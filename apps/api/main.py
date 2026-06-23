@@ -1,0 +1,131 @@
+"""2nd Act Capital API.
+
+FastAPI application entrypoint. Exposes a public health check and protects
+every other route with Auth0-issued JWT validation.
+"""
+
+from functools import lru_cache
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from jose import jwt
+from jose.exceptions import JWTError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+API_VERSION = "0.1.0"
+
+# Paths that do not require authentication.
+PUBLIC_PATHS = {"/health"}
+
+
+class Settings(BaseSettings):
+    """Runtime configuration sourced from environment variables."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    auth0_domain: str = "dev-smmrfubsfscif3t1.us.auth0.com"
+    auth0_audience: str = "https://api.2ndactcapital.com"
+
+    @property
+    def issuer(self) -> str:
+        return f"https://{self.auth0_domain}/"
+
+    @property
+    def jwks_url(self) -> str:
+        return f"https://{self.auth0_domain}/.well-known/jwks.json"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+@lru_cache
+def get_jwks() -> dict:
+    """Fetch and cache the Auth0 JSON Web Key Set."""
+    settings = get_settings()
+    response = httpx.get(settings.jwks_url, timeout=10.0)
+    response.raise_for_status()
+    return response.json()
+
+
+def verify_token(token: str) -> dict:
+    """Validate a Bearer token against the Auth0 tenant.
+
+    Returns the decoded claims on success and raises ``JWTError`` otherwise.
+    """
+    settings = get_settings()
+    jwks = get_jwks()
+
+    unverified_header = jwt.get_unverified_header(token)
+    rsa_key = next(
+        (
+            {
+                "kty": key["kty"],
+                "kid": key["kid"],
+                "use": key["use"],
+                "n": key["n"],
+                "e": key["e"],
+            }
+            for key in jwks.get("keys", [])
+            if key["kid"] == unverified_header.get("kid")
+        ),
+        None,
+    )
+
+    if rsa_key is None:
+        raise JWTError("Unable to find a matching signing key")
+
+    return jwt.decode(
+        token,
+        rsa_key,
+        algorithms=["RS256"],
+        audience=settings.auth0_audience,
+        issuer=settings.issuer,
+    )
+
+
+app = FastAPI(title="2nd Act Capital API", version=API_VERSION)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "https://2ndactcapital.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def auth0_jwt_middleware(request: Request, call_next):
+    """Require a valid Auth0 JWT for every route except the public ones."""
+    # Let CORS preflight and public routes through untouched.
+    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    scheme, _, token = auth_header.partition(" ")
+
+    if scheme.lower() != "bearer" or not token:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing or malformed Authorization header"},
+        )
+
+    try:
+        request.state.user = verify_token(token)
+    except JWTError as exc:
+        return JSONResponse(status_code=401, content={"detail": f"Invalid token: {exc}"})
+    except httpx.HTTPError:
+        return JSONResponse(
+            status_code=503, content={"detail": "Unable to reach identity provider"}
+        )
+
+    return await call_next(request)
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok", "version": API_VERSION}

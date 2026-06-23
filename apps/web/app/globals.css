@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/*
+ * 2nd Act Capital design tokens.
+ * Exposed as Tailwind theme colors so utilities like `bg-navy`, `text-ink`,
+ * and `border-line` resolve to the exact brand values below.
+ */
+@theme {
+  --color-surface: #ffffff; /* background primary */
+  --color-canvas: #faf8f5; /* background secondary (app shell) */
+  --color-sand: #f5f1eb; /* background tertiary (sidebar, footer) */
+  --color-line: #ede9e3; /* borders and dividers */
+
+  --color-ink: #1a1814; /* text primary */
+  --color-ink-soft: #3d3832; /* text secondary */
+  --color-muted: #8c8680; /* text muted */
+
+  --color-navy: #1b2b4b; /* brand navy */
+  --color-gold: #c9a84c; /* brand gold */
+  --color-gold-light: #e8d5a3; /* brand gold light */
+}
+
+html {
+  font-size: 17px;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}

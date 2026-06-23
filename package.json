@@ -1,25 +1,14 @@
 {
-  "name": "auth0-nextjs-samples",
-  "version": "0.1.0",
+  "name": "2ndactcapital",
   "private": true,
+  "packageManager": "npm@10.9.7",
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "node tools/check-port-and-start.cjs",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "ensure-env": "node tools/ensure-env.cjs"
-  },
-  "dependencies": {
-    "@auth0/nextjs-auth0": "^4.14.0",
-    "next": "16.1.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint"
   },
   "devDependencies": {
-    "detect-port": "^2.1.0",
-    "dotenv": "^16.5.0",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.0",
-    "js-yaml": "^4.1.0"
+    "turbo": "latest"
   }
 }
