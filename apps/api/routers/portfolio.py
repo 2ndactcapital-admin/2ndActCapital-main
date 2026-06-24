@@ -11,7 +11,7 @@ router = APIRouter(tags=["portfolio"])
 
 _PORTFOLIO_SELECT = (
     "mi.id, mi.deal_id, d.name AS deal_name, d.deal_status, "
-    "mi.user_id, mi.org_id, mi.stage, mi.notes, mi.invested_amount, "
+    "mi.user_id, mi.org_id, mi.investment_stage AS stage, mi.notes, mi.invested_amount, "
     "mi.created_at, mi.updated_at"
 )
 
@@ -55,11 +55,11 @@ async def get_portfolio_summary(request: Request):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT stage, COUNT(*) AS count, SUM(invested_amount) AS total_amount
+            SELECT investment_stage AS stage, COUNT(*) AS count, SUM(invested_amount) AS total_amount
             FROM member_investments
             WHERE user_id = $1 AND org_id = $2
-            GROUP BY stage
-            ORDER BY stage
+            GROUP BY investment_stage
+            ORDER BY investment_stage
             """,
             user_id,
             org_id,

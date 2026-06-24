@@ -1019,7 +1019,7 @@ async def indicate_interest(request: Request, deal_id: UUID, body: InterestReque
                     if first_stage:
                         await conn.execute(
                             """
-                            INSERT INTO member_investments (org_id, deal_id, user_id, stage)
+                            INSERT INTO member_investments (org_id, deal_id, user_id, investment_stage)
                             VALUES ($1, $2, $3, $4)
                             ON CONFLICT (deal_id, user_id) DO NOTHING
                             """,
@@ -1562,7 +1562,8 @@ async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpda
 # Member investments (Sprint 7)
 # ---------------------------------------------------------------------------
 MEMBER_INVESTMENT_SELECT = (
-    "id, deal_id, user_id, org_id, stage, notes, invested_amount, created_at, updated_at"
+    "id, deal_id, user_id, org_id, investment_stage AS stage, notes, "
+    "invested_amount, created_at, updated_at"
 )
 
 
@@ -1637,7 +1638,7 @@ async def update_member_investment_stage(
                 row = await conn.fetchrow(
                     f"""
                     UPDATE member_investments
-                    SET stage = $2, notes = COALESCE($3, notes), updated_at = now()
+                    SET investment_stage = $2, notes = COALESCE($3, notes), updated_at = now()
                     WHERE id = $1
                     RETURNING {MEMBER_INVESTMENT_SELECT}
                     """,
@@ -1659,7 +1660,7 @@ async def update_member_investment_stage(
             else:
                 row = await conn.fetchrow(
                     f"""
-                    INSERT INTO member_investments (org_id, deal_id, user_id, stage, notes)
+                    INSERT INTO member_investments (org_id, deal_id, user_id, investment_stage, notes)
                     VALUES ($1, $2, $3, $4, $5)
                     RETURNING {MEMBER_INVESTMENT_SELECT}
                     """,
