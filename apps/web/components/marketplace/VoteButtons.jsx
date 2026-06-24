@@ -2,10 +2,16 @@
 
 import { useState, useTransition } from "react";
 import { IconChevronUp, IconChevronDown } from "@tabler/icons-react";
-import { voteDealAction } from "@/lib/marketplaceActions";
 
-// Up/down vote control with toggle behavior. Optimistic, reconciled with the
-// server's returned summary.
+async function castVote(dealId, vote) {
+  const res = await fetch("/api/marketplace/vote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dealId, vote }),
+  });
+  return res.json();
+}
+
 export default function VoteButtons({
   dealId,
   initialUpvotes = 0,
@@ -23,7 +29,7 @@ export default function VoteButtons({
     e?.stopPropagation();
     if (pending) return;
     startTransition(async () => {
-      const res = await voteDealAction(dealId, vote);
+      const res = await castVote(dealId, vote);
       if (res.ok && res.summary) {
         setUpvotes(res.summary.upvotes ?? 0);
         setDownvotes(res.summary.downvotes ?? 0);

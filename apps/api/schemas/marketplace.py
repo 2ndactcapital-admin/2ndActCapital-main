@@ -20,6 +20,7 @@ class DealBase(BaseModel):
     name: str
     description: str | None = None
     deal_status: str | None = None
+    deal_stage: str | None = None
     asset_super_class: str | None = None
     asset_class: str | None = None
     asset_sub_category: str | None = None
@@ -52,6 +53,7 @@ class DealUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     deal_status: str | None = None
+    deal_stage: str | None = None
     asset_super_class: str | None = None
     asset_class: str | None = None
     asset_sub_category: str | None = None
@@ -224,3 +226,32 @@ class ConfigResponse(BaseModel):
     value_type: str | None = None
     category: str | None = None
     display_order: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Compliance review requests
+# ---------------------------------------------------------------------------
+class ComplianceReviewRequest(BaseModel):
+    entity_id: UUID | None = None
+    request_notes: str | None = None
+
+
+class ComplianceReviewStatusUpdate(BaseModel):
+    status: str  # "approved" or "denied"
+    review_notes: str | None = None
+
+
+class ComplianceReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    deal_id: UUID
+    user_id: UUID | None = None
+    entity_id: UUID | None = None
+    request_notes: str | None = None
+    status: str = "pending"
+    reviewed_by: UUID | None = None
+    review_notes: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
-import DealCard from "@/components/marketplace/DealCard";
+import DealsTable from "@/components/marketplace/DealsTable";
 import MarketplaceFilters from "@/components/marketplace/MarketplaceFilters";
-import { listDeals, getTaxonomy } from "@/lib/api";
+import StageBar from "@/components/marketplace/StageBar";
+import { listDeals, getTaxonomy, getConfig, getStageSummary } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 
 export default async function MarketplacePage({ searchParams }) {
@@ -16,28 +17,39 @@ export default async function MarketplacePage({ searchParams }) {
   const params = (await searchParams) || {};
   const q = typeof params.q === "string" ? params.q : "";
   const assetClass = typeof params.asset_class === "string" ? params.asset_class : "";
-  const status = typeof params.status === "string" ? params.status : "";
+  const dealStage = typeof params.deal_stage === "string" ? params.deal_stage : "";
   const featured = params.featured === "1";
 
   let deals = [];
   let taxonomy = { super_classes: [] };
+  let stages = [];
+  let stageSummary = [];
   let loadError = null;
+
   try {
-    const [filtered, tax] = await Promise.all([
+    const [filtered, tax, stagesRes, summaryRes] = await Promise.all([
       listDeals({
         search: q || undefined,
         asset_class: assetClass || undefined,
-        status: status || undefined,
+        deal_stage: dealStage || undefined,
         is_featured: featured ? true : undefined,
         limit: 100,
       }),
       getTaxonomy(),
+      getConfig("deal_stages"),
+      getStageSummary(),
     ]);
     deals = filtered;
     taxonomy = tax;
+    stages = stagesRes || [];
+    stageSummary = summaryRes || [];
   } catch (error) {
     loadError = error.message;
   }
+
+  const stageLabels = Object.fromEntries(
+    stages.map((s) => [s.config_key, s.config_value])
+  );
 
   return (
     <AppShell user={session.user}>
@@ -58,8 +70,14 @@ export default async function MarketplacePage({ searchParams }) {
         )}
       </div>
 
-      <div className="mt-6">
-        <MarketplaceFilters taxonomy={taxonomy} staff={staff} />
+      {stageSummary.length > 0 && (
+        <div className="mt-5">
+          <StageBar stageSummary={stageSummary} stages={stages} />
+        </div>
+      )}
+
+      <div className="mt-4">
+        <MarketplaceFilters taxonomy={taxonomy} staff={staff} stages={stages} />
       </div>
 
       <div className="mt-4">
@@ -67,18 +85,8 @@ export default async function MarketplacePage({ searchParams }) {
           <div className="rounded-lg border border-border bg-bg-card p-8 text-center text-sm text-text-muted">
             Could not load deals: {loadError}
           </div>
-        ) : deals.length === 0 ? (
-          <div className="rounded-lg border border-border bg-bg-card p-12 text-center">
-            <p className="text-sm font-medium text-text-secondary">
-              No deals match your filters
-            </p>
-          </div>
         ) : (
-          <div className="grid gap-5 md:grid-cols-2">
-            {deals.map((deal) => (
-              <DealCard key={deal.id} deal={deal} />
-            ))}
-          </div>
+          <DealsTable deals={deals} staff={staff} stageLabels={stageLabels} />
         )}
       </div>
     </AppShell>

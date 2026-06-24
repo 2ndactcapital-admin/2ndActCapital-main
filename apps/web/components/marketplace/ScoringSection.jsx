@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { saveScoreAction } from "@/lib/marketplaceActions";
 import ScoreBar from "@/components/marketplace/ScoreBar";
 
@@ -15,13 +16,17 @@ function weightPct(weight) {
   return (w <= 1 ? w * 100 : w).toFixed(1);
 }
 
-function DimensionRow({ dealId, dimension, label, weight, existing }) {
+function DimensionRow({ dealId, dimension, label, weight, existing, onSaved }) {
   const [state, formAction, pending] = useActionState(
     saveScoreAction.bind(null, dealId),
     {},
   );
   const [score, setScore] = useState(existing?.score ?? 50);
   const pct = weightPct(existing?.weight ?? weight);
+
+  useEffect(() => {
+    if (state?.ok && onSaved) onSaved();
+  }, [state]);
 
   return (
     <form
@@ -90,6 +95,7 @@ function DimensionRow({ dealId, dimension, label, weight, existing }) {
 }
 
 export default function ScoringSection({ dealId, dimensions = [], scores = [], composite }) {
+  const router = useRouter();
   const byDimension = Object.fromEntries(scores.map((s) => [s.dimension, s]));
 
   return (
@@ -110,6 +116,7 @@ export default function ScoringSection({ dealId, dimensions = [], scores = [], c
                 label={d.config_value}
                 weight={byDimension[d.config_key]?.weight ?? 0.1667}
                 existing={byDimension[d.config_key]}
+                onSaved={() => router.refresh()}
               />
             ))}
           </div>

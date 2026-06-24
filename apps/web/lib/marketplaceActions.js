@@ -5,6 +5,8 @@ import {
   createDeal,
   indicateInterest,
   overrideInterest,
+  submitComplianceRequest,
+  updateComplianceRequest,
   uploadAPI,
   upsertDealScore,
   voteDeal,
@@ -108,6 +110,36 @@ export async function overrideComplianceAction(dealId, prevState, formData) {
       entity_id: empty(formData.get("entity_id")),
       notes: empty(formData.get("notes")),
     });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function requestComplianceReviewAction(dealId, prevState, formData) {
+  try {
+    const item = await submitComplianceRequest(dealId, {
+      entity_id: empty(formData.get("entity_id")),
+      request_notes: empty(formData.get("request_notes")),
+    });
+    return { ok: true, item };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function approveComplianceReviewAction(dealId, reqId, prevState) {
+  try {
+    await updateComplianceRequest(dealId, reqId, { status: "approved" });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function denyComplianceReviewAction(dealId, reqId, prevState) {
+  try {
+    await updateComplianceRequest(dealId, reqId, { status: "denied" });
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error.message };

@@ -140,3 +140,14 @@ export const listDealInterest = (id) =>
   fetchAPI(`/api/v1/deals/${id}/interest`);
 export const overrideInterest = (id, body) =>
   fetchAPI(`/api/v1/deals/${id}/interest/override`, { method: "POST", body });
+export const getStageSummary = () =>
+  fetchAPI("/api/v1/deals/stage-summary");
+export const getComplianceRequests = (id) =>
+  fetchAPI(`/api/v1/deals/${id}/compliance-requests`);
+export const submitComplianceRequest = (id, body) =>
+  fetchAPI(`/api/v1/deals/${id}/compliance-requests`, { method: "POST", body });
+export const updateComplianceRequest = (id, reqId, body) =>
+  fetchAPI(`/api/v1/deals/${id}/compliance-requests/${reqId}`, {
+    method: "PUT",
+    body,
+  });

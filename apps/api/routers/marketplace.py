@@ -27,6 +27,9 @@ from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
 from schemas.marketplace import (
+    ComplianceReviewRequest,
+    ComplianceReviewResponse,
+    ComplianceReviewStatusUpdate,
     ConfigResponse,
     DealCreate,
     DealDetail,
@@ -66,8 +69,9 @@ STATUS_TRANSITIONS = {
 QUALIFIED_ACCREDITATION = ("self_certified", "third_party_verified")
 
 DEAL_SELECT = (
-    "id, org_id, slug, name, description, deal_status, asset_super_class, "
-    "asset_class, asset_sub_category, sponsor_entity_id, sponsor_name_override, "
+    "id, org_id, slug, name, description, deal_status, deal_stage, "
+    "asset_super_class, asset_class, asset_sub_category, "
+    "sponsor_entity_id, sponsor_name_override, "
     "target_raise, minimum_investment, expected_return_pct, term_months, "
     "deal_date, close_date, location, highlights, tags, is_featured, "
     "submitted_by, published_at, created_at, updated_at"
@@ -307,10 +311,30 @@ def _deal_response(row, *, composite=None, votes=None, user_vote=None,
 # ---------------------------------------------------------------------------
 # Deals — collection
 # ---------------------------------------------------------------------------
+@router.get("/deals/stage-summary")
+async def get_deal_stage_summary(request: Request):
+    org_id = get_org_id(request)
+    staff = is_staff(request)
+    conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
+    params: list = [org_id]
+    if not staff:
+        params.append(list(MEMBER_VISIBLE_STATUSES))
+        conditions.append(f"deal_status = ANY(${len(params)})")
+    query = (
+        f"SELECT COALESCE(deal_stage, 'sourced') AS stage, COUNT(*) AS count "
+        f"FROM deals WHERE {' AND '.join(conditions)} "
+        f"GROUP BY COALESCE(deal_stage, 'sourced') ORDER BY stage"
+    )
+    pool = await get_pool()
+    rows = await pool.fetch(query, *params)
+    return [{"stage": r["stage"], "count": r["count"]} for r in rows]
+
+
 @router.get("/deals", response_model=list[DealResponse])
 async def list_deals(
     request: Request,
     status: str | None = None,
+    deal_stage: str | None = None,
     asset_class: str | None = None,
     search: str | None = None,
     is_featured: bool | None = None,
@@ -331,6 +355,9 @@ async def list_deals(
         params.append(list(MEMBER_VISIBLE_STATUSES))
         conditions.append(f"deal_status = ANY(${len(params)})")
 
+    if deal_stage:
+        params.append(deal_stage)
+        conditions.append(f"deal_stage = ${len(params)}")
     if asset_class:
         params.append(asset_class)
         conditions.append(f"asset_class = ${len(params)}")
@@ -605,11 +632,12 @@ async def update_deal(request: Request, deal_id: UUID, body: DealUpdate):
             )
 
             editable = (
-                "name", "description", "deal_status", "asset_super_class",
-                "asset_class", "asset_sub_category", "sponsor_entity_id",
-                "sponsor_name_override", "target_raise", "minimum_investment",
-                "expected_return_pct", "term_months", "deal_date", "close_date",
-                "location", "highlights", "tags", "is_featured",
+                "name", "description", "deal_status", "deal_stage",
+                "asset_super_class", "asset_class", "asset_sub_category",
+                "sponsor_entity_id", "sponsor_name_override", "target_raise",
+                "minimum_investment", "expected_return_pct", "term_months",
+                "deal_date", "close_date", "location", "highlights", "tags",
+                "is_featured",
             )
             set_clauses = ["system_from = now()", "updated_at = now()"]
             params: list = [deal_id, org_id]
@@ -1124,3 +1152,156 @@ async def upload_document(
     return DealDocumentResponse(
         **{**dict(row), "extracted_data": _parse_json(row["extracted_data"])}
     )
+
+
+# ---------------------------------------------------------------------------
+# Compliance review requests
+# ---------------------------------------------------------------------------
+COMPLIANCE_SELECT = (
+    "id, deal_id, user_id, entity_id, request_notes, status, "
+    "reviewed_by, review_notes, reviewed_at, created_at, updated_at"
+)
+
+
+@router.post(
+    "/deals/{deal_id}/compliance-requests",
+    response_model=ComplianceReviewResponse,
+    status_code=201,
+)
+async def create_compliance_request(
+    request: Request, deal_id: UUID, body: ComplianceReviewRequest
+):
+    require_permission(request, "vote_deal")
+    org_id = get_org_id(request)
+    user_id = get_user_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        deal = await _fetch_deal(conn, org_id, deal_id)
+        if deal is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO compliance_override_requests
+                (org_id, deal_id, user_id, entity_id, request_notes, status)
+            VALUES ($1, $2, $3, $4, $5, 'pending')
+            ON CONFLICT (deal_id, user_id)
+            DO UPDATE SET entity_id = $4, request_notes = $5,
+                          status = 'pending', updated_at = now()
+            RETURNING {COMPLIANCE_SELECT}
+            """,
+            org_id,
+            deal_id,
+            user_id,
+            body.entity_id,
+            body.request_notes,
+        )
+    return ComplianceReviewResponse(**dict(row))
+
+
+@router.get(
+    "/deals/{deal_id}/compliance-requests",
+    response_model=list[ComplianceReviewResponse],
+)
+async def list_compliance_requests(request: Request, deal_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        deal = await _fetch_deal(conn, org_id, deal_id)
+        if deal is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+
+        rows = await conn.fetch(
+            f"""
+            SELECT {COMPLIANCE_SELECT}
+            FROM compliance_override_requests
+            WHERE deal_id = $1 AND org_id = $2
+            ORDER BY created_at DESC NULLS LAST
+            """,
+            deal_id,
+            org_id,
+        )
+    return [ComplianceReviewResponse(**dict(r)) for r in rows]
+
+
+@router.put(
+    "/deals/{deal_id}/compliance-requests/{req_id}",
+    response_model=ComplianceReviewResponse,
+)
+async def update_compliance_request(
+    request: Request,
+    deal_id: UUID,
+    req_id: UUID,
+    body: ComplianceReviewStatusUpdate,
+):
+    require_permission(request, "override_compliance")
+    org_id = get_org_id(request)
+    reviewer_id = get_user_id(request)
+    pool = await get_pool()
+
+    if body.status not in ("approved", "denied"):
+        raise HTTPException(
+            status_code=400, detail="status must be 'approved' or 'denied'"
+        )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                f"""
+                UPDATE compliance_override_requests
+                SET status = $3, reviewed_by = $4, review_notes = $5,
+                    reviewed_at = now(), updated_at = now()
+                WHERE id = $1 AND deal_id = $2 AND org_id = $6
+                RETURNING {COMPLIANCE_SELECT}
+                """,
+                req_id,
+                deal_id,
+                body.status,
+                reviewer_id,
+                body.review_notes,
+                org_id,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            if body.status == "approved":
+                # Grant compliance override in deal_interest.
+                existing = await conn.fetchrow(
+                    "SELECT id FROM deal_interest WHERE deal_id = $1 AND user_id = $2",
+                    deal_id,
+                    row["user_id"],
+                )
+                if existing:
+                    await conn.execute(
+                        "UPDATE deal_interest SET compliance_override = true WHERE id = $1",
+                        existing["id"],
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        INSERT INTO deal_interest
+                            (org_id, deal_id, entity_id, user_id, compliance_override)
+                        VALUES ($1, $2, $3, $4, true)
+                        """,
+                        org_id,
+                        deal_id,
+                        row["entity_id"],
+                        row["user_id"],
+                    )
+                await write_audit_log(
+                    conn,
+                    org_id=org_id,
+                    action="compliance_override",
+                    table_name="deal_interest",
+                    record_id=deal_id,
+                    new={
+                        "deal_id": str(deal_id),
+                        "user_id": str(row["user_id"]),
+                        "granted_by": str(reviewer_id),
+                        "via_review_request": str(req_id),
+                    },
+                )
+    return ComplianceReviewResponse(**dict(row))

@@ -5,7 +5,8 @@ import StatusBadge from "@/components/marketplace/StatusBadge";
 import InterestCard from "@/components/marketplace/InterestCard";
 import ScoringSection from "@/components/marketplace/ScoringSection";
 import DocumentsList from "@/components/marketplace/DocumentsList";
-import { getDeal, getConfig, listEntities } from "@/lib/api";
+import ComplianceRequests from "@/components/marketplace/ComplianceRequests";
+import { getDeal, getConfig, listEntities, getComplianceRequests } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 import {
   formatCurrency,
@@ -46,22 +47,22 @@ export default async function DealDetailPage({ params }) {
 
   const deal = detail.deal;
 
-  // Staff-only ancillary data (scoring dimensions); entities for the interest
-  // modal. Both degrade gracefully.
   let dimensions = [];
   let entities = [];
-  const [dimsRes, entRes] = await Promise.allSettled([
+  let complianceRequests = [];
+  const settledAll = await Promise.allSettled([
     staff ? getConfig("deal_scoring") : Promise.resolve([]),
     listEntities({ limit: 200 }),
+    staff ? getComplianceRequests(id) : Promise.resolve([]),
   ]);
-  if (dimsRes.status === "fulfilled") dimensions = dimsRes.value || [];
-  if (entRes.status === "fulfilled") entities = entRes.value || [];
+  if (settledAll[0].status === "fulfilled") dimensions = settledAll[0].value || [];
+  if (settledAll[1].status === "fulfilled") entities = settledAll[1].value || [];
+  if (settledAll[2].status === "fulfilled") complianceRequests = settledAll[2].value || [];
 
   const sponsor = detail.sponsor_name || deal.sponsor_name_override;
 
   return (
     <AppShell user={session.user}>
-      {/* Breadcrumb */}
       <nav className="text-sm text-text-muted">
         <a href="/marketplace" className="hover:text-navy">
           Marketplace
@@ -70,14 +71,16 @@ export default async function DealDetailPage({ params }) {
         <span className="text-text-secondary">{deal.name}</span>
       </nav>
 
-      {/* Header */}
       <div className="-mx-8 mt-3 border-b border-border bg-bg-app px-8 pb-6">
         <h1 className="text-3xl font-semibold text-navy">{deal.name}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          {deal.asset_class && (
+          {deal.asset_class_label && (
             <span className="rounded-md bg-gold-light px-2 py-1 text-xs font-medium text-navy">
-              {deal.asset_class}
+              {deal.asset_class_label}
             </span>
+          )}
+          {deal.asset_super_class_label && (
+            <span className="text-xs text-text-muted">{deal.asset_super_class_label}</span>
           )}
           <StatusBadge status={deal.deal_status} />
         </div>
@@ -94,7 +97,6 @@ export default async function DealDetailPage({ params }) {
       <div className="mt-8 grid gap-8 lg:grid-cols-[2fr_1fr]">
         {/* LEFT */}
         <div className="space-y-8">
-          {/* Overview */}
           <section>
             <h2 className="text-base font-semibold text-navy">Overview</h2>
             {deal.description && (
@@ -129,7 +131,6 @@ export default async function DealDetailPage({ params }) {
             )}
           </section>
 
-          {/* Investment Details */}
           <section>
             <h2 className="text-base font-semibold text-navy">
               Investment Details
@@ -144,20 +145,25 @@ export default async function DealDetailPage({ params }) {
             </dl>
           </section>
 
-          {/* Documents */}
           <DocumentsList
             dealId={deal.id}
             initial={detail.documents || []}
             canUpload={staff}
           />
 
-          {/* Scoring (staff) */}
           {staff && (
             <ScoringSection
               dealId={deal.id}
               dimensions={dimensions}
               scores={detail.scores || []}
               composite={deal.composite_score}
+            />
+          )}
+
+          {staff && complianceRequests.length > 0 && (
+            <ComplianceRequests
+              dealId={deal.id}
+              initial={complianceRequests}
             />
           )}
         </div>
@@ -167,6 +173,7 @@ export default async function DealDetailPage({ params }) {
           <InterestCard
             dealId={deal.id}
             composite={deal.composite_score}
+            scores={detail.scores || []}
             upvotes={deal.upvotes}
             downvotes={deal.downvotes}
             userVote={deal.user_vote}

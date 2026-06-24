@@ -6,28 +6,18 @@ import { useState } from "react";
 const INPUT =
   "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 
-// Status options. Members see only active/under_review; staff see all.
-const MEMBER_STATUSES = [
-  { value: "", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "under_review", label: "Under Review" },
-];
-const STAFF_STATUSES = [
-  ...MEMBER_STATUSES,
-  { value: "draft", label: "Draft" },
-  { value: "submitted", label: "Submitted" },
-  { value: "archived", label: "Archived" },
-];
-
-export default function MarketplaceFilters({ taxonomy = null, staff = false }) {
+export default function MarketplaceFilters({
+  taxonomy = null,
+  staff = false,
+  stages = [],
+}) {
   const router = useRouter();
   const params = useSearchParams();
   const [q, setQ] = useState(params.get("q") || "");
 
-  const status = params.get("status") || "";
+  const dealStage = params.get("deal_stage") || "";
   const assetClass = params.get("asset_class") || "";
   const featured = params.get("featured") === "1";
-  const statuses = staff ? STAFF_STATUSES : MEMBER_STATUSES;
   const superClasses = taxonomy?.super_classes || [];
 
   function update(next) {
@@ -74,18 +64,21 @@ export default function MarketplaceFilters({ taxonomy = null, staff = false }) {
         ))}
       </select>
 
-      <select
-        value={status}
-        onChange={(e) => update({ status: e.target.value })}
-        className={INPUT}
-        aria-label="Status"
-      >
-        {statuses.map((s) => (
-          <option key={s.value || "all"} value={s.value}>
-            {s.label}
-          </option>
-        ))}
-      </select>
+      {stages.length > 0 && (
+        <select
+          value={dealStage}
+          onChange={(e) => update({ deal_stage: e.target.value })}
+          className={INPUT}
+          aria-label="Stage"
+        >
+          <option value="">All stages</option>
+          {stages.map((s) => (
+            <option key={s.config_key} value={s.config_key}>
+              {s.config_value}
+            </option>
+          ))}
+        </select>
+      )}
 
       <label className="flex items-center gap-2 text-sm text-text-secondary">
         <input
