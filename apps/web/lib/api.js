@@ -151,3 +151,35 @@ export const updateComplianceRequest = (id, reqId, body) =>
     method: "PUT",
     body,
   });
+
+// --- Document review ---
+export const reviewDocument = (dealId, docId, body) =>
+  fetchAPI(`/api/v1/deals/${dealId}/documents/${docId}/review`, {
+    method: "PUT",
+    body,
+  });
+
+// --- AI summary ---
+export const getAISummary = (dealId) =>
+  fetchAPI(`/api/v1/deals/${dealId}/ai-summary`);
+export const generateAISummary = (dealId) =>
+  fetchAPI(`/api/v1/deals/${dealId}/ai-summary`, { method: "POST" });
+
+// --- Deal stage ---
+export const updateDealStage = (dealId, body) =>
+  fetchAPI(`/api/v1/deals/${dealId}/stage`, { method: "PUT", body });
+
+// --- Member investments ---
+export const getMemberInvestments = (dealId) =>
+  fetchAPI(`/api/v1/deals/${dealId}/member-investments`);
+export const updateMemberInvestmentStage = (dealId, userId, body) =>
+  fetchAPI(`/api/v1/deals/${dealId}/member-investments/${userId}/stage`, {
+    method: "POST",
+    body,
+  });
+
+// --- Portfolio ---
+export const getMyInvestments = () =>
+  fetchAPI("/api/v1/portfolio/my-investments");
+export const getPortfolioSummary = () =>
+  fetchAPI("/api/v1/portfolio/summary");

@@ -27,6 +27,7 @@ from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
 from schemas.marketplace import (
+    AISummaryResponse,
     ComplianceReviewRequest,
     ComplianceReviewResponse,
     ComplianceReviewStatusUpdate,
@@ -37,11 +38,15 @@ from schemas.marketplace import (
     DealResponse,
     DealScoreCreate,
     DealScoreResponse,
+    DealStageUpdate,
     DealUpdate,
+    DocumentReviewRequest,
     InterestOverrideRequest,
     InterestRequest,
     InterestResponse,
     InterestUserResponse,
+    MemberInvestmentResponse,
+    MemberInvestmentStageUpdate,
     StatusUpdate,
     VoteRequest,
 )
@@ -84,7 +89,8 @@ SCORE_SELECT = (
 
 DOC_SELECT = (
     "id, deal_id, file_name, file_type, file_size_bytes, document_type, "
-    "processing_status, extracted_data, created_at"
+    "processing_status, extracted_data, created_at, "
+    "status, reviewed_by, review_notes, reviewed_at, visible_to_members"
 )
 
 
@@ -520,11 +526,19 @@ async def get_deal(request: Request, deal_id: UUID):
             f"ORDER BY dimension",
             deal_id,
         )
-        doc_rows = await conn.fetch(
-            f"SELECT {DOC_SELECT} FROM deal_documents WHERE deal_id = $1 "
-            f"ORDER BY created_at DESC NULLS LAST",
-            deal_id,
-        )
+        if staff:
+            doc_rows = await conn.fetch(
+                f"SELECT {DOC_SELECT} FROM deal_documents WHERE deal_id = $1 "
+                f"ORDER BY created_at DESC NULLS LAST",
+                deal_id,
+            )
+        else:
+            doc_rows = await conn.fetch(
+                f"SELECT {DOC_SELECT} FROM deal_documents WHERE deal_id = $1 "
+                f"AND status = 'approved' AND visible_to_members = true "
+                f"ORDER BY created_at DESC NULLS LAST",
+                deal_id,
+            )
 
         interest_count = await conn.fetchval(
             "SELECT COUNT(DISTINCT user_id) FROM deal_interest WHERE deal_id = $1",
@@ -991,6 +1005,28 @@ async def indicate_interest(request: Request, deal_id: UUID, body: InterestReque
                 record_id=row["id"],
                 new=dict(row),
             )
+            # Auto-create member_investment at the first configured stage.
+            try:
+                async with conn.transaction():
+                    first_stage = await conn.fetchval(
+                        """
+                        SELECT config_key FROM config
+                        WHERE org_id = $1 AND category = 'investment_stages'
+                        ORDER BY display_order NULLS LAST, config_key LIMIT 1
+                        """,
+                        org_id,
+                    )
+                    if first_stage:
+                        await conn.execute(
+                            """
+                            INSERT INTO member_investments (org_id, deal_id, user_id, stage)
+                            VALUES ($1, $2, $3, $4)
+                            ON CONFLICT (deal_id, user_id) DO NOTHING
+                            """,
+                            org_id, deal_id, user_id, first_stage,
+                        )
+            except Exception:
+                pass
     return InterestResponse(
         **{**dict(row), "amount_interest": _f(row["amount_interest"])}
     )
@@ -1305,3 +1341,344 @@ async def update_compliance_request(
                     },
                 )
     return ComplianceReviewResponse(**dict(row))
+
+
+# ---------------------------------------------------------------------------
+# Document review (Sprint 7)
+# ---------------------------------------------------------------------------
+@router.put(
+    "/deals/{deal_id}/documents/{doc_id}/review",
+    response_model=DealDocumentResponse,
+)
+async def review_document(
+    request: Request, deal_id: UUID, doc_id: UUID, body: DocumentReviewRequest
+):
+    require_permission(request, "manage_documents")
+    org_id = get_org_id(request)
+    reviewer_id = get_user_id(request)
+
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(
+            status_code=400, detail="status must be 'approved' or 'rejected'"
+        )
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                f"""
+                UPDATE deal_documents
+                SET status = $3, reviewed_by = $4, review_notes = $5,
+                    reviewed_at = now(), visible_to_members = $6
+                WHERE id = $1 AND deal_id = $2
+                RETURNING {DOC_SELECT}
+                """,
+                doc_id,
+                deal_id,
+                body.status,
+                reviewer_id,
+                body.review_notes,
+                body.visible_to_members,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            await write_audit_log(
+                conn,
+                org_id=org_id,
+                action="review_document",
+                table_name="deal_documents",
+                record_id=doc_id,
+                new=dict(row),
+            )
+    return DealDocumentResponse(
+        **{**dict(row), "extracted_data": _parse_json(row["extracted_data"])}
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI deal summary (Sprint 7)
+# ---------------------------------------------------------------------------
+AI_SUMMARY_SELECT = (
+    "id, deal_id, model_used, generated_at, summary_text, strengths, risks, market_context"
+)
+
+_AI_MODEL = "claude-haiku-4-5-20251001"
+
+
+@router.post("/deals/{deal_id}/ai-summary", response_model=AISummaryResponse)
+async def generate_ai_summary(request: Request, deal_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        deal = await _fetch_deal(conn, org_id, deal_id)
+        if deal is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+
+    parts = [f"Deal Name: {deal['name']}"]
+    if deal.get("description"):
+        parts.append(f"Description: {deal['description']}")
+    if deal.get("asset_class"):
+        parts.append(f"Asset Class: {deal['asset_class']}")
+    if deal.get("target_raise") is not None:
+        parts.append(f"Target Raise: ${_f(deal['target_raise']):,.0f}")
+    if deal.get("minimum_investment") is not None:
+        parts.append(f"Minimum Investment: ${_f(deal['minimum_investment']):,.0f}")
+    if deal.get("expected_return_pct") is not None:
+        parts.append(f"Expected Return: {_f(deal['expected_return_pct'])}%")
+    if deal.get("term_months"):
+        parts.append(f"Term: {deal['term_months']} months")
+    highlights = deal.get("highlights") or []
+    if isinstance(highlights, str):
+        try:
+            highlights = json.loads(highlights)
+        except Exception:
+            highlights = []
+    if highlights:
+        parts.append(f"Highlights: {'; '.join(highlights)}")
+
+    deal_context = "\n".join(parts)
+
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.AsyncAnthropic(api_key=api_key)
+        message = await client.messages.create(
+            model=_AI_MODEL,
+            max_tokens=1024,
+            system=(
+                "You are a financial analyst for 2nd Act Capital, a private investment platform "
+                "for accredited investors. Analyze the deal and respond ONLY with valid JSON "
+                "(no markdown fences) containing exactly these keys: "
+                "summary_text (string), strengths (array of strings), "
+                "risks (array of strings), market_context (string)."
+            ),
+            messages=[
+                {"role": "user", "content": f"Analyze this investment deal:\n\n{deal_context}"}
+            ],
+        )
+        raw = message.content[0].text
+        parsed = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {exc}")
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO deal_ai_summaries
+                    (deal_id, model_used, generated_at, summary_text, strengths, risks, market_context)
+                VALUES ($1, $2, now(), $3, $4, $5, $6)
+                ON CONFLICT (deal_id) DO UPDATE SET
+                    model_used = $2, generated_at = now(), summary_text = $3,
+                    strengths = $4, risks = $5, market_context = $6
+                RETURNING {AI_SUMMARY_SELECT}
+                """,
+                deal_id,
+                _AI_MODEL,
+                parsed.get("summary_text"),
+                list(parsed.get("strengths") or []),
+                list(parsed.get("risks") or []),
+                parsed.get("market_context"),
+            )
+    return AISummaryResponse(
+        **{**dict(row), "strengths": list(row["strengths"] or []), "risks": list(row["risks"] or [])}
+    )
+
+
+@router.get("/deals/{deal_id}/ai-summary", response_model=AISummaryResponse)
+async def get_ai_summary(request: Request, deal_id: UUID):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        deal = await _fetch_deal(conn, org_id, deal_id)
+        if deal is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+        row = await conn.fetchrow(
+            f"SELECT {AI_SUMMARY_SELECT} FROM deal_ai_summaries WHERE deal_id = $1",
+            deal_id,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="No AI summary generated yet")
+    return AISummaryResponse(
+        **{**dict(row), "strengths": list(row["strengths"] or []), "risks": list(row["risks"] or [])}
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deal stage pipeline (Sprint 7)
+# ---------------------------------------------------------------------------
+@router.put("/deals/{deal_id}/stage", response_model=DealResponse)
+async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpdate):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        valid = await conn.fetchval(
+            """
+            SELECT 1 FROM config
+            WHERE org_id = $1 AND category = 'deal_stages' AND config_key = $2 LIMIT 1
+            """,
+            org_id,
+            body.stage,
+        )
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"Unknown deal stage: {body.stage}")
+
+        async with conn.transaction():
+            current = await _fetch_deal(conn, org_id, deal_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Deal not found")
+
+            updated = await conn.fetchrow(
+                f"""
+                UPDATE deals SET deal_stage = $2, updated_at = now()
+                WHERE id = $1 AND valid_to IS NULL AND system_to IS NULL
+                RETURNING {DEAL_SELECT}
+                """,
+                deal_id,
+                body.stage,
+            )
+            await write_audit_log(
+                conn,
+                org_id=org_id,
+                action="stage_change",
+                table_name="deals",
+                record_id=deal_id,
+                old={"deal_stage": current.get("deal_stage")},
+                new={"deal_stage": body.stage},
+            )
+    return _deal_response(updated)
+
+
+# ---------------------------------------------------------------------------
+# Member investments (Sprint 7)
+# ---------------------------------------------------------------------------
+MEMBER_INVESTMENT_SELECT = (
+    "id, deal_id, user_id, org_id, stage, notes, invested_amount, created_at, updated_at"
+)
+
+
+@router.get(
+    "/deals/{deal_id}/member-investments",
+    response_model=list[MemberInvestmentResponse],
+)
+async def list_member_investments(request: Request, deal_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        deal = await _fetch_deal(conn, org_id, deal_id)
+        if deal is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+        rows = await conn.fetch(
+            f"""
+            SELECT {MEMBER_INVESTMENT_SELECT} FROM member_investments
+            WHERE deal_id = $1 AND org_id = $2
+            ORDER BY updated_at DESC NULLS LAST
+            """,
+            deal_id,
+            org_id,
+        )
+    return [
+        MemberInvestmentResponse(
+            **{**dict(r), "invested_amount": _f(r["invested_amount"])}
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/deals/{deal_id}/member-investments/{member_user_id}/stage",
+    response_model=MemberInvestmentResponse,
+)
+async def update_member_investment_stage(
+    request: Request,
+    deal_id: UUID,
+    member_user_id: UUID,
+    body: MemberInvestmentStageUpdate,
+):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    actor_id = get_user_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        valid = await conn.fetchval(
+            """
+            SELECT 1 FROM config
+            WHERE org_id = $1 AND category = 'investment_stages' AND config_key = $2 LIMIT 1
+            """,
+            org_id,
+            body.stage,
+        )
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"Unknown investment stage: {body.stage}")
+
+        async with conn.transaction():
+            deal = await _fetch_deal(conn, org_id, deal_id)
+            if deal is None:
+                raise HTTPException(status_code=404, detail="Deal not found")
+
+            existing = await conn.fetchrow(
+                "SELECT id FROM member_investments WHERE deal_id = $1 AND user_id = $2",
+                deal_id,
+                member_user_id,
+            )
+            if existing:
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE member_investments
+                    SET stage = $2, notes = COALESCE($3, notes), updated_at = now()
+                    WHERE id = $1
+                    RETURNING {MEMBER_INVESTMENT_SELECT}
+                    """,
+                    existing["id"],
+                    body.stage,
+                    body.notes,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO investment_stage_history
+                        (member_investment_id, stage, changed_by, notes)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    existing["id"],
+                    body.stage,
+                    actor_id,
+                    body.notes,
+                )
+            else:
+                row = await conn.fetchrow(
+                    f"""
+                    INSERT INTO member_investments (org_id, deal_id, user_id, stage, notes)
+                    VALUES ($1, $2, $3, $4, $5)
+                    RETURNING {MEMBER_INVESTMENT_SELECT}
+                    """,
+                    org_id,
+                    deal_id,
+                    member_user_id,
+                    body.stage,
+                    body.notes,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO investment_stage_history
+                        (member_investment_id, stage, changed_by, notes)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    row["id"],
+                    body.stage,
+                    actor_id,
+                    body.notes,
+                )
+    return MemberInvestmentResponse(
+        **{**dict(row), "invested_amount": _f(row.get("invested_amount"))}
+    )

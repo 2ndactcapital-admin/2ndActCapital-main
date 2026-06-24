@@ -6,7 +6,18 @@ import InterestCard from "@/components/marketplace/InterestCard";
 import ScoringSection from "@/components/marketplace/ScoringSection";
 import DocumentsList from "@/components/marketplace/DocumentsList";
 import ComplianceRequests from "@/components/marketplace/ComplianceRequests";
-import { getDeal, getConfig, listEntities, getComplianceRequests } from "@/lib/api";
+import DealDetailTabBar from "@/components/marketplace/DealDetailTabBar";
+import DealStagePipeline from "@/components/marketplace/DealStagePipeline";
+import MemberInvestmentTracker from "@/components/marketplace/MemberInvestmentTracker";
+import AISummaryCard from "@/components/marketplace/AISummaryCard";
+import {
+  getDeal,
+  getConfig,
+  listEntities,
+  getComplianceRequests,
+  getAISummary,
+  getMemberInvestments,
+} from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 import {
   formatCurrency,
@@ -28,8 +39,10 @@ function Metric({ label, value }) {
   );
 }
 
-export default async function DealDetailPage({ params }) {
+export default async function DealDetailPage({ params, searchParams }) {
   const { id } = await params;
+  const sp = (await searchParams) || {};
+  const tab = typeof sp.tab === "string" ? sp.tab : "overview";
 
   const session = await auth0.getSession();
   if (!session) {
@@ -47,17 +60,49 @@ export default async function DealDetailPage({ params }) {
 
   const deal = detail.deal;
 
-  let dimensions = [];
-  let entities = [];
-  let complianceRequests = [];
-  const settledAll = await Promise.allSettled([
+  // Load all supporting data in parallel (best-effort).
+  const [
+    dimensionsRes,
+    entitiesRes,
+    complianceRes,
+    aiSummaryRes,
+    memberInvestmentsRes,
+    dealStagesRes,
+    investmentStagesRes,
+    documentStatusesRes,
+  ] = await Promise.allSettled([
     staff ? getConfig("deal_scoring") : Promise.resolve([]),
     listEntities({ limit: 200 }),
     staff ? getComplianceRequests(id) : Promise.resolve([]),
+    getAISummary(id),
+    staff ? getMemberInvestments(id) : Promise.resolve([]),
+    getConfig("deal_stages"),
+    staff ? getConfig("investment_stages") : Promise.resolve([]),
+    staff ? getConfig("document_statuses") : Promise.resolve([]),
   ]);
-  if (settledAll[0].status === "fulfilled") dimensions = settledAll[0].value || [];
-  if (settledAll[1].status === "fulfilled") entities = settledAll[1].value || [];
-  if (settledAll[2].status === "fulfilled") complianceRequests = settledAll[2].value || [];
+
+  const dimensions =
+    dimensionsRes.status === "fulfilled" ? dimensionsRes.value || [] : [];
+  const entities =
+    entitiesRes.status === "fulfilled" ? entitiesRes.value || [] : [];
+  const complianceRequests =
+    complianceRes.status === "fulfilled" ? complianceRes.value || [] : [];
+  const aiSummary =
+    aiSummaryRes.status === "fulfilled" ? aiSummaryRes.value : null;
+  const memberInvestments =
+    memberInvestmentsRes.status === "fulfilled"
+      ? memberInvestmentsRes.value || []
+      : [];
+  const dealStages =
+    dealStagesRes.status === "fulfilled" ? dealStagesRes.value || [] : [];
+  const investmentStages =
+    investmentStagesRes.status === "fulfilled"
+      ? investmentStagesRes.value || []
+      : [];
+  const documentStatuses =
+    documentStatusesRes.status === "fulfilled"
+      ? documentStatusesRes.value || []
+      : [];
 
   const sponsor = detail.sponsor_name || deal.sponsor_name_override;
 
@@ -80,7 +125,9 @@ export default async function DealDetailPage({ params }) {
             </span>
           )}
           {deal.asset_super_class_label && (
-            <span className="text-xs text-text-muted">{deal.asset_super_class_label}</span>
+            <span className="text-xs text-text-muted">
+              {deal.asset_super_class_label}
+            </span>
           )}
           <StatusBadge status={deal.deal_status} />
         </div>
@@ -95,81 +142,141 @@ export default async function DealDetailPage({ params }) {
       </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[2fr_1fr]">
-        {/* LEFT */}
-        <div className="space-y-8">
-          <section>
-            <h2 className="text-base font-semibold text-navy">Overview</h2>
-            {deal.description && (
-              <p className="mt-3 whitespace-pre-line text-sm text-text-secondary">
-                {deal.description}
-              </p>
-            )}
-            {deal.location && (
-              <p className="mt-3 text-sm text-text-muted">📍 {deal.location}</p>
-            )}
-            {(deal.highlights || []).length > 0 && (
-              <ul className="mt-4 space-y-1.5">
-                {deal.highlights.map((h, i) => (
-                  <li key={i} className="flex gap-2 text-sm text-text-secondary">
-                    <span className="text-gold">●</span>
-                    <span>{h}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {(deal.tags || []).length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {deal.tags.map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-full border border-border bg-bg-card px-2.5 py-0.5 text-xs text-text-secondary"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
-          </section>
+        {/* LEFT — tabbed */}
+        <div>
+          <DealDetailTabBar staff={staff} />
 
-          <section>
-            <h2 className="text-base font-semibold text-navy">
-              Investment Details
-            </h2>
-            <dl className="mt-4 grid grid-cols-2 gap-4 rounded-lg border border-border bg-bg-card p-5 sm:grid-cols-3">
-              <Metric label="Target Raise" value={formatCurrency(deal.target_raise)} />
-              <Metric label="Minimum Investment" value={formatCurrency(deal.minimum_investment)} />
-              <Metric label="Expected Return" value={formatPercent(deal.expected_return_pct)} />
-              <Metric label="Term" value={deal.term_months ? `${deal.term_months} months` : "—"} />
-              <Metric label="Deal Date" value={formatDate(deal.deal_date)} />
-              <Metric label="Close Date" value={formatDate(deal.close_date)} />
-            </dl>
-          </section>
+          {/* Overview */}
+          {tab === "overview" && (
+            <div className="mt-6 space-y-8">
+              <section>
+                <h2 className="text-base font-semibold text-navy">Overview</h2>
+                {deal.description && (
+                  <p className="mt-3 whitespace-pre-line text-sm text-text-secondary">
+                    {deal.description}
+                  </p>
+                )}
+                {deal.location && (
+                  <p className="mt-3 text-sm text-text-muted">
+                    📍 {deal.location}
+                  </p>
+                )}
+                {(deal.highlights || []).length > 0 && (
+                  <ul className="mt-4 space-y-1.5">
+                    {deal.highlights.map((h, i) => (
+                      <li
+                        key={i}
+                        className="flex gap-2 text-sm text-text-secondary"
+                      >
+                        <span className="text-gold">●</span>
+                        <span>{h}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {(deal.tags || []).length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {deal.tags.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded-full border border-border bg-bg-card px-2.5 py-0.5 text-xs text-text-secondary"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </section>
 
-          <DocumentsList
-            dealId={deal.id}
-            initial={detail.documents || []}
-            canUpload={staff}
-          />
-
-          {staff && (
-            <ScoringSection
-              dealId={deal.id}
-              dimensions={dimensions}
-              scores={detail.scores || []}
-              composite={deal.composite_score}
-            />
+              <section>
+                <h2 className="text-base font-semibold text-navy">
+                  Investment Details
+                </h2>
+                <dl className="mt-4 grid grid-cols-2 gap-4 rounded-lg border border-border bg-bg-card p-5 sm:grid-cols-3">
+                  <Metric
+                    label="Target Raise"
+                    value={formatCurrency(deal.target_raise)}
+                  />
+                  <Metric
+                    label="Minimum Investment"
+                    value={formatCurrency(deal.minimum_investment)}
+                  />
+                  <Metric
+                    label="Expected Return"
+                    value={formatPercent(deal.expected_return_pct)}
+                  />
+                  <Metric
+                    label="Term"
+                    value={
+                      deal.term_months ? `${deal.term_months} months` : "—"
+                    }
+                  />
+                  <Metric label="Deal Date" value={formatDate(deal.deal_date)} />
+                  <Metric
+                    label="Close Date"
+                    value={formatDate(deal.close_date)}
+                  />
+                </dl>
+              </section>
+            </div>
           )}
 
-          {staff && complianceRequests.length > 0 && (
-            <ComplianceRequests
-              dealId={deal.id}
-              initial={complianceRequests}
-            />
+          {/* Documents */}
+          {tab === "documents" && (
+            <div className="mt-6">
+              <DocumentsList
+                dealId={deal.id}
+                initial={detail.documents || []}
+                canUpload={staff}
+                canReview={staff}
+                documentStatuses={documentStatuses}
+              />
+            </div>
+          )}
+
+          {/* Scoring (staff) */}
+          {staff && tab === "scoring" && (
+            <div className="mt-6">
+              <ScoringSection
+                dealId={deal.id}
+                dimensions={dimensions}
+                scores={detail.scores || []}
+                composite={deal.composite_score}
+              />
+            </div>
+          )}
+
+          {/* Pipeline (staff) */}
+          {staff && tab === "pipeline" && (
+            <div className="mt-6 space-y-8">
+              <DealStagePipeline
+                dealId={deal.id}
+                deal={deal}
+                stages={dealStages}
+              />
+              <MemberInvestmentTracker
+                dealId={deal.id}
+                initial={memberInvestments}
+                investmentStages={investmentStages}
+              />
+              {complianceRequests.length > 0 && (
+                <ComplianceRequests
+                  dealId={deal.id}
+                  initial={complianceRequests}
+                />
+              )}
+            </div>
           )}
         </div>
 
         {/* RIGHT (sticky) */}
         <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
+          <AISummaryCard
+            dealId={deal.id}
+            initialSummary={aiSummary}
+            staff={staff}
+          />
+
           <InterestCard
             dealId={deal.id}
             composite={deal.composite_score}
@@ -189,12 +296,14 @@ export default async function DealDetailPage({ params }) {
             <dl className="mt-3 space-y-2 text-sm">
               <div className="flex justify-between gap-3">
                 <dt className="text-text-muted">Submitted by</dt>
-                <dd className="text-text-primary">{detail.submitted_by_name || "—"}</dd>
+                <dd className="text-text-primary">
+                  {detail.submitted_by_name || "—"}
+                </dd>
               </div>
               {staff && (
                 <div className="flex justify-between gap-3">
                   <dt className="text-text-muted">Members interested</dt>
-                  <dd className="text-text-primary tabular-nums">
+                  <dd className="tabular-nums text-text-primary">
                     {detail.interest_count ?? 0}
                   </dd>
                 </div>

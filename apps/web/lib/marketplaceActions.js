@@ -3,10 +3,15 @@
 import { redirect } from "next/navigation";
 import {
   createDeal,
+  generateAISummary,
   indicateInterest,
   overrideInterest,
+  reviewDocument,
+  setDealStatus,
   submitComplianceRequest,
   updateComplianceRequest,
+  updateDealStage,
+  updateMemberInvestmentStage,
   uploadAPI,
   upsertDealScore,
   voteDeal,
@@ -141,6 +146,65 @@ export async function denyComplianceReviewAction(dealId, reqId, prevState) {
   try {
     await updateComplianceRequest(dealId, reqId, { status: "denied" });
     return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function reviewDocumentAction(dealId, docId, prevState, formData) {
+  try {
+    const item = await reviewDocument(dealId, docId, {
+      status: empty(formData.get("status")),
+      review_notes: empty(formData.get("review_notes")),
+      visible_to_members: checked(formData.get("visible_to_members")),
+    });
+    return { ok: true, item };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function generateAISummaryAction(dealId, prevState) {
+  try {
+    const summary = await generateAISummary(dealId);
+    return { ok: true, summary };
+  } catch (error) {
+    return { ok: false, error: error.message, summary: prevState?.summary };
+  }
+}
+
+export async function updateDealStageAction(dealId, prevState, formData) {
+  try {
+    const result = await updateDealStage(dealId, {
+      stage: empty(formData.get("stage")),
+    });
+    return { ok: true, result };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function archiveDealAction(dealId, prevState, formData) {
+  try {
+    await setDealStatus(dealId, "archived");
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function updateMemberInvestmentStageAction(
+  dealId,
+  userId,
+  prevState,
+  formData,
+) {
+  try {
+    const item = await updateMemberInvestmentStage(dealId, userId, {
+      stage: empty(formData.get("stage")),
+      notes: empty(formData.get("notes")),
+    });
+    return { ok: true, item };
   } catch (error) {
     return { ok: false, error: error.message };
   }

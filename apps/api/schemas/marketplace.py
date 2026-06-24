@@ -143,6 +143,18 @@ class DealDocumentResponse(BaseModel):
     processing_status: str = "pending"
     extracted_data: dict | list | None = None
     created_at: datetime | None = None
+    # Review fields (Sprint 7)
+    status: str = "pending"
+    reviewed_by: UUID | None = None
+    review_notes: str | None = None
+    reviewed_at: datetime | None = None
+    visible_to_members: bool = False
+
+
+class DocumentReviewRequest(BaseModel):
+    status: str  # 'approved' or 'rejected'
+    review_notes: str | None = None
+    visible_to_members: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +238,73 @@ class ConfigResponse(BaseModel):
     value_type: str | None = None
     category: str | None = None
     display_order: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# AI Summary
+# ---------------------------------------------------------------------------
+class AISummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    deal_id: UUID
+    model_used: str | None = None
+    generated_at: datetime | None = None
+    summary_text: str | None = None
+    strengths: list[str] = []
+    risks: list[str] = []
+    market_context: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Deal stage pipeline
+# ---------------------------------------------------------------------------
+class DealStageUpdate(BaseModel):
+    stage: str
+
+
+# ---------------------------------------------------------------------------
+# Member investments
+# ---------------------------------------------------------------------------
+class MemberInvestmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    deal_id: UUID
+    user_id: UUID
+    org_id: UUID
+    stage: str | None = None
+    notes: str | None = None
+    invested_amount: float | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class MemberInvestmentStageUpdate(BaseModel):
+    stage: str
+    notes: str | None = None
+
+
+class PortfolioInvestmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    deal_id: UUID
+    deal_name: str | None = None
+    deal_status: str | None = None
+    user_id: UUID
+    org_id: UUID
+    stage: str | None = None
+    notes: str | None = None
+    invested_amount: float | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class InvestmentSummaryItem(BaseModel):
+    stage: str
+    count: int
+    total_amount: float | None = None
 
 
 # ---------------------------------------------------------------------------

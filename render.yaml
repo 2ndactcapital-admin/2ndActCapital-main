@@ -48,3 +48,5 @@ services:
         sync: false
       - key: R2_BUCKET_NAME
         sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
