@@ -99,7 +99,7 @@ async def run():
 
             await conn.execute(
                 "INSERT INTO member_target_allocations "
-                "(org_id, entity_id, taxonomy_key, target_pct, effective_date) "
+                "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
                 "VALUES ($1, $2, $3, $4, $5)",
                 DEFAULT_ORG_ID, parent_id, taxonomy_key_sc, 30.0, today,
             )
@@ -110,7 +110,7 @@ async def run():
             # -----------------------------------------------------------------
             child_targets = await conn.fetch(
                 "SELECT taxonomy_key, target_pct FROM member_target_allocations "
-                "WHERE entity_id = $1 AND end_date IS NULL",
+                "WHERE entity_id = $1 AND valid_to IS NULL",
                 child_id,
             )
             assert len(child_targets) == 0, "child should have no direct targets"
@@ -121,7 +121,7 @@ async def run():
             # -----------------------------------------------------------------
             await conn.execute(
                 "INSERT INTO member_target_allocations "
-                "(org_id, entity_id, taxonomy_key, target_pct, effective_date) "
+                "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
                 "VALUES ($1, $2, $3, $4, $5)",
                 DEFAULT_ORG_ID, child_id, taxonomy_key_mc, 20.0, today,
             )
@@ -131,42 +131,42 @@ async def run():
             # Test 4: bi-temporal update — close old row, insert new
             # -----------------------------------------------------------------
             await conn.execute(
-                "UPDATE member_target_allocations SET end_date = $1 "
-                "WHERE entity_id = $2 AND taxonomy_key = $3 AND end_date IS NULL",
+                "UPDATE member_target_allocations SET valid_to = $1 "
+                "WHERE entity_id = $2 AND taxonomy_key = $3 AND valid_to IS NULL",
                 today, child_id, taxonomy_key_mc,
             )
             await conn.execute(
                 "INSERT INTO member_target_allocations "
-                "(org_id, entity_id, taxonomy_key, target_pct, effective_date) "
+                "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
                 "VALUES ($1, $2, $3, $4, $5)",
                 DEFAULT_ORG_ID, child_id, taxonomy_key_mc, 25.0, today,
             )
             active = await conn.fetchrow(
                 "SELECT target_pct FROM member_target_allocations "
-                "WHERE entity_id = $1 AND taxonomy_key = $2 AND end_date IS NULL",
+                "WHERE entity_id = $1 AND taxonomy_key = $2 AND valid_to IS NULL",
                 child_id, taxonomy_key_mc,
             )
             assert active is not None, "should have one active row after update"
             assert float(active["target_pct"]) == 25.0, f"expected 25.0, got {active['target_pct']}"
             closed_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM member_target_allocations "
-                "WHERE entity_id = $1 AND taxonomy_key = $2 AND end_date IS NOT NULL",
+                "WHERE entity_id = $1 AND taxonomy_key = $2 AND valid_to IS NOT NULL",
                 child_id, taxonomy_key_mc,
             )
-            assert closed_count >= 1, "old row should be closed (end_date set)"
+            assert closed_count >= 1, "old row should be closed (valid_to set)"
             print("OK  bi-temporal update: old row closed, new row active")
 
             # -----------------------------------------------------------------
-            # Test 5: clear override (set end_date)
+            # Test 5: clear override (set valid_to)
             # -----------------------------------------------------------------
             await conn.execute(
-                "UPDATE member_target_allocations SET end_date = $1 "
-                "WHERE entity_id = $2 AND taxonomy_key = $3 AND end_date IS NULL",
+                "UPDATE member_target_allocations SET valid_to = $1 "
+                "WHERE entity_id = $2 AND taxonomy_key = $3 AND valid_to IS NULL",
                 today, child_id, taxonomy_key_mc,
             )
             remaining = await conn.fetchrow(
                 "SELECT id FROM member_target_allocations "
-                "WHERE entity_id = $1 AND taxonomy_key = $2 AND end_date IS NULL",
+                "WHERE entity_id = $1 AND taxonomy_key = $2 AND valid_to IS NULL",
                 child_id, taxonomy_key_mc,
             )
             assert remaining is None, "after clear, no active row should exist"
@@ -178,11 +178,11 @@ async def run():
             try:
                 await conn.execute(
                     "INSERT INTO member_target_allocations "
-                    "(org_id, entity_id, taxonomy_key, target_pct, effective_date) "
+                    "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
                     "VALUES ($1, $2, $3, 10.0, $4)",
                     DEFAULT_ORG_ID, parent_id, taxonomy_key_sc, today,
                 )
-                errors.append("FAIL UNIQUE constraint should have rejected duplicate (entity_id, taxonomy_key, end_date IS NULL)")
+                errors.append("FAIL UNIQUE constraint should have rejected duplicate (entity_id, taxonomy_key, valid_to IS NULL)")
             except asyncpg.exceptions.UniqueViolationError:
                 print("OK  UNIQUE NULLS NOT DISTINCT constraint enforced")
 
