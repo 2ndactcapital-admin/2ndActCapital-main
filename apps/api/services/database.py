@@ -1,8 +1,9 @@
 """Database access layer.
 
 Manages a lazily-initialized asyncpg connection pool sourced from the
-``DATABASE_URL`` environment variable. No queries are defined yet — this is a
-stub that establishes connection lifecycle management for later work.
+``DATABASE_URL`` environment variable. Configured for Supabase: SSL is
+enabled and prepared-statement caching is disabled so the pool works with
+the transaction-mode (pgBouncer) connection string.
 """
 
 import os
@@ -19,7 +20,15 @@ async def get_pool() -> asyncpg.Pool:
         database_url = os.environ.get("DATABASE_URL")
         if not database_url:
             raise RuntimeError("DATABASE_URL environment variable is not set")
-        _pool = await asyncpg.create_pool(dsn=database_url)
+        # Supabase requires SSL; pgBouncer (transaction pooling) does not
+        # support prepared statements, so disable statement caching.
+        _pool = await asyncpg.create_pool(
+            dsn=database_url,
+            ssl="require",
+            statement_cache_size=0,
+            min_size=1,
+            max_size=10,
+        )
     return _pool
 
 
