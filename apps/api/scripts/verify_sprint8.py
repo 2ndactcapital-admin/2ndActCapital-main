@@ -33,7 +33,7 @@ async def run():
         print("SKIP: DATABASE_URL not set")
         return
 
-    pool = await asyncpg.create_pool(DATABASE_URL)
+    pool = await asyncpg.create_pool(DATABASE_URL, statement_cache_size=0)
     errors = []
 
     async with pool.acquire() as conn:
