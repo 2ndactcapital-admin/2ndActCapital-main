@@ -4,6 +4,7 @@ import { useActionState, useRef, useState } from "react";
 import { IconPlus, IconX } from "@tabler/icons-react";
 import { createDealAction } from "@/lib/marketplaceActions";
 import { searchEntitiesAction } from "@/lib/crmActions";
+import TaxonomySelector from "@/components/TaxonomySelector";
 
 const INPUT =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -61,31 +62,7 @@ function SponsorTypeahead() {
   );
 }
 
-function ClassField({ name, label, options }) {
-  if (options && options.length > 0) {
-    return (
-      <div>
-        <label className={LABEL}>{label}</label>
-        <select name={name} className={INPUT} defaultValue="">
-          <option value="">Select…</option>
-          {options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <label className={LABEL}>{label}</label>
-      <input name={name} className={INPUT} />
-    </div>
-  );
-}
-
-export default function NewDealForm({ superClasses = [], assetClasses = [] }) {
+export default function NewDealForm({ taxonomy = null }) {
   const [state, formAction, pending] = useActionState(createDealAction, {});
   const [highlights, setHighlights] = useState([""]);
 
@@ -117,10 +94,7 @@ export default function NewDealForm({ superClasses = [], assetClasses = [] }) {
         <textarea name="description" rows={4} className={INPUT} />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <ClassField name="asset_super_class" label="Asset super-class" options={superClasses} />
-        <ClassField name="asset_class" label="Asset class" options={assetClasses} />
-      </div>
+      <TaxonomySelector initialTaxonomy={taxonomy} />
 
       <SponsorTypeahead />
       <div>

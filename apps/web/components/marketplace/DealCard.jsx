@@ -35,10 +35,19 @@ export default function DealCard({ deal }) {
             {deal.name}
           </h3>
         </div>
-        {deal.asset_class && (
-          <span className="shrink-0 rounded-md bg-gold-light px-2 py-1 text-xs font-medium text-navy">
-            {deal.asset_class}
-          </span>
+        {(deal.asset_super_class_label || deal.asset_class_label) && (
+          <div className="shrink-0 text-right">
+            {deal.asset_super_class_label && (
+              <p className="text-[11px] text-text-muted">
+                {deal.asset_super_class_label}
+              </p>
+            )}
+            {deal.asset_class_label && (
+              <span className="rounded-md bg-gold-light px-2 py-1 text-xs font-medium text-navy">
+                {deal.asset_class_label}
+              </span>
+            )}
+          </div>
         )}
       </div>
 

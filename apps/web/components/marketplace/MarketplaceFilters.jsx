@@ -19,7 +19,7 @@ const STAFF_STATUSES = [
   { value: "archived", label: "Archived" },
 ];
 
-export default function MarketplaceFilters({ assetClasses = [], staff = false }) {
+export default function MarketplaceFilters({ taxonomy = null, staff = false }) {
   const router = useRouter();
   const params = useSearchParams();
   const [q, setQ] = useState(params.get("q") || "");
@@ -28,6 +28,7 @@ export default function MarketplaceFilters({ assetClasses = [], staff = false })
   const assetClass = params.get("asset_class") || "";
   const featured = params.get("featured") === "1";
   const statuses = staff ? STAFF_STATUSES : MEMBER_STATUSES;
+  const superClasses = taxonomy?.super_classes || [];
 
   function update(next) {
     const sp = new URLSearchParams(params.toString());
@@ -62,10 +63,14 @@ export default function MarketplaceFilters({ assetClasses = [], staff = false })
         aria-label="Asset class"
       >
         <option value="">All asset classes</option>
-        {assetClasses.map((ac) => (
-          <option key={ac} value={ac}>
-            {ac}
-          </option>
+        {superClasses.map((sc) => (
+          <optgroup key={sc.key} label={sc.label}>
+            {(sc.major_classes || []).map((mc) => (
+              <option key={mc.key} value={mc.key}>
+                {mc.label}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
 

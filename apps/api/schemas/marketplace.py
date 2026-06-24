@@ -90,6 +90,12 @@ class DealResponse(DealBase):
     has_indicated_interest: bool = False
     document_count: int = 0
 
+    # Resolved taxonomy display labels (keys stored in the DB; labels resolved
+    # at read time so renames in config propagate automatically).
+    asset_super_class_label: str | None = None
+    asset_class_label: str | None = None
+    asset_sub_category_label: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Scores

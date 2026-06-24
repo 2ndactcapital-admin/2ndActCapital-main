@@ -3,7 +3,7 @@ import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
 import DealCard from "@/components/marketplace/DealCard";
 import MarketplaceFilters from "@/components/marketplace/MarketplaceFilters";
-import { listDeals } from "@/lib/api";
+import { listDeals, getTaxonomy } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 
 export default async function MarketplacePage({ searchParams }) {
@@ -20,12 +20,10 @@ export default async function MarketplacePage({ searchParams }) {
   const featured = params.featured === "1";
 
   let deals = [];
-  let assetClasses = [];
+  let taxonomy = { super_classes: [] };
   let loadError = null;
   try {
-    // Filtered list for display, plus the full catalog to derive the asset-class
-    // dropdown (values come from the data, never hardcoded).
-    const [filtered, all] = await Promise.all([
+    const [filtered, tax] = await Promise.all([
       listDeals({
         search: q || undefined,
         asset_class: assetClass || undefined,
@@ -33,12 +31,10 @@ export default async function MarketplacePage({ searchParams }) {
         is_featured: featured ? true : undefined,
         limit: 100,
       }),
-      listDeals({ limit: 200 }),
+      getTaxonomy(),
     ]);
     deals = filtered;
-    assetClasses = [
-      ...new Set((all || []).map((d) => d.asset_class).filter(Boolean)),
-    ].sort();
+    taxonomy = tax;
   } catch (error) {
     loadError = error.message;
   }
@@ -63,7 +59,7 @@ export default async function MarketplacePage({ searchParams }) {
       </div>
 
       <div className="mt-6">
-        <MarketplaceFilters assetClasses={assetClasses} staff={staff} />
+        <MarketplaceFilters taxonomy={taxonomy} staff={staff} />
       </div>
 
       <div className="mt-4">

@@ -20,6 +20,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
 )
 from starlette.concurrency import run_in_threadpool
@@ -43,6 +44,7 @@ from schemas.marketplace import (
 )
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.taxonomy import build_taxonomy, validate_taxonomy_fields
 from services.permissions import get_user_id, is_staff, require_permission
 from services.storage import upload_bytes
 
@@ -177,6 +179,13 @@ def _coerce_config(row):
     return value
 
 
+@router.get("/taxonomy")
+async def get_taxonomy(request: Request, response: Response):
+    org_id = get_org_id(request)
+    response.headers["Cache-Control"] = "max-age=3600"
+    return await build_taxonomy(str(org_id))
+
+
 # ---------------------------------------------------------------------------
 # Deal aggregates
 # ---------------------------------------------------------------------------
@@ -258,8 +267,20 @@ async def _doc_counts(conn, deal_ids) -> dict:
     return {r["deal_id"]: r["n"] for r in rows}
 
 
+async def _resolve_taxonomy_labels(conn, keys) -> dict:
+    """Return {config_key: label} for the given taxonomy config keys."""
+    keys = [k for k in keys if k]
+    if not keys:
+        return {}
+    rows = await conn.fetch(
+        "SELECT config_key, config_value FROM config WHERE config_key = ANY($1::text[])",
+        keys,
+    )
+    return {r["config_key"]: r["config_value"] for r in rows}
+
+
 def _deal_response(row, *, composite=None, votes=None, user_vote=None,
-                   interested=False, doc_count=0) -> DealResponse:
+                   interested=False, doc_count=0, label_map=None) -> DealResponse:
     data = dict(row)
     data["target_raise"] = _f(data.get("target_raise"))
     data["minimum_investment"] = _f(data.get("minimum_investment"))
@@ -267,6 +288,7 @@ def _deal_response(row, *, composite=None, votes=None, user_vote=None,
     data["highlights"] = data.get("highlights") or []
     data["tags"] = data.get("tags") or []
     votes = votes or {}
+    label_map = label_map or {}
     return DealResponse(
         **data,
         composite_score=composite,
@@ -276,6 +298,9 @@ def _deal_response(row, *, composite=None, votes=None, user_vote=None,
         user_vote=user_vote,
         has_indicated_interest=interested,
         document_count=doc_count,
+        asset_super_class_label=label_map.get(data.get("asset_super_class")),
+        asset_class_label=label_map.get(data.get("asset_class")),
+        asset_sub_category_label=label_map.get(data.get("asset_sub_category")),
     )
 
 
@@ -339,6 +364,13 @@ async def list_deals(
         user_votes = await _user_votes(conn, ids, user_id)
         interest = await _user_interest(conn, ids, user_id)
         docs = await _doc_counts(conn, ids)
+        taxonomy_keys = list({
+            k
+            for r in rows
+            for k in [r.get("asset_super_class"), r.get("asset_class"), r.get("asset_sub_category")]
+            if k
+        })
+        label_map = await _resolve_taxonomy_labels(conn, taxonomy_keys)
 
     return [
         _deal_response(
@@ -348,6 +380,7 @@ async def list_deals(
             user_vote=user_votes.get(r["id"]),
             interested=r["id"] in interest,
             doc_count=docs.get(r["id"], 0),
+            label_map=label_map,
         )
         for r in rows
     ]
@@ -357,6 +390,14 @@ async def list_deals(
 async def create_deal(request: Request, body: DealCreate):
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
+    tax_errors = await validate_taxonomy_fields(
+        str(org_id),
+        body.asset_super_class,
+        body.asset_class,
+        body.asset_sub_category,
+    )
+    if tax_errors:
+        raise HTTPException(status_code=422, detail=tax_errors)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -477,6 +518,11 @@ async def get_deal(request: Request, deal_id: UUID):
                 row["sponsor_entity_id"],
             ) or sponsor_name
 
+        label_map = await _resolve_taxonomy_labels(
+            conn,
+            [row.get("asset_super_class"), row.get("asset_class"), row.get("asset_sub_category")],
+        )
+
     deal = _deal_response(
         row,
         composite=composite,
@@ -484,6 +530,7 @@ async def get_deal(request: Request, deal_id: UUID):
         user_vote=user_vote,
         interested=interest,
         doc_count=doc_count,
+        label_map=label_map,
     )
     return DealDetail(
         deal=deal,
@@ -510,6 +557,16 @@ async def get_deal(request: Request, deal_id: UUID):
 async def update_deal(request: Request, deal_id: UUID, body: DealUpdate):
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
+    updates = body.model_dump(exclude_unset=True)
+    if any(k in updates for k in ("asset_super_class", "asset_class", "asset_sub_category")):
+        tax_errors = await validate_taxonomy_fields(
+            str(org_id),
+            updates.get("asset_super_class"),
+            updates.get("asset_class"),
+            updates.get("asset_sub_category"),
+        )
+        if tax_errors:
+            raise HTTPException(status_code=422, detail=tax_errors)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -517,8 +574,6 @@ async def update_deal(request: Request, deal_id: UUID, body: DealUpdate):
             current = await _fetch_deal(conn, org_id, deal_id)
             if current is None:
                 raise HTTPException(status_code=404, detail="Deal not found")
-
-            updates = body.model_dump(exclude_unset=True)
 
             # Bi-temporal, FK-safe: archive prior version, then update live row.
             await conn.execute(

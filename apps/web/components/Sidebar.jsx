@@ -12,6 +12,7 @@ import {
   IconUserCheck,
   IconShieldCheck,
   IconUsers,
+  IconSitemap,
   IconSettings,
 } from "@tabler/icons-react";
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
     href: "/portfolio-reporting",
     Icon: IconReportAnalytics,
   },
+  { label: "Taxonomy", href: "/taxonomy", Icon: IconSitemap },
   { label: "SPV Manager", href: "/spv-manager", Icon: IconFileInvoice },
   {
     label: "Investment Profile",

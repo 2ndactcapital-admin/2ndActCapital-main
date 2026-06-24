@@ -117,6 +117,9 @@ export const getConfig = (category) =>
     searchParams: category ? { category } : undefined,
   });
 
+// --- Taxonomy ---
+export const getTaxonomy = () => fetchAPI("/api/v1/taxonomy");
+
 // --- Marketplace ---
 export const listDeals = (searchParams) =>
   fetchAPI("/api/v1/deals", { searchParams });
