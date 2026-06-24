@@ -1410,6 +1410,7 @@ _AI_MODEL = "claude-haiku-4-5-20251001"
 async def generate_ai_summary(request: Request, deal_id: UUID):
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
+    actor_id = get_user_id(request)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -1469,22 +1470,30 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE deal_ai_summaries SET is_current = false
+                WHERE deal_id = $1 AND org_id = $2 AND is_current = true
+                """,
+                deal_id,
+                org_id,
+            )
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO deal_ai_summaries
-                    (deal_id, model_used, generated_at, summary_text, key_strengths, key_risks, market_context)
-                VALUES ($1, $2, now(), $3, $4, $5, $6)
-                ON CONFLICT (deal_id) DO UPDATE SET
-                    model_used = $2, generated_at = now(), summary_text = $3,
-                    key_strengths = $4, key_risks = $5, market_context = $6
+                    (org_id, deal_id, model_used, generated_at, summary_text,
+                     key_strengths, key_risks, market_context, generated_by, is_current)
+                VALUES ($1, $2, $3, now(), $4, $5, $6, $7, $8, true)
                 RETURNING {AI_SUMMARY_SELECT}
                 """,
+                org_id,
                 deal_id,
                 _AI_MODEL,
                 parsed.get("summary_text"),
                 list(parsed.get("strengths") or []),
                 list(parsed.get("risks") or []),
                 parsed.get("market_context"),
+                actor_id,
             )
     return AISummaryResponse(
         **{**dict(row), "strengths": list(row["strengths"] or []), "risks": list(row["risks"] or [])}
@@ -1501,7 +1510,7 @@ async def get_ai_summary(request: Request, deal_id: UUID):
         if deal is None:
             raise HTTPException(status_code=404, detail="Deal not found")
         row = await conn.fetchrow(
-            f"SELECT {AI_SUMMARY_SELECT} FROM deal_ai_summaries WHERE deal_id = $1",
+            f"SELECT {AI_SUMMARY_SELECT} FROM deal_ai_summaries WHERE deal_id = $1 AND is_current = true",
             deal_id,
         )
     if row is None:
@@ -1563,7 +1572,7 @@ async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpda
 # ---------------------------------------------------------------------------
 MEMBER_INVESTMENT_SELECT = (
     "id, deal_id, user_id, org_id, investment_stage AS stage, notes, "
-    "invested_amount, created_at, updated_at"
+    "amount_committed AS invested_amount, created_at, updated_at"
 )
 
 
@@ -1630,7 +1639,7 @@ async def update_member_investment_stage(
                 raise HTTPException(status_code=404, detail="Deal not found")
 
             existing = await conn.fetchrow(
-                "SELECT id FROM member_investments WHERE deal_id = $1 AND user_id = $2",
+                "SELECT id, investment_stage FROM member_investments WHERE deal_id = $1 AND user_id = $2",
                 deal_id,
                 member_user_id,
             )
@@ -1649,10 +1658,12 @@ async def update_member_investment_stage(
                 await conn.execute(
                     """
                     INSERT INTO investment_stage_history
-                        (member_investment_id, stage, changed_by, notes)
-                    VALUES ($1, $2, $3, $4)
+                        (org_id, member_investment_id, from_stage, to_stage, changed_by, notes)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     """,
+                    org_id,
                     existing["id"],
+                    existing["investment_stage"],
                     body.stage,
                     actor_id,
                     body.notes,
@@ -1673,10 +1684,12 @@ async def update_member_investment_stage(
                 await conn.execute(
                     """
                     INSERT INTO investment_stage_history
-                        (member_investment_id, stage, changed_by, notes)
-                    VALUES ($1, $2, $3, $4)
+                        (org_id, member_investment_id, from_stage, to_stage, changed_by, notes)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     """,
+                    org_id,
                     row["id"],
+                    None,
                     body.stage,
                     actor_id,
                     body.notes,

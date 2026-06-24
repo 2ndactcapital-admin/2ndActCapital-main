@@ -50,11 +50,10 @@ async def teardown(pool, deal_ids, doc_ids):
         "UPDATE deal_documents SET reviewed_by = NULL WHERE reviewed_by = $1",
         TEST_USER_ID,
     )
-    for did in deal_ids:
-        await pool.execute(
-            "DELETE FROM deal_ai_summaries WHERE deal_id = $1::uuid",
-            did,
-        )
+    await pool.execute(
+        "DELETE FROM deal_ai_summaries WHERE generated_by = $1",
+        TEST_USER_ID,
+    )
     await pool.execute(
         "DELETE FROM investment_stage_history WHERE changed_by = $1",
         TEST_USER_ID,
