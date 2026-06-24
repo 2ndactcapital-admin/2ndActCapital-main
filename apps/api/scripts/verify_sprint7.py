@@ -45,14 +45,45 @@ async def setup_test_user(pool):
 
 
 async def teardown(pool, deal_ids, doc_ids):
-    for did in deal_ids:
+    # Clear all FK references to test user
+    await pool.execute(
+        "UPDATE deal_documents SET reviewed_by = NULL WHERE reviewed_by = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM deal_ai_summaries WHERE generated_by = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM investment_stage_history WHERE changed_by = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM member_investments WHERE user_id = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM compliance_override_requests WHERE user_id = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM deal_interest WHERE user_id = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM deal_votes WHERE user_id = $1",
+        TEST_USER_ID,
+    )
+    await pool.execute(
+        "DELETE FROM deal_scores WHERE scored_by = $1",
+        TEST_USER_ID,
+    )
+    # Delete test deals (cascades to documents)
+    for deal_id in deal_ids:
         await pool.execute(
-            "DELETE FROM deal_ai_summaries WHERE deal_id = $1::uuid", did
+            "DELETE FROM deals WHERE id = $1",
+            deal_id,
         )
-        await pool.execute(
-            "DELETE FROM member_investments WHERE deal_id = $1::uuid", did
-        )
-        await pool.execute("DELETE FROM deals WHERE id = $1::uuid", did)
     await pool.execute("DELETE FROM users WHERE auth0_sub = $1", TEST_AUTH0_SUB)
 
 
