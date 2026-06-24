@@ -14,8 +14,17 @@ class EntityType(str, Enum):
     trust = "trust"
     llc = "llc"
     lp = "lp"
+    gp = "gp"
+    s_corp = "s_corp"
+    c_corp = "c_corp"
     corporation = "corporation"
     foundation = "foundation"
+    family_office = "family_office"
+    corp_uk = "corp_uk"
+    corp_eu = "corp_eu"
+    corp_cayman = "corp_cayman"
+    corp_luxembourg = "corp_luxembourg"
+    corp_other_intl = "corp_other_intl"
     other = "other"
 
 
