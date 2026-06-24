@@ -14,6 +14,9 @@ from jose import jwt
 from jose.exceptions import JWTError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from routers.entities import router as entities_router
+from services.database import close_pool
+
 API_VERSION = "0.1.0"
 
 # Paths that do not require authentication.
@@ -97,7 +100,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.middleware("http")
 async def auth0_jwt_middleware(request: Request, call_next):
     """Require a valid Auth0 JWT for every route except the public ones."""
@@ -129,3 +131,12 @@ async def auth0_jwt_middleware(request: Request, call_next):
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": API_VERSION}
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    await close_pool()
+
+
+# Feature routers
+app.include_router(entities_router, prefix="/api/v1")

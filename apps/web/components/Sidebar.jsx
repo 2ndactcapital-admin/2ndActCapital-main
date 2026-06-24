@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   IconLayoutDashboard,
+  IconAddressBook,
   IconBuildingStore,
   IconChartPie,
   IconReportAnalytics,
@@ -16,6 +17,7 @@ import {
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard", Icon: IconLayoutDashboard },
+  { label: "CRM", href: "/crm", Icon: IconAddressBook },
   { label: "Marketplace", href: "/marketplace", Icon: IconBuildingStore },
   { label: "Portfolio", href: "/portfolio", Icon: IconChartPie },
   {
