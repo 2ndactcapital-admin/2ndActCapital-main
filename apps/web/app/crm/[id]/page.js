@@ -2,23 +2,20 @@ import { redirect, notFound } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
 import EntityTypeBadge from "@/components/EntityTypeBadge";
-import EntityDetailsForm from "@/components/crm/EntityDetailsForm";
-import AttributesSection from "@/components/crm/AttributesSection";
-import OwnershipTree from "@/components/crm/OwnershipTree";
+import EntityDetailTabs from "@/components/crm/EntityDetailTabs";
 import { fetchAPI } from "@/lib/api";
 
 export default async function EntityDetailPage({ params }) {
+  const { id } = await params;
+
   const session = await auth0.getSession();
   if (!session) {
-    const { id } = await params;
     redirect(`/auth/login?returnTo=/crm/${id}`);
   }
 
-  const { id } = await params;
-
-  let detail;
+  let full;
   try {
-    detail = await fetchAPI(`/api/v1/entities/${id}`);
+    full = await fetchAPI(`/api/v1/entities/${id}/full`);
   } catch (error) {
     if (error.status === 404) notFound();
     throw error;
@@ -31,9 +28,7 @@ export default async function EntityDetailPage({ params }) {
     graph = { root_id: id, nodes: [], edges: [] };
   }
 
-  const entity = detail.entity;
-  const hasOwners = (detail.owners || []).length > 0;
-  const hasHoldings = (detail.holdings || []).length > 0;
+  const entity = full.entity;
 
   return (
     <AppShell user={session.user}>
@@ -52,43 +47,8 @@ export default async function EntityDetailPage({ params }) {
         <EntityTypeBadge type={entity.entity_type} />
       </div>
 
-      {/* Two columns */}
-      <div className="mt-8 grid gap-8 lg:grid-cols-2">
-        {/* Left: editable details */}
-        <div className="rounded-lg border border-border bg-bg-card p-6">
-          <EntityDetailsForm entity={entity} />
-        </div>
-
-        {/* Right: ownership graph */}
-        <div className="rounded-lg border border-border bg-bg-card p-6">
-          <h2 className="text-base font-semibold text-navy">Ownership</h2>
-          <div className="mt-4 space-y-6">
-            <OwnershipTree
-              graph={graph}
-              rootId={id}
-              direction="up"
-              title="Owned by"
-            />
-            {hasHoldings && (
-              <OwnershipTree
-                graph={graph}
-                rootId={id}
-                direction="down"
-                title="Owns"
-              />
-            )}
-            {!hasOwners && !hasHoldings && (
-              <p className="text-sm text-text-muted">
-                No ownership relationships recorded.
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Attributes */}
-      <div className="mt-8 max-w-3xl">
-        <AttributesSection entityId={id} attributes={detail.attributes || []} />
+      <div className="mt-8">
+        <EntityDetailTabs full={full} graph={graph} />
       </div>
     </AppShell>
   );

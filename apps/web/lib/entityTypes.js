@@ -32,3 +32,49 @@ export const FILTER_TABS = [
 export function typeLabel(value) {
   return ENTITY_TYPES.find((t) => t.value === value)?.label || value;
 }
+
+// Entity lifecycle status.
+export const STATUS_OPTIONS = [
+  { value: "prospect", label: "Prospect" },
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Inactive" },
+  { value: "archived", label: "Archived" },
+];
+
+// Status filter pills for the CRM list (includes "All").
+export const STATUS_FILTERS = [{ value: "", label: "All" }, ...STATUS_OPTIONS];
+
+export function statusLabel(value) {
+  return STATUS_OPTIONS.find((s) => s.value === value)?.label || value;
+}
+
+// Sub-types available per entity type.
+export const SUBTYPES_BY_TYPE = {
+  trust: [
+    "Revocable",
+    "Irrevocable",
+    "Charitable",
+    "GRAT",
+    "SLAT",
+    "QTIP",
+    "Land Trust",
+    "Other",
+  ],
+  llc: ["Single-member", "Multi-member", "Series LLC", "Other"],
+  lp: ["Family LP", "Fund LP", "Other"],
+  gp: ["Family GP", "Fund GP", "Other"],
+  corp_uk: ["Ltd", "PLC", "LLP", "Other"],
+  corp_eu: ["GmbH", "SA", "SAS", "BV", "NV", "SpA", "Other"],
+  corp_cayman: ["Exempted Company", "LLC", "Exempted LP", "Other"],
+  corp_luxembourg: ["SARL", "SA", "SCSp", "SCA", "Other"],
+  family_office: ["Single-family", "Multi-family"],
+  // s_corp, c_corp: no sub-types
+  // corp_other_intl: free-text sub_type
+};
+
+// Entity types whose sub_type is entered as free text rather than chosen.
+export const FREE_TEXT_SUBTYPE_TYPES = ["corp_other_intl"];
+
+export function subTypesFor(type) {
+  return SUBTYPES_BY_TYPE[type] || [];
+}

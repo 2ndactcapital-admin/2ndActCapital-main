@@ -3,7 +3,7 @@ import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
 import EntityTable from "@/components/crm/EntityTable";
 import { fetchAPI } from "@/lib/api";
-import { FILTER_TABS } from "@/lib/entityTypes";
+import { FILTER_TABS, STATUS_FILTERS } from "@/lib/entityTypes";
 
 export default async function CrmPage({ searchParams }) {
   const session = await auth0.getSession();
@@ -14,21 +14,27 @@ export default async function CrmPage({ searchParams }) {
   const params = (await searchParams) || {};
   const q = typeof params.q === "string" ? params.q : "";
   const type = typeof params.type === "string" ? params.type : "";
+  const status = typeof params.status === "string" ? params.status : "";
 
   let entities = [];
   let loadError = null;
   try {
     entities = await fetchAPI("/api/v1/entities", {
-      searchParams: { search: q || undefined, type: type || undefined },
+      searchParams: {
+        search: q || undefined,
+        type: type || undefined,
+        status: status || undefined,
+      },
     });
   } catch (error) {
     loadError = error.message;
   }
 
-  function tabHref(value) {
+  function buildHref({ nextType = type, nextStatus = status } = {}) {
     const sp = new URLSearchParams();
     if (q) sp.set("q", q);
-    if (value) sp.set("type", value);
+    if (nextType) sp.set("type", nextType);
+    if (nextStatus) sp.set("status", nextStatus);
     const qs = sp.toString();
     return qs ? `/crm?${qs}` : "/crm";
   }
@@ -48,6 +54,7 @@ export default async function CrmPage({ searchParams }) {
       {/* Search */}
       <form action="/crm" method="get" className="mt-6">
         {type && <input type="hidden" name="type" value={type} />}
+        {status && <input type="hidden" name="status" value={status} />}
         <input
           type="text"
           name="q"
@@ -57,18 +64,38 @@ export default async function CrmPage({ searchParams }) {
         />
       </form>
 
-      {/* Filter tabs */}
+      {/* Status filter pills */}
       <div className="mt-4 flex flex-wrap gap-2">
+        {STATUS_FILTERS.map((pill) => {
+          const active = pill.value === status;
+          return (
+            <a
+              key={pill.value || "all-status"}
+              href={buildHref({ nextStatus: pill.value })}
+              className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+                active
+                  ? "bg-gold text-navy"
+                  : "border border-border bg-bg-card text-text-secondary hover:bg-border"
+              }`}
+            >
+              {pill.label}
+            </a>
+          );
+        })}
+      </div>
+
+      {/* Type filter tabs */}
+      <div className="mt-3 flex flex-wrap gap-2">
         {FILTER_TABS.map((tab) => {
           const active = tab.value === type;
           return (
             <a
               key={tab.value || "all"}
-              href={tabHref(tab.value)}
+              href={buildHref({ nextType: tab.value })}
               className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
                 active
                   ? "bg-navy text-bg-app"
-                  : "bg-bg-card text-text-secondary border border-border hover:bg-border"
+                  : "border border-border bg-bg-card text-text-secondary hover:bg-border"
               }`}
             >
               {tab.label}
@@ -89,7 +116,7 @@ export default async function CrmPage({ searchParams }) {
               No entities found
             </p>
             <p className="mt-1 text-sm text-text-muted">
-              {q || type
+              {q || type || status
                 ? "Try adjusting your search or filters."
                 : "Create your first entity to get started."}
             </p>

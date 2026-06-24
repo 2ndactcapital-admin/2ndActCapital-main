@@ -5,16 +5,26 @@ and scope every query to the caller's org_id (read from JWT claims, falling
 back to the default organization).
 """
 
+import hashlib
 from collections import deque
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from schemas.entities import (
+    AddressCreate,
+    AddressResponse,
+    AddressUpdate,
     AttributeCreate,
     AttributeOut,
+    ComplianceRecordResponse,
+    ComplianceRecordUpdate,
+    EmploymentCreate,
+    EmploymentResponse,
+    EmploymentUpdate,
     EntityCreate,
     EntityDetail,
+    EntityFull,
     EntityOut,
     EntityType,
     EntityUpdate,
@@ -23,6 +33,10 @@ from schemas.entities import (
     OwnershipCreate,
     OwnershipGraph,
     OwnershipOut,
+    SocialProfileCreate,
+    SocialProfileResponse,
+    TaxIdCreate,
+    TaxIdResponse,
 )
 from services.audit import write_audit_log
 from services.database import get_pool
@@ -31,7 +45,6 @@ router = APIRouter(tags=["entities"])
 
 DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
 
-# Claim keys we accept for the caller's organization id.
 ORG_ID_CLAIMS = (
     "org_id",
     "https://2ndactcapital.com/org_id",
@@ -40,7 +53,9 @@ ORG_ID_CLAIMS = (
 
 ENTITY_COLUMNS = (
     "id, org_id, entity_type, display_name, legal_name, tax_id, "
-    "date_of_birth, country_of_formation, notes, valid_from, valid_to, "
+    "date_of_birth, country_of_formation, notes, sub_type, status, "
+    "lead_source, relationship_manager_id, tags, linkedin_url, "
+    "primary_email, primary_phone, valid_from, valid_to, "
     "system_from, system_to, created_at, updated_at"
 )
 
@@ -55,6 +70,10 @@ def get_org_id(request: Request) -> str:
     return DEFAULT_ORG_ID
 
 
+def _mask_tax_id(last4: str) -> str:
+    return f"•••• {last4}" if last4 else "••••"
+
+
 # ---------------------------------------------------------------------------
 # Collection
 # ---------------------------------------------------------------------------
@@ -62,21 +81,21 @@ def get_org_id(request: Request) -> str:
 async def list_entities(
     request: Request,
     type: EntityType | None = None,
+    status: str | None = None,
     search: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     org_id = get_org_id(request)
-    conditions = [
-        "org_id = $1",
-        "valid_to IS NULL",
-        "system_to IS NULL",
-    ]
+    conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
     params: list = [org_id]
 
     if type is not None:
         params.append(type.value)
         conditions.append(f"entity_type = ${len(params)}")
+    if status:
+        params.append(status)
+        conditions.append(f"status = ${len(params)}")
     if search:
         params.append(f"%{search}%")
         conditions.append(f"display_name ILIKE ${len(params)}")
@@ -109,8 +128,13 @@ async def create_entity(request: Request, body: EntityCreate):
                 f"""
                 INSERT INTO entities (
                     org_id, entity_type, display_name, legal_name, tax_id,
-                    date_of_birth, country_of_formation, notes
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    date_of_birth, country_of_formation, notes, sub_type,
+                    status, lead_source, relationship_manager_id, tags,
+                    linkedin_url, primary_email, primary_phone
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                    $14, $15, $16
+                )
                 RETURNING {ENTITY_COLUMNS}
                 """,
                 org_id,
@@ -121,6 +145,14 @@ async def create_entity(request: Request, body: EntityCreate):
                 body.date_of_birth,
                 body.country_of_formation,
                 body.notes,
+                body.sub_type,
+                body.status or "prospect",
+                body.lead_source,
+                body.relationship_manager_id,
+                body.tags or [],
+                body.linkedin_url,
+                body.primary_email,
+                body.primary_phone,
             )
             await write_audit_log(
                 conn,
@@ -134,7 +166,7 @@ async def create_entity(request: Request, body: EntityCreate):
 
 
 # ---------------------------------------------------------------------------
-# Single entity
+# Single entity helpers
 # ---------------------------------------------------------------------------
 async def _fetch_active_entity(conn, org_id: str, entity_id: UUID):
     return await conn.fetchrow(
@@ -142,6 +174,57 @@ async def _fetch_active_entity(conn, org_id: str, entity_id: UUID):
         SELECT {ENTITY_COLUMNS} FROM entities
         WHERE id = $1 AND org_id = $2
           AND valid_to IS NULL AND system_to IS NULL
+        """,
+        entity_id,
+        org_id,
+    )
+
+
+async def _fetch_owners(conn, org_id, entity_id):
+    return await conn.fetch(
+        """
+        SELECT o.id, o.parent_id, o.child_id, o.ownership_pct,
+               o.ownership_type, p.display_name AS parent_name,
+               c.display_name AS child_name
+        FROM entity_ownership o
+        JOIN entities p ON p.id = o.parent_id
+        JOIN entities c ON c.id = o.child_id
+        WHERE o.child_id = $1 AND o.org_id = $2
+          AND o.valid_to IS NULL AND o.system_to IS NULL
+        ORDER BY o.ownership_pct DESC
+        """,
+        entity_id,
+        org_id,
+    )
+
+
+async def _fetch_holdings(conn, org_id, entity_id):
+    return await conn.fetch(
+        """
+        SELECT o.id, o.parent_id, o.child_id, o.ownership_pct,
+               o.ownership_type, p.display_name AS parent_name,
+               c.display_name AS child_name
+        FROM entity_ownership o
+        JOIN entities p ON p.id = o.parent_id
+        JOIN entities c ON c.id = o.child_id
+        WHERE o.parent_id = $1 AND o.org_id = $2
+          AND o.valid_to IS NULL AND o.system_to IS NULL
+        ORDER BY o.ownership_pct DESC
+        """,
+        entity_id,
+        org_id,
+    )
+
+
+async def _fetch_attributes(conn, org_id, entity_id):
+    return await conn.fetch(
+        """
+        SELECT id, entity_id, attribute_key, attribute_value, value_type,
+               created_at
+        FROM entity_attributes
+        WHERE entity_id = $1 AND org_id = $2
+          AND valid_to IS NULL AND system_to IS NULL
+        ORDER BY attribute_key
         """,
         entity_id,
         org_id,
@@ -157,55 +240,112 @@ async def get_entity(request: Request, entity_id: UUID):
         row = await _fetch_active_entity(conn, org_id, entity_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Entity not found")
-
-        attributes = await conn.fetch(
-            """
-            SELECT id, entity_id, attribute_key, attribute_value, value_type,
-                   created_at
-            FROM entity_attributes
-            WHERE entity_id = $1 AND org_id = $2
-              AND valid_to IS NULL AND system_to IS NULL
-            ORDER BY attribute_key
-            """,
-            entity_id,
-            org_id,
-        )
-        owners = await conn.fetch(
-            """
-            SELECT o.id, o.parent_id, o.child_id, o.ownership_pct,
-                   o.ownership_type, p.display_name AS parent_name,
-                   c.display_name AS child_name
-            FROM entity_ownership o
-            JOIN entities p ON p.id = o.parent_id
-            JOIN entities c ON c.id = o.child_id
-            WHERE o.child_id = $1 AND o.org_id = $2
-              AND o.valid_to IS NULL AND o.system_to IS NULL
-            ORDER BY o.ownership_pct DESC
-            """,
-            entity_id,
-            org_id,
-        )
-        holdings = await conn.fetch(
-            """
-            SELECT o.id, o.parent_id, o.child_id, o.ownership_pct,
-                   o.ownership_type, p.display_name AS parent_name,
-                   c.display_name AS child_name
-            FROM entity_ownership o
-            JOIN entities p ON p.id = o.parent_id
-            JOIN entities c ON c.id = o.child_id
-            WHERE o.parent_id = $1 AND o.org_id = $2
-              AND o.valid_to IS NULL AND o.system_to IS NULL
-            ORDER BY o.ownership_pct DESC
-            """,
-            entity_id,
-            org_id,
-        )
+        attributes = await _fetch_attributes(conn, org_id, entity_id)
+        owners = await _fetch_owners(conn, org_id, entity_id)
+        holdings = await _fetch_holdings(conn, org_id, entity_id)
 
     return EntityDetail(
         entity=EntityOut(**dict(row)),
         attributes=[AttributeOut(**dict(a)) for a in attributes],
         owners=[OwnershipOut(**dict(o)) for o in owners],
         holdings=[OwnershipOut(**dict(h)) for h in holdings],
+    )
+
+
+@router.get("/entities/{entity_id}/full", response_model=EntityFull)
+async def get_entity_full(request: Request, entity_id: UUID):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await _fetch_active_entity(conn, org_id, entity_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+
+        attributes = await _fetch_attributes(conn, org_id, entity_id)
+        owners = await _fetch_owners(conn, org_id, entity_id)
+        holdings = await _fetch_holdings(conn, org_id, entity_id)
+
+        tax_ids = await conn.fetch(
+            """
+            SELECT id, entity_id, tax_id_type, tax_id_country, tax_id_last4,
+                   is_primary, created_at
+            FROM entity_tax_ids
+            WHERE entity_id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            ORDER BY is_primary DESC, created_at
+            """,
+            entity_id,
+            org_id,
+        )
+        addresses = await conn.fetch(
+            """
+            SELECT id, entity_id, address_type, street1, street2, city, state,
+                   postal_code, country, is_verified, is_primary, created_at
+            FROM entity_addresses
+            WHERE entity_id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            ORDER BY is_primary DESC, created_at
+            """,
+            entity_id,
+            org_id,
+        )
+        employment = await conn.fetch(
+            """
+            SELECT e.id, e.employee_id, e.employer_id, e.title, e.start_date,
+                   e.end_date, e.is_current, e.notes, e.created_at,
+                   emp.display_name AS employer_name
+            FROM entity_employment e
+            JOIN entities emp ON emp.id = e.employer_id
+            WHERE e.employee_id = $1 AND e.org_id = $2
+              AND e.valid_to IS NULL AND e.system_to IS NULL
+            ORDER BY e.is_current DESC, e.start_date DESC NULLS LAST
+            """,
+            entity_id,
+            org_id,
+        )
+        social = await conn.fetch(
+            """
+            SELECT id, entity_id, platform, url, is_primary,
+                   linkedin_import_stub, created_at
+            FROM entity_social_profiles
+            WHERE entity_id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            ORDER BY platform
+            """,
+            entity_id,
+            org_id,
+        )
+        compliance = await conn.fetchrow(
+            """
+            SELECT id, entity_id, kyc_status, kyc_verified_date,
+                   ofac_screen_status, ofac_screen_date, aml_risk_rating,
+                   accreditation_status, accreditation_basis,
+                   accreditation_verified_date, next_reverification_due,
+                   pep_status, pep_details, notes, created_at, updated_at
+            FROM compliance_records
+            WHERE entity_id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            """,
+            entity_id,
+            org_id,
+        )
+
+    return EntityFull(
+        entity=EntityOut(**dict(row)),
+        attributes=[AttributeOut(**dict(a)) for a in attributes],
+        owners=[OwnershipOut(**dict(o)) for o in owners],
+        holdings=[OwnershipOut(**dict(h)) for h in holdings],
+        tax_ids=[
+            TaxIdResponse(**dict(t), masked=_mask_tax_id(t["tax_id_last4"]))
+            for t in tax_ids
+        ],
+        addresses=[AddressResponse(**dict(a)) for a in addresses],
+        employment=[EmploymentResponse(**dict(e)) for e in employment],
+        social_profiles=[SocialProfileResponse(**dict(s)) for s in social],
+        compliance_record=(
+            ComplianceRecordResponse(**dict(compliance)) if compliance else None
+        ),
     )
 
 
@@ -221,23 +361,25 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 raise HTTPException(status_code=404, detail="Entity not found")
 
             updates = body.model_dump(exclude_unset=True)
-            # Normalize enum to its value for SQL.
             if isinstance(updates.get("entity_type"), EntityType):
                 updates["entity_type"] = updates["entity_type"].value
 
             # Bi-temporal, FK-safe: archive the prior version as a new row with
-            # system_to = now(), then update the live row (stable id) in place
-            # with a fresh system_from.
+            # system_to = now(), then update the live row (stable id) in place.
             await conn.execute(
                 """
                 INSERT INTO entities (
                     org_id, entity_type, display_name, legal_name, tax_id,
-                    date_of_birth, country_of_formation, notes,
+                    date_of_birth, country_of_formation, notes, sub_type, status,
+                    lead_source, relationship_manager_id, tags, linkedin_url,
+                    primary_email, primary_phone,
                     valid_from, valid_to, system_from, system_to,
                     created_by, created_at, updated_at
                 )
                 SELECT org_id, entity_type, display_name, legal_name, tax_id,
-                       date_of_birth, country_of_formation, notes,
+                       date_of_birth, country_of_formation, notes, sub_type,
+                       status, lead_source, relationship_manager_id, tags,
+                       linkedin_url, primary_email, primary_phone,
                        valid_from, valid_to, system_from, now(),
                        created_by, created_at, updated_at
                 FROM entities
@@ -256,6 +398,14 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 "date_of_birth",
                 "country_of_formation",
                 "notes",
+                "sub_type",
+                "status",
+                "lead_source",
+                "relationship_manager_id",
+                "tags",
+                "linkedin_url",
+                "primary_email",
+                "primary_phone",
             )
             set_clauses = ["system_from = now()", "updated_at = now()"]
             params: list = [entity_id, org_id]
@@ -287,7 +437,7 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
 
 
 # ---------------------------------------------------------------------------
-# Attributes (supports inline "add attribute" on the detail page)
+# Attributes
 # ---------------------------------------------------------------------------
 @router.post(
     "/entities/{entity_id}/attributes", response_model=AttributeOut, status_code=201
@@ -317,6 +467,410 @@ async def add_attribute(request: Request, entity_id: UUID, body: AttributeCreate
 
 
 # ---------------------------------------------------------------------------
+# Tax IDs
+# ---------------------------------------------------------------------------
+@router.post(
+    "/entities/{entity_id}/tax-ids", response_model=TaxIdResponse, status_code=201
+)
+async def add_tax_id(request: Request, entity_id: UUID, body: TaxIdCreate):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    # Placeholder "encryption": hash the value (real encryption in a later
+    # sprint). The clear value is never stored or returned.
+    digits = "".join(ch for ch in body.value if ch.isalnum())
+    last4 = digits[-4:] if digits else ""
+    encrypted = hashlib.sha256(body.value.encode()).hexdigest()
+
+    async with pool.acquire() as conn:
+        entity = await _fetch_active_entity(conn, org_id, entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        row = await conn.fetchrow(
+            """
+            INSERT INTO entity_tax_ids (
+                org_id, entity_id, tax_id_type, tax_id_country,
+                tax_id_encrypted, tax_id_last4, is_primary
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, entity_id, tax_id_type, tax_id_country, tax_id_last4,
+                      is_primary, created_at
+            """,
+            org_id,
+            entity_id,
+            body.tax_id_type.value,
+            body.tax_id_country,
+            encrypted,
+            last4,
+            body.is_primary,
+        )
+    return TaxIdResponse(**dict(row), masked=_mask_tax_id(row["tax_id_last4"]))
+
+
+# ---------------------------------------------------------------------------
+# Addresses
+# ---------------------------------------------------------------------------
+@router.post(
+    "/entities/{entity_id}/addresses", response_model=AddressResponse, status_code=201
+)
+async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        entity = await _fetch_active_entity(conn, org_id, entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        row = await conn.fetchrow(
+            """
+            INSERT INTO entity_addresses (
+                org_id, entity_id, address_type, street1, street2, city, state,
+                postal_code, country, is_primary, is_verified
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            RETURNING id, entity_id, address_type, street1, street2, city, state,
+                      postal_code, country, is_verified, is_primary, created_at
+            """,
+            org_id,
+            entity_id,
+            body.address_type.value,
+            body.street1,
+            body.street2,
+            body.city,
+            body.state,
+            body.postal_code,
+            body.country,
+            body.is_primary,
+            body.is_verified,
+        )
+    return AddressResponse(**dict(row))
+
+
+@router.put(
+    "/entities/{entity_id}/addresses/{addr_id}",
+    response_model=AddressResponse,
+)
+async def update_address(
+    request: Request, entity_id: UUID, addr_id: UUID, body: AddressUpdate
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT id FROM entity_addresses
+                WHERE id = $1 AND entity_id = $2 AND org_id = $3
+                  AND valid_to IS NULL AND system_to IS NULL
+                """,
+                addr_id,
+                entity_id,
+                org_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Address not found")
+
+            # Archive prior version, then update live row in place.
+            await conn.execute(
+                """
+                INSERT INTO entity_addresses (
+                    org_id, entity_id, address_type, street1, street2, city,
+                    state, postal_code, country, is_verified, is_primary,
+                    valid_from, valid_to, system_from, system_to,
+                    created_by, created_at
+                )
+                SELECT org_id, entity_id, address_type, street1, street2, city,
+                       state, postal_code, country, is_verified, is_primary,
+                       valid_from, valid_to, system_from, now(),
+                       created_by, created_at
+                FROM entity_addresses WHERE id = $1
+                """,
+                addr_id,
+            )
+
+            updates = body.model_dump(exclude_unset=True)
+            if hasattr(updates.get("address_type"), "value"):
+                updates["address_type"] = updates["address_type"].value
+            set_clauses = ["system_from = now()"]
+            params: list = [addr_id]
+            for field in (
+                "address_type",
+                "street1",
+                "street2",
+                "city",
+                "state",
+                "postal_code",
+                "country",
+                "is_primary",
+                "is_verified",
+            ):
+                if field in updates:
+                    params.append(updates[field])
+                    set_clauses.append(f"{field} = ${len(params)}")
+
+            row = await conn.fetchrow(
+                f"""
+                UPDATE entity_addresses SET {', '.join(set_clauses)}
+                WHERE id = $1
+                RETURNING id, entity_id, address_type, street1, street2, city,
+                          state, postal_code, country, is_verified, is_primary,
+                          created_at
+                """,
+                *params,
+            )
+    return AddressResponse(**dict(row))
+
+
+# ---------------------------------------------------------------------------
+# Employment
+# ---------------------------------------------------------------------------
+@router.post(
+    "/entities/{entity_id}/employment",
+    response_model=EmploymentResponse,
+    status_code=201,
+)
+async def add_employment(request: Request, entity_id: UUID, body: EmploymentCreate):
+    org_id = get_org_id(request)
+    if body.employer_id == entity_id:
+        raise HTTPException(
+            status_code=400, detail="Employer and employee must differ"
+        )
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        employee = await _fetch_active_entity(conn, org_id, entity_id)
+        if employee is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        employer = await _fetch_active_entity(conn, org_id, body.employer_id)
+        if employer is None:
+            raise HTTPException(
+                status_code=400, detail="Employer is not a valid entity in this org"
+            )
+        row = await conn.fetchrow(
+            """
+            INSERT INTO entity_employment (
+                org_id, employee_id, employer_id, title, start_date, end_date,
+                is_current, notes
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            RETURNING id, employee_id, employer_id, title, start_date, end_date,
+                      is_current, notes, created_at
+            """,
+            org_id,
+            entity_id,
+            body.employer_id,
+            body.title,
+            body.start_date,
+            body.end_date,
+            body.is_current,
+            body.notes,
+        )
+    return EmploymentResponse(**dict(row), employer_name=employer["display_name"])
+
+
+@router.put(
+    "/entities/{entity_id}/employment/{emp_id}",
+    response_model=EmploymentResponse,
+)
+async def update_employment(
+    request: Request, entity_id: UUID, emp_id: UUID, body: EmploymentUpdate
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                """
+                SELECT id FROM entity_employment
+                WHERE id = $1 AND employee_id = $2 AND org_id = $3
+                  AND valid_to IS NULL AND system_to IS NULL
+                """,
+                emp_id,
+                entity_id,
+                org_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Employment not found")
+
+            await conn.execute(
+                """
+                INSERT INTO entity_employment (
+                    org_id, employee_id, employer_id, title, start_date,
+                    end_date, is_current, notes,
+                    valid_from, valid_to, system_from, system_to,
+                    created_by, created_at
+                )
+                SELECT org_id, employee_id, employer_id, title, start_date,
+                       end_date, is_current, notes,
+                       valid_from, valid_to, system_from, now(),
+                       created_by, created_at
+                FROM entity_employment WHERE id = $1
+                """,
+                emp_id,
+            )
+
+            updates = body.model_dump(exclude_unset=True)
+            set_clauses = ["system_from = now()"]
+            params: list = [emp_id]
+            for field in ("title", "start_date", "end_date", "is_current", "notes"):
+                if field in updates:
+                    params.append(updates[field])
+                    set_clauses.append(f"{field} = ${len(params)}")
+
+            row = await conn.fetchrow(
+                f"""
+                UPDATE entity_employment SET {', '.join(set_clauses)}
+                WHERE id = $1
+                RETURNING id, employee_id, employer_id, title, start_date,
+                          end_date, is_current, notes, created_at
+                """,
+                *params,
+            )
+            employer = await _fetch_active_entity(conn, org_id, row["employer_id"])
+    return EmploymentResponse(
+        **dict(row), employer_name=employer["display_name"] if employer else None
+    )
+
+
+# ---------------------------------------------------------------------------
+# Social profiles
+# ---------------------------------------------------------------------------
+@router.post(
+    "/entities/{entity_id}/social-profiles",
+    response_model=SocialProfileResponse,
+    status_code=201,
+)
+async def add_social_profile(
+    request: Request, entity_id: UUID, body: SocialProfileCreate
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        entity = await _fetch_active_entity(conn, org_id, entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        stub = body.platform.value == "linkedin"
+        row = await conn.fetchrow(
+            """
+            INSERT INTO entity_social_profiles (
+                org_id, entity_id, platform, url, is_primary, linkedin_import_stub
+            ) VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (entity_id, platform) DO UPDATE SET
+                url = EXCLUDED.url,
+                is_primary = EXCLUDED.is_primary,
+                linkedin_import_stub = EXCLUDED.linkedin_import_stub,
+                valid_to = NULL, system_to = NULL
+            RETURNING id, entity_id, platform, url, is_primary,
+                      linkedin_import_stub, created_at
+            """,
+            org_id,
+            entity_id,
+            body.platform.value,
+            body.url,
+            body.is_primary,
+            stub,
+        )
+    return SocialProfileResponse(**dict(row))
+
+
+# ---------------------------------------------------------------------------
+# Compliance (advisor access — stub check, always allow for now)
+# ---------------------------------------------------------------------------
+COMPLIANCE_COLUMNS = (
+    "id, entity_id, kyc_status, kyc_verified_date, ofac_screen_status, "
+    "ofac_screen_date, aml_risk_rating, accreditation_status, "
+    "accreditation_basis, accreditation_verified_date, next_reverification_due, "
+    "pep_status, pep_details, notes, created_at, updated_at"
+)
+
+
+@router.get(
+    "/entities/{entity_id}/compliance", response_model=ComplianceRecordResponse
+)
+async def get_compliance(request: Request, entity_id: UUID):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"""
+            SELECT {COMPLIANCE_COLUMNS} FROM compliance_records
+            WHERE entity_id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            """,
+            entity_id,
+            org_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Compliance record not found")
+    return ComplianceRecordResponse(**dict(row))
+
+
+@router.put(
+    "/entities/{entity_id}/compliance", response_model=ComplianceRecordResponse
+)
+async def update_compliance(
+    request: Request, entity_id: UUID, body: ComplianceRecordUpdate
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    updates = body.model_dump(exclude_unset=True)
+    # Normalize enums to their values.
+    for key, value in list(updates.items()):
+        if hasattr(value, "value"):
+            updates[key] = value.value
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            existing = await conn.fetchrow(
+                f"""
+                SELECT {COMPLIANCE_COLUMNS} FROM compliance_records
+                WHERE entity_id = $1 AND org_id = $2
+                  AND valid_to IS NULL AND system_to IS NULL
+                """,
+                entity_id,
+                org_id,
+            )
+
+            if existing is None:
+                # Create a record then apply manual fields.
+                cols = ["org_id", "entity_id"]
+                vals: list = [org_id, entity_id]
+                for field, value in updates.items():
+                    cols.append(field)
+                    vals.append(value)
+                placeholders = ", ".join(f"${i + 1}" for i in range(len(vals)))
+                row = await conn.fetchrow(
+                    f"""
+                    INSERT INTO compliance_records ({', '.join(cols)})
+                    VALUES ({placeholders})
+                    RETURNING {COMPLIANCE_COLUMNS}
+                    """,
+                    *vals,
+                )
+            else:
+                set_clauses = ["updated_at = now()", "system_from = now()"]
+                params: list = [entity_id, org_id]
+                for field, value in updates.items():
+                    params.append(value)
+                    set_clauses.append(f"{field} = ${len(params)}")
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE compliance_records SET {', '.join(set_clauses)}
+                    WHERE entity_id = $1 AND org_id = $2
+                      AND valid_to IS NULL AND system_to IS NULL
+                    RETURNING {COMPLIANCE_COLUMNS}
+                    """,
+                    *params,
+                )
+
+            await write_audit_log(
+                conn,
+                org_id=org_id,
+                action="update",
+                table_name="compliance_records",
+                record_id=row["id"],
+                old=dict(existing) if existing else None,
+                new=dict(row),
+            )
+    return ComplianceRecordResponse(**dict(row))
+
+
+# ---------------------------------------------------------------------------
 # Ownership graph
 # ---------------------------------------------------------------------------
 @router.get("/entities/{entity_id}/ownership-graph", response_model=OwnershipGraph)
@@ -326,7 +880,7 @@ async def ownership_graph(request: Request, entity_id: UUID):
     max_depth = 5
 
     depths: dict[UUID, int] = {entity_id: 0}
-    edges: dict[UUID, GraphEdge] = {}  # keyed by ownership row id to dedup
+    edges: dict[UUID, GraphEdge] = {}
 
     async with pool.acquire() as conn:
         root = await _fetch_active_entity(conn, org_id, entity_id)
