@@ -83,7 +83,7 @@ def _candidate_values(
 
 
 async def write_audit_log(
-    conn: asyncpg.Connection,
+    conn: asyncpg.Connection | None = None,
     *,
     org_id: Any,
     action: str,
@@ -93,37 +93,51 @@ async def write_audit_log(
     new: dict | None = None,
     actor: Any = None,
 ) -> None:
-    """Insert an audit row, adapting to the real audit_log columns."""
-    columns = await _load_columns(conn)
-    if not columns:
-        return  # No audit_log table present; nothing to do.
+    """Insert an audit row using a fresh pool connection. Never raises.
 
-    candidates = _candidate_values(
-        org_id=org_id,
-        action=action,
-        table_name=table_name,
-        record_id=record_id,
-        old=old,
-        new=new,
-        actor=actor,
-    )
+    The ``conn`` parameter is accepted for backward compatibility but is not
+    used — the function always acquires a clean connection from the pool so
+    that a caller whose transaction is in a failed state does not poison the
+    audit write, and an audit failure never aborts the caller's transaction.
+    """
+    try:
+        from services.database import get_pool
 
-    insert_cols: list[str] = []
-    values: list[Any] = []
-    for col, value in candidates.items():
-        if col not in columns or value is None:
-            continue
-        data_type = columns[col]
-        if data_type in ("json", "jsonb") and not isinstance(value, str):
-            value = json.dumps(value, default=str)
-        insert_cols.append(col)
-        values.append(value)
+        pool = await get_pool()
+        async with pool.acquire() as fresh_conn:
+            columns = await _load_columns(fresh_conn)
+            if not columns:
+                return  # No audit_log table present; nothing to do.
 
-    if not insert_cols:
-        return
+            candidates = _candidate_values(
+                org_id=org_id,
+                action=action,
+                table_name=table_name,
+                record_id=record_id,
+                old=old,
+                new=new,
+                actor=actor,
+            )
 
-    placeholders = ", ".join(f"${i + 1}" for i in range(len(values)))
-    col_list = ", ".join(insert_cols)
-    await conn.execute(
-        f"INSERT INTO audit_log ({col_list}) VALUES ({placeholders})", *values
-    )
+            insert_cols: list[str] = []
+            values: list[Any] = []
+            for col, value in candidates.items():
+                if col not in columns or value is None:
+                    continue
+                data_type = columns[col]
+                if data_type in ("json", "jsonb") and not isinstance(value, str):
+                    value = json.dumps(value, default=str)
+                insert_cols.append(col)
+                values.append(value)
+
+            if not insert_cols:
+                return
+
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(values)))
+            col_list = ", ".join(insert_cols)
+            await fresh_conn.execute(
+                f"INSERT INTO audit_log ({col_list}) VALUES ({placeholders})",
+                *values,
+            )
+    except Exception as e:
+        print(f"Audit log write failed: {e}")

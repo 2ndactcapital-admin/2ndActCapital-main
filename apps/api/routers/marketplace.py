@@ -718,28 +718,32 @@ async def upsert_score(request: Request, deal_id: UUID, body: DealScoreCreate):
                 )
 
             # Recalculate + persist composite score on the deal.
+            # Use a nested transaction (SAVEPOINT) so a failure here — e.g. the
+            # composite_score column not existing — rolls back only this UPDATE
+            # and leaves the outer transaction (with the score row) intact.
             composite = (await _composite_scores(conn, [deal_id])).get(deal_id)
             try:
-                await conn.execute(
-                    """
-                    UPDATE deals SET composite_score = $2, updated_at = now()
-                    WHERE id = $1 AND valid_to IS NULL AND system_to IS NULL
-                    """,
-                    deal_id,
-                    composite,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        """
+                        UPDATE deals SET composite_score = $2, updated_at = now()
+                        WHERE id = $1 AND valid_to IS NULL AND system_to IS NULL
+                        """,
+                        deal_id,
+                        composite,
+                    )
             except Exception:
-                # composite_score may be a derived/absent column; ignore.
                 pass
 
-            await write_audit_log(
-                conn,
-                org_id=org_id,
-                action="upsert",
-                table_name="deal_scores",
-                record_id=row["id"],
-                new=dict(row),
-            )
+    # Audit write uses its own fresh pool connection (see services/audit.py) so
+    # it is never affected by the state of the connection used above.
+    await write_audit_log(
+        org_id=org_id,
+        action="upsert",
+        table_name="deal_scores",
+        record_id=row["id"],
+        new=dict(row),
+    )
     return DealScoreResponse(
         **{**dict(row), "score": _f(row["score"]), "weight": _f(row["weight"]),
            "ai_confidence": _f(row["ai_confidence"])}
