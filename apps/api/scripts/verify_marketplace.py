@@ -42,6 +42,10 @@ async def setup_test_user(pool):
 
 
 async def teardown_test_user(pool):
+    await pool.execute("DELETE FROM deal_scores WHERE scored_by = $1", TEST_USER_ID)
+    await pool.execute("DELETE FROM deal_votes WHERE user_id = $1", TEST_USER_ID)
+    await pool.execute("DELETE FROM deal_interest WHERE user_id = $1", TEST_USER_ID)
+    await pool.execute("DELETE FROM deals WHERE created_by = $1", TEST_USER_ID)
     await pool.execute("DELETE FROM users WHERE auth0_sub = $1", TEST_AUTH0_SUB)
 
 
