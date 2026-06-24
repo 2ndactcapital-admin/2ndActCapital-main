@@ -175,7 +175,8 @@ async def run_checks():
             ok &= r.status_code == 403
 
         # DoD 7: document upload -> R2 object + record pending
-        if new_id and os.environ.get("R2_ACCOUNT_ID"):
+        r2_account_id = os.environ.get("R2_ACCOUNT_ID", "")
+        if new_id and r2_account_id and r2_account_id != "your-account-id":
             files = {"file": ("test.txt", io.BytesIO(b"hello marketplace"), "text/plain")}
             r = await c.post(
                 f"/api/v1/deals/{new_id}/documents",
@@ -187,7 +188,7 @@ async def run_checks():
             print(f"[8] POST /deals/{{id}}/documents -> {r.status_code}; status={doc.get('processing_status')}")
             ok &= r.status_code == 201 and doc.get("processing_status") == "pending"
         else:
-            print("[8] SKIP document upload (R2_ACCOUNT_ID not set)")
+            print("[8] SKIP document upload — R2 env vars not set")
 
     return ok
 
