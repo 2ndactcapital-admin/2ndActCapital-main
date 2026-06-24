@@ -13,20 +13,20 @@ export default async function EntityDetailPage({ params }) {
     redirect(`/auth/login?returnTo=/crm/${id}`);
   }
 
-  let full;
-  try {
-    full = await fetchAPI(`/api/v1/entities/${id}/full`);
-  } catch (error) {
-    if (error.status === 404) notFound();
-    throw error;
-  }
+  const [fullResult, graphResult] = await Promise.allSettled([
+    fetchAPI(`/api/v1/entities/${id}/full`),
+    fetchAPI(`/api/v1/entities/${id}/ownership-graph`),
+  ]);
 
-  let graph = null;
-  try {
-    graph = await fetchAPI(`/api/v1/entities/${id}/ownership-graph`);
-  } catch {
-    graph = { root_id: id, nodes: [], edges: [] };
+  if (fullResult.status === "rejected") {
+    if (fullResult.reason?.status === 404) notFound();
+    throw fullResult.reason;
   }
+  const full = fullResult.value;
+  const graph =
+    graphResult.status === "fulfilled"
+      ? graphResult.value
+      : { root_id: id, nodes: [], edges: [] };
 
   const entity = full.entity;
 
