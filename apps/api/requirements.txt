@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-jose[cryptography]
+asyncpg
+boto3
+pydantic
+pydantic-settings
+httpx
