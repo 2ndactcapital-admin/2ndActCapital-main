@@ -1,0 +1,201 @@
+import { redirect, notFound } from "next/navigation";
+import { auth0 } from "@/lib/auth0";
+import AppShell from "@/components/AppShell";
+import StatusBadge from "@/components/marketplace/StatusBadge";
+import InterestCard from "@/components/marketplace/InterestCard";
+import ScoringSection from "@/components/marketplace/ScoringSection";
+import DocumentsList from "@/components/marketplace/DocumentsList";
+import { getDeal, getConfig, listEntities } from "@/lib/api";
+import { isStaff } from "@/lib/roles";
+import {
+  formatCurrency,
+  formatPercent,
+  formatMonths,
+  formatDate,
+} from "@/lib/format";
+
+function Metric({ label, value }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">
+        {label}
+      </dt>
+      <dd className="mt-0.5 text-sm font-medium text-text-primary tabular-nums">
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+export default async function DealDetailPage({ params }) {
+  const { id } = await params;
+
+  const session = await auth0.getSession();
+  if (!session) {
+    redirect(`/auth/login?returnTo=/marketplace/${id}`);
+  }
+  const staff = isStaff(session.user);
+
+  let detail;
+  try {
+    detail = await getDeal(id);
+  } catch (error) {
+    if (error.status === 404) notFound();
+    throw error;
+  }
+
+  const deal = detail.deal;
+
+  // Staff-only ancillary data (scoring dimensions); entities for the interest
+  // modal. Both degrade gracefully.
+  let dimensions = [];
+  let entities = [];
+  const [dimsRes, entRes] = await Promise.allSettled([
+    staff ? getConfig("deal_scoring") : Promise.resolve([]),
+    listEntities({ limit: 200 }),
+  ]);
+  if (dimsRes.status === "fulfilled") dimensions = dimsRes.value || [];
+  if (entRes.status === "fulfilled") entities = entRes.value || [];
+
+  const sponsor = detail.sponsor_name || deal.sponsor_name_override;
+
+  return (
+    <AppShell user={session.user}>
+      {/* Breadcrumb */}
+      <nav className="text-sm text-text-muted">
+        <a href="/marketplace" className="hover:text-navy">
+          Marketplace
+        </a>
+        <span className="mx-2">›</span>
+        <span className="text-text-secondary">{deal.name}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="-mx-8 mt-3 border-b border-border bg-bg-app px-8 pb-6">
+        <h1 className="text-3xl font-semibold text-navy">{deal.name}</h1>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {deal.asset_class && (
+            <span className="rounded-md bg-gold-light px-2 py-1 text-xs font-medium text-navy">
+              {deal.asset_class}
+            </span>
+          )}
+          <StatusBadge status={deal.deal_status} />
+        </div>
+        {sponsor && (
+          <p className="mt-2 text-sm text-text-secondary">{sponsor}</p>
+        )}
+        {deal.published_at && (
+          <p className="mt-1 text-xs text-text-muted">
+            Published {formatDate(deal.published_at)}
+          </p>
+        )}
+      </div>
+
+      <div className="mt-8 grid gap-8 lg:grid-cols-[2fr_1fr]">
+        {/* LEFT */}
+        <div className="space-y-8">
+          {/* Overview */}
+          <section>
+            <h2 className="text-base font-semibold text-navy">Overview</h2>
+            {deal.description && (
+              <p className="mt-3 whitespace-pre-line text-sm text-text-secondary">
+                {deal.description}
+              </p>
+            )}
+            {deal.location && (
+              <p className="mt-3 text-sm text-text-muted">📍 {deal.location}</p>
+            )}
+            {(deal.highlights || []).length > 0 && (
+              <ul className="mt-4 space-y-1.5">
+                {deal.highlights.map((h, i) => (
+                  <li key={i} className="flex gap-2 text-sm text-text-secondary">
+                    <span className="text-gold">●</span>
+                    <span>{h}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {(deal.tags || []).length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {deal.tags.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded-full border border-border bg-bg-card px-2.5 py-0.5 text-xs text-text-secondary"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Investment Details */}
+          <section>
+            <h2 className="text-base font-semibold text-navy">
+              Investment Details
+            </h2>
+            <dl className="mt-4 grid grid-cols-2 gap-4 rounded-lg border border-border bg-bg-card p-5 sm:grid-cols-3">
+              <Metric label="Target Raise" value={formatCurrency(deal.target_raise)} />
+              <Metric label="Minimum Investment" value={formatCurrency(deal.minimum_investment)} />
+              <Metric label="Expected Return" value={formatPercent(deal.expected_return_pct)} />
+              <Metric label="Term" value={deal.term_months ? `${deal.term_months} months` : "—"} />
+              <Metric label="Deal Date" value={formatDate(deal.deal_date)} />
+              <Metric label="Close Date" value={formatDate(deal.close_date)} />
+            </dl>
+          </section>
+
+          {/* Documents */}
+          <DocumentsList
+            dealId={deal.id}
+            initial={detail.documents || []}
+            canUpload={staff}
+          />
+
+          {/* Scoring (staff) */}
+          {staff && (
+            <ScoringSection
+              dealId={deal.id}
+              dimensions={dimensions}
+              scores={detail.scores || []}
+              composite={deal.composite_score}
+            />
+          )}
+        </div>
+
+        {/* RIGHT (sticky) */}
+        <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
+          <InterestCard
+            dealId={deal.id}
+            composite={deal.composite_score}
+            upvotes={deal.upvotes}
+            downvotes={deal.downvotes}
+            userVote={deal.user_vote}
+            alreadyInterested={deal.has_indicated_interest}
+            entities={entities}
+            staff={staff}
+          />
+
+          <div className="rounded-lg border border-border bg-bg-card p-5">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              Deal Info
+            </h3>
+            <dl className="mt-3 space-y-2 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-text-muted">Submitted by</dt>
+                <dd className="text-text-primary">{detail.submitted_by_name || "—"}</dd>
+              </div>
+              {staff && (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-text-muted">Members interested</dt>
+                  <dd className="text-text-primary tabular-nums">
+                    {detail.interest_count ?? 0}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        </div>
+      </div>
+    </AppShell>
+  );
+}

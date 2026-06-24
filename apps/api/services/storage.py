@@ -1,13 +1,14 @@
 """Object storage layer.
 
-Provides a boto3 S3-compatible client pointed at Cloudflare R2. No uploads or
-downloads are implemented yet — this is a stub that centralizes client
-construction for later work.
+Provides a boto3 S3-compatible client pointed at Cloudflare R2 and a helper to
+upload deal documents. Downloads / signed URLs are a later sprint.
 """
 
 import os
 
 import boto3
+
+DEFAULT_BUCKET = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
 
 
 def get_s3_client():
@@ -23,3 +24,25 @@ def get_s3_client():
         aws_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY"),
         region_name="auto",
     )
+
+
+def upload_bytes(
+    key: str,
+    data: bytes,
+    content_type: str | None = None,
+    bucket: str | None = None,
+) -> str:
+    """Upload bytes to R2 under ``key`` and return the object key.
+
+    Synchronous (boto3) — call via ``run_in_threadpool`` from async handlers.
+    """
+    client = get_s3_client()
+    extra = {"ContentType": content_type} if content_type else {}
+    client.put_object(
+        Bucket=bucket or DEFAULT_BUCKET,
+        Key=key,
+        Body=data,
+        **extra,
+    )
+    return key
+

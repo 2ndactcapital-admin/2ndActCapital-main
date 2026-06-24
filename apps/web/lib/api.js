@@ -63,6 +63,23 @@ export async function fetchAPI(path, options = {}) {
   return res.json();
 }
 
+/**
+ * Multipart upload against the FastAPI backend with the user's bearer token.
+ * Does not set Content-Type — fetch derives the multipart boundary itself.
+ */
+export async function uploadAPI(path, formData) {
+  const url = new URL(API_BASE + path);
+  const headers = { ...(await authHeaders()) };
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
 // --- Entities (CRM) ---
 export const listEntities = (searchParams) =>
   fetchAPI("/api/v1/entities", { searchParams });
@@ -93,3 +110,30 @@ export const bulkUpsertProfileAnswers = (entityId, answers) =>
     method: "POST",
     body: answers,
   });
+
+// --- Config ---
+export const getConfig = (category) =>
+  fetchAPI("/api/v1/config", {
+    searchParams: category ? { category } : undefined,
+  });
+
+// --- Marketplace ---
+export const listDeals = (searchParams) =>
+  fetchAPI("/api/v1/deals", { searchParams });
+export const getDeal = (id) => fetchAPI(`/api/v1/deals/${id}`);
+export const createDeal = (body) =>
+  fetchAPI("/api/v1/deals", { method: "POST", body });
+export const updateDeal = (id, body) =>
+  fetchAPI(`/api/v1/deals/${id}`, { method: "PUT", body });
+export const setDealStatus = (id, status) =>
+  fetchAPI(`/api/v1/deals/${id}/status`, { method: "PUT", body: { status } });
+export const upsertDealScore = (id, body) =>
+  fetchAPI(`/api/v1/deals/${id}/scores`, { method: "POST", body });
+export const voteDeal = (id, vote) =>
+  fetchAPI(`/api/v1/deals/${id}/vote`, { method: "POST", body: { vote } });
+export const indicateInterest = (id, body) =>
+  fetchAPI(`/api/v1/deals/${id}/interest`, { method: "POST", body });
+export const listDealInterest = (id) =>
+  fetchAPI(`/api/v1/deals/${id}/interest`);
+export const overrideInterest = (id, body) =>
+  fetchAPI(`/api/v1/deals/${id}/interest/override`, { method: "POST", body });
