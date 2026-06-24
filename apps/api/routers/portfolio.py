@@ -26,7 +26,7 @@ _PORTFOLIO_SELECT = (
 )
 
 _TARGET_SELECT = (
-    "id, entity_id, taxonomy_key, target_pct, effective_date, end_date, notes, created_at"
+    "id, entity_id, taxonomy_key, taxonomy_level, target_pct, valid_from, valid_to, notes, created_at"
 )
 
 
@@ -38,7 +38,7 @@ async def _fetch_targets_with_inheritance(conn, org_id: str, entity_id: UUID) ->
     """Return (direct_rows, inherited_rows) for an entity, walking ownership up 5 levels."""
     direct = await conn.fetch(
         f"SELECT {_TARGET_SELECT} FROM member_target_allocations "
-        "WHERE entity_id = $1 AND org_id = $2 AND end_date IS NULL "
+        "WHERE entity_id = $1 AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL "
         "ORDER BY taxonomy_key",
         entity_id, org_id,
     )
@@ -66,7 +66,7 @@ async def _fetch_targets_with_inheritance(conn, org_id: str, entity_id: UUID) ->
 
         ancestor_targets = await conn.fetch(
             f"SELECT {_TARGET_SELECT} FROM member_target_allocations "
-            "WHERE entity_id = $1 AND org_id = $2 AND end_date IS NULL "
+            "WHERE entity_id = $1 AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL "
             "ORDER BY taxonomy_key",
             parent_id, org_id,
         )
@@ -95,10 +95,10 @@ def _build_target_responses(
             id=r["id"],
             entity_id=r["entity_id"],
             taxonomy_key=r["taxonomy_key"],
-            taxonomy_level=entry.get("type"),
+            taxonomy_level=r.get("taxonomy_level") or entry.get("type"),
             target_pct=float(r["target_pct"]),
-            effective_date=r["effective_date"],
-            end_date=r["end_date"],
+            valid_from=r["valid_from"],
+            valid_to=r["valid_to"],
             notes=r["notes"],
             created_at=r["created_at"],
             taxonomy_label=entry.get("label"),
@@ -110,10 +110,10 @@ def _build_target_responses(
             id=r["id"],
             entity_id=r["entity_id"],
             taxonomy_key=r["taxonomy_key"],
-            taxonomy_level=entry.get("type"),
+            taxonomy_level=r.get("taxonomy_level") or entry.get("type"),
             target_pct=float(r["target_pct"]),
-            effective_date=r["effective_date"],
-            end_date=r["end_date"],
+            valid_from=r["valid_from"],
+            valid_to=r["valid_to"],
             notes=r["notes"],
             created_at=r["created_at"],
             taxonomy_label=entry.get("label"),
@@ -218,20 +218,20 @@ async def set_entity_targets(
                 await conn.execute(
                     """
                     UPDATE member_target_allocations
-                       SET end_date = $1
+                       SET valid_to = $1
                      WHERE entity_id = $2 AND taxonomy_key = $3
-                       AND org_id = $4 AND end_date IS NULL
+                       AND org_id = $4 AND valid_to IS NULL AND system_to IS NULL
                     """,
                     today, entity_id, item.taxonomy_key, org_id,
                 )
                 await conn.execute(
                     """
                     INSERT INTO member_target_allocations
-                        (org_id, entity_id, user_id, taxonomy_key, target_pct,
-                         effective_date, notes, created_by)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        (org_id, entity_id, user_id, taxonomy_key, taxonomy_level,
+                         target_pct, valid_from, notes, set_by)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     """,
-                    org_id, entity_id, actor_id, item.taxonomy_key,
+                    org_id, entity_id, actor_id, item.taxonomy_key, item.taxonomy_level,
                     item.target_pct, today, item.notes, actor_id,
                 )
             await write_audit_log(
@@ -264,9 +264,9 @@ async def clear_entity_target(
         result = await conn.execute(
             """
             UPDATE member_target_allocations
-               SET end_date = $1
+               SET valid_to = $1
              WHERE entity_id = $2 AND taxonomy_key = $3
-               AND org_id = $4 AND end_date IS NULL
+               AND org_id = $4 AND valid_to IS NULL AND system_to IS NULL
             """,
             today, entity_id, taxonomy_key, org_id,
         )

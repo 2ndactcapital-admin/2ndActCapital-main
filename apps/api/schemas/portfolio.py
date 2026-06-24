@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -26,8 +26,8 @@ class TargetAllocationResponse(BaseModel):
     entity_id: UUID
     taxonomy_key: str
     target_pct: float
-    effective_date: date
-    end_date: date | None = None
+    valid_from: datetime
+    valid_to: datetime | None = None
     notes: str | None = None
     created_at: datetime | None = None
     taxonomy_label: str | None = None
