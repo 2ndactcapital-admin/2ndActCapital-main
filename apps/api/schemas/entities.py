@@ -20,6 +20,7 @@ class EntityType(str, Enum):
     corporation = "corporation"
     foundation = "foundation"
     family_office = "family_office"
+    household = "household"
     corp_uk = "corp_uk"
     corp_eu = "corp_eu"
     corp_cayman = "corp_cayman"

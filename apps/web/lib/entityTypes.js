@@ -10,6 +10,7 @@ export const ENTITY_TYPES = [
   { value: "corporation", label: "Corporation" },
   { value: "foundation", label: "Foundation" },
   { value: "family_office", label: "Family Office" },
+  { value: "household", label: "Household / Family Group" },
   { value: "corp_uk", label: "UK Corp" },
   { value: "corp_eu", label: "EU Corp" },
   { value: "corp_cayman", label: "Cayman Corp" },
