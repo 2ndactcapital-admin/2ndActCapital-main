@@ -15,6 +15,7 @@ from jose.exceptions import JWTError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from routers.entities import router as entities_router
+from routers.investment_profile import router as investment_profile_router
 from services.database import close_pool
 
 API_VERSION = "0.1.0"
@@ -140,3 +141,4 @@ async def _shutdown() -> None:
 
 # Feature routers
 app.include_router(entities_router, prefix="/api/v1")
+app.include_router(investment_profile_router, prefix="/api/v1")

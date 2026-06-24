@@ -1,17 +1,18 @@
 import { auth0 } from "@/lib/auth0";
 
-const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// Build Authorization header from the user's Auth0 access token, when one is
-// available. Returns an empty object if no token can be obtained so callers can
-// still render (the API will respond 401 and the page shows an empty state).
+// Resolve the user's Auth0 access token for the API audience. Returns an empty
+// header object if no token is available so callers can render an error/empty
+// state instead of crashing.
 async function authHeaders() {
   try {
     const result = await auth0.getAccessToken();
     const token = result?.token || result?.accessToken;
     if (token) return { Authorization: `Bearer ${token}` };
   } catch {
-    // No access token available (e.g. API audience not configured yet).
+    // No token (e.g. unauthenticated render or audience not yet provisioned).
   }
   return {};
 }
@@ -28,7 +29,18 @@ async function parseError(res) {
   return error;
 }
 
-export async function apiGet(path, searchParams) {
+/**
+ * Server-side fetch against the FastAPI backend with the user's bearer token.
+ *
+ * @param {string} path - API path, e.g. "/api/v1/entities"
+ * @param {object} [options]
+ * @param {string} [options.method] - HTTP method (default GET)
+ * @param {any}    [options.body] - JSON-serializable request body
+ * @param {object} [options.searchParams] - query params (skips empty values)
+ */
+export async function fetchAPI(path, options = {}) {
+  const { method = "GET", body, searchParams } = options;
+
   const url = new URL(API_BASE + path);
   if (searchParams) {
     for (const [key, value] of Object.entries(searchParams)) {
@@ -37,31 +49,47 @@ export async function apiGet(path, searchParams) {
       }
     }
   }
+
+  const headers = { ...(await authHeaders()) };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+
   const res = await fetch(url, {
-    headers: await authHeaders(),
-    cache: "no-store",
-  });
-  if (!res.ok) throw await parseError(res);
-  return res.json();
-}
-
-export async function apiSend(path, method, body) {
-  const res = await fetch(API_BASE + path, {
     method,
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify(body),
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
 
-export const listEntities = (params) => apiGet("/api/v1/entities", params);
-export const getEntity = (id) => apiGet(`/api/v1/entities/${id}`);
+// --- Entities (CRM) ---
+export const listEntities = (searchParams) =>
+  fetchAPI("/api/v1/entities", { searchParams });
+export const getEntity = (id) => fetchAPI(`/api/v1/entities/${id}`);
 export const getOwnershipGraph = (id) =>
-  apiGet(`/api/v1/entities/${id}/ownership-graph`);
-export const createEntity = (body) => apiSend("/api/v1/entities", "POST", body);
+  fetchAPI(`/api/v1/entities/${id}/ownership-graph`);
+export const createEntity = (body) =>
+  fetchAPI("/api/v1/entities", { method: "POST", body });
 export const updateEntity = (id, body) =>
-  apiSend(`/api/v1/entities/${id}`, "PUT", body);
+  fetchAPI(`/api/v1/entities/${id}`, { method: "PUT", body });
 export const addAttribute = (id, body) =>
-  apiSend(`/api/v1/entities/${id}/attributes`, "POST", body);
+  fetchAPI(`/api/v1/entities/${id}/attributes`, { method: "POST", body });
+
+// --- Investment Profile ---
+export const getProfileQuestions = (category) =>
+  fetchAPI("/api/v1/investment-profile/questions", {
+    searchParams: category ? { category } : undefined,
+  });
+export const getProfileAnswers = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/answers`);
+export const upsertProfileAnswer = (entityId, body) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/answers`, {
+    method: "POST",
+    body,
+  });
+export const bulkUpsertProfileAnswers = (entityId, answers) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/answers/bulk`, {
+    method: "POST",
+    body: answers,
+  });

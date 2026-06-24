@@ -5,7 +5,7 @@ import EntityTypeBadge from "@/components/EntityTypeBadge";
 import EntityDetailsForm from "@/components/crm/EntityDetailsForm";
 import AttributesSection from "@/components/crm/AttributesSection";
 import OwnershipTree from "@/components/crm/OwnershipTree";
-import { getEntity, getOwnershipGraph } from "@/lib/api";
+import { fetchAPI } from "@/lib/api";
 
 export default async function EntityDetailPage({ params }) {
   const session = await auth0.getSession();
@@ -18,7 +18,7 @@ export default async function EntityDetailPage({ params }) {
 
   let detail;
   try {
-    detail = await getEntity(id);
+    detail = await fetchAPI(`/api/v1/entities/${id}`);
   } catch (error) {
     if (error.status === 404) notFound();
     throw error;
@@ -26,7 +26,7 @@ export default async function EntityDetailPage({ params }) {
 
   let graph = null;
   try {
-    graph = await getOwnershipGraph(id);
+    graph = await fetchAPI(`/api/v1/entities/${id}/ownership-graph`);
   } catch {
     graph = { root_id: id, nodes: [], edges: [] };
   }

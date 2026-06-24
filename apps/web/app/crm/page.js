@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
 import EntityTable from "@/components/crm/EntityTable";
-import { listEntities } from "@/lib/api";
+import { fetchAPI } from "@/lib/api";
 import { FILTER_TABS } from "@/lib/entityTypes";
 
 export default async function CrmPage({ searchParams }) {
@@ -18,7 +18,9 @@ export default async function CrmPage({ searchParams }) {
   let entities = [];
   let loadError = null;
   try {
-    entities = await listEntities({ search: q || undefined, type: type || undefined });
+    entities = await fetchAPI("/api/v1/entities", {
+      searchParams: { search: q || undefined, type: type || undefined },
+    });
   } catch (error) {
     loadError = error.message;
   }
