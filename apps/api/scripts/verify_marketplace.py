@@ -20,6 +20,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 H = {"Authorization": "Bearer local-verify"}
 
+# Fixed test identity. The token stub returns this UUID as the ``sub`` claim so
+# get_user_id() resolves it directly (a valid UUID sub is returned as-is), and a
+# matching row is seeded in ``users`` so FKs like deal_scores.scored_by hold.
+TEST_USER_ID = "99000000-0000-0000-0000-000000000001"
+TEST_AUTH0_SUB = "auth0|test_verify_user"
+TEST_ORG_ID = "00000000-0000-0000-0000-000000000001"
+
+
+async def setup_test_user(pool):
+    await pool.execute(
+        """
+        INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
+        VALUES ($1, $2, 'test@2ndactcapital.com', 'Test User', $3, 'member')
+        ON CONFLICT (auth0_sub) DO NOTHING
+        """,
+        TEST_USER_ID,
+        TEST_ORG_ID,
+        TEST_AUTH0_SUB,
+    )
+
+
+async def teardown_test_user(pool):
+    await pool.execute("DELETE FROM users WHERE auth0_sub = $1", TEST_AUTH0_SUB)
+
 
 async def audit_count(pool):
     exists = await pool.fetchval("SELECT to_regclass('public.audit_log') IS NOT NULL")
@@ -32,10 +56,31 @@ async def main_async():
         return False
 
     import main
-    from httpx import ASGITransport, AsyncClient
     from services.database import get_pool, close_pool
 
-    main.verify_token = lambda token: {"sub": "local-verify"}
+    # Token stub returns the seeded test user's UUID as the ``sub`` claim, so
+    # every request resolves to a real users row.
+    main.verify_token = lambda token: {"sub": TEST_USER_ID}
+    ok = True
+
+    pool = await get_pool()
+    await setup_test_user(pool)
+
+    try:
+        ok = await run_checks()
+    finally:
+        await teardown_test_user(pool)
+        await close_pool()
+
+    print("RESULT:", "PASS" if ok else "FAIL")
+    return ok
+
+
+async def run_checks():
+    from httpx import ASGITransport, AsyncClient
+
+    import main
+
     ok = True
 
     async with AsyncClient(
@@ -55,8 +100,7 @@ async def main_async():
         print(f"[2] GET /deals -> {r.status_code}, {len(deals)} deals")
         ok &= r.status_code == 200 and len(deals) >= 3
         if not deals:
-            print("RESULT: FAIL (no deals to test against)")
-            await close_pool()
+            print("FAIL: no deals to test against")
             return False
         first = deals[0]
         print(
@@ -141,8 +185,6 @@ async def main_async():
         else:
             print("[8] SKIP document upload (R2_ACCOUNT_ID not set)")
 
-    await close_pool()
-    print("RESULT:", "PASS" if ok else "FAIL")
     return ok
 
 
