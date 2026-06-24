@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     auth0_domain: str = "dev-smmrfubsfscif3t1.us.auth0.com"
     auth0_audience: str = "https://api.2ndactcapital.com"
+    # Comma-separated list of allowed CORS origins.  Defaults to local dev;
+    # override with ALLOWED_ORIGINS in production to include the Render URL.
+    allowed_origins: str = "http://localhost:3000,https://2ndactcapital.com"
 
     @property
     def issuer(self) -> str:
@@ -95,7 +98,7 @@ app = FastAPI(title="2nd Act Capital API", version=API_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://2ndactcapital.com"],
+    allow_origins=[o.strip() for o in get_settings().allowed_origins.split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

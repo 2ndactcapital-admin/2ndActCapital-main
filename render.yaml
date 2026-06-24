@@ -1,5 +1,29 @@
 services:
   - type: web
+    name: 2ndactcapital-web
+    runtime: node
+    rootDir: .
+    buildCommand: npm ci && cd apps/web && npx next build
+    startCommand: cd apps/web && npx next start -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # URL of the deployed API service below (no trailing slash).
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      # Auth0 Regular Web Application credentials.
+      - key: AUTH0_SECRET
+        sync: false
+      - key: AUTH0_BASE_URL
+        sync: false
+      - key: AUTH0_ISSUER_BASE_URL
+        sync: false
+      - key: AUTH0_CLIENT_ID
+        sync: false
+      - key: AUTH0_CLIENT_SECRET
+        sync: false
+
+  - type: web
     name: 2ndactcapital-api
     runtime: python
     rootDir: apps/api
@@ -11,6 +35,10 @@ services:
       - key: AUTH0_DOMAIN
         sync: false
       - key: AUTH0_AUDIENCE
+        sync: false
+      # Comma-separated list of allowed CORS origins, e.g.
+      # https://2ndactcapital.com,https://2ndactcapital-web.onrender.com
+      - key: ALLOWED_ORIGINS
         sync: false
       - key: R2_ACCOUNT_ID
         sync: false
