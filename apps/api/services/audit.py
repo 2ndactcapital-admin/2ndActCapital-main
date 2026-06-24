@@ -55,6 +55,7 @@ def _candidate_values(
         "target_table": table_name,
         "object_type": table_name,
         "record_type": table_name,
+        "resource_type": table_name,
         # target row
         "record_id": record_id,
         "entity_id": record_id,
