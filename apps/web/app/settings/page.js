@@ -12,7 +12,7 @@ export default async function SettingsPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-canvas">
+    <div className="flex min-h-screen flex-col bg-bg-app">
       <TopBar user={session.user} />
       <div className="flex flex-1">
         <Sidebar />
