@@ -66,7 +66,7 @@ async def main_async():
         )
         e = r.json()
         print(f"[3] POST employment -> {r.status_code}; employer_name={e.get('employer_name')}")
-        ok &= r.status_code == 201 and e.get("employer_id") == HARGROVE_LLC and e.get("employer_name")
+        ok &= r.status_code == 201 and e.get("employer_id") == HARGROVE_LLC and bool(e.get("employer_name"))
 
         # Compliance update writes audit
         pool = await get_pool()
