@@ -183,3 +183,26 @@ export const getMyInvestments = () =>
   fetchAPI("/api/v1/portfolio/my-investments");
 export const getPortfolioSummary = () =>
   fetchAPI("/api/v1/portfolio/summary");
+
+// --- Portfolio targets (entity-centric, Sprint 8) ---
+export const getEntityTargets = (entityId) =>
+  fetchAPI("/api/v1/portfolio/targets", { searchParams: { entity_id: entityId } });
+export const setEntityTargets = (entityId, items) =>
+  fetchAPI("/api/v1/portfolio/targets", {
+    method: "PUT",
+    body: { items },
+    searchParams: { entity_id: entityId },
+  });
+export const clearEntityTarget = (entityId, taxonomyKey) =>
+  fetchAPI("/api/v1/portfolio/targets", {
+    method: "DELETE",
+    searchParams: { entity_id: entityId, taxonomy_key: taxonomyKey },
+  });
+export const getEntityAllocations = (entityId) =>
+  fetchAPI("/api/v1/portfolio/allocations", {
+    searchParams: entityId ? { entity_id: entityId } : undefined,
+  });
+
+// --- Deal taxonomy placement (Sprint 8) ---
+export const getDealTaxonomyPlacement = (dealId) =>
+  fetchAPI(`/api/v1/deals/${dealId}/taxonomy-placement`);

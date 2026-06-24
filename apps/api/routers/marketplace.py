@@ -50,9 +50,10 @@ from schemas.marketplace import (
     StatusUpdate,
     VoteRequest,
 )
+from schemas.portfolio import TaxonomyPlacementResponse
 from services.audit import write_audit_log
 from services.database import get_pool
-from services.taxonomy import build_taxonomy, validate_taxonomy_fields
+from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id, is_staff, require_permission
 from services.storage import upload_bytes
 
@@ -591,6 +592,30 @@ async def get_deal(request: Request, deal_id: UUID):
         submitted_by_name=names.get(row.get("submitted_by")),
         sponsor_name=sponsor_name,
         interest_count=interest_count or 0,
+    )
+
+
+@router.get("/deals/{deal_id}/taxonomy-placement", response_model=TaxonomyPlacementResponse)
+async def get_deal_taxonomy_placement(request: Request, deal_id: UUID):
+    """Return the taxonomy key placements for a deal with resolved display labels."""
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await _fetch_deal(conn, org_id, deal_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+        keys = [row["asset_super_class"], row["asset_class"], row["asset_sub_category"]]
+        label_map = await _resolve_taxonomy_labels(conn, keys)
+
+    return TaxonomyPlacementResponse(
+        deal_id=deal_id,
+        asset_super_class=row["asset_super_class"],
+        asset_class=row["asset_class"],
+        asset_sub_category=row["asset_sub_category"],
+        asset_super_class_label=label_map.get(row["asset_super_class"]) if row["asset_super_class"] else None,
+        asset_class_label=label_map.get(row["asset_class"]) if row["asset_class"] else None,
+        asset_sub_category_label=label_map.get(row["asset_sub_category"]) if row["asset_sub_category"] else None,
     )
 
 

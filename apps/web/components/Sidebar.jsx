@@ -7,6 +7,7 @@ import {
   IconAddressBook,
   IconBuildingStore,
   IconChartPie,
+  IconChartTreemap,
   IconReportAnalytics,
   IconFileInvoice,
   IconUserCheck,
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { label: "CRM", href: "/crm", Icon: IconAddressBook },
   { label: "Marketplace", href: "/marketplace", Icon: IconBuildingStore },
   { label: "Portfolio", href: "/portfolio", Icon: IconChartPie },
+  { label: "Allocations", href: "/portfolio?tab=allocation", Icon: IconChartTreemap },
   {
     label: "Portfolio Reporting",
     href: "/portfolio-reporting",
