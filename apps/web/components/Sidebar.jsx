@@ -2,55 +2,99 @@
 
 import { useState } from "react";
 import { usePathname } from "next/navigation";
+import {
+  IconLayoutDashboard,
+  IconBuildingStore,
+  IconChartPie,
+  IconReportAnalytics,
+  IconFileInvoice,
+  IconUserCheck,
+  IconShieldCheck,
+  IconUsers,
+  IconSettings,
+} from "@tabler/icons-react";
 
 const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard" },
-  { label: "Marketplace", href: "/marketplace" },
-  { label: "Portfolio", href: "/portfolio" },
-  { label: "SPV Manager", href: "/spv-manager" },
-  { label: "Investment Profile", href: "/investment-profile" },
-  { label: "Insurance", href: "/insurance" },
-  { label: "Community", href: "/community" },
-  { label: "Admin", href: "/admin" },
+  { label: "Dashboard", href: "/dashboard", Icon: IconLayoutDashboard },
+  { label: "Marketplace", href: "/marketplace", Icon: IconBuildingStore },
+  { label: "Portfolio", href: "/portfolio", Icon: IconChartPie },
+  {
+    label: "Portfolio Reporting",
+    href: "/portfolio-reporting",
+    Icon: IconReportAnalytics,
+  },
+  { label: "SPV Manager", href: "/spv-manager", Icon: IconFileInvoice },
+  {
+    label: "Investment Profile",
+    href: "/investment-profile",
+    Icon: IconUserCheck,
+  },
+  { label: "Insurance", href: "/insurance", Icon: IconShieldCheck },
+  { label: "Community", href: "/community", Icon: IconUsers },
 ];
+
+const ADMIN_ITEM = { label: "Admin", href: "/admin", Icon: IconSettings };
+
+function NavLink({ item, collapsed, active }) {
+  const { label, href, Icon } = item;
+  return (
+    <a
+      href={href}
+      title={collapsed ? label : undefined}
+      className={`flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+        collapsed ? "justify-center" : "gap-3"
+      } ${active ? "bg-navy" : "hover:bg-border"}`}
+    >
+      <Icon
+        size={20}
+        stroke={1.75}
+        className={`shrink-0 ${active ? "text-gold" : "text-text-secondary"}`}
+      />
+      {!collapsed && (
+        <span
+          className={`truncate ${active ? "text-bg-app" : "text-text-secondary"}`}
+        >
+          {label}
+        </span>
+      )}
+    </a>
+  );
+}
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
+  const isActive = (href) =>
+    pathname === href || pathname?.startsWith(href + "/");
+
   return (
     <aside
-      className={`flex shrink-0 flex-col border-r border-line bg-sand transition-[width] duration-200 ${
-        collapsed ? "w-16" : "w-60"
+      className={`flex shrink-0 flex-col border-r-[0.5px] border-border bg-bg-sidebar transition-[width] duration-200 ${
+        collapsed ? "w-[52px]" : "w-[220px]"
       }`}
     >
       <nav className="flex-1 space-y-1 p-2">
-        {NAV_ITEMS.map((item) => {
-          const active =
-            pathname === item.href || pathname?.startsWith(item.href + "/");
-          return (
-            <a
-              key={item.href}
-              href={item.href}
-              title={collapsed ? item.label : undefined}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                active
-                  ? "bg-navy text-white"
-                  : "text-ink-soft hover:bg-line"
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center text-xs font-semibold ${
-                  active ? "text-white" : "text-muted"
-                }`}
-                aria-hidden="true"
-              >
-                {item.label[0]}
-              </span>
-              {!collapsed && <span className="truncate">{item.label}</span>}
-            </a>
-          );
-        })}
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.href}
+            item={item}
+            collapsed={collapsed}
+            active={isActive(item.href)}
+          />
+        ))}
+
+        {/* Admin section */}
+        {!collapsed && (
+          <div className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+            Admin
+          </div>
+        )}
+        <NavLink
+          item={ADMIN_ITEM}
+          collapsed={collapsed}
+          active={isActive(ADMIN_ITEM.href)}
+        />
       </nav>
 
       {/* Collapse toggle at the bottom */}
@@ -58,12 +102,9 @@ export default function Sidebar() {
         type="button"
         onClick={() => setCollapsed((value) => !value)}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        className="m-2 flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-line"
+        className="m-2 flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-border"
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-          {collapsed ? "»" : "«"}
-        </span>
-        {!collapsed && <span>Collapse</span>}
+        {collapsed ? "»" : "«"}
       </button>
     </aside>
   );

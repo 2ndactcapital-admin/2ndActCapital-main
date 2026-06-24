@@ -31,8 +31,8 @@ export default function AppearanceSettings() {
 
   return (
     <section>
-      <h2 className="text-base font-semibold text-ink">Appearance</h2>
-      <p className="mt-1 text-sm text-muted">
+      <h2 className="text-base font-semibold text-text-primary">Appearance</h2>
+      <p className="mt-1 text-sm text-text-muted">
         Choose how 2nd Act Capital looks for you. Saved to this browser.
       </p>
 
@@ -48,13 +48,13 @@ export default function AppearanceSettings() {
               className={`rounded-md border p-4 text-left transition-colors ${
                 active
                   ? "border-gold bg-gold-light"
-                  : "border-line bg-surface hover:bg-sand"
+                  : "border-border bg-bg-card hover:bg-bg-sidebar"
               }`}
             >
-              <span className="block text-sm font-semibold text-ink">
+              <span className="block text-sm font-semibold text-text-primary">
                 {option.label}
               </span>
-              <span className="mt-1 block text-xs text-muted">
+              <span className="mt-1 block text-xs text-text-muted">
                 {option.description}
               </span>
             </button>
