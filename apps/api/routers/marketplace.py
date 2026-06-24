@@ -8,6 +8,7 @@ never hard-coded here.
 """
 
 import json
+import os
 import re
 import uuid
 from uuid import UUID
@@ -1032,15 +1033,16 @@ async def upload_document(
         if deal is None:
             raise HTTPException(status_code=404, detail="Deal not found")
 
-        await run_in_threadpool(upload_bytes, key, data, file.content_type)
+        bucket = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
+        await run_in_threadpool(upload_bytes, key, data, file.content_type, bucket)
 
         async with conn.transaction():
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO deal_documents (
                     org_id, deal_id, file_name, file_type, file_size_bytes,
-                    document_type, storage_key, processing_status
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
+                    document_type, r2_key, r2_bucket, processing_status
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
                 RETURNING {DOC_SELECT}
                 """,
                 org_id,
@@ -1050,6 +1052,7 @@ async def upload_document(
                 len(data),
                 document_type,
                 key,
+                bucket,
             )
             await write_audit_log(
                 conn,

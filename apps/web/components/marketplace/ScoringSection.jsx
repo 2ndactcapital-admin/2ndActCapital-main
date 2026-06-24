@@ -3,7 +3,6 @@
 import { useActionState, useEffect, useState } from "react";
 import { saveScoreAction } from "@/lib/marketplaceActions";
 import ScoreBar from "@/components/marketplace/ScoreBar";
-import { humanize } from "@/lib/format";
 
 const INPUT =
   "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -108,8 +107,8 @@ export default function ScoringSection({ dealId, dimensions = [], scores = [], c
                 key={d.config_key}
                 dealId={dealId}
                 dimension={d.config_key}
-                label={humanize(d.config_key)}
-                weight={d.config_value}
+                label={d.config_value}
+                weight={byDimension[d.config_key]?.weight ?? 0.1667}
                 existing={byDimension[d.config_key]}
               />
             ))}
