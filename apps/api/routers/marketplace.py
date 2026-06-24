@@ -1399,7 +1399,8 @@ async def review_document(
 # AI deal summary (Sprint 7)
 # ---------------------------------------------------------------------------
 AI_SUMMARY_SELECT = (
-    "id, deal_id, model_used, generated_at, summary_text, strengths, risks, market_context"
+    "id, deal_id, model_used, generated_at, summary_text, "
+    "key_strengths AS strengths, key_risks AS risks, market_context"
 )
 
 _AI_MODEL = "claude-haiku-4-5-20251001"
@@ -1471,11 +1472,11 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO deal_ai_summaries
-                    (deal_id, model_used, generated_at, summary_text, strengths, risks, market_context)
+                    (deal_id, model_used, generated_at, summary_text, key_strengths, key_risks, market_context)
                 VALUES ($1, $2, now(), $3, $4, $5, $6)
                 ON CONFLICT (deal_id) DO UPDATE SET
                     model_used = $2, generated_at = now(), summary_text = $3,
-                    strengths = $4, risks = $5, market_context = $6
+                    key_strengths = $4, key_risks = $5, market_context = $6
                 RETURNING {AI_SUMMARY_SELECT}
                 """,
                 deal_id,
