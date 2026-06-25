@@ -1,0 +1,24 @@
+/* 2nd Act Capital — design tokens */
+:root{
+  --2a-navy:#1B2B4B;
+  --2a-gold:#C5A880;
+  --2a-gold-light:#E8D5A3;
+  --2a-bg:#FAF9F6;
+  --2a-text:#0F172A;
+  --2a-nav-rest:#9AA6BF;   /* nav icon on navy, resting */
+  --2a-font-display:'Spectral',Georgia,serif;
+  --2a-font-body:'Hanken Grotesk',system-ui,-apple-system,sans-serif;
+  --2a-text-base:17px;
+}
+/* Fonts: add to <head>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+*/
+body{font-family:var(--2a-font-body);font-size:var(--2a-text-base);color:var(--2a-text);background:var(--2a-bg);}
+
+/* Wordmark lockup (live text — preferred over SVG for crispness) */
+.wordmark{display:inline-flex;flex-direction:column;align-items:center;line-height:1;}
+.wordmark__name{font-family:var(--2a-font-display);font-weight:400;font-size:46px;color:var(--2a-navy);}
+.wordmark__name sup{font-size:.62em;vertical-align:.4em;}
+.wordmark__desc{font-family:var(--2a-font-body);font-weight:600;font-size:16px;letter-spacing:.52em;text-transform:uppercase;color:var(--2a-gold);padding-left:.52em;margin-top:6px;}
+/* on navy: set --name cream, --desc gold-light */
