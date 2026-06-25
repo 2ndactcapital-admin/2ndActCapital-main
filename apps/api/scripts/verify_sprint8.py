@@ -144,16 +144,16 @@ async def run():
             # Test 4: bi-temporal update — close old row, insert new
             # -----------------------------------------------------------------
             await conn.execute(
-                "UPDATE member_target_allocations SET valid_to = $1 "
-                "WHERE entity_id = $2 AND taxonomy_key = $3 AND valid_to IS NULL",
-                today, child_id, taxonomy_key_mc,
+                "UPDATE member_target_allocations SET valid_to = NOW() "
+                "WHERE entity_id = $1 AND taxonomy_key = $2 AND valid_to IS NULL",
+                child_id, taxonomy_key_mc,
             )
             await conn.execute(
                 "INSERT INTO member_target_allocations "
                 "(org_id, entity_id, taxonomy_key, taxonomy_level, target_pct, valid_from) "
-                "VALUES ($1, $2, $3, $4, $5, $6)",
+                "VALUES ($1, $2, $3, $4, $5, NOW())",
                 DEFAULT_ORG_ID, child_id, taxonomy_key_mc,
-                taxonomy_level_for(taxonomy_key_mc), 25.0, today,
+                taxonomy_level_for(taxonomy_key_mc), 25.0,
             )
             active = await conn.fetchrow(
                 "SELECT target_pct FROM member_target_allocations "
