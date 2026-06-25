@@ -102,6 +102,30 @@ this to confirm actual column names:
 Use asyncpg with statement_cache_size=0.
 Fix code to match schema — never guess.
 
+## Schema Notes
+
+### member_target_allocations — Partial Unique Index
+The uniqueness constraint on (entity_id, taxonomy_key)
+is a PARTIAL unique index covering only active rows:
+
+  CREATE UNIQUE INDEX
+    member_target_allocations_active_unique
+  ON member_target_allocations (entity_id, taxonomy_key)
+  WHERE valid_to IS NULL;
+
+This replaced the earlier full constraint:
+  member_target_allocations_entity_taxonomy_unique
+
+The partial index allows unlimited historical rows with
+the same (entity_id, taxonomy_key) — only one active
+row (valid_to IS NULL) per pair is enforced.
+Migration: Sprint 8 (applied 2026-06-25).
+
+### entity_type enum
+The Postgres entity_type enum was extended with:
+  ALTER TYPE entity_type ADD VALUE IF NOT EXISTS 'household';
+Migration: Sprint 8 (applied 2026-06-25).
+
 ## Reference Data
 See docs/reference.md for:
 - Seed entity UUIDs
