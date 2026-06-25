@@ -13,13 +13,12 @@ import AISummaryCard from "@/components/marketplace/AISummaryCard";
 import {
   getDeal,
   getConfig,
-  listEntities,
+  listInvestorEntities,
   getComplianceRequests,
   getAISummary,
   getMemberInvestments,
 } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
-import { isInvestorEntity } from "@/lib/entityTypes";
 import {
   formatCurrency,
   formatPercent,
@@ -73,7 +72,7 @@ export default async function DealDetailPage({ params, searchParams }) {
     documentStatusesRes,
   ] = await Promise.allSettled([
     staff ? getConfig("deal_scoring") : Promise.resolve([]),
-    listEntities({ limit: 200 }),
+    listInvestorEntities(),
     staff ? getComplianceRequests(id) : Promise.resolve([]),
     getAISummary(id),
     staff ? getMemberInvestments(id) : Promise.resolve([]),
@@ -84,11 +83,9 @@ export default async function DealDetailPage({ params, searchParams }) {
 
   const dimensions =
     dimensionsRes.status === "fulfilled" ? dimensionsRes.value || [] : [];
-  const allEntities =
+  // Server already filters to investor-capable entity types (org-scoped).
+  const entities =
     entitiesRes.status === "fulfilled" ? entitiesRes.value || [] : [];
-  // Only investor-capable vehicles belong in the IOI / compliance selectors —
-  // not sponsors, funds, foundations, or corporations.
-  const entities = allEntities.filter(isInvestorEntity);
   const complianceRequests =
     complianceRes.status === "fulfilled" ? complianceRes.value || [] : [];
   const aiSummary =

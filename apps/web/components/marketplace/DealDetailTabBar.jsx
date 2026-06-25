@@ -2,17 +2,19 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
+import { usePermissions } from "@/lib/usePermissions";
 
 export default function DealDetailTabBar({ staff = false }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab") || "overview";
+  const { can } = usePermissions();
 
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "documents", label: "Documents" },
-    ...(staff ? [{ id: "scoring", label: "Scoring" }] : []),
-    ...(staff ? [{ id: "pipeline", label: "Pipeline" }] : []),
+    ...(staff && can("score_deal") ? [{ id: "scoring", label: "Scoring" }] : []),
+    ...(staff && can("manage_deals") ? [{ id: "pipeline", label: "Pipeline" }] : []),
   ];
 
   return (

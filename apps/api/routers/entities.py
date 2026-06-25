@@ -59,6 +59,13 @@ ENTITY_COLUMNS = (
     "system_from, system_to, created_at, updated_at"
 )
 
+# Entity types that can hold an investment / indicate interest in a deal. Used by
+# the IOI and compliance-review selectors so members pick an investing vehicle
+# (not a sponsor, fund, or foundation). Mirrors the frontend INVESTOR_ENTITY_TYPES.
+INVESTOR_ENTITY_TYPES = (
+    "individual", "trust", "llc", "lp", "household", "family_office",
+)
+
 
 def get_org_id(request: Request) -> str:
     """Resolve the caller's org_id from JWT claims, or the default org."""
@@ -83,6 +90,7 @@ async def list_entities(
     type: EntityType | None = None,
     status: str | None = None,
     search: str | None = None,
+    investor_only: bool = False,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -93,6 +101,14 @@ async def list_entities(
     if type is not None:
         params.append(type.value)
         conditions.append(f"entity_type = ${len(params)}")
+    if investor_only:
+        # Return ALL org entities of investor-capable types so the IOI /
+        # compliance selectors populate. The entities table has no user_id, so
+        # this is org-scoped not user-scoped.
+        # TODO(sprint-future): scope to the caller's entities via
+        # relationship_manager_id or a users<->entities mapping once it exists.
+        params.append(list(INVESTOR_ENTITY_TYPES))
+        conditions.append(f"entity_type = ANY(${len(params)})")
     if status:
         params.append(status)
         conditions.append(f"status = ${len(params)}")

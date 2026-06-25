@@ -7,6 +7,7 @@ import {
   IconUser,
   IconLogout,
 } from "@tabler/icons-react";
+import NotificationBell from "@/components/NotificationBell";
 
 function initialsFrom(user) {
   const source = user?.name || user?.email || "";
@@ -38,6 +39,9 @@ export default function TopBar({ user }) {
         </span>
         <span className="wordmark__desc">Capital</span>
       </div>
+
+      <div className="flex items-center gap-2">
+        <NotificationBell />
 
       <div className="relative" ref={ref}>
         <button
@@ -97,6 +101,7 @@ export default function TopBar({ user }) {
             </div>
           </div>
         )}
+      </div>
       </div>
     </header>
   );

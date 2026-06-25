@@ -73,6 +73,12 @@ const ICONS = {
       <circle cx="8" cy="17" r="2.1" fill="var(--2a-navy)" />
     </>
   ),
+  notifications: (
+    <>
+      <path d="M6 9 a6 6 0 0 1 12 0 c0 5 1.5 6.5 2.5 7.5 H3.5 c1-1 2.5-2.5 2.5-7.5" />
+      <path d="M10 20 a2 2 0 0 0 4 0" />
+    </>
+  ),
 };
 
 export default function BrandNavIcon({ name, size = 20, className = "", style }) {

@@ -12,6 +12,7 @@ import {
   reviewDocumentAction,
 } from "@/lib/marketplaceActions";
 import { humanize, formatDate } from "@/lib/format";
+import { usePermissions } from "@/lib/usePermissions";
 
 const PROC_COLORS = {
   pending: "bg-border text-text-secondary",
@@ -136,6 +137,12 @@ export default function DocumentsList({
   canReview = false,
   documentStatuses = [],
 }) {
+  const { can } = usePermissions();
+  // Compose the server-supplied staff flag with the real RBAC permission.
+  const allowManageDocs = can("manage_documents");
+  const showUpload = canUpload && allowManageDocs;
+  const showReview = canReview && allowManageDocs;
+
   const [docs, setDocs] = useState(initial);
   const [uploading, setUploading] = useState(false);
   const formRef = useRef(null);
@@ -164,7 +171,7 @@ export default function DocumentsList({
     <section>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Documents</h2>
-        {canUpload && !uploading && (
+        {showUpload && !uploading && (
           <button
             type="button"
             onClick={() => setUploading(true)}
@@ -208,7 +215,7 @@ export default function DocumentsList({
                   {humanize(d.processing_status)}
                 </span>
               </div>
-              {canReview && (
+              {showReview && (
                 <DocReviewForm
                   dealId={dealId}
                   doc={d}

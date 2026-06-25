@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveScoreAction } from "@/lib/marketplaceActions";
 import ScoreBar from "@/components/marketplace/ScoreBar";
+import { usePermissions } from "@/lib/usePermissions";
 
 const INPUT =
   "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -96,7 +97,19 @@ function DimensionRow({ dealId, dimension, label, weight, existing, onSaved }) {
 
 export default function ScoringSection({ dealId, dimensions = [], scores = [], composite }) {
   const router = useRouter();
+  const { can } = usePermissions();
   const byDimension = Object.fromEntries(scores.map((s) => [s.dimension, s]));
+
+  if (!can("score_deal")) {
+    return (
+      <section>
+        <h2 className="text-base font-semibold text-navy">Scoring</h2>
+        <p className="mt-2 text-sm text-text-muted">
+          You do not have permission to score deals.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section>

@@ -46,20 +46,27 @@ support_staff > member > next_gen
 
 ## Verify Script Teardown Order
 Delete in this FK-safe order:
-  1. investment_stage_history
-  2. member_investments
-  3. deal_ai_summaries
-  4. deal_scores
-  5. deal_votes
-  6. deal_interest
-  7. compliance_override_requests
-  8. UPDATE deal_documents SET reviewed_by=NULL
-  9. deal_documents
-  10. deals
-  11. member_target_allocations
-  12. entity_ownership
-  13. entities
-  14. users (last)
+  1. notification_delivery_log
+     (or rely on ON DELETE CASCADE from notifications)
+  2. notification_recipients
+     (or rely on ON DELETE CASCADE from notifications)
+  3. notifications
+  4. user_notification_preferences
+  5. investment_stage_history
+  6. member_investments
+  7. deal_ai_summaries
+  8. deal_scores
+  9. deal_votes
+  10. deal_interest
+  11. compliance_override_requests
+  12. UPDATE deal_documents SET reviewed_by=NULL
+  13. deal_documents
+  14. deals
+  15. member_target_allocations
+  16. entity_ownership
+  17. entities
+  18. user_roles (test-assigned)
+  19. users (last)
 
 ## Sprint History
 - Sprint 0: Infrastructure
@@ -72,6 +79,7 @@ Delete in this FK-safe order:
 - Sprint 6b: UX fixes
 - Sprint 7: Document workflow + AI + deal stages
 - Sprint 8: Asset class visualizations
+- Sprint 9: Notification bus + RBAC wiring
 
 ## Config Table Categories
 asset_taxonomy    → taxonomy tree (SC/MC/Sub)

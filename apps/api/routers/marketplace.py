@@ -55,7 +55,10 @@ from services.audit import write_audit_log
 from services.database import get_pool
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id, is_staff, require_permission
+from services.notifications import notification_bus
+from services.rbac import get_users_by_role
 from services.storage import upload_bytes
+from services.users import ensure_user
 
 router = APIRouter(tags=["marketplace"])
 
@@ -152,6 +155,98 @@ async def _resolve_user_names(conn, ids) -> dict:
         except Exception:
             continue
     return {}
+
+
+async def _ensure_member_investment(conn, org_id, deal_id, user_id) -> None:
+    """Place a member at the first investment stage (best-effort).
+
+    SELECT-guarded INSERT — does not rely on a (deal_id, user_id) unique
+    constraint — and isolated in a savepoint so a failure never aborts the
+    caller's work.
+    """
+    try:
+        existing = await conn.fetchval(
+            "SELECT 1 FROM member_investments WHERE deal_id = $1 AND user_id = $2",
+            deal_id, user_id,
+        )
+        if existing:
+            return
+        first_stage = await conn.fetchval(
+            """
+            SELECT config_key FROM config
+            WHERE org_id = $1 AND category = 'investment_stages'
+            ORDER BY display_order NULLS LAST, config_key LIMIT 1
+            """,
+            org_id,
+        )
+        if first_stage:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO member_investments
+                        (org_id, deal_id, user_id, investment_stage)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    org_id, deal_id, user_id, first_stage,
+                )
+    except Exception as exc:
+        print(f"_ensure_member_investment failed: {exc}")
+
+
+async def _safe_notify_users(
+    pool, org_id, user_ids, *, event_type, title, body,
+    resource_type=None, resource_id=None, created_by=None,
+) -> None:
+    """Publish a notification to explicit users. Never raises."""
+    try:
+        await notification_bus.publish(
+            pool, org_id, event_type, title, body, list(user_ids),
+            resource_type=resource_type, resource_id=resource_id,
+            created_by=created_by,
+        )
+    except Exception as exc:
+        print(f"notify users failed ({event_type}): {exc}")
+
+
+async def _safe_notify_roles(
+    pool, org_id, roles, *, event_type, title, body,
+    resource_type=None, resource_id=None, created_by=None,
+) -> None:
+    """Publish a notification to everyone holding any of the given roles."""
+    try:
+        recipients: list[str] = []
+        for role_name in roles:
+            recipients.extend(await get_users_by_role(pool, org_id, role_name))
+        await _safe_notify_users(
+            pool, org_id, recipients, event_type=event_type, title=title,
+            body=body, resource_type=resource_type, resource_id=resource_id,
+            created_by=created_by,
+        )
+    except Exception as exc:
+        print(f"notify roles failed ({event_type}): {exc}")
+
+
+async def _deal_interest_user_ids(conn, org_id, deal_id) -> list[str]:
+    rows = await conn.fetch(
+        "SELECT DISTINCT user_id FROM deal_interest "
+        "WHERE deal_id = $1 AND org_id = $2 AND user_id IS NOT NULL",
+        deal_id, org_id,
+    )
+    return [str(r["user_id"]) for r in rows]
+
+
+async def _doc_uploader_id(conn, doc_id) -> str | None:
+    """Best-effort lookup of who uploaded a document (schema varies)."""
+    for col in ("uploaded_by", "created_by", "submitted_by", "user_id"):
+        try:
+            val = await conn.fetchval(
+                f"SELECT {col} FROM deal_documents WHERE id = $1", doc_id
+            )
+            if val:
+                return str(val)
+        except Exception:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -955,10 +1050,10 @@ async def _is_compliant(conn, org_id, entity_id) -> bool:
 async def indicate_interest(request: Request, deal_id: UUID, body: InterestRequest):
     require_permission(request, "vote_deal")
     org_id = get_org_id(request)
-    user_id = get_user_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
         async with conn.transaction():
             deal = await _fetch_deal(conn, org_id, deal_id)
             if deal is None:
@@ -1031,27 +1126,16 @@ async def indicate_interest(request: Request, deal_id: UUID, body: InterestReque
                 new=dict(row),
             )
             # Auto-create member_investment at the first configured stage.
-            try:
-                async with conn.transaction():
-                    first_stage = await conn.fetchval(
-                        """
-                        SELECT config_key FROM config
-                        WHERE org_id = $1 AND category = 'investment_stages'
-                        ORDER BY display_order NULLS LAST, config_key LIMIT 1
-                        """,
-                        org_id,
-                    )
-                    if first_stage:
-                        await conn.execute(
-                            """
-                            INSERT INTO member_investments (org_id, deal_id, user_id, investment_stage)
-                            VALUES ($1, $2, $3, $4)
-                            ON CONFLICT (deal_id, user_id) DO NOTHING
-                            """,
-                            org_id, deal_id, user_id, first_stage,
-                        )
-            except Exception:
-                pass
+            await _ensure_member_investment(conn, org_id, deal_id, user_id)
+
+    # Notify investment staff of the new interest indication.
+    await _safe_notify_roles(
+        pool, org_id, ["investment_staff"],
+        event_type="ioi_confirmed",
+        title="New Interest Indication",
+        body=f"A member indicated interest in {deal['name']}",
+        resource_type="deal", resource_id=deal_id, created_by=user_id,
+    )
     return InterestResponse(
         **{**dict(row), "amount_interest": _f(row["amount_interest"])}
     )
@@ -1234,55 +1318,73 @@ async def create_compliance_request(
 ):
     require_permission(request, "vote_deal")
     org_id = get_org_id(request)
-    user_id = get_user_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        # Resolve (and lazily create) the caller's users row so the user_id FK on
+        # compliance_override_requests is always satisfied. Live Auth0 users were
+        # never inserted into `users`, which made this endpoint 500 on the FK.
+        user_id = await ensure_user(conn, request)
+
         deal = await _fetch_deal(conn, org_id, deal_id)
         if deal is None:
             raise HTTPException(status_code=404, detail="Deal not found")
 
-        row = await conn.fetchrow(
-            f"""
-            INSERT INTO compliance_override_requests
-                (org_id, deal_id, user_id, entity_id, request_notes, status)
-            VALUES ($1, $2, $3, $4, $5, 'pending')
-            ON CONFLICT (deal_id, user_id)
-            DO UPDATE SET entity_id = $4, request_notes = $5,
-                          status = 'pending', updated_at = now()
-            RETURNING {COMPLIANCE_SELECT}
-            """,
-            org_id,
-            deal_id,
-            user_id,
-            body.entity_id,
-            body.request_notes,
-        )
+        # Validate the entity belongs to the org so a bad id returns 400, not a
+        # 500 from an FK violation.
+        if body.entity_id is not None:
+            valid_entity = await conn.fetchval(
+                """
+                SELECT 1 FROM entities
+                WHERE id = $1 AND org_id = $2
+                  AND valid_to IS NULL AND system_to IS NULL
+                """,
+                body.entity_id, org_id,
+            )
+            if not valid_entity:
+                raise HTTPException(status_code=400, detail="Unknown entity")
 
-        # Record the member's interest at the first investment stage so the
-        # action shows in their portfolio as "Pending Compliance Review" rather
-        # than silently disappearing. Best-effort: never block the request.
-        try:
-            async with conn.transaction():
-                first_stage = await conn.fetchval(
-                    """
-                    SELECT config_key FROM config
-                    WHERE org_id = $1 AND category = 'investment_stages'
-                    ORDER BY display_order NULLS LAST, config_key LIMIT 1
-                    """,
-                    org_id,
-                )
-                if first_stage:
-                    await conn.execute(
-                        """
-                        INSERT INTO member_investments (org_id, deal_id, user_id, investment_stage)
-                        VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (deal_id, user_id) DO NOTHING
-                        """,
-                        org_id, deal_id, user_id, first_stage,
-                    )
-        except Exception:
-            pass
+        # Upsert via SELECT-then-write (the codebase's standard pattern) so the
+        # request does not depend on a specific ON CONFLICT unique constraint.
+        existing = await conn.fetchrow(
+            "SELECT id FROM compliance_override_requests "
+            "WHERE deal_id = $1 AND user_id = $2",
+            deal_id, user_id,
+        )
+        if existing:
+            row = await conn.fetchrow(
+                f"""
+                UPDATE compliance_override_requests
+                SET entity_id = $2, request_notes = $3,
+                    status = 'pending', updated_at = now()
+                WHERE id = $1
+                RETURNING {COMPLIANCE_SELECT}
+                """,
+                existing["id"], body.entity_id, body.request_notes,
+            )
+        else:
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO compliance_override_requests
+                    (org_id, deal_id, user_id, entity_id, request_notes, status)
+                VALUES ($1, $2, $3, $4, $5, 'pending')
+                RETURNING {COMPLIANCE_SELECT}
+                """,
+                org_id, deal_id, user_id, body.entity_id, body.request_notes,
+            )
+
+        # Surface the action in the member's portfolio as "Pending Compliance
+        # Review" (best-effort).
+        await _ensure_member_investment(conn, org_id, deal_id, user_id)
+
+    # Notify reviewers (investment_staff + senior compliance).
+    await _safe_notify_roles(
+        pool, org_id, ["investment_staff", "compliance_sr"],
+        event_type="compliance_override_requested",
+        title="Compliance Review Requested",
+        body=f"A member requested compliance review for {deal['name']}",
+        resource_type="deal", resource_id=deal_id, created_by=user_id,
+    )
     return ComplianceReviewResponse(**dict(row))
 
 
@@ -1390,6 +1492,31 @@ async def update_compliance_request(
                         "via_review_request": str(req_id),
                     },
                 )
+
+        deal_name = await conn.fetchval(
+            "SELECT name FROM deals WHERE id = $1 AND org_id = $2 "
+            "AND valid_to IS NULL AND system_to IS NULL",
+            deal_id, org_id,
+        ) or "this deal"
+
+    # Notify the requesting member of the decision.
+    if body.status == "approved":
+        await _safe_notify_users(
+            pool, org_id, [str(row["user_id"])],
+            event_type="compliance_override_approved",
+            title="Compliance Review Approved",
+            body=f"Your request for {deal_name} has been approved",
+            resource_type="deal", resource_id=deal_id, created_by=reviewer_id,
+        )
+    else:
+        note = f" {body.review_notes}" if body.review_notes else ""
+        await _safe_notify_users(
+            pool, org_id, [str(row["user_id"])],
+            event_type="compliance_override_denied",
+            title="Compliance Review Not Approved",
+            body=f"Your request for {deal_name} was not approved.{note}",
+            resource_type="deal", resource_id=deal_id, created_by=reviewer_id,
+        )
     return ComplianceReviewResponse(**dict(row))
 
 
@@ -1439,6 +1566,28 @@ async def review_document(
                 table_name="deal_documents",
                 record_id=doc_id,
                 new=dict(row),
+            )
+        uploader_id = await _doc_uploader_id(conn, doc_id)
+
+    # Notify the document's uploader of the review outcome (best-effort).
+    if uploader_id:
+        file_name = row["file_name"]
+        if body.status == "approved":
+            await _safe_notify_users(
+                pool, org_id, [uploader_id],
+                event_type="document_approved",
+                title="Document Approved",
+                body=f"{file_name} has been approved",
+                resource_type="deal", resource_id=deal_id, created_by=reviewer_id,
+            )
+        else:
+            note = f" {body.review_notes}" if body.review_notes else ""
+            await _safe_notify_users(
+                pool, org_id, [uploader_id],
+                event_type="document_rejected",
+                title="Document Rejected",
+                body=f"{file_name} was not approved.{note}",
+                resource_type="deal", resource_id=deal_id, created_by=reviewer_id,
             )
     return DealDocumentResponse(
         **{**dict(row), "extracted_data": _parse_json(row["extracted_data"])}
@@ -1591,6 +1740,15 @@ async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpda
         if not valid:
             raise HTTPException(status_code=400, detail=f"Unknown deal stage: {body.stage}")
 
+        stage_label = await conn.fetchval(
+            """
+            SELECT config_value FROM config
+            WHERE org_id = $1 AND category = 'deal_stages' AND config_key = $2
+            LIMIT 1
+            """,
+            org_id, body.stage,
+        ) or body.stage
+
         async with conn.transaction():
             current = await _fetch_deal(conn, org_id, deal_id)
             if current is None:
@@ -1614,6 +1772,17 @@ async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpda
                 old={"deal_stage": current.get("deal_stage")},
                 new={"deal_stage": body.stage},
             )
+        interested = await _deal_interest_user_ids(conn, org_id, deal_id)
+
+    # Notify everyone who has indicated interest of the stage change.
+    await _safe_notify_users(
+        pool, org_id, interested,
+        event_type="deal_stage_changed",
+        title=f"{updated['name']} Stage Update",
+        body=f"Deal advanced to {stage_label}",
+        resource_type="deal", resource_id=deal_id,
+        created_by=get_user_id(request),
+    )
     return _deal_response(updated)
 
 

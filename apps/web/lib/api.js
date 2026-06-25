@@ -83,6 +83,11 @@ export async function uploadAPI(path, formData) {
 // --- Entities (CRM) ---
 export const listEntities = (searchParams) =>
   fetchAPI("/api/v1/entities", { searchParams });
+// Investor-capable entities for the IOI / compliance selectors (org-scoped).
+export const listInvestorEntities = () =>
+  fetchAPI("/api/v1/entities", {
+    searchParams: { investor_only: "true", limit: 200 },
+  });
 export const getEntity = (id) => fetchAPI(`/api/v1/entities/${id}`);
 export const getOwnershipGraph = (id) =>
   fetchAPI(`/api/v1/entities/${id}/ownership-graph`);
@@ -206,3 +211,26 @@ export const getEntityAllocations = (entityId) =>
 // --- Deal taxonomy placement (Sprint 8) ---
 export const getDealTaxonomyPlacement = (dealId) =>
   fetchAPI(`/api/v1/deals/${dealId}/taxonomy-placement`);
+
+// --- Current user (Sprint 9) ---
+export const getMe = () => fetchAPI("/api/v1/users/me");
+
+// --- Notifications (Sprint 9) ---
+export const getNotifications = (searchParams) =>
+  fetchAPI("/api/v1/notifications", { searchParams });
+export const getNotificationCount = () =>
+  fetchAPI("/api/v1/notifications/count");
+export const markNotificationRead = (id) =>
+  fetchAPI(`/api/v1/notifications/${id}/read`, { method: "PUT" });
+export const markAllNotificationsRead = () =>
+  fetchAPI("/api/v1/notifications/read-all", { method: "PUT" });
+
+// --- Admin: user / role management (Sprint 9) ---
+export const getAdminUsers = (searchParams) =>
+  fetchAPI("/api/v1/admin/users", { searchParams });
+export const getAdminRoles = () => fetchAPI("/api/v1/admin/roles");
+export const assignUserRole = (userId, roleId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/role`, {
+    method: "PUT",
+    body: { role_id: roleId },
+  });

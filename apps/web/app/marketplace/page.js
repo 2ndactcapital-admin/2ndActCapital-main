@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import DealsTable from "@/components/marketplace/DealsTable";
 import MarketplaceFilters from "@/components/marketplace/MarketplaceFilters";
 import StageBar from "@/components/marketplace/StageBar";
+import NewDealButton from "@/components/marketplace/NewDealButton";
 import { listDeals, getTaxonomy, getConfig, getStageSummary } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 
@@ -60,14 +61,7 @@ export default async function MarketplacePage({ searchParams }) {
             Member investment opportunities
           </p>
         </div>
-        {staff && (
-          <a
-            href="/marketplace/new"
-            className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app transition-opacity hover:opacity-90"
-          >
-            New Deal
-          </a>
-        )}
+        {staff && <NewDealButton />}
       </div>
 
       {stageSummary.length > 0 && (
