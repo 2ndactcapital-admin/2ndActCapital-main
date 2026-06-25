@@ -28,6 +28,17 @@ DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
 TEST_PREFIX = "sprint8_verify"
 
 
+def taxonomy_level_for(taxonomy_key: str) -> str:
+    """Derive taxonomy_level from a taxonomy_key prefix."""
+    if taxonomy_key.startswith("taxonomy_sc_"):
+        return "super_class"
+    if taxonomy_key.startswith("taxonomy_mc_"):
+        return "major_class"
+    if taxonomy_key.startswith("taxonomy_sub_"):
+        return "sub_category"
+    raise ValueError(f"unrecognized taxonomy_key prefix: {taxonomy_key}")
+
+
 async def run():
     if not DATABASE_URL:
         print("SKIP: DATABASE_URL not set")
@@ -99,9 +110,10 @@ async def run():
 
             await conn.execute(
                 "INSERT INTO member_target_allocations "
-                "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
-                "VALUES ($1, $2, $3, $4, $5)",
-                DEFAULT_ORG_ID, parent_id, taxonomy_key_sc, 30.0, today,
+                "(org_id, entity_id, taxonomy_key, taxonomy_level, target_pct, valid_from) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                DEFAULT_ORG_ID, parent_id, taxonomy_key_sc,
+                taxonomy_level_for(taxonomy_key_sc), 30.0, today,
             )
             print("OK  inserted parent target (super_class, 30%)")
 
@@ -121,9 +133,10 @@ async def run():
             # -----------------------------------------------------------------
             await conn.execute(
                 "INSERT INTO member_target_allocations "
-                "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
-                "VALUES ($1, $2, $3, $4, $5)",
-                DEFAULT_ORG_ID, child_id, taxonomy_key_mc, 20.0, today,
+                "(org_id, entity_id, taxonomy_key, taxonomy_level, target_pct, valid_from) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                DEFAULT_ORG_ID, child_id, taxonomy_key_mc,
+                taxonomy_level_for(taxonomy_key_mc), 20.0, today,
             )
             print("OK  inserted child direct target (major_class, 20%)")
 
@@ -137,9 +150,10 @@ async def run():
             )
             await conn.execute(
                 "INSERT INTO member_target_allocations "
-                "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
-                "VALUES ($1, $2, $3, $4, $5)",
-                DEFAULT_ORG_ID, child_id, taxonomy_key_mc, 25.0, today,
+                "(org_id, entity_id, taxonomy_key, taxonomy_level, target_pct, valid_from) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                DEFAULT_ORG_ID, child_id, taxonomy_key_mc,
+                taxonomy_level_for(taxonomy_key_mc), 25.0, today,
             )
             active = await conn.fetchrow(
                 "SELECT target_pct FROM member_target_allocations "
@@ -178,9 +192,10 @@ async def run():
             try:
                 await conn.execute(
                     "INSERT INTO member_target_allocations "
-                    "(org_id, entity_id, taxonomy_key, target_pct, valid_from) "
-                    "VALUES ($1, $2, $3, 10.0, $4)",
-                    DEFAULT_ORG_ID, parent_id, taxonomy_key_sc, today,
+                    "(org_id, entity_id, taxonomy_key, taxonomy_level, target_pct, valid_from) "
+                    "VALUES ($1, $2, $3, $4, 10.0, $5)",
+                    DEFAULT_ORG_ID, parent_id, taxonomy_key_sc,
+                    taxonomy_level_for(taxonomy_key_sc), today,
                 )
                 errors.append("FAIL UNIQUE constraint should have rejected duplicate (entity_id, taxonomy_key, valid_to IS NULL)")
             except asyncpg.exceptions.UniqueViolationError:
