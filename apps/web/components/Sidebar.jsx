@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard", Icon: IconLayoutDashboard },
   { label: "CRM", href: "/crm", Icon: IconAddressBook },
   { label: "Marketplace", href: "/marketplace", Icon: IconBuildingStore },
-  { label: "Portfolio", href: "/portfolio", Icon: IconChartPie },
+  { label: "Investments", href: "/portfolio", Icon: IconChartPie },
   { label: "Allocations", href: "/portfolio?tab=allocation", Icon: IconChartTreemap },
   {
     label: "Portfolio Reporting",

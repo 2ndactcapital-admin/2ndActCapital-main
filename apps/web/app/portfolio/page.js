@@ -135,14 +135,25 @@ export default async function PortfolioPage({ searchParams }) {
                               <StatusBadge status={inv.deal_status} />
                             )}
                           </div>
+                          <div className="mt-2">
+                            {inv.compliance_pending ? (
+                              <span className="inline-flex items-center rounded-full bg-[#FEF9C3] px-2.5 py-0.5 text-xs font-medium text-[#854D0E]">
+                                Pending Compliance Review
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-gold-light px-2.5 py-0.5 text-xs font-medium text-navy">
+                                {stageLabel}
+                              </span>
+                            )}
+                          </div>
                           {inv.invested_amount != null && (
                             <p className="mt-2 text-sm text-text-secondary tabular-nums">
                               {formatCurrency(inv.invested_amount)}
                             </p>
                           )}
-                          {inv.updated_at && (
+                          {inv.created_at && (
                             <p className="mt-1 text-xs text-text-muted">
-                              Updated {formatDate(inv.updated_at)}
+                              Submitted {formatDate(inv.created_at)}
                             </p>
                           )}
                         </a>

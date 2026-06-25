@@ -4,12 +4,21 @@ import { useState, useTransition } from "react";
 import { IconChevronUp, IconChevronDown } from "@tabler/icons-react";
 
 async function castVote(dealId, vote) {
-  const res = await fetch("/api/marketplace/vote", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dealId, vote }),
-  });
-  return res.json();
+  try {
+    const res = await fetch("/api/marketplace/vote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId, vote }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("[VoteButtons] vote failed", res.status, data);
+    }
+    return data;
+  } catch (error) {
+    console.error("[VoteButtons] request threw:", error?.message || error);
+    return { ok: false, error: error?.message };
+  }
 }
 
 export default function VoteButtons({

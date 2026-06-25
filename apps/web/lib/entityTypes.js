@@ -19,6 +19,22 @@ export const ENTITY_TYPES = [
   { value: "other", label: "Other" },
 ];
 
+// Entity types that can hold an investment / indicate interest in a deal.
+// Used to filter the entity selector in the IOI and compliance-review modals so
+// members only pick from their own investing vehicles (not sponsors, funds, etc).
+export const INVESTOR_ENTITY_TYPES = [
+  "individual",
+  "trust",
+  "llc",
+  "lp",
+  "household",
+  "family_office",
+];
+
+export function isInvestorEntity(entity) {
+  return INVESTOR_ENTITY_TYPES.includes(entity?.entity_type);
+}
+
 // Tabs shown on the CRM list (per spec — excludes "other").
 export const FILTER_TABS = [
   { value: "", label: "All" },

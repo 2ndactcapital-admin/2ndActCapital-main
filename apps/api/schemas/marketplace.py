@@ -297,6 +297,9 @@ class PortfolioInvestmentResponse(BaseModel):
     stage: str | None = None
     notes: str | None = None
     invested_amount: float | None = None
+    # True when the member has indicated interest but compliance review is still
+    # pending (no approved override yet) — surfaced as "Pending Compliance Review".
+    compliance_pending: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

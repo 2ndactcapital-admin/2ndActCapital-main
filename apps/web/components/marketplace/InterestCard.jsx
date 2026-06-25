@@ -1,17 +1,25 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { IconCheck } from "@tabler/icons-react";
 import VoteButtons from "@/components/marketplace/VoteButtons";
+import { formatCurrency } from "@/lib/format";
 import {
   indicateInterestAction,
-  overrideComplianceAction,
   requestComplianceReviewAction,
 } from "@/lib/marketplaceActions";
 
 const INPUT =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 const LABEL = "block text-xs font-medium uppercase tracking-wide text-text-muted";
+
+// Parse a user-typed amount ("$500,000" / "500000") into a finite number or null.
+function parseAmount(value) {
+  const cleaned = (value ?? "").toString().replace(/[$,\s]/g, "");
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
 
 function ScoreDisplay({ composite, scores = [] }) {
   if (composite == null) {
@@ -72,6 +80,33 @@ function ScoreDisplay({ composite, scores = [] }) {
   );
 }
 
+// Entity <select> shared by both modals. Renders a guidance message when the
+// member has no investor-capable entities to choose from.
+function EntitySelect({ entities, required = false }) {
+  if (entities.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-bg-app p-3 text-xs text-text-muted">
+        No entities found — contact your advisor to set up your profile.
+      </div>
+    );
+  }
+  return (
+    <select
+      name="entity_id"
+      className={INPUT}
+      defaultValue=""
+      required={required}
+    >
+      <option value="">Select an entity…</option>
+      {entities.map((e) => (
+        <option key={e.id} value={e.id}>
+          {e.display_name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export default function InterestCard({
   dealId,
   composite,
@@ -81,27 +116,37 @@ export default function InterestCard({
   userVote,
   alreadyInterested = false,
   entities = [],
-  staff = false,
+  minimumInvestment = null,
 }) {
   const [interested, setInterested] = useState(alreadyInterested);
   const [blocked, setBlocked] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [showOverride, setShowOverride] = useState(false);
   const [showReviewRequest, setShowReviewRequest] = useState(false);
   const [reviewRequested, setReviewRequested] = useState(false);
 
+  // Controlled amount field (required, currency-masked, min-validated).
+  const [amount, setAmount] = useState("");
+  const [amountTouched, setAmountTouched] = useState(false);
+
   const [state, formAction, pending] = useActionState(
     indicateInterestAction.bind(null, dealId),
-    {},
-  );
-  const [ovState, ovAction, ovPending] = useActionState(
-    overrideComplianceAction.bind(null, dealId),
     {},
   );
   const [rvState, rvAction, rvPending] = useActionState(
     requestComplianceReviewAction.bind(null, dealId),
     {},
   );
+
+  const min = Number(minimumInvestment) || 0;
+  const amountNumber = parseAmount(amount);
+  const amountError = useMemo(() => {
+    if (amountNumber == null) return "Amount is required";
+    if (min > 0 && amountNumber < min)
+      return `Amount must be at least ${formatCurrency(min)}`;
+    return null;
+  }, [amountNumber, min]);
+
+  const hasEntities = entities.length > 0;
 
   useEffect(() => {
     if (state?.ok) {
@@ -115,15 +160,23 @@ export default function InterestCard({
   }, [state]);
 
   useEffect(() => {
-    if (ovState?.ok) setShowOverride(false);
-  }, [ovState]);
-
-  useEffect(() => {
     if (rvState?.ok) {
       setShowReviewRequest(false);
       setReviewRequested(true);
     }
   }, [rvState]);
+
+  function handleAmountBlur() {
+    setAmountTouched(true);
+    const n = parseAmount(amount);
+    if (n != null) setAmount(formatCurrency(n));
+  }
+
+  function openModal() {
+    setAmount("");
+    setAmountTouched(false);
+    setShowModal(true);
+  }
 
   return (
     <div className="rounded-lg border border-border border-t-4 border-t-gold bg-bg-card p-5">
@@ -174,20 +227,10 @@ export default function InterestCard({
       ) : (
         <button
           type="button"
-          onClick={() => setShowModal(true)}
+          onClick={openModal}
           className="w-full rounded-md bg-navy px-4 py-2.5 text-sm font-medium text-bg-app transition-opacity hover:opacity-90"
         >
           Indicate Interest
-        </button>
-      )}
-
-      {staff && (
-        <button
-          type="button"
-          onClick={() => setShowOverride(true)}
-          className="mt-3 w-full text-center text-xs font-medium text-text-muted hover:text-navy hover:underline"
-        >
-          Override compliance
         </button>
       )}
 
@@ -197,18 +240,31 @@ export default function InterestCard({
           <form action={formAction} className="space-y-3">
             <div>
               <label className={LABEL}>Entity</label>
-              <select name="entity_id" className={INPUT} defaultValue="">
-                <option value="">Select an entity…</option>
-                {entities.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.display_name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <EntitySelect entities={entities} required />
+              </div>
             </div>
             <div>
-              <label className={LABEL}>Amount of interest (optional)</label>
-              <input name="amount_interest" placeholder="$" className={INPUT} />
+              <label className={LABEL}>Amount of interest</label>
+              <input
+                name="amount_interest"
+                inputMode="numeric"
+                placeholder="$"
+                className={INPUT}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                onBlur={handleAmountBlur}
+                required
+                aria-invalid={amountTouched && amountError ? "true" : undefined}
+              />
+              {min > 0 && (
+                <p className="mt-1 text-xs text-text-muted">
+                  Minimum investment: {formatCurrency(min)}
+                </p>
+              )}
+              {amountTouched && amountError && (
+                <p className="mt-1 text-xs text-[#9B2335]">{amountError}</p>
+              )}
             </div>
             <div>
               <label className={LABEL}>Notes (optional)</label>
@@ -220,7 +276,8 @@ export default function InterestCard({
             <div className="flex gap-2 pt-1">
               <button
                 type="submit"
-                disabled={pending}
+                disabled={pending || !hasEntities || !!amountError}
+                onClick={() => setAmountTouched(true)}
                 className="flex-1 rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60"
               >
                 {pending ? "Submitting…" : "Submit"}
@@ -247,14 +304,9 @@ export default function InterestCard({
             </p>
             <div>
               <label className={LABEL}>Entity (optional)</label>
-              <select name="entity_id" className={INPUT} defaultValue="">
-                <option value="">Select an entity…</option>
-                {entities.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.display_name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <EntitySelect entities={entities} />
+              </div>
             </div>
             <div>
               <label className={LABEL}>Notes (optional)</label>
@@ -277,43 +329,6 @@ export default function InterestCard({
               <button
                 type="button"
                 onClick={() => setShowReviewRequest(false)}
-                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {/* Override modal */}
-      {showOverride && (
-        <Modal title="Override compliance" onClose={() => setShowOverride(false)}>
-          <form action={ovAction} className="space-y-3">
-            <p className="text-xs text-text-muted">
-              Grant this member the ability to indicate interest despite an
-              incomplete compliance record. This action is audit-logged.
-            </p>
-            <div>
-              <label className={LABEL}>User ID</label>
-              <input name="user_id" placeholder="UUID" className={INPUT} />
-            </div>
-            <div>
-              <label className={LABEL}>Notes</label>
-              <textarea name="notes" rows={2} className={INPUT} />
-            </div>
-            {ovState?.error && <p className="text-sm text-[#9B2335]">{ovState.error}</p>}
-            <div className="flex gap-2 pt-1">
-              <button
-                type="submit"
-                disabled={ovPending}
-                className="flex-1 rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60"
-              >
-                {ovPending ? "Saving…" : "Grant override"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowOverride(false)}
                 className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border"
               >
                 Cancel

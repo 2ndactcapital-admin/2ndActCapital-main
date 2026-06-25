@@ -19,6 +19,7 @@ import {
   getMemberInvestments,
 } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
+import { isInvestorEntity } from "@/lib/entityTypes";
 import {
   formatCurrency,
   formatPercent,
@@ -83,8 +84,11 @@ export default async function DealDetailPage({ params, searchParams }) {
 
   const dimensions =
     dimensionsRes.status === "fulfilled" ? dimensionsRes.value || [] : [];
-  const entities =
+  const allEntities =
     entitiesRes.status === "fulfilled" ? entitiesRes.value || [] : [];
+  // Only investor-capable vehicles belong in the IOI / compliance selectors —
+  // not sponsors, funds, foundations, or corporations.
+  const entities = allEntities.filter(isInvestorEntity);
   const complianceRequests =
     complianceRes.status === "fulfilled" ? complianceRes.value || [] : [];
   const aiSummary =
@@ -286,7 +290,7 @@ export default async function DealDetailPage({ params, searchParams }) {
             userVote={deal.user_vote}
             alreadyInterested={deal.has_indicated_interest}
             entities={entities}
-            staff={staff}
+            minimumInvestment={deal.minimum_investment}
           />
 
           <div className="rounded-lg border border-border bg-bg-card p-5">

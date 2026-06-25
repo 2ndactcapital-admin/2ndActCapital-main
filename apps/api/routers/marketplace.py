@@ -1258,6 +1258,31 @@ async def create_compliance_request(
             body.entity_id,
             body.request_notes,
         )
+
+        # Record the member's interest at the first investment stage so the
+        # action shows in their portfolio as "Pending Compliance Review" rather
+        # than silently disappearing. Best-effort: never block the request.
+        try:
+            async with conn.transaction():
+                first_stage = await conn.fetchval(
+                    """
+                    SELECT config_key FROM config
+                    WHERE org_id = $1 AND category = 'investment_stages'
+                    ORDER BY display_order NULLS LAST, config_key LIMIT 1
+                    """,
+                    org_id,
+                )
+                if first_stage:
+                    await conn.execute(
+                        """
+                        INSERT INTO member_investments (org_id, deal_id, user_id, investment_stage)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (deal_id, user_id) DO NOTHING
+                        """,
+                        org_id, deal_id, user_id, first_stage,
+                    )
+        except Exception:
+            pass
     return ComplianceReviewResponse(**dict(row))
 
 

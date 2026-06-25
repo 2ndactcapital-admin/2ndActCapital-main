@@ -137,7 +137,22 @@ async def get_my_investments(request: Request):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT {_PORTFOLIO_SELECT}
+            SELECT {_PORTFOLIO_SELECT},
+                   (
+                     EXISTS (
+                       SELECT 1 FROM compliance_override_requests cor
+                       WHERE cor.deal_id = mi.deal_id
+                         AND cor.user_id = mi.user_id
+                         AND cor.org_id = mi.org_id
+                         AND cor.status = 'pending'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM deal_interest di
+                       WHERE di.deal_id = mi.deal_id
+                         AND di.user_id = mi.user_id
+                         AND di.compliance_override = true
+                     )
+                   ) AS compliance_pending
             FROM member_investments mi
             LEFT JOIN deals d
                 ON d.id = mi.deal_id
