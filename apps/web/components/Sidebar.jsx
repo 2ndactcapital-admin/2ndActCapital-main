@@ -2,63 +2,54 @@
 
 import { useState } from "react";
 import { usePathname } from "next/navigation";
-import {
-  IconLayoutDashboard,
-  IconAddressBook,
-  IconBuildingStore,
-  IconChartPie,
-  IconChartTreemap,
-  IconReportAnalytics,
-  IconFileInvoice,
-  IconUserCheck,
-  IconShieldCheck,
-  IconUsers,
-  IconSitemap,
-  IconSettings,
-} from "@tabler/icons-react";
+import BrandNavIcon from "./BrandNavIcon";
 
 const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard", Icon: IconLayoutDashboard },
-  { label: "CRM", href: "/crm", Icon: IconAddressBook },
-  { label: "Marketplace", href: "/marketplace", Icon: IconBuildingStore },
-  { label: "Investments", href: "/portfolio", Icon: IconChartPie },
-  { label: "Allocations", href: "/portfolio?tab=allocation", Icon: IconChartTreemap },
+  { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
+  { label: "Marketplace", href: "/marketplace", icon: "marketplace" },
+  { label: "Investments", href: "/portfolio", icon: "portfolio" },
   {
     label: "Portfolio Reporting",
     href: "/portfolio-reporting",
-    Icon: IconReportAnalytics,
+    icon: "portfolio-reporting",
   },
-  { label: "Taxonomy", href: "/taxonomy", Icon: IconSitemap },
-  { label: "SPV Manager", href: "/spv-manager", Icon: IconFileInvoice },
+  { label: "SPV Manager", href: "/spv-manager", icon: "spv-manager" },
   {
     label: "Investment Profile",
     href: "/investment-profile",
-    Icon: IconUserCheck,
+    icon: "investment-profile",
   },
-  { label: "Insurance", href: "/insurance", Icon: IconShieldCheck },
-  { label: "Community", href: "/community", Icon: IconUsers },
+  { label: "Insurance", href: "/insurance", icon: "insurance" },
+  { label: "Community", href: "/community", icon: "community" },
 ];
 
-const ADMIN_ITEM = { label: "Admin", href: "/admin", Icon: IconSettings };
+const ADMIN_ITEM = { label: "Admin", href: "/admin", icon: "admin" };
 
 function NavLink({ item, collapsed, active }) {
-  const { label, href, Icon } = item;
+  const { label, href, icon } = item;
   return (
     <a
       href={href}
       title={collapsed ? label : undefined}
       className={`flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
         collapsed ? "justify-center" : "gap-3"
-      } ${active ? "bg-navy" : "hover:bg-border"}`}
+      }`}
+      style={
+        active
+          ? { background: "rgba(232,213,163,0.12)" }
+          : undefined
+      }
     >
-      <Icon
+      <BrandNavIcon
+        name={icon}
         size={20}
-        stroke={1.75}
-        className={`shrink-0 ${active ? "text-gold" : "text-text-secondary"}`}
+        className="shrink-0"
+        style={{ color: active ? "var(--2a-gold-light)" : "#9AA6BF" }}
       />
       {!collapsed && (
         <span
-          className={`truncate ${active ? "text-bg-app" : "text-text-secondary"}`}
+          className="truncate"
+          style={{ color: active ? "#FAF9F6" : "#9AA6BF" }}
         >
           {label}
         </span>
@@ -76,9 +67,10 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`flex shrink-0 flex-col border-r-[0.5px] border-border bg-bg-sidebar transition-[width] duration-200 ${
+      className={`flex shrink-0 flex-col bg-navy transition-[width] duration-200 ${
         collapsed ? "w-[52px]" : "w-[220px]"
       }`}
+      style={{ borderRight: "0.5px solid rgba(255,255,255,0.08)" }}
     >
       <nav className="flex-1 space-y-1 p-2">
         {NAV_ITEMS.map((item) => (
@@ -92,7 +84,10 @@ export default function Sidebar() {
 
         {/* Admin section */}
         {!collapsed && (
-          <div className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+          <div
+            className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: "rgba(154,166,191,0.6)" }}
+          >
             Admin
           </div>
         )}
@@ -108,7 +103,12 @@ export default function Sidebar() {
         type="button"
         onClick={() => setCollapsed((value) => !value)}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        className="m-2 flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-border"
+        className="m-2 flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition-colors"
+        style={{ color: "#9AA6BF" }}
+        onMouseEnter={(e) =>
+          (e.currentTarget.style.background = "rgba(232,213,163,0.08)")
+        }
+        onMouseLeave={(e) => (e.currentTarget.style.background = "")}
       >
         {collapsed ? "»" : "«"}
       </button>

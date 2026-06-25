@@ -1,0 +1,14 @@
+{
+  "name": "2nd Act Capital",
+  "short_name": "2nd Act",
+  "icons": [
+    {
+      "src": "/brand/icon/app-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ],
+  "theme_color": "#1B2B4B",
+  "background_color": "#FAF9F6",
+  "display": "standalone"
+}

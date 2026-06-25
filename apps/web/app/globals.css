@@ -2,21 +2,8 @@
 
 /*
  * 2nd Act Capital design tokens.
- * Defined as Tailwind theme colors (emitted to :root) so the exact values
- * below back utilities like `bg-navy`, `text-text-secondary`, `border-border`.
- *
- * :root {
- *   --color-navy: #1B2B4B;
- *   --color-gold: #C5A880;
- *   --color-gold-light: #E8D5A3;
- *   --color-bg-app: #FAF9F6;
- *   --color-bg-sidebar: #F5F1EB;
- *   --color-bg-card: #FFFFFF;
- *   --color-text-primary: #0F172A;
- *   --color-text-secondary: #334155;
- *   --color-text-muted: #64748B;
- *   --color-border: #E2E8F0;
- * }
+ * Tailwind theme colors back utilities like `bg-navy`, `text-text-secondary`, etc.
+ * Brand tokens (--2a-*) are inlined from public/brand/tokens.css.
  */
 @theme {
   --color-navy: #1b2b4b;
@@ -31,11 +18,72 @@
   --color-border: #e2e8f0;
 }
 
+/* Brand tokens (mirrors public/brand/tokens.css) */
+:root {
+  --2a-navy: #1B2B4B;
+  --2a-gold: #C5A880;
+  --2a-gold-light: #E8D5A3;
+  --2a-bg: #FAF9F6;
+  --2a-text: #0F172A;
+  --2a-nav-rest: #9AA6BF;
+  --2a-font-display: 'Spectral', Georgia, serif;
+  --2a-font-body: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --2a-text-base: 17px;
+}
+
 html {
   font-size: 17px;
 }
 
 body {
-  background-color: var(--color-bg-app);
-  color: var(--color-text-primary);
+  font-family: var(--2a-font-body);
+  font-size: var(--2a-text-base);
+  background: var(--2a-bg);
+  color: var(--2a-text);
+}
+
+h1, h2, h3 {
+  font-family: var(--2a-font-display);
+  font-weight: 400;
+  color: var(--2a-navy);
+}
+
+/* Wordmark lockup (live text) */
+.wordmark {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.wordmark__name {
+  font-family: var(--2a-font-display);
+  font-weight: 400;
+  font-size: 46px;
+  color: var(--2a-navy);
+}
+.wordmark__name sup {
+  font-size: 0.62em;
+  vertical-align: 0.4em;
+}
+.wordmark__desc {
+  font-family: var(--2a-font-body);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.52em;
+  text-transform: uppercase;
+  color: var(--2a-gold);
+  padding-left: 0.52em;
+  margin-top: 6px;
+}
+
+/* Wordmark nav variant — scaled for 64px topbar on navy background */
+.wordmark--nav .wordmark__name {
+  font-size: 18px;
+  color: #FAF9F6;
+}
+.wordmark--nav .wordmark__desc {
+  font-size: 8px;
+  letter-spacing: 0.4em;
+  margin-top: 2px;
+  color: var(--2a-gold-light);
 }

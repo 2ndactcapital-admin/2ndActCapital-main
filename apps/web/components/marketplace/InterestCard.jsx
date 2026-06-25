@@ -348,7 +348,8 @@ function Modal({ title, onClose, children }) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-lg border border-border bg-bg-card p-6 shadow-lg"
+        className="w-full max-w-md rounded-lg border border-[#ece8dd] bg-bg-card p-6"
+        style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-base font-semibold text-navy">{title}</h3>

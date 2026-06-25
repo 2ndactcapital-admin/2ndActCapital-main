@@ -32,9 +32,11 @@ export default function TopBar({ user }) {
 
   return (
     <header className="flex h-16 items-center justify-between bg-navy px-6">
-      <div className="flex items-center gap-3">
-        <div className="h-8 w-8 rounded-md bg-gold" aria-hidden="true" />
-        <span className="text-lg font-medium text-bg-app">2nd Act Capital</span>
+      <div className="wordmark wordmark--nav">
+        <span className="wordmark__name">
+          2<sup>nd</sup> Act
+        </span>
+        <span className="wordmark__desc">Capital</span>
       </div>
 
       <div className="relative" ref={ref}>
@@ -60,7 +62,7 @@ export default function TopBar({ user }) {
         </button>
 
         {open && (
-          <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-card shadow-lg">
+          <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-card" style={{boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-medium text-text-primary">{displayName}</p>
               {user?.email && user.email !== displayName && (
