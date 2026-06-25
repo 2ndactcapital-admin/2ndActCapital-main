@@ -10,6 +10,36 @@
 - Deploy: Vercel (web), Render (api)
 - Monorepo: apps/web and apps/api
 
+## Environment Variables
+These are available in the shell environment:
+
+SUPABASE_URL — Supabase project URL
+SUPABASE_SERVICE_ROLE_KEY — service role key
+  for schema introspection (bypasses RLS)
+DATABASE_URL — direct Postgres connection
+  with PgBouncer (always use 
+  statement_cache_size=0)
+ANTHROPIC_API_KEY — set per session when 
+  needed for AI features
+
+Before writing any new endpoint or verify 
+script, introspect the actual table schema:
+
+  import asyncpg, os
+  conn = await asyncpg.connect(
+      os.environ['DATABASE_URL'],
+      statement_cache_size=0
+  )
+  rows = await conn.fetch("""
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = $1
+      AND table_schema = 'public'
+      ORDER BY ordinal_position
+  """, 'your_table_name')
+  for r in rows:
+      print(f"{r['column_name']} ({r['data_type']})")
+
 ## Design Tokens — Never Change
 Navy #1B2B4B | Gold #C5A880 | Gold Light #E8D5A3
 BG App #FAF9F6 | BG Sidebar #F5F1EB
