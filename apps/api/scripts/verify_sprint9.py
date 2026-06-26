@@ -43,14 +43,27 @@ async def setup_test_user(pool):
 
 
 async def teardown(pool, notification_ids):
-    # Notifications cascade to recipients + delivery_log (ON DELETE CASCADE).
-    for nid in notification_ids:
-        await pool.execute("DELETE FROM notifications WHERE id = $1", nid)
+    # Explicitly clear notification children before parents (do not rely solely
+    # on ON DELETE CASCADE), then FK references to the test user, then the user.
+    await pool.execute(
+        "DELETE FROM notification_delivery_log WHERE notification_id = ANY($1::uuid[])",
+        notification_ids,
+    )
+    await pool.execute(
+        "DELETE FROM notification_recipients WHERE notification_id = ANY($1::uuid[])",
+        notification_ids,
+    )
+    await pool.execute(
+        "DELETE FROM notifications WHERE id = ANY($1::uuid[])",
+        notification_ids,
+    )
     await pool.execute(
         "DELETE FROM user_notification_preferences WHERE user_id = $1",
         TEST_USER_ID,
     )
     await pool.execute("DELETE FROM user_roles WHERE user_id = $1", TEST_USER_ID)
+    # audit_log.user_id has an FK to users — clear it before deleting the user.
+    await pool.execute("DELETE FROM audit_log WHERE user_id = $1", TEST_USER_ID)
     await pool.execute("DELETE FROM users WHERE auth0_sub = $1", TEST_AUTH0_SUB)
 
 
