@@ -115,8 +115,16 @@ app.add_middleware(
 @app.middleware("http")
 async def auth0_jwt_middleware(request: Request, call_next):
     """Require a valid Auth0 JWT for every route except the public ones."""
-    # Let CORS preflight and public routes through untouched.
-    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+    # Let CORS preflight and public routes through untouched. The /debug/*
+    # prefix is matched explicitly (not just via PUBLIC_PATHS) so the triage
+    # endpoints are reachable without a token regardless of exact path — remove
+    # this prefix bypass together with the debug router.
+    path = request.url.path
+    if (
+        request.method == "OPTIONS"
+        or path in PUBLIC_PATHS
+        or path.startswith("/debug/")
+    ):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")

@@ -1,8 +1,8 @@
 """Temporary debug endpoints (Sprint 9 hotfix).
 
-GET /debug/user-info verifies the auth->users mapping in production without
-requiring the global JWT middleware to have run. REMOVE once the ensure_user
-500s are confirmed fixed.
+Both routes are public — the auth middleware bypasses the /debug/ prefix, so the
+endpoints handle the optional token themselves. REMOVE this router (and the
+/debug/ bypass in main.py) once the ensure_user 500s are confirmed fixed.
 """
 
 import os
@@ -16,33 +16,63 @@ from services.permissions import get_user_id
 router = APIRouter(tags=["debug"])
 
 
+@router.get("/debug/ping")
+async def debug_ping():
+    """No-auth liveness + DB connectivity check."""
+    db_reachable = False
+    db_error = None
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        db_reachable = True
+    except Exception as exc:
+        import traceback
+
+        print(f"ERROR in /debug/ping db check: {exc}")
+        print(traceback.format_exc())
+        db_error = str(exc)
+
+    result = {
+        "status": "ok",
+        "db_reachable": db_reachable,
+        "database_url_set": bool(os.environ.get("DATABASE_URL")),
+    }
+    if db_error:
+        result["db_error"] = db_error
+    return result
+
+
 @router.get("/debug/user-info")
 async def debug_user_info(request: Request):
-    # This route is public (see PUBLIC_PATHS), so the auth middleware did not
-    # populate request.state.user. Decode the bearer token here if present so
-    # the real jwt_sub / user_id are reported.
-    claims = getattr(request.state, "user", None)
-    if claims is None:
-        auth_header = request.headers.get("Authorization", "")
-        scheme, _, token = auth_header.partition(" ")
-        if scheme.lower() == "bearer" and token:
-            try:
-                from main import verify_token
+    """Verify the auth->users mapping. Returns partial info without a token,
+    full info when a valid bearer token is present."""
+    auth_header = request.headers.get("Authorization", "")
+    scheme, _, token = auth_header.partition(" ")
 
-                claims = verify_token(token)
-                request.state.user = claims
-            except Exception as exc:
-                return {
-                    "jwt_sub": None,
-                    "user_id": None,
-                    "user_exists_in_db": False,
-                    "org_id": None,
-                    "token_error": str(exc),
-                    "database_url_set": bool(os.environ.get("DATABASE_URL")),
-                }
-        else:
-            claims = {}
-            request.state.user = claims
+    if scheme.lower() != "bearer" or not token:
+        return {
+            "error": "No token provided",
+            "hint": "Pass Authorization: Bearer <token> header",
+            "database_url_set": bool(os.environ.get("DATABASE_URL")),
+        }
+
+    # The route is public, so the middleware did not decode the token — do it
+    # here so the real jwt_sub / user_id are reported.
+    try:
+        from main import verify_token
+
+        claims = verify_token(token)
+        request.state.user = claims
+    except Exception as exc:
+        return {
+            "jwt_sub": None,
+            "user_id": None,
+            "user_exists_in_db": False,
+            "org_id": None,
+            "token_error": str(exc),
+            "database_url_set": bool(os.environ.get("DATABASE_URL")),
+        }
 
     jwt_sub = claims.get("sub")
     user_id = get_user_id(request)
@@ -53,9 +83,7 @@ async def debug_user_info(request: Request):
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            found = await conn.fetchval(
-                "SELECT 1 FROM users WHERE id = $1", user_id
-            )
+            found = await conn.fetchval("SELECT 1 FROM users WHERE id = $1", user_id)
             user_exists = found is not None
             # Also check by auth0_sub, since the stored id may differ.
             if not user_exists and jwt_sub:
