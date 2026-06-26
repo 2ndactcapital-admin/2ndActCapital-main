@@ -53,17 +53,40 @@ async def setup(pool):
 
 
 async def teardown(pool, entity_id):
-    await pool.execute("DELETE FROM entity_notes WHERE entity_id = $1", entity_id)
+    # FK-safe order: delete every child of the test entity before the entity,
+    # then the test user. The accept-extraction step writes entity_attributes,
+    # so those must be cleared too.
+    await pool.execute("DELETE FROM entity_briefs WHERE entity_id = $1", entity_id)
+    await pool.execute(
+        "DELETE FROM profile_conversations WHERE entity_id = $1", entity_id
+    )
     await pool.execute(
         "DELETE FROM investment_profile_extractions WHERE entity_id = $1", entity_id
     )
+    await pool.execute("DELETE FROM entity_notes WHERE entity_id = $1", entity_id)
     await pool.execute(
         "DELETE FROM investment_profile_answers WHERE entity_id = $1", entity_id
     )
     await pool.execute(
-        "DELETE FROM profile_conversations WHERE entity_id = $1", entity_id
+        "DELETE FROM entity_attributes WHERE entity_id = $1", entity_id
     )
-    await pool.execute("DELETE FROM entity_briefs WHERE entity_id = $1", entity_id)
+    await pool.execute(
+        "DELETE FROM entity_addresses WHERE entity_id = $1", entity_id
+    )
+    await pool.execute(
+        "DELETE FROM entity_employment WHERE employee_id = $1 OR employer_id = $1",
+        entity_id,
+    )
+    await pool.execute(
+        "DELETE FROM entity_social_profiles WHERE entity_id = $1", entity_id
+    )
+    await pool.execute("DELETE FROM entity_tax_ids WHERE entity_id = $1", entity_id)
+    await pool.execute(
+        "DELETE FROM compliance_records WHERE entity_id = $1", entity_id
+    )
+    await pool.execute(
+        "DELETE FROM member_target_allocations WHERE entity_id = $1", entity_id
+    )
     await pool.execute("DELETE FROM entities WHERE id = $1", entity_id)
     await pool.execute("DELETE FROM audit_log WHERE user_id = $1", TEST_USER_ID)
     await pool.execute("DELETE FROM users WHERE auth0_sub = $1", TEST_AUTH0_SUB)
