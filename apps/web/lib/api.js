@@ -116,6 +116,51 @@ export const bulkUpsertProfileAnswers = (entityId, answers) =>
     body: answers,
   });
 
+// --- Foundation conversation (Sprint 10) ---
+export const getConversation = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/conversation`);
+export const startConversation = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/conversation/start`, {
+    method: "POST",
+  });
+export const sendConversationMessage = (entityId, message) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/conversation/message`, {
+    method: "POST",
+    body: { message },
+  });
+export const completeConversation = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/conversation/complete`, {
+    method: "POST",
+  });
+
+// --- AI extractions (Sprint 10) ---
+export const runExtraction = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/extract`, { method: "POST" });
+export const getExtractions = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/extractions`);
+export const reviewExtraction = (entityId, extractionId, body) =>
+  fetchAPI(
+    `/api/v1/investment-profile/${entityId}/extractions/${extractionId}/review`,
+    { method: "PUT", body },
+  );
+
+// --- Client brief (Sprint 10) ---
+export const getBrief = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/brief`);
+export const generateBrief = (entityId) =>
+  fetchAPI(`/api/v1/investment-profile/${entityId}/brief`, { method: "POST" });
+
+// --- Entity notes (Sprint 10) ---
+export const getEntityNotes = (entityId) =>
+  fetchAPI(`/api/v1/entities/${entityId}/notes`);
+export const createEntityNote = (entityId, body) =>
+  fetchAPI(`/api/v1/entities/${entityId}/notes`, { method: "POST", body });
+export const applyNoteUpdates = (entityId, noteId, body) =>
+  fetchAPI(`/api/v1/entities/${entityId}/notes/${noteId}/apply`, {
+    method: "POST",
+    body,
+  });
+
 // --- Config ---
 export const getConfig = (category) =>
   fetchAPI("/api/v1/config", {

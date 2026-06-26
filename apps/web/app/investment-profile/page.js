@@ -3,39 +3,57 @@ import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
 import ProfileClient from "@/components/investment-profile/ProfileClient";
 import { fetchAPI } from "@/lib/api";
+import { isStaff } from "@/lib/roles";
 
-export default async function InvestmentProfilePage() {
+export default async function InvestmentProfilePage({ searchParams }) {
   const session = await auth0.getSession();
   if (!session) {
     redirect("/auth/login?returnTo=/investment-profile");
   }
 
+  const sp = (await searchParams) || {};
+  const requestedEntity = typeof sp.entity === "string" ? sp.entity : null;
+  const initialTab = typeof sp.tab === "string" ? sp.tab : "profile";
+  const staff = isStaff(session.user);
+
   let entities = [];
   let questions = [];
+  let foundationQuestions = [];
   let loadError = null;
   try {
-    [entities, questions] = await Promise.all([
+    [entities, questions, foundationQuestions] = await Promise.all([
       fetchAPI("/api/v1/entities"),
       fetchAPI("/api/v1/investment-profile/questions"),
+      fetchAPI("/api/v1/investment-profile/questions", {
+        searchParams: { category: "foundation" },
+      }),
     ]);
   } catch (error) {
     loadError = error.message;
   }
 
-  // Default to the first individual entity, else the first entity.
+  // Default to the requested entity, else first individual, else first entity.
   const defaultEntity =
-    entities.find((e) => e.entity_type === "individual") || entities[0];
+    entities.find((e) => e.id === requestedEntity) ||
+    entities.find((e) => e.entity_type === "individual") ||
+    entities[0];
   const defaultEntityId = defaultEntity?.id || "";
 
   let initialAnswers = [];
+  let initialConversation = null;
+  let initialExtractions = [];
+  let initialBrief = null;
   if (defaultEntityId && !loadError) {
-    try {
-      initialAnswers = await fetchAPI(
-        `/api/v1/investment-profile/${defaultEntityId}/answers`,
-      );
-    } catch {
-      initialAnswers = [];
-    }
+    const [ans, convo, extr, brief] = await Promise.allSettled([
+      fetchAPI(`/api/v1/investment-profile/${defaultEntityId}/answers`),
+      fetchAPI(`/api/v1/investment-profile/${defaultEntityId}/conversation`),
+      fetchAPI(`/api/v1/investment-profile/${defaultEntityId}/extractions`),
+      fetchAPI(`/api/v1/investment-profile/${defaultEntityId}/brief`),
+    ]);
+    initialAnswers = ans.status === "fulfilled" ? ans.value || [] : [];
+    initialConversation = convo.status === "fulfilled" ? convo.value : null;
+    initialExtractions = extr.status === "fulfilled" ? extr.value || [] : [];
+    initialBrief = brief.status === "fulfilled" ? brief.value : null;
   }
 
   return (
@@ -54,8 +72,15 @@ export default async function InvestmentProfilePage() {
           <ProfileClient
             entities={entities}
             questions={questions}
+            foundationQuestions={foundationQuestions}
             defaultEntityId={defaultEntityId}
             initialAnswers={initialAnswers}
+            initialMode={defaultEntity?.profile_mode || "foundation"}
+            initialConversation={initialConversation}
+            initialExtractions={initialExtractions}
+            initialBrief={initialBrief}
+            initialTab={initialTab}
+            isStaff={staff}
           />
         )}
       </div>

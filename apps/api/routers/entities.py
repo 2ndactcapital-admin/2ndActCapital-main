@@ -9,7 +9,7 @@ import hashlib
 from collections import deque
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from schemas.entities import (
     AddressCreate,
@@ -30,6 +30,9 @@ from schemas.entities import (
     EntityUpdate,
     GraphEdge,
     GraphNode,
+    NoteCreate,
+    NoteOut,
+    ApplyNoteUpdatesIn,
     OwnershipCreate,
     OwnershipGraph,
     OwnershipOut,
@@ -55,7 +58,7 @@ ENTITY_COLUMNS = (
     "id, org_id, entity_type, display_name, legal_name, tax_id, "
     "date_of_birth, country_of_formation, notes, sub_type, status, "
     "lead_source, relationship_manager_id, tags, linkedin_url, "
-    "primary_email, primary_phone, valid_from, valid_to, "
+    "primary_email, primary_phone, profile_mode, valid_from, valid_to, "
     "system_from, system_to, created_at, updated_at"
 )
 
@@ -79,6 +82,30 @@ def get_org_id(request: Request) -> str:
 
 def _mask_tax_id(last4: str) -> str:
     return f"•••• {last4}" if last4 else "••••"
+
+
+def _parse_note_json(value):
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    import json
+
+    try:
+        return json.loads(value)
+    except (ValueError, TypeError):
+        return None
+
+
+async def _ensure_entity_exists(conn, org_id, entity_id: UUID):
+    found = await conn.fetchval(
+        """
+        SELECT 1 FROM entities
+        WHERE id = $1 AND org_id = $2
+          AND valid_to IS NULL AND system_to IS NULL
+        """,
+        entity_id, org_id,
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="Entity not found")
 
 
 # ---------------------------------------------------------------------------
@@ -388,14 +415,14 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                     org_id, entity_type, display_name, legal_name, tax_id,
                     date_of_birth, country_of_formation, notes, sub_type, status,
                     lead_source, relationship_manager_id, tags, linkedin_url,
-                    primary_email, primary_phone,
+                    primary_email, primary_phone, profile_mode,
                     valid_from, valid_to, system_from, system_to,
                     created_by, created_at, updated_at
                 )
                 SELECT org_id, entity_type, display_name, legal_name, tax_id,
                        date_of_birth, country_of_formation, notes, sub_type,
                        status, lead_source, relationship_manager_id, tags,
-                       linkedin_url, primary_email, primary_phone,
+                       linkedin_url, primary_email, primary_phone, profile_mode,
                        valid_from, valid_to, system_from, now(),
                        created_by, created_at, updated_at
                 FROM entities
@@ -422,6 +449,7 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 "linkedin_url",
                 "primary_email",
                 "primary_phone",
+                "profile_mode",
             )
             set_clauses = ["system_from = now()", "updated_at = now()"]
             params: list = [entity_id, org_id]
@@ -480,6 +508,138 @@ async def add_attribute(request: Request, entity_id: UUID, body: AttributeCreate
             body.value_type,
         )
     return AttributeOut(**dict(row))
+
+
+# ---------------------------------------------------------------------------
+# Notes (Sprint 10 — natural-language CRM notes with AI extraction)
+# ---------------------------------------------------------------------------
+NOTE_COLS = (
+    "id, entity_id, note_text, note_type, meeting_date, extracted_fields, "
+    "extraction_status, created_at, updated_at"
+)
+
+
+async def _run_note_extraction(org_id, note_id, entity_id, note_text):
+    """Background task: extract CRM updates from a note. Never raises."""
+    try:
+        from services.database import get_pool as _get_pool
+        from services.extraction import extract_from_note
+
+        pool = await _get_pool()
+        await extract_from_note(pool, org_id, note_id, entity_id, note_text)
+    except Exception as exc:  # pragma: no cover - defensive
+        import traceback
+
+        print(f"ERROR in note extraction: {exc}")
+        print(traceback.format_exc())
+
+
+@router.post("/entities/{entity_id}/notes", response_model=NoteOut, status_code=201)
+async def create_note(
+    request: Request,
+    entity_id: UUID,
+    body: NoteCreate,
+    background_tasks: BackgroundTasks,
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _ensure_entity_exists(conn, org_id, entity_id)
+        from services.users import ensure_user
+
+        creator = await ensure_user(conn, request)
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO entity_notes
+                (org_id, entity_id, note_text, note_type, meeting_date,
+                 extraction_status, created_by)
+            VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+            RETURNING {NOTE_COLS}
+            """,
+            org_id, entity_id, body.note_text, body.note_type,
+            body.meeting_date, creator,
+        )
+    # Extract in the background so the response is not blocked.
+    background_tasks.add_task(
+        _run_note_extraction, org_id, row["id"], entity_id, body.note_text
+    )
+    return NoteOut(**{**dict(row), "extracted_fields": _parse_note_json(row["extracted_fields"])})
+
+
+@router.get("/entities/{entity_id}/notes", response_model=list[NoteOut])
+async def list_notes(request: Request, entity_id: UUID):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    rows = await pool.fetch(
+        f"""
+        SELECT {NOTE_COLS} FROM entity_notes
+        WHERE entity_id = $1 AND org_id = $2
+        ORDER BY created_at DESC
+        """,
+        entity_id, org_id,
+    )
+    return [
+        NoteOut(**{**dict(r), "extracted_fields": _parse_note_json(r["extracted_fields"])})
+        for r in rows
+    ]
+
+
+@router.post("/entities/{entity_id}/notes/{note_id}/apply", status_code=200)
+async def apply_note_updates(
+    request: Request, entity_id: UUID, note_id: UUID, body: ApplyNoteUpdatesIn
+):
+    """Apply an advisor-confirmed note's suggested updates to the entity.
+
+    entity_updates patch editable entity columns; new_attributes are added as
+    entity_attributes rows. Only known-editable columns are applied.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    editable = {
+        "primary_email", "primary_phone", "legal_name", "notes",
+        "linkedin_url", "status", "lead_source",
+    }
+    entity_updates = {
+        k: v for k, v in (body.entity_updates or {}).items() if k in editable
+    }
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _ensure_entity_exists(conn, org_id, entity_id)
+            if entity_updates:
+                set_clauses = ["updated_at = now()"]
+                params: list = [entity_id, org_id]
+                for field, value in entity_updates.items():
+                    params.append(value)
+                    set_clauses.append(f"{field} = ${len(params)}")
+                await conn.execute(
+                    f"""
+                    UPDATE entities SET {', '.join(set_clauses)}
+                    WHERE id = $1 AND org_id = $2
+                      AND valid_to IS NULL AND system_to IS NULL
+                    """,
+                    *params,
+                )
+            for key, value in (body.new_attributes or {}).items():
+                await conn.execute(
+                    """
+                    INSERT INTO entity_attributes
+                        (org_id, entity_id, attribute_key, attribute_value, value_type)
+                    VALUES ($1, $2, $3, $4, 'string')
+                    """,
+                    org_id, entity_id, key,
+                    value if isinstance(value, str) else str(value),
+                )
+            await write_audit_log(
+                conn,
+                org_id=org_id,
+                action="apply_note_updates",
+                table_name="entities",
+                record_id=entity_id,
+                new={"note_id": str(note_id), "entity_updates": entity_updates,
+                     "new_attributes": body.new_attributes or {}},
+            )
+    return {"ok": True, "applied": entity_updates,
+            "attributes_added": list((body.new_attributes or {}).keys())}
 
 
 # ---------------------------------------------------------------------------

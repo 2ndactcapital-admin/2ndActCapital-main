@@ -9,6 +9,7 @@ import EmploymentTab from "@/components/crm/tabs/EmploymentTab";
 import TaxIdsTab from "@/components/crm/tabs/TaxIdsTab";
 import SocialTab from "@/components/crm/tabs/SocialTab";
 import ComplianceTab from "@/components/crm/tabs/ComplianceTab";
+import NotesTab from "@/components/crm/tabs/NotesTab";
 
 export default function EntityDetailTabs({ full, graph }) {
   const entity = full.entity;
@@ -21,6 +22,7 @@ export default function EntityDetailTabs({ full, graph }) {
     ...(isIndividual ? [{ key: "employment", label: "Employment" }] : []),
     { key: "tax_ids", label: "Tax IDs" },
     { key: "social", label: "Social Profiles" },
+    { key: "notes", label: "Notes" },
     { key: "compliance", label: "Compliance" },
   ];
 
@@ -66,6 +68,14 @@ export default function EntityDetailTabs({ full, graph }) {
           <div className="mt-8 max-w-3xl">
             <AttributesSection entityId={entity.id} attributes={full.attributes || []} />
           </div>
+          <div className="mt-6">
+            <a
+              href={`/investment-profile?entity=${entity.id}&tab=brief`}
+              className="text-sm font-medium text-navy hover:underline"
+            >
+              View Client Brief →
+            </a>
+          </div>
         </div>
 
         {/* Addresses */}
@@ -88,6 +98,11 @@ export default function EntityDetailTabs({ full, graph }) {
         {/* Social */}
         <div className={active === "social" ? "" : "hidden"}>
           <SocialTab entityId={entity.id} initial={full.social_profiles || []} />
+        </div>
+
+        {/* Notes */}
+        <div className={active === "notes" ? "" : "hidden"}>
+          <NotesTab entityId={entity.id} initial={full.notes || []} />
         </div>
 
         {/* Compliance */}
