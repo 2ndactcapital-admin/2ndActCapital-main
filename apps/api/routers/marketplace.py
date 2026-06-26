@@ -422,10 +422,11 @@ async def get_deal_stage_summary(request: Request):
     if not staff:
         params.append(list(MEMBER_VISIBLE_STATUSES))
         conditions.append(f"deal_status = ANY(${len(params)})")
+    # Normalize casing so "Sourced" and "sourced" collapse into one segment.
     query = (
-        f"SELECT COALESCE(deal_stage, 'sourced') AS stage, COUNT(*) AS count "
+        f"SELECT LOWER(COALESCE(deal_stage, 'sourced')) AS stage, COUNT(*) AS count "
         f"FROM deals WHERE {' AND '.join(conditions)} "
-        f"GROUP BY COALESCE(deal_stage, 'sourced') ORDER BY stage"
+        f"GROUP BY LOWER(COALESCE(deal_stage, 'sourced')) ORDER BY stage"
     )
     pool = await get_pool()
     rows = await pool.fetch(query, *params)
@@ -976,10 +977,13 @@ async def vote_deal(request: Request, deal_id: UUID, body: VoteRequest):
     if body.vote not in (1, -1):
         raise HTTPException(status_code=400, detail="vote must be 1 or -1")
     org_id = get_org_id(request)
-    user_id = get_user_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        # Resolve (and lazily create) the caller's users row so the user_id FK on
+        # deal_votes is satisfied — live Auth0 users were not in `users`, which
+        # made votes fail to register (FK violation -> 500).
+        user_id = await ensure_user(conn, request)
         async with conn.transaction():
             deal = await _fetch_deal(conn, org_id, deal_id)
             if deal is None:

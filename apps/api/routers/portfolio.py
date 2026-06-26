@@ -16,6 +16,7 @@ from services.audit import write_audit_log
 from services.database import get_pool
 from services.permissions import get_user_id, require_staff
 from services.taxonomy import get_taxonomy_index
+from services.users import ensure_user
 
 router = APIRouter(tags=["portfolio"])
 
@@ -130,11 +131,13 @@ def _build_target_responses(
 
 @router.get("/portfolio/my-investments", response_model=list[PortfolioInvestmentResponse])
 async def get_my_investments(request: Request):
-    user_id = get_user_id(request)
     org_id = get_org_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
+        # Resolve the caller's canonical users.id so the lookup matches the id
+        # that indicate_interest / create_compliance_request wrote the rows with.
+        user_id = await ensure_user(conn, request)
         rows = await conn.fetch(
             f"""
             SELECT {_PORTFOLIO_SELECT},

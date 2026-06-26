@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { IconAddressBook } from "@tabler/icons-react";
 import BrandNavIcon from "./BrandNavIcon";
 import { usePermissions } from "@/lib/usePermissions";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
+  { label: "CRM", href: "/crm", TablerIcon: IconAddressBook },
   { label: "Marketplace", href: "/marketplace", icon: "marketplace" },
   { label: "Investments", href: "/portfolio", icon: "portfolio" },
   {
@@ -15,11 +17,6 @@ const NAV_ITEMS = [
     icon: "portfolio-reporting",
   },
   { label: "SPV Manager", href: "/spv-manager", icon: "spv-manager" },
-  {
-    label: "Investment Profile",
-    href: "/investment-profile",
-    icon: "investment-profile",
-  },
   { label: "Insurance", href: "/insurance", icon: "insurance" },
   { label: "Community", href: "/community", icon: "community" },
   { label: "Notifications", href: "/notifications", icon: "notifications" },
@@ -29,8 +26,9 @@ const ADMIN_ITEM = { label: "Admin", href: "/admin", icon: "admin" };
 const USERS_ITEM = { label: "User Management", href: "/admin/users", icon: "investment-profile" };
 
 function NavLink({ item, collapsed, active, badge = 0 }) {
-  const { label, href, icon } = item;
+  const { label, href, icon, TablerIcon } = item;
   const badgeText = badge > 9 ? "9+" : String(badge);
+  const iconColor = active ? "var(--2a-gold-light)" : "#9AA6BF";
   return (
     <a
       href={href}
@@ -45,11 +43,11 @@ function NavLink({ item, collapsed, active, badge = 0 }) {
       }
     >
       <span className="relative shrink-0">
-        <BrandNavIcon
-          name={icon}
-          size={20}
-          style={{ color: active ? "var(--2a-gold-light)" : "#9AA6BF" }}
-        />
+        {TablerIcon ? (
+          <TablerIcon size={20} stroke={1.6} style={{ color: iconColor }} />
+        ) : (
+          <BrandNavIcon name={icon} size={20} style={{ color: iconColor }} />
+        )}
         {collapsed && badge > 0 && (
           <span
             className="absolute -right-1.5 -top-1.5 flex min-w-[15px] items-center justify-center rounded-full px-1 text-[9px] font-semibold text-navy"

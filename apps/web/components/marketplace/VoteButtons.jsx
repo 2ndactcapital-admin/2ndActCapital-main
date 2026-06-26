@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { IconChevronUp, IconChevronDown } from "@tabler/icons-react";
+import { IconThumbUp, IconThumbDown } from "@tabler/icons-react";
 
 async function castVote(dealId, vote) {
   try {
@@ -61,7 +61,7 @@ export default function VoteButtons({
           userVote === 1 ? "text-gold" : "text-text-muted"
         }`}
       >
-        <IconChevronUp size={iconSize} stroke={2} />
+        <IconThumbUp size={iconSize} stroke={2} />
         <span className="tabular-nums">{upvotes}</span>
       </button>
       <button
@@ -73,7 +73,7 @@ export default function VoteButtons({
           userVote === -1 ? "text-navy" : "text-text-muted"
         }`}
       >
-        <IconChevronDown size={iconSize} stroke={2} />
+        <IconThumbDown size={iconSize} stroke={2} />
         <span className="tabular-nums">{downvotes}</span>
       </button>
     </div>
