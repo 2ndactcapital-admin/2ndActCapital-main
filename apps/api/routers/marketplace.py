@@ -62,6 +62,32 @@ from services.users import ensure_user
 
 router = APIRouter(tags=["marketplace"])
 
+
+def log_500(endpoint_name: str):
+    """Wrap an endpoint so unexpected errors print a full traceback (visible in
+    Render logs) and surface as a 500 with the message. Intentional
+    HTTPExceptions (404/403/400) pass through untouched. functools.wraps keeps
+    the original signature so FastAPI dependency injection still works.
+    """
+    import functools
+    import traceback
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                print(f"ERROR in {endpoint_name}: {exc}")
+                print(traceback.format_exc())
+                raise HTTPException(status_code=500, detail=str(exc))
+
+        return wrapper
+
+    return decorator
+
 # Statuses visible to ordinary members.
 MEMBER_VISIBLE_STATUSES = ("active", "under_review")
 
@@ -972,6 +998,7 @@ async def upsert_score(request: Request, deal_id: UUID, body: DealScoreCreate):
 # Votes
 # ---------------------------------------------------------------------------
 @router.post("/deals/{deal_id}/vote")
+@log_500("vote_deal")
 async def vote_deal(request: Request, deal_id: UUID, body: VoteRequest):
     require_permission(request, "vote_deal")
     if body.vote not in (1, -1):
@@ -1051,6 +1078,7 @@ async def _is_compliant(conn, org_id, entity_id) -> bool:
 
 
 @router.post("/deals/{deal_id}/interest", response_model=InterestResponse, status_code=201)
+@log_500("indicate_interest")
 async def indicate_interest(request: Request, deal_id: UUID, body: InterestRequest):
     require_permission(request, "vote_deal")
     org_id = get_org_id(request)
@@ -1317,6 +1345,7 @@ COMPLIANCE_SELECT = (
     response_model=ComplianceReviewResponse,
     status_code=201,
 )
+@log_500("create_compliance_request")
 async def create_compliance_request(
     request: Request, deal_id: UUID, body: ComplianceReviewRequest
 ):

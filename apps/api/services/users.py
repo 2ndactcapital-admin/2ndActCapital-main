@@ -32,7 +32,9 @@ async def ensure_user(conn, request: Request) -> str:
       3. A freshly inserted row keyed on ``auth0_sub``.
 
     Never raises — on any unexpected error it falls back to the token-derived id
-    so read paths are unaffected.
+    so read paths are unaffected. NOTE: when the INSERT fails the returned id is
+    NOT in the DB, so the caller's FK insert will 500; the traceback below is the
+    signal to look for in the logs.
     """
     claims = _claims(request)
     user_id = get_user_id(request)
@@ -58,10 +60,13 @@ async def ensure_user(conn, request: Request) -> str:
                 or email
                 or "Member"
             )
+            # Include `role` — it is NOT NULL in the users table (every seed
+            # INSERT sets it), so omitting it made this INSERT fail silently and
+            # the caller's FK insert 500. Default new live users to 'member'.
             inserted = await conn.fetchrow(
                 """
-                INSERT INTO users (id, org_id, email, full_name, auth0_sub)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
+                VALUES ($1, $2, $3, $4, $5, 'member')
                 ON CONFLICT (auth0_sub) DO UPDATE
                     SET email = COALESCE(EXCLUDED.email, users.email)
                 RETURNING id
@@ -71,6 +76,8 @@ async def ensure_user(conn, request: Request) -> str:
             if inserted:
                 return str(inserted["id"])
     except Exception as exc:  # pragma: no cover - defensive
-        print(f"ensure_user failed: {exc}")
+        import traceback
+        print(f"ERROR in ensure_user (sub={sub!r}, user_id={user_id!r}): {exc}")
+        print(traceback.format_exc())
 
     return user_id

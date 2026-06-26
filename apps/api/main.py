@@ -15,6 +15,7 @@ from jose.exceptions import JWTError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from routers.admin import router as admin_router
+from routers.debug import router as debug_router
 from routers.entities import router as entities_router
 from routers.investment_profile import router as investment_profile_router
 from routers.marketplace import router as marketplace_router
@@ -26,7 +27,9 @@ from services.database import close_pool
 API_VERSION = "0.1.0"
 
 # Paths that do not require authentication.
-PUBLIC_PATHS = {"/health"}
+# NOTE: /debug/user-info is intentionally public for production triage — remove
+# it (and the debug router) once the ensure_user 500s are confirmed fixed.
+PUBLIC_PATHS = {"/health", "/debug/user-info"}
 
 
 class Settings(BaseSettings):
@@ -155,3 +158,5 @@ app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
+# Debug router mounted at root so the path is exactly /debug/user-info.
+app.include_router(debug_router)
