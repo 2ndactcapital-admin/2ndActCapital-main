@@ -57,6 +57,14 @@ export default function TopBar({ user }) {
           >
             {initials}
           </div>
+          <img
+            src="/brand/icon/mark-gold.svg"
+            width="16"
+            height="16"
+            alt=""
+            aria-hidden="true"
+            style={{ opacity: 0.7 }}
+          />
           <span className="text-sm font-medium text-bg-app">{displayName}</span>
           <IconChevronDown
             size={16}
