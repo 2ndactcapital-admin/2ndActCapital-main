@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -125,6 +126,7 @@ class EntityUpdate(BaseModel):
     linkedin_url: str | None = None
     primary_email: str | None = None
     primary_phone: str | None = None
+    profile_mode: str | None = None
 
 
 class EntityOut(BaseModel):
@@ -147,6 +149,7 @@ class EntityOut(BaseModel):
     linkedin_url: str | None = None
     primary_email: str | None = None
     primary_phone: str | None = None
+    profile_mode: str = "foundation"
     valid_from: datetime | None = None
     valid_to: datetime | None = None
     system_from: datetime | None = None
@@ -157,6 +160,34 @@ class EntityOut(BaseModel):
 
 # Spec alias.
 EntityResponse = EntityOut
+
+
+# ---------------------------------------------------------------------------
+# Entity notes (Sprint 10 — natural-language CRM notes)
+# ---------------------------------------------------------------------------
+class NoteCreate(BaseModel):
+    note_text: str
+    note_type: str = "meeting"
+    meeting_date: date | None = None
+
+
+class NoteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    entity_id: UUID
+    note_text: str
+    note_type: str
+    meeting_date: date | None = None
+    extracted_fields: Any | None = None
+    extraction_status: str = "pending"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ApplyNoteUpdatesIn(BaseModel):
+    entity_updates: dict | None = None
+    new_attributes: dict | None = None
 
 
 # ---------------------------------------------------------------------------

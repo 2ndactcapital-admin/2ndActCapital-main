@@ -63,10 +63,16 @@ Delete in this FK-safe order:
   13. deal_documents
   14. deals
   15. member_target_allocations
-  16. entity_ownership
-  17. entities
-  18. user_roles (test-assigned)
-  19. users (last)
+  16. entity_notes
+  17. investment_profile_extractions
+  18. investment_profile_answers
+  19. profile_conversations
+  20. entity_briefs
+  21. entity_ownership
+  22. entities
+  23. user_roles (test-assigned)
+  24. audit_log (WHERE user_id = test user)
+  25. users (last)
 
 ## Sprint History
 - Sprint 0: Infrastructure
@@ -80,6 +86,8 @@ Delete in this FK-safe order:
 - Sprint 7: Document workflow + AI + deal stages
 - Sprint 8: Asset class visualizations
 - Sprint 9: Notification bus + RBAC wiring
+- Sprint 10: Client Intelligence Layer (Foundation
+  conversation, AI extraction, CRM notes, client brief)
 
 ## Config Table Categories
 asset_taxonomy    → taxonomy tree (SC/MC/Sub)
