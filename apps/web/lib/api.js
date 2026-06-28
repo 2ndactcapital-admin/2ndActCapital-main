@@ -279,3 +279,29 @@ export const assignUserRole = (userId, roleId) =>
     method: "PUT",
     body: { role_id: roleId },
   });
+
+// --- SPV Manager (Sprint 12) ---
+export const listSPVs = (searchParams) =>
+  fetchAPI("/api/v1/spvs", { searchParams });
+export const getSPV = (id) => fetchAPI(`/api/v1/spvs/${id}`);
+export const createSPV = (body) =>
+  fetchAPI("/api/v1/spvs", { method: "POST", body });
+export const updateSPV = (id, body) =>
+  fetchAPI(`/api/v1/spvs/${id}`, { method: "PATCH", body });
+export const transitionSPVStatus = (id, body) =>
+  fetchAPI(`/api/v1/spvs/${id}/status`, { method: "POST", body });
+export const setSPVFormEntity = (id, body) =>
+  fetchAPI(`/api/v1/spvs/${id}/form-entity`, { method: "POST", body });
+export const subscribeSPV = (id, body) =>
+  fetchAPI(`/api/v1/spvs/${id}/subscriptions`, { method: "POST", body });
+export const amendSubscription = (spvId, subId, body) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/subscriptions/${subId}`, {
+    method: "PATCH",
+    body,
+  });
+export const getSPVCapTable = (id) =>
+  fetchAPI(`/api/v1/spvs/${id}/captable`);
+export const listSPVDocuments = (id) =>
+  fetchAPI(`/api/v1/spvs/${id}/documents`);
+export const getSPVHistory = (id) =>
+  fetchAPI(`/api/v1/spvs/${id}/history`);

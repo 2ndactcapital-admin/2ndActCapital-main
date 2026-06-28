@@ -22,6 +22,7 @@ from routers.investment_profile import router as investment_profile_router
 from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.portfolio import router as portfolio_router
+from routers.spv import router as spv_router
 from routers.users import router as users_router
 from services.database import close_pool
 
@@ -179,6 +180,7 @@ app.include_router(entities_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
+app.include_router(spv_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")

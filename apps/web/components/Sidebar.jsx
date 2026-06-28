@@ -16,7 +16,7 @@ const NAV_ITEMS = [
     href: "/portfolio-reporting",
     icon: "portfolio-reporting",
   },
-  { label: "SPV Manager", href: "/spv-manager", icon: "spv-manager" },
+  { label: "SPV Manager", href: "/spvs", icon: "spv-manager" },
   { label: "Insurance", href: "/insurance", icon: "insurance" },
   { label: "Community", href: "/community", icon: "community" },
   { label: "Notifications", href: "/notifications", icon: "notifications" },
