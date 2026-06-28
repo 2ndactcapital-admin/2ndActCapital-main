@@ -73,7 +73,7 @@ export default function ActivityView() {
       {activities.map((a) => (
         <li key={a.id} className="flex flex-col gap-1 px-4 py-3">
           <div className="flex items-start justify-between gap-2">
-            <span className="text-sm text-[#0F172A]">{a.label || a.action_key}</span>
+            <span className="text-sm text-[#0F172A]">{a.title || a.action_key}</span>
             <StatusChip status={a.status} />
           </div>
           {a.rationale && (

@@ -249,7 +249,7 @@ async def main_async():
             rev_id = await pool.fetchval(
                 """
                 INSERT INTO assistant_activities
-                    (org_id, user_id, action_key, label, status, reversible)
+                    (org_id, user_id, action_key, title, status, reversible)
                 VALUES ($1, $2, 'tasks.my_todos', 'Test reversible', 'done', true)
                 RETURNING id
                 """,
