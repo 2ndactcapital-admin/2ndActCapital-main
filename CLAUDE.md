@@ -221,3 +221,35 @@ The mark is "The Ascent": three rounded squares rising on a diagonal, top one go
 
 ### Avoid
 Fintech aesthetics, gradients, heavy law-firm serifs, dollar-sign/bar-chart iconography, dark mode.
+
+## AI Provider Abstraction
+
+All AI calls MUST route through the central
+call_claude_text / call_claude_json helpers.
+Never call the Anthropic SDK directly from a
+router or service. This keeps the AI provider
+swappable.
+
+We will migrate to Anthropic commercial terms
+with a Zero Data Retention (ZDR) agreement —
+and possibly AWS Bedrock or Google Vertex AI
+for in-VPC data residency — before launch.
+Because all AI access is centralized, that
+migration is a config/key change (swap the
+key or base URL, update model strings if
+needed), NOT an application refactor. Preserve
+this boundary: any new AI feature goes through
+the central helpers.
+
+### User-facing privacy claims — HOLD
+Do NOT surface any "nothing leaves 2nd Act",
+"fully private", "data never leaves", or
+similar privacy claims in user-facing copy,
+marketing pages, the enrollment flow, or the
+AI assistant's dialogue until the commercial
++ ZDR arrangement is signed and verified.
+Build the features now; the stronger privacy
+language gets turned on only once the contract
+literally backs it. Until then, use neutral
+language like "your private AI assistant"
+that does not make a data-handling promise.

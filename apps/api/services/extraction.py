@@ -12,6 +12,7 @@ import json
 import os
 
 AI_MODEL = "claude-haiku-4-5-20251001"
+ASSISTANT_MODEL = "claude-sonnet-4-6"
 
 
 def _strip_fences(text: str) -> str:
@@ -67,6 +68,43 @@ async def call_claude_text(system: str, messages: list[dict], max_tokens: int = 
         return message.content[0].text
     except Exception as exc:
         print(f"call_claude_text failed: {exc}")
+        return None
+
+
+async def call_claude_with_tools(
+    system: str,
+    messages: list[dict],
+    tools: list[dict],
+    model: str = ASSISTANT_MODEL,
+    max_tokens: int = 2000,
+) -> dict | None:
+    """Call Claude with tool-use (ASSISTANT_MODEL by default) and return the raw response dict.
+
+    Returns a dict with keys: stop_reason, content (list of blocks).
+    Returns None when the API key is absent or the call fails.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import anthropic as _anthropic
+
+        client = _anthropic.AsyncAnthropic(api_key=api_key)
+        kwargs: dict = dict(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+        )
+        if tools:
+            kwargs["tools"] = tools
+        message = await client.messages.create(**kwargs)
+        return {
+            "stop_reason": message.stop_reason,
+            "content": [b.model_dump() for b in message.content],
+        }
+    except Exception as exc:
+        print(f"call_claude_with_tools failed: {exc}")
         return None
 
 
