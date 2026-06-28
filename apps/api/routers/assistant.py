@@ -9,7 +9,6 @@ Five endpoints:
 """
 import json
 import traceback
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -245,18 +244,19 @@ async def _run_loop(
 
 async def _load_conversation(conn, org_id: str, user_id: str,
                               context_type: str | None, context_id: str | None) -> dict:
+    # context_ref is a single jsonb column: {"type": ..., "id": ...}
     query = (
-        "SELECT id, messages, context_type, context_id, created_at, updated_at "
+        "SELECT id, messages, context_ref, created_at, updated_at "
         "FROM assistant_conversations "
         "WHERE user_id = $1 AND org_id = $2 AND status = 'active' "
     )
     params: list = [user_id, org_id]
     if context_type:
         params.append(context_type)
-        query += f" AND context_type = ${len(params)}"
+        query += f" AND context_ref->>'type' = ${len(params)}"
     if context_id:
         params.append(context_id)
-        query += f" AND context_id = ${len(params)}"
+        query += f" AND context_ref->>'id' = ${len(params)}"
     query += " ORDER BY updated_at DESC LIMIT 1"
 
     row = await conn.fetchrow(query, *params)
@@ -265,17 +265,19 @@ async def _load_conversation(conn, org_id: str, user_id: str,
 
 async def _create_conversation(conn, org_id: str, user_id: str,
                                 context_type: str | None, context_id: str | None) -> dict:
+    ctx_ref: str | None = None
+    if context_type or context_id:
+        ctx_ref = json.dumps({"type": context_type, "id": context_id})
     row = await conn.fetchrow(
         """
         INSERT INTO assistant_conversations
-            (org_id, user_id, context_type, context_id, messages, status)
-        VALUES ($1, $2, $3, $4, '[]'::jsonb, 'active')
-        RETURNING id, messages, context_type, context_id, created_at, updated_at
+            (org_id, user_id, context_ref, messages, status)
+        VALUES ($1, $2, $3::jsonb, '[]'::jsonb, 'active')
+        RETURNING id, messages, context_ref, created_at, updated_at
         """,
         org_id,
         user_id,
-        context_type,
-        context_id,
+        ctx_ref,
     )
     return dict(row)
 
@@ -285,7 +287,6 @@ def _format_conversation(row: dict) -> dict:
     display_messages = []
     for m in raw:
         if m.get("_display") is None:
-            # user message
             content = m.get("content", "")
             if isinstance(content, str):
                 display_messages.append({"role": "user", "text": content})
@@ -299,10 +300,13 @@ def _format_conversation(row: dict) -> dict:
                     "render": d.get("render"),
                 }
             )
+    ctx_ref = row.get("context_ref") or {}
+    if isinstance(ctx_ref, str):
+        ctx_ref = json.loads(ctx_ref)
     return {
         "id": str(row["id"]),
-        "context_type": row.get("context_type"),
-        "context_id": str(row["context_id"]) if row.get("context_id") else None,
+        "context_type": ctx_ref.get("type"),
+        "context_id": ctx_ref.get("id"),
         "messages": display_messages,
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
@@ -434,17 +438,15 @@ async def confirm_action(request: Request, body: ConfirmBody):
             raise HTTPException(status_code=500, detail=str(exc))
 
     # Write assistant_activities row
-    activity_id_val: str = str(uuid.uuid4())
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO assistant_activities
-                (id, org_id, user_id, action_key, label, status,
+                (org_id, user_id, action_key, title, status,
                  rationale, reversible, undo_token, result)
-            VALUES ($1, $2, $3, $4, $5, 'done', $6, $7, $8::jsonb, $9::jsonb)
+            VALUES ($1, $2, $3, $4, 'done', $5, $6, $7::jsonb, $8::jsonb)
             RETURNING id, status, created_at
             """,
-            activity_id_val,
             org_id,
             user_id,
             action_key,
@@ -549,8 +551,8 @@ async def list_activities(
             conditions.append(f"status = ${len(params)}")
 
         query = (
-            f"SELECT id, action_key, label, status, rationale, "
-            f"reversible, created_at, completed_at "
+            f"SELECT id, action_key, title, status, rationale, "
+            f"reversible, created_at, undone_at "
             f"FROM assistant_activities "
             f"WHERE {' AND '.join(conditions)} "
             f"ORDER BY created_at DESC LIMIT {limit}"
@@ -561,12 +563,12 @@ async def list_activities(
         {
             "id": str(r["id"]),
             "action_key": r["action_key"],
-            "label": r["label"],
+            "title": r["title"],
             "status": r["status"],
             "rationale": r["rationale"],
             "reversible": r["reversible"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+            "undone_at": r["undone_at"].isoformat() if r["undone_at"] else None,
         }
         for r in rows
     ]

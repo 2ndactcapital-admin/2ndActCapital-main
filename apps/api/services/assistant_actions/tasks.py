@@ -7,7 +7,7 @@ async def _my_todos(pool, user_id: str, org_id: str, **_):
     async with pool.acquire() as conn:
         activity_rows = await conn.fetch(
             """
-            SELECT id, action_key, label, status, created_at
+            SELECT id, action_key, title, status, created_at
             FROM assistant_activities
             WHERE user_id = $1 AND org_id = $2
               AND status IN ('awaiting_review', 'in_progress', 'blocked')
@@ -36,7 +36,7 @@ async def _my_todos(pool, user_id: str, org_id: str, **_):
         {
             "id": str(r["id"]),
             "type": "activity",
-            "label": r["label"] or r["action_key"],
+            "label": r["title"] or r["action_key"],
             "status": r["status"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         }
