@@ -11,21 +11,24 @@ async def _show_new_deals(pool, user_id: str, org_id: str, **_):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, name, deal_type, status, taxonomy_key, created_at
+            SELECT id, name, deal_status, asset_super_class, asset_class, created_at
             FROM deals
-            WHERE org_id = $1 AND status IN ('active', 'under_review')
+            WHERE org_id = $1
+              AND deal_status = ANY($2)
+              AND valid_to IS NULL
             ORDER BY created_at DESC
             LIMIT 5
             """,
             org_id,
+            list(("active", "under_review")),
         )
     deals = [
         {
             "id": str(r["id"]),
             "name": r["name"],
-            "deal_type": r["deal_type"],
-            "status": r["status"],
-            "taxonomy_key": r["taxonomy_key"],
+            "deal_status": r["deal_status"],
+            "asset_super_class": r["asset_super_class"],
+            "asset_class": r["asset_class"],
         }
         for r in rows
     ]
