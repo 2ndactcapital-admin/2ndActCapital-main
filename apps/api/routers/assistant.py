@@ -47,7 +47,11 @@ SYSTEM_PROMPT = (
 
 def _to_api_messages(stored: list[dict]) -> list[dict]:
     """Strip display-only fields before sending to Claude."""
-    return [{"role": m["role"], "content": m["content"]} for m in stored]
+    return [
+        {"role": m["role"], "content": m["content"]}
+        for m in stored
+        if isinstance(m, dict)
+    ]
 
 
 def _extract_text(content: list[dict]) -> str:
@@ -282,10 +286,21 @@ async def _create_conversation(conn, org_id: str, user_id: str,
     return dict(row)
 
 
+def _parse_jsonb(value, default):
+    """Return value parsed from JSON string if needed, else value, else default."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return json.loads(value) if value else default
+    return value
+
+
 def _format_conversation(row: dict) -> dict:
-    raw: list = row.get("messages") or []
+    raw = _parse_jsonb(row.get("messages"), [])
     display_messages = []
     for m in raw:
+        if not isinstance(m, dict):
+            continue
         if m.get("_display") is None:
             content = m.get("content", "")
             if isinstance(content, str):
@@ -300,9 +315,7 @@ def _format_conversation(row: dict) -> dict:
                     "render": d.get("render"),
                 }
             )
-    ctx_ref = row.get("context_ref") or {}
-    if isinstance(ctx_ref, str):
-        ctx_ref = json.loads(ctx_ref)
+    ctx_ref = _parse_jsonb(row.get("context_ref"), {})
     return {
         "id": str(row["id"]),
         "context_type": ctx_ref.get("type"),
@@ -353,7 +366,7 @@ async def post_message(request: Request, body: MessageBody):
         if not row:
             row = await _create_conversation(conn, org_id, user_id, ctx_type, ctx_id)
         conv_id = str(row["id"])
-        stored_messages: list[dict] = list(row.get("messages") or [])
+        stored_messages: list[dict] = list(_parse_jsonb(row.get("messages"), []))
 
     # RBAC
     permissions = await get_user_permissions(pool, user_id, org_id)
@@ -500,7 +513,7 @@ async def undo_activity(request: Request, activity_id: str):
         if row["status"] == "undone":
             raise HTTPException(status_code=400, detail="Activity already undone")
 
-        undo_token = row["undo_token"]
+        undo_token = _parse_jsonb(row["undo_token"], None)
         action = REGISTRY.get(row["action_key"])
 
         # Execute reverse using undo_token if handler supports it
