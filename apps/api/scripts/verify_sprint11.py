@@ -56,7 +56,8 @@ async def teardown(pool, entity_id, conv_ids, activity_ids):
         "DELETE FROM assistant_activities WHERE user_id = $1", TEST_USER_ID
     )
     await pool.execute(
-        "DELETE FROM assistant_conversations WHERE user_id = $1", TEST_USER_ID
+        "DELETE FROM assistant_conversations WHERE user_id = $1 OR context_ref->>'id' = 'check6_draft_note'",
+        TEST_USER_ID,
     )
     await pool.execute(
         "DELETE FROM assistant_autonomy_prefs WHERE user_id = $1", TEST_USER_ID
@@ -184,6 +185,8 @@ async def main_async():
                 print("[5] SKIP — ANTHROPIC_API_KEY not set")
 
             # --- Check 6: draft_note proposed_action (NOT written) ---------
+            # Use a separate context_ref so this check gets a fresh conversation
+            # uncontaminated by check 5's deal-query messages.
             if has_key:
                 r = await c.post(
                     "/api/v1/assistant/message",
@@ -192,7 +195,8 @@ async def main_async():
                         "message": (
                             f"Draft a CRM note for entity {entity_id} "
                             "saying the client discussed impact investments."
-                        )
+                        ),
+                        "context_ref": {"type": "verify", "id": "check6_draft_note"},
                     },
                 )
                 msg_res = r.json()
@@ -271,7 +275,9 @@ async def main_async():
                 """
                 INSERT INTO config (org_id, config_key, config_value, value_type, category)
                 VALUES ($1, 'panel_posture_member', 'expanded', 'text', 'panel_posture')
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (org_id, config_key) DO UPDATE SET
+                    config_value = 'expanded',
+                    category     = 'panel_posture'
                 """,
                 TEST_ORG_ID,
             )
