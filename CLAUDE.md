@@ -253,3 +253,30 @@ language gets turned on only once the contract
 literally backs it. Until then, use neutral
 language like "your private AI assistant"
 that does not make a data-handling promise.
+
+## Schema Source of Truth
+Before writing ANY SQL or query in a sprint, read
+docs/schema_snapshot.sql — it is a live introspection
+of the deployed database, regenerated at the start of
+each sprint. Use exact column names from it. Never
+infer column names from the sprint prompt, from the
+AssistantAction/dataclass field names, or from memory.
+If a table is not in the snapshot, it is not deployed
+yet. Column-name drift between the prompt and the
+deployed schema has caused repeated production bugs
+(e.g. users.role NOT NULL, assistant_action_catalog
+"key" vs "action_key") — the snapshot is the fix.
+
+## Standard Sprint Steps (ordered)
+1. Run the sprint Part 1 SQL in Supabase.
+2. Regenerate docs/schema_snapshot.sql from the
+   deployed DB (script in docs/refresh_schema.md),
+   commit + push.
+3. Read docs/schema_snapshot.sql before writing
+   any query.
+4. Build the sprint (scaffold -> wire -> implement).
+5. Run verify_sprint{N}.py locally (DATABASE_URL +
+   ANTHROPIC_API_KEY from ~/.bashrc).
+6. Fix failures, re-run until green.
+7. Merge to main; confirm Render env vars.
+8. Live smoke test.

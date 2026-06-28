@@ -60,33 +60,42 @@ class ActionRegistry:
         return specs
 
     async def sync_catalog(self, pool, org_id: str) -> None:
-        """Upsert every registered action into assistant_action_catalog."""
+        """Upsert every registered action into assistant_action_catalog.
+
+        Column mapping (deployed schema):
+          AssistantAction.key  → action_key
+          .required_permission → required_permission (may be NULL)
+          is_active            → always True on upsert
+          registered_at        → now() on insert, preserved on update
+        """
         async with pool.acquire() as conn:
             for a in self._actions.values():
                 await conn.execute(
                     """
                     INSERT INTO assistant_action_catalog
-                        (org_id, key, module, description, access_type,
-                         default_autonomy, reversible, render_target, params_schema)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-                    ON CONFLICT (org_id, key) DO UPDATE SET
-                        module           = EXCLUDED.module,
-                        description      = EXCLUDED.description,
-                        access_type      = EXCLUDED.access_type,
-                        default_autonomy = EXCLUDED.default_autonomy,
-                        reversible       = EXCLUDED.reversible,
-                        render_target    = EXCLUDED.render_target,
-                        params_schema    = EXCLUDED.params_schema
+                        (org_id, action_key, module, description, access_type,
+                         required_permission, default_autonomy, reversible,
+                         render_target, is_active)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+                    ON CONFLICT (org_id, action_key) DO UPDATE SET
+                        module              = EXCLUDED.module,
+                        description         = EXCLUDED.description,
+                        access_type         = EXCLUDED.access_type,
+                        required_permission = EXCLUDED.required_permission,
+                        default_autonomy    = EXCLUDED.default_autonomy,
+                        reversible          = EXCLUDED.reversible,
+                        render_target       = EXCLUDED.render_target,
+                        is_active           = true
                     """,
                     org_id,
                     a.key,
                     a.module,
                     a.description,
                     a.access_type,
+                    a.required_permission,
                     a.default_autonomy,
                     a.reversible,
                     a.render_target,
-                    json.dumps(a.params_schema),
                 )
 
 
