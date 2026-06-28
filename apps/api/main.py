@@ -15,6 +15,7 @@ from jose.exceptions import JWTError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from routers.admin import router as admin_router
+from routers.assistant import router as assistant_router
 from routers.debug import router as debug_router
 from routers.entities import router as entities_router
 from routers.investment_profile import router as investment_profile_router
@@ -153,12 +154,27 @@ async def health() -> dict:
     return {"status": "ok", "version": API_VERSION}
 
 
+@app.on_event("startup")
+async def _startup() -> None:
+    from services.assistant_actions import register_all
+    from services.action_registry import REGISTRY
+    from services.database import get_pool
+
+    register_all()
+    try:
+        pool = await get_pool()
+        await REGISTRY.sync_catalog(pool, "00000000-0000-0000-0000-000000000001")
+    except Exception as exc:
+        print(f"[startup] sync_catalog failed (non-fatal): {exc}")
+
+
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     await close_pool()
 
 
 # Feature routers
+app.include_router(assistant_router, prefix="/api/v1")
 app.include_router(entities_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
