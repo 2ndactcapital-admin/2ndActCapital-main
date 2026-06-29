@@ -49,10 +49,18 @@ async def setup(pool):
         """,
         TEST_ORG_ID,
     )
-    return str(entity_id)
+    deal_id = await pool.fetchval(
+        """
+        INSERT INTO deals (org_id, name, deal_status)
+        VALUES ($1, 'Verify12 Test Deal', 'reviewing')
+        RETURNING id
+        """,
+        TEST_ORG_ID,
+    )
+    return str(entity_id), str(deal_id)
 
 
-async def teardown(pool, entity_id, spv_ids):
+async def teardown(pool, entity_id, deal_id, spv_ids):
     for spv_id in spv_ids:
         await pool.execute(
             "DELETE FROM spv_documents WHERE spv_id = $1", spv_id
@@ -105,6 +113,15 @@ async def teardown(pool, entity_id, spv_ids):
     await pool.execute("DELETE FROM entities WHERE id = $1", entity_id)
     await pool.execute("DELETE FROM audit_log WHERE user_id = $1", TEST_USER_ID)
     await pool.execute("DELETE FROM users WHERE id = $1", TEST_USER_ID)
+    # Deal children before deal
+    await pool.execute("DELETE FROM deal_ai_summaries WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM deal_scores WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM deal_votes WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM deal_interest WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM deal_documents WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM investment_stage_history WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM member_investments WHERE deal_id = $1", deal_id)
+    await pool.execute("DELETE FROM deals WHERE id = $1", deal_id)
 
 
 async def main_async():
@@ -123,7 +140,7 @@ async def main_async():
     register_all()
 
     pool = await get_pool()
-    entity_id = await setup(pool)
+    entity_id, deal_id = await setup(pool)
     spv_ids: list = []
 
     try:
@@ -156,6 +173,7 @@ async def main_async():
                 headers=H,
                 json={
                     "name": "Verify12 SPV Alpha",
+                    "deal_id": deal_id,
                     "target_raise": 5000000,
                     "min_commitment": 100000,
                     "carry_pct": 20,
@@ -285,7 +303,7 @@ async def main_async():
                     doc = r.json()
                     doc_id = doc.get("id")
                     db_doc = await pool.fetchrow(
-                        "SELECT id, document_type FROM spv_documents WHERE spv_id = $1",
+                        "SELECT id, doc_type FROM spv_documents WHERE spv_id = $1",
                         spv_id,
                     ) if r.status_code in (200, 201) else None
                     print(
@@ -298,7 +316,7 @@ async def main_async():
                     print("[10] SKIP — R2_ACCOUNT_ID not set")
 
     finally:
-        await teardown(pool, entity_id, spv_ids)
+        await teardown(pool, entity_id, deal_id, spv_ids)
         await close_pool()
 
     print("RESULT:", "PASS" if ok else "FAIL")

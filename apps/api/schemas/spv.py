@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 class SPVCreate(BaseModel):
     name: str
-    deal_id: Optional[UUID] = None
+    deal_id: UUID  # NOT NULL in DB
     target_raise: Optional[float] = None
     minimum_raise: Optional[float] = None
     hard_cap: Optional[float] = None
@@ -109,12 +109,11 @@ class SPVDocumentResponse(BaseModel):
     id: UUID
     org_id: UUID
     spv_id: UUID
+    # DB columns: title, storage_key, doc_type — aliased to friendly names via DOC_SELECT
     file_name: str
-    file_type: str
-    file_size_bytes: Optional[int]
-    r2_key: str
-    r2_bucket: str
+    r2_key: Optional[str]
     document_type: str
+    status: str
     uploaded_by: Optional[UUID]
     created_at: datetime
 

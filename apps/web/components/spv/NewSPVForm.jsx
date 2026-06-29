@@ -16,6 +16,7 @@ export default function NewSPVForm() {
     const fd = new FormData(e.currentTarget);
     const body = {
       name: fd.get("name"),
+      deal_id: fd.get("deal_id") || null,
       target_raise: fd.get("target_raise") ? Number(fd.get("target_raise")) : null,
       min_commitment: fd.get("min_commitment") ? Number(fd.get("min_commitment")) : null,
       carry_pct: fd.get("carry_pct") ? Number(fd.get("carry_pct")) : null,
@@ -73,6 +74,17 @@ export default function NewSPVForm() {
                   required
                   placeholder="e.g. Acme Growth SPV I"
                   className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#334155] mb-1">
+                  Deal ID *
+                </label>
+                <input
+                  name="deal_id"
+                  required
+                  placeholder="UUID of the associated deal"
+                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880] font-mono"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">

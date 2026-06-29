@@ -7,14 +7,14 @@ async def _list_open_spvs(pool, user_id: str, org_id: str, **_):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT s.id, s.name, s.status, s.target_raise, s.min_commitment,
+            SELECT s.id, s.name, s.spv_status AS status, s.target_raise, s.min_commitment,
                    s.close_date,
                    COALESCE(SUM(sub.commitment_amount), 0) AS total_committed
             FROM spvs s
             LEFT JOIN spv_subscriptions sub
               ON sub.spv_id = s.id AND sub.valid_to IS NULL
             WHERE s.org_id = $1
-              AND s.status IN ('open', 'closing')
+              AND s.spv_status IN ('open', 'closing')
             GROUP BY s.id
             ORDER BY s.close_date ASC NULLS LAST, s.created_at DESC
             LIMIT 10
@@ -52,7 +52,7 @@ async def _show_captable(pool, user_id: str, org_id: str, spv_id: str = "", **_)
 
     async with pool.acquire() as conn:
         spv = await conn.fetchrow(
-            "SELECT id, name, target_raise, status FROM spvs WHERE id = $1 AND org_id = $2",
+            "SELECT id, name, target_raise, spv_status AS status FROM spvs WHERE id = $1 AND org_id = $2",
             spv_id,
             org_id,
         )
@@ -63,7 +63,8 @@ async def _show_captable(pool, user_id: str, org_id: str, spv_id: str = "", **_)
             """
             SELECT s.entity_id,
                    COALESCE(e.display_name, e.legal_name, s.entity_id::text) AS entity_name,
-                   s.commitment_amount, s.funded_amount, s.ownership_pct, s.status
+                   s.commitment_amount, s.funded_amount, s.ownership_pct,
+                   s.subscription_status AS status
             FROM spv_subscriptions s
             LEFT JOIN entities e ON e.id = s.entity_id AND e.valid_to IS NULL
             WHERE s.spv_id = $1 AND s.org_id = $2 AND s.valid_to IS NULL
@@ -115,7 +116,7 @@ async def _preview_subscribe(pool, user_id: str, org_id: str,
 
     async with pool.acquire() as conn:
         spv = await conn.fetchrow(
-            "SELECT id, name, status, min_commitment FROM spvs WHERE id = $1 AND org_id = $2",
+            "SELECT id, name, spv_status AS status, min_commitment FROM spvs WHERE id = $1 AND org_id = $2",
             spv_id,
             org_id,
         )
@@ -168,10 +169,10 @@ async def _execute_subscribe(pool, user_id: str, org_id: str,
         row = await conn.fetchrow(
             """
             INSERT INTO spv_subscriptions
-                (org_id, spv_id, entity_id, commitment_amount, status,
+                (org_id, spv_id, entity_id, commitment_amount, subscription_status,
                  valid_from, created_by)
-            VALUES ($1, $2, $3, $4, 'pending', now(), $5)
-            RETURNING id, spv_id, entity_id, commitment_amount, status
+            VALUES ($1, $2, $3, $4, 'soft', now(), $5)
+            RETURNING id, spv_id, entity_id, commitment_amount, subscription_status
             """,
             org_id,
             spv_id,
@@ -185,7 +186,7 @@ async def _execute_subscribe(pool, user_id: str, org_id: str,
         "spv_id": spv_id,
         "entity_id": entity_id,
         "commitment_amount": commitment_amount,
-        "status": row["status"],
+        "status": row["subscription_status"],
     }
     return {
         "result": sub,

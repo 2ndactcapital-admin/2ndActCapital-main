@@ -56,20 +56,23 @@ SPV_STATUS_TRANSITIONS = {
 # Statuses visible to ordinary members.
 MEMBER_VISIBLE_STATUSES = ("open", "closing")
 
+# DB column is spv_status; alias to status for the response.
 SPV_SELECT = (
-    "id, org_id, deal_id, name, status, target_raise, minimum_raise, "
+    "id, org_id, deal_id, name, spv_status, target_raise, minimum_raise, "
     "hard_cap, min_commitment, carry_pct, mgmt_fee_pct, vehicle_entity_id, "
     "close_date, created_by, created_at, updated_at"
 )
 
+# DB column is subscription_status; alias to status for the response.
 SUB_SELECT = (
     "id, org_id, spv_id, entity_id, commitment_amount, funded_amount, "
-    "status, ownership_pct, signed_at, valid_from, valid_to, created_by, created_at"
+    "subscription_status, ownership_pct, signed_at, valid_from, valid_to, created_by, created_at"
 )
 
+# DB columns: title, storage_key, doc_type — aliased to frontend-friendly names.
 DOC_SELECT = (
-    "id, org_id, spv_id, file_name, file_type, file_size_bytes, "
-    "r2_key, r2_bucket, document_type, uploaded_by, created_at"
+    "id, org_id, spv_id, title AS file_name, storage_key AS r2_key, "
+    "doc_type AS document_type, status, uploaded_by, created_at"
 )
 
 
@@ -78,26 +81,30 @@ def _f(v):
 
 
 def _spv_response(row) -> SPVResponse:
+    d = dict(row)
+    d["status"] = d.pop("spv_status")  # remap DB column name to response field
     return SPVResponse(
         **{
-            **dict(row),
-            "target_raise": _f(row["target_raise"]),
-            "minimum_raise": _f(row["minimum_raise"]),
-            "hard_cap": _f(row["hard_cap"]),
-            "min_commitment": _f(row["min_commitment"]),
-            "carry_pct": _f(row["carry_pct"]),
-            "mgmt_fee_pct": _f(row["mgmt_fee_pct"]),
+            **d,
+            "target_raise": _f(d.get("target_raise")),
+            "minimum_raise": _f(d.get("minimum_raise")),
+            "hard_cap": _f(d.get("hard_cap")),
+            "min_commitment": _f(d.get("min_commitment")),
+            "carry_pct": _f(d.get("carry_pct")),
+            "mgmt_fee_pct": _f(d.get("mgmt_fee_pct")),
         }
     )
 
 
 def _sub_response(row) -> SubscriptionResponse:
+    d = dict(row)
+    d["status"] = d.pop("subscription_status")  # remap DB column name to response field
     return SubscriptionResponse(
         **{
-            **dict(row),
-            "commitment_amount": _f(row["commitment_amount"]),
-            "funded_amount": _f(row["funded_amount"]),
-            "ownership_pct": _f(row["ownership_pct"]),
+            **d,
+            "commitment_amount": _f(d.get("commitment_amount")),
+            "funded_amount": _f(d.get("funded_amount")),
+            "ownership_pct": _f(d.get("ownership_pct")),
         }
     )
 
@@ -117,7 +124,6 @@ async def _fetch_spv(conn, org_id, spv_id: UUID):
 async def create_spv(request: Request, body: SPVCreate):
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
-    user_id = get_user_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -126,7 +132,7 @@ async def create_spv(request: Request, body: SPVCreate):
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO spvs
-                    (org_id, deal_id, name, status, target_raise, minimum_raise,
+                    (org_id, deal_id, name, spv_status, target_raise, minimum_raise,
                      hard_cap, min_commitment, carry_pct, mgmt_fee_pct, close_date,
                      created_by)
                 VALUES ($1, $2, $3, 'forming', $4, $5, $6, $7, $8, $9, $10, $11)
@@ -183,10 +189,10 @@ async def list_spvs(
 
     if status:
         params.append(status)
-        conditions.append(f"status = ${len(params)}")
+        conditions.append(f"spv_status = ${len(params)}")
     elif not staff:
         params.append(list(MEMBER_VISIBLE_STATUSES))
-        conditions.append(f"status = ANY(${len(params)})")
+        conditions.append(f"spv_status = ANY(${len(params)})")
 
     params.append(limit)
     params.append(offset)
@@ -213,7 +219,7 @@ async def get_spv(request: Request, spv_id: UUID):
         row = await _fetch_spv(conn, org_id, spv_id)
     if row is None:
         raise HTTPException(status_code=404, detail="SPV not found")
-    if not staff and row["status"] not in MEMBER_VISIBLE_STATUSES:
+    if not staff and row["spv_status"] not in MEMBER_VISIBLE_STATUSES:
         raise HTTPException(status_code=404, detail="SPV not found")
     return _spv_response(row)
 
@@ -283,7 +289,7 @@ async def transition_spv_status(request: Request, spv_id: UUID, body: SPVStatusU
             if current is None:
                 raise HTTPException(status_code=404, detail="SPV not found")
 
-            src = current["status"]
+            src = current["spv_status"]
             allowed = SPV_STATUS_TRANSITIONS.get(src, set())
             # cancelled is always allowed except from cancelled itself.
             if src != "cancelled":
@@ -296,7 +302,7 @@ async def transition_spv_status(request: Request, spv_id: UUID, body: SPVStatusU
 
             row = await conn.fetchrow(
                 f"""
-                UPDATE spvs SET status = $3, updated_at = now()
+                UPDATE spvs SET spv_status = $3, updated_at = now()
                 WHERE id = $1 AND org_id = $2
                 RETURNING {SPV_SELECT}
                 """,
@@ -323,8 +329,8 @@ async def transition_spv_status(request: Request, spv_id: UUID, body: SPVStatusU
                 action="status_change",
                 table_name="spvs",
                 record_id=spv_id,
-                old={"status": src},
-                new={"status": target},
+                old={"spv_status": src},
+                new={"spv_status": target},
             )
     return _spv_response(row)
 
@@ -385,7 +391,7 @@ async def subscribe_to_spv(request: Request, spv_id: UUID, body: SubscriptionCre
             spv = await _fetch_spv(conn, org_id, spv_id)
             if spv is None:
                 raise HTTPException(status_code=404, detail="SPV not found")
-            if spv["status"] not in ("open", "closing"):
+            if spv["spv_status"] not in ("open", "closing"):
                 raise HTTPException(
                     status_code=400,
                     detail="Subscriptions only accepted when SPV is open or closing",
@@ -415,9 +421,9 @@ async def subscribe_to_spv(request: Request, spv_id: UUID, body: SubscriptionCre
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO spv_subscriptions
-                    (org_id, spv_id, entity_id, commitment_amount, status,
+                    (org_id, spv_id, entity_id, commitment_amount, subscription_status,
                      valid_from, created_by)
-                VALUES ($1, $2, $3, $4, 'pending', now(), $5)
+                VALUES ($1, $2, $3, $4, 'soft', now(), $5)
                 RETURNING {SUB_SELECT}
                 """,
                 org_id,
@@ -470,7 +476,7 @@ async def amend_subscription(
                 f"""
                 INSERT INTO spv_subscriptions
                     (org_id, spv_id, entity_id, commitment_amount, funded_amount,
-                     status, ownership_pct, signed_at, valid_from, created_by)
+                     subscription_status, ownership_pct, signed_at, valid_from, created_by)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
                 RETURNING {SUB_SELECT}
                 """,
@@ -479,7 +485,7 @@ async def amend_subscription(
                 old["entity_id"],
                 body.commitment_amount,
                 old["funded_amount"],
-                old["status"],
+                old["subscription_status"],
                 old["ownership_pct"],
                 old["signed_at"],
                 user_id,
@@ -515,7 +521,7 @@ async def get_captable(request: Request, spv_id: UUID):
             SELECT s.id AS subscription_id, s.entity_id,
                    COALESCE(e.display_name, e.legal_name, s.entity_id::text) AS entity_name,
                    s.commitment_amount, s.funded_amount,
-                   s.ownership_pct, s.status, s.signed_at
+                   s.ownership_pct, s.subscription_status AS status, s.signed_at
             FROM spv_subscriptions s
             LEFT JOIN entities e ON e.id = s.entity_id
               AND e.valid_to IS NULL
@@ -564,7 +570,7 @@ async def list_spv_documents(request: Request, spv_id: UUID):
         spv = await _fetch_spv(conn, org_id, spv_id)
         if spv is None:
             raise HTTPException(status_code=404, detail="SPV not found")
-        if not staff and spv["status"] not in MEMBER_VISIBLE_STATUSES:
+        if not staff and spv["spv_status"] not in MEMBER_VISIBLE_STATUSES:
             raise HTTPException(status_code=404, detail="SPV not found")
         rows = await conn.fetch(
             f"SELECT {DOC_SELECT} FROM spv_documents WHERE spv_id = $1 AND org_id = $2 "
@@ -602,18 +608,14 @@ async def upload_spv_document(
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO spv_documents
-                    (org_id, spv_id, file_name, file_type, file_size_bytes,
-                     r2_key, r2_bucket, document_type, uploaded_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    (org_id, spv_id, title, storage_key, doc_type, uploaded_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING {DOC_SELECT}
                 """,
                 org_id,
                 spv_id,
                 file.filename,
-                file.content_type,
-                len(data),
                 key,
-                bucket,
                 document_type or "general",
                 user_id,
             )
@@ -642,9 +644,9 @@ async def get_spv_history(request: Request, spv_id: UUID):
         if spv is None:
             raise HTTPException(status_code=404, detail="SPV not found")
         rows = await conn.fetch(
-            "SELECT id, from_status, to_status, note, changed_by, created_at "
+            "SELECT id, from_status, to_status, note, changed_by, changed_at AS created_at "
             "FROM spv_status_history WHERE spv_id = $1 AND org_id = $2 "
-            "ORDER BY created_at ASC",
+            "ORDER BY changed_at ASC",
             spv_id,
             org_id,
         )
