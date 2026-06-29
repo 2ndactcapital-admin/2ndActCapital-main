@@ -119,7 +119,11 @@ async def teardown(pool, entity_id, deal_id, spv_ids):
     await pool.execute("DELETE FROM deal_votes WHERE deal_id = $1", deal_id)
     await pool.execute("DELETE FROM deal_interest WHERE deal_id = $1", deal_id)
     await pool.execute("DELETE FROM deal_documents WHERE deal_id = $1", deal_id)
-    await pool.execute("DELETE FROM investment_stage_history WHERE deal_id = $1", deal_id)
+    await pool.execute(
+        "DELETE FROM investment_stage_history WHERE member_investment_id IN "
+        "(SELECT id FROM member_investments WHERE deal_id = $1)",
+        deal_id,
+    )
     await pool.execute("DELETE FROM member_investments WHERE deal_id = $1", deal_id)
     await pool.execute("DELETE FROM deals WHERE id = $1", deal_id)
 
