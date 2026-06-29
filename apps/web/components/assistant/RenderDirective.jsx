@@ -1,5 +1,8 @@
 "use client";
 
+import SPVList from "./render/SPVList";
+import CapTable from "./render/CapTable";
+
 // Maps render.component string → React component.
 // Unknown components fall back to a plain text display.
 
@@ -71,6 +74,8 @@ const COMPONENT_MAP = {
   InvestmentCard,
   NoteDraft,
   ToDoList,
+  SPVList,
+  CapTable,
 };
 
 export default function RenderDirective({ render, onNavigate }) {

@@ -311,6 +311,25 @@ export default async function DealDetailPage({ params, searchParams }) {
               )}
             </dl>
           </div>
+
+          {/* Co-invest via SPV — shown when deal is active */}
+          {deal.deal_status === "active" && (
+            <div className="rounded-lg border border-[#ece8dd] bg-white p-5">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-[#C5A880]">
+                Co-invest via SPV
+              </h3>
+              <p className="mt-2 text-sm text-[#334155]">
+                Pool capital with other members through a special purpose vehicle.
+              </p>
+              <a
+                href="/spvs"
+                className="mt-3 block rounded-md px-4 py-2 text-center text-sm font-medium text-white transition"
+                style={{ backgroundColor: "#1B2B4B" }}
+              >
+                View open SPVs
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </AppShell>
