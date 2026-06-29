@@ -52,7 +52,7 @@ async def setup(pool):
     deal_id = await pool.fetchval(
         """
         INSERT INTO deals (org_id, name, deal_status)
-        VALUES ($1, 'Verify12 Test Deal', 'reviewing')
+        VALUES ($1, 'Verify12 Test Deal', 'under_review')
         RETURNING id
         """,
         TEST_ORG_ID,
