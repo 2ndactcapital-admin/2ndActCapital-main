@@ -622,6 +622,68 @@
 --   UNIQUE roles_org_id_name_key: (org_id, name)
 --   PRIMARY KEY roles_pkey: (id)
 
+-- ===== spv_documents =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   subscription_id                          uuid
+--   doc_type                                 text NOT NULL
+--   title                                    text NOT NULL
+--   storage_key                              text
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   uploaded_by                              uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_documents_pkey: (id)
+
+-- ===== spv_status_history =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   from_status                              text
+--   to_status                                text NOT NULL
+--   note                                     text
+--   changed_by                               uuid
+--   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_status_history_pkey: (id)
+
+-- ===== spv_subscriptions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   member_investment_id                     uuid
+--   commitment_amount                        numeric NOT NULL
+--   funded_amount                            numeric NOT NULL DEFAULT 0
+--   ownership_pct                            numeric
+--   subscription_status                      text NOT NULL DEFAULT 'soft'::text
+--   signed_at                                timestamp with time zone
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_subscriptions_pkey: (id)
+
+-- ===== spvs =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   vehicle_entity_id                        uuid
+--   name                                     text NOT NULL
+--   spv_status                               text NOT NULL DEFAULT 'forming'::text
+--   target_raise                             numeric
+--   minimum_raise                            numeric
+--   hard_cap                                 numeric
+--   min_commitment                           numeric
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   carry_pct                                numeric
+--   mgmt_fee_pct                             numeric
+--   close_date                               date
+--   formation_notes                          text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spvs_pkey: (id)
+
 -- ===== user_notification_preferences =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
