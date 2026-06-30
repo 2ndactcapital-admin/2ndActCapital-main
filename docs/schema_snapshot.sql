@@ -126,6 +126,17 @@
 --   UNIQUE config_org_id_config_key_key: (org_id, config_key)
 --   PRIMARY KEY config_pkey: (id)
 
+-- ===== dashboard_briefs =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   greeting                                 text
+--   narration                                text
+--   blocks                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   generated_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY dashboard_briefs_pkey: (id)
+--   UNIQUE dashboard_briefs_user_id_key: (user_id)
+
 -- ===== deal_ai_summaries =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -533,6 +544,28 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY member_target_allocations_pkey: (id)
+
+-- ===== member_todos =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   entity_id                                uuid
+--   kind                                     text NOT NULL DEFAULT 'actual'::text
+--   category                                 text NOT NULL
+--   title                                    text NOT NULL
+--   detail                                   text
+--   action_key                               text
+--   action_params                            jsonb
+--   due_date                                 date
+--   expected_window                          text
+--   priority                                 integer NOT NULL DEFAULT 100
+--   status                                   text NOT NULL DEFAULT 'open'::text
+--   source                                   text
+--   related_type                             text
+--   related_id                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY member_todos_pkey: (id)
 
 -- ===== notification_delivery_log =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
