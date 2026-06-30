@@ -3,11 +3,11 @@
 GET  /dashboard/brief            — deterministic blocks, no AI blocking
 GET  /dashboard/brief/narration  — AI narration, cached to dashboard_briefs
 POST /dashboard/todos/regenerate — idempotent todo generation (debounced 2 min)
-GET  /dashboard/todos            — list member todos
+GET  /dashboard/todos            — list member todos (status = pending)
 PATCH /dashboard/todos/{id}      — dismiss or complete a todo
 """
 import json
-from datetime import date, timezone
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -22,8 +22,6 @@ from services.users import ensure_user
 
 router = APIRouter(tags=["dashboard"])
 
-ORG_ID = "00000000-0000-0000-0000-000000000001"
-
 _NARRATION_SYSTEM = (
     "You are the trusted advisor voice of 2nd Act Capital — a private membership "
     "platform for post-liquidity founders. Write a warm, spare daily brief for the "
@@ -32,6 +30,14 @@ _NARRATION_SYSTEM = (
     "and note any promising opportunity or upcoming event. If nothing is urgent, "
     "give a quiet affirming observation about their position."
 )
+
+
+def _greeting(full_name: str | None) -> str:
+    from datetime import datetime
+    h = datetime.now().hour
+    time = "Good morning" if h < 12 else "Good afternoon" if h < 17 else "Good evening"
+    name = (full_name or "").strip().split()[0] if full_name else "Member"
+    return f"{time}, {name}."
 
 
 # ---------------------------------------------------------------------------
@@ -105,20 +111,35 @@ async def get_brief_narration(request: Request):
         model=ASSISTANT_MODEL,
     )
 
-    # Cache the result (upsert by user + date).
+    # Cache the result (safe upsert: try UPDATE, INSERT if nothing updated).
     if narration:
         async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO dashboard_briefs (org_id, user_id, brief_date, narration, model_used)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (user_id, brief_date)
-                DO UPDATE SET narration = EXCLUDED.narration,
-                              model_used = EXCLUDED.model_used,
-                              generated_at = now()
-                """,
-                org_id, user_id, today, narration, ASSISTANT_MODEL,
+            # Fetch full_name for greeting
+            profile = await conn.fetchrow(
+                "SELECT full_name FROM users WHERE id = $1", user_id,
             )
+            greeting_text = _greeting(profile["full_name"] if profile else None)
+            blocks_json = json.dumps(blocks)
+
+            result = await conn.execute(
+                """
+                UPDATE dashboard_briefs
+                SET greeting = $1, narration = $2, blocks = $3::jsonb,
+                    generated_at = now()
+                WHERE user_id = $4 AND brief_date = $5
+                """,
+                greeting_text, narration, blocks_json, user_id, today,
+            )
+            if result == "UPDATE 0":
+                await conn.execute(
+                    """
+                    INSERT INTO dashboard_briefs
+                        (org_id, user_id, brief_date, greeting, narration, blocks)
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    org_id, user_id, today, greeting_text, narration, blocks_json,
+                )
 
     return {"narration": narration}
 
@@ -135,13 +156,13 @@ async def regenerate(request: Request):
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
 
-    # Debounce: skip if any todo was touched in the last 2 minutes.
+    # Debounce: skip if any todo was created in the last 2 minutes.
     async with pool.acquire() as conn:
         recent = await conn.fetchval(
             """
             SELECT count(*) FROM member_todos
             WHERE user_id = $1 AND org_id = $2
-              AND updated_at > now() - interval '2 minutes'
+              AND created_at > now() - interval '2 minutes'
             """,
             user_id, org_id,
         )
@@ -165,11 +186,12 @@ async def list_todos(request: Request):
         user_id = await ensure_user(conn, request)
         rows = await conn.fetch(
             """
-            SELECT id, kind, source, related_id, title, body,
-                   action_href, action_label, priority,
-                   dismissed_at, completed_at, created_at
+            SELECT id, kind, category, source, related_type, related_id,
+                   title, detail, action_key, action_params,
+                   priority, status, due_date, expected_window, created_at
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
+              AND status = 'pending'
             ORDER BY kind, priority DESC, created_at DESC
             """,
             user_id, org_id,
@@ -180,9 +202,11 @@ async def list_todos(request: Request):
         for k in ("id", "related_id"):
             if d.get(k) is not None:
                 d[k] = str(d[k])
-        for k in ("dismissed_at", "completed_at", "created_at"):
+        for k in ("created_at",):
             if d.get(k) is not None:
                 d[k] = d[k].isoformat()
+        if d.get("due_date") is not None:
+            d["due_date"] = d["due_date"].isoformat()
         return d
 
     items = [_fmt(r) for r in rows]
@@ -215,44 +239,25 @@ async def patch_todo(todo_id: str, body: TodoPatch, request: Request):
         if not row:
             raise HTTPException(status_code=404, detail="Todo not found")
 
-        updates = {}
         if body.dismissed is True:
-            updates["dismissed_at"] = "now()"
-        elif body.dismissed is False:
-            updates["dismissed_at"] = None
-        if body.completed is True:
-            updates["completed_at"] = "now()"
-        elif body.completed is False:
-            updates["completed_at"] = None
-
-        if not updates:
+            new_status = "dismissed"
+        elif body.completed is True:
+            new_status = "completed"
+        elif body.dismissed is False or body.completed is False:
+            new_status = "pending"
+        else:
             raise HTTPException(status_code=400, detail="No update fields provided")
 
-        # Build SET clause — now() fields handled specially.
-        set_parts = []
-        params: list = [todo_id]
-        for col, val in updates.items():
-            if val == "now()":
-                set_parts.append(f"{col} = now()")
-            else:
-                params.append(val)
-                set_parts.append(f"{col} = ${len(params)}")
-        set_parts.append("updated_at = now()")
-        set_clause = ", ".join(set_parts)
-
         updated = await conn.fetchrow(
-            f"""
+            """
             UPDATE member_todos
-            SET {set_clause}
+            SET status = $2
             WHERE id = $1
-            RETURNING id, kind, title, dismissed_at, completed_at
+            RETURNING id, kind, title, status
             """,
-            *params,
+            todo_id, new_status,
         )
 
     d = dict(updated)
     d["id"] = str(d["id"])
-    for k in ("dismissed_at", "completed_at"):
-        if d.get(k) is not None:
-            d[k] = d[k].isoformat()
     return d

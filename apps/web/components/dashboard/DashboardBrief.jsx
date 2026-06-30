@@ -35,18 +35,18 @@ function TodoItem({ item, onDismiss, onComplete }) {
     <div className="flex items-start justify-between gap-3 py-2 border-b border-[#F5F1EB] last:border-0">
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-[#0F172A] truncate">{item.title}</p>
-        {item.body && (
-          <p className="text-xs text-[#64748B] mt-0.5">{item.body}</p>
+        {item.detail && (
+          <p className="text-xs text-[#64748B] mt-0.5">{item.detail}</p>
         )}
       </div>
       <div className="flex gap-1.5 shrink-0">
-        {item.action_href && (
+        {item.action_key && (
           <a
-            href={item.action_href}
+            href={item.action_key}
             className="rounded px-2.5 py-1 text-xs font-medium"
             style={{ background: "#1B2B4B", color: "#FAF9F6" }}
           >
-            {item.action_label || "View"}
+            {item.action_params || "View"}
           </a>
         )}
         <button
@@ -151,8 +151,8 @@ function OnHorizonBlock({ data, onDismiss }) {
           <div key={item.id} className="flex items-start justify-between gap-3 py-2 border-b border-[#F5F1EB] last:border-0">
             <div className="flex-1 min-w-0">
               <p className="text-sm text-[#334155] truncate">{item.title}</p>
-              {item.body && (
-                <p className="text-xs text-[#64748B] mt-0.5">{item.body}</p>
+              {item.detail && (
+                <p className="text-xs text-[#64748B] mt-0.5">{item.detail}</p>
               )}
             </div>
             <button
