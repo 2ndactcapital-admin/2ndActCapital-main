@@ -696,6 +696,38 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY spv_subscriptions_pkey: (id)
 
+-- ===== spv_transaction_allocations =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   transaction_id                           uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   subscription_id                          uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   ownership_pct                            numeric NOT NULL
+--   allocated_amount                         numeric NOT NULL
+--   status                                   text NOT NULL DEFAULT 'allocated'::text
+--   settled_at                               timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_transaction_allocations_pkey: (id)
+
+-- ===== spv_transactions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   txn_type                                 text NOT NULL
+--   txn_date                                 date NOT NULL
+--   amount                                   numeric NOT NULL
+--   description                              text
+--   reference                                text
+--   allocation_basis                         text NOT NULL DEFAULT 'ownership_pct'::text
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   allocated_at                             timestamp with time zone
+--   posted_at                                timestamp with time zone
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_transactions_pkey: (id)
+
 -- ===== spvs =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
