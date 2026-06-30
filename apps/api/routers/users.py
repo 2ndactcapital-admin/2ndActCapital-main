@@ -1,8 +1,7 @@
-"""Current-user endpoint (Sprint 9).
+"""Current-user endpoints (Sprint 9 + Sprint 12 prefs).
 
-``GET /users/me`` returns the caller's profile plus resolved role and permission
-list, used by the frontend to gate UI elements (scoring, document review,
-pipeline, admin nav).
+``GET  /users/me``   — profile + resolved role / permissions
+``PATCH /users/me``  — update nav_pinned, assistant_panel_posture
 """
 
 from fastapi import APIRouter, Request
@@ -23,6 +22,13 @@ class MeResponse(BaseModel):
     role: str | None = None
     roles: list[str] = []
     permissions: list[str] = []
+    nav_pinned: bool | None = None
+    assistant_panel_posture: str | None = None
+
+
+class MePatch(BaseModel):
+    nav_pinned: bool | None = None
+    assistant_panel_posture: str | None = None
 
 
 @router.get("/users/me", response_model=MeResponse)
@@ -33,7 +39,8 @@ async def get_me(request: Request):
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
         profile = await conn.fetchrow(
-            "SELECT id, email, full_name, role FROM users WHERE id = $1",
+            "SELECT id, email, full_name, role, nav_pinned, assistant_panel_posture "
+            "FROM users WHERE id = $1",
             user_id,
         )
 
@@ -41,7 +48,6 @@ async def get_me(request: Request):
     role_names = [r["name"] for r in roles]
     permissions = sorted(await get_user_permissions(pool, user_id, org_id))
 
-    # Primary role: first assigned RBAC role, else the denormalized users.role.
     primary_role = role_names[0] if role_names else (
         profile["role"] if profile else None
     )
@@ -53,4 +59,36 @@ async def get_me(request: Request):
         role=primary_role,
         roles=role_names,
         permissions=permissions,
+        nav_pinned=profile["nav_pinned"] if profile else None,
+        assistant_panel_posture=profile["assistant_panel_posture"] if profile else None,
     )
+
+
+@router.patch("/users/me", response_model=MeResponse)
+async def patch_me(request: Request, body: MePatch):
+    """Update per-user preferences stored on the users row."""
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+
+        # Build SET clause only for fields that were explicitly provided.
+        provided = body.model_fields_set
+        updates: dict = {}
+        if "nav_pinned" in provided:
+            updates["nav_pinned"] = body.nav_pinned
+        if "assistant_panel_posture" in provided:
+            updates["assistant_panel_posture"] = body.assistant_panel_posture
+
+        if updates:
+            cols = list(updates.keys())
+            set_clause = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))
+            await conn.execute(
+                f"UPDATE users SET {set_clause}, updated_at = now() WHERE id = $1",
+                user_id,
+                *updates.values(),
+            )
+
+    # Return the updated profile (re-use get_me logic).
+    return await get_me(request)

@@ -70,5 +70,6 @@ export function usePermissions() {
     roles,
     permissions,
     can,
+    navPinned: me?.nav_pinned ?? null,
   };
 }

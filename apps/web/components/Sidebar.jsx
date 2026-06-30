@@ -118,28 +118,43 @@ function PinIcon({ pinned }) {
 }
 
 export default function Sidebar() {
-  // Pin state: persists to localStorage so it survives navigation and re-login.
-  const [pinned, setPinned] = useState(false);
+  // Seed from localStorage immediately to avoid a flash on load.
+  const [pinned, setPinned] = useState(() => {
+    try {
+      const stored = localStorage.getItem("nav-pinned");
+      return stored === "true";
+    } catch {
+      return false;
+    }
+  });
   const [hovered, setHovered] = useState(false);
   const [unread, setUnread] = useState(0);
   const pathname = usePathname();
-  const { can } = usePermissions();
+  // navPinned comes from /api/users/me (cached by usePermissions).
+  const { can, navPinned } = usePermissions();
   const mouseLeaveTimer = useRef(null);
+  // Track whether the account value has been applied so we only sync once.
+  const accountSynced = useRef(false);
 
-  // Restore saved preference on mount.
+  // When the account value loads, let it override local state once.
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("nav-pinned");
-      if (stored !== null) setPinned(stored === "true");
-    } catch {}
-  }, []);
+    if (accountSynced.current || navPinned === null || navPinned === undefined) return;
+    accountSynced.current = true;
+    setPinned(navPinned);
+    try { localStorage.setItem("nav-pinned", String(navPinned)); } catch {}
+  }, [navPinned]);
 
   function togglePin() {
     const next = !pinned;
     setPinned(next);
-    try {
-      localStorage.setItem("nav-pinned", String(next));
-    } catch {}
+    // Update localStorage immediately — no flash on next navigation.
+    try { localStorage.setItem("nav-pinned", String(next)); } catch {}
+    // Persist to account so the setting follows the user across devices.
+    fetch("/api/users/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nav_pinned: next }),
+    }).catch(() => {});
   }
 
   function handleMouseEnter() {
