@@ -79,12 +79,11 @@ async def _needs_attention_handler(pool, user_id: str, org_id: str) -> dict | No
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, title, body, action_href, action_label, priority, source
+            SELECT id, title, detail, action_key, action_params, priority, source
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
               AND kind = 'actual'
-              AND dismissed_at IS NULL
-              AND completed_at IS NULL
+              AND status = 'open'
             ORDER BY priority DESC, created_at DESC
             LIMIT 10
             """,
@@ -139,12 +138,11 @@ async def _on_horizon_handler(pool, user_id: str, org_id: str) -> dict | None:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, title, body, action_href, action_label, priority, source
+            SELECT id, title, detail, action_key, action_params, priority, source
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
               AND kind = 'anticipated'
-              AND dismissed_at IS NULL
-              AND completed_at IS NULL
+              AND status = 'open'
             ORDER BY priority DESC, created_at DESC
             LIMIT 10
             """,

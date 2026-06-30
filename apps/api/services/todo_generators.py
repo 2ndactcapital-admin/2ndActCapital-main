@@ -3,8 +3,7 @@
 ACTUAL generators:      pending_subscriptions, unsigned_documents
 ANTICIPATED generators: upcoming_capital_calls, outstanding_tax_docs
 
-All generators are idempotent via ON CONFLICT DO NOTHING on
-(user_id, source, related_id) where related_id IS NOT NULL.
+All generators are idempotent via ON CONFLICT DO NOTHING.
 """
 from typing import Callable
 
@@ -30,13 +29,13 @@ async def generate_pending_subscriptions(pool, user_id: str, org_id: str) -> int
             await conn.execute(
                 """
                 INSERT INTO member_todos
-                    (org_id, user_id, kind, source, related_id,
-                     title, body, action_href, action_label, priority)
-                VALUES ($1, $2, 'actual', 'pending_subscriptions', $3,
-                        $4, $5, '/spvs', 'Review', 10)
-                ON CONFLICT (user_id, source, related_id)
-                WHERE related_id IS NOT NULL
-                DO NOTHING
+                    (org_id, user_id, kind, category, source,
+                     related_type, related_id,
+                     title, detail, action_key, action_params, priority, status)
+                VALUES ($1, $2, 'actual', 'subscription', 'pending_subscriptions',
+                        'spv_subscription', $3,
+                        $4, $5, '/spvs', 'Review', 10, 'open')
+                ON CONFLICT DO NOTHING
                 """,
                 org_id, user_id, row["sub_id"],
                 f"Complete your subscription for {row['spv_name']}",
@@ -67,13 +66,13 @@ async def generate_unsigned_documents(pool, user_id: str, org_id: str) -> int:
             await conn.execute(
                 """
                 INSERT INTO member_todos
-                    (org_id, user_id, kind, source, related_id,
-                     title, body, action_href, action_label, priority)
-                VALUES ($1, $2, 'actual', 'unsigned_documents', $3,
-                        $4, $5, '/spvs', 'Review documents', 20)
-                ON CONFLICT (user_id, source, related_id)
-                WHERE related_id IS NOT NULL
-                DO NOTHING
+                    (org_id, user_id, kind, category, source,
+                     related_type, related_id,
+                     title, detail, action_key, action_params, priority, status)
+                VALUES ($1, $2, 'actual', 'document', 'unsigned_documents',
+                        'spv_document', $3,
+                        $4, $5, '/spvs', 'Review documents', 20, 'open')
+                ON CONFLICT DO NOTHING
                 """,
                 org_id, user_id, row["id"],
                 f"Sign: {row['doc_title']} — {row['spv_name']}",

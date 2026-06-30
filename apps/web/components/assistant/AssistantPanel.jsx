@@ -254,7 +254,7 @@ function TodosView() {
           <div key={t.id} className="flex items-start gap-2 border-b border-[#F5F1EB] px-3 py-2 last:border-0">
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-[#0F172A] truncate">{t.title}</p>
-              {t.body && <p className="text-[10px] text-[#64748B] mt-0.5">{t.body}</p>}
+              {t.detail && <p className="text-[10px] text-[#64748B] mt-0.5">{t.detail}</p>}
             </div>
             <button
               type="button"

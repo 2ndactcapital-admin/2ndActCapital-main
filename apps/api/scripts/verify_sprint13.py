@@ -157,9 +157,9 @@ async def run():
             await conn.execute(
                 """
                 INSERT INTO member_todos
-                    (org_id, user_id, kind, source, title, priority)
-                VALUES ($1, $2, 'actual', 'test', 'Low priority', 1),
-                       ($1, $2, 'actual', 'test', 'High priority', 99)
+                    (org_id, user_id, kind, source, title, detail, priority, status)
+                VALUES ($1, $2, 'actual', 'test', 'Low priority', 'detail', 1, 'open'),
+                       ($1, $2, 'actual', 'test', 'High priority', 'detail', 99, 'open')
                 """,
                 ORG_ID, TEST_USER_ID,
             )
@@ -219,16 +219,16 @@ async def run():
                 updated = await conn.fetchrow(
                     """
                     UPDATE member_todos
-                    SET dismissed_at = now(), updated_at = now()
+                    SET status = 'dismissed'
                     WHERE id = $1
-                    RETURNING dismissed_at
+                    RETURNING status
                     """,
                     todo_id,
                 )
-            if updated and updated["dismissed_at"]:
-                ok("Check 8: PATCH todo dismiss sets dismissed_at")
+            if updated and updated["status"] == "dismissed":
+                ok("Check 8: PATCH todo dismiss sets status = dismissed")
             else:
-                fail("Check 8: dismiss did not set dismissed_at")
+                fail("Check 8: dismiss did not update status")
 
     finally:
         async with pool.acquire() as conn:
