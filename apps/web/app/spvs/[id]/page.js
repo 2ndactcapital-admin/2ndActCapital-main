@@ -5,6 +5,8 @@ import { getSPV, getSPVCapTable, listSPVDocuments, getSPVHistory } from "@/lib/a
 import { isStaff } from "@/lib/roles";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import SPVStatusControl from "@/components/spv/SPVStatusControl";
+import SPVDocumentsTab from "@/components/spv/SPVDocumentsTab";
+import SPVSubscriptionsTab from "@/components/spv/SPVSubscriptionsTab";
 
 const STATUS_CONFIG = {
   forming: { label: "Forming", bg: "bg-[#F5F1EB]", text: "text-[#64748B]" },
@@ -33,94 +35,6 @@ function Metric({ label, value }) {
       <dt className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{label}</dt>
       <dd className="mt-0.5 text-sm font-medium text-[#0F172A] tabular-nums">{value}</dd>
     </div>
-  );
-}
-
-function CapTableSection({ capTable }) {
-  if (!capTable || !capTable.subscriptions?.length) {
-    return (
-      <p className="text-sm text-[#64748B] py-6 text-center">No subscriptions yet.</p>
-    );
-  }
-  const { total_committed, target_raise, subscriptions } = capTable;
-  const pct = target_raise ? Math.min(100, Math.round((total_committed / target_raise) * 100)) : null;
-
-  return (
-    <div>
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-[#0F172A]">
-            {formatCurrency(total_committed)} committed
-          </p>
-          {target_raise && (
-            <p className="text-xs text-[#64748B]">
-              {pct}% of {formatCurrency(target_raise)} target
-            </p>
-          )}
-        </div>
-        {pct !== null && (
-          <div className="w-32 h-1.5 rounded-full bg-[#F5F1EB]">
-            <div
-              className="h-1.5 rounded-full"
-              style={{ width: `${pct}%`, backgroundColor: "#C5A880" }}
-            />
-          </div>
-        )}
-      </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-[#E2E8F0]">
-            <th className="py-2 text-left text-xs font-semibold uppercase tracking-wide text-[#64748B]">Subscriber</th>
-            <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">Committed</th>
-            <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">Funded</th>
-            <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">%</th>
-            <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[#E2E8F0]">
-          {subscriptions.map((s, i) => (
-            <tr key={i}>
-              <td className="py-2.5 text-[#0F172A]">{s.entity_name}</td>
-              <td className="py-2.5 text-right tabular-nums">{formatCurrency(s.commitment_amount)}</td>
-              <td className="py-2.5 text-right tabular-nums text-[#64748B]">
-                {s.funded_amount != null ? formatCurrency(s.funded_amount) : "—"}
-              </td>
-              <td className="py-2.5 text-right tabular-nums text-[#64748B]">
-                {s.ownership_pct != null ? formatPercent(s.ownership_pct) : "—"}
-              </td>
-              <td className="py-2.5 text-right">
-                <StatusPill status={s.status} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function DocumentsSection({ documents }) {
-  if (!documents?.length) {
-    return <p className="text-sm text-[#64748B] py-6 text-center">No documents uploaded.</p>;
-  }
-  return (
-    <ul className="divide-y divide-[#E2E8F0]">
-      {documents.map((d) => (
-        <li key={d.id} className="flex items-center justify-between py-3">
-          <div>
-            <p className="text-sm font-medium text-[#0F172A]">{d.file_name}</p>
-            <p className="text-xs text-[#64748B]">
-              {d.document_type} · {formatDate(d.created_at)}
-            </p>
-          </div>
-          <span className="text-xs text-[#64748B]">
-            {d.file_size_bytes != null
-              ? `${Math.round(d.file_size_bytes / 1024)} KB`
-              : ""}
-          </span>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -237,14 +151,32 @@ export default async function SPVDetailPage({ params, searchParams }) {
         <div className="rounded-lg border border-[#ece8dd] bg-white p-5">
           {tab === "overview" && (
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Metric label="Status" value={spv.status} />
+              {/* Status shown as a pill in the detail grid */}
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Status</dt>
+                <dd className="mt-1">
+                  <StatusPill status={spv.status} />
+                </dd>
+              </div>
               <Metric label="Hard Cap" value={formatCurrency(spv.hard_cap)} />
               <Metric label="Min. Raise" value={formatCurrency(spv.minimum_raise)} />
               <Metric label="Created" value={formatDate(spv.created_at)} />
             </dl>
           )}
-          {tab === "captable" && staff && <CapTableSection capTable={capTable} />}
-          {tab === "documents" && <DocumentsSection documents={documents} />}
+          {tab === "captable" && staff && (
+            <SPVSubscriptionsTab
+              spvId={id}
+              capTable={capTable}
+              staff={staff}
+            />
+          )}
+          {tab === "documents" && (
+            <SPVDocumentsTab
+              spvId={id}
+              initialDocuments={documents}
+              staff={staff}
+            />
+          )}
           {tab === "history" && staff && <HistorySection history={history} />}
         </div>
       </div>

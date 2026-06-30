@@ -5,8 +5,15 @@ import { usePathname, useRouter } from "next/navigation";
 import ActivityView from "./ActivityView";
 import BoundedChoice from "./BoundedChoice";
 import RenderDirective from "./RenderDirective";
+import { usePermissions } from "@/lib/usePermissions";
 
-const VIEWS = ["Chat", "Activity", "Interesting Deals", "Messages"];
+// permission: null means available to all authenticated users.
+const VIEW_CONFIG = [
+  { key: "Chat", label: "Chat", permission: null },
+  { key: "Activity", label: "Activity", permission: null },
+  { key: "Interesting Deals", label: "Interesting Deals", permission: null },
+  { key: "Messages", label: "Messages", permission: null },
+];
 
 // Map user role → default posture when no user override is set.
 const ROLE_POSTURE = {
@@ -206,6 +213,12 @@ export default function AssistantPanel({ user, contextRef }) {
   const [expanded, setExpanded] = useState(false);
   const [activeView, setActiveView] = useState("Chat");
   const pathname = usePathname();
+  const { can, loading: permsLoading } = usePermissions();
+
+  // Filter views by the current user's permissions.
+  const availableViews = VIEW_CONFIG.filter(
+    (v) => !v.permission || can(v.permission)
+  );
 
   // Derive context from current route if no explicit contextRef
   const effectiveContext = contextRef || null;
@@ -255,22 +268,19 @@ export default function AssistantPanel({ user, contextRef }) {
 
       {expanded && (
         <>
-          {/* View selector */}
-          <div className="flex gap-1 overflow-x-auto border-b border-[#E2E8F0] px-2 py-1.5">
-            {VIEWS.map((v) => (
-              <button
-                key={v}
-                onClick={() => setActiveView(v)}
-                className={[
-                  "shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors",
-                  activeView === v
-                    ? "bg-[#1B2B4B] text-white"
-                    : "text-[#64748B] hover:text-[#0F172A]",
-                ].join(" ")}
-              >
-                {v}
-              </button>
-            ))}
+          {/* View selector — single dropdown, role-gated */}
+          <div className="border-b border-[#E2E8F0] px-2 py-1.5">
+            <select
+              value={activeView}
+              onChange={(e) => setActiveView(e.target.value)}
+              className="w-full rounded border border-[#E2E8F0] bg-[#FAF9F6] px-2 py-1 text-xs font-medium text-[#1B2B4B] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+            >
+              {availableViews.map((v) => (
+                <option key={v.key} value={v.key}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* View body */}
