@@ -17,6 +17,8 @@ import os
 import sys
 import uuid
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import asyncpg
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
