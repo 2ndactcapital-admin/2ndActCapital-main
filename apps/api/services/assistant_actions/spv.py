@@ -1,5 +1,7 @@
 """SPV assistant actions (Sprint 12)."""
+import uuid
 from services.action_registry import AssistantAction, REGISTRY
+from services.spv_allocation import allocate_transaction
 
 
 async def _list_open_spvs(pool, user_id: str, org_id: str, **_):
@@ -204,6 +206,148 @@ async def _execute_subscribe(pool, user_id: str, org_id: str,
     }
 
 
+async def _show_ledger_handler(pool, user_id: str, org_id: str, spv_id: str = "", **_):
+    """Return ledger summary for a specific SPV (staff only)."""
+    if not spv_id:
+        return {"data": {"error": "spv_id required"}, "render": None, "text": "Please provide an SPV ID."}
+
+    async with pool.acquire() as conn:
+        spv = await conn.fetchrow(
+            "SELECT id, name FROM spvs WHERE id = $1 AND org_id = $2",
+            spv_id,
+            org_id,
+        )
+        if not spv:
+            return {"data": {"error": "SPV not found"}, "render": None, "text": "SPV not found."}
+
+        rows = await conn.fetch(
+            """
+            SELECT txn_type, SUM(amount) AS total
+            FROM spv_transactions
+            WHERE spv_id = $1 AND status = 'posted' AND org_id = $2
+            GROUP BY txn_type
+            """,
+            spv_id,
+            org_id,
+        )
+
+    totals_by_type = {r["txn_type"]: float(r["total"]) for r in rows}
+    summary = {
+        "total_called": totals_by_type.get("capital_call", 0.0),
+        "total_distributed": totals_by_type.get("distribution", 0.0),
+        "total_fees": totals_by_type.get("fee", 0.0),
+        "by_type": totals_by_type,
+    }
+
+    name = spv["name"]
+    return {
+        "data": {"spv_id": spv_id, "spv_name": name, "summary": summary},
+        "render": {
+            "component": "SPVLedger",
+            "target": "screen",
+            "screen_route": f"/spvs/{spv_id}?tab=transactions",
+            "props": {"spv_id": spv_id, "spv_name": name, "summary": summary},
+        },
+        "text": f"Opening {name} ledger...",
+    }
+
+
+async def _record_txn_draft(
+    pool, user_id: str, org_id: str,
+    spv_id: str = "", txn_type: str = "", amount: float = 0.0,
+    txn_date: str = "", description: str = "", **_
+):
+    """Draft handler: validate inputs and return a preview (no DB writes)."""
+    errors = []
+    if not spv_id:
+        errors.append("spv_id is required")
+    if not txn_type:
+        errors.append("txn_type is required")
+    if not amount or amount <= 0:
+        errors.append("amount must be a positive number")
+    if not txn_date:
+        errors.append("txn_date is required")
+    if errors:
+        return {"error": "; ".join(errors)}
+
+    async with pool.acquire() as conn:
+        spv = await conn.fetchrow(
+            "SELECT id, name FROM spvs WHERE id = $1 AND org_id = $2",
+            spv_id,
+            org_id,
+        )
+        if not spv:
+            return {"error": f"SPV {spv_id} not found"}
+
+    return {
+        "spv_id": spv_id,
+        "spv_name": spv["name"],
+        "txn_type": txn_type,
+        "amount": amount,
+        "txn_date": txn_date,
+        "description": description,
+    }
+
+
+async def _record_txn_confirm(
+    pool, user_id: str, org_id: str,
+    choice_value: str = "confirm",
+    spv_id: str = "", txn_type: str = "", amount: float = 0.0,
+    txn_date: str = "", description: str = "", **_
+):
+    """Confirm handler: insert spv_transactions row and optionally allocate."""
+    if choice_value == "none":
+        return {"result": None, "render": None, "undo_token": None}
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO spv_transactions
+                (org_id, spv_id, txn_type, amount, txn_date, description,
+                 status, created_by)
+            VALUES ($1, $2, $3, $4, $5::date, $6, 'draft', $7)
+            RETURNING id, org_id, spv_id, txn_type, amount, txn_date,
+                      description, status
+            """,
+            org_id,
+            spv_id,
+            txn_type,
+            amount,
+            txn_date,
+            description,
+            user_id,
+        )
+
+    txn_id = row["id"]
+    txn = {
+        "id": str(txn_id),
+        "spv_id": spv_id,
+        "txn_type": txn_type,
+        "amount": float(row["amount"]),
+        "txn_date": row["txn_date"].isoformat() if row["txn_date"] else txn_date,
+        "description": description,
+        "status": row["status"],
+    }
+
+    allocations = None
+    if choice_value == "confirm_and_allocate":
+        allocations = await allocate_transaction(pool, str(txn_id), user_id)
+        txn["status"] = "allocated"
+
+    undo_token = {"transaction_id": str(txn_id), "action": "void"}
+
+    return {
+        "result": {**txn, "allocations": allocations},
+        "render": {
+            "component": "SPVLedger",
+            "target": "screen",
+            "screen_route": f"/spvs/{spv_id}?tab=transactions",
+            "props": {"spv_id": spv_id, "transaction": txn},
+        },
+        "undo_token": undo_token,
+    }
+
+
 def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
@@ -284,6 +428,79 @@ def register_actions() -> None:
             options=[
                 {"key": "confirm", "label": "Confirm subscription"},
                 {"key": "none", "label": "Not now — I'll think about it"},
+            ],
+        )
+    )
+
+    REGISTRY.register(
+        AssistantAction(
+            key="spv.show_ledger",
+            module="spv",
+            description="Show the transaction ledger summary for a specific SPV. Staff only.",
+            access_type="read",
+            required_permission="manage_deals",
+            default_autonomy="auto",
+            reversible=False,
+            render_target="screen",
+            handler=_show_ledger_handler,
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "spv_id": {
+                        "type": "string",
+                        "description": "UUID of the SPV whose ledger to display.",
+                    },
+                },
+                "required": ["spv_id"],
+            },
+        )
+    )
+
+    REGISTRY.register(
+        AssistantAction(
+            key="spv.record_transaction",
+            module="spv",
+            description=(
+                "Record a capital call, distribution, or fee transaction against an SPV. "
+                "Optionally allocates the transaction to subscribers immediately."
+            ),
+            access_type="write",
+            required_permission="manage_deals",
+            default_autonomy="confirm",
+            reversible=True,
+            render_target="screen",
+            handler=_record_txn_confirm,
+            draft_handler=_record_txn_draft,
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "spv_id": {
+                        "type": "string",
+                        "description": "UUID of the SPV for this transaction.",
+                    },
+                    "txn_type": {
+                        "type": "string",
+                        "description": "Transaction type (e.g. capital_call, distribution, fee).",
+                    },
+                    "amount": {
+                        "type": "number",
+                        "description": "Transaction amount in USD.",
+                    },
+                    "txn_date": {
+                        "type": "string",
+                        "description": "Transaction date (YYYY-MM-DD).",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional free-text description.",
+                    },
+                },
+                "required": ["spv_id", "txn_type", "amount", "txn_date"],
+            },
+            options=[
+                {"key": "confirm_and_allocate", "label": "Create & allocate now"},
+                {"key": "draft_only", "label": "Create as draft"},
+                {"key": "none", "label": "Not now"},
             ],
         )
     )

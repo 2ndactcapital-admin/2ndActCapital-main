@@ -7,6 +7,7 @@ import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import SPVStatusControl from "@/components/spv/SPVStatusControl";
 import SPVDocumentsTab from "@/components/spv/SPVDocumentsTab";
 import SPVSubscriptionsTab from "@/components/spv/SPVSubscriptionsTab";
+import SPVTransactionsTab from "@/components/spv/SPVTransactionsTab";
 
 const STATUS_CONFIG = {
   forming: { label: "Forming", bg: "bg-[#F5F1EB]", text: "text-[#64748B]" },
@@ -90,6 +91,7 @@ export default async function SPVDetailPage({ params, searchParams }) {
     { key: "overview", label: "Overview" },
     ...(staff ? [{ key: "captable", label: "Cap Table" }] : []),
     { key: "documents", label: "Documents" },
+    ...(staff ? [{ key: "transactions", label: "Transactions" }] : []),
     ...(staff ? [{ key: "history", label: "History" }] : []),
   ];
 
@@ -176,6 +178,9 @@ export default async function SPVDetailPage({ params, searchParams }) {
               initialDocuments={documents}
               staff={staff}
             />
+          )}
+          {tab === "transactions" && staff && (
+            <SPVTransactionsTab spvId={id} staff={staff} />
           )}
           {tab === "history" && staff && <HistorySection history={history} />}
         </div>

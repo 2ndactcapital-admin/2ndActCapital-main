@@ -1,18 +1,28 @@
-"""SPV Manager endpoints (Sprint 12).
+"""SPV Manager endpoints (Sprint 12 + Sprint 14).
 
 Routes:
-  POST   /spvs                            — create SPV (staff)
-  GET    /spvs                            — list SPVs
-  GET    /spvs/{id}                       — SPV detail
-  PATCH  /spvs/{id}                       — update metadata (staff)
-  POST   /spvs/{id}/status               — transition status (staff)
-  POST   /spvs/{id}/form-entity          — set vehicle entity (staff)
-  POST   /spvs/{id}/subscriptions        — subscribe (member)
-  PATCH  /spvs/{spv_id}/subscriptions/{sub_id} — amend subscription (bi-temporal)
-  GET    /spvs/{id}/captable             — cap table (staff)
-  GET    /spvs/{id}/documents            — list documents
-  POST   /spvs/{id}/documents            — upload document (staff)
-  GET    /spvs/{id}/history              — status history
+  POST   /spvs                                          — create SPV (staff)
+  GET    /spvs                                          — list SPVs
+  GET    /spvs/{id}                                     — SPV detail
+  PATCH  /spvs/{id}                                     — update metadata (staff)
+  POST   /spvs/{id}/status                              — transition status (staff)
+  POST   /spvs/{id}/form-entity                         — set vehicle entity (staff)
+  POST   /spvs/{id}/subscriptions                       — subscribe (member)
+  PATCH  /spvs/{spv_id}/subscriptions/{sub_id}          — amend subscription (bi-temporal)
+  GET    /spvs/{id}/captable                            — cap table (staff)
+  GET    /spvs/{id}/documents                           — list documents
+  POST   /spvs/{id}/documents                           — upload document (staff)
+  GET    /spvs/{id}/history                             — status history
+
+  Sprint 14 — Transaction Ledger:
+  POST   /spvs/{id}/transactions                        — create draft transaction (staff)
+  GET    /spvs/{id}/transactions                        — list transactions
+  PATCH  /spvs/{id}/transactions/{txn_id}               — edit draft only (staff)
+  POST   /spvs/{id}/transactions/{txn_id}/allocate      — compute+persist allocations (staff)
+  POST   /spvs/{id}/transactions/{txn_id}/post          — post an allocated txn (staff)
+  POST   /spvs/{id}/transactions/{txn_id}/void          — void a transaction (staff)
+  GET    /spvs/{id}/transactions/{txn_id}/allocations   — allocation rows (staff)
+  GET    /spvs/{id}/ledger                              — full ledger view (staff)
 """
 import os
 import uuid as _uuid
@@ -23,8 +33,11 @@ from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
 from schemas.spv import (
+    AllocationRow,
     CapTableEntry,
     CapTableResponse,
+    LedgerResponse,
+    LedgerSummary,
     SPVCreate,
     SPVDocumentResponse,
     SPVFormEntityUpdate,
@@ -35,6 +48,9 @@ from schemas.spv import (
     SubscriptionAmend,
     SubscriptionCreate,
     SubscriptionResponse,
+    TransactionCreate,
+    TransactionResponse,
+    TransactionUpdate,
 )
 from services.audit import write_audit_log
 from services.database import get_pool
@@ -658,3 +674,343 @@ async def get_spv_history(request: Request, spv_id: UUID):
             org_id,
         )
     return [StatusHistoryEntry(**dict(r)) for r in rows]
+
+
+# ===========================================================================
+# Sprint 14 — Transaction Ledger
+# ===========================================================================
+
+_TXN_TYPES = ("capital_call", "distribution", "fee", "return_of_capital")
+_ALLOC_BASIS = ("ownership_pct", "committed", "funded")
+
+_TXN_SELECT = (
+    "id, org_id, spv_id, txn_type, txn_date, amount, description, reference, "
+    "allocation_basis, status, allocated_at, posted_at, voided_at, created_by, "
+    "created_at, updated_at"
+)
+_ALLOC_SELECT = (
+    "id, org_id, transaction_id, subscription_id, allocated_amount, "
+    "ownership_pct, status, created_at"
+)
+
+
+def _txn_response(row) -> TransactionResponse:
+    d = dict(row)
+    d["amount"] = float(d["amount"]) if d.get("amount") is not None else 0.0
+    return TransactionResponse(**d)
+
+
+def _alloc_response(row) -> AllocationRow:
+    d = dict(row)
+    d["allocated_amount"] = float(d["allocated_amount"])
+    d["ownership_pct"] = float(d["ownership_pct"])
+    return AllocationRow(**d)
+
+
+# ---------------------------------------------------------------------------
+# POST /spvs/{spv_id}/transactions
+# ---------------------------------------------------------------------------
+@router.post("/spvs/{spv_id}/transactions", response_model=TransactionResponse, status_code=201)
+async def create_transaction(request: Request, spv_id: UUID, body: TransactionCreate):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    if body.txn_type not in _TXN_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid txn_type; allowed: {_TXN_TYPES}")
+    if body.allocation_basis not in _ALLOC_BASIS:
+        raise HTTPException(status_code=400, detail=f"Invalid allocation_basis; allowed: {_ALLOC_BASIS}")
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        spv = await _fetch_spv(conn, org_id, spv_id)
+        if spv is None:
+            raise HTTPException(status_code=404, detail="SPV not found")
+
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO spv_transactions
+                (org_id, spv_id, txn_type, txn_date, amount, description, reference,
+                 allocation_basis, status, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9)
+            RETURNING {_TXN_SELECT}
+            """,
+            org_id, spv_id, body.txn_type, body.txn_date, body.amount,
+            body.description, body.reference, body.allocation_basis, user_id,
+        )
+        await write_audit_log(
+            conn, org_id=org_id, action="create", table_name="spv_transactions",
+            record_id=row["id"], new=dict(row),
+        )
+    return _txn_response(row)
+
+
+# ---------------------------------------------------------------------------
+# GET /spvs/{spv_id}/transactions
+# ---------------------------------------------------------------------------
+@router.get("/spvs/{spv_id}/transactions", response_model=list[TransactionResponse])
+async def list_transactions(request: Request, spv_id: UUID):
+    org_id = get_org_id(request)
+    staff = is_staff(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        spv = await _fetch_spv(conn, org_id, spv_id)
+        if spv is None:
+            raise HTTPException(status_code=404, detail="SPV not found")
+
+        if staff:
+            rows = await conn.fetch(
+                f"SELECT {_TXN_SELECT} FROM spv_transactions "
+                "WHERE spv_id = $1 AND org_id = $2 "
+                "ORDER BY txn_date DESC, created_at DESC",
+                spv_id, org_id,
+            )
+        else:
+            # Members see only transactions where they have an allocation
+            rows = await conn.fetch(
+                f"""
+                SELECT DISTINCT t.{', t.'.join(_TXN_SELECT.split(', '))}
+                FROM spv_transactions t
+                JOIN spv_transaction_allocations sta ON sta.transaction_id = t.id
+                JOIN spv_subscriptions ss ON ss.id = sta.subscription_id
+                JOIN member_investments mi ON mi.id = ss.member_investment_id
+                WHERE t.spv_id = $1 AND t.org_id = $2 AND mi.user_id = $3
+                ORDER BY t.txn_date DESC, t.created_at DESC
+                """,
+                spv_id, org_id, user_id,
+            )
+    return [_txn_response(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# PATCH /spvs/{spv_id}/transactions/{txn_id}
+# ---------------------------------------------------------------------------
+@router.patch("/spvs/{spv_id}/transactions/{txn_id}", response_model=TransactionResponse)
+async def patch_transaction(request: Request, spv_id: UUID, txn_id: UUID, body: TransactionUpdate):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    pool = await get_pool()
+
+    if "txn_type" in updates and updates["txn_type"] not in _TXN_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid txn_type; allowed: {_TXN_TYPES}")
+    if "allocation_basis" in updates and updates["allocation_basis"] not in _ALLOC_BASIS:
+        raise HTTPException(status_code=400, detail=f"Invalid allocation_basis; allowed: {_ALLOC_BASIS}")
+
+    async with pool.acquire() as conn:
+        txn = await conn.fetchrow(
+            f"SELECT {_TXN_SELECT} FROM spv_transactions WHERE id = $1 AND spv_id = $2 AND org_id = $3",
+            txn_id, spv_id, org_id,
+        )
+        if txn is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if txn["status"] != "draft":
+            raise HTTPException(status_code=400, detail="Only draft transactions may be edited")
+
+        editable = ("txn_type", "txn_date", "amount", "description", "reference", "allocation_basis")
+        set_clauses = ["updated_at = now()"]
+        params: list = [txn_id, spv_id, org_id]
+        for field in editable:
+            if field in updates:
+                params.append(updates[field])
+                set_clauses.append(f"{field} = ${len(params)}")
+
+        row = await conn.fetchrow(
+            f"UPDATE spv_transactions SET {', '.join(set_clauses)} "
+            f"WHERE id = $1 AND spv_id = $2 AND org_id = $3 RETURNING {_TXN_SELECT}",
+            *params,
+        )
+        await write_audit_log(
+            conn, org_id=org_id, action="update", table_name="spv_transactions",
+            record_id=txn_id, old=dict(txn), new=dict(row),
+        )
+    return _txn_response(row)
+
+
+# ---------------------------------------------------------------------------
+# POST /spvs/{spv_id}/transactions/{txn_id}/allocate
+# ---------------------------------------------------------------------------
+@router.post("/spvs/{spv_id}/transactions/{txn_id}/allocate")
+async def allocate(request: Request, spv_id: UUID, txn_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        txn = await conn.fetchrow(
+            "SELECT id, spv_id FROM spv_transactions WHERE id = $1 AND org_id = $2",
+            txn_id, org_id,
+        )
+        if txn is None or str(txn["spv_id"]) != str(spv_id):
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+    from services.spv_allocation import allocate_transaction
+    try:
+        alloc_rows = await allocate_transaction(pool, str(txn_id), user_id)
+    except (ValueError, AssertionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    total_allocated = sum(float(r["allocated_amount"]) for r in alloc_rows)
+    return {
+        "transaction_id": str(txn_id),
+        "subscriber_count": len(alloc_rows),
+        "total_allocated": total_allocated,
+        "allocations": [
+            {
+                "subscription_id": r["subscription_id"],
+                "allocated_amount": float(r["allocated_amount"]),
+                "ownership_pct": float(r["ownership_pct"]),
+            }
+            for r in alloc_rows
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /spvs/{spv_id}/transactions/{txn_id}/post
+# ---------------------------------------------------------------------------
+@router.post("/spvs/{spv_id}/transactions/{txn_id}/post", response_model=TransactionResponse)
+async def post_txn(request: Request, spv_id: UUID, txn_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        txn = await conn.fetchrow(
+            f"SELECT {_TXN_SELECT} FROM spv_transactions WHERE id = $1 AND org_id = $2",
+            txn_id, org_id,
+        )
+        if txn is None or str(txn["spv_id"]) != str(spv_id):
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if txn["status"] != "allocated":
+            raise HTTPException(status_code=400, detail="Transaction must be 'allocated' before posting")
+
+    from services.spv_allocation import post_transaction
+    try:
+        await post_transaction(pool, str(txn_id), user_id)
+    except (ValueError, AssertionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT {_TXN_SELECT} FROM spv_transactions WHERE id = $1", txn_id,
+        )
+    return _txn_response(row)
+
+
+# ---------------------------------------------------------------------------
+# POST /spvs/{spv_id}/transactions/{txn_id}/void
+# ---------------------------------------------------------------------------
+@router.post("/spvs/{spv_id}/transactions/{txn_id}/void", response_model=TransactionResponse)
+async def void_transaction(request: Request, spv_id: UUID, txn_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        txn = await conn.fetchrow(
+            f"SELECT {_TXN_SELECT} FROM spv_transactions WHERE id = $1 AND org_id = $2",
+            txn_id, org_id,
+        )
+        if txn is None or str(txn["spv_id"]) != str(spv_id):
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE spv_transaction_allocations SET status = 'void' WHERE transaction_id = $1",
+                txn_id,
+            )
+            row = await conn.fetchrow(
+                f"UPDATE spv_transactions SET status = 'void', voided_at = now(), updated_at = now() "
+                f"WHERE id = $1 RETURNING {_TXN_SELECT}",
+                txn_id,
+            )
+            await write_audit_log(
+                conn, org_id=org_id, action="void", table_name="spv_transactions",
+                record_id=txn_id, new={"voided_by": user_id},
+            )
+    return _txn_response(row)
+
+
+# ---------------------------------------------------------------------------
+# GET /spvs/{spv_id}/transactions/{txn_id}/allocations
+# ---------------------------------------------------------------------------
+@router.get("/spvs/{spv_id}/transactions/{txn_id}/allocations", response_model=list[AllocationRow])
+async def get_allocations(request: Request, spv_id: UUID, txn_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        txn = await conn.fetchrow(
+            "SELECT id FROM spv_transactions WHERE id = $1 AND spv_id = $2 AND org_id = $3",
+            txn_id, spv_id, org_id,
+        )
+        if txn is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        rows = await conn.fetch(
+            f"SELECT {_ALLOC_SELECT} FROM spv_transaction_allocations "
+            "WHERE transaction_id = $1 AND status = 'active' "
+            "ORDER BY allocated_amount DESC",
+            txn_id,
+        )
+    return [_alloc_response(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# GET /spvs/{spv_id}/ledger
+# ---------------------------------------------------------------------------
+@router.get("/spvs/{spv_id}/ledger", response_model=LedgerResponse)
+async def get_ledger(request: Request, spv_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        spv = await _fetch_spv(conn, org_id, spv_id)
+        if spv is None:
+            raise HTTPException(status_code=404, detail="SPV not found")
+
+        txn_rows = await conn.fetch(
+            f"SELECT {_TXN_SELECT} FROM spv_transactions "
+            "WHERE spv_id = $1 AND org_id = $2 AND status != 'void' "
+            "ORDER BY txn_date DESC, created_at DESC",
+            spv_id, org_id,
+        )
+
+        # Compute summary from posted transactions
+        totals = await conn.fetchrow(
+            """
+            SELECT
+              COALESCE(SUM(CASE WHEN txn_type = 'capital_call' THEN amount ELSE 0 END), 0) AS total_called,
+              COALESCE(SUM(CASE WHEN txn_type = 'distribution' THEN amount ELSE 0 END), 0) AS total_distributed,
+              COALESCE(SUM(CASE WHEN txn_type IN ('fee', 'return_of_capital') THEN amount ELSE 0 END), 0) AS total_fees
+            FROM spv_transactions
+            WHERE spv_id = $1 AND org_id = $2 AND status = 'posted'
+            """,
+            spv_id, org_id,
+        )
+
+    total_called = float(totals["total_called"])
+    total_distributed = float(totals["total_distributed"])
+    total_fees = float(totals["total_fees"])
+    net = total_called - total_distributed - total_fees
+
+    return LedgerResponse(
+        spv_id=spv_id,
+        spv_name=spv["name"],
+        summary=LedgerSummary(
+            total_called=total_called,
+            total_distributed=total_distributed,
+            total_fees=total_fees,
+            net=net,
+        ),
+        transactions=[_txn_response(r) for r in txn_rows],
+    )
