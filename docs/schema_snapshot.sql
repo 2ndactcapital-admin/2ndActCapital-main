@@ -712,6 +712,7 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   assistant_panel_posture                  text
+--   nav_pinned                               boolean NOT NULL DEFAULT false
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
 --   PRIMARY KEY users_pkey: (id)
