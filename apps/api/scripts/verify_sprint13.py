@@ -157,9 +157,9 @@ async def run():
             await conn.execute(
                 """
                 INSERT INTO member_todos
-                    (org_id, user_id, kind, source, title, detail, priority, status)
-                VALUES ($1, $2, 'actual', 'test', 'Low priority', 'detail', 1, 'open'),
-                       ($1, $2, 'actual', 'test', 'High priority', 'detail', 99, 'open')
+                    (org_id, user_id, kind, category, source, title, detail, priority, status)
+                VALUES ($1, $2, 'actual', 'general', 'test', 'Low priority', 'detail', 1, 'open'),
+                       ($1, $2, 'actual', 'general', 'test', 'High priority', 'detail', 99, 'open')
                 """,
                 ORG_ID, TEST_USER_ID,
             )
