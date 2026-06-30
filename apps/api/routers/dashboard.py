@@ -191,7 +191,7 @@ async def list_todos(request: Request):
                    priority, status, due_date, expected_window, created_at
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
-              AND status = 'pending'
+              AND status = 'open'
             ORDER BY kind, priority DESC, created_at DESC
             """,
             user_id, org_id,
@@ -242,9 +242,9 @@ async def patch_todo(todo_id: str, body: TodoPatch, request: Request):
         if body.dismissed is True:
             new_status = "dismissed"
         elif body.completed is True:
-            new_status = "completed"
+            new_status = "done"
         elif body.dismissed is False or body.completed is False:
-            new_status = "pending"
+            new_status = "open"
         else:
             raise HTTPException(status_code=400, detail="No update fields provided")
 

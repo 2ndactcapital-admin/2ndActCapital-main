@@ -31,10 +31,10 @@ async def generate_pending_subscriptions(pool, user_id: str, org_id: str) -> int
                 INSERT INTO member_todos
                     (org_id, user_id, kind, category, source,
                      related_type, related_id,
-                     title, detail, action_key, action_params, priority)
+                     title, detail, action_key, action_params, priority, status)
                 VALUES ($1, $2, 'actual', 'subscription', 'pending_subscriptions',
                         'spv_subscription', $3,
-                        $4, $5, '/spvs', 'Review', 10)
+                        $4, $5, '/spvs', 'Review', 10, 'open')
                 ON CONFLICT DO NOTHING
                 """,
                 org_id, user_id, row["sub_id"],
@@ -68,10 +68,10 @@ async def generate_unsigned_documents(pool, user_id: str, org_id: str) -> int:
                 INSERT INTO member_todos
                     (org_id, user_id, kind, category, source,
                      related_type, related_id,
-                     title, detail, action_key, action_params, priority)
+                     title, detail, action_key, action_params, priority, status)
                 VALUES ($1, $2, 'actual', 'document', 'unsigned_documents',
                         'spv_document', $3,
-                        $4, $5, '/spvs', 'Review documents', 20)
+                        $4, $5, '/spvs', 'Review documents', 20, 'open')
                 ON CONFLICT DO NOTHING
                 """,
                 org_id, user_id, row["id"],

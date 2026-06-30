@@ -83,7 +83,7 @@ async def _needs_attention_handler(pool, user_id: str, org_id: str) -> dict | No
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
               AND kind = 'actual'
-              AND status = 'pending'
+              AND status = 'open'
             ORDER BY priority DESC, created_at DESC
             LIMIT 10
             """,
@@ -142,7 +142,7 @@ async def _on_horizon_handler(pool, user_id: str, org_id: str) -> dict | None:
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
               AND kind = 'anticipated'
-              AND status = 'pending'
+              AND status = 'open'
             ORDER BY priority DESC, created_at DESC
             LIMIT 10
             """,

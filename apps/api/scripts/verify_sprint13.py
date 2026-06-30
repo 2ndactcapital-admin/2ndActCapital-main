@@ -158,8 +158,8 @@ async def run():
                 """
                 INSERT INTO member_todos
                     (org_id, user_id, kind, source, title, detail, priority, status)
-                VALUES ($1, $2, 'actual', 'test', 'Low priority', 'detail', 1, 'pending'),
-                       ($1, $2, 'actual', 'test', 'High priority', 'detail', 99, 'pending')
+                VALUES ($1, $2, 'actual', 'test', 'Low priority', 'detail', 1, 'open'),
+                       ($1, $2, 'actual', 'test', 'High priority', 'detail', 99, 'open')
                 """,
                 ORG_ID, TEST_USER_ID,
             )
