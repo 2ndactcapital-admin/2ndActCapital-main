@@ -50,7 +50,12 @@ async def call_claude_json(system: str, user: str, max_tokens: int = 400) -> dic
         return None
 
 
-async def call_claude_text(system: str, messages: list[dict], max_tokens: int = 400) -> str | None:
+async def call_claude_text(
+    system: str,
+    messages: list[dict],
+    max_tokens: int = 400,
+    model: str | None = None,
+) -> str | None:
     """Call Claude with a message history and return the text response."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -60,7 +65,7 @@ async def call_claude_text(system: str, messages: list[dict], max_tokens: int = 
 
         client = _anthropic.AsyncAnthropic(api_key=api_key)
         message = await client.messages.create(
-            model=AI_MODEL,
+            model=model or AI_MODEL,
             max_tokens=max_tokens,
             system=system,
             messages=messages,

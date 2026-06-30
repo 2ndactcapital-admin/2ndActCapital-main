@@ -9,7 +9,8 @@ import { usePermissions } from "@/lib/usePermissions";
 
 // permission: null means available to all authenticated users.
 const VIEW_CONFIG = [
-  { key: "Chat", label: "Chat", permission: null },
+  { key: "Chat", label: "AI Assistant", permission: null },
+  { key: "Todos", label: "To-Do", permission: null },
   { key: "Activity", label: "Activity", permission: null },
   { key: "Interesting Deals", label: "Interesting Deals", permission: null },
   { key: "Messages", label: "Messages", permission: null },
@@ -208,6 +209,74 @@ function ChatView({ contextRef }) {
   );
 }
 
+function TodosView() {
+  const [data, setData] = useState({ actual: [], anticipated: [] });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/dashboard/todos")
+      .then((r) => r.ok ? r.json() : { actual: [], anticipated: [] })
+      .then((d) => { if (active) { setData(d); setLoading(false); } })
+      .catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  async function dismiss(id) {
+    setData((prev) => ({
+      actual: prev.actual.filter((t) => t.id !== id),
+      anticipated: prev.anticipated.filter((t) => t.id !== id),
+    }));
+    await fetch(`/api/dashboard/todos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dismissed: true }),
+    }).catch(() => {});
+  }
+
+  if (loading) {
+    return <p className="px-3 py-6 text-center text-xs text-[#64748B]">Loading…</p>;
+  }
+
+  const noItems = data.actual.length === 0 && data.anticipated.length === 0;
+  if (noItems) {
+    return <p className="px-3 py-6 text-center text-xs text-[#64748B]">Nothing pending.</p>;
+  }
+
+  function Section({ label, items }) {
+    if (!items.length) return null;
+    return (
+      <div className="mb-3">
+        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#C5A880]">
+          {label}
+        </p>
+        {items.map((t) => (
+          <div key={t.id} className="flex items-start gap-2 border-b border-[#F5F1EB] px-3 py-2 last:border-0">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-[#0F172A] truncate">{t.title}</p>
+              {t.body && <p className="text-[10px] text-[#64748B] mt-0.5">{t.body}</p>}
+            </div>
+            <button
+              type="button"
+              onClick={() => dismiss(t.id)}
+              className="text-[10px] text-[#64748B] hover:text-[#0F172A] shrink-0 mt-0.5"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto py-2">
+      <Section label="Needs your attention" items={data.actual} />
+      <Section label="On the horizon" items={data.anticipated} />
+    </div>
+  );
+}
+
 export default function AssistantPanel({ user, contextRef }) {
   const [posture, setPosture] = usePosture(user);
   const [expanded, setExpanded] = useState(false);
@@ -288,6 +357,7 @@ export default function AssistantPanel({ user, contextRef }) {
             {activeView === "Chat" && (
               <ChatView contextRef={effectiveContext} />
             )}
+            {activeView === "Todos" && <TodosView />}
             {activeView === "Activity" && <ActivityView />}
             {(activeView === "Interesting Deals" || activeView === "Messages") && (
               <p className="px-4 py-6 text-center text-sm text-[#64748B]">Coming soon.</p>
