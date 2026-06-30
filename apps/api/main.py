@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from routers.admin import router as admin_router
 from routers.assistant import router as assistant_router
+from routers.dashboard import router as dashboard_router
 from routers.debug import router as debug_router
 from routers.entities import router as entities_router
 from routers.investment_profile import router as investment_profile_router
@@ -159,9 +160,11 @@ async def health() -> dict:
 async def _startup() -> None:
     from services.assistant_actions import register_all
     from services.action_registry import REGISTRY
+    from services.brief_blocks import register_brief_blocks
     from services.database import get_pool
 
     register_all()
+    register_brief_blocks()
     try:
         pool = await get_pool()
         await REGISTRY.sync_catalog(pool, "00000000-0000-0000-0000-000000000001")
@@ -176,6 +179,7 @@ async def _shutdown() -> None:
 
 # Feature routers
 app.include_router(assistant_router, prefix="/api/v1")
+app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(entities_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")

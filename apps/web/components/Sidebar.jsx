@@ -221,12 +221,14 @@ export default function Sidebar() {
         >
           <AscendMark size={22} />
           {expanded && (
-            <span
-              className="flex-1 truncate text-sm font-light tracking-wide"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#FAF9F6", whiteSpace: "nowrap" }}
-            >
-              2<sup style={{ fontSize: "0.6em", verticalAlign: "super" }}>nd</sup>{" "}Act Capital
-            </span>
+            <img
+              src="/brand/wordmark/wordmark-navy-bg.svg"
+              alt="2nd Act Capital"
+              width={110}
+              height={32}
+              className="flex-1"
+              style={{ objectFit: "contain", objectPosition: "left center" }}
+            />
           )}
           {expanded && (
             <button
