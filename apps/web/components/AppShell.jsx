@@ -3,17 +3,20 @@ import Sidebar from "@/components/Sidebar";
 import Footer from "@/components/Footer";
 import AssistantPanel from "@/components/assistant/AssistantPanel";
 
-// Full authenticated shell: TopBar + Sidebar + page content + AssistantPanel.
+// Sidebar-first layout: Sidebar spans full height on the left; TopBar,
+// main content, AssistantPanel, and Footer fill the remaining column.
 export default function AppShell({ user, children }) {
   return (
-    <div className="flex min-h-screen flex-col bg-bg-app">
-      <TopBar user={user} />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto p-8">{children}</main>
-        <AssistantPanel user={user} />
+    <div className="flex min-h-screen bg-bg-app">
+      <Sidebar />
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <TopBar user={user} />
+        <div className="flex flex-1 overflow-hidden">
+          <main className="flex-1 overflow-y-auto p-8">{children}</main>
+          <AssistantPanel user={user} />
+        </div>
+        <Footer />
       </div>
-      <Footer />
     </div>
   );
 }

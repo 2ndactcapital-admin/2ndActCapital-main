@@ -32,84 +32,72 @@ export default function TopBar({ user }) {
   }, []);
 
   return (
-    <header className="flex h-16 items-center justify-between bg-navy px-6">
-      <div className="wordmark wordmark--nav">
-        <span className="wordmark__name">
-          2<sup>nd</sup> Act
-        </span>
-        <span className="wordmark__desc">Capital</span>
-      </div>
-
+    <header className="flex h-14 items-center justify-end bg-navy px-6">
       <div className="flex items-center gap-2">
         <NotificationBell />
 
-      <div className="relative" ref={ref}>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 rounded-md px-2 py-1 transition-opacity hover:opacity-80"
-          aria-expanded={open}
-          aria-haspopup="true"
-        >
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-gold text-sm font-semibold"
-            style={{ color: "#4a3a1f" }}
+        <div className="relative" ref={ref}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-md px-2 py-1 transition-opacity hover:opacity-80"
+            aria-expanded={open}
+            aria-haspopup="true"
           >
-            {initials}
-          </div>
-          <img
-            src="/brand/icon/mark-gold.svg"
-            width="16"
-            height="16"
-            alt=""
-            aria-hidden="true"
-            style={{ opacity: 0.7 }}
-          />
-          <span className="text-sm font-medium text-bg-app">{displayName}</span>
-          <IconChevronDown
-            size={16}
-            stroke={2}
-            className={`text-bg-app/70 transition-transform ${open ? "rotate-180" : ""}`}
-          />
-        </button>
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-gold text-sm font-semibold"
+              style={{ color: "#4a3a1f" }}
+            >
+              {initials}
+            </div>
+            <span className="text-sm font-medium text-bg-app">{displayName}</span>
+            <IconChevronDown
+              size={14}
+              stroke={2}
+              className={`text-bg-app/70 transition-transform ${open ? "rotate-180" : ""}`}
+            />
+          </button>
 
-        {open && (
-          <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-card" style={{boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
-            <div className="border-b border-border px-4 py-3">
-              <p className="text-sm font-medium text-text-primary">{displayName}</p>
-              {user?.email && user.email !== displayName && (
-                <p className="mt-0.5 text-xs text-text-muted">{user.email}</p>
-              )}
+          {open && (
+            <div
+              className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-bg-card"
+              style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
+            >
+              <div className="border-b border-border px-4 py-3">
+                <p className="text-sm font-medium text-text-primary">{displayName}</p>
+                {user?.email && user.email !== displayName && (
+                  <p className="mt-0.5 text-xs text-text-muted">{user.email}</p>
+                )}
+              </div>
+              <div className="p-1">
+                <a
+                  href="/settings"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
+                  onClick={() => setOpen(false)}
+                >
+                  <IconSettings size={16} stroke={1.75} />
+                  Settings
+                </a>
+                <a
+                  href="/investment-profile"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
+                  onClick={() => setOpen(false)}
+                >
+                  <IconUser size={16} stroke={1.75} />
+                  Investment Profile
+                </a>
+                <div className="my-1 border-t border-border" />
+                <a
+                  href="/auth/logout"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-[#9B2335] hover:bg-[#FEF2F2]"
+                >
+                  <IconLogout size={16} stroke={1.75} />
+                  Sign Out
+                </a>
+              </div>
             </div>
-            <div className="p-1">
-              <a
-                href="/settings"
-                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
-                onClick={() => setOpen(false)}
-              >
-                <IconSettings size={16} stroke={1.75} />
-                Settings
-              </a>
-              <a
-                href="/investment-profile"
-                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-border"
-                onClick={() => setOpen(false)}
-              >
-                <IconUser size={16} stroke={1.75} />
-                Investment Profile
-              </a>
-              <div className="my-1 border-t border-border" />
-              <a
-                href="/auth/logout"
-                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-[#9B2335] hover:bg-[#FEF2F2]"
-              >
-                <IconLogout size={16} stroke={1.75} />
-                Sign Out
-              </a>
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
       </div>
     </header>
   );

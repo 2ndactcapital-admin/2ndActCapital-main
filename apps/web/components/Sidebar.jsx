@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { IconAddressBook } from "@tabler/icons-react";
 import BrandNavIcon from "./BrandNavIcon";
@@ -11,11 +11,7 @@ const NAV_ITEMS = [
   { label: "CRM", href: "/crm", TablerIcon: IconAddressBook },
   { label: "Marketplace", href: "/marketplace", icon: "marketplace" },
   { label: "Investments", href: "/portfolio", icon: "portfolio" },
-  {
-    label: "Portfolio Reporting",
-    href: "/portfolio-reporting",
-    icon: "portfolio-reporting",
-  },
+  { label: "Portfolio Reporting", href: "/portfolio-reporting", icon: "portfolio-reporting" },
   { label: "SPV Manager", href: "/spvs", icon: "spv-manager" },
   { label: "Insurance", href: "/insurance", icon: "insurance" },
   { label: "Community", href: "/community", icon: "community" },
@@ -25,22 +21,36 @@ const NAV_ITEMS = [
 const ADMIN_ITEM = { label: "Admin", href: "/admin", icon: "admin" };
 const USERS_ITEM = { label: "User Management", href: "/admin/users", icon: "investment-profile" };
 
-function NavLink({ item, collapsed, active, badge = 0 }) {
+// The Ascent mark inline SVG — white on navy, with gold-light top square.
+function AscendMark({ size = 20 }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 512 512"
+      width={size}
+      height={size}
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <rect x="118" y="300" width="80" height="80" rx="20" fill="rgba(255,255,255,0.65)" />
+      <rect x="216" y="216" width="80" height="80" rx="20" fill="rgba(255,255,255,0.85)" />
+      <rect x="314" y="132" width="80" height="80" rx="20" fill="#E8D5A3" />
+    </svg>
+  );
+}
+
+function NavLink({ item, expanded, active, badge = 0 }) {
   const { label, href, icon, TablerIcon } = item;
   const badgeText = badge > 9 ? "9+" : String(badge);
-  const iconColor = active ? "var(--2a-gold-light)" : "#9AA6BF";
+  const iconColor = active ? "var(--2a-gold-light, #E8D5A3)" : "#9AA6BF";
   return (
     <a
       href={href}
-      title={collapsed ? label : undefined}
+      title={!expanded ? label : undefined}
       className={`relative flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-        collapsed ? "justify-center" : "gap-3"
+        expanded ? "gap-3" : "justify-center"
       }`}
-      style={
-        active
-          ? { background: "rgba(232,213,163,0.12)" }
-          : undefined
-      }
+      style={active ? { background: "rgba(232,213,163,0.12)" } : undefined}
     >
       <span className="relative shrink-0">
         {TablerIcon ? (
@@ -48,16 +58,16 @@ function NavLink({ item, collapsed, active, badge = 0 }) {
         ) : (
           <BrandNavIcon name={icon} size={20} style={{ color: iconColor }} />
         )}
-        {collapsed && badge > 0 && (
+        {!expanded && badge > 0 && (
           <span
-            className="absolute -right-1.5 -top-1.5 flex min-w-[15px] items-center justify-center rounded-full px-1 text-[9px] font-semibold text-navy"
-            style={{ backgroundColor: "#C5A880", height: 15 }}
+            className="absolute -right-1.5 -top-1.5 flex min-w-[15px] items-center justify-center rounded-full px-1 text-[9px] font-semibold"
+            style={{ backgroundColor: "#C5A880", color: "#1B2B4B", height: 15 }}
           >
             {badgeText}
           </span>
         )}
       </span>
-      {!collapsed && (
+      {expanded && (
         <span
           className="flex flex-1 items-center justify-between truncate"
           style={{ color: active ? "#FAF9F6" : "#9AA6BF" }}
@@ -65,8 +75,8 @@ function NavLink({ item, collapsed, active, badge = 0 }) {
           <span className="truncate">{label}</span>
           {badge > 0 && (
             <span
-              className="ml-2 flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold text-navy"
-              style={{ backgroundColor: "#C5A880", height: 16 }}
+              className="ml-2 flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold"
+              style={{ backgroundColor: "#C5A880", color: "#1B2B4B", height: 16 }}
             >
               {badgeText}
             </span>
@@ -77,16 +87,95 @@ function NavLink({ item, collapsed, active, badge = 0 }) {
   );
 }
 
+function PinIcon({ pinned }) {
+  // Simple pin icon — diagonal line with dot
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {pinned ? (
+        <>
+          <line x1="12" y1="17" x2="12" y2="22" />
+          <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+        </>
+      ) : (
+        <>
+          <line x1="12" y1="17" x2="12" y2="22" />
+          <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" opacity={0.45} />
+        </>
+      )}
+    </svg>
+  );
+}
+
 export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
+  // Seed from localStorage immediately to avoid a flash on load.
+  const [pinned, setPinned] = useState(() => {
+    try {
+      const stored = localStorage.getItem("nav-pinned");
+      return stored === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [hovered, setHovered] = useState(false);
   const [unread, setUnread] = useState(0);
   const pathname = usePathname();
-  const { can } = usePermissions();
+  // navPinned comes from /api/users/me (cached by usePermissions).
+  const { can, navPinned } = usePermissions();
+  const mouseLeaveTimer = useRef(null);
+  // Track whether the account value has been applied so we only sync once.
+  const accountSynced = useRef(false);
+
+  // When the account value loads, let it override local state once.
+  useEffect(() => {
+    if (accountSynced.current || navPinned === null || navPinned === undefined) return;
+    accountSynced.current = true;
+    setPinned(navPinned);
+    try { localStorage.setItem("nav-pinned", String(navPinned)); } catch {}
+  }, [navPinned]);
+
+  function togglePin() {
+    const next = !pinned;
+    setPinned(next);
+    // Update localStorage immediately — no flash on next navigation.
+    try { localStorage.setItem("nav-pinned", String(next)); } catch {}
+    // Persist to account so the setting follows the user across devices.
+    fetch("/api/users/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nav_pinned: next }),
+    }).catch(() => {});
+  }
+
+  function handleMouseEnter() {
+    if (mouseLeaveTimer.current) clearTimeout(mouseLeaveTimer.current);
+    if (!pinned) setHovered(true);
+  }
+
+  function handleMouseLeave() {
+    if (!pinned) {
+      // Small delay prevents jitter when moving between items.
+      mouseLeaveTimer.current = setTimeout(() => setHovered(false), 80);
+    }
+  }
+
+  // When pinned, always expanded. Otherwise expanded only while hovered.
+  const expanded = pinned || hovered;
 
   const isActive = (href) =>
     pathname === href || pathname?.startsWith(href + "/");
 
-  // Poll the unread notification count for the sidebar badge.
+  // Unread notification badge — poll every 60 s.
   useEffect(() => {
     let active = true;
     async function refresh() {
@@ -95,75 +184,104 @@ export default function Sidebar() {
         if (!res.ok) return;
         const data = await res.json();
         if (active) setUnread(data.unread_count ?? 0);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     refresh();
-    const interval = setInterval(refresh, 60000);
+    const id = setInterval(refresh, 60000);
     return () => {
       active = false;
-      clearInterval(interval);
+      clearInterval(id);
     };
   }, []);
 
   return (
+    // The outer aside reserves exactly the icon-rail width (52 px) in the flex
+    // layout when unpinned, so it never pushes main content during hover.
+    // When pinned it reserves the full 220 px (pushes content, as expected).
     <aside
-      className={`flex shrink-0 flex-col bg-navy transition-[width] duration-200 ${
-        collapsed ? "w-[52px]" : "w-[220px]"
-      }`}
-      style={{ borderRight: "0.5px solid rgba(255,255,255,0.08)" }}
+      className="relative flex-shrink-0"
+      style={{ width: pinned ? 220 : 52 }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
-      <nav className="flex-1 space-y-1 p-2">
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.href}
-            item={item}
-            collapsed={collapsed}
-            active={isActive(item.href)}
-            badge={item.href === "/notifications" ? unread : 0}
-          />
-        ))}
-
-        {/* Admin section — gated by the manage_members permission. */}
-        {can("manage_members") && (
-          <>
-            {!collapsed && (
-              <div
-                className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
-                style={{ color: "rgba(154,166,191,0.6)" }}
-              >
-                Admin
-              </div>
-            )}
-            <NavLink
-              item={ADMIN_ITEM}
-              collapsed={collapsed}
-              active={isActive(ADMIN_ITEM.href)}
-            />
-            <NavLink
-              item={USERS_ITEM}
-              collapsed={collapsed}
-              active={isActive(USERS_ITEM.href)}
-            />
-          </>
-        )}
-      </nav>
-
-      {/* Collapse toggle at the bottom */}
-      <button
-        type="button"
-        onClick={() => setCollapsed((value) => !value)}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        className="m-2 flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition-colors"
-        style={{ color: "#9AA6BF" }}
-        onMouseEnter={(e) =>
-          (e.currentTarget.style.background = "rgba(232,213,163,0.08)")
-        }
-        onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+      {/* Inner panel: absolute so it can fly out over content when hovered. */}
+      <div
+        className="absolute inset-y-0 left-0 flex flex-col bg-navy overflow-hidden transition-all duration-200"
+        style={{
+          width: expanded ? 220 : 52,
+          zIndex: hovered && !pinned ? 50 : "auto",
+          boxShadow: hovered && !pinned ? "4px 0 16px rgba(0,0,0,0.18)" : "none",
+          borderRight: "0.5px solid rgba(255,255,255,0.08)",
+        }}
       >
-        {collapsed ? "»" : "«"}
-      </button>
+        {/* Sidebar header: mark + wordmark + pin control */}
+        <div
+          className="flex items-center px-3 py-4 gap-2"
+          style={{ minHeight: 56, borderBottom: "0.5px solid rgba(255,255,255,0.08)" }}
+        >
+          <AscendMark size={22} />
+          {expanded && (
+            <span
+              className="flex-1 truncate text-sm font-light tracking-wide"
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "#FAF9F6", whiteSpace: "nowrap" }}
+            >
+              2<sup style={{ fontSize: "0.6em", verticalAlign: "super" }}>nd</sup>{" "}Act Capital
+            </span>
+          )}
+          {expanded && (
+            <button
+              type="button"
+              onClick={togglePin}
+              title={pinned ? "Unpin sidebar" : "Pin sidebar open"}
+              className="flex items-center justify-center rounded p-1 transition-colors"
+              style={{
+                color: pinned ? "#E8D5A3" : "rgba(154,166,191,0.6)",
+                background: "transparent",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(232,213,163,0.1)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <PinIcon pinned={pinned} />
+            </button>
+          )}
+        </div>
+
+        {/* Nav items */}
+        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.href}
+              item={item}
+              expanded={expanded}
+              active={isActive(item.href)}
+              badge={item.href === "/notifications" ? unread : 0}
+            />
+          ))}
+
+          {can("manage_members") && (
+            <>
+              {expanded && (
+                <div
+                  className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: "rgba(154,166,191,0.6)" }}
+                >
+                  Admin
+                </div>
+              )}
+              <NavLink
+                item={ADMIN_ITEM}
+                expanded={expanded}
+                active={isActive(ADMIN_ITEM.href)}
+              />
+              <NavLink
+                item={USERS_ITEM}
+                expanded={expanded}
+                active={isActive(USERS_ITEM.href)}
+              />
+            </>
+          )}
+        </nav>
+      </div>
     </aside>
   );
 }
