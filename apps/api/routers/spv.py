@@ -128,6 +128,13 @@ async def create_spv(request: Request, body: SPVCreate):
 
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
+        deal_exists = await conn.fetchval(
+            "SELECT 1 FROM deals WHERE id = $1 AND org_id = $2",
+            body.deal_id,
+            org_id,
+        )
+        if not deal_exists:
+            raise HTTPException(status_code=400, detail=f"Deal {body.deal_id} not found")
         async with conn.transaction():
             row = await conn.fetchrow(
                 f"""

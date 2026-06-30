@@ -1,13 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-export default function NewSPVForm() {
+function extractErrorMessage(err) {
+  // err may be a plain Error, an API error object, or a Pydantic validation array
+  if (!err) return "An unexpected error occurred";
+  if (typeof err === "string") return err;
+  // Array of Pydantic validation errors: [{loc, msg, type}, ...]
+  if (Array.isArray(err)) {
+    const first = err[0];
+    if (first && typeof first === "object") {
+      const loc = Array.isArray(first.loc) ? first.loc.join(" → ") : "";
+      const msg = first.msg || String(first);
+      return loc ? `${loc}: ${msg}` : msg;
+    }
+    return String(err);
+  }
+  // FastAPI detail string or array nested on an Error object
+  if (err.detail) return extractErrorMessage(err.detail);
+  if (err.message && typeof err.message === "string") return err.message;
+  return String(err);
+}
+
+export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealName } = {}) {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [deals, setDeals] = useState([]);
+  const [dealsLoading, setDealsLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    if (!open || lockedDealId) return;
+    setDealsLoading(true);
+    fetch("/api/deals?limit=200")
+      .then((r) => r.json())
+      .then((data) => setDeals(Array.isArray(data) ? data : []))
+      .catch(() => setDeals([]))
+      .finally(() => setDealsLoading(false));
+  }, [open, lockedDealId]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -16,7 +48,7 @@ export default function NewSPVForm() {
     const fd = new FormData(e.currentTarget);
     const body = {
       name: fd.get("name"),
-      deal_id: fd.get("deal_id") || null,
+      deal_id: lockedDealId || fd.get("deal_id") || null,
       target_raise: fd.get("target_raise") ? Number(fd.get("target_raise")) : null,
       min_commitment: fd.get("min_commitment") ? Number(fd.get("min_commitment")) : null,
       carry_pct: fd.get("carry_pct") ? Number(fd.get("carry_pct")) : null,
@@ -29,16 +61,15 @@ export default function NewSPVForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to create SPV");
+        throw extractErrorMessage(data.error ?? data.detail ?? data);
       }
-      const spv = await res.json();
       setOpen(false);
-      router.push(`/spvs/${spv.id}`);
+      router.push(`/spvs/${data.id}`);
       router.refresh();
     } catch (err) {
-      setError(err.message);
+      setError(typeof err === "string" ? err : extractErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -78,14 +109,31 @@ export default function NewSPVForm() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-[#334155] mb-1">
-                  Deal ID *
+                  Deal *
                 </label>
-                <input
-                  name="deal_id"
-                  required
-                  placeholder="UUID of the associated deal"
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880] font-mono"
-                />
+                {lockedDealId ? (
+                  <div className="w-full rounded border border-[#E2E8F0] bg-[#FAF9F6] px-3 py-2 text-sm text-[#334155]">
+                    {lockedDealName || lockedDealId}
+                  </div>
+                ) : dealsLoading ? (
+                  <div className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm text-[#64748B]">
+                    Loading deals…
+                  </div>
+                ) : (
+                  <select
+                    name="deal_id"
+                    required
+                    defaultValue=""
+                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880] bg-white"
+                  >
+                    <option value="" disabled>Select a deal</option>
+                    {deals.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
