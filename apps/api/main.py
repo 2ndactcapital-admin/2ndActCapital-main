@@ -19,6 +19,7 @@ from routers.assistant import router as assistant_router
 from routers.dashboard import router as dashboard_router
 from routers.debug import router as debug_router
 from routers.entities import router as entities_router
+from routers.entity_graph import router as entity_graph_router
 from routers.investment_profile import router as investment_profile_router
 from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
@@ -185,6 +186,7 @@ app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(spv_router, prefix="/api/v1")
+app.include_router(entity_graph_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")

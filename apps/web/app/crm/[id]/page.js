@@ -46,6 +46,12 @@ export default async function EntityDetailPage({ params }) {
         <h1 className="text-3xl font-semibold text-navy">{entity.display_name}</h1>
         <EntityTypeBadge type={entity.entity_type} />
       </div>
+      <a
+        href={`/crm/${entity.id}/hierarchy`}
+        className="text-sm text-gold hover:underline mt-1"
+      >
+        View ownership structure →
+      </a>
 
       <div className="mt-8">
         <EntityDetailTabs full={full} graph={graph} />

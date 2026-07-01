@@ -335,3 +335,16 @@ export const listSPVAllocations = (spvId, txnId) =>
   fetchAPI(`/api/v1/spvs/${spvId}/transactions/${txnId}/allocations`);
 export const getSPVLedger = (spvId) =>
   fetchAPI(`/api/v1/spvs/${spvId}/ledger`);
+
+// --- Entity Hierarchy (Sprint 15) ---
+export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
+export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);
+export const getEntityRelationships = (id) => fetchAPI(`/api/v1/entities/${id}/relationships`);
+export const createEntityRelationship = (body) => fetchAPI("/api/v1/entity-relationships", { method: "POST", body });
+export const updateEntityRelationship = (id, body) => fetchAPI(`/api/v1/entity-relationships/${id}`, { method: "PATCH", body });
+export const deleteEntityRelationship = (id) => fetchAPI(`/api/v1/entity-relationships/${id}`, { method: "DELETE" });
+export const listEntityGroups = () => fetchAPI("/api/v1/entity-groups");
+export const getEntityGroup = (id) => fetchAPI(`/api/v1/entity-groups/${id}`);
+export const createEntityGroup = (body) => fetchAPI("/api/v1/entity-groups", { method: "POST", body });
+export const addEntityGroupMember = (groupId, entityId) => fetchAPI(`/api/v1/entity-groups/${groupId}/members`, { method: "POST", body: { entity_id: entityId } });
+export const removeEntityGroupMember = (groupId, entityId) => fetchAPI(`/api/v1/entity-groups/${groupId}/members/${entityId}`, { method: "DELETE" });
