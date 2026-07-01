@@ -298,6 +298,8 @@
 --   url                                      text
 --   country_code                             text
 --   region_code                              text
+--   is_incomplete                            boolean NOT NULL DEFAULT false
+--   created_via                              text
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
@@ -359,6 +361,33 @@
 --   generated_at                             timestamp with time zone NOT NULL DEFAULT now()
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_briefs_pkey: (id)
+
+-- ===== entity_document_tags =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   document_id                              uuid NOT NULL
+--   tag                                      text NOT NULL
+--   is_fixed                                 boolean NOT NULL DEFAULT false
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE entity_document_tags_document_id_tag_key: (document_id, tag)
+--   PRIMARY KEY entity_document_tags_pkey: (id)
+
+-- ===== entity_documents =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   title                                    text NOT NULL
+--   doc_category                             text
+--   storage_key                              text
+--   file_name                                text
+--   content_type                             text
+--   file_size                                bigint
+--   version                                  integer NOT NULL DEFAULT 1
+--   supersedes_id                            uuid
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   uploaded_by                              uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY entity_documents_pkey: (id)
 
 -- ===== entity_employment =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
