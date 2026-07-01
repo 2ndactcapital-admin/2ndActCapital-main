@@ -360,6 +360,24 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_employment_pkey: (id)
 
+-- ===== entity_group_members =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   group_id                                 uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE entity_group_members_group_id_entity_id_key: (group_id, entity_id)
+--   PRIMARY KEY entity_group_members_pkey: (id)
+
+-- ===== entity_groups =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY entity_groups_pkey: (id)
+
 -- ===== entity_notes =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -403,6 +421,7 @@
 --   system_to                                timestamp with time zone
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   ownership_pct                            numeric
 --   PRIMARY KEY entity_relationships_pkey: (id)
 
 -- ===== entity_social_profiles =====
