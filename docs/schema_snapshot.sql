@@ -286,6 +286,18 @@
 --   primary_email                            text
 --   primary_phone                            text
 --   profile_mode                             text NOT NULL DEFAULT 'foundation'::text
+--   name_prefix                              text
+--   first_name                               text
+--   middle_name                              text
+--   surname                                  text
+--   name_suffix                              text
+--   legal_name_overridden                    boolean NOT NULL DEFAULT false
+--   inception_date                           date
+--   end_date                                 date
+--   is_active                                boolean NOT NULL DEFAULT true
+--   url                                      text
+--   country_code                             text
+--   region_code                              text
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
@@ -307,6 +319,12 @@
 --   system_to                                timestamp with time zone
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   phone                                    text
+--   country_code                             text
+--   region_code                              text
+--   is_seasonal                              boolean NOT NULL DEFAULT false
+--   season_from_month                        integer
+--   season_to_month                          integer
 --   PRIMARY KEY entity_addresses_pkey: (id)
 
 -- ===== entity_attributes =====
@@ -660,6 +678,20 @@
 --   created_by                               uuid
 --   UNIQUE profile_conversations_entity_id_status_key: (entity_id, status)
 --   PRIMARY KEY profile_conversations_pkey: (id)
+
+-- ===== reference_data =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid
+--   list_key                                 text NOT NULL
+--   code                                     text NOT NULL
+--   label                                    text NOT NULL
+--   parent_code                              text
+--   extra                                    jsonb
+--   display_order                            integer NOT NULL DEFAULT 100
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE reference_data_list_key_code_parent_code_key: (list_key, code, parent_code)
+--   PRIMARY KEY reference_data_pkey: (id)
 
 -- ===== role_permissions =====
 --   role_id                                  uuid NOT NULL
