@@ -134,3 +134,13 @@ export async function searchEntitiesAction(query) {
     return { ok: false, error: error.message, results: [] };
   }
 }
+
+export async function uploadDocumentAction(entityId, prevState, formData) {
+  const { uploadAPI } = await import("@/lib/api");
+  try {
+    const item = await uploadAPI(`/api/v1/entities/${entityId}/documents`, formData);
+    return { ok: true, item };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}

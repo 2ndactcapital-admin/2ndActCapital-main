@@ -27,6 +27,9 @@ from schemas.entities import (
     EntityDetail,
     EntityFull,
     EntityOut,
+    EntitySearchItem,
+    EntitySearchResponse,
+    EntityStubCreate,
     EntityType,
     EntityUpdate,
     GraphEdge,
@@ -63,8 +66,9 @@ ENTITY_COLUMNS = (
     "inception_date, end_date, country_of_formation, notes, "
     "is_active, url, country_code, region_code, "
     "sub_type, status, lead_source, relationship_manager_id, tags, linkedin_url, "
-    "primary_email, primary_phone, profile_mode, valid_from, valid_to, "
-    "system_from, system_to, created_at, updated_at"
+    "primary_email, primary_phone, profile_mode, "
+    "is_incomplete, created_via, "
+    "valid_from, valid_to, system_from, system_to, created_at, updated_at"
 )
 
 # Entity types that can hold an investment / indicate interest in a deal. Used by
@@ -193,11 +197,12 @@ async def create_entity(request: Request, body: EntityCreate):
                     inception_date, end_date, country_of_formation, notes,
                     is_active, url, country_code, region_code,
                     sub_type, status, lead_source, relationship_manager_id,
-                    tags, linkedin_url, primary_email, primary_phone
+                    tags, linkedin_url, primary_email, primary_phone,
+                    is_incomplete, created_via
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                     $12, $13, $14, $15, $16, $17, $18, $19,
-                    $20, $21, $22, $23, $24, $25, $26, $27
+                    $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
                 )
                 RETURNING {ENTITY_COLUMNS}
                 """,
@@ -228,6 +233,8 @@ async def create_entity(request: Request, body: EntityCreate):
                 body.linkedin_url,
                 body.primary_email,
                 body.primary_phone,
+                body.is_incomplete,
+                body.created_via,
             )
             await write_audit_log(
                 conn,
@@ -237,6 +244,156 @@ async def create_entity(request: Request, body: EntityCreate):
                 record_id=row["id"],
                 new=dict(row),
             )
+    return EntityOut(**dict(row))
+
+
+# ---------------------------------------------------------------------------
+# Sprint 17 — Entity search (debounced picker)
+# ---------------------------------------------------------------------------
+SEARCH_COLS = "id, display_name, legal_name, entity_type, is_incomplete, is_active"
+
+
+@router.get("/entities/search", response_model=EntitySearchResponse)
+async def search_entities(
+    request: Request,
+    q: str = Query(""),
+    entity_type: list[str] = Query(default=[]),
+    exclude_ids: list[str] = Query(default=[]),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    include_inactive: bool = False,
+    include_incomplete: bool = True,
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
+    params: list = [org_id]
+
+    if not include_inactive:
+        conditions.append("is_active = true")
+    if not include_incomplete:
+        conditions.append("is_incomplete = false")
+
+    pattern = f"%{q.lower()}%" if q else "%"
+    params.append(pattern)
+    conditions.append(f"(LOWER(display_name) LIKE ${len(params)} OR LOWER(COALESCE(legal_name,'')) LIKE ${len(params)})")
+
+    if entity_type:
+        params.append(entity_type)
+        conditions.append(f"entity_type = ANY(${len(params)}::text[])")
+    if exclude_ids:
+        params.append(exclude_ids)
+        conditions.append(f"id != ALL(${len(params)}::uuid[])")
+
+    where = " AND ".join(conditions)
+
+    total = await pool.fetchval(
+        f"SELECT COUNT(*) FROM entities WHERE {where}", *params
+    )
+
+    offset = (page - 1) * page_size
+    # Ranking params: exact match and prefix match for the ORDER BY CASE
+    params.append(q.lower() if q else "")
+    exact_pos = len(params)
+    params.append(f"{q.lower()}%" if q else "%")
+    prefix_pos = len(params)
+    params.append(page_size + 1)
+    limit_pos = len(params)
+    params.append(offset)
+    offset_pos = len(params)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT {SEARCH_COLS}
+        FROM entities
+        WHERE {where}
+        ORDER BY
+          CASE WHEN LOWER(display_name) = ${exact_pos} THEN 0
+               WHEN LOWER(display_name) LIKE ${prefix_pos} THEN 1
+               ELSE 2 END,
+          display_name ASC
+        LIMIT ${limit_pos} OFFSET ${offset_pos}
+        """,
+        *params,
+    )
+
+    items = rows[:page_size]
+    has_more = len(rows) > page_size
+
+    return EntitySearchResponse(
+        items=[EntitySearchItem(**dict(r)) for r in items],
+        total=total or 0,
+        has_more=has_more,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 17 — Entity stub (picker create with dupe check)
+# ---------------------------------------------------------------------------
+@router.post("/entities/stub", response_model=EntityOut, status_code=201)
+async def create_entity_stub(request: Request, body: EntityStubCreate):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        if not body.force_create:
+            dupes = await conn.fetch(
+                f"""
+                SELECT {SEARCH_COLS}
+                FROM entities
+                WHERE org_id = $1
+                  AND LOWER(display_name) = LOWER($2)
+                  AND valid_to IS NULL AND system_to IS NULL
+                ORDER BY display_name
+                LIMIT 5
+                """,
+                org_id, body.display_name,
+            )
+            if dupes:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "message": "Possible duplicates found",
+                        "possible_duplicates": [
+                            {
+                                "id": str(r["id"]),
+                                "display_name": r["display_name"],
+                                "entity_type": r["entity_type"],
+                                "is_incomplete": r["is_incomplete"],
+                                "is_active": r["is_active"],
+                            }
+                            for r in dupes
+                        ],
+                    },
+                )
+
+        from services.users import ensure_user
+        creator = await ensure_user(conn, request)
+
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO entities (
+                org_id, entity_type, display_name,
+                is_incomplete, created_via, status, tags
+            ) VALUES ($1, $2, $3, true, 'picker_stub', 'prospect', '{{}}')
+            RETURNING {ENTITY_COLUMNS}
+            """,
+            org_id, body.entity_type.value, body.display_name,
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO member_todos (
+                org_id, user_id, kind, category, source, title, detail, priority, status
+            ) VALUES ($1, $2, 'actual', 'crm', 'entity_stub', $3, $4, 5, 'open')
+            """,
+            org_id, creator,
+            f"Complete profile: {body.display_name}",
+            f"Stub entity created via picker. Please complete the {body.entity_type.value} profile.",
+        )
+
     return EntityOut(**dict(row))
 
 
@@ -473,6 +630,7 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                     is_active, url, country_code, region_code,
                     sub_type, status, lead_source, relationship_manager_id,
                     tags, linkedin_url, primary_email, primary_phone, profile_mode,
+                    is_incomplete, created_via,
                     valid_from, valid_to, system_from, system_to,
                     created_by, created_at, updated_at
                 )
@@ -483,6 +641,7 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                        is_active, url, country_code, region_code,
                        sub_type, status, lead_source, relationship_manager_id,
                        tags, linkedin_url, primary_email, primary_phone, profile_mode,
+                       is_incomplete, created_via,
                        valid_from, valid_to, system_from, now(),
                        created_by, created_at, updated_at
                 FROM entities
@@ -521,6 +680,7 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 "primary_email",
                 "primary_phone",
                 "profile_mode",
+                "is_incomplete",
             )
             set_clauses = ["system_from = now()", "updated_at = now()"]
             params: list = [entity_id, org_id]

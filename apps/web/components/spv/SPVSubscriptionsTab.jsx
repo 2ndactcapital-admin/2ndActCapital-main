@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
+import EntityPicker from "@/components/EntityPicker";
 
 const STATUS_CONFIG = {
   soft: { label: "Soft", bg: "#F5F1EB", text: "#64748B" },
@@ -41,23 +42,10 @@ function extractErrorMessage(err) {
 export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, staff = false }) {
   const [capTable, setCapTable] = useState(initialCapTable);
   const [addOpen, setAddOpen] = useState(false);
-  const [entities, setEntities] = useState([]);
-  const [entitiesLoading, setEntitiesLoading] = useState(false);
-  const [entityId, setEntityId] = useState("");
+  const [selectedEntity, setSelectedEntity] = useState(null);
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-
-  // Fetch entities when the add-subscriber modal opens.
-  useEffect(() => {
-    if (!addOpen) return;
-    setEntitiesLoading(true);
-    fetch("/api/entities?limit=200", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => setEntities(Array.isArray(data) ? data : []))
-      .catch(() => setEntities([]))
-      .finally(() => setEntitiesLoading(false));
-  }, [addOpen]);
 
   async function refreshCapTable() {
     try {
@@ -71,7 +59,7 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
 
   async function handleAdd(e) {
     e.preventDefault();
-    if (!entityId || !amount) return;
+    if (!selectedEntity?.id || !amount) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -79,14 +67,14 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          entity_id: entityId,
+          entity_id: selectedEntity.id,
           commitment_amount: Number(amount),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw extractErrorMessage(data.error ?? data.detail ?? data);
       setAddOpen(false);
-      setEntityId("");
+      setSelectedEntity(null);
       setAmount("");
       await refreshCapTable();
     } catch (err) {
@@ -188,25 +176,12 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
                 <label className="mb-1 block text-xs font-medium text-[#334155]">
                   Investor Entity *
                 </label>
-                {entitiesLoading ? (
-                  <div className="rounded border border-[#E2E8F0] px-3 py-2 text-sm text-[#64748B]">
-                    Loading entities…
-                  </div>
-                ) : (
-                  <select
-                    value={entityId}
-                    onChange={(e) => setEntityId(e.target.value)}
-                    required
-                    className="w-full rounded border border-[#E2E8F0] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
-                  >
-                    <option value="" disabled>Select entity</option>
-                    {entities.map((ent) => (
-                      <option key={ent.id} value={ent.id}>
-                        {ent.display_name || ent.legal_name || ent.id}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <EntityPicker
+                  value={selectedEntity}
+                  onChange={setSelectedEntity}
+                  placeholder="Search entities…"
+                  className="w-full rounded border border-[#E2E8F0] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-[#334155]">
@@ -227,14 +202,14 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
               <div className="flex justify-end gap-3 pt-1">
                 <button
                   type="button"
-                  onClick={() => { setAddOpen(false); setError(null); }}
+                  onClick={() => { setAddOpen(false); setSelectedEntity(null); setError(null); }}
                   className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || !entityId || !amount}
+                  disabled={submitting || !selectedEntity?.id || !amount}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   style={{ backgroundColor: "#1B2B4B" }}
                 >

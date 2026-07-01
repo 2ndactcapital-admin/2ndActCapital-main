@@ -46,3 +46,17 @@ def upload_bytes(
     )
     return key
 
+
+def get_signed_url(key: str, expires: int = 3600, bucket: str | None = None) -> str:
+    """Return a presigned GET URL for ``key``.
+
+    Synchronous (boto3) — call via ``run_in_threadpool`` from async handlers.
+    ``expires`` is the lifetime in seconds (default 1 hour).
+    """
+    client = get_s3_client()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket or DEFAULT_BUCKET, "Key": key},
+        ExpiresIn=expires,
+    )
+
