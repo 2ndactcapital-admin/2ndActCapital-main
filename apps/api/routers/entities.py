@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from schemas.entities import (
+    PERSON_ENTITY_TYPES,
     AddressCreate,
     AddressResponse,
     AddressUpdate,
@@ -40,6 +41,7 @@ from schemas.entities import (
     SocialProfileResponse,
     TaxIdCreate,
     TaxIdResponse,
+    derive_legal_name,
 )
 from services.audit import write_audit_log
 from services.database import get_pool
@@ -55,9 +57,12 @@ ORG_ID_CLAIMS = (
 )
 
 ENTITY_COLUMNS = (
-    "id, org_id, entity_type, display_name, legal_name, tax_id, "
-    "date_of_birth, country_of_formation, notes, sub_type, status, "
-    "lead_source, relationship_manager_id, tags, linkedin_url, "
+    "id, org_id, entity_type, display_name, "
+    "name_prefix, first_name, middle_name, surname, name_suffix, "
+    "legal_name, legal_name_overridden, tax_id, "
+    "inception_date, end_date, country_of_formation, notes, "
+    "is_active, url, country_code, region_code, "
+    "sub_type, status, lead_source, relationship_manager_id, tags, linkedin_url, "
     "primary_email, primary_phone, profile_mode, valid_from, valid_to, "
     "system_from, system_to, created_at, updated_at"
 )
@@ -118,11 +123,14 @@ async def list_entities(
     status: str | None = None,
     search: str | None = None,
     investor_only: bool = False,
+    include_inactive: bool = False,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     org_id = get_org_id(request)
     conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
+    if not include_inactive:
+        conditions.append("is_active = true")
     params: list = [org_id]
 
     if type is not None:
@@ -165,29 +173,53 @@ async def create_entity(request: Request, body: EntityCreate):
     org_id = get_org_id(request)
     pool = await get_pool()
 
+    legal_name = body.legal_name
+    if body.entity_type.value in PERSON_ENTITY_TYPES and not body.legal_name_overridden:
+        derived = derive_legal_name(
+            body.name_prefix, body.first_name, body.middle_name,
+            body.surname, body.name_suffix,
+        )
+        if derived:
+            legal_name = derived
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
                 f"""
                 INSERT INTO entities (
-                    org_id, entity_type, display_name, legal_name, tax_id,
-                    date_of_birth, country_of_formation, notes, sub_type,
-                    status, lead_source, relationship_manager_id, tags,
-                    linkedin_url, primary_email, primary_phone
+                    org_id, entity_type, display_name,
+                    name_prefix, first_name, middle_name, surname, name_suffix,
+                    legal_name, legal_name_overridden, tax_id,
+                    inception_date, end_date, country_of_formation, notes,
+                    is_active, url, country_code, region_code,
+                    sub_type, status, lead_source, relationship_manager_id,
+                    tags, linkedin_url, primary_email, primary_phone
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                    $14, $15, $16
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                    $12, $13, $14, $15, $16, $17, $18, $19,
+                    $20, $21, $22, $23, $24, $25, $26, $27
                 )
                 RETURNING {ENTITY_COLUMNS}
                 """,
                 org_id,
                 body.entity_type.value,
                 body.display_name,
-                body.legal_name,
+                body.name_prefix,
+                body.first_name,
+                body.middle_name,
+                body.surname,
+                body.name_suffix,
+                legal_name,
+                body.legal_name_overridden,
                 body.tax_id,
-                body.date_of_birth,
+                body.inception_date,
+                body.end_date,
                 body.country_of_formation,
                 body.notes,
+                body.is_active,
+                body.url,
+                body.country_code,
+                body.region_code,
                 body.sub_type,
                 body.status or "prospect",
                 body.lead_source,
@@ -324,7 +356,9 @@ async def get_entity_full(request: Request, entity_id: UUID):
         addresses = await conn.fetch(
             """
             SELECT id, entity_id, address_type, street1, street2, city, state,
-                   postal_code, country, is_verified, is_primary, created_at
+                   postal_code, country, phone, country_code, region_code,
+                   is_verified, is_primary, is_seasonal,
+                   season_from_month, season_to_month, created_at
             FROM entity_addresses
             WHERE entity_id = $1 AND org_id = $2
               AND valid_to IS NULL AND system_to IS NULL
@@ -407,22 +441,48 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
             if isinstance(updates.get("entity_type"), EntityType):
                 updates["entity_type"] = updates["entity_type"].value
 
+            # Re-derive legal_name for person entities when name components change
+            # and the caller has not explicitly overridden it.
+            etype = updates.get("entity_type", current["entity_type"])
+            overridden = updates.get(
+                "legal_name_overridden", current["legal_name_overridden"]
+            )
+            name_fields = (
+                "name_prefix", "first_name", "middle_name", "surname", "name_suffix"
+            )
+            if any(f in updates for f in name_fields) and etype in PERSON_ENTITY_TYPES and not overridden:
+                derived = derive_legal_name(
+                    updates.get("name_prefix", current["name_prefix"]),
+                    updates.get("first_name", current["first_name"]),
+                    updates.get("middle_name", current["middle_name"]),
+                    updates.get("surname", current["surname"]),
+                    updates.get("name_suffix", current["name_suffix"]),
+                )
+                if derived:
+                    updates["legal_name"] = derived
+
             # Bi-temporal, FK-safe: archive the prior version as a new row with
             # system_to = now(), then update the live row (stable id) in place.
             await conn.execute(
                 """
                 INSERT INTO entities (
-                    org_id, entity_type, display_name, legal_name, tax_id,
-                    date_of_birth, country_of_formation, notes, sub_type, status,
-                    lead_source, relationship_manager_id, tags, linkedin_url,
-                    primary_email, primary_phone, profile_mode,
+                    org_id, entity_type, display_name,
+                    name_prefix, first_name, middle_name, surname, name_suffix,
+                    legal_name, legal_name_overridden, tax_id,
+                    inception_date, end_date, country_of_formation, notes,
+                    is_active, url, country_code, region_code,
+                    sub_type, status, lead_source, relationship_manager_id,
+                    tags, linkedin_url, primary_email, primary_phone, profile_mode,
                     valid_from, valid_to, system_from, system_to,
                     created_by, created_at, updated_at
                 )
-                SELECT org_id, entity_type, display_name, legal_name, tax_id,
-                       date_of_birth, country_of_formation, notes, sub_type,
-                       status, lead_source, relationship_manager_id, tags,
-                       linkedin_url, primary_email, primary_phone, profile_mode,
+                SELECT org_id, entity_type, display_name,
+                       name_prefix, first_name, middle_name, surname, name_suffix,
+                       legal_name, legal_name_overridden, tax_id,
+                       inception_date, end_date, country_of_formation, notes,
+                       is_active, url, country_code, region_code,
+                       sub_type, status, lead_source, relationship_manager_id,
+                       tags, linkedin_url, primary_email, primary_phone, profile_mode,
                        valid_from, valid_to, system_from, now(),
                        created_by, created_at, updated_at
                 FROM entities
@@ -436,11 +496,22 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
             editable = (
                 "entity_type",
                 "display_name",
+                "name_prefix",
+                "first_name",
+                "middle_name",
+                "surname",
+                "name_suffix",
                 "legal_name",
+                "legal_name_overridden",
                 "tax_id",
-                "date_of_birth",
+                "inception_date",
+                "end_date",
                 "country_of_formation",
                 "notes",
+                "is_active",
+                "url",
+                "country_code",
+                "region_code",
                 "sub_type",
                 "status",
                 "lead_source",
@@ -699,10 +770,14 @@ async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
             """
             INSERT INTO entity_addresses (
                 org_id, entity_id, address_type, street1, street2, city, state,
-                postal_code, country, is_primary, is_verified
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                postal_code, country, phone, country_code, region_code,
+                is_primary, is_verified, is_seasonal,
+                season_from_month, season_to_month
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
             RETURNING id, entity_id, address_type, street1, street2, city, state,
-                      postal_code, country, is_verified, is_primary, created_at
+                      postal_code, country, phone, country_code, region_code,
+                      is_verified, is_primary, is_seasonal,
+                      season_from_month, season_to_month, created_at
             """,
             org_id,
             entity_id,
@@ -713,8 +788,14 @@ async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
             body.state,
             body.postal_code,
             body.country,
+            body.phone,
+            body.country_code,
+            body.region_code,
             body.is_primary,
             body.is_verified,
+            body.is_seasonal,
+            body.season_from_month,
+            body.season_to_month,
         )
     return AddressResponse(**dict(row))
 
@@ -748,12 +829,16 @@ async def update_address(
                 """
                 INSERT INTO entity_addresses (
                     org_id, entity_id, address_type, street1, street2, city,
-                    state, postal_code, country, is_verified, is_primary,
+                    state, postal_code, country, phone, country_code, region_code,
+                    is_verified, is_primary, is_seasonal,
+                    season_from_month, season_to_month,
                     valid_from, valid_to, system_from, system_to,
                     created_by, created_at
                 )
                 SELECT org_id, entity_id, address_type, street1, street2, city,
-                       state, postal_code, country, is_verified, is_primary,
+                       state, postal_code, country, phone, country_code, region_code,
+                       is_verified, is_primary, is_seasonal,
+                       season_from_month, season_to_month,
                        valid_from, valid_to, system_from, now(),
                        created_by, created_at
                 FROM entity_addresses WHERE id = $1
@@ -774,8 +859,14 @@ async def update_address(
                 "state",
                 "postal_code",
                 "country",
+                "phone",
+                "country_code",
+                "region_code",
                 "is_primary",
                 "is_verified",
+                "is_seasonal",
+                "season_from_month",
+                "season_to_month",
             ):
                 if field in updates:
                     params.append(updates[field])
@@ -786,8 +877,9 @@ async def update_address(
                 UPDATE entity_addresses SET {', '.join(set_clauses)}
                 WHERE id = $1
                 RETURNING id, entity_id, address_type, street1, street2, city,
-                          state, postal_code, country, is_verified, is_primary,
-                          created_at
+                          state, postal_code, country, phone, country_code, region_code,
+                          is_verified, is_primary, is_seasonal,
+                          season_from_month, season_to_month, created_at
                 """,
                 *params,
             )

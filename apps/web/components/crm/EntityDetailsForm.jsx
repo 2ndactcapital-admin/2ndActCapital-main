@@ -3,19 +3,33 @@
 import { useActionState, useEffect, useState } from "react";
 import { updateEntityAction } from "@/lib/actions";
 import { STATUS_OPTIONS, statusLabel, subTypesFor, FREE_TEXT_SUBTYPE_TYPES } from "@/lib/entityTypes";
+import { CountryRegionSelect } from "@/components/ReferenceSelect";
 
 const INPUT_CLASS =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 const LABEL_CLASS =
   "block text-xs font-medium uppercase tracking-wide text-text-muted";
 
-const TEXT_FIELDS = [
-  { key: "display_name", label: "Display Name" },
-  { key: "legal_name", label: "Legal Name" },
+const PERSON_TYPES = new Set(["individual"]);
+
+// Text fields shown for all entity types
+const COMMON_TEXT_FIELDS = [
   { key: "lead_source", label: "Lead Source" },
-  { key: "country_of_formation", label: "Country" },
   { key: "primary_email", label: "Primary Email" },
   { key: "primary_phone", label: "Primary Phone" },
+  { key: "url", label: "Website / URL" },
+];
+
+// Text fields only for non-person entities
+const ENTITY_TEXT_FIELDS = [
+  { key: "display_name", label: "Display Name" },
+  { key: "legal_name", label: "Legal Name" },
+  { key: "country_of_formation", label: "Country of Formation" },
+];
+
+// Text fields only for persons
+const PERSON_TEXT_FIELDS = [
+  { key: "display_name", label: "Display Name" },
 ];
 
 function StatusBadge({ status }) {
@@ -40,6 +54,7 @@ function ReadRow({ label, children }) {
 
 export default function EntityDetailsForm({ entity }) {
   const [editing, setEditing] = useState(false);
+  const [confirmInactive, setConfirmInactive] = useState(false);
   const [state, formAction, pending] = useActionState(
     updateEntityAction.bind(null, entity.id),
     {},
@@ -49,9 +64,11 @@ export default function EntityDetailsForm({ entity }) {
     if (state?.ok) setEditing(false);
   }, [state]);
 
+  const isPerson = PERSON_TYPES.has(entity.entity_type);
   const subTypes = subTypesFor(entity.entity_type);
   const freeTextSubType = FREE_TEXT_SUBTYPE_TYPES.includes(entity.entity_type);
   const tags = entity.tags || [];
+  const dateLabel = isPerson ? "Date of Birth" : "Inception Date";
 
   if (!editing) {
     return (
@@ -70,12 +87,40 @@ export default function EntityDetailsForm({ entity }) {
           <ReadRow label="Status">
             <StatusBadge status={entity.status} />
           </ReadRow>
-          {entity.sub_type && <ReadRow label="Sub-type">{entity.sub_type}</ReadRow>}
-          {TEXT_FIELDS.map((f) => (
-            <ReadRow key={f.key} label={f.label}>
-              {entity[f.key] || "—"}
+          {!entity.is_active && (
+            <ReadRow label="Active">
+              <span className="text-xs font-semibold uppercase text-[#9B2335]">Inactive</span>
             </ReadRow>
-          ))}
+          )}
+          {entity.sub_type && <ReadRow label="Sub-type">{entity.sub_type}</ReadRow>}
+          <ReadRow label="Display Name">{entity.display_name || "—"}</ReadRow>
+          {isPerson ? (
+            <>
+              <ReadRow label="Legal Name">{entity.legal_name || "—"}</ReadRow>
+              <ReadRow label="First Name">{entity.first_name || "—"}</ReadRow>
+              <ReadRow label="Last Name">{entity.surname || "—"}</ReadRow>
+            </>
+          ) : (
+            <>
+              <ReadRow label="Legal Name">{entity.legal_name || "—"}</ReadRow>
+              <ReadRow label="Country of Formation">{entity.country_of_formation || "—"}</ReadRow>
+            </>
+          )}
+          {entity.inception_date && (
+            <ReadRow label={dateLabel}>{String(entity.inception_date)}</ReadRow>
+          )}
+          {entity.end_date && (
+            <ReadRow label="End Date">{String(entity.end_date)}</ReadRow>
+          )}
+          {(entity.country_code || entity.region_code) && (
+            <ReadRow label="Country / Region">
+              {[entity.country_code, entity.region_code].filter(Boolean).join(" / ")}
+            </ReadRow>
+          )}
+          {entity.url && <ReadRow label="Website">{entity.url}</ReadRow>}
+          <ReadRow label="Lead Source">{entity.lead_source || "—"}</ReadRow>
+          <ReadRow label="Primary Email">{entity.primary_email || "—"}</ReadRow>
+          <ReadRow label="Primary Phone">{entity.primary_phone || "—"}</ReadRow>
           <ReadRow label="Tags">
             {tags.length ? (
               <span className="flex flex-wrap gap-1">
@@ -104,31 +149,122 @@ export default function EntityDetailsForm({ entity }) {
     <form action={formAction}>
       <h2 className="text-sm font-semibold text-text-secondary">Edit Details</h2>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {TEXT_FIELDS.map((f) => (
-          <div key={f.key}>
-            <label className={LABEL_CLASS}>{f.label}</label>
-            <input name={f.key} defaultValue={entity[f.key] || ""} className={INPUT_CLASS} />
+
+        {/* Display name */}
+        <div>
+          <label className={LABEL_CLASS}>Display Name</label>
+          <input name="display_name" defaultValue={entity.display_name || ""} className={INPUT_CLASS} />
+        </div>
+
+        {/* Person name components */}
+        {isPerson && (
+          <>
+            <div>
+              <label className={LABEL_CLASS}>Prefix</label>
+              <input name="name_prefix" defaultValue={entity.name_prefix || ""} className={INPUT_CLASS} placeholder="Mr. / Ms. / Dr." />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>First Name</label>
+              <input name="first_name" defaultValue={entity.first_name || ""} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Middle Name</label>
+              <input name="middle_name" defaultValue={entity.middle_name || ""} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Last Name / Surname</label>
+              <input name="surname" defaultValue={entity.surname || ""} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Suffix</label>
+              <input name="name_suffix" defaultValue={entity.name_suffix || ""} className={INPUT_CLASS} placeholder="Jr. / III / Esq." />
+            </div>
+            <div className="flex items-center gap-2 pt-5">
+              <input type="checkbox" name="legal_name_overridden" id="lno" defaultChecked={entity.legal_name_overridden} />
+              <label htmlFor="lno" className="text-xs text-text-secondary">Override legal name manually</label>
+            </div>
+            {entity.legal_name_overridden && (
+              <div>
+                <label className={LABEL_CLASS}>Legal Name (manual)</label>
+                <input name="legal_name" defaultValue={entity.legal_name || ""} className={INPUT_CLASS} />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Non-person fields */}
+        {!isPerson && (
+          <>
+            <div>
+              <label className={LABEL_CLASS}>Legal Name</label>
+              <input name="legal_name" defaultValue={entity.legal_name || ""} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Country of Formation</label>
+              <input name="country_of_formation" defaultValue={entity.country_of_formation || ""} className={INPUT_CLASS} />
+            </div>
+          </>
+        )}
+
+        {/* Dates */}
+        <div>
+          <label className={LABEL_CLASS}>{dateLabel}</label>
+          <input type="date" name="inception_date" defaultValue={entity.inception_date || ""} className={INPUT_CLASS} />
+        </div>
+        {!isPerson && (
+          <div>
+            <label className={LABEL_CLASS}>End / Dissolution Date</label>
+            <input type="date" name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
           </div>
-        ))}
+        )}
+
+        {/* Country / Region */}
+        <div className="sm:col-span-2">
+          <label className={LABEL_CLASS}>Country / Region</label>
+          <CountryRegionSelect
+            defaultCountryCode={entity.country_code || ""}
+            defaultRegionCode={entity.region_code || ""}
+          />
+        </div>
+
+        {/* URL */}
+        <div>
+          <label className={LABEL_CLASS}>Website / URL</label>
+          <input name="url" defaultValue={entity.url || ""} className={INPUT_CLASS} placeholder="https://…" />
+        </div>
+
+        {/* Common fields */}
+        <div>
+          <label className={LABEL_CLASS}>Lead Source</label>
+          <input name="lead_source" defaultValue={entity.lead_source || ""} className={INPUT_CLASS} />
+        </div>
+        <div>
+          <label className={LABEL_CLASS}>Primary Email</label>
+          <input name="primary_email" defaultValue={entity.primary_email || ""} className={INPUT_CLASS} />
+        </div>
+        <div>
+          <label className={LABEL_CLASS}>Primary Phone</label>
+          <input name="primary_phone" defaultValue={entity.primary_phone || ""} className={INPUT_CLASS} />
+        </div>
+
+        {/* Status */}
         <div>
           <label className={LABEL_CLASS}>Status</label>
           <select name="status" defaultValue={entity.status || "prospect"} className={INPUT_CLASS}>
             {STATUS_OPTIONS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
+              <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
         </div>
+
+        {/* Sub-type */}
         {subTypes.length > 0 ? (
           <div>
             <label className={LABEL_CLASS}>Sub-type</label>
             <select name="sub_type" defaultValue={entity.sub_type || ""} className={INPUT_CLASS}>
               <option value="">Select…</option>
               {subTypes.map((st) => (
-                <option key={st} value={st}>
-                  {st}
-                </option>
+                <option key={st} value={st}>{st}</option>
               ))}
             </select>
           </div>
@@ -138,6 +274,29 @@ export default function EntityDetailsForm({ entity }) {
             <input name="sub_type" defaultValue={entity.sub_type || ""} className={INPUT_CLASS} />
           </div>
         ) : null}
+
+        {/* is_active — hidden sentinel so unchecked = false (not missing) */}
+        <div className="sm:col-span-2">
+          <input type="hidden" name="is_active_sentinel" value="1" />
+          <label className="flex items-center gap-2 text-sm text-text-secondary">
+            <input
+              type="checkbox"
+              name="is_active"
+              defaultChecked={entity.is_active !== false}
+              onChange={(e) => {
+                if (!e.target.checked) setConfirmInactive(true);
+                else setConfirmInactive(false);
+              }}
+            />
+            Active (uncheck to mark this entity inactive)
+          </label>
+          {confirmInactive && (
+            <p className="mt-1 text-xs text-[#9B2335]">
+              Inactive entities are hidden from default lists. Save to confirm.
+            </p>
+          )}
+        </div>
+
         <div className="sm:col-span-2">
           <label className={LABEL_CLASS}>Tags (comma-separated)</label>
           <input name="tags" defaultValue={(entity.tags || []).join(", ")} className={INPUT_CLASS} />
@@ -158,7 +317,7 @@ export default function EntityDetailsForm({ entity }) {
         </button>
         <button
           type="button"
-          onClick={() => setEditing(false)}
+          onClick={() => { setEditing(false); setConfirmInactive(false); }}
           className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border"
         >
           Cancel

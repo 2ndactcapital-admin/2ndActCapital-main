@@ -167,6 +167,12 @@ export const getConfig = (category) =>
     searchParams: category ? { category } : undefined,
   });
 
+// --- Reference data (Sprint 16) ---
+export const getReferenceList = (listKey, parentCode) =>
+  fetchAPI(`/api/v1/reference/${listKey}`, {
+    searchParams: parentCode ? { parent_code: parentCode } : undefined,
+  });
+
 // --- Taxonomy ---
 export const getTaxonomy = () => fetchAPI("/api/v1/taxonomy");
 
