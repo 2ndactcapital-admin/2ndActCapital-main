@@ -184,11 +184,14 @@ async def compute_allocations(pool: asyncpg.Pool, transaction_id: str) -> list[d
         # ------------------------------------------------------------------
         result: list[dict] = []
         for idx, s in enumerate(subs):
+            effective_pct = (s["weight"] / total_weight * Decimal("100")).quantize(
+                Decimal("0.000001")
+            )
             result.append(
                 {
                     "subscription_id": s["subscription_id"],
                     "allocated_amount": str(allocated[idx]),
-                    "ownership_pct": str(s["ownership_pct"]),
+                    "ownership_pct": str(effective_pct),
                     "entity_id": s["entity_id"],
                 }
             )
@@ -218,7 +221,7 @@ async def allocate_transaction(
         # Load transaction metadata needed for the DB writes.
         txn_row = await conn.fetchrow(
             """
-            SELECT id, org_id, amount
+            SELECT id, org_id, spv_id, amount
             FROM spv_transactions
             WHERE id = $1
             """,
@@ -228,6 +231,7 @@ async def allocate_transaction(
             raise ValueError(f"Transaction not found: {transaction_id}")
 
         org_id = txn_row["org_id"]
+        spv_id = txn_row["spv_id"]
         txn_amount = Decimal(str(txn_row["amount"]))
 
         async with conn.transaction():
@@ -246,13 +250,15 @@ async def allocate_transaction(
                 await conn.execute(
                     """
                     INSERT INTO spv_transaction_allocations
-                        (org_id, transaction_id, subscription_id,
+                        (org_id, transaction_id, spv_id, subscription_id, entity_id,
                          allocated_amount, ownership_pct, status)
-                    VALUES ($1, $2, $3, $4, $5, 'active')
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
                     """,
                     org_id,
                     transaction_id,
+                    spv_id,
                     alloc["subscription_id"],
+                    alloc["entity_id"],
                     Decimal(alloc["allocated_amount"]),
                     Decimal(alloc["ownership_pct"]),
                 )
