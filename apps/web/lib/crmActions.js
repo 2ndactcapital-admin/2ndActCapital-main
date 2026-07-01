@@ -34,6 +34,9 @@ export async function addAddressAction(entityId, prevState, formData) {
   const street1 = empty(formData.get("street1"));
   const city = empty(formData.get("city"));
   if (!street1 || !city) return { ok: false, error: "Street and city are required." };
+  const country_code = empty(formData.get("country_code"));
+  const sfmRaw = formData.get("season_from_month");
+  const stmRaw = formData.get("season_to_month");
   try {
     const item = await fetchAPI(`/api/v1/entities/${entityId}/addresses`, {
       method: "POST",
@@ -44,8 +47,14 @@ export async function addAddressAction(entityId, prevState, formData) {
         city,
         state: empty(formData.get("state")),
         postal_code: empty(formData.get("postal_code")),
-        country: empty(formData.get("country")) || "US",
+        country: country_code || empty(formData.get("country")) || "US",
+        phone: empty(formData.get("phone")),
+        country_code: country_code || undefined,
+        region_code: empty(formData.get("region_code")) || undefined,
         is_primary: checked(formData.get("is_primary")),
+        is_seasonal: checked(formData.get("is_seasonal")),
+        season_from_month: sfmRaw ? parseInt(sfmRaw, 10) : undefined,
+        season_to_month: stmRaw ? parseInt(stmRaw, 10) : undefined,
       },
     });
     return { ok: true, item };

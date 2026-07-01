@@ -7,7 +7,21 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+PERSON_ENTITY_TYPES: frozenset[str] = frozenset({"individual"})
+
+
+def derive_legal_name(
+    name_prefix: str | None,
+    first_name: str | None,
+    middle_name: str | None,
+    surname: str | None,
+    name_suffix: str | None,
+) -> str | None:
+    parts = [p for p in [name_prefix, first_name, middle_name, surname, name_suffix] if p]
+    return " ".join(parts) if parts else None
 
 
 class EntityType(str, Enum):
@@ -92,11 +106,23 @@ class AccreditationStatus(str, Enum):
 class EntityCreate(BaseModel):
     entity_type: EntityType
     display_name: str
+    # Name components — used for individuals; server derives legal_name from them
+    name_prefix: str | None = None
+    first_name: str | None = None
+    middle_name: str | None = None
+    surname: str | None = None
+    name_suffix: str | None = None
     legal_name: str | None = None
+    legal_name_overridden: bool = False
     tax_id: str | None = None
-    date_of_birth: date | None = None
+    inception_date: date | None = None
+    end_date: date | None = None
     country_of_formation: str | None = None
     notes: str | None = None
+    is_active: bool = True
+    url: str | None = None
+    country_code: str | None = None
+    region_code: str | None = None
     # Sprint 2b additions
     sub_type: str | None = None
     status: str = "prospect"
@@ -113,11 +139,22 @@ class EntityUpdate(BaseModel):
 
     entity_type: EntityType | None = None
     display_name: str | None = None
+    name_prefix: str | None = None
+    first_name: str | None = None
+    middle_name: str | None = None
+    surname: str | None = None
+    name_suffix: str | None = None
     legal_name: str | None = None
+    legal_name_overridden: bool | None = None
     tax_id: str | None = None
-    date_of_birth: date | None = None
+    inception_date: date | None = None
+    end_date: date | None = None
     country_of_formation: str | None = None
     notes: str | None = None
+    is_active: bool | None = None
+    url: str | None = None
+    country_code: str | None = None
+    region_code: str | None = None
     sub_type: str | None = None
     status: str | None = None
     lead_source: str | None = None
@@ -136,11 +173,22 @@ class EntityOut(BaseModel):
     org_id: UUID
     entity_type: EntityType
     display_name: str
+    name_prefix: str | None = None
+    first_name: str | None = None
+    middle_name: str | None = None
+    surname: str | None = None
+    name_suffix: str | None = None
     legal_name: str | None = None
+    legal_name_overridden: bool = False
     tax_id: str | None = None
-    date_of_birth: date | None = None
+    inception_date: date | None = None
+    end_date: date | None = None
     country_of_formation: str | None = None
     notes: str | None = None
+    is_active: bool = True
+    url: str | None = None
+    country_code: str | None = None
+    region_code: str | None = None
     sub_type: str | None = None
     status: str | None = None
     lead_source: str | None = None
@@ -266,8 +314,24 @@ class AddressCreate(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     country: str = "US"
+    phone: str | None = None
+    country_code: str | None = None
+    region_code: str | None = None
     is_primary: bool = False
     is_verified: bool = False
+    is_seasonal: bool = False
+    season_from_month: int | None = None
+    season_to_month: int | None = None
+
+    @field_validator("season_from_month", "season_to_month", mode="before")
+    @classmethod
+    def validate_month(cls, v):
+        if v is None:
+            return v
+        n = int(v)
+        if not (1 <= n <= 12):
+            raise ValueError("Month must be between 1 and 12")
+        return n
 
 
 class AddressUpdate(BaseModel):
@@ -278,8 +342,24 @@ class AddressUpdate(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     country: str | None = None
+    phone: str | None = None
+    country_code: str | None = None
+    region_code: str | None = None
     is_primary: bool | None = None
     is_verified: bool | None = None
+    is_seasonal: bool | None = None
+    season_from_month: int | None = None
+    season_to_month: int | None = None
+
+    @field_validator("season_from_month", "season_to_month", mode="before")
+    @classmethod
+    def validate_month(cls, v):
+        if v is None:
+            return v
+        n = int(v)
+        if not (1 <= n <= 12):
+            raise ValueError("Month must be between 1 and 12")
+        return n
 
 
 class AddressResponse(BaseModel):
@@ -294,8 +374,14 @@ class AddressResponse(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     country: str
+    phone: str | None = None
+    country_code: str | None = None
+    region_code: str | None = None
     is_verified: bool
     is_primary: bool
+    is_seasonal: bool = False
+    season_from_month: int | None = None
+    season_to_month: int | None = None
     created_at: datetime | None = None
 
 

@@ -20,14 +20,26 @@ function parseTags(value) {
 
 // Create a new entity, then redirect to its detail page.
 export async function createEntityAction(prevState, formData) {
+  const lnoRaw = formData.get("legal_name_overridden");
   const body = {
     entity_type: formData.get("entity_type"),
     display_name: emptyToNull(formData.get("display_name")),
+    name_prefix: emptyToNull(formData.get("name_prefix")),
+    first_name: emptyToNull(formData.get("first_name")),
+    middle_name: emptyToNull(formData.get("middle_name")),
+    surname: emptyToNull(formData.get("surname")),
+    name_suffix: emptyToNull(formData.get("name_suffix")),
     legal_name: emptyToNull(formData.get("legal_name")),
+    legal_name_overridden: lnoRaw === "on" || lnoRaw === "true",
     tax_id: emptyToNull(formData.get("tax_id")),
-    date_of_birth: emptyToNull(formData.get("date_of_birth")),
+    inception_date: emptyToNull(formData.get("inception_date")),
+    end_date: emptyToNull(formData.get("end_date")),
     country_of_formation: emptyToNull(formData.get("country_of_formation")),
     notes: emptyToNull(formData.get("notes")),
+    is_active: formData.get("is_active") !== "false",
+    url: emptyToNull(formData.get("url")),
+    country_code: emptyToNull(formData.get("country_code")),
+    region_code: emptyToNull(formData.get("region_code")),
     sub_type: emptyToNull(formData.get("sub_type")),
     status: formData.get("status") || "prospect",
     lead_source: emptyToNull(formData.get("lead_source")),
@@ -54,10 +66,25 @@ export async function createEntityAction(prevState, formData) {
 
 // Inline-edit an entity's details (Overview tab).
 export async function updateEntityAction(id, prevState, formData) {
+  const lnoRaw = formData.get("legal_name_overridden");
+  const isActiveSentinel = formData.get("is_active_sentinel");
+  const isActiveRaw = formData.get("is_active");
   const body = {
     display_name: emptyToNull(formData.get("display_name")),
+    name_prefix: emptyToNull(formData.get("name_prefix")),
+    first_name: emptyToNull(formData.get("first_name")),
+    middle_name: emptyToNull(formData.get("middle_name")),
+    surname: emptyToNull(formData.get("surname")),
+    name_suffix: emptyToNull(formData.get("name_suffix")),
     legal_name: emptyToNull(formData.get("legal_name")),
+    legal_name_overridden: lnoRaw != null ? (lnoRaw === "on" || lnoRaw === "true") : undefined,
     country_of_formation: emptyToNull(formData.get("country_of_formation")),
+    inception_date: emptyToNull(formData.get("inception_date")),
+    end_date: emptyToNull(formData.get("end_date")),
+    is_active: isActiveSentinel === "1" ? isActiveRaw === "on" : undefined,
+    url: emptyToNull(formData.get("url")),
+    country_code: emptyToNull(formData.get("country_code")),
+    region_code: emptyToNull(formData.get("region_code")),
     notes: emptyToNull(formData.get("notes")),
     sub_type: emptyToNull(formData.get("sub_type")),
     status: formData.get("status") || undefined,
@@ -66,6 +93,8 @@ export async function updateEntityAction(id, prevState, formData) {
     primary_phone: emptyToNull(formData.get("primary_phone")),
     tags: parseTags(formData.get("tags")),
   };
+  // Strip undefined values so Pydantic only updates provided fields
+  Object.keys(body).forEach((k) => body[k] === undefined && delete body[k]);
 
   try {
     await updateEntity(id, body);
