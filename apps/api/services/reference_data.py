@@ -1,4 +1,9 @@
-"""Reference data service with in-process TTL cache (300 s)."""
+"""Reference data service with in-process TTL cache (300 s).
+
+Queries the `reference_data` table (deployed by the live Sprint 16
+migration). Columns: id, org_id (nullable), list_key, code, label,
+parent_code, extra (jsonb), display_order, is_active, created_at.
+"""
 
 import asyncio
 import time
@@ -25,7 +30,7 @@ async def get_list(
             rows = await conn.fetch(
                 """
                 SELECT code, label, parent_code, display_order, extra
-                FROM reference_items
+                FROM reference_data
                 WHERE list_key = $1 AND parent_code = $2 AND is_active = true
                 ORDER BY display_order, label
                 """,
@@ -36,7 +41,7 @@ async def get_list(
             rows = await conn.fetch(
                 """
                 SELECT code, label, parent_code, display_order, extra
-                FROM reference_items
+                FROM reference_data
                 WHERE list_key = $1 AND is_active = true
                 ORDER BY display_order, label
                 """,

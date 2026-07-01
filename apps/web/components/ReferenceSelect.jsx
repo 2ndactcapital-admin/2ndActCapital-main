@@ -5,10 +5,11 @@ import { useEffect, useState } from "react";
 const INPUT =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 
-// Mapping: country_code → list_key for region dropdown (null = text input)
+// Mapping: country_code → list_key for region dropdown.
+// Only include list_keys that are seeded in the live reference_data table.
+// Unmapped countries (including CA) fall back to a free-text input.
 const REGION_LIST = {
   US: "us_state",
-  CA: "ca_province",
 };
 
 async function fetchItems(listKey, parentCode) {

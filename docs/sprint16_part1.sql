@@ -1,5 +1,9 @@
 -- Sprint 16: Reference Data + CRM Entity Completeness
--- Run in Supabase SQL editor (Step 1 of standard sprint steps).
+-- SUPERSEDED — this migration was NOT applied to the live database.
+-- The live database was migrated with a separate Part 1 SQL that created
+-- `reference_data` (not `reference_items`) and seeded list_keys:
+--   country, currency, month, name_prefix, name_suffix, us_state
+-- DO NOT run this file. It is retained for reference only.
 
 -- ============================================================
 -- entities: name components + completeness fields
