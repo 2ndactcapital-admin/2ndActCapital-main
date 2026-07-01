@@ -1,0 +1,6 @@
+import { forwardToApi } from "@/lib/apiForward";
+
+export async function GET(request, { params }) {
+  const { id, txnId } = await params;
+  return forwardToApi(`/api/v1/spvs/${id}/transactions/${txnId}/allocations`);
+}

@@ -305,3 +305,33 @@ export const listSPVDocuments = (id) =>
   fetchAPI(`/api/v1/spvs/${id}/documents`);
 export const getSPVHistory = (id) =>
   fetchAPI(`/api/v1/spvs/${id}/history`);
+
+// --- SPV Transactions (Sprint 14) ---
+export const listSPVTransactions = (spvId) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions`);
+export const createSPVTransaction = (spvId, body) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions`, { method: "POST", body });
+export const updateSPVTransaction = (spvId, txnId, body) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions/${txnId}`, {
+    method: "PATCH",
+    body,
+  });
+export const allocateSPVTransaction = (spvId, txnId) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions/${txnId}/allocate`, {
+    method: "POST",
+    body: {},
+  });
+export const postSPVTransaction = (spvId, txnId) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions/${txnId}/post`, {
+    method: "POST",
+    body: {},
+  });
+export const voidSPVTransaction = (spvId, txnId) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions/${txnId}/void`, {
+    method: "POST",
+    body: {},
+  });
+export const listSPVAllocations = (spvId, txnId) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/transactions/${txnId}/allocations`);
+export const getSPVLedger = (spvId) =>
+  fetchAPI(`/api/v1/spvs/${spvId}/ledger`);

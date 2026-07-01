@@ -2,6 +2,7 @@
 
 import SPVList from "./render/SPVList";
 import CapTable from "./render/CapTable";
+import SPVLedger from "./render/SPVLedger";
 
 // Maps render.component string → React component.
 // Unknown components fall back to a plain text display.
@@ -76,6 +77,7 @@ const COMPONENT_MAP = {
   ToDoList,
   SPVList,
   CapTable,
+  SPVLedger,
 };
 
 export default function RenderDirective({ render, onNavigate }) {

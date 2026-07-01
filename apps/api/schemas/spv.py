@@ -125,3 +125,69 @@ class StatusHistoryEntry(BaseModel):
     note: Optional[str]
     changed_by: Optional[UUID]
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Sprint 14 — Transaction Ledger schemas
+# ---------------------------------------------------------------------------
+
+class TransactionCreate(BaseModel):
+    txn_type: str                # 'capital_call', 'distribution', 'fee', 'return_of_capital'
+    txn_date: date
+    amount: float
+    description: Optional[str] = None
+    reference: Optional[str] = None
+    allocation_basis: str = "committed"   # 'ownership_pct', 'committed', 'funded'
+
+
+class TransactionUpdate(BaseModel):
+    txn_type: Optional[str] = None
+    txn_date: Optional[date] = None
+    amount: Optional[float] = None
+    description: Optional[str] = None
+    reference: Optional[str] = None
+    allocation_basis: Optional[str] = None
+
+
+class TransactionResponse(BaseModel):
+    id: UUID
+    org_id: UUID
+    spv_id: UUID
+    txn_type: str
+    txn_date: date
+    amount: float
+    description: Optional[str]
+    reference: Optional[str]
+    allocation_basis: str
+    status: str
+    allocated_at: Optional[datetime]
+    posted_at: Optional[datetime]
+    voided_at: Optional[datetime]
+    created_by: Optional[UUID]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AllocationRow(BaseModel):
+    id: UUID
+    org_id: UUID
+    transaction_id: UUID
+    subscription_id: UUID
+    allocated_amount: float
+    ownership_pct: float
+    status: str
+    created_at: datetime
+
+
+class LedgerSummary(BaseModel):
+    total_called: float
+    total_distributed: float
+    total_fees: float
+    net: float
+
+
+class LedgerResponse(BaseModel):
+    spv_id: UUID
+    spv_name: str
+    summary: LedgerSummary
+    transactions: list[TransactionResponse]
