@@ -469,6 +469,10 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   ownership_pct                            numeric
+--   change_reason                            text
+--   change_source_type                       text
+--   change_source_id                         uuid
+--   effective_date                           date
 --   PRIMARY KEY entity_relationships_pkey: (id)
 
 -- ===== entity_social_profiles =====
@@ -685,6 +689,23 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY organizations_pkey: (id)
 --   UNIQUE organizations_slug_key: (slug)
+
+-- ===== ownership_change_log =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   relationship_id                          uuid
+--   from_entity_id                           uuid NOT NULL
+--   to_entity_id                             uuid NOT NULL
+--   prior_pct                                numeric
+--   new_pct                                  numeric
+--   change_reason                            text NOT NULL
+--   change_source_type                       text
+--   change_source_id                         uuid
+--   effective_date                           date
+--   note                                     text
+--   changed_by                               uuid
+--   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY ownership_change_log_pkey: (id)
 
 -- ===== permissions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
