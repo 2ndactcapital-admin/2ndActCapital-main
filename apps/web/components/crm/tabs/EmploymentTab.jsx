@@ -1,67 +1,17 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { addEmploymentAction, searchEntitiesAction } from "@/lib/crmActions";
+import { addEmploymentAction } from "@/lib/crmActions";
+import EntityPicker from "@/components/EntityPicker";
 
 const INPUT = "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 
-function EmployerTypeahead({ excludeId }) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const timer = useRef(null);
-
-  function onChange(value) {
-    setQuery(value);
-    setSelected(null);
-    clearTimeout(timer.current);
-    if (!value.trim()) {
-      setResults([]);
-      return;
-    }
-    timer.current = setTimeout(async () => {
-      const res = await searchEntitiesAction(value);
-      setResults((res.results || []).filter((e) => e.id !== excludeId));
-    }, 300);
-  }
-
-  return (
-    <div className="sm:col-span-2">
-      <label className="block text-xs font-medium uppercase tracking-wide text-text-muted">
-        Employer (search entities)
-      </label>
-      <input type="hidden" name="employer_id" value={selected?.id || ""} />
-      <input
-        value={selected ? selected.display_name : query}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Type to search…"
-        className={`mt-1 w-full ${INPUT}`}
-      />
-      {!selected && results.length > 0 && (
-        <ul className="mt-1 max-h-40 overflow-auto rounded-md border border-border bg-bg-card">
-          {results.map((e) => (
-            <li key={e.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelected(e);
-                  setResults([]);
-                }}
-                className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-app"
-              >
-                {e.display_name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
+const COMPANY_TYPES = ["llc", "lp", "gp", "s_corp", "c_corp", "corporation", "foundation", "family_office", "other"];
 
 export default function EmploymentTab({ entityId, initial }) {
   const [items, setItems] = useState(initial || []);
   const [adding, setAdding] = useState(false);
+  const [selectedEmployer, setSelectedEmployer] = useState(null);
   const formRef = useRef(null);
   const [state, formAction, pending] = useActionState(
     addEmploymentAction.bind(null, entityId),
@@ -74,6 +24,7 @@ export default function EmploymentTab({ entityId, initial }) {
         prev.some((e) => e.id === state.item.id) ? prev : [...prev, state.item],
       );
       formRef.current?.reset();
+      setSelectedEmployer(null);
       setAdding(false);
     }
   }, [state]);
@@ -116,7 +67,22 @@ export default function EmploymentTab({ entityId, initial }) {
 
       {adding && (
         <form ref={formRef} action={formAction} className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
-          <EmployerTypeahead excludeId={entityId} />
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium uppercase tracking-wide text-text-muted">
+              Employer (search entities)
+            </label>
+            <input type="hidden" name="employer_id" value={selectedEmployer?.id || ""} />
+            <EntityPicker
+              value={selectedEmployer}
+              onChange={setSelectedEmployer}
+              placeholder="Search for employer…"
+              entityTypes={COMPANY_TYPES}
+              allowCreate
+              createEntityType="llc"
+              excludeId={entityId}
+              className={`mt-1 ${INPUT} w-full`}
+            />
+          </div>
           <input name="title" placeholder="Title" className={INPUT} />
           <div />
           <input type="date" name="start_date" className={INPUT} />
@@ -130,7 +96,7 @@ export default function EmploymentTab({ entityId, initial }) {
             <button type="submit" disabled={pending} className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60">
               {pending ? "Saving…" : "Save employment"}
             </button>
-            <button type="button" onClick={() => setAdding(false)} className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border">
+            <button type="button" onClick={() => { setAdding(false); setSelectedEmployer(null); }} className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border">
               Cancel
             </button>
           </div>

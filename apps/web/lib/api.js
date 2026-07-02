@@ -342,6 +342,14 @@ export const listSPVAllocations = (spvId, txnId) =>
 export const getSPVLedger = (spvId) =>
   fetchAPI(`/api/v1/spvs/${spvId}/ledger`);
 
+// --- Entity Documents (Sprint 17) ---
+export const listEntityDocuments = (entityId, searchParams) =>
+  fetchAPI(`/api/v1/entities/${entityId}/documents`, { searchParams });
+export const patchEntityDocument = (entityId, docId, body) =>
+  fetchAPI(`/api/v1/entities/${entityId}/documents/${docId}`, { method: "PATCH", body });
+export const getDocumentDownloadUrl = (entityId, docId) =>
+  fetchAPI(`/api/v1/entities/${entityId}/documents/${docId}/download`);
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

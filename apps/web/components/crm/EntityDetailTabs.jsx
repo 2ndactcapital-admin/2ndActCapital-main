@@ -10,6 +10,7 @@ import TaxIdsTab from "@/components/crm/tabs/TaxIdsTab";
 import SocialTab from "@/components/crm/tabs/SocialTab";
 import ComplianceTab from "@/components/crm/tabs/ComplianceTab";
 import NotesTab from "@/components/crm/tabs/NotesTab";
+import DocumentsTab from "@/components/crm/tabs/DocumentsTab";
 
 export default function EntityDetailTabs({ full, graph }) {
   const entity = full.entity;
@@ -23,6 +24,7 @@ export default function EntityDetailTabs({ full, graph }) {
     { key: "tax_ids", label: "Tax IDs" },
     { key: "social", label: "Social Profiles" },
     { key: "notes", label: "Notes" },
+    { key: "documents", label: "Documents" },
     { key: "compliance", label: "Compliance" },
   ];
 
@@ -103,6 +105,11 @@ export default function EntityDetailTabs({ full, graph }) {
         {/* Notes */}
         <div className={active === "notes" ? "" : "hidden"}>
           <NotesTab entityId={entity.id} initial={full.notes || []} />
+        </div>
+
+        {/* Documents */}
+        <div className={active === "documents" ? "" : "hidden"}>
+          <DocumentsTab entityId={entity.id} />
         </div>
 
         {/* Compliance */}

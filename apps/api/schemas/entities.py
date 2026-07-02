@@ -132,6 +132,9 @@ class EntityCreate(BaseModel):
     linkedin_url: str | None = None
     primary_email: str | None = None
     primary_phone: str | None = None
+    # Sprint 17
+    is_incomplete: bool = False
+    created_via: str | None = None
 
 
 class EntityUpdate(BaseModel):
@@ -164,6 +167,7 @@ class EntityUpdate(BaseModel):
     primary_email: str | None = None
     primary_phone: str | None = None
     profile_mode: str | None = None
+    is_incomplete: bool | None = None
 
 
 class EntityOut(BaseModel):
@@ -198,6 +202,8 @@ class EntityOut(BaseModel):
     primary_email: str | None = None
     primary_phone: str | None = None
     profile_mode: str = "foundation"
+    is_incomplete: bool = False
+    created_via: str | None = None
     valid_from: datetime | None = None
     valid_to: datetime | None = None
     system_from: datetime | None = None
@@ -208,6 +214,32 @@ class EntityOut(BaseModel):
 
 # Spec alias.
 EntityResponse = EntityOut
+
+
+# ---------------------------------------------------------------------------
+# Sprint 17 — Entity Picker: search + stub schemas
+# ---------------------------------------------------------------------------
+class EntityStubCreate(BaseModel):
+    display_name: str
+    entity_type: EntityType
+    force_create: bool = False
+
+
+class EntitySearchItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    display_name: str
+    legal_name: str | None = None
+    entity_type: EntityType
+    is_incomplete: bool = False
+    is_active: bool = True
+
+
+class EntitySearchResponse(BaseModel):
+    items: list[EntitySearchItem]
+    total: int
+    has_more: bool
 
 
 # ---------------------------------------------------------------------------
