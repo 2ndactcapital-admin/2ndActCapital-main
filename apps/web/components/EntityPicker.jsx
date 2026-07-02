@@ -221,8 +221,7 @@ export default function EntityPicker({
           {allowCreate && query.trim() && !loading && (
             <button
               type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={handleCreate}
+              onMouseDown={(e) => { e.preventDefault(); handleCreate(); }}
               className="w-full border-t border-border px-3 py-2 text-left text-sm font-medium text-navy hover:bg-bg-app"
             >
               + Create &ldquo;{query.trim()}&rdquo;

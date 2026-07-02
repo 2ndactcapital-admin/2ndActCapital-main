@@ -180,7 +180,19 @@ export default async function SPVDetailPage({ params, searchParams }) {
             />
           )}
           {tab === "transactions" && staff && (
-            <SPVTransactionsTab spvId={id} staff={staff} />
+            <SPVTransactionsTab
+              spvId={id}
+              staff={staff}
+              spvName={spv.name}
+              totalCommitted={
+                Array.isArray(capTable?.subscriptions)
+                  ? capTable.subscriptions.reduce(
+                      (sum, s) => sum + (Number(s.commitment_amount) || 0),
+                      0,
+                    )
+                  : null
+              }
+            />
           )}
           {tab === "history" && staff && <HistorySection history={history} />}
         </div>
