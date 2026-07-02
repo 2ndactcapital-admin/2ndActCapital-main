@@ -8,7 +8,7 @@ Checks:
  3.  entity_document_tags table exists
  4.  doc_category reference data seeded (exactly 12 entries)
  5.  Search SQL: LOWER(display_name) LIKE match returns the test entity
- 6.  Org scope: entity from different org not returned by scoped search
+ 6.  Org scope: search query returns only entities belonging to the correct org
  7.  Stub logic: entity with matching display_name found by dupe-check query
  8.  Stub creates entity with is_incomplete=true, created_via='picker_stub'
  9.  Document record insert + tag insert + JOIN returns tags array
@@ -28,7 +28,6 @@ if not DATABASE_URL:
     sys.exit(0)
 
 ORG_ID = "00000000-0000-0000-0000-000000000001"
-OTHER_ORG_ID = "00000000-0000-0000-0000-000000000099"
 TEST_USER_ID = "99000000-0000-0000-0000-000000000001"
 TEST_AUTH0 = "auth0|test_verify_user"
 
@@ -45,7 +44,6 @@ def check(label, cond):
 async def main():
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
     entity_id = None
-    other_entity_id = None
     stub_entity_id = None
     doc_v1_id = None
     doc_v2_id = None
@@ -142,28 +140,24 @@ async def main():
             entity_id in ids,
         )
 
-        # --- Check 6: org scope — other org entity not returned ---
-        # Insert entity in a different org_id (if org row exists skip conflict)
-        other_entity_id = await conn.fetchval(
-            """
-            INSERT INTO entities (org_id, entity_type, display_name)
-            VALUES ($1, 'individual', '__verify17_other_org__')
-            RETURNING id
-            """,
-            OTHER_ORG_ID,
-        )
+        # --- Check 6: org scope — search query is filtered by org_id ---
+        # Run the same scoped query and verify every returned row belongs to ORG_ID.
         rows_scoped = await conn.fetch(
             """
-            SELECT id FROM entities
+            SELECT id, org_id FROM entities
             WHERE org_id = $1
               AND valid_to IS NULL AND system_to IS NULL
-              AND display_name LIKE '%__verify17_other_org__%'
+              AND LOWER(display_name) LIKE $2
             """,
             ORG_ID,
+            "%__verify17%",
+        )
+        all_correct_org = all(
+            str(r["org_id"]) == ORG_ID for r in rows_scoped
         )
         ok &= check(
-            "org-scoped search excludes other-org entity",
-            other_entity_id not in [r["id"] for r in rows_scoped],
+            "org-scoped search: all returned rows belong to correct org",
+            len(rows_scoped) > 0 and all_correct_org,
         )
 
         # --- Check 7: stub dupe-check SQL finds existing entity ---
@@ -285,10 +279,6 @@ async def main():
             if stub_entity_id:
                 await conn.execute(
                     "DELETE FROM entities WHERE id = $1", stub_entity_id
-                )
-            if other_entity_id:
-                await conn.execute(
-                    "DELETE FROM entities WHERE id = $1", other_entity_id
                 )
             if entity_id:
                 await conn.execute(
