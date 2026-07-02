@@ -124,9 +124,9 @@ async def upload_document(
         clean_tags = [t.strip() for t in tags if t.strip()]
         if clean_tags:
             await conn.executemany(
-                "INSERT INTO entity_document_tags (document_id, tag) VALUES ($1, $2) "
-                "ON CONFLICT DO NOTHING",
-                [(doc_id, tag) for tag in clean_tags],
+                "INSERT INTO entity_document_tags (org_id, document_id, tag, is_fixed) "
+                "VALUES ($1, $2, $3, false) ON CONFLICT DO NOTHING",
+                [(org_id, doc_id, tag) for tag in clean_tags],
             )
 
     result = dict(row)
@@ -194,9 +194,9 @@ async def new_document_version(
         clean_tags = [t.strip() for t in tags if t.strip()]
         if clean_tags:
             await conn.executemany(
-                "INSERT INTO entity_document_tags (document_id, tag) VALUES ($1, $2) "
-                "ON CONFLICT DO NOTHING",
-                [(new_doc_id, tag) for tag in clean_tags],
+                "INSERT INTO entity_document_tags (org_id, document_id, tag, is_fixed) "
+                "VALUES ($1, $2, $3, false) ON CONFLICT DO NOTHING",
+                [(org_id, new_doc_id, tag) for tag in clean_tags],
             )
 
     result = dict(row)
@@ -287,9 +287,9 @@ async def patch_document(
 
         if add_tags:
             await conn.executemany(
-                "INSERT INTO entity_document_tags (document_id, tag) VALUES ($1, $2) "
-                "ON CONFLICT DO NOTHING",
-                [(doc_id, tag) for tag in add_tags],
+                "INSERT INTO entity_document_tags (org_id, document_id, tag, is_fixed) "
+                "VALUES ($1, $2, $3, false) ON CONFLICT DO NOTHING",
+                [(org_id, doc_id, tag) for tag in add_tags],
             )
         if remove_tags:
             await conn.execute(
