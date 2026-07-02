@@ -215,8 +215,9 @@ async def main():
                 doc_v1_id, ORG_ID, entity_id,
             )
             await conn.execute(
-                "INSERT INTO entity_document_tags (document_id, tag) VALUES ($1, $2)",
-                doc_v1_id, "signed",
+                "INSERT INTO entity_document_tags (org_id, document_id, tag, is_fixed) "
+                "VALUES ($1, $2, $3, false)",
+                ORG_ID, doc_v1_id, "signed",
             )
             doc_row = await conn.fetchrow(
                 """
