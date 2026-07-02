@@ -11,6 +11,7 @@ import SocialTab from "@/components/crm/tabs/SocialTab";
 import ComplianceTab from "@/components/crm/tabs/ComplianceTab";
 import NotesTab from "@/components/crm/tabs/NotesTab";
 import DocumentsTab from "@/components/crm/tabs/DocumentsTab";
+import OwnershipTab from "@/components/crm/tabs/OwnershipTab";
 
 export default function EntityDetailTabs({ full, graph }) {
   const entity = full.entity;
@@ -25,6 +26,7 @@ export default function EntityDetailTabs({ full, graph }) {
     { key: "social", label: "Social Profiles" },
     { key: "notes", label: "Notes" },
     { key: "documents", label: "Documents" },
+    { key: "ownership", label: "Ownership" },
     { key: "compliance", label: "Compliance" },
   ];
 
@@ -110,6 +112,11 @@ export default function EntityDetailTabs({ full, graph }) {
         {/* Documents */}
         <div className={active === "documents" ? "" : "hidden"}>
           <DocumentsTab entityId={entity.id} />
+        </div>
+
+        {/* Ownership */}
+        <div className={active === "ownership" ? "" : "hidden"}>
+          <OwnershipTab entityId={entity.id} />
         </div>
 
         {/* Compliance */}

@@ -350,6 +350,20 @@ export const patchEntityDocument = (entityId, docId, body) =>
 export const getDocumentDownloadUrl = (entityId, docId) =>
   fetchAPI(`/api/v1/entities/${entityId}/documents/${docId}/download`);
 
+// --- Ownership (Sprint 18) ---
+export const getEntityOwnership = (entityId, asOf) =>
+  fetchAPI(`/api/v1/entities/${entityId}/ownership`, {
+    searchParams: asOf ? { as_of: asOf } : undefined,
+  });
+export const createEntityOwnership = (entityId, body) =>
+  fetchAPI(`/api/v1/entities/${entityId}/ownership`, { method: "POST", body });
+export const amendOwnership = (relId, body) =>
+  fetchAPI(`/api/v1/entity-relationships/${relId}/ownership`, { method: "PATCH", body });
+export const deleteOwnership = (relId) =>
+  fetchAPI(`/api/v1/entity-relationships/${relId}/ownership`, { method: "DELETE" });
+export const getOwnershipHistory = (entityId) =>
+  fetchAPI(`/api/v1/entities/${entityId}/ownership/history`);
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

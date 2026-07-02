@@ -1,4 +1,4 @@
-"""Entity hierarchy / graph endpoints (Sprint 15).
+"""Entity hierarchy / graph endpoints (Sprint 15 + Sprint 18).
 
 Routes:
   GET    /entities/{entity_id}/tree                  — subtree (all auth)
@@ -12,11 +12,19 @@ Routes:
   DELETE /entity-groups/{group_id}/members/{entity_id} — remove member (staff)
   GET    /entity-groups                               — list groups (all auth)
   GET    /entity-groups/{group_id}                    — group detail + members (all auth)
+
+  Sprint 18 — Ownership Editing & Time-Travel:
+  GET    /entities/{entity_id}/ownership              — both-sides view + as_of (all auth)
+  POST   /entities/{entity_id}/ownership              — create ownership edge (staff)
+  PATCH  /entity-relationships/{rel_id}/ownership     — amend pct/note (staff)
+  DELETE /entity-relationships/{rel_id}/ownership     — soft-delete + log (staff)
+  GET    /entities/{entity_id}/ownership/history      — change log newest-first (all auth)
 """
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from routers.entities import get_org_id
@@ -63,6 +71,22 @@ class GroupMemberAdd(BaseModel):
     entity_id: UUID
 
 
+class OwnershipCreate(BaseModel):
+    direction: str  # 'owns' | 'owned_by'
+    counterparty_id: UUID
+    ownership_pct: Optional[Decimal] = None
+    effective_date: Optional[str] = None  # YYYY-MM-DD
+    note: Optional[str] = None
+    change_reason: Optional[str] = None
+
+
+class OwnershipPatch(BaseModel):
+    ownership_pct: Optional[Decimal] = None
+    note: Optional[str] = None
+    effective_date: Optional[str] = None
+    change_reason: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -75,6 +99,8 @@ def _rel_row_to_dict(row) -> dict:
             d[key] = str(d[key])
     if "ownership_pct" in d and d["ownership_pct"] is not None:
         d["ownership_pct"] = float(d["ownership_pct"])
+    if "effective_date" in d and d["effective_date"] is not None:
+        d["effective_date"] = str(d["effective_date"])
     return d
 
 
@@ -482,3 +508,399 @@ async def get_entity_group(group_id: UUID, request: Request):
         g["created_by"] = str(g["created_by"])
     g["members"] = member_list
     return g
+
+
+# ---------------------------------------------------------------------------
+# Ownership endpoints — Sprint 18
+# ---------------------------------------------------------------------------
+
+_OWN_FIELDS = (
+    "r.id, r.from_entity_id, r.to_entity_id, r.ownership_pct, "
+    "r.notes, r.effective_date, r.change_reason, r.valid_from"
+)
+
+
+async def _log_ownership_change(
+    conn, org_id, relationship_id, from_id, to_id,
+    prior_pct, new_pct, change_reason, changed_by
+):
+    """Insert into ownership_change_log. Gracefully skips on schema mismatch."""
+    try:
+        await conn.execute(
+            """
+            INSERT INTO ownership_change_log
+                (org_id, relationship_id, from_entity_id, to_entity_id,
+                 prior_pct, new_pct, change_reason, changed_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            org_id, relationship_id, from_id, to_id,
+            prior_pct, new_pct, change_reason, changed_by,
+        )
+    except Exception:
+        pass  # non-fatal — main transaction already committed
+
+
+def _ownership_row(row, counterparty_row) -> dict:
+    d = {
+        "relationship_id": str(row["id"]),
+        "ownership_pct": float(row["ownership_pct"]) if row["ownership_pct"] is not None else None,
+        "notes": row["notes"],
+        "effective_date": str(row["effective_date"]) if row["effective_date"] else None,
+        "change_reason": row.get("change_reason"),
+        "valid_from": row["valid_from"].isoformat() if row.get("valid_from") else None,
+    }
+    if counterparty_row:
+        d["counterparty"] = {
+            "id": str(counterparty_row["id"]),
+            "display_name": counterparty_row["display_name"],
+            "entity_type": counterparty_row["entity_type"],
+        }
+    return d
+
+
+@router.get("/entities/{entity_id}/ownership")
+async def get_entity_ownership(
+    entity_id: UUID,
+    request: Request,
+    as_of: Optional[str] = Query(None, description="YYYY-MM-DD"),
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    # Default: current active rows. With as_of: valid-time slice.
+    if as_of:
+        time_filter = (
+            "AND r.valid_from <= $3::date "
+            "AND (r.valid_to IS NULL OR r.valid_to > $3::date) "
+            "AND r.system_to IS NULL"
+        )
+        as_of_param = as_of
+    else:
+        time_filter = "AND r.valid_to IS NULL AND r.system_to IS NULL"
+        as_of_param = None
+
+    async with pool.acquire() as conn:
+        owns_rows = await conn.fetch(
+            f"""
+            SELECT {_OWN_FIELDS},
+                   e.id AS cp_id, e.display_name, e.entity_type
+            FROM entity_relationships r
+            JOIN entities e ON e.id = r.to_entity_id
+            WHERE r.from_entity_id = $1
+              AND r.org_id = $2
+              AND r.relationship_type = 'ownership'
+              {time_filter}
+            ORDER BY e.display_name
+            """,
+            entity_id,
+            org_id,
+            *([as_of_param] if as_of_param else []),
+        )
+
+        owned_by_rows = await conn.fetch(
+            f"""
+            SELECT {_OWN_FIELDS},
+                   e.id AS cp_id, e.display_name, e.entity_type
+            FROM entity_relationships r
+            JOIN entities e ON e.id = r.from_entity_id
+            WHERE r.to_entity_id = $1
+              AND r.org_id = $2
+              AND r.relationship_type = 'ownership'
+              {time_filter}
+            ORDER BY e.display_name
+            """,
+            entity_id,
+            org_id,
+            *([as_of_param] if as_of_param else []),
+        )
+
+    def _to_item(row):
+        cp = {
+            "id": str(row["cp_id"]),
+            "display_name": row["display_name"],
+            "entity_type": row["entity_type"],
+        }
+        return {
+            "relationship_id": str(row["id"]),
+            "counterparty": cp,
+            "ownership_pct": float(row["ownership_pct"]) if row["ownership_pct"] is not None else None,
+            "notes": row["notes"],
+            "effective_date": str(row["effective_date"]) if row.get("effective_date") else None,
+            "change_reason": row.get("change_reason"),
+        }
+
+    owned_by_list = [_to_item(r) for r in owned_by_rows]
+    total_pct = sum(
+        (i["ownership_pct"] or 0.0) for i in owned_by_list
+    )
+
+    return {
+        "entity_id": str(entity_id),
+        "as_of": as_of,
+        "owns": [_to_item(r) for r in owns_rows],
+        "owned_by": owned_by_list,
+        "owned_by_total_pct": round(total_pct, 6),
+    }
+
+
+@router.post("/entities/{entity_id}/ownership", status_code=201)
+async def create_ownership(
+    entity_id: UUID,
+    body: OwnershipCreate,
+    request: Request,
+):
+    require_staff(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    if body.direction not in ("owns", "owned_by"):
+        raise HTTPException(status_code=400, detail="direction must be 'owns' or 'owned_by'")
+
+    counterparty_id = str(body.counterparty_id)
+    this_id = str(entity_id)
+
+    if this_id == counterparty_id:
+        raise HTTPException(status_code=400, detail="An entity cannot own itself")
+
+    if body.ownership_pct is not None and not (0 <= body.ownership_pct <= 100):
+        raise HTTPException(status_code=400, detail="ownership_pct must be 0–100")
+
+    if body.direction == "owns":
+        from_id, to_id = this_id, counterparty_id
+    else:
+        from_id, to_id = counterparty_id, this_id
+
+    has_cycle = await detect_cycle(pool, org_id, from_id, to_id)
+    if has_cycle:
+        raise HTTPException(
+            status_code=400,
+            detail="Adding this relationship would create a cycle",
+        )
+
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+
+        row = await conn.fetchrow(
+            """
+            INSERT INTO entity_relationships
+                (org_id, from_entity_id, to_entity_id, relationship_type,
+                 notes, ownership_pct, effective_date, change_reason,
+                 change_source_type, valid_from, system_from, created_by)
+            VALUES ($1, $2, $3, 'ownership', $4, $5, $6::date, $7,
+                    'api', now(), now(), $8)
+            RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
+                      notes, ownership_pct, effective_date, change_reason,
+                      valid_from, valid_to, system_from, system_to, created_by, created_at
+            """,
+            org_id,
+            UUID(from_id),
+            UUID(to_id),
+            body.note,
+            body.ownership_pct,
+            body.effective_date,
+            body.change_reason or "initial",
+            user_id,
+        )
+
+        new_rel_id = row["id"]
+        await _log_ownership_change(
+            conn, org_id, new_rel_id,
+            UUID(from_id), UUID(to_id),
+            None, body.ownership_pct,
+            body.change_reason or "initial",
+            UUID(user_id),
+        )
+
+    result = _rel_row_to_dict(row)
+    await write_audit_log(
+        org_id=org_id,
+        action="create_ownership",
+        table_name="entity_relationships",
+        record_id=result["id"],
+        new=result,
+        actor=user_id,
+    )
+    return result
+
+
+@router.patch("/entity-relationships/{rel_id}/ownership")
+async def amend_ownership(
+    rel_id: UUID,
+    body: OwnershipPatch,
+    request: Request,
+):
+    require_staff(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        current = await conn.fetchrow(
+            """
+            SELECT id, org_id, from_entity_id, to_entity_id, relationship_type,
+                   notes, ownership_pct, effective_date, change_reason,
+                   valid_from, valid_to, system_from, system_to, created_by, created_at
+            FROM entity_relationships
+            WHERE id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            """,
+            rel_id,
+            org_id,
+        )
+        if not current:
+            raise HTTPException(status_code=404, detail="Relationship not found or already closed")
+        if current["relationship_type"] != "ownership":
+            raise HTTPException(status_code=400, detail="Relationship is not type 'ownership'")
+
+        prior_pct = current["ownership_pct"]
+        new_pct = body.ownership_pct if body.ownership_pct is not None else prior_pct
+        new_notes = body.note if body.note is not None else current["notes"]
+        new_effective_date = body.effective_date if body.effective_date is not None else (
+            str(current["effective_date"]) if current["effective_date"] else None
+        )
+        new_change_reason = body.change_reason or "manual_edit"
+
+        if new_pct is not None and not (0 <= new_pct <= 100):
+            raise HTTPException(status_code=400, detail="ownership_pct must be 0–100")
+
+        user_id = await ensure_user(conn, request)
+
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE entity_relationships
+                SET valid_to = now(), system_to = now()
+                WHERE id = $1 AND org_id = $2
+                  AND valid_to IS NULL AND system_to IS NULL
+                """,
+                rel_id,
+                org_id,
+            )
+
+            new_row = await conn.fetchrow(
+                """
+                INSERT INTO entity_relationships
+                    (org_id, from_entity_id, to_entity_id, relationship_type,
+                     notes, ownership_pct, effective_date, change_reason,
+                     change_source_type, valid_from, system_from, created_by)
+                VALUES ($1, $2, $3, 'ownership', $4, $5, $6::date, $7,
+                        'api', now(), now(), $8)
+                RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
+                          notes, ownership_pct, effective_date, change_reason,
+                          valid_from, valid_to, system_from, system_to, created_by, created_at
+                """,
+                org_id,
+                current["from_entity_id"],
+                current["to_entity_id"],
+                new_notes,
+                new_pct,
+                new_effective_date,
+                new_change_reason,
+                user_id,
+            )
+
+            await _log_ownership_change(
+                conn, org_id, new_row["id"],
+                current["from_entity_id"], current["to_entity_id"],
+                prior_pct, new_pct,
+                new_change_reason,
+                UUID(user_id),
+            )
+
+    result = _rel_row_to_dict(new_row)
+    await write_audit_log(
+        org_id=org_id,
+        action="amend_ownership",
+        table_name="entity_relationships",
+        record_id=result["id"],
+        old=_rel_row_to_dict(current),
+        new=result,
+        actor=user_id,
+    )
+    return result
+
+
+@router.delete("/entity-relationships/{rel_id}/ownership", status_code=204)
+async def delete_ownership(rel_id: UUID, request: Request):
+    require_staff(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            """
+            SELECT id, from_entity_id, to_entity_id, ownership_pct
+            FROM entity_relationships
+            WHERE id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            """,
+            rel_id,
+            org_id,
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Relationship not found or already deleted")
+
+        user_id = await ensure_user(conn, request)
+
+        await conn.execute(
+            """
+            UPDATE entity_relationships
+            SET valid_to = now(), system_to = now()
+            WHERE id = $1 AND org_id = $2
+              AND valid_to IS NULL AND system_to IS NULL
+            """,
+            rel_id,
+            org_id,
+        )
+
+        await _log_ownership_change(
+            conn, org_id, rel_id,
+            existing["from_entity_id"], existing["to_entity_id"],
+            existing["ownership_pct"], Decimal("0"),
+            "deleted",
+            UUID(user_id),
+        )
+
+    await write_audit_log(
+        org_id=org_id,
+        action="delete_ownership",
+        table_name="entity_relationships",
+        record_id=str(rel_id),
+        actor=user_id,
+    )
+
+
+@router.get("/entities/{entity_id}/ownership/history")
+async def get_ownership_history(entity_id: UUID, request: Request):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, relationship_id, from_entity_id, to_entity_id,
+                   prior_pct, new_pct, change_reason, changed_by, created_at
+            FROM ownership_change_log
+            WHERE (from_entity_id = $1 OR to_entity_id = $1)
+              AND org_id = $2
+            ORDER BY created_at DESC
+            LIMIT 200
+            """,
+            entity_id,
+            org_id,
+        )
+
+    result = []
+    for row in rows:
+        d = dict(row)
+        for key in ("id", "relationship_id", "from_entity_id", "to_entity_id", "changed_by"):
+            if d.get(key) is not None:
+                d[key] = str(d[key])
+        if d.get("prior_pct") is not None:
+            d["prior_pct"] = float(d["prior_pct"])
+        if d.get("new_pct") is not None:
+            d["new_pct"] = float(d["new_pct"])
+        if d.get("created_at"):
+            d["created_at"] = d["created_at"].isoformat()
+        result.append(d)
+
+    return {"entity_id": str(entity_id), "history": result}
