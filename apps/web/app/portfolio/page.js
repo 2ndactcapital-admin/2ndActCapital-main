@@ -14,6 +14,8 @@ const TABS = [
   { key: "gap", label: "Gap Analysis" },
 ];
 
+const LENS_LINK = { href: "/portfolio/allocation", label: "Allocation Lens" };
+
 export default async function PortfolioPage({ searchParams }) {
   const session = await auth0.getSession();
   if (!session) {
@@ -83,6 +85,12 @@ export default async function PortfolioPage({ searchParams }) {
             {t.label}
           </a>
         ))}
+        <a
+          href={LENS_LINK.href}
+          className="-mb-px border-b-2 border-transparent px-4 py-2 text-sm font-medium text-text-muted transition-colors hover:text-text-secondary"
+        >
+          {LENS_LINK.label}
+        </a>
       </div>
 
       {/* Investments tab */}
