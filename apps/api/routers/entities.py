@@ -139,7 +139,7 @@ async def list_entities(
 
     if type is not None:
         params.append(type.value)
-        conditions.append(f"entity_type = ${len(params)}")
+        conditions.append(f"entity_type::text = ${len(params)}")
     if investor_only:
         # Return ALL org entities of investor-capable types so the IOI /
         # compliance selectors populate. The entities table has no user_id, so
@@ -147,7 +147,7 @@ async def list_entities(
         # TODO(sprint-future): scope to the caller's entities via
         # relationship_manager_id or a users<->entities mapping once it exists.
         params.append(list(INVESTOR_ENTITY_TYPES))
-        conditions.append(f"entity_type = ANY(${len(params)})")
+        conditions.append(f"entity_type::text = ANY(${len(params)})")
     if status:
         params.append(status)
         conditions.append(f"status = ${len(params)}")
@@ -281,7 +281,7 @@ async def search_entities(
 
     if entity_type:
         params.append(entity_type)
-        conditions.append(f"entity_type = ANY(${len(params)}::text[])")
+        conditions.append(f"entity_type::text = ANY(${len(params)})")
     if exclude_ids:
         params.append(exclude_ids)
         conditions.append(f"id != ALL(${len(params)}::uuid[])")
