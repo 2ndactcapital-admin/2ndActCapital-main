@@ -132,12 +132,16 @@ class StatusHistoryEntry(BaseModel):
 # ---------------------------------------------------------------------------
 
 class TransactionCreate(BaseModel):
-    txn_type: str                # 'capital_call', 'distribution', 'fee', 'return_of_capital'
+    # Either txn_type (legacy) OR transaction_type_id must be provided.
+    txn_type: Optional[str] = None
+    transaction_type_id: Optional[UUID] = None
     txn_date: date
     amount: float
     description: Optional[str] = None
     reference: Optional[str] = None
     allocation_basis: str = "committed"   # 'ownership_pct', 'committed', 'funded'
+    currency_code: str = "USD"
+    amount_basis: str = "currency"        # 'currency', 'units', 'percent'
 
 
 class TransactionUpdate(BaseModel):
@@ -147,6 +151,8 @@ class TransactionUpdate(BaseModel):
     description: Optional[str] = None
     reference: Optional[str] = None
     allocation_basis: Optional[str] = None
+    currency_code: Optional[str] = None
+    amount_basis: Optional[str] = None
 
 
 class TransactionResponse(BaseModel):
@@ -162,10 +168,31 @@ class TransactionResponse(BaseModel):
     status: str
     allocated_at: Optional[datetime]
     posted_at: Optional[datetime]
-    voided_at: Optional[datetime]
+    transaction_type_id: Optional[UUID] = None
+    currency_code: str = "USD"
+    amount_basis: str = "currency"
     created_by: Optional[UUID]
     created_at: datetime
     updated_at: datetime
+
+
+class TransactionTypeResponse(BaseModel):
+    id: UUID
+    org_id: UUID
+    code: str
+    label: str
+    category: str
+    direction: str
+    affects_paid_in: bool
+    affects_unfunded: bool
+    affects_nav: bool
+    is_recallable: bool
+    performance_impact: Optional[str]
+    applies_to_security_types: list[str]
+    amount_basis: str
+    display_order: int
+    notes: Optional[str]
+    created_at: datetime
 
 
 class AllocationRow(BaseModel):
@@ -183,6 +210,7 @@ class LedgerSummary(BaseModel):
     total_called: float
     total_distributed: float
     total_fees: float
+    total_recallable: float = 0.0
     net: float
 
 

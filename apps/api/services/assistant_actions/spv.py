@@ -255,14 +255,15 @@ async def _show_ledger_handler(pool, user_id: str, org_id: str, spv_id: str = ""
 async def _record_txn_draft(
     pool, user_id: str, org_id: str,
     spv_id: str = "", txn_type: str = "", amount: float = 0.0,
-    txn_date: str = "", description: str = "", **_
+    txn_date: str = "", description: str = "",
+    transaction_type: str = "", currency_code: str = "USD", **_
 ):
     """Draft handler: validate inputs and return a preview (no DB writes)."""
     errors = []
     if not spv_id:
         errors.append("spv_id is required")
-    if not txn_type:
-        errors.append("txn_type is required")
+    if not txn_type and not transaction_type:
+        errors.append("txn_type or transaction_type (code) is required")
     if not amount or amount <= 0:
         errors.append("amount must be a positive number")
     if not txn_date:
@@ -279,13 +280,27 @@ async def _record_txn_draft(
         if not spv:
             return {"error": f"SPV {spv_id} not found"}
 
+        # Resolve transaction type by code if provided
+        type_label = txn_type or transaction_type
+        type_row = None
+        if transaction_type:
+            type_row = await conn.fetchrow(
+                "SELECT id, label, amount_basis FROM transaction_types "
+                "WHERE code = $1 AND org_id = $2 AND is_active = true",
+                transaction_type, org_id,
+            )
+            if type_row:
+                type_label = type_row["label"]
+
     return {
         "spv_id": spv_id,
         "spv_name": spv["name"],
-        "txn_type": txn_type,
+        "txn_type": txn_type or transaction_type,
+        "type_label": type_label,
         "amount": amount,
         "txn_date": txn_date,
         "description": description,
+        "currency_code": currency_code or "USD",
     }
 
 
@@ -293,28 +308,45 @@ async def _record_txn_confirm(
     pool, user_id: str, org_id: str,
     choice_value: str = "confirm",
     spv_id: str = "", txn_type: str = "", amount: float = 0.0,
-    txn_date: str = "", description: str = "", **_
+    txn_date: str = "", description: str = "",
+    transaction_type: str = "", currency_code: str = "USD", **_
 ):
     """Confirm handler: insert spv_transactions row and optionally allocate."""
     if choice_value == "none":
         return {"result": None, "render": None, "undo_token": None}
 
     async with pool.acquire() as conn:
+        # Resolve transaction_type by code if provided
+        resolved_type_id = None
+        resolved_txn_type = txn_type
+        resolved_currency = currency_code or "USD"
+        if transaction_type:
+            type_row = await conn.fetchrow(
+                "SELECT id, code FROM transaction_types "
+                "WHERE code = $1 AND org_id = $2 AND is_active = true",
+                transaction_type, org_id,
+            )
+            if type_row:
+                resolved_type_id = type_row["id"]
+                resolved_txn_type = type_row["code"]
+
         row = await conn.fetchrow(
             """
             INSERT INTO spv_transactions
                 (org_id, spv_id, txn_type, amount, txn_date, description,
-                 status, created_by)
-            VALUES ($1, $2, $3, $4, $5::date, $6, 'draft', $7)
+                 transaction_type_id, currency_code, status, created_by)
+            VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, 'draft', $9)
             RETURNING id, org_id, spv_id, txn_type, amount, txn_date,
-                      description, status
+                      description, transaction_type_id, currency_code, status
             """,
             org_id,
             spv_id,
-            txn_type,
+            resolved_txn_type or txn_type,
             amount,
             txn_date,
             description,
+            resolved_type_id,
+            resolved_currency,
             user_id,
         )
 
@@ -461,7 +493,8 @@ def register_actions() -> None:
             key="spv.record_transaction",
             module="spv",
             description=(
-                "Record a capital call, distribution, or fee transaction against an SPV. "
+                "Record a transaction against an SPV (capital call, distribution, fee, etc.). "
+                "Specify the type by code (transaction_type) or legacy txn_type string. "
                 "Optionally allocates the transaction to subscribers immediately."
             ),
             access_type="write",
@@ -478,13 +511,21 @@ def register_actions() -> None:
                         "type": "string",
                         "description": "UUID of the SPV for this transaction.",
                     },
+                    "transaction_type": {
+                        "type": "string",
+                        "description": "Transaction type code (e.g. call_investment, dist_standard). Preferred over txn_type.",
+                    },
                     "txn_type": {
                         "type": "string",
-                        "description": "Transaction type (e.g. capital_call, distribution, fee).",
+                        "description": "Legacy transaction type string (capital_call, distribution, fee). Use transaction_type when possible.",
                     },
                     "amount": {
                         "type": "number",
-                        "description": "Transaction amount in USD.",
+                        "description": "Transaction amount.",
+                    },
+                    "currency_code": {
+                        "type": "string",
+                        "description": "ISO 4217 currency code (default: USD).",
                     },
                     "txn_date": {
                         "type": "string",
@@ -495,7 +536,7 @@ def register_actions() -> None:
                         "description": "Optional free-text description.",
                     },
                 },
-                "required": ["spv_id", "txn_type", "amount", "txn_date"],
+                "required": ["spv_id", "amount", "txn_date"],
             },
             options=[
                 {"key": "confirm_and_allocate", "label": "Create & allocate now"},
