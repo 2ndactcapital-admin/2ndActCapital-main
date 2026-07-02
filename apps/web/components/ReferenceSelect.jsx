@@ -7,9 +7,10 @@ const INPUT =
 
 // Mapping: country_code → list_key for region dropdown.
 // Only include list_keys that are seeded in the live reference_data table.
-// Unmapped countries (including CA) fall back to a free-text input.
+// Unmapped countries fall back to a free-text input.
 const REGION_LIST = {
   US: "us_state",
+  CA: "ca_province",
 };
 
 async function fetchItems(listKey, parentCode) {
