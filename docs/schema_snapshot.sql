@@ -425,6 +425,19 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_groups_pkey: (id)
 
+-- ===== entity_holdings =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   taxonomy_key                             text NOT NULL
+--   market_value                             numeric NOT NULL
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   as_of_date                               date NOT NULL DEFAULT CURRENT_DATE
+--   source                                   text NOT NULL DEFAULT 'manual'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY entity_holdings_pkey: (id)
+
 -- ===== entity_notes =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
