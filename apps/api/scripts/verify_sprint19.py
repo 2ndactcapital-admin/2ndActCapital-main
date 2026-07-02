@@ -14,7 +14,6 @@ Checks:
 import asyncio
 import os
 import sys
-from decimal import Decimal
 from uuid import UUID
 
 import asyncpg
@@ -35,6 +34,50 @@ def check(label: str, passed: bool) -> bool:
     return passed
 
 
+async def pre_teardown(conn) -> None:
+    """Delete any leftover objects from a previous failed run (FK-safe order)."""
+    try:
+        await conn.execute(
+            "DELETE FROM spv_transactions WHERE spv_id IN "
+            "(SELECT id FROM spvs WHERE name = 'Sprint19 Test SPV' AND org_id = $1)",
+            ORG_ID,
+        )
+    except Exception:
+        pass
+    try:
+        await conn.execute(
+            "DELETE FROM spv_status_history WHERE spv_id IN "
+            "(SELECT id FROM spvs WHERE name = 'Sprint19 Test SPV' AND org_id = $1)",
+            ORG_ID,
+        )
+    except Exception:
+        pass
+    try:
+        await conn.execute(
+            "DELETE FROM spvs WHERE name = 'Sprint19 Test SPV' AND org_id = $1",
+            ORG_ID,
+        )
+    except Exception:
+        pass
+    try:
+        await conn.execute(
+            "DELETE FROM deals WHERE name = 'Sprint19 Verify Deal' AND org_id = $1",
+            ORG_ID,
+        )
+    except Exception:
+        pass
+    try:
+        await conn.execute(
+            "DELETE FROM users WHERE auth0_sub = 'auth0|s19_noemail_test'"
+        )
+    except Exception:
+        pass
+    try:
+        await conn.execute("DELETE FROM users WHERE id = $1", TEST_USER_ID)
+    except Exception:
+        pass
+
+
 async def main() -> None:
     url = os.environ.get("DATABASE_URL")
     if not url:
@@ -43,20 +86,21 @@ async def main() -> None:
 
     conn = await asyncpg.connect(url, statement_cache_size=0)
 
-    # Seed stable test objects
     deal_id = None
     spv_id = None
     txn_id = None
-    test_entity_id = None
-    test_sub_user_id = None  # for Bug 2 test
+    test_sub_user_id = None
 
     try:
+        # ── Pre-teardown: clean leftovers from prior runs ────────────────────
+        await pre_teardown(conn)
+
         # ── Seed test user ──────────────────────────────────────────────────
         await conn.execute(
             """
             INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
             VALUES ($1, $2, $3, 'Sprint 19 Verify', $4, 'member')
-            ON CONFLICT (auth0_sub) DO NOTHING
+            ON CONFLICT (id) DO NOTHING
             """,
             TEST_USER_ID, ORG_ID,
             "sprint19verify@placeholder.local",
@@ -84,27 +128,24 @@ async def main() -> None:
         )
 
         # ── Check 1: transaction_types seeded ───────────────────────────────
+        # transaction_types is a global reference table — no org_id filter.
         total_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM transaction_types WHERE org_id = $1 AND is_active = true",
-            ORG_ID,
+            "SELECT COUNT(*) FROM transaction_types WHERE is_active = true",
         )
         check("transaction_types: at least 16 active rows seeded", total_count >= 16)
 
-        # Filter by category
+        # Filter by category (no org_id filter)
         call_types = await conn.fetch(
-            "SELECT code FROM transaction_types WHERE org_id = $1 AND category = 'call' AND is_active = true",
-            ORG_ID,
+            "SELECT code FROM transaction_types WHERE category = 'call' AND is_active = true",
         )
         check(
             "get_types category filter: at least one 'call' type exists",
             len(call_types) >= 1,
         )
 
-        # Filter by security_type (applies_to_security_types contains or is empty)
         # Types with empty applies_to_security_types should match any security_type.
         all_types = await conn.fetch(
-            "SELECT code, applies_to_security_types FROM transaction_types WHERE org_id = $1 AND is_active = true",
-            ORG_ID,
+            "SELECT code, applies_to_security_types FROM transaction_types WHERE is_active = true",
         )
         universal_types = [r for r in all_types if not r["applies_to_security_types"]]
         check(
@@ -113,7 +154,6 @@ async def main() -> None:
         )
 
         # ── Check 2: Bug 1 fixed — no voided_at reference ───────────────────
-        # GET /spvs/{id}/transactions — execute the actual SQL used by the endpoint
         try:
             txn_rows = await conn.fetch(
                 "SELECT id, org_id, spv_id, txn_type, txn_date, amount, description, reference, "
@@ -129,19 +169,18 @@ async def main() -> None:
             check(f"Bug 1: GET transactions SQL failed — {e}", False)
             txn_rows = []
 
-        # Ledger SQL
+        # Ledger SQL (attribute-driven, integer comparisons)
         try:
             await conn.fetchrow(
                 """
                 SELECT
                   COALESCE(SUM(CASE
-                    WHEN tt.affects_paid_in = true THEN t.amount
+                    WHEN tt.affects_paid_in > 0 THEN t.amount
                     WHEN t.transaction_type_id IS NULL AND t.txn_type = 'capital_call' THEN t.amount
                     ELSE 0
                   END), 0) AS total_called,
                   COALESCE(SUM(CASE
-                    WHEN tt.affects_nav = false AND tt.direction = 'credit'
-                         AND COALESCE(tt.is_recallable, false) = false THEN t.amount
+                    WHEN tt.affects_nav < 0 AND COALESCE(tt.is_recallable, false) = false THEN t.amount
                     WHEN t.transaction_type_id IS NULL AND t.txn_type = 'distribution' THEN t.amount
                     ELSE 0
                   END), 0) AS total_distributed,
@@ -165,7 +204,6 @@ async def main() -> None:
             check(f"Bug 1: GET ledger SQL failed — {e}", False)
 
         # ── Check 3: Bug 2 fixed — ensure_user with missing email ─────────────
-        # Simulate: insert a user with sub but placeholder email (what ensure_user now does).
         placeholder_sub = "auth0|s19_noemail_test"
         placeholder_email = f"{placeholder_sub}@placeholder.local"
         try:
@@ -183,19 +221,17 @@ async def main() -> None:
             check(f"Bug 2: placeholder email insert failed — {e}", False)
 
         # ── Check 4: Create spv_transaction with transaction_type_id ─────────
+        # transaction_types is global — no org_id filter
         call_type = await conn.fetchrow(
             "SELECT id, code, amount_basis FROM transaction_types "
-            "WHERE org_id = $1 AND code = 'call_investment' AND is_active = true "
+            "WHERE code = 'call_investment' AND is_active = true "
             "LIMIT 1",
-            ORG_ID,
         )
         if call_type is None:
-            # Fall back to any call category type
             call_type = await conn.fetchrow(
                 "SELECT id, code, amount_basis FROM transaction_types "
-                "WHERE org_id = $1 AND category = 'call' AND is_active = true "
+                "WHERE category = 'call' AND is_active = true "
                 "LIMIT 1",
-                ORG_ID,
             )
 
         if call_type is None:
@@ -238,16 +274,15 @@ async def main() -> None:
                 call_type["id"],
             )
             check(
-                "Check 5: call type has affects_paid_in = true (attribute-driven)",
-                type_attrs is not None and type_attrs["affects_paid_in"] is True,
+                "Check 5: call type has affects_paid_in > 0 (attribute-driven)",
+                type_attrs is not None and int(type_attrs["affects_paid_in"]) > 0,
             )
 
-            # Check dist_recallable type has is_recallable = true
+            # Check dist_recallable type has is_recallable = true (no org_id filter)
             dist_recall = await conn.fetchrow(
                 "SELECT id, is_recallable, affects_unfunded FROM transaction_types "
-                "WHERE org_id = $1 AND code = 'dist_recallable' AND is_active = true "
+                "WHERE code = 'dist_recallable' AND is_active = true "
                 "LIMIT 1",
-                ORG_ID,
             )
             if dist_recall:
                 check(
@@ -258,17 +293,14 @@ async def main() -> None:
                 print("[S] Check 5 dist_recallable: type not found by code 'dist_recallable' — checking by is_recallable")
                 any_recallable = await conn.fetchrow(
                     "SELECT id FROM transaction_types "
-                    "WHERE org_id = $1 AND is_recallable = true AND is_active = true LIMIT 1",
-                    ORG_ID,
+                    "WHERE is_recallable = true AND is_active = true LIMIT 1",
                 )
                 check("Check 5: at least one recallable distribution type exists", any_recallable is not None)
 
             # ── Check 6: amount_basis respected ────────────────────────────
-            # Find a type with amount_basis = 'units' if any
             units_type = await conn.fetchrow(
                 "SELECT id, code, amount_basis FROM transaction_types "
-                "WHERE org_id = $1 AND amount_basis = 'units' AND is_active = true LIMIT 1",
-                ORG_ID,
+                "WHERE amount_basis = 'units' AND is_active = true LIMIT 1",
             )
             if units_type:
                 units_txn_id = await conn.fetchval(
@@ -290,14 +322,12 @@ async def main() -> None:
                 )
                 check("Check 6: amount_basis = 'units' stored correctly", units_row["amount_basis"] == "units")
             else:
-                # Verify amount_basis from the call type we created
                 check(
                     "Check 6: amount_basis stored on spv_transaction",
                     txn_row["amount_basis"] in ("currency", "units", "percent"),
                 )
 
         # ── Check 7: FX get_rate ─────────────────────────────────────────────
-        # Test base == quote returns 1.0 (logic in service, verify fx_rates table exists)
         try:
             tables = await conn.fetch(
                 "SELECT table_name FROM information_schema.tables "
@@ -306,21 +336,17 @@ async def main() -> None:
             check("Check 7: fx_rates table exists", len(tables) == 1)
 
             if len(tables) == 1:
-                # Check seeded USD→EUR rate
                 usd_eur = await conn.fetchrow(
                     "SELECT rate FROM fx_rates WHERE base_ccy = 'USD' AND quote_ccy = 'EUR' "
                     "ORDER BY as_of_date DESC LIMIT 1"
                 )
                 check("Check 7: USD→EUR rate seeded in fx_rates", usd_eur is not None)
-
-                # base == quote should logically return 1.0 (tested in service)
                 check("Check 7: USD→USD is identity rate (1.0 by design)", True)
         except Exception as e:
             check(f"Check 7: fx_rates check failed — {e}", False)
 
         # ── Check 8: Ledger totals attribute-driven ──────────────────────────
         if call_type and txn_id:
-            # Post the call transaction to 'posted' status for the ledger query
             await conn.execute(
                 "UPDATE spv_transactions SET status = 'posted', posted_at = now(), updated_at = now() "
                 "WHERE id = $1",
@@ -330,7 +356,7 @@ async def main() -> None:
                 """
                 SELECT
                   COALESCE(SUM(CASE
-                    WHEN tt.affects_paid_in = true THEN t.amount
+                    WHEN tt.affects_paid_in > 0 THEN t.amount
                     WHEN t.transaction_type_id IS NULL AND t.txn_type = 'capital_call' THEN t.amount
                     ELSE 0
                   END), 0) AS total_called
@@ -350,7 +376,7 @@ async def main() -> None:
     finally:
         # FK-safe teardown
         try:
-            if txn_id:
+            if spv_id:
                 await conn.execute(
                     "DELETE FROM spv_transactions WHERE spv_id = $1 AND org_id = $2",
                     spv_id, ORG_ID,
@@ -370,13 +396,11 @@ async def main() -> None:
             print(f"[teardown warning] deals: {e}")
         try:
             if test_sub_user_id:
-                await conn.execute("DELETE FROM users WHERE auth0_sub = $1", "auth0|s19_noemail_test")
+                await conn.execute("DELETE FROM users WHERE auth0_sub = 'auth0|s19_noemail_test'")
         except Exception as e:
             print(f"[teardown warning] no-email test user: {e}")
         try:
-            await conn.execute(
-                "DELETE FROM users WHERE id = $1", TEST_USER_ID
-            )
+            await conn.execute("DELETE FROM users WHERE id = $1", TEST_USER_ID)
         except Exception as e:
             print(f"[teardown warning] test user: {e}")
         await conn.close()

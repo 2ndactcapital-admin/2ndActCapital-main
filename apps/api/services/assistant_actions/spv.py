@@ -286,8 +286,8 @@ async def _record_txn_draft(
         if transaction_type:
             type_row = await conn.fetchrow(
                 "SELECT id, label, amount_basis FROM transaction_types "
-                "WHERE code = $1 AND org_id = $2 AND is_active = true",
-                transaction_type, org_id,
+                "WHERE code = $1 AND is_active = true",
+                transaction_type,
             )
             if type_row:
                 type_label = type_row["label"]
@@ -323,8 +323,8 @@ async def _record_txn_confirm(
         if transaction_type:
             type_row = await conn.fetchrow(
                 "SELECT id, code FROM transaction_types "
-                "WHERE code = $1 AND org_id = $2 AND is_active = true",
-                transaction_type, org_id,
+                "WHERE code = $1 AND is_active = true",
+                transaction_type,
             )
             if type_row:
                 resolved_type_id = type_row["id"]

@@ -178,19 +178,19 @@ class TransactionResponse(BaseModel):
 
 class TransactionTypeResponse(BaseModel):
     id: UUID
-    org_id: UUID
     code: str
     label: str
     category: str
     direction: str
-    affects_paid_in: bool
-    affects_unfunded: bool
-    affects_nav: bool
+    # affects_* are INTEGER in the DB (-1 = decreases, 0 = no effect, +1 = increases)
+    affects_paid_in: int
+    affects_unfunded: int
+    affects_nav: int
     is_recallable: bool
     performance_impact: Optional[str]
     applies_to_security_types: list[str]
     amount_basis: str
-    display_order: int
+    display_order: Optional[int]
     notes: Optional[str]
     created_at: datetime
 

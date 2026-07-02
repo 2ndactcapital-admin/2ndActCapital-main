@@ -1,4 +1,9 @@
-"""Transaction type reference service (Sprint 19)."""
+"""Transaction type reference service (Sprint 19).
+
+transaction_types is a global reference table — rows are not org-scoped.
+The org_id parameter is accepted for API compatibility but is NOT used in
+the WHERE clause.
+"""
 
 from typing import Optional
 
@@ -15,15 +20,15 @@ async def get_types(
     include the type when security_type is in the list.  A null/empty list
     means the type applies to all security types.
     """
-    conditions = ["org_id = $1", "is_active = true"]
-    params: list = [org_id]
+    conditions = ["is_active = true"]
+    params: list = []
 
     if category:
         params.append(category)
         conditions.append(f"category = ${len(params)}")
 
     query = (
-        "SELECT id, org_id, code, label, category, direction, "
+        "SELECT id, code, label, category, direction, "
         "affects_paid_in, affects_unfunded, affects_nav, is_recallable, "
         "performance_impact, applies_to_security_types, amount_basis, "
         "display_order, notes, created_at "

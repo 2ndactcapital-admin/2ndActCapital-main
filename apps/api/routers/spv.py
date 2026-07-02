@@ -752,8 +752,8 @@ async def create_transaction(request: Request, spv_id: UUID, body: TransactionCr
 
         if transaction_type_id is not None:
             type_row = await conn.fetchrow(
-                "SELECT code, amount_basis FROM transaction_types WHERE id = $1 AND org_id = $2 AND is_active = true",
-                transaction_type_id, org_id,
+                "SELECT code, amount_basis FROM transaction_types WHERE id = $1 AND is_active = true",
+                transaction_type_id,
             )
             if type_row is None:
                 raise HTTPException(status_code=400, detail="transaction_type_id not found or inactive")
@@ -1049,13 +1049,12 @@ async def get_ledger(request: Request, spv_id: UUID):
                 """
                 SELECT
                   COALESCE(SUM(CASE
-                    WHEN tt.affects_paid_in = true THEN t.amount
+                    WHEN tt.affects_paid_in > 0 THEN t.amount
                     WHEN t.transaction_type_id IS NULL AND t.txn_type = 'capital_call' THEN t.amount
                     ELSE 0
                   END), 0) AS total_called,
                   COALESCE(SUM(CASE
-                    WHEN tt.affects_nav = false AND tt.direction = 'credit'
-                         AND COALESCE(tt.is_recallable, false) = false THEN t.amount
+                    WHEN tt.affects_nav < 0 AND COALESCE(tt.is_recallable, false) = false THEN t.amount
                     WHEN t.transaction_type_id IS NULL AND t.txn_type = 'distribution' THEN t.amount
                     ELSE 0
                   END), 0) AS total_distributed,
