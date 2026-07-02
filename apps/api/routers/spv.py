@@ -50,8 +50,10 @@ from schemas.spv import (
     SubscriptionResponse,
     TransactionCreate,
     TransactionResponse,
+    TransactionTypeResponse,
     TransactionUpdate,
 )
+from services.transaction_types import get_types as get_txn_types
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.permissions import get_user_id, is_staff, require_permission
@@ -677,16 +679,34 @@ async def get_spv_history(request: Request, spv_id: UUID):
 
 
 # ===========================================================================
+# Sprint 19 — Transaction Types
+# ===========================================================================
+
+@router.get("/transaction-types", response_model=list[TransactionTypeResponse])
+async def list_transaction_types(
+    request: Request,
+    category: str | None = Query(None),
+    security_type: str | None = Query(None),
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    items = await get_txn_types(pool, str(org_id), category=category, security_type=security_type)
+    return [TransactionTypeResponse(**it) for it in items]
+
+
+# ===========================================================================
 # Sprint 14 — Transaction Ledger
 # ===========================================================================
 
 _TXN_TYPES = ("capital_call", "distribution", "fee", "return_of_capital")
 _ALLOC_BASIS = ("ownership_pct", "committed", "funded")
+_AMOUNT_BASIS = ("currency", "units", "percent")
 
 _TXN_SELECT = (
     "id, org_id, spv_id, txn_type, txn_date, amount, description, reference, "
-    "allocation_basis, status, allocated_at, posted_at, voided_at, created_by, "
-    "created_at, updated_at"
+    "allocation_basis, status, allocated_at, posted_at, "
+    "transaction_type_id, currency_code, amount_basis, "
+    "created_by, created_at, updated_at"
 )
 _ALLOC_SELECT = (
     "id, org_id, transaction_id, subscription_id, allocated_amount, "
@@ -716,8 +736,6 @@ async def create_transaction(request: Request, spv_id: UUID, body: TransactionCr
     org_id = get_org_id(request)
     pool = await get_pool()
 
-    if body.txn_type not in _TXN_TYPES:
-        raise HTTPException(status_code=400, detail=f"Invalid txn_type; allowed: {_TXN_TYPES}")
     if body.allocation_basis not in _ALLOC_BASIS:
         raise HTTPException(status_code=400, detail=f"Invalid allocation_basis; allowed: {_ALLOC_BASIS}")
 
@@ -727,17 +745,45 @@ async def create_transaction(request: Request, spv_id: UUID, body: TransactionCr
         if spv is None:
             raise HTTPException(status_code=404, detail="SPV not found")
 
-        row = await conn.fetchrow(
-            f"""
-            INSERT INTO spv_transactions
-                (org_id, spv_id, txn_type, txn_date, amount, description, reference,
-                 allocation_basis, status, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9)
-            RETURNING {_TXN_SELECT}
-            """,
-            org_id, spv_id, body.txn_type, body.txn_date, body.amount,
-            body.description, body.reference, body.allocation_basis, user_id,
-        )
+        # Resolve transaction type: prefer transaction_type_id, fall back to txn_type string.
+        txn_type = body.txn_type
+        transaction_type_id = body.transaction_type_id
+        amount_basis = body.amount_basis
+
+        if transaction_type_id is not None:
+            type_row = await conn.fetchrow(
+                "SELECT code, amount_basis FROM transaction_types WHERE id = $1 AND org_id = $2 AND is_active = true",
+                transaction_type_id, org_id,
+            )
+            if type_row is None:
+                raise HTTPException(status_code=400, detail="transaction_type_id not found or inactive")
+            txn_type = type_row["code"]
+            amount_basis = type_row["amount_basis"]
+        elif txn_type is not None:
+            if txn_type not in _TXN_TYPES:
+                raise HTTPException(status_code=400, detail=f"Invalid txn_type; allowed: {_TXN_TYPES}")
+        else:
+            raise HTTPException(status_code=400, detail="Either txn_type or transaction_type_id is required")
+
+        try:
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO spv_transactions
+                    (org_id, spv_id, txn_type, txn_date, amount, description, reference,
+                     allocation_basis, transaction_type_id, currency_code, amount_basis,
+                     status, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12)
+                RETURNING {_TXN_SELECT}
+                """,
+                org_id, spv_id, txn_type, body.txn_date, body.amount,
+                body.description, body.reference, body.allocation_basis,
+                transaction_type_id, body.currency_code, amount_basis, user_id,
+            )
+        except Exception as exc:
+            import traceback
+            print(f"ERROR create_transaction (spv={spv_id}): {exc}")
+            print(traceback.format_exc())
+            raise
         await write_audit_log(
             conn, org_id=org_id, action="create", table_name="spv_transactions",
             record_id=row["id"], new=dict(row),
@@ -754,33 +800,41 @@ async def list_transactions(request: Request, spv_id: UUID):
     staff = is_staff(request)
     pool = await get_pool()
 
-    async with pool.acquire() as conn:
-        user_id = await ensure_user(conn, request)
-        spv = await _fetch_spv(conn, org_id, spv_id)
-        if spv is None:
-            raise HTTPException(status_code=404, detail="SPV not found")
+    try:
+        async with pool.acquire() as conn:
+            user_id = await ensure_user(conn, request)
+            spv = await _fetch_spv(conn, org_id, spv_id)
+            if spv is None:
+                raise HTTPException(status_code=404, detail="SPV not found")
 
-        if staff:
-            rows = await conn.fetch(
-                f"SELECT {_TXN_SELECT} FROM spv_transactions "
-                "WHERE spv_id = $1 AND org_id = $2 "
-                "ORDER BY txn_date DESC, created_at DESC",
-                spv_id, org_id,
-            )
-        else:
-            # Members see only transactions where they have an allocation
-            rows = await conn.fetch(
-                f"""
-                SELECT DISTINCT t.{', t.'.join(_TXN_SELECT.split(', '))}
-                FROM spv_transactions t
-                JOIN spv_transaction_allocations sta ON sta.transaction_id = t.id
-                JOIN spv_subscriptions ss ON ss.id = sta.subscription_id
-                JOIN member_investments mi ON mi.id = ss.member_investment_id
-                WHERE t.spv_id = $1 AND t.org_id = $2 AND mi.user_id = $3
-                ORDER BY t.txn_date DESC, t.created_at DESC
-                """,
-                spv_id, org_id, user_id,
-            )
+            if staff:
+                rows = await conn.fetch(
+                    f"SELECT {_TXN_SELECT} FROM spv_transactions "
+                    "WHERE spv_id = $1 AND org_id = $2 "
+                    "ORDER BY txn_date DESC, created_at DESC",
+                    spv_id, org_id,
+                )
+            else:
+                # Members see only transactions where they have an allocation
+                rows = await conn.fetch(
+                    f"""
+                    SELECT DISTINCT ON (t.id) {_TXN_SELECT.replace('id,', 't.id,').replace(', ', ', t.')}
+                    FROM spv_transactions t
+                    JOIN spv_transaction_allocations sta ON sta.transaction_id = t.id
+                    JOIN spv_subscriptions ss ON ss.id = sta.subscription_id
+                    JOIN member_investments mi ON mi.id = ss.member_investment_id
+                    WHERE t.spv_id = $1 AND t.org_id = $2 AND mi.user_id = $3
+                    ORDER BY t.id, t.txn_date DESC, t.created_at DESC
+                    """,
+                    spv_id, org_id, user_id,
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+        print(f"ERROR list_transactions (spv={spv_id}): {exc}")
+        print(traceback.format_exc())
+        raise
     return [_txn_response(r) for r in rows]
 
 
@@ -811,7 +865,10 @@ async def patch_transaction(request: Request, spv_id: UUID, txn_id: UUID, body: 
         if txn["status"] != "draft":
             raise HTTPException(status_code=400, detail="Only draft transactions may be edited")
 
-        editable = ("txn_type", "txn_date", "amount", "description", "reference", "allocation_basis")
+        editable = (
+            "txn_type", "txn_date", "amount", "description", "reference",
+            "allocation_basis", "currency_code", "amount_basis",
+        )
         set_clauses = ["updated_at = now()"]
         params: list = [txn_id, spv_id, org_id]
         for field in editable:
@@ -928,7 +985,7 @@ async def void_transaction(request: Request, spv_id: UUID, txn_id: UUID):
                 txn_id,
             )
             row = await conn.fetchrow(
-                f"UPDATE spv_transactions SET status = 'void', voided_at = now(), updated_at = now() "
+                f"UPDATE spv_transactions SET status = 'void', updated_at = now() "
                 f"WHERE id = $1 RETURNING {_TXN_SELECT}",
                 txn_id,
             )
@@ -978,29 +1035,55 @@ async def get_ledger(request: Request, spv_id: UUID):
         if spv is None:
             raise HTTPException(status_code=404, detail="SPV not found")
 
-        txn_rows = await conn.fetch(
-            f"SELECT {_TXN_SELECT} FROM spv_transactions "
-            "WHERE spv_id = $1 AND org_id = $2 AND status != 'void' "
-            "ORDER BY txn_date DESC, created_at DESC",
-            spv_id, org_id,
-        )
+        try:
+            txn_rows = await conn.fetch(
+                f"SELECT {_TXN_SELECT} FROM spv_transactions "
+                "WHERE spv_id = $1 AND org_id = $2 AND status != 'void' "
+                "ORDER BY txn_date DESC, created_at DESC",
+                spv_id, org_id,
+            )
 
-        # Compute summary from posted transactions
-        totals = await conn.fetchrow(
-            """
-            SELECT
-              COALESCE(SUM(CASE WHEN txn_type = 'capital_call' THEN amount ELSE 0 END), 0) AS total_called,
-              COALESCE(SUM(CASE WHEN txn_type = 'distribution' THEN amount ELSE 0 END), 0) AS total_distributed,
-              COALESCE(SUM(CASE WHEN txn_type IN ('fee', 'return_of_capital') THEN amount ELSE 0 END), 0) AS total_fees
-            FROM spv_transactions
-            WHERE spv_id = $1 AND org_id = $2 AND status = 'posted'
-            """,
-            spv_id, org_id,
-        )
+            # Compute summary from posted transactions using type attributes when available.
+            # Falls back to legacy txn_type string matching for rows without a type_id.
+            totals = await conn.fetchrow(
+                """
+                SELECT
+                  COALESCE(SUM(CASE
+                    WHEN tt.affects_paid_in = true THEN t.amount
+                    WHEN t.transaction_type_id IS NULL AND t.txn_type = 'capital_call' THEN t.amount
+                    ELSE 0
+                  END), 0) AS total_called,
+                  COALESCE(SUM(CASE
+                    WHEN tt.affects_nav = false AND tt.direction = 'credit'
+                         AND COALESCE(tt.is_recallable, false) = false THEN t.amount
+                    WHEN t.transaction_type_id IS NULL AND t.txn_type = 'distribution' THEN t.amount
+                    ELSE 0
+                  END), 0) AS total_distributed,
+                  COALESCE(SUM(CASE
+                    WHEN tt.category = 'fee' THEN t.amount
+                    WHEN t.transaction_type_id IS NULL AND t.txn_type IN ('fee', 'return_of_capital') THEN t.amount
+                    ELSE 0
+                  END), 0) AS total_fees,
+                  COALESCE(SUM(CASE
+                    WHEN COALESCE(tt.is_recallable, false) = true THEN t.amount
+                    ELSE 0
+                  END), 0) AS total_recallable
+                FROM spv_transactions t
+                LEFT JOIN transaction_types tt ON tt.id = t.transaction_type_id
+                WHERE t.spv_id = $1 AND t.org_id = $2 AND t.status = 'posted'
+                """,
+                spv_id, org_id,
+            )
+        except Exception as exc:
+            import traceback
+            print(f"ERROR get_ledger (spv={spv_id}): {exc}")
+            print(traceback.format_exc())
+            raise
 
     total_called = float(totals["total_called"])
     total_distributed = float(totals["total_distributed"])
     total_fees = float(totals["total_fees"])
+    total_recallable = float(totals["total_recallable"])
     net = total_called - total_distributed - total_fees
 
     return LedgerResponse(
@@ -1010,6 +1093,7 @@ async def get_ledger(request: Request, spv_id: UUID):
             total_called=total_called,
             total_distributed=total_distributed,
             total_fees=total_fees,
+            total_recallable=total_recallable,
             net=net,
         ),
         transactions=[_txn_response(r) for r in txn_rows],

@@ -26,13 +26,17 @@ function formatDate(val) {
 // ─── Type badge config ──────────────────────────────────────────────────────
 const TYPE_CONFIG = {
   capital_call: { label: "Capital Call", bg: "#1B2B4B", text: "#FFFFFF" },
+  call_investment: { label: "Capital Call", bg: "#1B2B4B", text: "#FFFFFF" },
   distribution: { label: "Distribution", bg: "#E8F5E9", text: "#2D6A4F" },
+  dist_standard: { label: "Distribution", bg: "#E8F5E9", text: "#2D6A4F" },
+  dist_recallable: { label: "Dist. (Recallable)", bg: "#FDF8EE", text: "#C5A880" },
   fee: { label: "Fee", bg: "#F1F5F9", text: "#64748B" },
+  management_fee: { label: "Mgmt Fee", bg: "#F1F5F9", text: "#64748B" },
   return_of_capital: { label: "Return of Capital", bg: "#EFF6FF", text: "#1D4ED8" },
 };
 
 function TypeBadge({ type }) {
-  const cfg = TYPE_CONFIG[type] || { label: type, bg: "#F1F5F9", text: "#64748B" };
+  const cfg = TYPE_CONFIG[type] || { label: (type || "").replace(/_/g, " "), bg: "#F1F5F9", text: "#64748B" };
   return (
     <span
       className="inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide"
@@ -194,39 +198,47 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
 }
 
 // ─── Add Transaction modal ───────────────────────────────────────────────────
-const TXN_TYPE_OPTIONS = [
-  { value: "capital_call", label: "Capital Call" },
-  { value: "distribution", label: "Distribution" },
-  { value: "fee", label: "Fee" },
-  { value: "return_of_capital", label: "Return of Capital" },
-];
-
-const BASIS_OPTIONS = [
-  { value: "pro_rata", label: "Pro Rata" },
-  { value: "fixed", label: "Fixed" },
-  { value: "custom", label: "Custom" },
-];
 
 function AddTransactionModal({ spvId, onClose, onCreated }) {
+  const [txnTypes, setTxnTypes] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
   const [form, setForm] = useState({
-    txn_type: "",
+    transaction_type_id: "",
     txn_date: "",
     amount: "",
-    basis: "",
+    currency_code: "USD",
     reference: "",
     description: "",
   });
+  const [selectedType, setSelectedType] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    fetch("/api/transaction-types", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setTxnTypes(Array.isArray(data) ? data : []));
+    fetch("/api/reference/currency", { cache: "no-store" })
+      .then((r) => r.ok ? r.json() : { items: [] })
+      .then((data) => setCurrencies(data.items || []));
+  }, []);
+
   function handleChange(e) {
     const { name, value } = e.target;
+    if (name === "transaction_type_id") {
+      const t = txnTypes.find((x) => x.id === value);
+      setSelectedType(t || null);
+    }
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
+  const amountLabel = selectedType
+    ? { currency: "Amount", units: "Units", percent: "Percent (%)" }[selectedType.amount_basis] || "Amount"
+    : "Amount";
+
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.txn_type || !form.txn_date || !form.amount) return;
+    if (!form.transaction_type_id || !form.txn_date || !form.amount) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -234,10 +246,10 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          txn_type: form.txn_type,
+          transaction_type_id: form.transaction_type_id,
           txn_date: form.txn_date,
           amount: parseFloat(form.amount),
-          basis: form.basis || null,
+          currency_code: form.currency_code || "USD",
           reference: form.reference || null,
           description: form.description || null,
         }),
@@ -271,15 +283,15 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
             <div>
               <label className={labelClass}>Type *</label>
               <select
-                name="txn_type"
-                value={form.txn_type}
+                name="transaction_type_id"
+                value={form.transaction_type_id}
                 onChange={handleChange}
                 required
                 className={fieldClass}
               >
                 <option value="" disabled>Select type</option>
-                {TXN_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                {txnTypes.map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
                 ))}
               </select>
             </div>
@@ -297,7 +309,7 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelClass}>Amount (USD) *</label>
+              <label className={labelClass}>{amountLabel} *</label>
               <input
                 type="number"
                 name="amount"
@@ -311,20 +323,31 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
               />
             </div>
             <div>
-              <label className={labelClass}>Basis</label>
+              <label className={labelClass}>Currency</label>
               <select
-                name="basis"
-                value={form.basis}
+                name="currency_code"
+                value={form.currency_code}
                 onChange={handleChange}
                 className={fieldClass}
               >
-                <option value="">Select basis</option>
-                {BASIS_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                {currencies.length === 0 && (
+                  <option value="USD">USD</option>
+                )}
+                {currencies.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.extra?.symbol ? `${c.extra.symbol} ${c.code}` : c.code}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
+          {selectedType && (
+            <p className="text-[11px] text-[#64748B]">
+              {selectedType.direction === "debit" ? "Debit" : "Credit"} ·{" "}
+              {selectedType.category}
+              {selectedType.is_recallable && " · Recallable"}
+            </p>
+          )}
           <div>
             <label className={labelClass}>Reference</label>
             <input
@@ -360,7 +383,7 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
             </button>
             <button
               type="submit"
-              disabled={submitting || !form.txn_type || !form.txn_date || !form.amount}
+              disabled={submitting || !form.transaction_type_id || !form.txn_date || !form.amount}
               className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               style={{ backgroundColor: "#1B2B4B" }}
             >
@@ -539,11 +562,13 @@ export default function SPVTransactionsTab({ spvId, staff = false }) {
   // ── Summary header ──
   function LedgerSummary() {
     if (!staff || !ledger) return null;
+    const s = ledger.summary || ledger;
     const items = [
-      { label: "Total Called", value: ledger.total_called },
-      { label: "Total Distributed", value: ledger.total_distributed },
-      { label: "Total Fees", value: ledger.total_fees },
-      { label: "Net", value: ledger.net },
+      { label: "Total Called", value: s.total_called },
+      { label: "Total Distributed", value: s.total_distributed },
+      ...(s.total_recallable > 0 ? [{ label: "Recallable", value: s.total_recallable }] : []),
+      { label: "Total Fees", value: s.total_fees },
+      { label: "Net", value: s.net },
     ];
     return (
       <div

@@ -71,11 +71,16 @@ async def ensure_user(conn, request: Request) -> str:
                 return str(by_id["id"])
 
         # 3. Create the user; the DB generates the v4 id.
-        email = claims.get("email")
+        # Some Auth0 strategies (e.g. social login without verified email) omit
+        # the email claim. users.email is NOT NULL, so use a deterministic
+        # placeholder so the insert never violates the constraint. The real email
+        # should be back-filled via the Auth0 management API or a profile-complete
+        # flow once the user verifies their address.
+        email = claims.get("email") or f"{sub}@placeholder.local"
         full_name = (
             claims.get("name")
             or claims.get("nickname")
-            or email
+            or claims.get("email")
             or "Member"
         )
         inserted = await conn.fetchrow(
@@ -83,7 +88,10 @@ async def ensure_user(conn, request: Request) -> str:
             INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
             VALUES (uuid_generate_v4(), $1, $2, $3, $4, 'member')
             ON CONFLICT (auth0_sub) DO UPDATE
-                SET email = COALESCE(EXCLUDED.email, users.email)
+                SET email = COALESCE(
+                    NULLIF(EXCLUDED.email, EXCLUDED.auth0_sub || '@placeholder.local'),
+                    users.email
+                )
             RETURNING id
             """,
             org_id, email, full_name, sub,
