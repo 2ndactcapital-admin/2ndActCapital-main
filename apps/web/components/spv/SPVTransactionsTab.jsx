@@ -397,7 +397,7 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
 }
 
 // ─── Main component ──────────────────────────────────────────────────────────
-export default function SPVTransactionsTab({ spvId, staff = false }) {
+export default function SPVTransactionsTab({ spvId, staff = false, spvName, totalCommitted }) {
   const [transactions, setTransactions] = useState([]);
   const [ledger, setLedger] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -564,6 +564,7 @@ export default function SPVTransactionsTab({ spvId, staff = false }) {
     if (!staff || !ledger) return null;
     const s = ledger.summary || ledger;
     const items = [
+      ...(totalCommitted != null ? [{ label: "Committed", value: totalCommitted }] : []),
       { label: "Total Called", value: s.total_called },
       { label: "Total Distributed", value: s.total_distributed },
       ...(s.total_recallable > 0 ? [{ label: "Recallable", value: s.total_recallable }] : []),
@@ -572,9 +573,20 @@ export default function SPVTransactionsTab({ spvId, staff = false }) {
     ];
     return (
       <div
-        className="mb-5 flex flex-wrap items-center justify-end gap-6 rounded-lg border border-[#ece8dd] bg-white px-5 py-3"
+        className="mb-5 flex flex-wrap items-center gap-6 rounded-lg border border-[#ece8dd] bg-white px-5 py-3"
         style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
       >
+        <div className="mr-auto">
+          <p
+            className="text-[10px] font-semibold uppercase tracking-widest"
+            style={{ color: "#C5A880" }}
+          >
+            Summary
+          </p>
+          <p className="mt-0.5 text-sm font-medium text-[#1B2B4B]">
+            {spvName || "—"}
+          </p>
+        </div>
         {items.map((item) => (
           <div key={item.label} className="text-right">
             <p
