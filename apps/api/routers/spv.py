@@ -57,7 +57,7 @@ from services.transaction_types import get_types as get_txn_types
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.permissions import get_user_id, is_staff, require_permission
-from services.storage import upload_bytes
+from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
 
 router = APIRouter(tags=["spvs"])
@@ -652,6 +652,122 @@ async def upload_spv_document(
                 record_id=row["id"],
                 new=dict(row),
             )
+    return SPVDocumentResponse(**dict(row))
+
+
+@router.get("/spvs/{spv_id}/documents/{doc_id}/download")
+async def download_spv_document(
+    request: Request,
+    spv_id: UUID,
+    doc_id: UUID,
+    expires: int = Query(3600, ge=60, le=86400),
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    bucket = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT storage_key FROM spv_documents WHERE id=$1 AND spv_id=$2 AND org_id=$3",
+            doc_id, spv_id, org_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    url = await run_in_threadpool(get_signed_url, row["storage_key"], expires, bucket)
+    return {"url": url, "expires_in": expires}
+
+
+@router.patch("/spvs/{spv_id}/documents/{doc_id}")
+async def patch_spv_document(request: Request, spv_id: UUID, doc_id: UUID, body: dict):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id FROM spv_documents WHERE id=$1 AND spv_id=$2 AND org_id=$3",
+            doc_id, spv_id, org_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        new_status = body.get("status")
+        if new_status:
+            await conn.execute(
+                "UPDATE spv_documents SET status=$1 WHERE id=$2", new_status, doc_id,
+            )
+        updated = await conn.fetchrow(f"SELECT {DOC_SELECT} FROM spv_documents WHERE id=$1", doc_id)
+
+    return dict(updated)
+
+
+@router.delete("/spvs/{spv_id}/documents/{doc_id}", status_code=204)
+async def delete_spv_document(request: Request, spv_id: UUID, doc_id: UUID):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    bucket = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT storage_key FROM spv_documents WHERE id=$1 AND spv_id=$2 AND org_id=$3",
+            doc_id, spv_id, org_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        await conn.execute(
+            "UPDATE spv_documents SET status='deleted' WHERE id=$1", doc_id,
+        )
+
+    try:
+        await run_in_threadpool(delete_object, row["storage_key"], bucket)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("R2 delete failed for %s: %s", row["storage_key"], exc)
+
+
+@router.post("/spvs/{spv_id}/documents/{doc_id}/version", response_model=SPVDocumentResponse, status_code=201)
+async def new_spv_document_version(
+    request: Request,
+    spv_id: UUID,
+    doc_id: UUID,
+    file: UploadFile = File(...),
+    document_type: str | None = Form(None),
+):
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    user_id = get_user_id(request)
+    pool = await get_pool()
+    bucket = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
+
+    data = await file.read()
+    key = f"spvs/{spv_id}/{_uuid.uuid4()}_{file.filename}"
+    await run_in_threadpool(upload_bytes, key, data, file.content_type, bucket)
+
+    async with pool.acquire() as conn:
+        prior = await conn.fetchrow(
+            "SELECT doc_type FROM spv_documents WHERE id=$1 AND spv_id=$2 AND org_id=$3",
+            doc_id, spv_id, org_id,
+        )
+        if not prior:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        await conn.execute(
+            "UPDATE spv_documents SET status='deprecated' WHERE id=$1 AND org_id=$2",
+            doc_id, org_id,
+        )
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO spv_documents (org_id, spv_id, title, storage_key, doc_type, uploaded_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING {DOC_SELECT}
+            """,
+            org_id, spv_id, file.filename, key,
+            document_type or prior["doc_type"], user_id,
+        )
+
     return SPVDocumentResponse(**dict(row))
 
 

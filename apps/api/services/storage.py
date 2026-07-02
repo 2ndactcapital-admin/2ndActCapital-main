@@ -47,6 +47,15 @@ def upload_bytes(
     return key
 
 
+def delete_object(key: str, bucket: str | None = None) -> None:
+    """Delete an object from R2.
+
+    Synchronous (boto3) — call via ``run_in_threadpool`` from async handlers.
+    """
+    client = get_s3_client()
+    client.delete_object(Bucket=bucket or DEFAULT_BUCKET, Key=key)
+
+
 def get_signed_url(key: str, expires: int = 3600, bucket: str | None = None) -> str:
     """Return a presigned GET URL for ``key``.
 

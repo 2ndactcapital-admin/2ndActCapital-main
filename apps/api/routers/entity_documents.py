@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from starlette.concurrency import run_in_threadpool
 
 from services.database import get_pool
-from services.storage import get_signed_url, upload_bytes
+from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
 
 router = APIRouter(tags=["entity-documents"])
@@ -330,3 +330,37 @@ async def download_document(
         get_signed_url, row["storage_key"], expires, DEFAULT_BUCKET
     )
     return {"url": url, "expires_in": expires}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /entities/{entity_id}/documents/{doc_id} — soft-delete + R2 removal
+# ---------------------------------------------------------------------------
+@router.delete("/entities/{entity_id}/documents/{doc_id}", status_code=204)
+async def delete_document(
+    request: Request,
+    entity_id: _uuid.UUID,
+    doc_id: _uuid.UUID,
+):
+    org_id = _get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT storage_key FROM entity_documents "
+            "WHERE id=$1 AND org_id=$2 AND entity_id=$3",
+            doc_id, org_id, entity_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        await conn.execute(
+            "UPDATE entity_documents SET status='deleted' WHERE id=$1",
+            doc_id,
+        )
+
+    # Remove from R2 best-effort — log but don't fail the request.
+    try:
+        await run_in_threadpool(delete_object, row["storage_key"], DEFAULT_BUCKET)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("R2 delete failed for %s: %s", row["storage_key"], exc)
