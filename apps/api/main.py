@@ -15,6 +15,7 @@ from jose.exceptions import JWTError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from routers.admin import router as admin_router
+from routers.allocation_lens import router as allocation_lens_router
 from routers.assistant import router as assistant_router
 from routers.dashboard import router as dashboard_router
 from routers.debug import router as debug_router
@@ -194,5 +195,6 @@ app.include_router(reference_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
+app.include_router(allocation_lens_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)

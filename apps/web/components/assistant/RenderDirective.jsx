@@ -4,6 +4,7 @@ import SPVList from "./render/SPVList";
 import CapTable from "./render/CapTable";
 import SPVLedger from "./render/SPVLedger";
 import EntityTree from "./render/EntityTree";
+import AllocationSunburst from "./render/AllocationSunburst";
 
 // Maps render.component string → React component.
 // Unknown components fall back to a plain text display.
@@ -80,6 +81,7 @@ const COMPONENT_MAP = {
   CapTable,
   SPVLedger,
   EntityTree,
+  AllocationSunburst,
 };
 
 export default function RenderDirective({ render, onNavigate }) {
