@@ -82,14 +82,16 @@ async def main():
             WHERE table_name = 'entity_documents' AND table_schema = 'public'
               AND column_name IN (
                 'id', 'org_id', 'entity_id', 'title', 'doc_category',
-                'file_name', 'r2_key', 'version', 'supersedes_id', 'status'
+                'file_name', 'storage_key', 'content_type', 'file_size',
+                'version', 'supersedes_id', 'status'
               )
             """
         )
         found_doc_cols = {r["column_name"] for r in doc_cols}
         expected_doc_cols = {
             "id", "org_id", "entity_id", "title", "doc_category",
-            "file_name", "r2_key", "version", "supersedes_id", "status",
+            "file_name", "storage_key", "content_type", "file_size",
+            "version", "supersedes_id", "status",
         }
         missing_doc = expected_doc_cols - found_doc_cols
         ok &= check(
@@ -206,9 +208,9 @@ async def main():
                 """
                 INSERT INTO entity_documents (
                   id, org_id, entity_id, title, doc_category,
-                  file_name, file_type, r2_key, r2_bucket, version, status
+                  file_name, content_type, file_size, storage_key, version, status
                 ) VALUES ($1, $2, $3, 'Verify17 Doc', 'other',
-                  'test.pdf', 'application/pdf', 'test/key.pdf', 'test-bucket', 1, 'active')
+                  'test.pdf', 'application/pdf', 0, 'test/key.pdf', 1, 'active')
                 """,
                 doc_v1_id, ORG_ID, entity_id,
             )
@@ -243,11 +245,11 @@ async def main():
                 """
                 INSERT INTO entity_documents (
                   id, org_id, entity_id, title, doc_category,
-                  file_name, file_type, r2_key, r2_bucket, version,
-                  supersedes_id, status
+                  file_name, content_type, file_size, storage_key,
+                  version, supersedes_id, status
                 ) VALUES ($1, $2, $3, 'Verify17 Doc', 'other',
-                  'test_v2.pdf', 'application/pdf', 'test/key_v2.pdf',
-                  'test-bucket', 2, $4, 'active')
+                  'test_v2.pdf', 'application/pdf', 0, 'test/key_v2.pdf',
+                  2, $4, 'active')
                 """,
                 doc_v2_id, ORG_ID, entity_id, doc_v1_id,
             )

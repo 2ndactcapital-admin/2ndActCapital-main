@@ -35,15 +35,16 @@ def _get_org_id(request: Request) -> str:
     return DEFAULT_ORG_ID
 
 
+# Deployed column names (storage_key / content_type / file_size — no r2_bucket)
 _DOC_FIELDS = (
     "d.id, d.org_id, d.entity_id, d.title, d.doc_category, "
-    "d.file_name, d.file_type, d.file_size_bytes, d.r2_key, d.r2_bucket, "
+    "d.file_name, d.content_type, d.file_size, d.storage_key, "
     "d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at, d.updated_at"
 )
 
 _DOC_GROUP = (
     "d.id, d.org_id, d.entity_id, d.title, d.doc_category, "
-    "d.file_name, d.file_type, d.file_size_bytes, d.r2_key, d.r2_bucket, "
+    "d.file_name, d.content_type, d.file_size, d.storage_key, "
     "d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at, d.updated_at"
 )
 
@@ -95,9 +96,9 @@ async def upload_document(
     contents = await file.read()
     file_ext = os.path.splitext(file.filename or "")[-1].lower()
     doc_id = _uuid.uuid4()
-    r2_key = f"entity-docs/{entity_id}/{doc_id}{file_ext}"
+    storage_key = f"entity-docs/{entity_id}/{doc_id}{file_ext}"
 
-    await run_in_threadpool(upload_bytes, r2_key, contents, file.content_type)
+    await run_in_threadpool(upload_bytes, storage_key, contents, file.content_type)
 
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -108,16 +109,16 @@ async def upload_document(
             """
             INSERT INTO entity_documents (
                 id, org_id, entity_id, title, doc_category,
-                file_name, file_type, file_size_bytes,
-                r2_key, r2_bucket, version, status, uploaded_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, 'active', $11)
+                file_name, content_type, file_size,
+                storage_key, version, status, uploaded_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 'active', $10)
             RETURNING id, org_id, entity_id, title, doc_category,
-                      file_name, file_type, file_size_bytes, r2_key, r2_bucket,
+                      file_name, content_type, file_size, storage_key,
                       version, supersedes_id, status, uploaded_by, created_at, updated_at
             """,
             doc_id, org_id, entity_id, title, doc_category,
             file.filename, file.content_type, len(contents),
-            r2_key, DEFAULT_BUCKET, uploader,
+            storage_key, uploader,
         )
 
         clean_tags = [t.strip() for t in tags if t.strip()]
@@ -150,9 +151,9 @@ async def new_document_version(
     contents = await file.read()
     file_ext = os.path.splitext(file.filename or "")[-1].lower()
     new_doc_id = _uuid.uuid4()
-    r2_key = f"entity-docs/{entity_id}/{new_doc_id}{file_ext}"
+    storage_key = f"entity-docs/{entity_id}/{new_doc_id}{file_ext}"
 
-    await run_in_threadpool(upload_bytes, r2_key, contents, file.content_type)
+    await run_in_threadpool(upload_bytes, storage_key, contents, file.content_type)
 
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -178,16 +179,16 @@ async def new_document_version(
             """
             INSERT INTO entity_documents (
                 id, org_id, entity_id, title, doc_category,
-                file_name, file_type, file_size_bytes,
-                r2_key, r2_bucket, version, supersedes_id, status, uploaded_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active', $13)
+                file_name, content_type, file_size,
+                storage_key, version, supersedes_id, status, uploaded_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $12)
             RETURNING id, org_id, entity_id, title, doc_category,
-                      file_name, file_type, file_size_bytes, r2_key, r2_bucket,
+                      file_name, content_type, file_size, storage_key,
                       version, supersedes_id, status, uploaded_by, created_at, updated_at
             """,
             new_doc_id, org_id, entity_id, title, doc_category,
             file.filename, file.content_type, len(contents),
-            r2_key, DEFAULT_BUCKET, prior["version"] + 1, doc_id, uploader,
+            storage_key, prior["version"] + 1, doc_id, uploader,
         )
 
         clean_tags = [t.strip() for t in tags if t.strip()]
@@ -250,7 +251,7 @@ async def list_documents(
         *params,
     )
 
-    return {"documents": [dict(r) for r in rows]}
+    return {"items": [dict(r) for r in rows]}
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +317,7 @@ async def download_document(
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT r2_key, r2_bucket FROM entity_documents "
+            "SELECT storage_key FROM entity_documents "
             "WHERE id=$1 AND org_id=$2 AND entity_id=$3",
             doc_id, org_id, entity_id,
         )
@@ -324,6 +325,6 @@ async def download_document(
         raise HTTPException(status_code=404, detail="Document not found")
 
     url = await run_in_threadpool(
-        get_signed_url, row["r2_key"], expires, row["r2_bucket"]
+        get_signed_url, row["storage_key"], expires, DEFAULT_BUCKET
     )
     return {"url": url, "expires_in": expires}
