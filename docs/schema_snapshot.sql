@@ -509,6 +509,18 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_tax_ids_pkey: (id)
 
+-- ===== fx_rates =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid
+--   base_ccy                                 text NOT NULL DEFAULT 'USD'::text
+--   quote_ccy                                text NOT NULL
+--   rate                                     numeric NOT NULL
+--   as_of_date                               date NOT NULL
+--   source                                   text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE fx_rates_base_ccy_quote_ccy_as_of_date_key: (base_ccy, quote_ccy, as_of_date)
+--   PRIMARY KEY fx_rates_pkey: (id)
+
 -- ===== investment_profile_answers =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -827,6 +839,9 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   transaction_type_id                      uuid
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   amount_basis                             text NOT NULL DEFAULT 'currency'::text
 --   PRIMARY KEY spv_transactions_pkey: (id)
 
 -- ===== spvs =====
@@ -849,6 +864,27 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY spvs_pkey: (id)
+
+-- ===== transaction_types =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid
+--   code                                     text NOT NULL
+--   label                                    text NOT NULL
+--   category                                 text NOT NULL
+--   direction                                text NOT NULL
+--   affects_paid_in                          integer NOT NULL DEFAULT 0
+--   affects_unfunded                         integer NOT NULL DEFAULT 0
+--   affects_nav                              integer NOT NULL DEFAULT 0
+--   is_recallable                            boolean NOT NULL DEFAULT false
+--   performance_impact                       text
+--   applies_to_security_types                ARRAY
+--   amount_basis                             text NOT NULL DEFAULT 'currency'::text
+--   is_active                                boolean NOT NULL DEFAULT true
+--   display_order                            integer NOT NULL DEFAULT 100
+--   notes                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE transaction_types_code_key: (code)
+--   PRIMARY KEY transaction_types_pkey: (id)
 
 -- ===== user_notification_preferences =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
