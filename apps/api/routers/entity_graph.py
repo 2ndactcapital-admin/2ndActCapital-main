@@ -878,11 +878,11 @@ async def get_ownership_history(entity_id: UUID, request: Request):
         rows = await conn.fetch(
             """
             SELECT id, relationship_id, from_entity_id, to_entity_id,
-                   prior_pct, new_pct, change_reason, changed_by, created_at
+                   prior_pct, new_pct, change_reason, changed_by, changed_at
             FROM ownership_change_log
             WHERE (from_entity_id = $1 OR to_entity_id = $1)
               AND org_id = $2
-            ORDER BY created_at DESC
+            ORDER BY changed_at DESC
             LIMIT 200
             """,
             entity_id,
@@ -899,8 +899,8 @@ async def get_ownership_history(entity_id: UUID, request: Request):
             d["prior_pct"] = float(d["prior_pct"])
         if d.get("new_pct") is not None:
             d["new_pct"] = float(d["new_pct"])
-        if d.get("created_at"):
-            d["created_at"] = d["created_at"].isoformat()
+        if d.get("changed_at"):
+            d["changed_at"] = d["changed_at"].isoformat()
         result.append(d)
 
     return {"entity_id": str(entity_id), "history": result}

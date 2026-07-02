@@ -87,14 +87,14 @@ async def main():
             WHERE table_name = 'ownership_change_log' AND table_schema = 'public'
               AND column_name IN (
                 'id', 'org_id', 'relationship_id', 'from_entity_id', 'to_entity_id',
-                'prior_pct', 'new_pct', 'change_reason', 'changed_by', 'created_at'
+                'prior_pct', 'new_pct', 'change_reason', 'changed_by', 'changed_at'
               )
             """
         )
         found_log_cols = {r["column_name"] for r in log_cols}
         expected_log = {
             "id", "org_id", "relationship_id", "from_entity_id", "to_entity_id",
-            "prior_pct", "new_pct", "change_reason", "changed_by", "created_at",
+            "prior_pct", "new_pct", "change_reason", "changed_by", "changed_at",
         }
         missing_log = expected_log - found_log_cols
         ok &= check(
@@ -284,7 +284,7 @@ async def main():
                 SELECT prior_pct, new_pct, change_reason
                 FROM ownership_change_log
                 WHERE relationship_id = $1 AND org_id = $2
-                ORDER BY created_at DESC LIMIT 1
+                ORDER BY changed_at DESC LIMIT 1
                 """,
                 new_rel_id, ORG_ID,
             )
@@ -298,7 +298,38 @@ async def main():
         else:
             print("[S] Check 7 skipped — ownership_change_log columns missing")
 
+        # --- Check 9: time-travel — as_of query ---
+        # Must run while new_rel_id is still active (system_to IS NULL).
+        # The router time-travel filter is:
+        #   valid_from <= as_of AND (valid_to IS NULL OR valid_to > as_of) AND system_to IS NULL
+        # A deleted/amended row has system_to set and is invisible even in time-travel mode —
+        # so this check must execute before the soft-delete in check 8.
+
+        # Use new_rel's valid_from as the as_of anchor (75% row, currently active).
+        new_row_detail = await conn.fetchrow(
+            "SELECT valid_from FROM entity_relationships WHERE id = $1", new_rel_id
+        )
+        as_of_ts = new_row_detail["valid_from"]
+
+        time_travel_rows = await conn.fetch(
+            """
+            SELECT r.id, r.ownership_pct FROM entity_relationships r
+            WHERE r.from_entity_id = $1
+              AND r.org_id = $2
+              AND r.relationship_type = 'ownership'
+              AND r.valid_from <= $3
+              AND (r.valid_to IS NULL OR r.valid_to > $3)
+              AND r.system_to IS NULL
+            """,
+            entity_a_id, ORG_ID, as_of_ts,
+        )
+        ok &= check(
+            "time-travel: 75% row found at its valid_from timestamp",
+            any(r["id"] == new_rel_id for r in time_travel_rows),
+        )
+
         # --- Check 8: soft-delete + log entry with new_pct=0 ---
+        # Runs after check 9 so the time-travel query sees new_rel while system_to IS NULL.
         await conn.execute(
             """
             UPDATE entity_relationships
@@ -332,7 +363,7 @@ async def main():
                 SELECT new_pct, change_reason FROM ownership_change_log
                 WHERE relationship_id = $1 AND change_reason = 'deleted'
                   AND org_id = $2
-                ORDER BY created_at DESC LIMIT 1
+                ORDER BY changed_at DESC LIMIT 1
                 """,
                 new_rel_id, ORG_ID,
             )
@@ -342,35 +373,6 @@ async def main():
                 and float(del_log["new_pct"]) == 0.0
                 and del_log["change_reason"] == "deleted",
             )
-
-        # --- Check 9: time-travel — as_of query ---
-        # rel_ab_id was active (60%) then closed; it should appear in a past as_of query.
-        # new_rel_id (75%) was opened then closed; should appear in an even later as_of query.
-        # Both should be gone in current query (valid_to IS NULL).
-
-        # Find the valid_from of new_rel_id to pick an as_of timestamp between the two versions.
-        new_row_detail = await conn.fetchrow(
-            "SELECT valid_from FROM entity_relationships WHERE id = $1", new_rel_id
-        )
-        # Use valid_from of new_rel as "during 75% period" anchor.
-        as_of_ts = new_row_detail["valid_from"]
-
-        time_travel_rows = await conn.fetch(
-            """
-            SELECT r.id, r.ownership_pct FROM entity_relationships r
-            WHERE r.from_entity_id = $1
-              AND r.org_id = $2
-              AND r.relationship_type = 'ownership'
-              AND r.valid_from <= $3
-              AND (r.valid_to IS NULL OR r.valid_to > $3)
-              AND r.system_to IS NULL
-            """,
-            entity_a_id, ORG_ID, as_of_ts,
-        )
-        ok &= check(
-            "time-travel: 75% row found at its valid_from timestamp",
-            any(r["id"] == new_rel_id for r in time_travel_rows),
-        )
 
         # Current query should return 0 rows for A→B (both closed)
         current_rows = await conn.fetch(
@@ -392,11 +394,11 @@ async def main():
         if not missing_log:
             history_rows = await conn.fetch(
                 """
-                SELECT id, change_reason, created_at
+                SELECT id, change_reason, changed_at
                 FROM ownership_change_log
                 WHERE (from_entity_id = $1 OR to_entity_id = $1)
                   AND org_id = $2
-                ORDER BY created_at DESC
+                ORDER BY changed_at DESC
                 LIMIT 200
                 """,
                 entity_a_id, ORG_ID,
@@ -413,7 +415,7 @@ async def main():
             if len(history_rows) >= 2:
                 ok &= check(
                     "history: ordered newest-first",
-                    history_rows[0]["created_at"] >= history_rows[-1]["created_at"],
+                    history_rows[0]["changed_at"] >= history_rows[-1]["changed_at"],
                 )
         else:
             print("[S] Check 10 skipped — ownership_change_log columns missing")
@@ -432,17 +434,15 @@ async def main():
         try:
             await conn.execute(
                 """
-                UPDATE entity_relationships
-                SET valid_to = now(), system_to = now()
+                DELETE FROM entity_relationships
                 WHERE org_id = $1
                   AND (from_entity_id = ANY($2::uuid[]) OR to_entity_id = ANY($2::uuid[]))
-                  AND valid_to IS NULL AND system_to IS NULL
                 """,
                 ORG_ID,
                 [entity_a_id, entity_b_id, entity_c_id],
             )
         except Exception as e:
-            print(f"[teardown warning] rel soft-close: {e}")
+            print(f"[teardown warning] rel delete: {e}")
         for eid in [entity_c_id, entity_b_id, entity_a_id]:
             if eid:
                 try:
