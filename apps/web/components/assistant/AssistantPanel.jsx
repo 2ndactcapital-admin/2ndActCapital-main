@@ -318,7 +318,7 @@ export default function AssistantPanel({ user, contextRef }) {
   return (
     <div
       className={[
-        "flex flex-col border-l border-[#E2E8F0] bg-white transition-all duration-200",
+        "flex flex-col overflow-hidden border-l border-[#E2E8F0] bg-white transition-all duration-200",
         expanded ? "w-72" : "w-10",
       ].join(" ")}
     >

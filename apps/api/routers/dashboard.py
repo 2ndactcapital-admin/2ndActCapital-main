@@ -78,7 +78,7 @@ async def get_brief_narration(request: Request):
     # Return cached narration if generated today.
     async with pool.acquire() as conn:
         cached = await conn.fetchrow(
-            "SELECT narration FROM dashboard_briefs WHERE user_id = $1 AND brief_date = $2",
+            "SELECT narration FROM dashboard_briefs WHERE user_id = $1 AND generated_at::date = $2",
             user_id, today,
         )
     if cached and cached["narration"]:
@@ -126,7 +126,7 @@ async def get_brief_narration(request: Request):
                 UPDATE dashboard_briefs
                 SET greeting = $1, narration = $2, blocks = $3::jsonb,
                     generated_at = now()
-                WHERE user_id = $4 AND brief_date = $5
+                WHERE user_id = $4 AND generated_at::date = $5
                 """,
                 greeting_text, narration, blocks_json, user_id, today,
             )
@@ -134,11 +134,11 @@ async def get_brief_narration(request: Request):
                 await conn.execute(
                     """
                     INSERT INTO dashboard_briefs
-                        (org_id, user_id, brief_date, greeting, narration, blocks)
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                        (org_id, user_id, greeting, narration, blocks)
+                    VALUES ($1, $2, $3, $4, $5::jsonb)
                     ON CONFLICT DO NOTHING
                     """,
-                    org_id, user_id, today, greeting_text, narration, blocks_json,
+                    org_id, user_id, greeting_text, narration, blocks_json,
                 )
 
     return {"narration": narration}
