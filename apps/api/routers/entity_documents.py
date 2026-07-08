@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 from starlette.concurrency import run_in_threadpool
 
 from services.database import get_pool
-from services.storage import get_signed_url, upload_bytes
+from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
 
 router = APIRouter(tags=["entity-documents"])
@@ -35,17 +35,17 @@ def _get_org_id(request: Request) -> str:
     return DEFAULT_ORG_ID
 
 
-# Deployed column names (storage_key / content_type / file_size — no r2_bucket)
+# Deployed column names (storage_key / content_type / file_size — no r2_bucket, no updated_at)
 _DOC_FIELDS = (
     "d.id, d.org_id, d.entity_id, d.title, d.doc_category, "
     "d.file_name, d.content_type, d.file_size, d.storage_key, "
-    "d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at, d.updated_at"
+    "d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at"
 )
 
 _DOC_GROUP = (
     "d.id, d.org_id, d.entity_id, d.title, d.doc_category, "
     "d.file_name, d.content_type, d.file_size, d.storage_key, "
-    "d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at, d.updated_at"
+    "d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at"
 )
 
 
@@ -114,7 +114,7 @@ async def upload_document(
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 'active', $10)
             RETURNING id, org_id, entity_id, title, doc_category,
                       file_name, content_type, file_size, storage_key,
-                      version, supersedes_id, status, uploaded_by, created_at, updated_at
+                      version, supersedes_id, status, uploaded_by, created_at
             """,
             doc_id, org_id, entity_id, title, doc_category,
             file.filename, file.content_type, len(contents),
@@ -142,8 +142,8 @@ async def new_document_version(
     request: Request,
     entity_id: _uuid.UUID,
     doc_id: _uuid.UUID,
-    title: str = Form(...),
-    doc_category: str = Form(...),
+    title: str | None = Form(default=None),
+    doc_category: str | None = Form(default=None),
     tags: list[str] = Form(default=[]),
     file: UploadFile = File(...),
 ):
@@ -160,18 +160,20 @@ async def new_document_version(
         await _assert_entity(conn, org_id, entity_id)
 
         prior = await conn.fetchrow(
-            "SELECT version FROM entity_documents WHERE id=$1 AND org_id=$2 AND entity_id=$3",
+            "SELECT version, title, doc_category FROM entity_documents WHERE id=$1 AND org_id=$2 AND entity_id=$3",
             doc_id, org_id, entity_id,
         )
         if not prior:
             raise HTTPException(status_code=404, detail="Document not found")
 
+        effective_title = title or prior["title"]
+        effective_category = doc_category or prior["doc_category"]
+
         uploader = await ensure_user(conn, request)
 
         # Mark prior version deprecated
         await conn.execute(
-            "UPDATE entity_documents SET status='deprecated', updated_at=now() "
-            "WHERE id=$1 AND org_id=$2",
+            "UPDATE entity_documents SET status='deprecated' WHERE id=$1 AND org_id=$2",
             doc_id, org_id,
         )
 
@@ -184,9 +186,9 @@ async def new_document_version(
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $12)
             RETURNING id, org_id, entity_id, title, doc_category,
                       file_name, content_type, file_size, storage_key,
-                      version, supersedes_id, status, uploaded_by, created_at, updated_at
+                      version, supersedes_id, status, uploaded_by, created_at
             """,
-            new_doc_id, org_id, entity_id, title, doc_category,
+            new_doc_id, org_id, entity_id, effective_title, effective_category,
             file.filename, file.content_type, len(contents),
             storage_key, prior["version"] + 1, doc_id, uploader,
         )
@@ -278,7 +280,7 @@ async def patch_document(
         new_status = body.get("status")
         if new_status:
             await conn.execute(
-                "UPDATE entity_documents SET status=$1, updated_at=now() WHERE id=$2",
+                "UPDATE entity_documents SET status=$1 WHERE id=$2",
                 new_status, doc_id,
             )
 
@@ -328,3 +330,37 @@ async def download_document(
         get_signed_url, row["storage_key"], expires, DEFAULT_BUCKET
     )
     return {"url": url, "expires_in": expires}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /entities/{entity_id}/documents/{doc_id} — soft-delete + R2 removal
+# ---------------------------------------------------------------------------
+@router.delete("/entities/{entity_id}/documents/{doc_id}", status_code=204)
+async def delete_document(
+    request: Request,
+    entity_id: _uuid.UUID,
+    doc_id: _uuid.UUID,
+):
+    org_id = _get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT storage_key FROM entity_documents "
+            "WHERE id=$1 AND org_id=$2 AND entity_id=$3",
+            doc_id, org_id, entity_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        await conn.execute(
+            "UPDATE entity_documents SET status='deleted' WHERE id=$1",
+            doc_id,
+        )
+
+    # Remove from R2 best-effort — log but don't fail the request.
+    try:
+        await run_in_threadpool(delete_object, row["storage_key"], DEFAULT_BUCKET)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("R2 delete failed for %s: %s", row["storage_key"], exc)

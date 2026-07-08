@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { updateEntityAction } from "@/lib/actions";
 import { STATUS_OPTIONS, statusLabel, subTypesFor, FREE_TEXT_SUBTYPE_TYPES } from "@/lib/entityTypes";
-import { CountryRegionSelect } from "@/components/ReferenceSelect";
+import { CountryRegionSelect, ReferenceSelect } from "@/components/ReferenceSelect";
 
 const INPUT_CLASS =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -55,6 +55,7 @@ function ReadRow({ label, children }) {
 export default function EntityDetailsForm({ entity }) {
   const [editing, setEditing] = useState(false);
   const [confirmInactive, setConfirmInactive] = useState(false);
+  const [legalNameOverridden, setLegalNameOverridden] = useState(entity.legal_name_overridden || false);
   const [state, formAction, pending] = useActionState(
     updateEntityAction.bind(null, entity.id),
     {},
@@ -68,7 +69,9 @@ export default function EntityDetailsForm({ entity }) {
   const subTypes = subTypesFor(entity.entity_type);
   const freeTextSubType = FREE_TEXT_SUBTYPE_TYPES.includes(entity.entity_type);
   const tags = entity.tags || [];
-  const dateLabel = isPerson ? "Date of Birth" : "Inception Date";
+  const dateLabel = isPerson ? "Date of Birth" : "Date of Formation";
+  const endDateLabel = isPerson ? "Date of Death" : "End / Dissolution Date";
+  const countryRegionLabel = isPerson ? "Country (Citizenship) / Region" : "Country / Region";
 
   if (!editing) {
     return (
@@ -110,10 +113,10 @@ export default function EntityDetailsForm({ entity }) {
             <ReadRow label={dateLabel}>{String(entity.inception_date)}</ReadRow>
           )}
           {entity.end_date && (
-            <ReadRow label="End Date">{String(entity.end_date)}</ReadRow>
+            <ReadRow label={endDateLabel}>{String(entity.end_date)}</ReadRow>
           )}
           {(entity.country_code || entity.region_code) && (
-            <ReadRow label="Country / Region">
+            <ReadRow label={countryRegionLabel}>
               {[entity.country_code, entity.region_code].filter(Boolean).join(" / ")}
             </ReadRow>
           )}
@@ -161,7 +164,7 @@ export default function EntityDetailsForm({ entity }) {
           <>
             <div>
               <label className={LABEL_CLASS}>Prefix</label>
-              <input name="name_prefix" defaultValue={entity.name_prefix || ""} className={INPUT_CLASS} placeholder="Mr. / Ms. / Dr." />
+              <ReferenceSelect listKey="name_prefix" name="name_prefix" defaultValue={entity.name_prefix || ""} className={INPUT_CLASS} placeholder="Select…" />
             </div>
             <div>
               <label className={LABEL_CLASS}>First Name</label>
@@ -177,13 +180,13 @@ export default function EntityDetailsForm({ entity }) {
             </div>
             <div>
               <label className={LABEL_CLASS}>Suffix</label>
-              <input name="name_suffix" defaultValue={entity.name_suffix || ""} className={INPUT_CLASS} placeholder="Jr. / III / Esq." />
+              <ReferenceSelect listKey="name_suffix" name="name_suffix" defaultValue={entity.name_suffix || ""} className={INPUT_CLASS} placeholder="Select…" />
             </div>
             <div className="flex items-center gap-2 pt-5">
-              <input type="checkbox" name="legal_name_overridden" id="lno" defaultChecked={entity.legal_name_overridden} />
+              <input type="checkbox" name="legal_name_overridden" id="lno" checked={legalNameOverridden} onChange={(e) => setLegalNameOverridden(e.target.checked)} />
               <label htmlFor="lno" className="text-xs text-text-secondary">Override legal name manually</label>
             </div>
-            {entity.legal_name_overridden && (
+            {legalNameOverridden && (
               <div>
                 <label className={LABEL_CLASS}>Legal Name (manual)</label>
                 <input name="legal_name" defaultValue={entity.legal_name || ""} className={INPUT_CLASS} />
@@ -201,7 +204,7 @@ export default function EntityDetailsForm({ entity }) {
             </div>
             <div>
               <label className={LABEL_CLASS}>Country of Formation</label>
-              <input name="country_of_formation" defaultValue={entity.country_of_formation || ""} className={INPUT_CLASS} />
+              <ReferenceSelect listKey="country" name="country_of_formation" defaultValue={entity.country_of_formation || ""} className={INPUT_CLASS} placeholder="Select country…" />
             </div>
           </>
         )}
@@ -211,16 +214,14 @@ export default function EntityDetailsForm({ entity }) {
           <label className={LABEL_CLASS}>{dateLabel}</label>
           <input type="date" name="inception_date" defaultValue={entity.inception_date || ""} className={INPUT_CLASS} />
         </div>
-        {!isPerson && (
-          <div>
-            <label className={LABEL_CLASS}>End / Dissolution Date</label>
-            <input type="date" name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
-          </div>
-        )}
+        <div>
+          <label className={LABEL_CLASS}>{endDateLabel}</label>
+          <input type="date" name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
+        </div>
 
         {/* Country / Region */}
         <div className="sm:col-span-2">
-          <label className={LABEL_CLASS}>Country / Region</label>
+          <label className={LABEL_CLASS}>{countryRegionLabel}</label>
           <CountryRegionSelect
             defaultCountryCode={entity.country_code || ""}
             defaultRegionCode={entity.region_code || ""}
