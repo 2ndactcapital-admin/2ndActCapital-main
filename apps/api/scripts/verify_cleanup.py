@@ -3,9 +3,9 @@
 Checks:
   1. entity_documents has no updated_at column
   2. dashboard_briefs uses generated_at (not brief_date)
-  3. entity_documents version query (created_at, no updated_at)
+  3. entity_documents query runs without updated_at
   4. dashboard_briefs SELECT/WHERE on generated_at::date works
-  5. entity_type enum cast works in search filters
+  5. entity_type::text cast works in search filters
   6. reference lists for name_prefix, name_suffix, country exist
 """
 
@@ -22,6 +22,18 @@ import asyncpg
 
 ORG_ID = "00000000-0000-0000-0000-000000000001"
 TEST_USER_ID = "99000000-0000-0000-0000-000000000001"
+TEST_AUTH0_SUB = "auth0|test_cleanup_verify"
+TEST_EMAIL = "cleanup_verify@test.local"
+
+
+async def teardown(conn):
+    """Remove test rows in FK-safe order."""
+    await conn.execute("DELETE FROM audit_log WHERE user_id = $1", TEST_USER_ID)
+    await conn.execute("DELETE FROM user_roles WHERE user_id = $1", TEST_USER_ID)
+    await conn.execute(
+        "DELETE FROM user_notification_preferences WHERE user_id = $1", TEST_USER_ID
+    )
+    await conn.execute("DELETE FROM users WHERE id = $1", TEST_USER_ID)
 
 
 async def main():
@@ -29,14 +41,17 @@ async def main():
     failures = []
 
     try:
-        # Seed test user
+        # Defensive teardown first — remove any leftover rows from a prior failed run.
+        await teardown(conn)
+
+        # Seed test user (email NOT NULL).
         await conn.execute(
             """
-            INSERT INTO users (id, org_id, auth0_sub, full_name, role)
-            VALUES ($1, $2, 'auth0|test_cleanup_verify', 'Cleanup Verify', 'member')
-            ON CONFLICT (auth0_sub) DO NOTHING
+            INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
+            VALUES ($1, $2, $3, 'Cleanup Verify', $4, 'member')
+            ON CONFLICT (id) DO NOTHING
             """,
-            TEST_USER_ID, ORG_ID,
+            TEST_USER_ID, ORG_ID, TEST_EMAIL, TEST_AUTH0_SUB,
         )
 
         # 1. entity_documents has no updated_at column
@@ -129,24 +144,21 @@ async def main():
         # 6. Reference lists for name_prefix, name_suffix, country exist
         for list_key in ("name_prefix", "name_suffix", "country"):
             try:
-                rows = await conn.fetch(
+                row = await conn.fetchrow(
                     "SELECT count(*) AS cnt FROM reference_items WHERE list_key = $1 AND org_id = $2",
                     list_key, ORG_ID,
                 )
-                cnt = rows[0]["cnt"] if rows else 0
+                cnt = row["cnt"] if row else 0
                 if cnt > 0:
                     print(f"[PASS] 6. reference list '{list_key}' has {cnt} items")
                 else:
-                    # Not a hard failure — lists may be empty in test DB
                     print(f"[WARN] 6. reference list '{list_key}' is empty (may be intentional)")
             except Exception as e:
                 failures.append(f"reference list '{list_key}' error: {e}")
                 print(f"[FAIL] 6. reference list '{list_key}': {e}")
 
     finally:
-        await conn.execute(
-            "DELETE FROM users WHERE id = $1", TEST_USER_ID,
-        )
+        await teardown(conn)
         await conn.close()
 
     print()
