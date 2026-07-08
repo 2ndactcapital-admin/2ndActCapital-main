@@ -89,9 +89,9 @@ async def main():
         try:
             await conn.fetch(
                 """
-                SELECT id, org_id, entity_id, title, doc_category,
-                       file_name, content_type, file_size, storage_key,
-                       version, supersedes_id, status, uploaded_by, created_at,
+                SELECT d.id, d.org_id, d.entity_id, d.title, d.doc_category,
+                       d.file_name, d.content_type, d.file_size, d.storage_key,
+                       d.version, d.supersedes_id, d.status, d.uploaded_by, d.created_at,
                        COALESCE(
                          array_agg(t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL),
                          ARRAY[]::text[]
@@ -141,21 +141,21 @@ async def main():
             failures.append(f"entity_type cast error: {e}")
             print(f"[FAIL] 5. entity_type::text cast: {e}")
 
-        # 6. Reference lists for name_prefix, name_suffix, country exist
+        # 6. Reference lists for name_prefix, name_suffix, country exist in reference_data
         for list_key in ("name_prefix", "name_suffix", "country"):
             try:
                 row = await conn.fetchrow(
-                    "SELECT count(*) AS cnt FROM reference_items WHERE list_key = $1 AND org_id = $2",
-                    list_key, ORG_ID,
+                    "SELECT count(*) AS cnt FROM reference_data WHERE list_key = $1 AND is_active = true",
+                    list_key,
                 )
                 cnt = row["cnt"] if row else 0
                 if cnt > 0:
-                    print(f"[PASS] 6. reference list '{list_key}' has {cnt} items")
+                    print(f"[PASS] 6. reference_data '{list_key}' has {cnt} items")
                 else:
-                    print(f"[WARN] 6. reference list '{list_key}' is empty (may be intentional)")
+                    print(f"[WARN] 6. reference_data '{list_key}' is empty (may be intentional)")
             except Exception as e:
-                failures.append(f"reference list '{list_key}' error: {e}")
-                print(f"[FAIL] 6. reference list '{list_key}': {e}")
+                failures.append(f"reference_data '{list_key}' error: {e}")
+                print(f"[FAIL] 6. reference_data '{list_key}': {e}")
 
     finally:
         await teardown(conn)
