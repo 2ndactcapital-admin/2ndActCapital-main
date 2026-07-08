@@ -7,7 +7,7 @@ import AssistantPanel from "@/components/assistant/AssistantPanel";
 // main content, AssistantPanel, and Footer fill the remaining column.
 export default function AppShell({ user, children }) {
   return (
-    <div className="flex min-h-screen bg-bg-app">
+    <div className="flex h-screen bg-bg-app overflow-hidden">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar user={user} />

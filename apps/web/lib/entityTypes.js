@@ -19,6 +19,9 @@ export const ENTITY_TYPES = [
   { value: "other", label: "Other" },
 ];
 
+// Entity types that represent a natural person (affects name-field layout).
+export const PERSON_TYPES = new Set(["individual"]);
+
 // Entity types that can hold an investment / indicate interest in a deal.
 // Used to filter the entity selector in the IOI and compliance-review modals so
 // members only pick from their own investing vehicles (not sponsors, funds, etc).
