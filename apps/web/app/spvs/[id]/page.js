@@ -93,6 +93,7 @@ export default async function SPVDetailPage({ params, searchParams }) {
     { key: "documents", label: "Documents" },
     ...(staff ? [{ key: "transactions", label: "Transactions" }] : []),
     ...(staff ? [{ key: "history", label: "History" }] : []),
+    ...(staff ? [{ key: "ledger", label: "Ledger", href: `/spvs/${id}/ledger` }] : []),
   ];
 
   return (
@@ -137,7 +138,7 @@ export default async function SPVDetailPage({ params, searchParams }) {
           {tabs.map((t) => (
             <a
               key={t.key}
-              href={`/spvs/${id}?tab=${t.key}`}
+              href={t.href || `/spvs/${id}?tab=${t.key}`}
               className={`pb-2 text-sm font-medium transition-colors ${
                 tab === t.key
                   ? "border-b-2 border-[#C5A880] text-[#1B2B4B]"
