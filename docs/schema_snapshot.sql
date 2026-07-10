@@ -70,6 +70,23 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY audit_log_pkey: (id)
 
+-- ===== chart_of_accounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   code                                     text NOT NULL
+--   name                                     text NOT NULL
+--   account_type                             text NOT NULL
+--   normal_balance                           character NOT NULL
+--   tax_character_code                       text
+--   parent_code                              text
+--   is_capital_account                       boolean NOT NULL DEFAULT false
+--   is_active                                boolean NOT NULL DEFAULT true
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY chart_of_accounts_pkey: (id)
+
 -- ===== compliance_override_requests =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -597,6 +614,38 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY investment_stage_history_pkey: (id)
 
+-- ===== journal_entries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   vehicle_id                               uuid NOT NULL
+--   entry_date                               date NOT NULL
+--   ledger_basis                             text NOT NULL DEFAULT 'GAAP'::text
+--   transaction_type_code                    text
+--   memo                                     text
+--   source_event_id                          uuid
+--   reverses_entry_id                        uuid
+--   reversal_reason                          text
+--   posted_at                                timestamp with time zone
+--   posted_by                                uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY journal_entries_pkey: (id)
+
+-- ===== journal_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   entry_id                                 uuid NOT NULL
+--   line_no                                  integer NOT NULL
+--   account_id                               uuid NOT NULL
+--   debit                                    numeric NOT NULL DEFAULT 0
+--   credit                                   numeric NOT NULL DEFAULT 0
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   dim_member_series_id                     uuid
+--   dim_investment_id                        uuid
+--   dim_tax_lot_id                           uuid
+--   memo                                     text
+--   UNIQUE jl_line_unique: (entry_id, line_no)
+--   PRIMARY KEY journal_lines_pkey: (id)
+
 -- ===== member_investments =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -741,6 +790,27 @@
 --   PRIMARY KEY permissions_pkey: (id)
 --   UNIQUE permissions_resource_action_key: (resource, action)
 
+-- ===== posting_template_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   template_id                              uuid NOT NULL
+--   line_no                                  integer NOT NULL
+--   account_code                             text NOT NULL
+--   side                                     character NOT NULL
+--   amount_source                            text NOT NULL DEFAULT 'event_amount'::text
+--   dimension_source                         text NOT NULL DEFAULT 'none'::text
+--   PRIMARY KEY posting_template_lines_pkey: (id)
+--   UNIQUE ptl_line_unique: (template_id, line_no)
+
+-- ===== posting_templates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   transaction_type_code                    text NOT NULL
+--   name                                     text NOT NULL
+--   vehicle_type_scope                       text NOT NULL DEFAULT 'any'::text
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY posting_templates_pkey: (id)
+
 -- ===== profile_conversations =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -876,6 +946,8 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   vehicle_type                             text NOT NULL DEFAULT 'standalone_spv'::text
+--   master_entity_id                         uuid
 --   PRIMARY KEY spvs_pkey: (id)
 
 -- ===== transaction_types =====
