@@ -2,15 +2,14 @@
 
 import { useActionState, useEffect, useState } from "react";
 import { updateEntityAction } from "@/lib/actions";
-import { STATUS_OPTIONS, statusLabel, subTypesFor, FREE_TEXT_SUBTYPE_TYPES } from "@/lib/entityTypes";
+import { PERSON_TYPES, STATUS_OPTIONS, statusLabel, subTypesFor, FREE_TEXT_SUBTYPE_TYPES } from "@/lib/entityTypes";
 import { CountryRegionSelect, ReferenceSelect } from "@/components/ReferenceSelect";
+import PersonNameFields from "@/components/crm/PersonNameFields";
 
 const INPUT_CLASS =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 const LABEL_CLASS =
   "block text-xs font-medium uppercase tracking-wide text-text-muted";
-
-const PERSON_TYPES = new Set(["individual"]);
 
 // Text fields shown for all entity types
 const COMMON_TEXT_FIELDS = [
@@ -55,7 +54,6 @@ function ReadRow({ label, children }) {
 export default function EntityDetailsForm({ entity }) {
   const [editing, setEditing] = useState(false);
   const [confirmInactive, setConfirmInactive] = useState(false);
-  const [legalNameOverridden, setLegalNameOverridden] = useState(entity.legal_name_overridden || false);
   const [state, formAction, pending] = useActionState(
     updateEntityAction.bind(null, entity.id),
     {},
@@ -160,40 +158,7 @@ export default function EntityDetailsForm({ entity }) {
         </div>
 
         {/* Person name components */}
-        {isPerson && (
-          <>
-            <div>
-              <label className={LABEL_CLASS}>Prefix</label>
-              <ReferenceSelect listKey="name_prefix" name="name_prefix" defaultValue={entity.name_prefix || ""} className={INPUT_CLASS} placeholder="Select…" />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>First Name</label>
-              <input name="first_name" defaultValue={entity.first_name || ""} className={INPUT_CLASS} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Middle Name</label>
-              <input name="middle_name" defaultValue={entity.middle_name || ""} className={INPUT_CLASS} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Last Name / Surname</label>
-              <input name="surname" defaultValue={entity.surname || ""} className={INPUT_CLASS} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Suffix</label>
-              <ReferenceSelect listKey="name_suffix" name="name_suffix" defaultValue={entity.name_suffix || ""} className={INPUT_CLASS} placeholder="Select…" />
-            </div>
-            <div className="flex items-center gap-2 pt-5">
-              <input type="checkbox" name="legal_name_overridden" id="lno" checked={legalNameOverridden} onChange={(e) => setLegalNameOverridden(e.target.checked)} />
-              <label htmlFor="lno" className="text-xs text-text-secondary">Override legal name manually</label>
-            </div>
-            {legalNameOverridden && (
-              <div>
-                <label className={LABEL_CLASS}>Legal Name (manual)</label>
-                <input name="legal_name" defaultValue={entity.legal_name || ""} className={INPUT_CLASS} />
-              </div>
-            )}
-          </>
-        )}
+        {isPerson && <PersonNameFields defaultValues={entity} />}
 
         {/* Non-person fields */}
         {!isPerson && (

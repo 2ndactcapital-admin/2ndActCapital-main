@@ -4,10 +4,13 @@ import { useActionState, useState } from "react";
 import { createEntityAction } from "@/lib/actions";
 import {
   ENTITY_TYPES,
+  PERSON_TYPES,
   STATUS_OPTIONS,
   subTypesFor,
   FREE_TEXT_SUBTYPE_TYPES,
 } from "@/lib/entityTypes";
+import { ReferenceSelect } from "@/components/ReferenceSelect";
+import PersonNameFields from "@/components/crm/PersonNameFields";
 
 const INPUT_CLASS =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -18,8 +21,10 @@ export default function NewEntityForm() {
   const [state, formAction, pending] = useActionState(createEntityAction, {});
   const [entityType, setEntityType] = useState("individual");
 
+  const isPerson = PERSON_TYPES.has(entityType);
   const subTypes = subTypesFor(entityType);
   const freeTextSubType = FREE_TEXT_SUBTYPE_TYPES.includes(entityType);
+  const dateLabel = isPerson ? "Date of Birth" : "Date of Formation";
 
   return (
     <form action={formAction} className="max-w-2xl space-y-4">
@@ -68,11 +73,19 @@ export default function NewEntityForm() {
         <input name="display_name" required className={INPUT_CLASS} />
       </div>
 
+      {/* Person name components or single legal name, depending on entity type */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className={LABEL_CLASS}>Legal Name</label>
-          <input name="legal_name" className={INPUT_CLASS} />
-        </div>
+        {isPerson ? (
+          <PersonNameFields />
+        ) : (
+          <div>
+            <label className={LABEL_CLASS}>Legal Name</label>
+            <input name="legal_name" className={INPUT_CLASS} />
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className={LABEL_CLASS}>Status</label>
           <select name="status" defaultValue="prospect" className={INPUT_CLASS}>
@@ -87,13 +100,22 @@ export default function NewEntityForm() {
           <label className={LABEL_CLASS}>Lead Source</label>
           <input name="lead_source" className={INPUT_CLASS} />
         </div>
+
+        {!isPerson && (
+          <div>
+            <label className={LABEL_CLASS}>Country of Formation</label>
+            <ReferenceSelect
+              listKey="country"
+              name="country_of_formation"
+              className={INPUT_CLASS}
+              placeholder="Select country…"
+            />
+          </div>
+        )}
+
         <div>
-          <label className={LABEL_CLASS}>Country of Formation</label>
-          <input name="country_of_formation" className={INPUT_CLASS} />
-        </div>
-        <div>
-          <label className={LABEL_CLASS}>Date of Birth</label>
-          <input type="date" name="date_of_birth" className={INPUT_CLASS} />
+          <label className={LABEL_CLASS}>{dateLabel}</label>
+          <input type="date" name="inception_date" className={INPUT_CLASS} />
         </div>
         <div>
           <label className={LABEL_CLASS}>Primary Email</label>
