@@ -1,12 +1,29 @@
 """verify_sprint22.py — Sprint 22 General Ledger Foundation
 
+Column names are taken directly from docs/schema_snapshot.sql.
+
 Assertions:
-  1. Unbalanced entry raises on post.
+  1. Unbalanced entry raises on post (fn_post_journal_entry).
   2. Balanced entry posts; posted_at is set.
-  3. Posted entry's lines cannot be updated or deleted.
+  3. Posted entry's lines cannot be updated or deleted (immutability trigger).
   4. Reversal produces mirrored lines; trial balance for the vehicle nets to zero.
   5. Capital accounts sum correctly across two distinct dim_member_series_id values.
-  6. journal_lines insert referencing a chart_of_accounts row from a different org raises.
+  6. journal_lines insert referencing a chart_of_accounts row from a different org raises
+     (fn_validate_line_org trigger).
+
+Schema facts used here:
+  journal_entries: id, org_id, vehicle_id, entry_date, ledger_basis,
+    transaction_type_code, memo, reverses_entry_id, reversal_reason,
+    posted_at, posted_by, created_at, created_by
+    (NO amount / dims / template_id / basis)
+  journal_lines: id, entry_id, line_no, account_id, debit (NOT NULL DEFAULT 0),
+    credit (NOT NULL DEFAULT 0), currency_code, dim_member_series_id,
+    dim_investment_id, dim_tax_lot_id, memo
+    (NO org_id — tenancy enforced by fn_validate_line_org trigger)
+    debit/credit are NOT NULL; pass 0 on unused side, never NULL.
+    line_no is NOT NULL and unique per entry; must be supplied.
+  chart_of_accounts: is_capital_account, tax_character_code (not is_capital/tax_character)
+    No created_by column.
 """
 import asyncio
 import os
@@ -41,7 +58,7 @@ async def main():
 
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
 
-    # ── Seed test user ──────────────────────────────────────────────────────
+    # ── Seed test user ─────────────────────────────────────────────────────
     await conn.execute(
         """
         INSERT INTO users (id, auth0_sub, email, role)
@@ -51,13 +68,11 @@ async def main():
         TEST_USER_ID,
     )
 
-    # ── Resolve org and create a test SPV ──────────────────────────────────
     spv_id = str(uuid.uuid4())
     other_org_id = str(uuid.uuid4())
-    cleanup_ids = {"spv": spv_id}
 
     try:
-        # Insert a minimal SPV so posting engine can resolve org_id.
+        # Insert a minimal test SPV so the posting engine can resolve org_id.
         await conn.execute(
             """
             INSERT INTO spvs (id, org_id, name, status, target_raise, min_commitment)
@@ -67,8 +82,7 @@ async def main():
             spv_id, ORG_ID,
         )
 
-        # Ensure default COA + templates exist for this org (idempotent).
-        # The seeds are idempotent so we just check a sentinel account is present.
+        # Verify COA seed is present (needed for all line inserts).
         coa_count = await conn.fetchval(
             "SELECT COUNT(*) FROM chart_of_accounts WHERE org_id = $1 AND system_to IS NULL",
             ORG_ID,
@@ -87,91 +101,92 @@ async def main():
             return
         record("Template seed present", True, f"{tmpl_count} templates")
 
-        # Resolve COA IDs we need.
-        def coa_id(code):
-            return conn.fetchval(
-                "SELECT id FROM chart_of_accounts WHERE org_id = $1 AND code = $2 AND system_to IS NULL",
+        # Resolve the COA account_ids we'll use directly.
+        async def acct_id(code):
+            return await conn.fetchval(
+                "SELECT id FROM chart_of_accounts "
+                "WHERE org_id = $1 AND code = $2 AND system_to IS NULL",
                 ORG_ID, code,
             )
 
-        cash_id = await coa_id("1000")
-        cap_contrib_id = await coa_id("3000")
-        cap_dist_id = await coa_id("3100")
-        if not cash_id or not cap_contrib_id:
-            record("COA IDs resolved", False, "accounts 1000/3000 missing")
+        cash_id = await acct_id("1000")
+        cap_contrib_id = await acct_id("3000")
+        cap_dist_id = await acct_id("3100")
+        mgmt_fee_id = await acct_id("5000")
+        accrued_id = await acct_id("2000")
+
+        if not all([cash_id, cap_contrib_id, mgmt_fee_id, accrued_id]):
+            record("COA IDs resolved", False, "accounts 1000/3000/5000/2000 missing")
             return
         record("COA IDs resolved", True)
 
-        # ── Assertion 1: Unbalanced entry raises on post ─────────────────
-        # Insert a journal entry with only ONE line (unbalanced).
-        unbal_entry_id = str(uuid.uuid4())
+        # ── Assertion 1: Unbalanced entry raises on post ──────────────────
+        # Insert an entry with only a debit line (no matching credit).
+        unbal_id = str(uuid.uuid4())
         async with conn.transaction():
             await conn.execute(
                 """
                 INSERT INTO journal_entries
-                  (id, org_id, vehicle_id, transaction_type_code, entry_date, amount, basis, created_by)
-                VALUES ($1::uuid, $2::uuid, $3::uuid, 'MANAGEMENT_FEE', '2026-01-01', 500.00, 'GAAP', $4::uuid)
+                  (id, org_id, vehicle_id, transaction_type_code, entry_date, ledger_basis, created_by)
+                VALUES ($1::uuid, $2::uuid, $3::uuid, 'MANAGEMENT_FEE', '2026-01-01', 'GAAP', $4::uuid)
                 """,
-                unbal_entry_id, ORG_ID, spv_id, TEST_USER_ID,
+                unbal_id, ORG_ID, spv_id, TEST_USER_ID,
             )
-            # Only a debit line — no credit line, so it's unbalanced.
-            mgmt_fee_id = await coa_id("5000")
+            # Only debit line — no credit — so entry is unbalanced.
             await conn.execute(
                 """
-                INSERT INTO journal_lines
-                  (org_id, journal_entry_id, account_id, debit, credit)
-                VALUES ($1::uuid, $2::uuid, $3::uuid, 500.00, NULL)
+                INSERT INTO journal_lines (entry_id, line_no, account_id, debit, credit)
+                VALUES ($1::uuid, 1, $2::uuid, 500.00, 0)
                 """,
-                ORG_ID, unbal_entry_id, mgmt_fee_id,
+                unbal_id, mgmt_fee_id,
             )
 
         raised = False
         try:
             await conn.execute(
                 "SELECT fn_post_journal_entry($1::uuid, $2::uuid)",
-                unbal_entry_id, TEST_USER_ID,
+                unbal_id, TEST_USER_ID,
             )
         except Exception:
             raised = True
         record("Unbalanced entry raises on post", raised)
 
-        # ── Assertion 2: Balanced entry posts; posted_at is set ──────────
-        bal_entry_id = str(uuid.uuid4())
-        ms_id = str(uuid.uuid4())  # fake member_series_id for dimension
+        # ── Assertion 2: Balanced entry posts; posted_at is set ───────────
+        ms_id = str(uuid.uuid4())  # synthetic member_series dimension
+        bal_id = str(uuid.uuid4())
         async with conn.transaction():
             await conn.execute(
                 """
                 INSERT INTO journal_entries
-                  (id, org_id, vehicle_id, transaction_type_code, entry_date, amount, basis, created_by)
-                VALUES ($1::uuid, $2::uuid, $3::uuid, 'CAPITAL_CONTRIBUTION', '2026-01-15', 25000.00, 'GAAP', $4::uuid)
+                  (id, org_id, vehicle_id, transaction_type_code, entry_date, ledger_basis, created_by)
+                VALUES ($1::uuid, $2::uuid, $3::uuid, 'CAPITAL_CONTRIBUTION', '2026-01-15', 'GAAP', $4::uuid)
                 """,
-                bal_entry_id, ORG_ID, spv_id, TEST_USER_ID,
+                bal_id, ORG_ID, spv_id, TEST_USER_ID,
             )
             await conn.execute(
                 """
-                INSERT INTO journal_lines
-                  (org_id, journal_entry_id, account_id, debit, credit, dim_member_series_id)
+                INSERT INTO journal_lines (entry_id, line_no, account_id, debit, credit)
                 VALUES
-                  ($1::uuid, $2::uuid, $3::uuid, 25000.00, NULL, NULL),
-                  ($1::uuid, $2::uuid, $4::uuid, NULL, 25000.00, $5::uuid)
+                  ($1::uuid, 1, $2::uuid, 25000.00, 0),
+                  ($1::uuid, 2, $3::uuid, 0, 25000.00)
                 """,
-                ORG_ID, bal_entry_id, cash_id, cap_contrib_id, ms_id,
+                bal_id, cash_id, cap_contrib_id,
             )
 
         await conn.execute(
             "SELECT fn_post_journal_entry($1::uuid, $2::uuid)",
-            bal_entry_id, TEST_USER_ID,
+            bal_id, TEST_USER_ID,
         )
-        posted_row = await conn.fetchrow(
-            "SELECT posted_at FROM journal_entries WHERE id = $1::uuid", bal_entry_id
+        posted = await conn.fetchrow(
+            "SELECT posted_at FROM journal_entries WHERE id = $1::uuid", bal_id
         )
-        posted_ok = posted_row and posted_row["posted_at"] is not None
+        posted_ok = posted and posted["posted_at"] is not None
         record("Balanced entry posts; posted_at set", posted_ok)
 
-        # ── Assertion 3: Posted entry's lines cannot be updated or deleted
+        # ── Assertion 3: Posted lines cannot be updated or deleted ────────
         line_id = await conn.fetchval(
-            "SELECT id FROM journal_lines WHERE journal_entry_id = $1::uuid LIMIT 1",
-            bal_entry_id,
+            "SELECT id FROM journal_lines WHERE entry_id = $1::uuid LIMIT 1",
+            bal_id,
         )
         update_blocked = False
         delete_blocked = False
@@ -190,86 +205,88 @@ async def main():
         record("Posted lines cannot be updated", update_blocked)
         record("Posted lines cannot be deleted", delete_blocked)
 
-        # ── Assertion 4: Reversal → mirrored lines; TB nets zero ─────────
-        rev_entry_id_val = await conn.fetchval(
+        # ── Assertion 4: Reversal produces mirrored lines; TB nets zero ───
+        rev_id = await conn.fetchval(
             "SELECT fn_reverse_journal_entry($1::uuid, $2::text, $3::uuid)",
-            bal_entry_id, "Test reversal", TEST_USER_ID,
+            bal_id, "Test reversal sprint22", TEST_USER_ID,
         )
-        reversal_ok = rev_entry_id_val is not None
-        record("Reversal returns new entry id", reversal_ok)
+        reversal_created = rev_id is not None
+        record("Reversal returns new entry id", reversal_created)
 
-        if reversal_ok:
-            # Check the trial balance sums to zero for this vehicle (net).
-            tb = await conn.fetch(
+        if reversal_created:
+            # Net of all debits and credits across both entries should be zero.
+            net = await conn.fetchval(
                 """
-                SELECT account_code, total_debit, total_credit
-                FROM v_trial_balance
-                WHERE vehicle_id = $1::uuid AND basis = 'GAAP'
+                SELECT COALESCE(SUM(jl.debit), 0) - COALESCE(SUM(jl.credit), 0)
+                FROM journal_lines jl
+                JOIN journal_entries je ON je.id = jl.entry_id
+                WHERE je.vehicle_id = $1::uuid
+                  AND je.ledger_basis = 'GAAP'
+                  AND je.posted_at IS NOT NULL
                 """,
                 spv_id,
             )
-            net = sum(
-                (Decimal(str(r["total_debit"] or 0)) - Decimal(str(r["total_credit"] or 0)))
-                for r in tb
-            )
             record("Trial balance nets to zero after reversal", net == 0, f"net={net}")
 
-        # ── Assertion 5: Capital accounts sum across two member_series ────
-        # Post a second contribution for a different class.
+        # ── Assertion 5: Capital accounts across two member_series ────────
         ms_id2 = str(uuid.uuid4())
-        bal_entry2_id = str(uuid.uuid4())
+        bal_id2 = str(uuid.uuid4())
         async with conn.transaction():
             await conn.execute(
                 """
                 INSERT INTO journal_entries
-                  (id, org_id, vehicle_id, transaction_type_code, entry_date, amount, basis, created_by)
-                VALUES ($1::uuid, $2::uuid, $3::uuid, 'CAPITAL_CONTRIBUTION', '2026-02-01', 10000.00, 'GAAP', $4::uuid)
+                  (id, org_id, vehicle_id, transaction_type_code, entry_date, ledger_basis, created_by)
+                VALUES ($1::uuid, $2::uuid, $3::uuid, 'CAPITAL_CONTRIBUTION', '2026-02-01', 'GAAP', $4::uuid)
                 """,
-                bal_entry2_id, ORG_ID, spv_id, TEST_USER_ID,
+                bal_id2, ORG_ID, spv_id, TEST_USER_ID,
             )
             await conn.execute(
                 """
                 INSERT INTO journal_lines
-                  (org_id, journal_entry_id, account_id, debit, credit, dim_member_series_id)
+                  (entry_id, line_no, account_id, debit, credit, dim_member_series_id)
                 VALUES
-                  ($1::uuid, $2::uuid, $3::uuid, 10000.00, NULL, NULL),
-                  ($1::uuid, $2::uuid, $4::uuid, NULL, 10000.00, $5::uuid)
+                  ($1::uuid, 1, $2::uuid, 10000.00, 0, NULL),
+                  ($1::uuid, 2, $3::uuid, 0, 10000.00, $4::uuid)
                 """,
-                ORG_ID, bal_entry2_id, cash_id, cap_contrib_id, ms_id2,
+                bal_id2, cash_id, cap_contrib_id, ms_id2,
             )
         await conn.execute(
             "SELECT fn_post_journal_entry($1::uuid, $2::uuid)",
-            bal_entry2_id, TEST_USER_ID,
+            bal_id2, TEST_USER_ID,
         )
 
-        ca_rows = await conn.fetch(
+        # Sum credits on capital account 3000 per member_series_id.
+        ca = await conn.fetch(
             """
-            SELECT dim_member_series_id, SUM(balance) AS total
-            FROM v_capital_accounts
-            WHERE vehicle_id = $1::uuid AND basis = 'GAAP'
-            GROUP BY dim_member_series_id
+            SELECT jl.dim_member_series_id, SUM(jl.credit) AS total_credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            JOIN chart_of_accounts coa ON coa.id = jl.account_id
+            WHERE je.vehicle_id = $1::uuid
+              AND je.ledger_basis = 'GAAP'
+              AND je.posted_at IS NOT NULL
+              AND coa.is_capital_account = true
+              AND jl.dim_member_series_id IS NOT NULL
+            GROUP BY jl.dim_member_series_id
             """,
             spv_id,
         )
-        series_ids = {str(r["dim_member_series_id"]) for r in ca_rows if r["dim_member_series_id"]}
-        # ms_id was reversed so may be absent; ms_id2 should be present with 10000
         ms2_total = next(
-            (Decimal(str(r["total"])) for r in ca_rows if str(r["dim_member_series_id"]) == ms_id2),
+            (Decimal(str(r["total_credit"])) for r in ca
+             if str(r["dim_member_series_id"]) == ms_id2),
             None,
         )
         cap_ok = ms2_total == Decimal("10000.00")
         record("Capital accounts: second class sums correctly", cap_ok, f"balance={ms2_total}")
 
-        # ── Assertion 6: Cross-org COA reference raises ───────────────────
-        other_org_id = str(uuid.uuid4())
-        other_acct_id = str(uuid.uuid4())
+        # ── Assertion 6: Cross-org COA reference raises via trigger ───────
         cross_org_raised = False
+        other_acct_id = str(uuid.uuid4())
         try:
             async with conn.transaction():
-                # Create a throwaway org and account, then attempt to insert a
-                # journal_line referencing the other org's account into this org's entry.
                 await conn.execute(
-                    "INSERT INTO organizations (id, name, slug) VALUES ($1::uuid, 'Test Throwaway Org', 'test-throwaway-xorg')",
+                    "INSERT INTO organizations (id, name, slug) "
+                    "VALUES ($1::uuid, 'Throwaway Org Sprint22', 'throwaway-sprint22-xorg')",
                     other_org_id,
                 )
                 await conn.execute(
@@ -284,57 +301,49 @@ async def main():
                 await conn.execute(
                     """
                     INSERT INTO journal_entries
-                      (id, org_id, vehicle_id, transaction_type_code, entry_date, amount, basis, created_by)
-                    VALUES ($1::uuid, $2::uuid, $3::uuid, 'CAPITAL_CONTRIBUTION', '2026-03-01', 1000.00, 'GAAP', $4::uuid)
+                      (id, org_id, vehicle_id, transaction_type_code, entry_date, ledger_basis, created_by)
+                    VALUES ($1::uuid, $2::uuid, $3::uuid, 'CAPITAL_CONTRIBUTION',
+                            '2026-03-01', 'GAAP', $4::uuid)
                     """,
                     xorg_entry_id, ORG_ID, spv_id, TEST_USER_ID,
                 )
-                # This should raise — account from other_org_id used in ORG_ID journal_line.
+                # This should raise: account belongs to other_org_id but entry belongs to ORG_ID.
                 await conn.execute(
                     """
-                    INSERT INTO journal_lines
-                      (org_id, journal_entry_id, account_id, debit, credit)
-                    VALUES ($1::uuid, $2::uuid, $3::uuid, 1000.00, NULL)
+                    INSERT INTO journal_lines (entry_id, line_no, account_id, debit, credit)
+                    VALUES ($1::uuid, 1, $2::uuid, 1000.00, 0)
                     """,
-                    ORG_ID, xorg_entry_id, other_acct_id,
+                    xorg_entry_id, other_acct_id,
                 )
-                # If we got here without error, roll back explicitly.
-                raise Exception("Expected constraint violation but none raised")
+                # If we got here with no error, the trigger doesn't exist yet.
+                raise Exception("no-trigger")
         except Exception as exc:
-            err_str = str(exc)
-            cross_org_raised = "Expected constraint violation" not in err_str
-        record("Cross-org COA reference raises", cross_org_raised)
+            cross_org_raised = "no-trigger" not in str(exc)
+        record("Cross-org COA reference raises (fn_validate_line_org)", cross_org_raised)
 
     finally:
-        # ── Teardown ────────────────────────────────────────────────────────
+        # ── Teardown (FK-safe order) ───────────────────────────────────────
         try:
-            spv_id_val = cleanup_ids.get("spv")
-            if spv_id_val:
-                # Delete in FK-safe order: lines → entries → spv
-                await conn.execute(
-                    "DELETE FROM journal_lines WHERE journal_entry_id IN "
-                    "(SELECT id FROM journal_entries WHERE vehicle_id = $1::uuid)",
-                    spv_id_val,
-                )
-                await conn.execute(
-                    "DELETE FROM journal_entries WHERE vehicle_id = $1::uuid",
-                    spv_id_val,
-                )
-                await conn.execute(
-                    "DELETE FROM spvs WHERE id = $1::uuid", spv_id_val
-                )
-            # Clean up other org
-            try:
-                await conn.execute(
-                    "DELETE FROM chart_of_accounts WHERE org_id = $1::uuid", other_org_id
-                )
-                await conn.execute(
-                    "DELETE FROM organizations WHERE id = $1::uuid", other_org_id
-                )
-            except Exception:
-                pass
+            await conn.execute(
+                "DELETE FROM journal_lines WHERE entry_id IN "
+                "(SELECT id FROM journal_entries WHERE vehicle_id = $1::uuid)",
+                spv_id,
+            )
+            await conn.execute(
+                "DELETE FROM journal_entries WHERE vehicle_id = $1::uuid", spv_id
+            )
+            await conn.execute("DELETE FROM spvs WHERE id = $1::uuid", spv_id)
         except Exception as te:
-            print(f"  [teardown] {te}")
+            print(f"  [teardown] spv/entries: {te}")
+        try:
+            await conn.execute(
+                "DELETE FROM chart_of_accounts WHERE org_id = $1::uuid", other_org_id
+            )
+            await conn.execute(
+                "DELETE FROM organizations WHERE id = $1::uuid", other_org_id
+            )
+        except Exception:
+            pass
         await conn.close()
 
     # ── Summary ────────────────────────────────────────────────────────────

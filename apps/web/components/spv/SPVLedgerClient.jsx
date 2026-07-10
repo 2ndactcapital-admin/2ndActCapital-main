@@ -217,10 +217,10 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
                         {ln.account_code} {ln.account_name}
                       </td>
                       <td className="text-right tabular-nums text-[#0F172A]">
-                        {ln.dr_cr === "D" ? fmtMoney(parseFloat(amount) || 0) : ""}
+                        {ln.side === "D" ? fmtMoney(parseFloat(amount) || 0) : ""}
                       </td>
                       <td className="text-right tabular-nums text-[#0F172A]">
-                        {ln.dr_cr === "C" ? fmtMoney(parseFloat(amount) || 0) : ""}
+                        {ln.side === "C" ? fmtMoney(parseFloat(amount) || 0) : ""}
                       </td>
                     </tr>
                   ))}
@@ -345,7 +345,7 @@ function JournalPanel({ entry, onPost, onReverse }) {
             {(entry.transaction_type_code || "").replace(/_/g, " ")}
           </p>
           <p className="text-sm font-medium text-[#0F172A]">{fmtDate(entry.entry_date)}</p>
-          <p className="text-sm text-[#64748B]">{fmtMoney(entry.amount)}</p>
+          <p className="text-sm text-[#64748B]">{entry._amount ? fmtMoney(entry._amount) : ""}</p>
           {entry.template_name && (
             <p className="mt-0.5 text-xs text-[#64748B]">via {entry.template_name}</p>
           )}
@@ -360,7 +360,7 @@ function JournalPanel({ entry, onPost, onReverse }) {
               Post
             </button>
           )}
-          {entry.posted_at && !entry.reversed_by_entry_id && (
+          {entry.posted_at && !entry.reverses_entry_id && (
             <button
               onClick={() => onReverse(entry)}
               className="rounded border border-[#E2E8F0] px-3 py-1 text-xs text-[#9B2335] hover:bg-[#FEF3F2]"
@@ -402,22 +402,16 @@ function JournalPanel({ entry, onPost, onReverse }) {
       )}
 
       <dl className="mt-4 space-y-1 text-[10px]">
-        {entry.basis && (
+        {entry.ledger_basis && (
           <div className="flex gap-2">
             <dt className="font-semibold uppercase tracking-wide text-[#64748B]">Basis</dt>
-            <dd className="text-[#334155]">{entry.basis}</dd>
+            <dd className="text-[#334155]">{entry.ledger_basis}</dd>
           </div>
         )}
         {entry.reverses_entry_id && (
           <div className="flex gap-2">
             <dt className="font-semibold uppercase tracking-wide text-[#64748B]">Reverses</dt>
             <dd className="font-mono text-[#C5A880]">{entry.reverses_entry_id}</dd>
-          </div>
-        )}
-        {entry.reversed_by_entry_id && (
-          <div className="flex gap-2">
-            <dt className="font-semibold uppercase tracking-wide text-[#64748B]">Reversed by</dt>
-            <dd className="font-mono text-[#9B2335]">{entry.reversed_by_entry_id}</dd>
           </div>
         )}
       </dl>
@@ -708,7 +702,7 @@ export default function SPVLedgerClient({ vehicleId }) {
                         {(e.transaction_type_code || "").replace(/_/g, " ")}
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums text-[#0F172A]">
-                        {fmtMoney(e.amount)}
+                        {e._amount ? fmtMoney(e._amount) : ""}
                       </td>
                       <td className="px-2 py-2">
                         <StatusPill posted={!!e.posted_at} />

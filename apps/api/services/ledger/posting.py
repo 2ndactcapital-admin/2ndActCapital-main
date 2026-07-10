@@ -8,9 +8,21 @@ reverse — delegates to fn_reverse_journal_entry (DB creates mirrored entry).
 Money: Decimal throughout — no floats.
 Immutability: never DELETE entries or lines; reversal only.
 Tenancy: org_id resolved from spvs.org_id; never accepted from caller.
+         fn_validate_line_org trigger enforces account org matches entry org.
+
+Schema facts (from snapshot):
+  journal_entries: id, org_id, vehicle_id, entry_date, ledger_basis,
+    transaction_type_code, memo, source_event_id, reverses_entry_id,
+    reversal_reason, posted_at, posted_by, created_at, created_by
+    (no amount, no dims, no template_id)
+  journal_lines: id, entry_id, line_no, account_id, debit, credit,
+    currency_code, dim_member_series_id, dim_investment_id, dim_tax_lot_id, memo
+    (no org_id — derives from parent entry via trigger)
+    debit and credit are NOT NULL DEFAULT 0; pass 0 on the unused side.
+  posting_template_lines: id, template_id, line_no, account_code (text),
+    side ('D'/'C'), amount_source, dimension_source
 """
 
-import json
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -28,8 +40,8 @@ async def _resolve_org(conn, vehicle_id: str) -> str:
 async def _resolve_template(conn, org_id: str, transaction_type_code: str):
     """Resolve posting template.
 
-    vehicle_type-specific matching is a seam for a later sprint
-    (vehicle_type not yet on spvs).  Always falls back to vehicle_type_scope='any'.
+    vehicle_type-specific matching is a seam for a later sprint.
+    Always uses vehicle_type_scope='any'.
     """
     return await conn.fetchrow(
         "SELECT id, name FROM posting_templates "
@@ -49,13 +61,13 @@ async def build_entry(
     entry_date: Any,
     amount: Any,
     dims: dict,
-    basis: str = "GAAP",
+    ledger_basis: str = "GAAP",
     created_by: Optional[str] = None,
 ) -> dict:
     """Build a draft journal entry with expanded lines.
 
-    Returns the entry dict with a 'lines' key containing journal_lines rows
-    (augmented with account_code, account_name, tax_character for display).
+    Amount drives line-level debit/credit — NOT stored on the entry row itself.
+    Returns the entry dict with 'lines' (augmented with account_code, account_name).
     posted_at is NULL — caller must call post() to commit.
     """
     amount = Decimal(str(amount))
@@ -75,16 +87,18 @@ async def build_entry(
             template_id = str(tmpl["id"])
             template_name = tmpl["name"]
 
+            # Template lines store account_code (text); resolve account_id via COA JOIN.
             lines = await conn.fetch(
-                "SELECT ptl.id, ptl.account_id, ptl.dr_cr, "
-                "       ptl.dimension_source, ptl.line_order, "
-                "       coa.code AS account_code, coa.name AS account_name, "
-                "       coa.tax_character "
+                "SELECT ptl.line_no, ptl.account_code, ptl.side, ptl.dimension_source, "
+                "       coa.id AS account_id, coa.name AS account_name, "
+                "       coa.tax_character_code "
                 "FROM posting_template_lines ptl "
-                "JOIN chart_of_accounts coa ON coa.id = ptl.account_id "
-                "WHERE ptl.posting_template_id = $1::uuid "
-                "ORDER BY ptl.line_order",
-                template_id,
+                "JOIN chart_of_accounts coa "
+                "     ON coa.org_id = $1 AND coa.code = ptl.account_code "
+                "     AND coa.system_to IS NULL AND coa.is_active = true "
+                "WHERE ptl.template_id = $2::uuid "
+                "ORDER BY ptl.line_no",
+                org_id, template_id,
             )
             if not lines:
                 raise ValueError(f"Template '{template_name}' has no lines")
@@ -92,19 +106,21 @@ async def build_entry(
             entry = await conn.fetchrow(
                 "INSERT INTO journal_entries "
                 "(org_id, vehicle_id, transaction_type_code, entry_date, "
-                " amount, dims, basis, template_id, created_by) "
-                "VALUES ($1::uuid, $2::uuid, $3, $4::date, $5, $6::jsonb, $7, $8::uuid, $9::uuid) "
+                " ledger_basis, memo, created_by) "
+                "VALUES ($1::uuid, $2::uuid, $3, $4::date, $5, $6, $7::uuid) "
                 "RETURNING *",
                 org_id, vehicle_id, transaction_type_code, entry_date,
-                amount, json.dumps(dims, default=str), basis, template_id, created_by,
+                ledger_basis,
+                template_name,  # memo records which template produced this entry
+                created_by,
             )
             entry_id = str(entry["id"])
 
             inserted_lines: list[dict] = []
             for ln in lines:
-                dr_cr = ln["dr_cr"]
-                debit: Optional[Decimal] = amount if dr_cr == "D" else None
-                credit: Optional[Decimal] = amount if dr_cr == "C" else None
+                side = ln["side"]
+                debit = amount if side == "D" else Decimal("0")
+                credit = amount if side == "C" else Decimal("0")
 
                 dim_src = ln["dimension_source"]
                 dim_member_series_id = (
@@ -116,23 +132,24 @@ async def build_entry(
 
                 jl = await conn.fetchrow(
                     "INSERT INTO journal_lines "
-                    "(org_id, journal_entry_id, account_id, debit, credit, "
+                    "(entry_id, line_no, account_id, debit, credit, "
                     " dim_member_series_id, dim_investment_id) "
-                    "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7) "
+                    "VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7) "
                     "RETURNING *",
-                    org_id, entry_id, str(ln["account_id"]),
+                    entry_id, ln["line_no"], str(ln["account_id"]),
                     debit, credit,
                     dim_member_series_id, dim_investment_id,
                 )
                 row = dict(jl)
                 row["account_code"] = ln["account_code"]
                 row["account_name"] = ln["account_name"]
-                row["tax_character"] = ln["tax_character"]
+                row["tax_character_code"] = ln["tax_character_code"]
                 inserted_lines.append(row)
 
             result = dict(entry)
             result["lines"] = inserted_lines
             result["template_name"] = template_name
+            result["_amount"] = str(amount)  # echoed back for UI convenience
             return result
 
 
@@ -140,7 +157,6 @@ async def post(pool, entry_id: str, user_id: str) -> dict:
     """Post a draft entry.
 
     Calls fn_post_journal_entry which validates balance and raises if unbalanced.
-    Writes audit_log entry after success.
     """
     async with pool.acquire() as conn:
         await conn.execute(
@@ -160,8 +176,6 @@ async def reverse(pool, entry_id: str, reason: str, user_id: str) -> dict:
     Returns the new reversal entry.
     """
     async with pool.acquire() as conn:
-        # The function may return the new entry's UUID or void.
-        # Capture the return value and fall back to querying by reverses_entry_id.
         try:
             new_id = await conn.fetchval(
                 "SELECT fn_reverse_journal_entry($1::uuid, $2::text, $3::uuid)",

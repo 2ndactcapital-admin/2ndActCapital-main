@@ -8,8 +8,9 @@ Bi-temporal writes (same pattern as entity_relationships):
 from typing import Optional
 
 _COA_FIELDS = (
-    "id, org_id, code, name, account_type, is_capital, "
-    "tax_character, normal_balance, system_from, system_to, created_by, created_at"
+    "id, org_id, code, name, account_type, normal_balance, "
+    "tax_character_code, parent_code, is_capital_account, is_active, "
+    "valid_from, valid_to, system_from, system_to"
 )
 
 
@@ -47,17 +48,16 @@ async def create_account(
 ) -> dict:
     row = await conn.fetchrow(
         "INSERT INTO chart_of_accounts "
-        "(org_id, code, name, account_type, is_capital, tax_character, normal_balance, created_by) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
+        "(org_id, code, name, account_type, is_capital_account, tax_character_code, normal_balance) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7) "
         "RETURNING *",
         org_id,
         data["code"],
         data["name"],
         data["account_type"],
-        data.get("is_capital", False),
-        data.get("tax_character"),
+        data.get("is_capital_account", False),
+        data.get("tax_character_code"),
         data["normal_balance"],
-        created_by,
     )
     return dict(row)
 
@@ -79,16 +79,15 @@ async def update_account(
         o = dict(old)
         new_row = await conn.fetchrow(
             "INSERT INTO chart_of_accounts "
-            "(org_id, code, name, account_type, is_capital, tax_character, normal_balance, created_by) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
+            "(org_id, code, name, account_type, is_capital_account, tax_character_code, normal_balance) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7) "
             "RETURNING *",
             org_id,
             data.get("code", o["code"]),
             data.get("name", o["name"]),
             data.get("account_type", o["account_type"]),
-            data.get("is_capital", o["is_capital"]),
-            data.get("tax_character", o["tax_character"]),
+            data.get("is_capital_account", o["is_capital_account"]),
+            data.get("tax_character_code", o["tax_character_code"]),
             data.get("normal_balance", o["normal_balance"]),
-            updated_by,
         )
         return dict(new_row)

@@ -23,7 +23,6 @@ Tenancy: org_id resolved from JWT (COA) or from spvs.org_id (entries).
 Money: Decimal everywhere.
 """
 
-import json
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -48,8 +47,8 @@ class AccountCreate(BaseModel):
     code: str
     name: str
     account_type: str
-    is_capital: bool = False
-    tax_character: Optional[str] = None
+    is_capital_account: bool = False
+    tax_character_code: Optional[str] = None
     normal_balance: str  # D or C
 
 
@@ -57,8 +56,8 @@ class AccountUpdate(BaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
     account_type: Optional[str] = None
-    is_capital: Optional[bool] = None
-    tax_character: Optional[str] = None
+    is_capital_account: Optional[bool] = None
+    tax_character_code: Optional[str] = None
     normal_balance: Optional[str] = None
 
 
@@ -68,7 +67,7 @@ class EntryCreate(BaseModel):
     entry_date: date
     amount: Decimal
     dims: dict = {}
-    basis: str = "GAAP"
+    ledger_basis: str = "GAAP"
 
     @field_validator("amount")
     @classmethod
@@ -147,7 +146,7 @@ async def build_entry(request: Request, body: EntryCreate):
             entry_date=body.entry_date,
             amount=body.amount,
             dims=body.dims,
-            basis=body.basis,
+            ledger_basis=body.ledger_basis,
             created_by=user_id,
         )
     except LookupError as exc:
@@ -162,25 +161,14 @@ async def post_entry(request: Request, entry_id: UUID):
     user_id = get_user_id(request)
     pool = await get_pool()
 
-    # Fetch entry to get org_id and template_name for audit
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT org_id, template_id FROM journal_entries WHERE id = $1::uuid",
+            "SELECT org_id, memo FROM journal_entries WHERE id = $1::uuid",
             str(entry_id),
         )
     if not row:
         raise HTTPException(status_code=404, detail="Entry not found")
     org_id = str(row["org_id"])
-
-    # Resolve template name for audit rationale
-    template_name = None
-    if row["template_id"]:
-        async with pool.acquire() as conn:
-            t = await conn.fetchrow(
-                "SELECT name FROM posting_templates WHERE id = $1::uuid",
-                str(row["template_id"]),
-            )
-            template_name = t["name"] if t else None
 
     try:
         entry = await posting_svc.post(pool, str(entry_id), user_id)
@@ -190,7 +178,7 @@ async def post_entry(request: Request, entry_id: UUID):
     await write_audit_log(
         org_id=org_id, action="POST_JOURNAL_ENTRY", table_name="journal_entries",
         record_id=str(entry_id),
-        new={"template_name": template_name, "entry_id": str(entry_id)},
+        new={"memo": row["memo"], "entry_id": str(entry_id)},
         actor=user_id,
     )
     return entry
@@ -206,21 +194,12 @@ async def reverse_entry(request: Request, entry_id: UUID, body: ReverseRequest):
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT org_id, template_id FROM journal_entries WHERE id = $1::uuid",
+            "SELECT org_id, memo FROM journal_entries WHERE id = $1::uuid",
             str(entry_id),
         )
     if not row:
         raise HTTPException(status_code=404, detail="Entry not found")
     org_id = str(row["org_id"])
-
-    template_name = None
-    if row["template_id"]:
-        async with pool.acquire() as conn:
-            t = await conn.fetchrow(
-                "SELECT name FROM posting_templates WHERE id = $1::uuid",
-                str(row["template_id"]),
-            )
-            template_name = t["name"] if t else None
 
     try:
         reversal = await posting_svc.reverse(pool, str(entry_id), body.reason, user_id)
@@ -230,7 +209,7 @@ async def reverse_entry(request: Request, entry_id: UUID, body: ReverseRequest):
     await write_audit_log(
         org_id=org_id, action="REVERSE_JOURNAL_ENTRY", table_name="journal_entries",
         record_id=str(entry_id),
-        new={"reason": body.reason, "template_name": template_name, "entry_id": str(entry_id)},
+        new={"reason": body.reason, "memo": row["memo"], "entry_id": str(entry_id)},
         actor=user_id,
     )
     return reversal
@@ -279,7 +258,7 @@ async def trial_balance(
 
     if basis:
         params.append(basis)
-        conditions.append(f"basis = ${len(params)}")
+        conditions.append(f"ledger_basis = ${len(params)}")
     if as_of:
         params.append(as_of)
         conditions.append(f"entry_date <= ${len(params)}::date")
@@ -304,7 +283,7 @@ async def capital_accounts(
 
     if basis:
         params.append(basis)
-        conditions.append(f"basis = ${len(params)}")
+        conditions.append(f"ledger_basis = ${len(params)}")
     if as_of:
         params.append(as_of)
         conditions.append(f"entry_date <= ${len(params)}::date")
@@ -340,14 +319,17 @@ async def list_templates(
         result = []
         for tmpl in templates:
             lines = await conn.fetch(
-                "SELECT ptl.dr_cr, ptl.dimension_source, ptl.line_order, "
-                "       coa.code AS account_code, coa.name AS account_name, "
-                "       coa.tax_character, coa.normal_balance "
+                "SELECT ptl.side, ptl.dimension_source, ptl.line_no, "
+                "       ptl.account_code, "
+                "       coa.name AS account_name, "
+                "       coa.tax_character_code, coa.normal_balance "
                 "FROM posting_template_lines ptl "
-                "JOIN chart_of_accounts coa ON coa.id = ptl.account_id "
-                "WHERE ptl.posting_template_id = $1::uuid "
-                "ORDER BY ptl.line_order",
-                str(tmpl["id"]),
+                "JOIN chart_of_accounts coa "
+                "     ON coa.org_id = $1 AND coa.code = ptl.account_code "
+                "     AND coa.system_to IS NULL AND coa.is_active = true "
+                "WHERE ptl.template_id = $2::uuid "
+                "ORDER BY ptl.line_no",
+                org_id, str(tmpl["id"]),
             )
             d = dict(tmpl)
             d["lines"] = [dict(ln) for ln in lines]

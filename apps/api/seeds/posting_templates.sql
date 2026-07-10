@@ -2,25 +2,26 @@
 -- Idempotent: skips templates that already exist for the org + txn_code combination.
 -- Run AFTER coa_default.sql.
 --
--- Account code → debit/credit mapping (sprint spec):
+-- posting_template_lines columns (from schema snapshot):
+--   template_id, line_no, account_code (text), side ('D'/'C'), amount_source, dimension_source
+--   No account_id — the posting engine resolves account_id at runtime via COA JOIN.
+--
+-- Account code → side mapping (sprint spec):
 --   CAPITAL_CONTRIBUTION : dr 1000 (Cash)          cr 3000 (Capital — Contributed) dim member_series
 --   INVESTMENT_PURCHASE  : dr 1500 (Investments)   cr 1000 (Cash)                  dim investment
 --   MANAGEMENT_FEE       : dr 5000 (Mgmt Fee Exp)  cr 2000 (Accrued Expenses)      dim none
 --   DISTRIBUTION         : dr 3100 (Capital Dist)  cr 1000 (Cash)                  dim member_series
 --   REALIZED_GAIN        : dr 1000 (Cash)           cr 4000 (Realized Gain LT)      dim investment
 --   VALUATION_MARK       : dr 1550 (Unrealized)    cr 4100 (Unreal. App. Income)   dim investment
---
--- Transaction types without an obvious mapping are omitted (no template = no posting path).
 
 WITH new_templates AS (
     INSERT INTO posting_templates
-        (org_id, name, transaction_type_code, vehicle_type_scope, basis, is_active)
+        (org_id, name, transaction_type_code, vehicle_type_scope, is_active)
     SELECT
         o.id,
         t.label,
         t.code,
         'any',
-        'GAAP',
         true
     FROM organizations o
     CROSS JOIN (VALUES
@@ -39,11 +40,12 @@ WITH new_templates AS (
           AND pt.vehicle_type_scope  = 'any'
           AND pt.is_active           = true
     )
-    RETURNING id, org_id, transaction_type_code
+    RETURNING id, transaction_type_code
 ),
 
--- Flatten debit + credit lines into one row set, then join to COA by account code.
-line_spec(txn_code, account_code, dr_cr, dimension_source, line_order) AS (VALUES
+-- Debit + credit lines per transaction type.
+-- account_code stored as text; side is 'D' (debit) or 'C' (credit).
+line_spec(txn_code, account_code, side, dimension_source, line_no) AS (VALUES
     ('CAPITAL_CONTRIBUTION', '1000', 'D', 'none',          1),
     ('CAPITAL_CONTRIBUTION', '3000', 'C', 'member_series', 2),
     ('INVESTMENT_PURCHASE',  '1500', 'D', 'investment',    1),
@@ -59,20 +61,17 @@ line_spec(txn_code, account_code, dr_cr, dimension_source, line_order) AS (VALUE
 )
 
 INSERT INTO posting_template_lines
-    (posting_template_id, account_id, dr_cr, dimension_source, line_order)
+    (template_id, line_no, account_code, side, dimension_source)
 SELECT
     nt.id,
-    coa.id,
-    ls.dr_cr,
-    ls.dimension_source,
-    ls.line_order
+    ls.line_no,
+    ls.account_code,
+    ls.side,
+    ls.dimension_source
 FROM new_templates         nt
-JOIN line_spec             ls  ON ls.txn_code     = nt.transaction_type_code
-JOIN chart_of_accounts     coa ON coa.org_id      = nt.org_id
-                                AND coa.code       = ls.account_code
-                                AND coa.system_to IS NULL
+JOIN line_spec             ls  ON ls.txn_code = nt.transaction_type_code
 WHERE NOT EXISTS (
     SELECT 1
     FROM posting_template_lines ptl
-    WHERE ptl.posting_template_id = nt.id
+    WHERE ptl.template_id = nt.id
 );
