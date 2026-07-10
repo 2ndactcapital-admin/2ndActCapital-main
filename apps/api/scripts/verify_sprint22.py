@@ -3,13 +3,15 @@
 Column names are taken directly from docs/schema_snapshot.sql.
 
 Assertions:
-  1. Unbalanced entry raises on post (fn_post_journal_entry).
-  2. Balanced entry posts; posted_at is set.
-  3. Posted entry's lines cannot be updated or deleted (immutability trigger).
-  4. Reversal produces mirrored lines; trial balance for the vehicle nets to zero.
-  5. Capital accounts sum correctly across two distinct dim_member_series_id values.
-  6. journal_lines insert referencing a chart_of_accounts row from a different org raises
-     (fn_validate_line_org trigger).
+   1. Unbalanced entry raises on post (fn_post_journal_entry).
+   2. Balanced entry posts; posted_at is set.
+   3. Posted entry's lines cannot be updated or deleted (immutability trigger).
+   4. Reversal produces mirrored lines; trial balance for the vehicle nets to zero.
+   5. Capital accounts sum correctly across two distinct dim_member_series_id values.
+   6. journal_lines insert referencing a chart_of_accounts row from a different org raises
+      (fn_validate_line_org trigger).
+  12. Teardown: all test entries gone from journal_entries; all triggers on
+      journal_lines re-enabled (tgenabled = 'O').
 
 Schema facts used here:
   users: id, org_id (NOT NULL), auth0_sub, email, role
@@ -32,6 +34,7 @@ Schema facts used here:
 """
 import asyncio
 import os
+import sys
 import uuid
 from decimal import Decimal
 
@@ -77,10 +80,14 @@ async def main():
     spv_id = str(uuid.uuid4())
     deal_id = str(uuid.uuid4())
     other_org_id = str(uuid.uuid4())
+    # Every journal_entry id this run creates goes here, including the reversal
+    # returned by fn_reverse_journal_entry.  Teardown uses this list so it never
+    # issues a bare DELETE … WHERE vehicle_id = … (which would miss the reversal
+    # entry and leave orphans).
+    entry_ids: list[str] = []
 
     try:
-        # deals.org_id and deals.name are NOT NULL with no default; all other
-        # NOT NULL columns have defaults (deal_status, is_featured, timestamps).
+        # deals.org_id and deals.name are NOT NULL with no default.
         await conn.execute(
             """
             INSERT INTO deals (id, org_id, name)
@@ -139,7 +146,6 @@ async def main():
         record("COA IDs resolved", True)
 
         # ── Assertion 1: Unbalanced entry raises on post ──────────────────
-        # Insert an entry with only a debit line (no matching credit).
         unbal_id = str(uuid.uuid4())
         async with conn.transaction():
             await conn.execute(
@@ -150,7 +156,6 @@ async def main():
                 """,
                 unbal_id, ORG_ID, spv_id, TEST_USER_ID,
             )
-            # Only debit line — no credit — so entry is unbalanced.
             await conn.execute(
                 """
                 INSERT INTO journal_lines (entry_id, line_no, account_id, debit, credit)
@@ -158,6 +163,7 @@ async def main():
                 """,
                 unbal_id, mgmt_fee_id,
             )
+        entry_ids.append(unbal_id)
 
         raised = False
         try:
@@ -170,7 +176,6 @@ async def main():
         record("Unbalanced entry raises on post", raised)
 
         # ── Assertion 2: Balanced entry posts; posted_at is set ───────────
-        ms_id = str(uuid.uuid4())  # synthetic member_series dimension
         bal_id = str(uuid.uuid4())
         async with conn.transaction():
             await conn.execute(
@@ -190,6 +195,7 @@ async def main():
                 """,
                 bal_id, cash_id, cap_contrib_id,
             )
+        entry_ids.append(bal_id)
 
         await conn.execute(
             "SELECT fn_post_journal_entry($1::uuid, $2::uuid)",
@@ -232,7 +238,7 @@ async def main():
         record("Reversal returns new entry id", reversal_created)
 
         if reversal_created:
-            # Net of all debits and credits across both entries should be zero.
+            entry_ids.append(str(rev_id))  # reversal entry must be tracked for teardown
             net = await conn.fetchval(
                 """
                 SELECT COALESCE(SUM(jl.debit), 0) - COALESCE(SUM(jl.credit), 0)
@@ -268,12 +274,13 @@ async def main():
                 """,
                 bal_id2, cash_id, cap_contrib_id, ms_id2,
             )
+        entry_ids.append(bal_id2)
+
         await conn.execute(
             "SELECT fn_post_journal_entry($1::uuid, $2::uuid)",
             bal_id2, TEST_USER_ID,
         )
 
-        # Sum credits on capital account 3000 per member_series_id.
         ca = await conn.fetch(
             """
             SELECT jl.dim_member_series_id, SUM(jl.credit) AS total_credit
@@ -298,6 +305,8 @@ async def main():
         record("Capital accounts: second member series sums correctly", cap_ok, f"balance={ms2_total}")
 
         # ── Assertion 6: Cross-org COA reference raises via trigger ───────
+        # xorg_entry_id is inside a transaction that is always rolled back — never
+        # added to entry_ids.
         cross_org_raised = False
         other_acct_id = str(uuid.uuid4())
         try:
@@ -325,7 +334,6 @@ async def main():
                     """,
                     xorg_entry_id, ORG_ID, spv_id, TEST_USER_ID,
                 )
-                # This should raise: account belongs to other_org_id but entry belongs to ORG_ID.
                 await conn.execute(
                     """
                     INSERT INTO journal_lines (entry_id, line_no, account_id, debit, credit)
@@ -333,47 +341,113 @@ async def main():
                     """,
                     xorg_entry_id, other_acct_id,
                 )
-                # If we got here with no error, the trigger doesn't exist yet.
                 raise Exception("no-trigger")
         except Exception as exc:
             cross_org_raised = "no-trigger" not in str(exc)
         record("Cross-org COA reference raises (fn_validate_line_org)", cross_org_raised)
 
     finally:
-        # ── Teardown (FK-safe order) ───────────────────────────────────────
-        # Children before parents:
-        #   journal_lines → journal_entries → spvs → deals
-        #   chart_of_accounts (other org) → organizations (other org)
-        #   users (test user)
+        # ── Teardown ───────────────────────────────────────────────────────
+        #
+        # trg_guard_posted_lines blocks DELETE on journal_lines for posted entries.
+        # Disable it for the exact set of entry IDs this run created, then
+        # re-enable it in a nested finally so it is NEVER left disabled — a
+        # disabled immutability trigger on a live ledger is the worst outcome
+        # this script could produce.
+        #
+        # Teardown errors are fatal: print to stderr and exit non-zero.  A script
+        # that silently pollutes the ledger is worse than one that crashes.
+
+        teardown_failed = False
+
+        if entry_ids:
+            try:
+                await conn.execute(
+                    "ALTER TABLE journal_lines DISABLE TRIGGER trg_guard_posted_lines"
+                )
+                try:
+                    await conn.execute(
+                        "DELETE FROM journal_lines WHERE entry_id = ANY($1::uuid[])",
+                        entry_ids,
+                    )
+                    await conn.execute(
+                        "DELETE FROM journal_entries WHERE id = ANY($1::uuid[])",
+                        entry_ids,
+                    )
+                finally:
+                    # Always re-enable, even if the deletes raised.
+                    await conn.execute(
+                        "ALTER TABLE journal_lines ENABLE TRIGGER trg_guard_posted_lines"
+                    )
+            except Exception as te:
+                teardown_failed = True
+                print(
+                    f"\n  [teardown] FATAL: entries/lines: {te}",
+                    file=sys.stderr,
+                )
+
         try:
-            await conn.execute(
-                "DELETE FROM journal_lines WHERE entry_id IN "
-                "(SELECT id FROM journal_entries WHERE vehicle_id = $1::uuid)",
-                spv_id,
-            )
-            await conn.execute(
-                "DELETE FROM journal_entries WHERE vehicle_id = $1::uuid", spv_id
-            )
             await conn.execute("DELETE FROM spvs WHERE id = $1::uuid", spv_id)
             await conn.execute("DELETE FROM deals WHERE id = $1::uuid", deal_id)
         except Exception as te:
-            print(f"  [teardown] entries/spv/deal: {te}")
+            teardown_failed = True
+            print(f"\n  [teardown] FATAL: spv/deal: {te}", file=sys.stderr)
+
         try:
+            # other_org rows are always inside a rolled-back transaction so these
+            # deletes are no-ops; keep for safety in case of partial commit.
             await conn.execute(
                 "DELETE FROM chart_of_accounts WHERE org_id = $1::uuid", other_org_id
             )
             await conn.execute(
                 "DELETE FROM organizations WHERE id = $1::uuid", other_org_id
             )
-        except Exception as te:
-            print(f"  [teardown] other org: {te}")
+        except Exception:
+            pass  # expected no-op; rolled-back transaction left nothing
+
         try:
             await conn.execute(
                 "DELETE FROM users WHERE id = $1::uuid", TEST_USER_ID
             )
         except Exception as te:
-            print(f"  [teardown] test user: {te}")
+            teardown_failed = True
+            print(f"\n  [teardown] FATAL: test user: {te}", file=sys.stderr)
+
+        # ── Assertion 12: database clean; all triggers on journal_lines re-enabled
+        try:
+            leftover = 0
+            if entry_ids:
+                leftover = await conn.fetchval(
+                    "SELECT count(*) FROM journal_entries WHERE id = ANY($1::uuid[])",
+                    entry_ids,
+                )
+            trigger_rows = await conn.fetch(
+                "SELECT tgname, tgenabled FROM pg_trigger "
+                "WHERE tgrelid = 'public.journal_lines'::regclass "
+                "  AND tgisinternal = false"
+            )
+            triggers_ok = all(r["tgenabled"] == "O" for r in trigger_rows)
+            trigger_detail = ", ".join(
+                f"{r['tgname']}={r['tgenabled']!r}" for r in trigger_rows
+            )
+            clean_ok = leftover == 0 and triggers_ok and not teardown_failed
+            record(
+                "Teardown: entries deleted and triggers re-enabled",
+                clean_ok,
+                f"leftover={leftover} triggers=[{trigger_detail}]",
+            )
+        except Exception as te:
+            record("Teardown: entries deleted and triggers re-enabled", False, str(te))
+
         await conn.close()
+
+        if teardown_failed:
+            print(
+                "\n  [FATAL] Teardown incomplete — test data left in database. "
+                "Fix manually before re-running.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
 
     # ── Summary ────────────────────────────────────────────────────────────
     passed = sum(1 for _, ok, _ in results if ok)
