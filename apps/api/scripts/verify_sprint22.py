@@ -12,6 +12,10 @@ Assertions:
      (fn_validate_line_org trigger).
 
 Schema facts used here:
+  users: id, org_id (NOT NULL), auth0_sub, email, role
+  deals: id, org_id (NOT NULL), name — all other columns have defaults or are nullable
+  spvs: id, org_id (NOT NULL), deal_id (NOT NULL), name, spv_status (NOT 'status'),
+    target_raise, min_commitment — all other columns nullable or defaulted
   journal_entries: id, org_id, vehicle_id, entry_date, ledger_basis,
     transaction_type_code, memo, reverses_entry_id, reversal_reason,
     posted_at, posted_by, created_at, created_by
@@ -24,6 +28,7 @@ Schema facts used here:
     line_no is NOT NULL and unique per entry; must be supplied.
   chart_of_accounts: is_capital_account, tax_character_code (not is_capital/tax_character)
     No created_by column.
+  organizations: id, name, slug — created_at has default
 """
 import asyncio
 import os
@@ -59,27 +64,40 @@ async def main():
     conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
 
     # ── Seed test user ─────────────────────────────────────────────────────
+    # users.org_id is NOT NULL; supply ORG_ID.
     await conn.execute(
         """
-        INSERT INTO users (id, auth0_sub, email, role)
-        VALUES ($1, 'auth0|test_verify_sprint22', 'test_sprint22@example.com', 'staff')
+        INSERT INTO users (id, org_id, auth0_sub, email, role)
+        VALUES ($1, $2::uuid, 'auth0|test_verify_sprint22', 'test_sprint22@example.com', 'staff')
         ON CONFLICT (auth0_sub) DO NOTHING
         """,
-        TEST_USER_ID,
+        TEST_USER_ID, ORG_ID,
     )
 
     spv_id = str(uuid.uuid4())
+    deal_id = str(uuid.uuid4())
     other_org_id = str(uuid.uuid4())
 
     try:
-        # Insert a minimal test SPV so the posting engine can resolve org_id.
+        # deals.org_id and deals.name are NOT NULL with no default; all other
+        # NOT NULL columns have defaults (deal_status, is_featured, timestamps).
         await conn.execute(
             """
-            INSERT INTO spvs (id, org_id, name, status, target_raise, min_commitment)
-            VALUES ($1::uuid, $2::uuid, 'Test GL SPV', 'open', 100000, 1000)
+            INSERT INTO deals (id, org_id, name)
+            VALUES ($1::uuid, $2::uuid, 'Test GL Deal Sprint22')
             ON CONFLICT (id) DO NOTHING
             """,
-            spv_id, ORG_ID,
+            deal_id, ORG_ID,
+        )
+
+        # spvs.deal_id is NOT NULL; spv_status is the correct column (not 'status').
+        await conn.execute(
+            """
+            INSERT INTO spvs (id, org_id, deal_id, name, spv_status, target_raise, min_commitment)
+            VALUES ($1::uuid, $2::uuid, $3::uuid, 'Test GL SPV', 'forming', 100000, 1000)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            spv_id, ORG_ID, deal_id,
         )
 
         # Verify COA seed is present (needed for all line inserts).
@@ -277,7 +295,7 @@ async def main():
             None,
         )
         cap_ok = ms2_total == Decimal("10000.00")
-        record("Capital accounts: second class sums correctly", cap_ok, f"balance={ms2_total}")
+        record("Capital accounts: second member series sums correctly", cap_ok, f"balance={ms2_total}")
 
         # ── Assertion 6: Cross-org COA reference raises via trigger ───────
         cross_org_raised = False
@@ -323,6 +341,10 @@ async def main():
 
     finally:
         # ── Teardown (FK-safe order) ───────────────────────────────────────
+        # Children before parents:
+        #   journal_lines → journal_entries → spvs → deals
+        #   chart_of_accounts (other org) → organizations (other org)
+        #   users (test user)
         try:
             await conn.execute(
                 "DELETE FROM journal_lines WHERE entry_id IN "
@@ -333,8 +355,9 @@ async def main():
                 "DELETE FROM journal_entries WHERE vehicle_id = $1::uuid", spv_id
             )
             await conn.execute("DELETE FROM spvs WHERE id = $1::uuid", spv_id)
+            await conn.execute("DELETE FROM deals WHERE id = $1::uuid", deal_id)
         except Exception as te:
-            print(f"  [teardown] spv/entries: {te}")
+            print(f"  [teardown] entries/spv/deal: {te}")
         try:
             await conn.execute(
                 "DELETE FROM chart_of_accounts WHERE org_id = $1::uuid", other_org_id
@@ -342,8 +365,14 @@ async def main():
             await conn.execute(
                 "DELETE FROM organizations WHERE id = $1::uuid", other_org_id
             )
-        except Exception:
-            pass
+        except Exception as te:
+            print(f"  [teardown] other org: {te}")
+        try:
+            await conn.execute(
+                "DELETE FROM users WHERE id = $1::uuid", TEST_USER_ID
+            )
+        except Exception as te:
+            print(f"  [teardown] test user: {te}")
         await conn.close()
 
     # ── Summary ────────────────────────────────────────────────────────────
