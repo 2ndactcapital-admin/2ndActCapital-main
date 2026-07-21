@@ -948,6 +948,8 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   vehicle_type                             text NOT NULL DEFAULT 'standalone_spv'::text
 --   master_entity_id                         uuid
+--   class_label                              text
+--   UNIQUE spvs_deal_class_label_uniq: (deal_id, class_label)
 --   PRIMARY KEY spvs_pkey: (id)
 
 -- ===== transaction_types =====
