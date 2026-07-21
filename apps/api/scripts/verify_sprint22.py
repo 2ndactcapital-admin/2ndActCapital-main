@@ -426,9 +426,13 @@ async def main():
                 "WHERE tgrelid = 'public.journal_lines'::regclass "
                 "  AND tgisinternal = false"
             )
-            triggers_ok = all(r["tgenabled"] == "O" for r in trigger_rows)
+            def _tg_enabled(v) -> str:
+                # asyncpg returns pg "char" as bytes; normalise to str.
+                return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+
+            triggers_ok = all(_tg_enabled(r["tgenabled"]) == "O" for r in trigger_rows)
             trigger_detail = ", ".join(
-                f"{r['tgname']}={r['tgenabled']!r}" for r in trigger_rows
+                f"{r['tgname']}={_tg_enabled(r['tgenabled'])!r}" for r in trigger_rows
             )
             clean_ok = leftover == 0 and triggers_ok and not teardown_failed
             record(
