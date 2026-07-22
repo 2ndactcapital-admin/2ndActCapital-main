@@ -81,8 +81,7 @@ echo " Max turns:  $MAX_TURNS (per leg; auto-resumes up to $RESUME_LIMIT times o
 echo " Prompt:     $PROMPT_FILE"
 echo "=================================================="
 
-ALLOWED_TOOLS="Read,Write,Edit,Bash(python scripts/*),Bash(git add*),Bash(git commit*),Bash(git push*),Bash(git checkout*),Bash(git merge*),Bash(git fetch*),mcp__supabase-2ndact-dev"
-
+ALLOWED_TOOLS="Read,Write,Edit,Bash(cd*),Bash(python*),Bash(npm*),Bash(git*),mcp__supabase-2ndact-dev"
 TOTAL_COST="0"
 TOTAL_TURNS="0"
 
@@ -93,7 +92,9 @@ echo ""
 echo "--- Step 1: refresh-schema ---"
 refresh_result=$(timeout 300 claude -p "/refresh-schema" \
   --permission-mode acceptEdits \
-  --allowedTools "$ALLOWED_TOOLS" \
+  --allowedTools "$
+
+ALLOWED_TOOLS" \
   --output-format json 2>"$LOG_DIR/${SPRINT_NAME}.refresh.err")
 refresh_status=$?
 
