@@ -25,7 +25,7 @@ export default function CapTable({
 }) {
   if (!subscriptions.length) {
     return (
-      <div className="mt-2 rounded border border-[#ece8dd] bg-white px-3 py-3 text-sm text-[#64748B]">
+      <div className="mt-2 rounded border border-[#ece8dd] bg-white px-3 py-3 text-sm text-[var(--2a-text-muted)]">
         No subscriptions yet for {spv_name || "this SPV"}.
       </div>
     );
@@ -38,35 +38,35 @@ export default function CapTable({
 
   return (
     <div className="mt-2 rounded border border-[#ece8dd] bg-white px-3 py-3">
-      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#C5A880]">
+      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--2a-gold)]">
         {spv_name || "Cap Table"}
       </p>
-      <div className="mb-2 flex items-center justify-between text-xs text-[#64748B]">
+      <div className="mb-2 flex items-center justify-between text-xs text-[var(--2a-text-muted)]">
         <span>{fmt(total_committed)} committed</span>
         {target_raise && <span>{pct}% of {fmt(target_raise)}</span>}
       </div>
       {pct !== null && (
-        <div className="mb-3 h-1.5 w-full rounded-full bg-[#F5F1EB]">
+        <div className="mb-3 h-1.5 w-full rounded-full bg-[var(--2a-bg-sidebar)]">
           <div
             className="h-1.5 rounded-full"
-            style={{ width: `${pct}%`, backgroundColor: "#C5A880" }}
+            style={{ width: `${pct}%`, backgroundColor: "var(--2a-gold)" }}
           />
         </div>
       )}
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-[#E2E8F0] text-[#64748B]">
+          <tr className="border-b border-[var(--2a-border)] text-[var(--2a-text-muted)]">
             <th className="pb-1 text-left font-medium">Subscriber</th>
             <th className="pb-1 text-right font-medium">Committed</th>
             <th className="pb-1 text-right font-medium">%</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-[#E2E8F0]">
+        <tbody className="divide-y divide-[var(--2a-border)]">
           {subscriptions.map((s, i) => (
             <tr key={i}>
-              <td className="py-1.5 text-[#0F172A]">{s.entity_name}</td>
+              <td className="py-1.5 text-[var(--2a-text)]">{s.entity_name}</td>
               <td className="py-1.5 text-right tabular-nums">{fmt(s.commitment_amount)}</td>
-              <td className="py-1.5 text-right tabular-nums text-[#64748B]">
+              <td className="py-1.5 text-right tabular-nums text-[var(--2a-text-muted)]">
                 {fmtPct(s.ownership_pct)}
               </td>
             </tr>

@@ -3,10 +3,13 @@ import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
 import TaxonomyBrowser from "@/components/TaxonomyBrowser";
 import { getTaxonomy } from "@/lib/api";
+import { brandName, loadTheme } from "@/lib/theme";
 
-export const metadata = {
-  title: "Asset Taxonomy — 2nd Act Capital",
-};
+export async function generateMetadata() {
+  const theme = await loadTheme();
+  const brand = brandName(theme.settings || {});
+  return { title: brand ? `Asset Taxonomy — ${brand}` : "Asset Taxonomy" };
+}
 
 export default async function TaxonomyPage() {
   const session = await auth0.getSession();

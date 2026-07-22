@@ -1,38 +1,37 @@
 @import "tailwindcss";
 
 /*
- * 2nd Act Capital design tokens.
- * Tailwind theme colors back utilities like `bg-navy`, `text-text-secondary`, etc.
- * Brand tokens (--2a-*) are inlined from public/brand/tokens.css.
+ * White-label design tokens (Sprint 24).
+ *
+ * No palette value is written here. The tenant's colours and fonts are
+ * injected as `--2a-*` custom properties by the root layout, sourced from
+ * org_settings via apps/web/lib/theme.js. The only place literal brand values
+ * exist is DEFAULT_SETTINGS in apps/api/services/org_settings.py.
+ *
+ * The Tailwind theme below maps utilities (`bg-navy`, `text-text-muted`, …)
+ * onto those same runtime variables, so every existing utility class is
+ * themed automatically.
  */
 @theme {
-  --color-navy: #1b2b4b;
-  --color-gold: #c5a880;
-  --color-gold-light: #e8d5a3;
-  --color-bg-app: #faf9f6;
-  --color-bg-sidebar: #f5f1eb;
-  --color-bg-card: #ffffff;
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #334155;
-  --color-text-muted: #64748b;
-  --color-border: #e2e8f0;
+  --color-navy: var(--2a-navy);
+  --color-gold: var(--2a-gold);
+  --color-gold-light: var(--2a-gold-light);
+  --color-slate-blue: var(--2a-nav-rest);
+  --color-bg-app: var(--2a-bg);
+  --color-bg-sidebar: var(--2a-bg-sidebar);
+  --color-bg-card: var(--2a-bg-card);
+  --color-text-primary: var(--2a-text);
+  --color-text-secondary: var(--2a-text-secondary);
+  --color-text-muted: var(--2a-text-muted);
+  --color-border: var(--2a-border);
 }
 
-/* Brand tokens (mirrors public/brand/tokens.css) */
 :root {
-  --2a-navy: #1B2B4B;
-  --2a-gold: #C5A880;
-  --2a-gold-light: #E8D5A3;
-  --2a-bg: #FAF9F6;
-  --2a-text: #0F172A;
-  --2a-nav-rest: #9AA6BF;
-  --2a-font-display: 'Spectral', Georgia, serif;
-  --2a-font-body: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
   --2a-text-base: 17px;
 }
 
 html {
-  font-size: 17px;
+  font-size: var(--2a-text-base);
 }
 
 body {
@@ -76,10 +75,10 @@ h1, h2, h3 {
   margin-top: 6px;
 }
 
-/* Wordmark nav variant — scaled for 64px topbar on navy background */
+/* Wordmark nav variant — scaled for the 64px topbar on the navy background */
 .wordmark--nav .wordmark__name {
   font-size: 18px;
-  color: #FAF9F6;
+  color: var(--2a-bg);
 }
 .wordmark--nav .wordmark__desc {
   font-size: 8px;

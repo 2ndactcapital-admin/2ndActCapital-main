@@ -325,10 +325,10 @@ export default async function DealDetailPage({ params, searchParams }) {
           {/* Co-invest via SPV — shown when deal is active */}
           {deal.deal_status === "active" && (
             <div className="rounded-lg border border-[#ece8dd] bg-white p-5">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-[#C5A880]">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--2a-gold)]">
                 Co-invest via SPV
               </h3>
-              <p className="mt-2 text-sm text-[#334155]">
+              <p className="mt-2 text-sm text-[var(--2a-text-secondary)]">
                 Pool capital with other members through a special purpose vehicle.
               </p>
 
@@ -340,17 +340,17 @@ export default async function DealDetailPage({ params, searchParams }) {
                     <li key={c.spv_id}>
                       <a
                         href={`/spvs/${c.spv_id}`}
-                        className="block rounded-md border border-[#ece8dd] px-3 py-2.5 transition hover:border-[#C5A880]"
+                        className="block rounded-md border border-[#ece8dd] px-3 py-2.5 transition hover:border-[var(--2a-gold)]"
                       >
-                        <span className="block text-sm font-medium text-[#1B2B4B]">
+                        <span className="block text-sm font-medium text-[var(--2a-navy)]">
                           {c.class_label ? `Class ${c.class_label}` : c.spv_name}
                         </span>
                         {c.class_label && (
-                          <span className="block text-xs text-[#64748B]">
+                          <span className="block text-xs text-[var(--2a-text-muted)]">
                             {c.spv_name}
                           </span>
                         )}
-                        <span className="mt-1 block text-xs tabular-nums text-[#64748B]">
+                        <span className="mt-1 block text-xs tabular-nums text-[var(--2a-text-muted)]">
                           {c.carry_pct != null
                             ? `${formatPercent(c.carry_pct)} carry`
                             : "Carry —"}
@@ -371,7 +371,7 @@ export default async function DealDetailPage({ params, searchParams }) {
                 <a
                   href={dealClasses.length === 1 ? `/spvs/${dealClasses[0].spv_id}` : "/spvs"}
                   className="mt-3 block rounded-md px-4 py-2 text-center text-sm font-medium text-white transition"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {dealClasses.length === 1 ? "View SPV" : "View open SPVs"}
                 </a>

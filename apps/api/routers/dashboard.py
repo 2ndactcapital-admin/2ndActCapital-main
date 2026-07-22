@@ -16,20 +16,23 @@ from routers.entities import get_org_id
 from services.brief_blocks import BRIEF_REGISTRY
 from services.database import get_pool
 from services.extraction import call_claude_text, ASSISTANT_MODEL
+from services.org_settings import get_brand_name
 from services.rbac import get_user_permissions
 from services.todo_generators import regenerate_todos
 from services.users import ensure_user
 
 router = APIRouter(tags=["dashboard"])
 
-_NARRATION_SYSTEM = (
-    "You are the trusted advisor voice of 2nd Act Capital — a private membership "
+def _narration_system(brand_name: str) -> str:
+    """Sprint 24: the firm's name comes from org_settings, not a literal."""
+    return (
+    f"You are the trusted advisor voice of {brand_name} — a private membership "
     "platform for post-liquidity founders. Write a warm, spare daily brief for the "
     "member in 2–3 sentences. Tone: calm, precise, no hype. No exclamation points, "
     "no emoji. Mention the most important item needing attention if there is one, "
     "and note any promising opportunity or upcoming event. If nothing is urgent, "
     "give a quiet affirming observation about their position."
-)
+    )
 
 
 def _greeting(full_name: str | None) -> str:
@@ -105,7 +108,7 @@ async def get_brief_narration(request: Request):
     context = "\n".join(context_parts) or "No data today."
 
     narration = await call_claude_text(
-        system=_NARRATION_SYSTEM,
+        system=_narration_system(await get_brand_name(pool, org_id)),
         messages=[{"role": "user", "content": f"Member brief context:\n{context}"}],
         max_tokens=180,
         model=ASSISTANT_MODEL,

@@ -139,7 +139,7 @@ function ChatView({ contextRef }) {
       {/* Message list */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {messages.length === 0 && (
-          <p className="text-center text-xs text-[#64748B] mt-8">
+          <p className="text-center text-xs text-[var(--2a-text-muted)] mt-8">
             Ask anything about your portfolio, the marketplace, or your network.
           </p>
         )}
@@ -152,15 +152,15 @@ function ChatView({ contextRef }) {
               className={[
                 "max-w-[85%] rounded-lg px-3 py-2 text-sm",
                 m.role === "user"
-                  ? "bg-[#1B2B4B] text-white"
-                  : "bg-white border border-[#ece8dd] text-[#0F172A]",
+                  ? "bg-[var(--2a-navy)] text-white"
+                  : "bg-white border border-[#ece8dd] text-[var(--2a-text)]",
               ].join(" ")}
             >
               <p className="whitespace-pre-wrap">{m.text}</p>
               {m.disclosures?.length > 0 && (
                 <ul className="mt-1 space-y-0.5">
                   {m.disclosures.map((d, j) => (
-                    <li key={j} className="text-xs text-[#64748B] italic">
+                    <li key={j} className="text-xs text-[var(--2a-text-muted)] italic">
                       {d}
                     </li>
                   ))}
@@ -174,7 +174,7 @@ function ChatView({ contextRef }) {
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="rounded-lg border border-[#ece8dd] bg-white px-3 py-2 text-sm text-[#64748B]">
+            <div className="rounded-lg border border-[#ece8dd] bg-white px-3 py-2 text-sm text-[var(--2a-text-muted)]">
               …
             </div>
           </div>
@@ -194,9 +194,9 @@ function ChatView({ contextRef }) {
       </div>
 
       {/* Composer */}
-      <div className="border-t border-[#E2E8F0] px-3 py-2">
+      <div className="border-t border-[var(--2a-border)] px-3 py-2">
         <textarea
-          className="w-full resize-none rounded border border-[#E2E8F0] bg-[#FAF9F6] px-2 py-1.5 text-sm text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+          className="w-full resize-none rounded border border-[var(--2a-border)] bg-[var(--2a-bg)] px-2 py-1.5 text-sm text-[var(--2a-text)] placeholder-[var(--2a-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
           rows={2}
           placeholder="Message…"
           value={input}
@@ -235,31 +235,31 @@ function TodosView() {
   }
 
   if (loading) {
-    return <p className="px-3 py-6 text-center text-xs text-[#64748B]">Loading…</p>;
+    return <p className="px-3 py-6 text-center text-xs text-[var(--2a-text-muted)]">Loading…</p>;
   }
 
   const noItems = data.actual.length === 0 && data.anticipated.length === 0;
   if (noItems) {
-    return <p className="px-3 py-6 text-center text-xs text-[#64748B]">Nothing pending.</p>;
+    return <p className="px-3 py-6 text-center text-xs text-[var(--2a-text-muted)]">Nothing pending.</p>;
   }
 
   function Section({ label, items }) {
     if (!items.length) return null;
     return (
       <div className="mb-3">
-        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#C5A880]">
+        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--2a-gold)]">
           {label}
         </p>
         {items.map((t) => (
-          <div key={t.id} className="flex items-start gap-2 border-b border-[#F5F1EB] px-3 py-2 last:border-0">
+          <div key={t.id} className="flex items-start gap-2 border-b border-[var(--2a-bg-sidebar)] px-3 py-2 last:border-0">
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-[#0F172A] truncate">{t.title}</p>
-              {t.detail && <p className="text-[10px] text-[#64748B] mt-0.5">{t.detail}</p>}
+              <p className="text-xs font-medium text-[var(--2a-text)] truncate">{t.title}</p>
+              {t.detail && <p className="text-[10px] text-[var(--2a-text-muted)] mt-0.5">{t.detail}</p>}
             </div>
             <button
               type="button"
               onClick={() => dismiss(t.id)}
-              className="text-[10px] text-[#64748B] hover:text-[#0F172A] shrink-0 mt-0.5"
+              className="text-[10px] text-[var(--2a-text-muted)] hover:text-[var(--2a-text)] shrink-0 mt-0.5"
             >
               ✕
             </button>
@@ -301,14 +301,14 @@ export default function AssistantPanel({ user, contextRef }) {
     // Thin rail — click to expand
     return (
       <div
-        className="flex w-10 cursor-pointer flex-col items-center border-l border-[#E2E8F0] bg-white pt-4"
+        className="flex w-10 cursor-pointer flex-col items-center border-l border-[var(--2a-border)] bg-white pt-4"
         title="Open assistant"
         onClick={() => {
           setPosture("expanded");
           setExpanded(true);
         }}
       >
-        <span className="text-[#C5A880]" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", fontSize: 11, letterSpacing: "0.15em" }}>
+        <span className="text-[var(--2a-gold)]" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", fontSize: 11, letterSpacing: "0.15em" }}>
           ASSISTANT
         </span>
       </div>
@@ -318,31 +318,31 @@ export default function AssistantPanel({ user, contextRef }) {
   return (
     <div
       className={[
-        "flex flex-col overflow-hidden border-l border-[#E2E8F0] bg-white transition-all duration-200",
+        "flex flex-col overflow-hidden border-l border-[var(--2a-border)] bg-white transition-all duration-200",
         expanded ? "w-72" : "w-10",
       ].join(" ")}
     >
       {/* Header / toggle */}
       <div
-        className="flex cursor-pointer items-center justify-between border-b border-[#E2E8F0] px-3 py-2"
+        className="flex cursor-pointer items-center justify-between border-b border-[var(--2a-border)] px-3 py-2"
         onClick={() => setExpanded((v) => !v)}
       >
         {expanded && (
-          <span className="text-xs font-semibold uppercase tracking-widest text-[#C5A880]">
+          <span className="text-xs font-semibold uppercase tracking-widest text-[var(--2a-gold)]">
             Assistant
           </span>
         )}
-        <span className="ml-auto text-[#64748B] text-xs">{expanded ? "›" : "‹"}</span>
+        <span className="ml-auto text-[var(--2a-text-muted)] text-xs">{expanded ? "›" : "‹"}</span>
       </div>
 
       {expanded && (
         <>
           {/* View selector — single dropdown, role-gated */}
-          <div className="border-b border-[#E2E8F0] px-2 py-1.5">
+          <div className="border-b border-[var(--2a-border)] px-2 py-1.5">
             <select
               value={activeView}
               onChange={(e) => setActiveView(e.target.value)}
-              className="w-full rounded border border-[#E2E8F0] bg-[#FAF9F6] px-2 py-1 text-xs font-medium text-[#1B2B4B] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+              className="w-full rounded border border-[var(--2a-border)] bg-[var(--2a-bg)] px-2 py-1 text-xs font-medium text-[var(--2a-navy)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
             >
               {availableViews.map((v) => (
                 <option key={v.key} value={v.key}>
@@ -360,7 +360,7 @@ export default function AssistantPanel({ user, contextRef }) {
             {activeView === "Todos" && <TodosView />}
             {activeView === "Activity" && <ActivityView />}
             {(activeView === "Interesting Deals" || activeView === "Messages") && (
-              <p className="px-4 py-6 text-center text-sm text-[#64748B]">Coming soon.</p>
+              <p className="px-4 py-6 text-center text-sm text-[var(--2a-text-muted)]">Coming soon.</p>
             )}
           </div>
         </>

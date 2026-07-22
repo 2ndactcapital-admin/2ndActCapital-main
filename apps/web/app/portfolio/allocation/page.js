@@ -6,7 +6,7 @@ import AllocationSunburst from "@/components/allocation/AllocationSunburst";
 import EntityPicker from "@/components/EntityPicker";
 
 const LABEL_INPUT =
-  "mt-1 rounded-md border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] outline-none focus:ring-2 focus:ring-[#1B2B4B]";
+  "mt-1 rounded-md border border-[var(--2a-border)] bg-white px-3 py-2 text-sm text-[var(--2a-text)] outline-none focus:ring-2 focus:ring-[var(--2a-navy)]";
 
 const SCOPE_OPTIONS = [
   { value: "entity",  label: "Single entity" },
@@ -22,7 +22,7 @@ function ScopeSelector({ scopeType, setScopeType, entity, setEntity }) {
         gap: 12,
         alignItems: "flex-end",
         padding: "16px 20px",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: "var(--2a-bg-card)",
         border: "1px solid #ece8dd",
         borderRadius: 8,
         marginBottom: 24,
@@ -36,7 +36,7 @@ function ScopeSelector({ scopeType, setScopeType, entity, setEntity }) {
             fontWeight: 700,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
-            color: "#64748B",
+            color: "var(--2a-text-muted)",
             marginBottom: 4,
           }}
         >
@@ -61,7 +61,7 @@ function ScopeSelector({ scopeType, setScopeType, entity, setEntity }) {
             fontWeight: 700,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
-            color: "#64748B",
+            color: "var(--2a-text-muted)",
             marginBottom: 4,
           }}
         >
@@ -87,7 +87,7 @@ function SummaryLine({ data }) {
     return `$${v.toFixed(0)}`;
   };
   return (
-    <p style={{ fontSize: 13, color: "#64748B", marginBottom: 16, textAlign: "center" }}>
+    <p style={{ fontSize: 13, color: "var(--2a-text-muted)", marginBottom: 16, textAlign: "center" }}>
       {fmtDollar(total_actual_dollar)} across {entity_count} {entity_count === 1 ? "entity" : "entities"} · as of {as_of}
     </p>
   );
@@ -131,7 +131,7 @@ export default function AllocationPage() {
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.22em",
-              color: "#C5A880",
+              color: "var(--2a-gold)",
               marginBottom: 6,
             }}
           >
@@ -142,7 +142,7 @@ export default function AllocationPage() {
               fontFamily: "Spectral, Georgia, serif",
               fontWeight: 300,
               fontSize: "clamp(1.5rem, 3vw, 2rem)",
-              color: "#1B2B4B",
+              color: "var(--2a-navy)",
               letterSpacing: "-0.015em",
               margin: 0,
             }}
@@ -163,7 +163,7 @@ export default function AllocationPage() {
             style={{
               textAlign: "center",
               padding: "80px 24px",
-              color: "#64748B",
+              color: "var(--2a-text-muted)",
               fontSize: 14,
             }}
           >
@@ -172,7 +172,7 @@ export default function AllocationPage() {
         )}
 
         {entity && loading && (
-          <div style={{ textAlign: "center", padding: "80px 24px", color: "#64748B", fontSize: 14 }}>
+          <div style={{ textAlign: "center", padding: "80px 24px", color: "var(--2a-text-muted)", fontSize: 14 }}>
             Loading…
           </div>
         )}

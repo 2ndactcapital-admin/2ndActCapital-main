@@ -10,18 +10,18 @@ import SPVSubscriptionsTab from "@/components/spv/SPVSubscriptionsTab";
 import SPVTransactionsTab from "@/components/spv/SPVTransactionsTab";
 
 const STATUS_CONFIG = {
-  forming: { label: "Forming", bg: "bg-[#F5F1EB]", text: "text-[#64748B]" },
+  forming: { label: "Forming", bg: "bg-[var(--2a-bg-sidebar)]", text: "text-[var(--2a-text-muted)]" },
   open: { label: "Open", bg: "bg-[#E8F5E9]", text: "text-[#2D6A4F]" },
-  closing: { label: "Closing", bg: "bg-[#EEF4FF]", text: "text-[#1B2B4B]" },
-  closed: { label: "Closed", bg: "bg-[#F5F1EB]", text: "text-[#64748B]" },
+  closing: { label: "Closing", bg: "bg-[#EEF4FF]", text: "text-[var(--2a-navy)]" },
+  closed: { label: "Closed", bg: "bg-[var(--2a-bg-sidebar)]", text: "text-[var(--2a-text-muted)]" },
   cancelled: { label: "Cancelled", bg: "bg-[#FEF3F2]", text: "text-[#9B2335]" },
 };
 
 function StatusPill({ status }) {
   const cfg = STATUS_CONFIG[status] || {
     label: status,
-    bg: "bg-[#F5F1EB]",
-    text: "text-[#64748B]",
+    bg: "bg-[var(--2a-bg-sidebar)]",
+    text: "text-[var(--2a-text-muted)]",
   };
   return (
     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.bg} ${cfg.text}`}>
@@ -33,26 +33,26 @@ function StatusPill({ status }) {
 function Metric({ label, value }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{label}</dt>
-      <dd className="mt-0.5 text-sm font-medium text-[#0F172A] tabular-nums">{value}</dd>
+      <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">{label}</dt>
+      <dd className="mt-0.5 text-sm font-medium text-[var(--2a-text)] tabular-nums">{value}</dd>
     </div>
   );
 }
 
 function HistorySection({ history }) {
   if (!history?.length) {
-    return <p className="text-sm text-[#64748B] py-6 text-center">No status history.</p>;
+    return <p className="text-sm text-[var(--2a-text-muted)] py-6 text-center">No status history.</p>;
   }
   return (
-    <ol className="relative border-l border-[#E2E8F0] pl-4 space-y-4">
+    <ol className="relative border-l border-[var(--2a-border)] pl-4 space-y-4">
       {history.map((h) => (
         <li key={h.id} className="ml-2">
-          <div className="absolute -left-1.5 mt-1 h-3 w-3 rounded-full border border-white bg-[#C5A880]" />
-          <p className="text-xs text-[#64748B]">{formatDate(h.created_at)}</p>
-          <p className="text-sm text-[#0F172A]">
+          <div className="absolute -left-1.5 mt-1 h-3 w-3 rounded-full border border-white bg-[var(--2a-gold)]" />
+          <p className="text-xs text-[var(--2a-text-muted)]">{formatDate(h.created_at)}</p>
+          <p className="text-sm text-[var(--2a-text)]">
             {h.from_status ? `${h.from_status} → ${h.to_status}` : h.to_status}
           </p>
-          {h.note && <p className="text-xs text-[#64748B] mt-0.5">{h.note}</p>}
+          {h.note && <p className="text-xs text-[var(--2a-text-muted)] mt-0.5">{h.note}</p>}
         </li>
       ))}
     </ol>
@@ -101,23 +101,23 @@ export default async function SPVDetailPage({ params, searchParams }) {
       <div className="mx-auto max-w-5xl">
         {/* Header */}
         <div className="mb-6">
-          <a href="/spvs" className="text-xs text-[#64748B] hover:text-[#C5A880]">
+          <a href="/spvs" className="text-xs text-[var(--2a-text-muted)] hover:text-[var(--2a-gold)]">
             ← SPV Manager
           </a>
           <div className="mt-3 flex items-start justify-between gap-4">
             <div>
               <h1
                 className="text-2xl font-light"
-                style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+                style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
               >
                 {spv.name}
                 {/* Class label only appears on multi-class investments */}
                 {spv.class_label && (
-                  <span className="text-[#64748B]"> — Class {spv.class_label}</span>
+                  <span className="text-[var(--2a-text-muted)]"> — Class {spv.class_label}</span>
                 )}
               </h1>
               {spv.close_date && (
-                <p className="mt-0.5 text-sm text-[#64748B]">
+                <p className="mt-0.5 text-sm text-[var(--2a-text-muted)]">
                   Closes {formatDate(spv.close_date)}
                 </p>
               )}
@@ -138,15 +138,15 @@ export default async function SPVDetailPage({ params, searchParams }) {
         </div>
 
         {/* Tabs */}
-        <div className="mb-4 flex gap-4 border-b border-[#E2E8F0]">
+        <div className="mb-4 flex gap-4 border-b border-[var(--2a-border)]">
           {tabs.map((t) => (
             <a
               key={t.key}
               href={t.href || `/spvs/${id}?tab=${t.key}`}
               className={`pb-2 text-sm font-medium transition-colors ${
                 tab === t.key
-                  ? "border-b-2 border-[#C5A880] text-[#1B2B4B]"
-                  : "text-[#64748B] hover:text-[#0F172A]"
+                  ? "border-b-2 border-[var(--2a-gold)] text-[var(--2a-navy)]"
+                  : "text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
               }`}
             >
               {t.label}
@@ -160,7 +160,7 @@ export default async function SPVDetailPage({ params, searchParams }) {
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {/* Status shown as a pill in the detail grid */}
               <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Status</dt>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Status</dt>
                 <dd className="mt-1">
                   <StatusPill status={spv.status} />
                 </dd>

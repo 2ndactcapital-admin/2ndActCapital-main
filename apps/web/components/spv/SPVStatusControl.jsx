@@ -51,7 +51,7 @@ export default function SPVStatusControl({ spv }) {
       <button
         type="button"
         onClick={() => { setOpen(true); setTarget(options[0] || ""); }}
-        className="rounded-md border border-[#E2E8F0] px-3 py-1.5 text-xs font-medium text-[#334155] hover:border-[#C5A880] hover:text-[#1B2B4B] transition"
+        className="rounded-md border border-[var(--2a-border)] px-3 py-1.5 text-xs font-medium text-[var(--2a-text-secondary)] hover:border-[var(--2a-gold)] hover:text-[var(--2a-navy)] transition"
       >
         Change status
       </button>
@@ -61,17 +61,17 @@ export default function SPVStatusControl({ spv }) {
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h2
               className="mb-4 text-base font-light"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
             >
               Transition SPV Status
             </h2>
             <form onSubmit={handleTransition} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-[#334155] mb-1">New Status</label>
+                <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">New Status</label>
                 <select
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 >
                   {options.map((s) => (
                     <option key={s} value={s}>{s}</option>
@@ -79,12 +79,12 @@ export default function SPVStatusControl({ spv }) {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-[#334155] mb-1">Note (optional)</label>
+                <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">Note (optional)</label>
                 <input
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   placeholder="Reason for transition"
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 />
               </div>
               {error && <p className="text-xs text-[#9B2335]">{error}</p>}
@@ -92,7 +92,7 @@ export default function SPVStatusControl({ spv }) {
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+                  className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
@@ -100,7 +100,7 @@ export default function SPVStatusControl({ spv }) {
                   type="submit"
                   disabled={submitting || !target}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {submitting ? "Saving…" : "Confirm"}
                 </button>

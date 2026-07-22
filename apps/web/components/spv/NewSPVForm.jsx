@@ -112,7 +112,7 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
         type="button"
         onClick={() => setOpen(true)}
         className="rounded-md px-4 py-2 text-sm font-medium text-white"
-        style={{ backgroundColor: "#1B2B4B" }}
+        style={{ backgroundColor: "var(--2a-navy)" }}
       >
         New SPV
       </button>
@@ -122,32 +122,32 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
             <h2
               className="mb-4 text-lg font-light"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
             >
               New SPV
             </h2>
             <form onSubmit={handleSubmit} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-[#334155] mb-1">
+                <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">
                   Name *
                 </label>
                 <input
                   name="name"
                   required
                   placeholder="e.g. Acme Growth SPV I"
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[#334155] mb-1">
+                <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">
                   Deal *
                 </label>
                 {lockedDealId ? (
-                  <div className="w-full rounded border border-[#E2E8F0] bg-[#FAF9F6] px-3 py-2 text-sm text-[#334155]">
+                  <div className="w-full rounded border border-[var(--2a-border)] bg-[var(--2a-bg)] px-3 py-2 text-sm text-[var(--2a-text-secondary)]">
                     {lockedDealName || lockedDealId}
                   </div>
                 ) : dealsLoading ? (
-                  <div className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm text-[#64748B]">
+                  <div className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm text-[var(--2a-text-muted)]">
                     Loading deals…
                   </div>
                 ) : (
@@ -156,7 +156,7 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                     required
                     value={dealId}
                     onChange={(e) => setDealId(e.target.value)}
-                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880] bg-white"
+                    className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)] bg-white"
                   >
                     <option value="" disabled>Select a deal</option>
                     {deals.map((d) => (
@@ -171,7 +171,7 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
               {/* Class — required once the investment already has an SPV */}
               {classState && (
                 <div>
-                  <label className="block text-xs font-medium text-[#334155] mb-1">
+                  <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">
                     Class {classRequired && "*"}
                   </label>
                   <input
@@ -180,9 +180,9 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                     value={classLabel}
                     onChange={(e) => setClassLabel(e.target.value)}
                     placeholder={classRequired ? classState.suggested_class_label : "Optional"}
-                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                    className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                   />
-                  <p className="mt-1 text-xs text-[#64748B]">
+                  <p className="mt-1 text-xs text-[var(--2a-text-muted)]">
                     {classRequired
                       ? `This investment already has ${classState.spv_count} SPV${
                           classState.spv_count === 1 ? "" : "s"
@@ -197,27 +197,27 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#334155] mb-1">Target Raise ($)</label>
+                  <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">Target Raise ($)</label>
                   <input
                     name="target_raise"
                     type="number"
                     min="0"
                     placeholder="5000000"
-                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                    className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#334155] mb-1">Min. Commitment ($)</label>
+                  <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">Min. Commitment ($)</label>
                   <input
                     name="min_commitment"
                     type="number"
                     min="0"
                     placeholder="100000"
-                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                    className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#334155] mb-1">Carry (%)</label>
+                  <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">Carry (%)</label>
                   <input
                     name="carry_pct"
                     type="number"
@@ -225,11 +225,11 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                     max="100"
                     step="0.1"
                     placeholder="20"
-                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                    className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#334155] mb-1">Mgmt Fee (%)</label>
+                  <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">Mgmt Fee (%)</label>
                   <input
                     name="mgmt_fee_pct"
                     type="number"
@@ -237,16 +237,16 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                     max="100"
                     step="0.1"
                     placeholder="2"
-                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                    className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-[#334155] mb-1">Close Date</label>
+                <label className="block text-xs font-medium text-[var(--2a-text-secondary)] mb-1">Close Date</label>
                 <input
                   name="close_date"
                   type="date"
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 />
               </div>
               {error && <p className="text-xs text-[#9B2335]">{error}</p>}
@@ -254,7 +254,7 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+                  className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
@@ -262,7 +262,7 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                   type="submit"
                   disabled={submitting}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {submitting ? "Creating…" : "Create SPV"}
                 </button>

@@ -11,7 +11,7 @@ const fmt = (value) =>
 const netColor = (value) => {
   if (value > 0) return "#2D6A4F";
   if (value < 0) return "#9B2335";
-  return "#64748B";
+  return "var(--2a-text-muted)";
 };
 
 export default function SPVLedger({ spv_id, spv_name, summary = {} }) {
@@ -27,7 +27,7 @@ export default function SPVLedger({ spv_id, spv_name, summary = {} }) {
   return (
     <div
       style={{
-        background: "#FFFFFF",
+        background: "var(--2a-bg-card)",
         border: "1px solid #ece8dd",
         borderRadius: 6,
         padding: "20px 24px",
@@ -39,7 +39,7 @@ export default function SPVLedger({ spv_id, spv_name, summary = {} }) {
           fontFamily: "'Spectral', Georgia, serif",
           fontWeight: 300,
           fontSize: 20,
-          color: "#1B2B4B",
+          color: "var(--2a-navy)",
           margin: "0 0 20px 0",
           lineHeight: 1.3,
         }}
@@ -63,7 +63,7 @@ export default function SPVLedger({ spv_id, spv_name, summary = {} }) {
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.22em",
-                color: "#C5A880",
+                color: "var(--2a-gold)",
                 marginBottom: 4,
               }}
             >
@@ -73,7 +73,7 @@ export default function SPVLedger({ spv_id, spv_name, summary = {} }) {
               style={{
                 fontSize: 16,
                 fontWeight: 500,
-                color: isNet ? netColor(value) : "#0F172A",
+                color: isNet ? netColor(value) : "var(--2a-text)",
                 textAlign: "right",
                 fontVariantNumeric: "tabular-nums",
               }}
@@ -90,8 +90,8 @@ export default function SPVLedger({ spv_id, spv_name, summary = {} }) {
           style={{
             display: "inline-block",
             padding: "8px 18px",
-            background: "#1B2B4B",
-            color: "#FAF9F6",
+            background: "var(--2a-navy)",
+            color: "var(--2a-bg)",
             borderRadius: 4,
             fontSize: 14,
             fontWeight: 500,

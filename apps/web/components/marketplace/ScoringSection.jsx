@@ -58,7 +58,7 @@ function DimensionRow({ dealId, dimension, label, weight, existing, onSaved }) {
           max={100}
           value={score}
           onChange={(e) => setScore(Number(e.target.value))}
-          className="flex-1 accent-[#C5A880]"
+          className="flex-1 accent-[var(--2a-gold)]"
         />
         <input
           type="number"

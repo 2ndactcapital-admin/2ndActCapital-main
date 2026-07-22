@@ -12,7 +12,7 @@ const DOC_TYPES = [
 
 const STATUS_CFG = {
   active: { label: "Active", bg: "#E8F5E9", color: "#2D6A4F" },
-  deprecated: { label: "Deprecated", bg: "#F5F1EB", color: "#64748B" },
+  deprecated: { label: "Deprecated", bg: "var(--2a-bg-sidebar)", color: "var(--2a-text-muted)" },
   archived: { label: "Archived", bg: "#FEF3F2", color: "#9B2335" },
 };
 
@@ -33,7 +33,7 @@ function extractErrorMessage(err) {
 }
 
 function StatusPill({ status }) {
-  const cfg = STATUS_CFG[status] || { label: status, bg: "#F5F1EB", color: "#64748B" };
+  const cfg = STATUS_CFG[status] || { label: status, bg: "var(--2a-bg-sidebar)", color: "var(--2a-text-muted)" };
   return (
     <span
       className="rounded-full px-2 py-0.5 text-[10px] font-medium capitalize"
@@ -163,9 +163,9 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
       {/* Toolbar */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-base font-semibold text-[#1B2B4B]">Documents</h2>
+          <h2 className="text-base font-semibold text-[var(--2a-navy)]">Documents</h2>
           {staff && (
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[#64748B]">
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--2a-text-muted)]">
               <input
                 type="checkbox"
                 checked={showAll}
@@ -180,7 +180,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
             type="button"
             onClick={() => { setUploadOpen(true); setUploadError(null); }}
             className="rounded-md px-4 py-2 text-sm font-medium text-white"
-            style={{ backgroundColor: "#1B2B4B" }}
+            style={{ backgroundColor: "var(--2a-navy)" }}
           >
             Upload Document
           </button>
@@ -189,14 +189,14 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
 
       {/* Document list */}
       {visible.length === 0 ? (
-        <p className="py-6 text-center text-sm text-[#64748B]">No documents uploaded.</p>
+        <p className="py-6 text-center text-sm text-[var(--2a-text-muted)]">No documents uploaded.</p>
       ) : (
-        <ul className="divide-y divide-[#E2E8F0]">
+        <ul className="divide-y divide-[var(--2a-border)]">
           {visible.map((d) => (
             <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[#0F172A]">{d.file_name || d.title}</p>
-                <p className="text-xs text-[#64748B]">
+                <p className="text-sm font-medium text-[var(--2a-text)]">{d.file_name || d.title}</p>
+                <p className="text-xs text-[var(--2a-text-muted)]">
                   {d.document_type} · {formatDate(d.created_at)}
                 </p>
               </div>
@@ -205,7 +205,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                 <button
                   type="button"
                   onClick={() => handleDownload(d)}
-                  className="text-xs font-medium text-[#1B2B4B] hover:underline"
+                  className="text-xs font-medium text-[var(--2a-navy)] hover:underline"
                 >
                   Download
                 </button>
@@ -214,14 +214,14 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                     <button
                       type="button"
                       onClick={() => { setVersionTarget(d); setUploadError(null); }}
-                      className="text-xs text-[#64748B] hover:text-[#0F172A]"
+                      className="text-xs text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                     >
                       New version
                     </button>
                     <button
                       type="button"
                       onClick={() => handleStatusChange(d, "archived")}
-                      className="text-xs text-[#64748B] hover:text-[#9B2335]"
+                      className="text-xs text-[var(--2a-text-muted)] hover:text-[#9B2335]"
                     >
                       Archive
                     </button>
@@ -231,7 +231,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                   <button
                     type="button"
                     onClick={() => handleStatusChange(d, "active")}
-                    className="text-xs text-[#64748B] hover:text-[#1B2B4B]"
+                    className="text-xs text-[var(--2a-text-muted)] hover:text-[var(--2a-navy)]"
                   >
                     Restore
                   </button>
@@ -257,17 +257,17 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h2
               className="mb-4 text-base font-light"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
             >
               Upload Document
             </h2>
             <form onSubmit={handleUpload} className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#334155]">Document Type</label>
+                <label className="mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]">Document Type</label>
                 <select
                   value={docType}
                   onChange={(e) => setDocType(e.target.value)}
-                  className="w-full rounded border border-[#E2E8F0] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 >
                   {DOC_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
@@ -275,24 +275,24 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#334155]">
+                <label className="mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]">
                   Title (optional — defaults to file name)
                 </label>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. Series A Subscription Agreement"
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#334155]">File *</label>
+                <label className="mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]">File *</label>
                 <input
                   ref={fileRef}
                   type="file"
                   required
                   accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg"
-                  className="w-full text-sm text-[#334155] file:mr-3 file:rounded file:border-0 file:bg-[#F5F1EB] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[#1B2B4B]"
+                  className="w-full text-sm text-[var(--2a-text-secondary)] file:mr-3 file:rounded file:border-0 file:bg-[var(--2a-bg-sidebar)] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[var(--2a-navy)]"
                 />
               </div>
               {uploadError && <p className="text-xs text-[#9B2335]">{uploadError}</p>}
@@ -300,7 +300,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                 <button
                   type="button"
                   onClick={() => { setUploadOpen(false); setUploadError(null); }}
-                  className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+                  className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
@@ -308,7 +308,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                   type="submit"
                   disabled={uploading}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {uploading ? "Uploading…" : "Upload"}
                 </button>
@@ -324,22 +324,22 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h2
               className="mb-1 text-base font-light"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
             >
               New Version
             </h2>
-            <p className="mb-4 text-sm text-[#64748B]">
+            <p className="mb-4 text-sm text-[var(--2a-text-muted)]">
               {versionTarget.file_name} — current version will be marked deprecated.
             </p>
             <form onSubmit={handleVersion} className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#334155]">Replacement file *</label>
+                <label className="mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]">Replacement file *</label>
                 <input
                   ref={versionFileRef}
                   type="file"
                   required
                   accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg"
-                  className="w-full text-sm text-[#334155] file:mr-3 file:rounded file:border-0 file:bg-[#F5F1EB] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[#1B2B4B]"
+                  className="w-full text-sm text-[var(--2a-text-secondary)] file:mr-3 file:rounded file:border-0 file:bg-[var(--2a-bg-sidebar)] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[var(--2a-navy)]"
                 />
               </div>
               {uploadError && <p className="text-xs text-[#9B2335]">{uploadError}</p>}
@@ -347,7 +347,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                 <button
                   type="button"
                   onClick={() => { setVersionTarget(null); setUploadError(null); }}
-                  className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+                  className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
@@ -355,7 +355,7 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
                   type="submit"
                   disabled={uploading}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {uploading ? "Uploading…" : "Upload version"}
                 </button>
@@ -371,18 +371,18 @@ export default function SPVDocumentsTab({ spvId, initialDocuments = [], staff = 
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h2
               className="mb-2 text-base font-light"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
             >
               Delete document?
             </h2>
-            <p className="text-sm text-[#64748B]">
-              <strong className="font-medium text-[#0F172A]">{deleteTarget.file_name || deleteTarget.title}</strong> will be permanently removed from storage. This cannot be undone.
+            <p className="text-sm text-[var(--2a-text-muted)]">
+              <strong className="font-medium text-[var(--2a-text)]">{deleteTarget.file_name || deleteTarget.title}</strong> will be permanently removed from storage. This cannot be undone.
             </p>
             <div className="mt-5 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setDeleteTarget(null)}
-                className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+                className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
               >
                 Cancel
               </button>

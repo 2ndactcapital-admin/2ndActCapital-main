@@ -25,18 +25,18 @@ function formatDate(val) {
 
 // ─── Type badge config ──────────────────────────────────────────────────────
 const TYPE_CONFIG = {
-  capital_call: { label: "Capital Call", bg: "#1B2B4B", text: "#FFFFFF" },
-  call_investment: { label: "Capital Call", bg: "#1B2B4B", text: "#FFFFFF" },
+  capital_call: { label: "Capital Call", bg: "var(--2a-navy)", text: "var(--2a-bg)" },
+  call_investment: { label: "Capital Call", bg: "var(--2a-navy)", text: "var(--2a-bg)" },
   distribution: { label: "Distribution", bg: "#E8F5E9", text: "#2D6A4F" },
   dist_standard: { label: "Distribution", bg: "#E8F5E9", text: "#2D6A4F" },
-  dist_recallable: { label: "Dist. (Recallable)", bg: "#FDF8EE", text: "#C5A880" },
-  fee: { label: "Fee", bg: "#F1F5F9", text: "#64748B" },
-  management_fee: { label: "Mgmt Fee", bg: "#F1F5F9", text: "#64748B" },
+  dist_recallable: { label: "Dist. (Recallable)", bg: "#FDF8EE", text: "var(--2a-gold)" },
+  fee: { label: "Fee", bg: "#F1F5F9", text: "var(--2a-text-muted)" },
+  management_fee: { label: "Mgmt Fee", bg: "#F1F5F9", text: "var(--2a-text-muted)" },
   return_of_capital: { label: "Return of Capital", bg: "#EFF6FF", text: "#1D4ED8" },
 };
 
 function TypeBadge({ type }) {
-  const cfg = TYPE_CONFIG[type] || { label: (type || "").replace(/_/g, " "), bg: "#F1F5F9", text: "#64748B" };
+  const cfg = TYPE_CONFIG[type] || { label: (type || "").replace(/_/g, " "), bg: "#F1F5F9", text: "var(--2a-text-muted)" };
   return (
     <span
       className="inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide"
@@ -49,14 +49,14 @@ function TypeBadge({ type }) {
 
 // ─── Status pill config ─────────────────────────────────────────────────────
 const STATUS_CONFIG = {
-  draft: { label: "Draft", bg: "#F1F5F9", text: "#64748B" },
-  allocated: { label: "Allocated", bg: "#FDF8EE", text: "#C5A880" },
-  posted: { label: "Posted", bg: "#1B2B4B", text: "#FFFFFF" },
+  draft: { label: "Draft", bg: "#F1F5F9", text: "var(--2a-text-muted)" },
+  allocated: { label: "Allocated", bg: "#FDF8EE", text: "var(--2a-gold)" },
+  posted: { label: "Posted", bg: "var(--2a-navy)", text: "var(--2a-bg)" },
   void: { label: "Void", bg: "#FEF3F2", text: "#9B2335" },
 };
 
 function StatusPill({ status }) {
-  const cfg = STATUS_CONFIG[status] || { label: status, bg: "#F1F5F9", text: "#64748B" };
+  const cfg = STATUS_CONFIG[status] || { label: status, bg: "#F1F5F9", text: "var(--2a-text-muted)" };
   return (
     <span
       className="inline-block rounded-full px-2.5 py-0.5 text-[10px] font-medium"
@@ -105,7 +105,7 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
     return (
       <tr>
         <td colSpan={7} className="pb-2 pt-0">
-          <div className="mx-6 rounded bg-[#FAF9F6] px-4 py-3 text-xs text-[#64748B]">
+          <div className="mx-6 rounded bg-[var(--2a-bg)] px-4 py-3 text-xs text-[var(--2a-text-muted)]">
             Loading allocations…
           </div>
         </td>
@@ -129,7 +129,7 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
     return (
       <tr>
         <td colSpan={7} className="pb-2 pt-0">
-          <div className="mx-6 rounded bg-[#FAF9F6] px-4 py-3 text-xs text-[#64748B]">
+          <div className="mx-6 rounded bg-[var(--2a-bg)] px-4 py-3 text-xs text-[var(--2a-text-muted)]">
             No allocations recorded.
           </div>
         </td>
@@ -144,17 +144,17 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
   return (
     <tr>
       <td colSpan={7} className="pb-3 pt-0">
-        <div className="mx-6 rounded border border-[#ece8dd] bg-[#FAF9F6]">
+        <div className="mx-6 rounded border border-[#ece8dd] bg-[var(--2a-bg)]">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-[#ece8dd]">
-                <th className="py-2 pl-3 text-left font-semibold uppercase tracking-wide text-[#64748B]">
+                <th className="py-2 pl-3 text-left font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">
                   Entity
                 </th>
-                <th className="py-2 text-right font-semibold uppercase tracking-wide text-[#64748B]">
+                <th className="py-2 text-right font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">
                   Ownership %
                 </th>
-                <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide text-[#64748B]">
+                <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">
                   Allocated Amount
                 </th>
               </tr>
@@ -162,11 +162,11 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
             <tbody className="divide-y divide-[#ece8dd]">
               {allocations.map((a, i) => (
                 <tr key={i}>
-                  <td className="py-1.5 pl-3 text-[#0F172A]">{a.entity_name || a.entity_id}</td>
-                  <td className="py-1.5 text-right tabular-nums text-[#334155]">
+                  <td className="py-1.5 pl-3 text-[var(--2a-text)]">{a.entity_name || a.entity_id}</td>
+                  <td className="py-1.5 text-right tabular-nums text-[var(--2a-text-secondary)]">
                     {a.ownership_pct != null ? `${parseFloat(a.ownership_pct).toFixed(2)}%` : "—"}
                   </td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums text-[#0F172A]">
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-[var(--2a-text)]">
                     {formatMoney(a.allocated_amount)}
                   </td>
                 </tr>
@@ -176,7 +176,7 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
               <tr className="border-t border-[#ece8dd]">
                 <td
                   colSpan={2}
-                  className="py-2 pl-3 text-xs font-semibold text-[#334155]"
+                  className="py-2 pl-3 text-xs font-semibold text-[var(--2a-text-secondary)]"
                 >
                   Total
                   {balanced && (
@@ -184,7 +184,7 @@ function AllocationRow({ spvId, txnId, txnAmount }) {
                   )}
                 </td>
                 <td
-                  className="py-2 pr-3 text-right tabular-nums font-semibold text-[#0F172A]"
+                  className="py-2 pr-3 text-right tabular-nums font-semibold text-[var(--2a-text)]"
                 >
                   {formatMoney(sum)}
                 </td>
@@ -266,14 +266,14 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
   }
 
   const fieldClass =
-    "w-full rounded border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]";
-  const labelClass = "mb-1 block text-xs font-medium text-[#334155]";
+    "w-full rounded border border-[var(--2a-border)] bg-white px-3 py-2 text-sm text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]";
+  const labelClass = "mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-lg">
         <h2
-          className="mb-5 text-lg font-light text-[#1B2B4B]"
+          className="mb-5 text-lg font-light text-[var(--2a-navy)]"
           style={{ fontFamily: "Spectral, Georgia, serif" }}
         >
           Add Transaction
@@ -342,7 +342,7 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
             </div>
           </div>
           {selectedType && (
-            <p className="text-[11px] text-[#64748B]">
+            <p className="text-[11px] text-[var(--2a-text-muted)]">
               {selectedType.direction === "debit" ? "Debit" : "Credit"} ·{" "}
               {selectedType.category}
               {selectedType.is_recallable && " · Recallable"}
@@ -377,7 +377,7 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+              className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
             >
               Cancel
             </button>
@@ -385,7 +385,7 @@ function AddTransactionModal({ spvId, onClose, onCreated }) {
               type="submit"
               disabled={submitting || !form.transaction_type_id || !form.txn_date || !form.amount}
               className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              style={{ backgroundColor: "#1B2B4B" }}
+              style={{ backgroundColor: "var(--2a-navy)" }}
             >
               {submitting ? "Adding…" : "Add Transaction"}
             </button>
@@ -508,7 +508,7 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
     const btnBase =
       "rounded px-2.5 py-1 text-[11px] font-medium transition-colors";
     const navyBtn = `${btnBase} text-white`;
-    const ghostBtn = `${btnBase} border border-[#E2E8F0] text-[#334155] hover:border-[#C5A880] hover:text-[#1B2B4B]`;
+    const ghostBtn = `${btnBase} border border-[var(--2a-border)] text-[var(--2a-text-secondary)] hover:border-[var(--2a-gold)] hover:text-[var(--2a-navy)]`;
     const redBtn = `${btnBase} text-[#9B2335] border border-[#FECDD3] hover:bg-[#FEF3F2]`;
 
     if (txn.status === "draft") {
@@ -516,7 +516,7 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
         <span className="flex items-center gap-1.5">
           <button
             className={navyBtn}
-            style={{ backgroundColor: "#1B2B4B" }}
+            style={{ backgroundColor: "var(--2a-navy)" }}
             onClick={() => handleAction("allocate", txn)}
           >
             Allocate
@@ -535,7 +535,7 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
         <span className="flex items-center gap-1.5">
           <button
             className={navyBtn}
-            style={{ backgroundColor: "#1B2B4B" }}
+            style={{ backgroundColor: "var(--2a-navy)" }}
             onClick={() => handleAction("post", txn)}
           >
             Post
@@ -579,11 +579,11 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
         <div className="mr-auto">
           <p
             className="text-[10px] font-semibold uppercase tracking-widest"
-            style={{ color: "#C5A880" }}
+            style={{ color: "var(--2a-gold)" }}
           >
             Summary
           </p>
-          <p className="mt-0.5 text-sm font-medium text-[#1B2B4B]">
+          <p className="mt-0.5 text-sm font-medium text-[var(--2a-navy)]">
             {spvName || "—"}
           </p>
         </div>
@@ -591,11 +591,11 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
           <div key={item.label} className="text-right">
             <p
               className="text-[10px] font-semibold uppercase tracking-widest"
-              style={{ color: "#C5A880" }}
+              style={{ color: "var(--2a-gold)" }}
             >
               {item.label}
             </p>
-            <p className="mt-0.5 tabular-nums text-sm font-medium text-[#0F172A]">
+            <p className="mt-0.5 tabular-nums text-sm font-medium text-[var(--2a-text)]">
               {formatMoney(item.value)}
             </p>
           </div>
@@ -610,7 +610,7 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
       {/* Top bar */}
       <div className="mb-4 flex items-center justify-between">
         <h3
-          className="text-base font-light text-[#1B2B4B]"
+          className="text-base font-light text-[var(--2a-navy)]"
           style={{ fontFamily: "Spectral, Georgia, serif" }}
         >
           Transactions
@@ -620,7 +620,7 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
             type="button"
             onClick={() => setAddOpen(true)}
             className="rounded-md px-4 py-2 text-sm font-medium text-white"
-            style={{ backgroundColor: "#1B2B4B" }}
+            style={{ backgroundColor: "var(--2a-navy)" }}
           >
             Add Transaction
           </button>
@@ -645,13 +645,13 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
 
       {/* Loading / error / empty */}
       {loading && (
-        <p className="py-8 text-center text-sm text-[#64748B]">Loading transactions…</p>
+        <p className="py-8 text-center text-sm text-[var(--2a-text-muted)]">Loading transactions…</p>
       )}
       {!loading && error && (
         <p className="py-8 text-center text-sm text-[#9B2335]">Failed to load: {error}</p>
       )}
       {!loading && !error && transactions.length === 0 && (
-        <p className="py-8 text-center text-sm text-[#64748B]">No transactions recorded.</p>
+        <p className="py-8 text-center text-sm text-[var(--2a-text-muted)]">No transactions recorded.</p>
       )}
 
       {/* Table */}
@@ -659,27 +659,27 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
         <div className="overflow-x-auto rounded-lg border border-[#ece8dd] bg-white" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[#ece8dd] bg-[#FAF9F6]">
-                <th className="py-2.5 pl-4 pr-3 text-left text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+              <tr className="border-b border-[#ece8dd] bg-[var(--2a-bg)]">
+                <th className="py-2.5 pl-4 pr-3 text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                   Date
                 </th>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                   Type
                 </th>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                   Reference
                 </th>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                   Description
                 </th>
-                <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+                <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                   Amount
                 </th>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                   Status
                 </th>
                 {staff && (
-                  <th className="py-2.5 pl-3 pr-4 text-right text-[10px] font-semibold uppercase tracking-widest text-[#64748B]">
+                  <th className="py-2.5 pl-3 pr-4 text-right text-[10px] font-semibold uppercase tracking-widest text-[var(--2a-text-muted)]">
                     Actions
                   </th>
                 )}
@@ -690,11 +690,11 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
                 <>
                   <tr
                     key={txn.id}
-                    className="border-b border-[#ece8dd] last:border-b-0 hover:bg-[#FAF9F6]"
+                    className="border-b border-[#ece8dd] last:border-b-0 hover:bg-[var(--2a-bg)]"
                     style={{ cursor: "default" }}
                   >
                     <td
-                      className="py-2.5 pl-4 pr-3 text-[#334155]"
+                      className="py-2.5 pl-4 pr-3 text-[var(--2a-text-secondary)]"
                       style={{ whiteSpace: "nowrap" }}
                     >
                       {formatDate(txn.txn_date)}
@@ -702,17 +702,17 @@ export default function SPVTransactionsTab({ spvId, staff = false, spvName, tota
                     <td className="px-3 py-2.5">
                       <TypeBadge type={txn.txn_type} />
                     </td>
-                    <td className="px-3 py-2.5 text-[#334155]">
+                    <td className="px-3 py-2.5 text-[var(--2a-text-secondary)]">
                       {txn.reference || <span className="text-[#94A3B8]">—</span>}
                     </td>
-                    <td className="px-3 py-2.5 text-[#334155]">
+                    <td className="px-3 py-2.5 text-[var(--2a-text-secondary)]">
                       {txn.description ? (
                         <span className="max-w-[220px] truncate block">{txn.description}</span>
                       ) : (
                         <span className="text-[#94A3B8]">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-medium text-[#0F172A]">
+                    <td className="px-3 py-2.5 text-right tabular-nums font-medium text-[var(--2a-text)]">
                       {formatMoney(txn.amount)}
                     </td>
                     <td className="px-3 py-2.5">

@@ -15,14 +15,14 @@ function TypeBadge({ type }) {
       style={{
         display: "inline-block",
         padding: "1px 7px",
-        background: "#F5F1EB",
+        background: "var(--2a-bg-sidebar)",
         border: "1px solid #ece8dd",
         borderRadius: 3,
         fontSize: 11,
         fontWeight: 600,
         textTransform: "uppercase",
         letterSpacing: "0.18em",
-        color: "#64748B",
+        color: "var(--2a-text-muted)",
         whiteSpace: "nowrap",
       }}
     >
@@ -74,7 +74,7 @@ function TreeNode({ node, depth = 0 }) {
             >
               <path
                 d="M2 2 L2 9 L12 9"
-                stroke="#C5A880"
+                stroke="var(--2a-gold)"
                 strokeWidth="1.4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -89,7 +89,7 @@ function TreeNode({ node, depth = 0 }) {
             flex: 1,
             fontSize: depth === 0 ? 15 : 14,
             fontWeight: depth === 0 ? 600 : 400,
-            color: "#0F172A",
+            color: "var(--2a-text)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -105,7 +105,7 @@ function TreeNode({ node, depth = 0 }) {
             style={{
               fontSize: 12,
               fontWeight: 500,
-              color: "#334155",
+              color: "var(--2a-text-secondary)",
               fontVariantNumeric: "tabular-nums",
               flexShrink: 0,
               marginLeft: 4,
@@ -133,7 +133,7 @@ export default function EntityTree({ entity_id, tree, lookthrough }) {
   return (
     <div
       style={{
-        background: "#FFFFFF",
+        background: "var(--2a-bg-card)",
         border: "1px solid #ece8dd",
         borderRadius: 6,
         padding: "16px 20px",
@@ -154,7 +154,7 @@ export default function EntityTree({ entity_id, tree, lookthrough }) {
             fontWeight: 700,
             textTransform: "uppercase",
             letterSpacing: "0.22em",
-            color: "#C5A880",
+            color: "var(--2a-gold)",
           }}
         >
           Ownership Structure
@@ -167,7 +167,7 @@ export default function EntityTree({ entity_id, tree, lookthrough }) {
               fontWeight: 600,
               textTransform: "uppercase",
               letterSpacing: "0.18em",
-              color: "#64748B",
+              color: "var(--2a-text-muted)",
             }}
           >
             Look-through
@@ -180,7 +180,7 @@ export default function EntityTree({ entity_id, tree, lookthrough }) {
           style={{
             margin: 0,
             fontSize: 14,
-            color: "#64748B",
+            color: "var(--2a-text-muted)",
             fontStyle: "italic",
           }}
         >
@@ -216,7 +216,7 @@ export default function EntityTree({ entity_id, tree, lookthrough }) {
           style={{
             fontSize: 13,
             fontWeight: 500,
-            color: "#C5A880",
+            color: "var(--2a-gold)",
             textDecoration: "none",
             letterSpacing: "0.01em",
           }}

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
+import { brandName, loadTheme } from "@/lib/theme";
 
 const AscentMark = ({ size = 64 }) => (
   <svg
@@ -8,9 +9,9 @@ const AscentMark = ({ size = 64 }) => (
     height={size}
     aria-hidden="true"
   >
-    <rect x="118" y="300" width="80" height="80" rx="20" fill="#C5A880" />
-    <rect x="216" y="216" width="80" height="80" rx="20" fill="#C5A880" />
-    <rect x="314" y="132" width="80" height="80" rx="20" fill="#E8D5A3" />
+    <rect x="118" y="300" width="80" height="80" rx="20" fill="var(--2a-gold)" />
+    <rect x="216" y="216" width="80" height="80" rx="20" fill="var(--2a-gold)" />
+    <rect x="314" y="132" width="80" height="80" rx="20" fill="var(--2a-gold-light)" />
   </svg>
 );
 
@@ -18,14 +19,19 @@ export default async function MarketingPage() {
   const session = await auth0.getSession();
   if (session) redirect("/dashboard");
 
+  // Unauthenticated landing page — branding comes from the public theme
+  // endpoint so a new tenant's marketing page reads as theirs.
+  const theme = await loadTheme();
+  const brand = brandName(theme.settings || {});
+
   return (
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: "#FAF9F6",
+        backgroundColor: "var(--2a-bg)",
         fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
         fontSize: "17px",
-        color: "#0F172A",
+        color: "var(--2a-text)",
       }}
     >
       {/* Nav */}
@@ -40,27 +46,27 @@ export default async function MarketingPage() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "20px 32px",
-          backgroundColor: "rgba(250,249,246,0.92)",
+          backgroundColor: "color-mix(in srgb, var(--2a-bg) 92%, transparent)",
           backdropFilter: "blur(8px)",
-          borderBottom: "1px solid #E2E8F0",
+          borderBottom: "1px solid var(--2a-border)",
         }}
       >
-        <a href="/" aria-label="2nd Act Capital" style={{ textDecoration: "none" }}>
+        <a href="/" aria-label={brand} style={{ textDecoration: "none" }}>
           <span
             style={{
-              fontFamily: "Spectral, Georgia, serif",
-              color: "#1B2B4B",
+              fontFamily: "var(--2a-font-display)",
+              color: "var(--2a-navy)",
               fontSize: "18px",
               fontWeight: 600,
               letterSpacing: "-0.01em",
             }}
           >
-            2nd Act Capital
+            {brand}
           </span>
         </a>
         <a
           href="/login"
-          style={{ color: "#64748B", fontSize: "14px", fontWeight: 500, textDecoration: "none" }}
+          style={{ color: "var(--2a-text-muted)", fontSize: "14px", fontWeight: 500, textDecoration: "none" }}
         >
           Sign in
         </a>
@@ -69,7 +75,7 @@ export default async function MarketingPage() {
       {/* Hero */}
       <section
         style={{
-          backgroundColor: "#1B2B4B",
+          backgroundColor: "var(--2a-navy)",
           minHeight: "100vh",
           display: "flex",
           flexDirection: "column",
@@ -90,19 +96,19 @@ export default async function MarketingPage() {
             fontWeight: 300,
             fontSize: "clamp(2rem, 5vw, 3.25rem)",
             lineHeight: 1.15,
-            color: "#FAF9F6",
+            color: "var(--2a-bg)",
             letterSpacing: "-0.02em",
             maxWidth: "680px",
             margin: "0 auto 24px",
           }}
         >
           A private community for the{" "}
-          <em style={{ fontStyle: "italic", color: "#E8D5A3" }}>post-liquidity</em>{" "}
+          <em style={{ fontStyle: "italic", color: "var(--2a-gold-light)" }}>post-liquidity</em>{" "}
           life.
         </h1>
         <p
           style={{
-            color: "#9AA6BF",
+            color: "var(--2a-nav-rest)",
             fontSize: "1.0625rem",
             lineHeight: 1.65,
             maxWidth: "480px",
@@ -118,8 +124,8 @@ export default async function MarketingPage() {
             href="/login"
             style={{
               display: "inline-block",
-              backgroundColor: "#C5A880",
-              color: "#1B2B4B",
+              backgroundColor: "var(--2a-gold)",
+              color: "var(--2a-navy)",
               borderRadius: "6px",
               padding: "12px 28px",
               fontSize: "14px",
@@ -133,8 +139,8 @@ export default async function MarketingPage() {
             href="/login"
             style={{
               display: "inline-block",
-              border: "1px solid #C5A880",
-              color: "#C5A880",
+              border: "1px solid var(--2a-gold)",
+              color: "var(--2a-gold)",
               borderRadius: "6px",
               padding: "12px 28px",
               fontSize: "14px",
@@ -156,7 +162,7 @@ export default async function MarketingPage() {
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.22em",
-              color: "#C5A880",
+              color: "var(--2a-gold)",
               textAlign: "center",
               marginBottom: "48px",
             }}
@@ -190,7 +196,7 @@ export default async function MarketingPage() {
               <div
                 key={num}
                 style={{
-                  backgroundColor: "#FFFFFF",
+                  backgroundColor: "var(--2a-bg-card)",
                   border: "1px solid #ece8dd",
                   borderRadius: "8px",
                   padding: "24px",
@@ -200,7 +206,7 @@ export default async function MarketingPage() {
                   style={{
                     fontSize: "12px",
                     fontWeight: 700,
-                    color: "#C5A880",
+                    color: "var(--2a-gold)",
                     letterSpacing: "0.1em",
                     marginBottom: "12px",
                   }}
@@ -212,13 +218,13 @@ export default async function MarketingPage() {
                     fontFamily: "Spectral, Georgia, serif",
                     fontWeight: 500,
                     fontSize: "1.0625rem",
-                    color: "#1B2B4B",
+                    color: "var(--2a-navy)",
                     marginBottom: "8px",
                   }}
                 >
                   {title}
                 </h3>
-                <p style={{ color: "#64748B", fontSize: "0.9375rem", lineHeight: 1.6, margin: 0 }}>
+                <p style={{ color: "var(--2a-text-muted)", fontSize: "0.9375rem", lineHeight: 1.6, margin: 0 }}>
                   {body}
                 </p>
               </div>
@@ -229,7 +235,7 @@ export default async function MarketingPage() {
 
       {/* Three pillars */}
       <section
-        style={{ backgroundColor: "#F5F1EB", padding: "96px 24px" }}
+        style={{ backgroundColor: "var(--2a-bg-sidebar)", padding: "96px 24px" }}
         aria-labelledby="pillars-heading"
       >
         <div style={{ maxWidth: "896px", margin: "0 auto" }}>
@@ -239,7 +245,7 @@ export default async function MarketingPage() {
               fontFamily: "Spectral, Georgia, serif",
               fontWeight: 300,
               fontSize: "clamp(1.5rem, 3vw, 2.125rem)",
-              color: "#1B2B4B",
+              color: "var(--2a-navy)",
               letterSpacing: "-0.015em",
               textAlign: "center",
               marginBottom: "16px",
@@ -247,7 +253,7 @@ export default async function MarketingPage() {
           >
             What membership includes
           </h2>
-          <p style={{ color: "#64748B", textAlign: "center", marginBottom: "64px" }}>
+          <p style={{ color: "var(--2a-text-muted)", textAlign: "center", marginBottom: "64px" }}>
             Three things we built because they did not exist anywhere else.
           </p>
           <div
@@ -274,7 +280,7 @@ export default async function MarketingPage() {
               <div
                 key={label}
                 style={{
-                  backgroundColor: "#FFFFFF",
+                  backgroundColor: "var(--2a-bg-card)",
                   border: "1px solid #ece8dd",
                   borderRadius: "8px",
                   padding: "24px",
@@ -285,7 +291,7 @@ export default async function MarketingPage() {
                   style={{
                     width: "4px",
                     height: "32px",
-                    backgroundColor: "#C5A880",
+                    backgroundColor: "var(--2a-gold)",
                     borderRadius: "2px",
                     marginBottom: "20px",
                   }}
@@ -295,13 +301,13 @@ export default async function MarketingPage() {
                     fontFamily: "Spectral, Georgia, serif",
                     fontWeight: 500,
                     fontSize: "1.0625rem",
-                    color: "#1B2B4B",
+                    color: "var(--2a-navy)",
                     marginBottom: "8px",
                   }}
                 >
                   {label}
                 </h3>
-                <p style={{ color: "#64748B", fontSize: "0.9375rem", lineHeight: 1.6, margin: 0 }}>
+                <p style={{ color: "var(--2a-text-muted)", fontSize: "0.9375rem", lineHeight: 1.6, margin: 0 }}>
                   {body}
                 </p>
               </div>
@@ -312,7 +318,7 @@ export default async function MarketingPage() {
 
       {/* Assistant band */}
       <section
-        style={{ backgroundColor: "#1B2B4B", padding: "96px 24px" }}
+        style={{ backgroundColor: "var(--2a-navy)", padding: "96px 24px" }}
         aria-labelledby="assistant-heading"
       >
         <div style={{ maxWidth: "640px", margin: "0 auto", textAlign: "center" }}>
@@ -322,7 +328,7 @@ export default async function MarketingPage() {
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.22em",
-              color: "#C5A880",
+              color: "var(--2a-gold)",
               marginBottom: "24px",
             }}
           >
@@ -334,14 +340,14 @@ export default async function MarketingPage() {
               fontFamily: "Spectral, Georgia, serif",
               fontWeight: 300,
               fontSize: "clamp(1.5rem, 3vw, 2.125rem)",
-              color: "#FAF9F6",
+              color: "var(--2a-bg)",
               letterSpacing: "-0.015em",
               marginBottom: "24px",
             }}
           >
             The first thing it asks is what you would like to call it.
           </h2>
-          <p style={{ color: "#9AA6BF", lineHeight: 1.7, margin: 0 }}>
+          <p style={{ color: "var(--2a-nav-rest)", lineHeight: 1.7, margin: 0 }}>
             Not your name. Its name. A small question that sets the tone: this
             is yours, shaped around how you think. It reads the deals you care
             about, remembers what matters, and surfaces connections you would
@@ -369,7 +375,7 @@ export default async function MarketingPage() {
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.22em",
-                color: "#C5A880",
+                color: "var(--2a-gold)",
                 marginBottom: "16px",
               }}
             >
@@ -381,14 +387,14 @@ export default async function MarketingPage() {
                 fontFamily: "Spectral, Georgia, serif",
                 fontWeight: 300,
                 fontSize: "clamp(1.5rem, 3vw, 2rem)",
-                color: "#1B2B4B",
+                color: "var(--2a-navy)",
                 letterSpacing: "-0.015em",
                 marginBottom: "20px",
               }}
             >
               Deals worth your attention, not just your capital.
             </h2>
-            <p style={{ color: "#64748B", lineHeight: 1.7, margin: 0 }}>
+            <p style={{ color: "var(--2a-text-muted)", lineHeight: 1.7, margin: 0 }}>
               Every opportunity on the platform has been evaluated by at least
               one member who has operational skin in the game. You see the
               thesis, the diligence, and the members backing it — before you
@@ -397,7 +403,7 @@ export default async function MarketingPage() {
           </div>
           <div
             style={{
-              backgroundColor: "#FFFFFF",
+              backgroundColor: "var(--2a-bg-card)",
               border: "1px solid #ece8dd",
               borderRadius: "8px",
               padding: "32px",
@@ -427,12 +433,12 @@ export default async function MarketingPage() {
                       fontWeight: 700,
                       textTransform: "uppercase",
                       letterSpacing: "0.08em",
-                      color: "#64748B",
+                      color: "var(--2a-text-muted)",
                     }}
                   >
                     {label}
                   </dt>
-                  <dd style={{ fontSize: "14px", fontWeight: 500, color: "#1B2B4B", margin: 0 }}>
+                  <dd style={{ fontSize: "14px", fontWeight: 500, color: "var(--2a-navy)", margin: 0 }}>
                     {value}
                   </dd>
                 </div>
@@ -444,7 +450,7 @@ export default async function MarketingPage() {
 
       {/* Enroll CTA */}
       <section
-        style={{ backgroundColor: "#F5F1EB", padding: "112px 24px", textAlign: "center" }}
+        style={{ backgroundColor: "var(--2a-bg-sidebar)", padding: "112px 24px", textAlign: "center" }}
         aria-labelledby="cta-heading"
       >
         <div style={{ maxWidth: "560px", margin: "0 auto" }}>
@@ -455,7 +461,7 @@ export default async function MarketingPage() {
               fontFamily: "Spectral, Georgia, serif",
               fontWeight: 300,
               fontSize: "clamp(1.5rem, 3vw, 2.25rem)",
-              color: "#1B2B4B",
+              color: "var(--2a-navy)",
               letterSpacing: "-0.015em",
               marginTop: "32px",
               marginBottom: "16px",
@@ -465,7 +471,7 @@ export default async function MarketingPage() {
             <br />
             <em style={{ fontStyle: "italic" }}>No forms.</em>
           </h2>
-          <p style={{ color: "#64748B", lineHeight: 1.7, marginBottom: "40px" }}>
+          <p style={{ color: "var(--2a-text-muted)", lineHeight: 1.7, marginBottom: "40px" }}>
             If someone you trust has pointed you here, you are already most of
             the way in. The rest is a conversation.
           </p>
@@ -473,8 +479,8 @@ export default async function MarketingPage() {
             href="/login"
             style={{
               display: "inline-block",
-              backgroundColor: "#1B2B4B",
-              color: "#FAF9F6",
+              backgroundColor: "var(--2a-navy)",
+              color: "var(--2a-bg)",
               borderRadius: "6px",
               padding: "14px 32px",
               fontSize: "14px",
@@ -490,8 +496,8 @@ export default async function MarketingPage() {
       {/* Footer */}
       <footer
         style={{
-          backgroundColor: "#1B2B4B",
-          borderTop: "1px solid rgba(197,168,128,0.15)",
+          backgroundColor: "var(--2a-navy)",
+          borderTop: "1px solid color-mix(in srgb, var(--2a-gold) 15%, transparent)",
           padding: "40px 32px",
         }}
       >
@@ -508,16 +514,16 @@ export default async function MarketingPage() {
         >
           <span
             style={{
-              fontFamily: "Spectral, Georgia, serif",
-              color: "#9AA6BF",
+              fontFamily: "var(--2a-font-display)",
+              color: "var(--2a-nav-rest)",
               fontSize: "15px",
             }}
           >
-            2nd Act Capital
+            {brand}
           </span>
           <p
             style={{
-              color: "#64748B",
+              color: "var(--2a-text-muted)",
               fontSize: "13px",
               lineHeight: 1.6,
               textAlign: "center",
@@ -528,7 +534,7 @@ export default async function MarketingPage() {
           </p>
           <a
             href="/login"
-            style={{ color: "#9AA6BF", fontSize: "14px", textDecoration: "none", whiteSpace: "nowrap" }}
+            style={{ color: "var(--2a-nav-rest)", fontSize: "14px", textDecoration: "none", whiteSpace: "nowrap" }}
           >
             Sign in
           </a>
@@ -540,7 +546,7 @@ export default async function MarketingPage() {
           * { transition: none !important; animation: none !important; }
         }
         a:focus-visible {
-          outline: 2px solid #C5A880;
+          outline: 2px solid var(--2a-gold);
           outline-offset: 3px;
           border-radius: 3px;
         }

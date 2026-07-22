@@ -2,7 +2,7 @@
 // stageSummary: [{stage, count}]  stages: [{config_key, config_value}]
 
 const STAGE_COLORS = [
-  "#C5A880", // gold
+  "var(--2a-gold)", // gold
   "#2C4A3E", // navy
   "#4A7C6B",
   "#6A9E8E",

@@ -20,6 +20,10 @@ class MeResponse(BaseModel):
     email: str | None = None
     full_name: str | None = None
     role: str | None = None
+    # Sprint 24: the raw users.role value ('member' / 'org_admin' /
+    # 'super_admin'). Distinct from `role` above, which prefers a granted
+    # user_roles name — the admin gates key off the account role itself.
+    account_role: str | None = None
     roles: list[str] = []
     permissions: list[str] = []
     nav_pinned: bool | None = None
@@ -57,6 +61,7 @@ async def get_me(request: Request):
         email=profile["email"] if profile else None,
         full_name=profile["full_name"] if profile else None,
         role=primary_role,
+        account_role=profile["role"] if profile else None,
         roles=role_names,
         permissions=permissions,
         nav_pinned=profile["nav_pinned"] if profile else None,

@@ -4,11 +4,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 // ── State color palette ──────────────────────────────────────────────────────
 const STATE_COLORS = {
-  none:     { base: "#F4F1E9", light: "#FAF8F3", text: "#334155" },
-  under:    { base: "#C9A24B", light: "#D4B06A", text: "#1B2B4B" },
-  on:       { base: "#2F6B4F", light: "#3D7F60", text: "#FFFFFF" },
-  over:     { base: "#7E2B2B", light: "#933636", text: "#FFFFFF" },
-  off_plan: { base: "#3A3A3C", light: "#4A4A4C", text: "#FFFFFF" },
+  none:     { base: "#F4F1E9", light: "#FAF8F3", text: "var(--2a-text-secondary)" },
+  under:    { base: "#C9A24B", light: "#D4B06A", text: "var(--2a-navy)" },
+  on:       { base: "#2F6B4F", light: "#3D7F60", text: "var(--2a-bg)" },
+  over:     { base: "#7E2B2B", light: "#933636", text: "var(--2a-bg)" },
+  off_plan: { base: "#3A3A3C", light: "#4A4A4C", text: "var(--2a-bg)" },
 };
 
 // State glyph for color-blind safety
@@ -184,8 +184,8 @@ function Tooltip({ node, x, y, size }) {
         position: "fixed",
         left: x + 14,
         top: y - 8,
-        background: "#1B2B4B",
-        color: "#FAF9F6",
+        background: "var(--2a-navy)",
+        color: "var(--2a-bg)",
         borderRadius: 6,
         padding: "8px 12px",
         fontSize: 12,
@@ -211,7 +211,7 @@ function Legend() {
       {Object.entries(STATE_LABELS).map(([state, label]) => {
         const c = STATE_COLORS[state];
         return (
-          <div key={state} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155" }}>
+          <div key={state} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--2a-text-secondary)" }}>
             <span
               style={{
                 display: "inline-block",
@@ -219,7 +219,7 @@ function Legend() {
                 height: 12,
                 borderRadius: 3,
                 background: c.base,
-                border: state === "none" ? "1px solid #E2E8F0" : "none",
+                border: state === "none" ? "1px solid var(--2a-border)" : "none",
               }}
             />
             <span>{STATE_GLYPHS[state] && <b>{STATE_GLYPHS[state]} </b>}{label}</span>
@@ -309,7 +309,7 @@ export default function AllocationSunburst({ data, size = 540 }) {
           <path
             d={d}
             fill={`url(#grad-${state})`}
-            stroke="#FFFFFF"
+            stroke="var(--2a-bg-card)"
             strokeWidth={level === "super" ? 1.5 : 0.75}
           />
           {showLabel && (
@@ -352,7 +352,7 @@ export default function AllocationSunburst({ data, size = 540 }) {
         <line
           key={`div-${arc.key}`}
           x1={x1} y1={y1} x2={x2} y2={y2}
-          stroke="#1B2B4B"
+          stroke="var(--2a-navy)"
           strokeWidth={1.5}
           style={{ pointerEvents: "none" }}
         />
@@ -375,12 +375,12 @@ export default function AllocationSunburst({ data, size = 540 }) {
     >
       {/* Drill-down breadcrumb */}
       {drillPath.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#64748B" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "var(--2a-text-muted)" }}>
           <button
             onClick={handleZoomOut}
             style={{
-              background: "none", border: "1px solid #E2E8F0", borderRadius: 4,
-              padding: "3px 10px", cursor: "pointer", color: "#1B2B4B", fontSize: 12,
+              background: "none", border: "1px solid var(--2a-border)", borderRadius: 4,
+              padding: "3px 10px", cursor: "pointer", color: "var(--2a-navy)", fontSize: 12,
               fontFamily: "inherit",
             }}
           >
@@ -389,7 +389,7 @@ export default function AllocationSunburst({ data, size = 540 }) {
           {drillPath.map((crumb, i) => (
             <span key={crumb.key}>
               {i > 0 && <span style={{ margin: "0 4px" }}>/</span>}
-              <span style={{ color: "#1B2B4B", fontWeight: 500 }}>{crumb.label}</span>
+              <span style={{ color: "var(--2a-navy)", fontWeight: 500 }}>{crumb.label}</span>
             </span>
           ))}
         </div>
@@ -418,13 +418,13 @@ export default function AllocationSunburst({ data, size = 540 }) {
         <g>{renderDividers()}</g>
 
         {/* Center hole — label */}
-        <circle cx={0} cy={0} r={HOLE_R} fill="#FFFFFF" />
+        <circle cx={0} cy={0} r={HOLE_R} fill="var(--2a-bg-card)" />
         <text
           textAnchor="middle"
           dominantBaseline="middle"
           y={-5}
           fontSize={9}
-          fill="#64748B"
+          fill="var(--2a-text-muted)"
           fontFamily="'Hanken Grotesk', system-ui, sans-serif"
           fontWeight={600}
           textTransform="uppercase"
@@ -439,7 +439,7 @@ export default function AllocationSunburst({ data, size = 540 }) {
             dominantBaseline="middle"
             y={7}
             fontSize={8}
-            fill="#9AA6BF"
+            fill="var(--2a-nav-rest)"
             fontFamily="'Hanken Grotesk', system-ui, sans-serif"
             style={{ userSelect: "none" }}
           >

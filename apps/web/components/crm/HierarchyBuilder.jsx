@@ -6,8 +6,8 @@ const ENTITY_COLORS = {
   individual: "#EEF4FF",
   trust: "#F0FDF4",
   llc: "#FFF7ED",
-  household: "#FAF9F6",
-  spv: "#F5F1EB",
+  household: "var(--2a-bg)",
+  spv: "var(--2a-bg-sidebar)",
   foundation: "#FEF3F2",
   default: "#F8FAFC",
 };
@@ -133,7 +133,7 @@ function collectDescendants(node, result = []) {
 
 function TreeNode({ node, position, isSelected, isCollapsed, onSelect, onToggle, lookthroughMap, showLookthrough }) {
   const bgColor = ENTITY_COLORS[node.entity_type] || ENTITY_COLORS.default;
-  const borderColor = isSelected ? "#C5A880" : "#ece8dd";
+  const borderColor = isSelected ? "var(--2a-gold)" : "#ece8dd";
   const borderWidth = isSelected ? 2 : 1;
   const hasChildren = node.children && node.children.length > 0;
   const effectivePct = lookthroughMap && lookthroughMap[node.id];
@@ -163,7 +163,7 @@ function TreeNode({ node, position, isSelected, isCollapsed, onSelect, onToggle,
         fontSize={13}
         fontWeight="600"
         fontFamily="'Hanken Grotesk', system-ui, sans-serif"
-        fill="#0F172A"
+        fill="var(--2a-text)"
         clipPath={`url(#clip-${node.id})`}
       >
         {node.display_name}
@@ -174,7 +174,7 @@ function TreeNode({ node, position, isSelected, isCollapsed, onSelect, onToggle,
         textAnchor="middle"
         fontSize={11}
         fontFamily="'Hanken Grotesk', system-ui, sans-serif"
-        fill="#C5A880"
+        fill="var(--2a-gold)"
         fontWeight="500"
         style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}
       >
@@ -187,7 +187,7 @@ function TreeNode({ node, position, isSelected, isCollapsed, onSelect, onToggle,
           textAnchor="middle"
           fontSize={10}
           fontFamily="'Hanken Grotesk', system-ui, sans-serif"
-          fill="#64748B"
+          fill="var(--2a-text-muted)"
         >
           {Number(effectivePct).toFixed(1)}% eff.
         </text>
@@ -201,14 +201,14 @@ function TreeNode({ node, position, isSelected, isCollapsed, onSelect, onToggle,
           }}
           style={{ cursor: "pointer" }}
         >
-          <rect width={12} height={12} rx={3} fill="#1B2B4B" opacity={0.1} />
+          <rect width={12} height={12} rx={3} fill="var(--2a-navy)" opacity={0.1} />
           <text
             x={6}
             y={9}
             textAnchor="middle"
             fontSize={10}
             fontFamily="'Hanken Grotesk', system-ui, sans-serif"
-            fill="#1B2B4B"
+            fill="var(--2a-navy)"
             fontWeight="700"
           >
             {isCollapsed ? "+" : "−"}
@@ -241,7 +241,7 @@ function EdgePath({ parent, child, parentPos, childPos }) {
 
   return (
     <g>
-      <path d={d} fill="none" stroke="#E2E8F0" strokeWidth={1.5} />
+      <path d={d} fill="none" stroke="var(--2a-border)" strokeWidth={1.5} />
       {pct && (
         <>
           <rect
@@ -260,7 +260,7 @@ function EdgePath({ parent, child, parentPos, childPos }) {
             textAnchor="middle"
             fontSize={11}
             fontFamily="'Hanken Grotesk', system-ui, sans-serif"
-            fill="#C5A880"
+            fill="var(--2a-gold)"
             fontWeight="500"
           >
             {pct}
@@ -282,7 +282,7 @@ function TypeBadge({ type }) {
         padding: "2px 8px",
         fontSize: 11,
         fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-        color: "#C5A880",
+        color: "var(--2a-gold)",
         fontWeight: 600,
         letterSpacing: "0.05em",
         textTransform: "uppercase",
@@ -371,7 +371,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
     fontSize: 11,
     fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
     fontWeight: 600,
-    color: "#64748B",
+    color: "var(--2a-text-muted)",
     textTransform: "uppercase",
     letterSpacing: "0.12em",
     display: "block",
@@ -383,9 +383,9 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
     padding: "7px 10px",
     fontSize: 13,
     fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-    border: "1px solid #E2E8F0",
+    border: "1px solid var(--2a-border)",
     borderRadius: 5,
-    color: "#0F172A",
+    color: "var(--2a-text)",
     background: "#fff",
     outline: "none",
     boxSizing: "border-box",
@@ -395,7 +395,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
     fontSize: 11,
     fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
     fontWeight: 700,
-    color: "#64748B",
+    color: "var(--2a-text-muted)",
     textTransform: "uppercase",
     letterSpacing: "0.12em",
     marginBottom: 8,
@@ -419,8 +419,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
         <button
           onClick={() => onShowLookthroughChange(!showLookthrough)}
           style={{
-            background: showLookthrough ? "#1B2B4B" : "#F5F1EB",
-            color: showLookthrough ? "#E8D5A3" : "#1B2B4B",
+            background: showLookthrough ? "var(--2a-navy)" : "var(--2a-bg-sidebar)",
+            color: showLookthrough ? "var(--2a-gold-light)" : "var(--2a-navy)",
             border: "1px solid #ece8dd",
             borderRadius: 5,
             padding: "5px 12px",
@@ -436,7 +436,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
       </div>
 
       {!selectedNode ? (
-        <div style={{ color: "#64748B", fontSize: 13, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+        <div style={{ color: "var(--2a-text-muted)", fontSize: 13, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
           Select a node to view details.
         </div>
       ) : (
@@ -447,7 +447,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                 fontFamily: "'Spectral', Georgia, serif",
                 fontSize: 17,
                 fontWeight: 500,
-                color: "#0F172A",
+                color: "var(--2a-text)",
                 marginBottom: 6,
               }}
             >
@@ -457,18 +457,18 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
           </div>
 
           {selectedNode.ownership_pct != null && (
-            <div style={{ fontSize: 13, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", color: "#334155", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", color: "var(--2a-text-secondary)", marginBottom: 8 }}>
               Ownership from parent:{" "}
-              <span style={{ fontWeight: 600, color: "#C5A880" }}>
+              <span style={{ fontWeight: 600, color: "var(--2a-gold)" }}>
                 {Number(selectedNode.ownership_pct).toFixed(2)}%
               </span>
             </div>
           )}
 
           {showLookthrough && lookthroughMap && lookthroughMap[selectedNode.id] != null && (
-            <div style={{ fontSize: 13, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", color: "#334155", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", color: "var(--2a-text-secondary)", marginBottom: 8 }}>
               Effective ownership:{" "}
-              <span style={{ fontWeight: 600, color: "#C5A880" }}>
+              <span style={{ fontWeight: 600, color: "var(--2a-gold)" }}>
                 {Number(lookthroughMap[selectedNode.id]).toFixed(4)}%
               </span>
             </div>
@@ -484,8 +484,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                     style={{
                       fontSize: 12,
                       fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                      color: "#334155",
-                      background: "#FAF9F6",
+                      color: "var(--2a-text-secondary)",
+                      background: "var(--2a-bg)",
                       border: "1px solid #ece8dd",
                       borderRadius: 5,
                       padding: "5px 10px",
@@ -496,7 +496,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                   >
                     <span>{pNode.display_name}</span>
                     {pct != null && (
-                      <span style={{ color: "#C5A880", fontWeight: 600 }}>{Number(pct).toFixed(1)}%</span>
+                      <span style={{ color: "var(--2a-gold)", fontWeight: 600 }}>{Number(pct).toFixed(1)}%</span>
                     )}
                   </div>
                 ))}
@@ -514,8 +514,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                     style={{
                       fontSize: 12,
                       fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                      color: "#334155",
-                      background: "#FAF9F6",
+                      color: "var(--2a-text-secondary)",
+                      background: "var(--2a-bg)",
                       border: "1px solid #ece8dd",
                       borderRadius: 5,
                       padding: "5px 10px",
@@ -524,7 +524,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span>{child.display_name}</span>
                       {child.ownership_pct != null && (
-                        <span style={{ color: "#C5A880", fontWeight: 600 }}>
+                        <span style={{ color: "var(--2a-gold)", fontWeight: 600 }}>
                           {Number(child.ownership_pct).toFixed(1)}%
                         </span>
                       )}
@@ -547,8 +547,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                               onClick={() => handleEditSubmit(child.relationship_id)}
                               disabled={editLoading}
                               style={{
-                                background: "#1B2B4B",
-                                color: "#E8D5A3",
+                                background: "var(--2a-navy)",
+                                color: "var(--2a-gold-light)",
                                 border: "none",
                                 borderRadius: 4,
                                 padding: "3px 8px",
@@ -562,8 +562,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                             <button
                               onClick={() => { setEditId(null); setEditPct(""); }}
                               style={{
-                                background: "#F5F1EB",
-                                color: "#334155",
+                                background: "var(--2a-bg-sidebar)",
+                                color: "var(--2a-text-secondary)",
                                 border: "1px solid #ece8dd",
                                 borderRadius: 4,
                                 padding: "3px 8px",
@@ -580,8 +580,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                             <button
                               onClick={() => { setEditId(child.relationship_id); setEditPct(child.ownership_pct ?? ""); }}
                               style={{
-                                background: "#F5F1EB",
-                                color: "#334155",
+                                background: "var(--2a-bg-sidebar)",
+                                color: "var(--2a-text-secondary)",
                                 border: "1px solid #ece8dd",
                                 borderRadius: 4,
                                 padding: "3px 8px",
@@ -629,17 +629,17 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                       style={{
                         fontSize: 12,
                         fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                        color: "#334155",
+                        color: "var(--2a-text-secondary)",
                         display: "flex",
                         justifyContent: "space-between",
                         padding: "3px 8px",
-                        background: "#FAF9F6",
+                        background: "var(--2a-bg)",
                         border: "1px solid #ece8dd",
                         borderRadius: 4,
                       }}
                     >
                       <span>{desc.display_name}</span>
-                      <span style={{ color: "#C5A880", fontWeight: 600 }}>
+                      <span style={{ color: "var(--2a-gold)", fontWeight: 600 }}>
                         {Number(lookthroughMap[desc.id]).toFixed(4)}%
                       </span>
                     </div>
@@ -665,7 +665,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                 fontFamily: "'Spectral', Georgia, serif",
                 fontSize: 15,
                 fontWeight: 500,
-                color: "#1B2B4B",
+                color: "var(--2a-navy)",
                 marginBottom: 12,
               }}
             >
@@ -726,8 +726,8 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                 type="submit"
                 disabled={addLoading}
                 style={{
-                  background: "#1B2B4B",
-                  color: "#E8D5A3",
+                  background: "var(--2a-navy)",
+                  color: "var(--2a-gold-light)",
                   border: "none",
                   borderRadius: 5,
                   padding: "8px 0",
@@ -805,9 +805,9 @@ function EntityGroupPanel({ staff }) {
     padding: "7px 10px",
     fontSize: 13,
     fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-    border: "1px solid #E2E8F0",
+    border: "1px solid var(--2a-border)",
     borderRadius: 5,
-    color: "#0F172A",
+    color: "var(--2a-text)",
     background: "#fff",
     outline: "none",
     boxSizing: "border-box",
@@ -817,7 +817,7 @@ function EntityGroupPanel({ staff }) {
     <div
       style={{
         borderTop: "1px solid #ece8dd",
-        background: "#FAF9F6",
+        background: "var(--2a-bg)",
         padding: "20px 24px",
       }}
     >
@@ -826,7 +826,7 @@ function EntityGroupPanel({ staff }) {
           fontFamily: "'Spectral', Georgia, serif",
           fontSize: 17,
           fontWeight: 500,
-          color: "#1B2B4B",
+          color: "var(--2a-navy)",
           marginBottom: 14,
         }}
       >
@@ -834,11 +834,11 @@ function EntityGroupPanel({ staff }) {
       </div>
 
       {loading ? (
-        <div style={{ fontSize: 13, color: "#64748B", fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+        <div style={{ fontSize: 13, color: "var(--2a-text-muted)", fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
           Loading groups...
         </div>
       ) : groups.length === 0 ? (
-        <div style={{ fontSize: 13, color: "#64748B", fontFamily: "'Hanken Grotesk', system-ui, sans-serif", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, color: "var(--2a-text-muted)", fontFamily: "'Hanken Grotesk', system-ui, sans-serif", marginBottom: 12 }}>
           No groups yet.
         </div>
       ) : (
@@ -860,15 +860,15 @@ function EntityGroupPanel({ staff }) {
                 padding: "8px 14px",
                 fontSize: 13,
                 fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                color: "#0F172A",
+                color: "var(--2a-text)",
                 boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
               }}
             >
               <div style={{ fontWeight: 600 }}>{group.name}</div>
               {group.description && (
-                <div style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>{group.description}</div>
+                <div style={{ fontSize: 12, color: "var(--2a-text-muted)", marginTop: 2 }}>{group.description}</div>
               )}
-              <div style={{ fontSize: 11, color: "#C5A880", marginTop: 4, fontWeight: 500 }}>
+              <div style={{ fontSize: 11, color: "var(--2a-gold)", marginTop: 4, fontWeight: 500 }}>
                 {group.member_count ?? (group.members?.length ?? 0)} member{(group.member_count ?? (group.members?.length ?? 0)) !== 1 ? "s" : ""}
               </div>
             </div>
@@ -884,7 +884,7 @@ function EntityGroupPanel({ staff }) {
                 fontSize: 11,
                 fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
                 fontWeight: 600,
-                color: "#64748B",
+                color: "var(--2a-text-muted)",
                 textTransform: "uppercase",
                 letterSpacing: "0.12em",
               }}
@@ -906,7 +906,7 @@ function EntityGroupPanel({ staff }) {
                 fontSize: 11,
                 fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
                 fontWeight: 600,
-                color: "#64748B",
+                color: "var(--2a-text-muted)",
                 textTransform: "uppercase",
                 letterSpacing: "0.12em",
               }}
@@ -925,8 +925,8 @@ function EntityGroupPanel({ staff }) {
             type="submit"
             disabled={creating}
             style={{
-              background: "#1B2B4B",
-              color: "#E8D5A3",
+              background: "var(--2a-navy)",
+              color: "var(--2a-gold-light)",
               border: "none",
               borderRadius: 5,
               padding: "8px 16px",
@@ -1065,7 +1065,7 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
           padding: 32,
           fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
           fontSize: 14,
-          color: "#64748B",
+          color: "var(--2a-text-muted)",
         }}
       >
         No ownership tree data available for this entity.
@@ -1103,7 +1103,7 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
             flex: 1,
             overflow: "hidden",
             position: "relative",
-            background: "#FAF9F6",
+            background: "var(--2a-bg)",
             cursor: isDragging.current ? "grabbing" : "grab",
           }}
           onMouseDown={handleMouseDown}
@@ -1133,7 +1133,7 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
                 borderRadius: 5,
                 fontSize: 16,
                 fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                color: "#1B2B4B",
+                color: "var(--2a-navy)",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -1153,7 +1153,7 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
                 borderRadius: 5,
                 fontSize: 16,
                 fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                color: "#1B2B4B",
+                color: "var(--2a-navy)",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -1173,7 +1173,7 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
                 borderRadius: 5,
                 fontSize: 10,
                 fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-                color: "#1B2B4B",
+                color: "var(--2a-navy)",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",

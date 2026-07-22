@@ -158,9 +158,9 @@ export default function NotificationsFeed({ initialItems = [] }) {
                 style={{
                   borderColor: "#ece8dd",
                   borderLeft: unread
-                    ? "3px solid #C5A880"
+                    ? "3px solid var(--2a-gold)"
                     : "3px solid transparent",
-                  backgroundColor: unread ? "#FAF9F6" : "#ffffff",
+                  backgroundColor: unread ? "var(--2a-bg)" : "var(--2a-bg-card)",
                 }}
               >
                 <div className="flex items-start justify-between gap-2">

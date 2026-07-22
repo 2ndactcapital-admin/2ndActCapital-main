@@ -5,15 +5,15 @@ import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import EntityPicker from "@/components/EntityPicker";
 
 const STATUS_CONFIG = {
-  soft: { label: "Soft", bg: "#F5F1EB", text: "#64748B" },
-  pending: { label: "Pending", bg: "#EEF4FF", text: "#1B2B4B" },
+  soft: { label: "Soft", bg: "var(--2a-bg-sidebar)", text: "var(--2a-text-muted)" },
+  pending: { label: "Pending", bg: "#EEF4FF", text: "var(--2a-navy)" },
   signed: { label: "Signed", bg: "#E8F5E9", text: "#2D6A4F" },
   funded: { label: "Funded", bg: "#E8F5E9", text: "#2D6A4F" },
   cancelled: { label: "Cancelled", bg: "#FEF3F2", text: "#9B2335" },
 };
 
 function StatusPill({ status }) {
-  const cfg = STATUS_CONFIG[status] || { label: status, bg: "#F5F1EB", text: "#64748B" };
+  const cfg = STATUS_CONFIG[status] || { label: status, bg: "var(--2a-bg-sidebar)", text: "var(--2a-text-muted)" };
   return (
     <span
       className="rounded-full px-2 py-0.5 text-[10px] font-medium"
@@ -85,7 +85,7 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
   }
 
   if (!capTable) {
-    return <p className="py-6 text-center text-sm text-[#64748B]">No cap table data available.</p>;
+    return <p className="py-6 text-center text-sm text-[var(--2a-text-muted)]">No cap table data available.</p>;
   }
 
   const { total_committed, target_raise, subscriptions = [] } = capTable;
@@ -98,19 +98,19 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
       {/* Summary + Add Subscriber */}
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-[#0F172A]">
+          <p className="text-sm font-medium text-[var(--2a-text)]">
             {formatCurrency(total_committed)} committed
           </p>
           {target_raise && (
-            <p className="text-xs text-[#64748B]">
+            <p className="text-xs text-[var(--2a-text-muted)]">
               {pct}% of {formatCurrency(target_raise)} target
             </p>
           )}
           {pct !== null && (
-            <div className="mt-2 h-1.5 w-40 rounded-full bg-[#F5F1EB]">
+            <div className="mt-2 h-1.5 w-40 rounded-full bg-[var(--2a-bg-sidebar)]">
               <div
                 className="h-1.5 rounded-full"
-                style={{ width: `${pct}%`, backgroundColor: "#C5A880" }}
+                style={{ width: `${pct}%`, backgroundColor: "var(--2a-gold)" }}
               />
             </div>
           )}
@@ -120,7 +120,7 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
             type="button"
             onClick={() => setAddOpen(true)}
             className="shrink-0 rounded-md px-4 py-2 text-sm font-medium text-white"
-            style={{ backgroundColor: "#1B2B4B" }}
+            style={{ backgroundColor: "var(--2a-navy)" }}
           >
             Add Subscriber
           </button>
@@ -129,27 +129,27 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
 
       {/* Subscriptions table */}
       {subscriptions.length === 0 ? (
-        <p className="py-6 text-center text-sm text-[#64748B]">No subscriptions yet.</p>
+        <p className="py-6 text-center text-sm text-[var(--2a-text-muted)]">No subscriptions yet.</p>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[#E2E8F0]">
-              <th className="py-2 text-left text-xs font-semibold uppercase tracking-wide text-[#64748B]">Subscriber</th>
-              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">Committed</th>
-              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">Funded</th>
-              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">%</th>
-              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[#64748B]">Status</th>
+            <tr className="border-b border-[var(--2a-border)]">
+              <th className="py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Subscriber</th>
+              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Committed</th>
+              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Funded</th>
+              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">%</th>
+              <th className="py-2 text-right text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E2E8F0]">
+          <tbody className="divide-y divide-[var(--2a-border)]">
             {subscriptions.map((s, i) => (
               <tr key={i}>
-                <td className="py-2.5 text-[#0F172A]">{s.entity_name}</td>
+                <td className="py-2.5 text-[var(--2a-text)]">{s.entity_name}</td>
                 <td className="py-2.5 text-right tabular-nums">{formatCurrency(s.commitment_amount)}</td>
-                <td className="py-2.5 text-right tabular-nums text-[#64748B]">
+                <td className="py-2.5 text-right tabular-nums text-[var(--2a-text-muted)]">
                   {s.funded_amount != null ? formatCurrency(s.funded_amount) : "—"}
                 </td>
-                <td className="py-2.5 text-right tabular-nums text-[#64748B]">
+                <td className="py-2.5 text-right tabular-nums text-[var(--2a-text-muted)]">
                   {s.ownership_pct != null ? formatPercent(s.ownership_pct) : "—"}
                 </td>
                 <td className="py-2.5 text-right">
@@ -167,24 +167,24 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h2
               className="mb-4 text-base font-light"
-              style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
+              style={{ fontFamily: "Spectral, Georgia, serif", color: "var(--2a-navy)" }}
             >
               Add Subscriber
             </h2>
             <form onSubmit={handleAdd} className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#334155]">
+                <label className="mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]">
                   Investor Entity *
                 </label>
                 <EntityPicker
                   value={selectedEntity}
                   onChange={setSelectedEntity}
                   placeholder="Search entities…"
-                  className="w-full rounded border border-[#E2E8F0] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-[#334155]">
+                <label className="mb-1 block text-xs font-medium text-[var(--2a-text-secondary)]">
                   Commitment Amount (USD) *
                 </label>
                 <input
@@ -195,7 +195,7 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
                   onChange={(e) => setAmount(e.target.value)}
                   required
                   placeholder="e.g. 250000"
-                  className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  className="w-full rounded border border-[var(--2a-border)] px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 />
               </div>
               {error && <p className="text-xs text-[#9B2335]">{error}</p>}
@@ -203,7 +203,7 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
                 <button
                   type="button"
                   onClick={() => { setAddOpen(false); setSelectedEntity(null); setError(null); }}
-                  className="rounded-md px-4 py-2 text-sm text-[#64748B] hover:text-[#0F172A]"
+                  className="rounded-md px-4 py-2 text-sm text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
                 >
                   Cancel
                 </button>
@@ -211,7 +211,7 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
                   type="submit"
                   disabled={submitting || !selectedEntity?.id || !amount}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {submitting ? "Adding…" : "Add Subscriber"}
                 </button>

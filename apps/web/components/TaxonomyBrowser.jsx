@@ -4,8 +4,8 @@ import { useState } from "react";
 
 // One accent color per super-class (index 0–7).
 const SC_COLORS = [
-  "#1B2B4B", // Navy        — Private Real Estate
-  "#C5A880", // Gold        — Private Equity
+  "var(--2a-navy)", // Navy        — Private Real Estate
+  "var(--2a-gold)", // Gold        — Private Equity
   "#2C6FAC", // Blue        — Private Credit
   "#3A7D44", // Green       — Infrastructure / Energy
   "#7C3AED", // Purple      — Hedge Funds

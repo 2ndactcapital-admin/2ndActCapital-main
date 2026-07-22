@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { IconAddressBook } from "@tabler/icons-react";
 import BrandNavIcon from "./BrandNavIcon";
+import { useBrand } from "@/components/ThemeProvider";
 import { usePermissions } from "@/lib/usePermissions";
 
 const NAV_ITEMS = [
@@ -20,6 +21,10 @@ const NAV_ITEMS = [
 
 const ADMIN_ITEM = { label: "Admin", href: "/admin", icon: "admin" };
 const USERS_ITEM = { label: "User Management", href: "/admin/users", icon: "investment-profile" };
+// Sprint 24 — white-label settings. Org Admins see their own org; Super
+// Admins additionally get the platform-wide screen.
+const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
+const PLATFORM_ITEM = { label: "Platform", href: "/admin/platform", icon: "admin" };
 
 // The Ascent mark inline SVG — white on navy, with gold-light top square.
 function AscendMark({ size = 20 }) {
@@ -34,7 +39,7 @@ function AscendMark({ size = 20 }) {
     >
       <rect x="118" y="300" width="80" height="80" rx="20" fill="rgba(255,255,255,0.65)" />
       <rect x="216" y="216" width="80" height="80" rx="20" fill="rgba(255,255,255,0.85)" />
-      <rect x="314" y="132" width="80" height="80" rx="20" fill="#E8D5A3" />
+      <rect x="314" y="132" width="80" height="80" rx="20" fill="var(--2a-gold-light)" />
     </svg>
   );
 }
@@ -42,7 +47,7 @@ function AscendMark({ size = 20 }) {
 function NavLink({ item, expanded, active, badge = 0 }) {
   const { label, href, icon, TablerIcon } = item;
   const badgeText = badge > 9 ? "9+" : String(badge);
-  const iconColor = active ? "var(--2a-gold-light, #E8D5A3)" : "#9AA6BF";
+  const iconColor = active ? "var(--2a-gold-light, var(--2a-gold-light))" : "var(--2a-nav-rest)";
   return (
     <a
       href={href}
@@ -50,7 +55,11 @@ function NavLink({ item, expanded, active, badge = 0 }) {
       className={`relative flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
         expanded ? "gap-3" : "justify-center"
       }`}
-      style={active ? { background: "rgba(232,213,163,0.12)" } : undefined}
+      style={
+        active
+          ? { background: "color-mix(in srgb, var(--2a-gold-light) 12%, transparent)" }
+          : undefined
+      }
     >
       <span className="relative shrink-0">
         {TablerIcon ? (
@@ -61,7 +70,7 @@ function NavLink({ item, expanded, active, badge = 0 }) {
         {!expanded && badge > 0 && (
           <span
             className="absolute -right-1.5 -top-1.5 flex min-w-[15px] items-center justify-center rounded-full px-1 text-[9px] font-semibold"
-            style={{ backgroundColor: "#C5A880", color: "#1B2B4B", height: 15 }}
+            style={{ backgroundColor: "var(--2a-gold)", color: "var(--2a-navy)", height: 15 }}
           >
             {badgeText}
           </span>
@@ -70,13 +79,13 @@ function NavLink({ item, expanded, active, badge = 0 }) {
       {expanded && (
         <span
           className="flex flex-1 items-center justify-between truncate"
-          style={{ color: active ? "#FAF9F6" : "#9AA6BF" }}
+          style={{ color: active ? "var(--2a-bg)" : "var(--2a-nav-rest)" }}
         >
           <span className="truncate">{label}</span>
           {badge > 0 && (
             <span
               className="ml-2 flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold"
-              style={{ backgroundColor: "#C5A880", color: "#1B2B4B", height: 16 }}
+              style={{ backgroundColor: "var(--2a-gold)", color: "var(--2a-navy)", height: 16 }}
             >
               {badgeText}
             </span>
@@ -130,8 +139,9 @@ export default function Sidebar() {
   const [hovered, setHovered] = useState(false);
   const [unread, setUnread] = useState(0);
   const pathname = usePathname();
+  const brand = useBrand();
   // navPinned comes from /api/users/me (cached by usePermissions).
-  const { can, navPinned } = usePermissions();
+  const { can, navPinned, accountRole: role } = usePermissions();
   const mouseLeaveTimer = useRef(null);
   // Track whether the account value has been applied so we only sync once.
   const accountSynced = useRef(false);
@@ -220,16 +230,30 @@ export default function Sidebar() {
           style={{ minHeight: 56, borderBottom: "0.5px solid rgba(255,255,255,0.08)" }}
         >
           <AscendMark size={22} />
-          {expanded && (
-            <img
-              src="/brand/wordmark/wordmark-navy-bg.svg"
-              alt="2nd Act Capital"
-              width={110}
-              height={32}
-              className="flex-1"
-              style={{ objectFit: "contain", objectPosition: "left center" }}
-            />
-          )}
+          {expanded &&
+            (brand.logoUrl ? (
+              <img
+                src={brand.logoUrl}
+                alt={brand.name}
+                width={110}
+                height={32}
+                className="flex-1"
+                style={{ objectFit: "contain", objectPosition: "left center" }}
+              />
+            ) : (
+              // No logo configured for this tenant — fall back to the live-text
+              // lockup so a newly onboarded org still reads as itself.
+              <span
+                className="flex-1 truncate"
+                style={{
+                  fontFamily: "var(--2a-font-display)",
+                  fontSize: 15,
+                  color: "var(--2a-bg)",
+                }}
+              >
+                {brand.name}
+              </span>
+            ))}
           {expanded && (
             <button
               type="button"
@@ -237,10 +261,15 @@ export default function Sidebar() {
               title={pinned ? "Unpin sidebar" : "Pin sidebar open"}
               className="flex items-center justify-center rounded p-1 transition-colors"
               style={{
-                color: pinned ? "#E8D5A3" : "rgba(154,166,191,0.6)",
+                color: pinned
+                  ? "var(--2a-gold-light)"
+                  : "color-mix(in srgb, var(--2a-nav-rest) 60%, transparent)",
                 background: "transparent",
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(232,213,163,0.1)")}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background =
+                  "color-mix(in srgb, var(--2a-gold-light) 10%, transparent)")
+              }
               onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             >
               <PinIcon pinned={pinned} />
@@ -265,7 +294,9 @@ export default function Sidebar() {
               {expanded && (
                 <div
                   className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: "rgba(154,166,191,0.6)" }}
+                  style={{
+                    color: "color-mix(in srgb, var(--2a-nav-rest) 60%, transparent)",
+                  }}
                 >
                   Admin
                 </div>
@@ -281,6 +312,21 @@ export default function Sidebar() {
                 active={isActive(USERS_ITEM.href)}
               />
             </>
+          )}
+
+          {(role === "org_admin" || role === "super_admin") && (
+            <NavLink
+              item={ORG_SETTINGS_ITEM}
+              expanded={expanded}
+              active={isActive(ORG_SETTINGS_ITEM.href)}
+            />
+          )}
+          {role === "super_admin" && (
+            <NavLink
+              item={PLATFORM_ITEM}
+              expanded={expanded}
+              active={isActive(PLATFORM_ITEM.href)}
+            />
           )}
         </nav>
       </div>

@@ -15,8 +15,8 @@ function DealList({ deals = [] }) {
     <ul className="mt-2 space-y-1">
       {deals.map((d) => (
         <li key={d.id} className="flex items-center justify-between rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm">
-          <span className="font-medium text-[#0F172A]">{d.name}</span>
-          <span className="text-xs text-[#64748B] capitalize">{d.status}</span>
+          <span className="font-medium text-[var(--2a-text)]">{d.name}</span>
+          <span className="text-xs text-[var(--2a-text-muted)] capitalize">{d.status}</span>
         </li>
       ))}
     </ul>
@@ -29,8 +29,8 @@ function InvestmentCard({ investments = [] }) {
     <ul className="mt-2 space-y-2">
       {investments.map((inv) => (
         <li key={inv.id} className="rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm">
-          <p className="font-medium text-[#0F172A]">{inv.deal_name}</p>
-          <p className="text-xs text-[#64748B]">
+          <p className="font-medium text-[var(--2a-text)]">{inv.deal_name}</p>
+          <p className="text-xs text-[var(--2a-text-muted)]">
             {inv.current_stage} · {inv.status}
             {inv.committed_amount ? ` · ${inv.currency ?? ""} ${Number(inv.committed_amount).toLocaleString()}` : ""}
           </p>
@@ -43,8 +43,8 @@ function InvestmentCard({ investments = [] }) {
 function NoteDraft({ note }) {
   if (!note) return null;
   return (
-    <div className="mt-2 rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm text-[#334155]">
-      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#C5A880]">Note</p>
+    <div className="mt-2 rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm text-[var(--2a-text-secondary)]">
+      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--2a-gold)]">Note</p>
       <p className="whitespace-pre-wrap">{note.note_text}</p>
     </div>
   );
@@ -62,8 +62,8 @@ function ToDoList({ todos = [] }) {
     <ul className="mt-2 space-y-1">
       {todos.map((t) => (
         <li key={t.id} className="flex items-center justify-between rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm">
-          <span className="text-[#0F172A]">{t.label}</span>
-          <span className="rounded-full bg-[#F5F1EB] px-2 py-0.5 text-xs text-[#64748B]">
+          <span className="text-[var(--2a-text)]">{t.label}</span>
+          <span className="rounded-full bg-[var(--2a-bg-sidebar)] px-2 py-0.5 text-xs text-[var(--2a-text-muted)]">
             {STATUS_LABEL[t.status] ?? t.status}
           </span>
         </li>
@@ -91,7 +91,7 @@ export default function RenderDirective({ render, onNavigate }) {
   if (target === "screen" && screen_route && onNavigate) {
     onNavigate(screen_route);
     return (
-      <p className="mt-1 text-xs text-[#64748B]">
+      <p className="mt-1 text-xs text-[var(--2a-text-muted)]">
         Opened {component} for you →
       </p>
     );
@@ -100,7 +100,7 @@ export default function RenderDirective({ render, onNavigate }) {
   const Comp = COMPONENT_MAP[component];
   if (!Comp) {
     return (
-      <p className="mt-1 text-xs text-[#64748B]">[{component}]</p>
+      <p className="mt-1 text-xs text-[var(--2a-text-muted)]">[{component}]</p>
     );
   }
   return <Comp {...props} />;

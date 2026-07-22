@@ -5,7 +5,7 @@ import { ReferenceSelect } from "@/components/ReferenceSelect";
 
 const DOC_STATUS_CONFIG = {
   active: { label: "Active", bg: "#E8F5E9", text: "#2D6A4F" },
-  deprecated: { label: "Deprecated", bg: "#F5F1EB", text: "#64748B" },
+  deprecated: { label: "Deprecated", bg: "var(--2a-bg-sidebar)", text: "var(--2a-text-muted)" },
   archived: { label: "Archived", bg: "#FEF3F2", text: "#9B2335" },
   deleted: { label: "Deleted", bg: "#FEF3F2", text: "#9B2335" },
 };
@@ -27,7 +27,7 @@ function shortDate(str) {
 }
 
 function StatusPill({ status }) {
-  const cfg = DOC_STATUS_CONFIG[status] || { label: status, bg: "#F5F1EB", text: "#64748B" };
+  const cfg = DOC_STATUS_CONFIG[status] || { label: status, bg: "var(--2a-bg-sidebar)", text: "var(--2a-text-muted)" };
   return (
     <span
       className="rounded-full px-2 py-0.5 text-[10px] font-medium"
@@ -168,7 +168,7 @@ export default function DocumentsTab({ entityId }) {
           type="button"
           onClick={() => { setShowUpload(true); setError(null); }}
           className="rounded-md px-4 py-2 text-sm font-medium text-white"
-          style={{ backgroundColor: "#1B2B4B" }}
+          style={{ backgroundColor: "var(--2a-navy)" }}
         >
           Upload document
         </button>
@@ -204,7 +204,7 @@ export default function DocumentsTab({ entityId }) {
                         <span
                           key={tag}
                           className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                          style={{ backgroundColor: "#E8D5A3", color: "#1B2B4B" }}
+                          style={{ backgroundColor: "var(--2a-gold-light)", color: "var(--2a-navy)" }}
                         >
                           {tag}
                         </span>
@@ -305,7 +305,7 @@ export default function DocumentsTab({ entityId }) {
                   type="submit"
                   disabled={uploading}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {uploading ? "Uploading…" : "Upload"}
                 </button>
@@ -347,7 +347,7 @@ export default function DocumentsTab({ entityId }) {
                   type="submit"
                   disabled={uploading}
                   className="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                  style={{ backgroundColor: "#1B2B4B" }}
+                  style={{ backgroundColor: "var(--2a-navy)" }}
                 >
                   {uploading ? "Uploading…" : "Upload version"}
                 </button>

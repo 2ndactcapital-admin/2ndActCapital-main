@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { useBrand } from "@/components/ThemeProvider";
+
 const THEME_STORAGE_KEY = "2ac_theme";
 
 const OPTIONS = [
@@ -16,6 +18,7 @@ const OPTIONS = [
 
 export default function AppearanceSettings() {
   const [theme, setTheme] = useState("light");
+  const brand = useBrand();
 
   useEffect(() => {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -33,7 +36,7 @@ export default function AppearanceSettings() {
     <section>
       <h2 className="text-base font-semibold text-text-primary">Appearance</h2>
       <p className="mt-1 text-sm text-text-muted">
-        Choose how 2nd Act Capital looks for you. Saved to this browser.
+        Choose how {brand.name} looks for you. Saved to this browser.
       </p>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-3">

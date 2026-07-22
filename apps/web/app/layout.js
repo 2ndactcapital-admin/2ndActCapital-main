@@ -1,26 +1,54 @@
 import "./globals.css";
 
-export const metadata = {
-  title: "2nd Act Capital",
-  description: "A private community for the post-liquidity investor",
-  icons: {
-    icon: "/brand/icon/favicon.svg",
-    apple: "/brand/icon/app-icon.svg",
-  },
-  manifest: "/manifest.json",
-};
+import ThemeProvider from "@/components/ThemeProvider";
+import {
+  brandName,
+  faviconUrl,
+  fontHref,
+  loadTheme,
+  themeToCssVars,
+} from "@/lib/theme";
 
-export default function RootLayout({ children }) {
+// Sprint 24: title, icons and the entire palette come from the tenant's
+// org_settings. Nothing here is hardcoded to a particular client.
+export async function generateMetadata() {
+  const theme = await loadTheme();
+  const settings = theme.settings || {};
+  const name = brandName(settings);
+  const favicon = faviconUrl(settings);
+
+  return {
+    title: name || undefined,
+    description: settings["brand.tagline"] || undefined,
+    ...(favicon ? { icons: { icon: favicon, apple: favicon } } : {}),
+    manifest: "/manifest.webmanifest",
+  };
+}
+
+export default async function RootLayout({ children }) {
+  const theme = await loadTheme();
+  const settings = theme.settings || {};
+
+  // Rendered into <head> so the tenant's palette is present on first paint —
+  // a client-side provider would flash an unbranded frame first.
+  const cssVars = themeToCssVars(settings);
+  const fonts = fontHref(settings);
+
   return (
     <html lang="en">
       <head>
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Hanken+Grotesk:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
+        {fonts && <link href={fonts} rel="stylesheet" />}
+        {cssVars && (
+          <style
+            id="tenant-theme"
+            dangerouslySetInnerHTML={{ __html: `:root{${cssVars}}` }}
+          />
+        )}
       </head>
-      <body>{children}</body>
+      <body>
+        <ThemeProvider theme={theme}>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }

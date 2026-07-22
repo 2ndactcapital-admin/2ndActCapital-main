@@ -30,14 +30,14 @@ function StatusPill({ posted }) {
   if (posted) {
     return (
       <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold"
-        style={{ background: "#1B2B4B", color: "#FFF" }}>
+        style={{ background: "var(--2a-navy)", color: "#FFF" }}>
         Posted
       </span>
     );
   }
   return (
     <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold"
-      style={{ background: "#F1F5F9", color: "#64748B" }}>
+      style={{ background: "#F1F5F9", color: "var(--2a-text-muted)" }}>
       Draft
     </span>
   );
@@ -98,7 +98,7 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="w-full max-w-md rounded-lg border border-[#ece8dd] bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-base font-semibold text-[#1B2B4B]"
+        <h2 className="mb-4 text-base font-semibold text-[var(--2a-navy)]"
           style={{ fontFamily: "Spectral, Georgia, serif" }}>
           Add Journal Event
         </h2>
@@ -107,11 +107,11 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
               Transaction Type
             </label>
             <select
-              className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+              className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
               value={templateId}
               onChange={(e) => setTemplateId(e.target.value)}
               required
@@ -126,14 +126,14 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
               Amount
             </label>
             <input
               type="number"
               step="0.01"
               min="0.01"
-              className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+              className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               required
@@ -141,12 +141,12 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
               Entry Date
             </label>
             <input
               type="date"
-              className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+              className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
               value={entryDate}
               onChange={(e) => setEntryDate(e.target.value)}
               required
@@ -154,11 +154,11 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
               Basis
             </label>
             <select
-              className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+              className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
               value={basis}
               onChange={(e) => setBasis(e.target.value)}
             >
@@ -169,12 +169,12 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
 
           {needsMemberSeries && (
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
                 Class ID (member series)
               </label>
               <input
                 type="text"
-                className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm font-mono text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm font-mono text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 value={memberSeriesId}
                 onChange={(e) => setMemberSeriesId(e.target.value)}
                 placeholder="UUID"
@@ -184,12 +184,12 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
 
           {needsInvestment && (
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
                 Investment ID
               </label>
               <input
                 type="text"
-                className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm font-mono text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm font-mono text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
                 value={investmentId}
                 onChange={(e) => setInvestmentId(e.target.value)}
                 placeholder="UUID"
@@ -198,13 +198,13 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
           )}
 
           {selectedTmpl && (
-            <div className="rounded border border-[#ece8dd] bg-[#FAF9F6] p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B] mb-1.5">
+            <div className="rounded border border-[#ece8dd] bg-[var(--2a-bg)] p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1.5">
                 Journal Preview
               </p>
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-[#64748B]">
+                  <tr className="text-[var(--2a-text-muted)]">
                     <th className="text-left font-medium pb-1">Account</th>
                     <th className="text-right font-medium">Debit</th>
                     <th className="text-right font-medium">Credit</th>
@@ -212,14 +212,14 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
                 </thead>
                 <tbody>
                   {selectedTmpl.lines.map((ln, i) => (
-                    <tr key={i} className="border-t border-[#E2E8F0]">
-                      <td className="py-0.5 text-[#334155]">
+                    <tr key={i} className="border-t border-[var(--2a-border)]">
+                      <td className="py-0.5 text-[var(--2a-text-secondary)]">
                         {ln.account_code} {ln.account_name}
                       </td>
-                      <td className="text-right tabular-nums text-[#0F172A]">
+                      <td className="text-right tabular-nums text-[var(--2a-text)]">
                         {ln.side === "D" ? fmtMoney(parseFloat(amount) || 0) : ""}
                       </td>
-                      <td className="text-right tabular-nums text-[#0F172A]">
+                      <td className="text-right tabular-nums text-[var(--2a-text)]">
                         {ln.side === "C" ? fmtMoney(parseFloat(amount) || 0) : ""}
                       </td>
                     </tr>
@@ -233,14 +233,14 @@ function AddEventModal({ vehicleId, templates, onClose, onCreated }) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded border border-[#E2E8F0] px-4 py-1.5 text-sm text-[#64748B] hover:bg-[#F5F1EB]"
+              className="rounded border border-[var(--2a-border)] px-4 py-1.5 text-sm text-[var(--2a-text-muted)] hover:bg-[var(--2a-bg-sidebar)]"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="rounded bg-[#1B2B4B] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2a3f6f] disabled:opacity-50"
+              className="rounded bg-[var(--2a-navy)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2a3f6f] disabled:opacity-50"
             >
               {saving ? "Saving…" : "Create Draft"}
             </button>
@@ -282,7 +282,7 @@ function ReverseModal({ entry, onClose, onReversed }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="w-full max-w-sm rounded-lg border border-[#ece8dd] bg-white p-6 shadow-lg">
-        <h2 className="mb-3 text-base font-semibold text-[#1B2B4B]"
+        <h2 className="mb-3 text-base font-semibold text-[var(--2a-navy)]"
           style={{ fontFamily: "Spectral, Georgia, serif" }}>
           Reverse Entry
         </h2>
@@ -291,12 +291,12 @@ function ReverseModal({ entry, onClose, onReversed }) {
         )}
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#64748B] mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--2a-text-muted)] mb-1">
               Reason
             </label>
             <textarea
               rows={3}
-              className="w-full rounded border border-[#E2E8F0] px-3 py-1.5 text-sm text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+              className="w-full rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm text-[var(--2a-text)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               required
@@ -306,7 +306,7 @@ function ReverseModal({ entry, onClose, onReversed }) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded border border-[#E2E8F0] px-3 py-1.5 text-sm text-[#64748B] hover:bg-[#F5F1EB]"
+              className="rounded border border-[var(--2a-border)] px-3 py-1.5 text-sm text-[var(--2a-text-muted)] hover:bg-[var(--2a-bg-sidebar)]"
             >
               Cancel
             </button>
@@ -329,7 +329,7 @@ function ReverseModal({ entry, onClose, onReversed }) {
 function JournalPanel({ entry, onPost, onReverse }) {
   if (!entry) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-[#64748B]">
+      <div className="flex h-full items-center justify-center text-sm text-[var(--2a-text-muted)]">
         Select an event to view its journal lines.
       </div>
     );
@@ -341,13 +341,13 @@ function JournalPanel({ entry, onPost, onReverse }) {
     <div className="h-full overflow-auto p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">
             {(entry.transaction_type_code || "").replace(/_/g, " ")}
           </p>
-          <p className="text-sm font-medium text-[#0F172A]">{fmtDate(entry.entry_date)}</p>
-          <p className="text-sm text-[#64748B]">{entry._amount ? fmtMoney(entry._amount) : ""}</p>
+          <p className="text-sm font-medium text-[var(--2a-text)]">{fmtDate(entry.entry_date)}</p>
+          <p className="text-sm text-[var(--2a-text-muted)]">{entry._amount ? fmtMoney(entry._amount) : ""}</p>
           {entry.template_name && (
-            <p className="mt-0.5 text-xs text-[#64748B]">via {entry.template_name}</p>
+            <p className="mt-0.5 text-xs text-[var(--2a-text-muted)]">via {entry.template_name}</p>
           )}
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -355,7 +355,7 @@ function JournalPanel({ entry, onPost, onReverse }) {
           {!entry.posted_at && (
             <button
               onClick={() => onPost(entry)}
-              className="rounded bg-[#1B2B4B] px-3 py-1 text-xs font-medium text-white hover:bg-[#2a3f6f]"
+              className="rounded bg-[var(--2a-navy)] px-3 py-1 text-xs font-medium text-white hover:bg-[#2a3f6f]"
             >
               Post
             </button>
@@ -363,7 +363,7 @@ function JournalPanel({ entry, onPost, onReverse }) {
           {entry.posted_at && !entry.reverses_entry_id && (
             <button
               onClick={() => onReverse(entry)}
-              className="rounded border border-[#E2E8F0] px-3 py-1 text-xs text-[#9B2335] hover:bg-[#FEF3F2]"
+              className="rounded border border-[var(--2a-border)] px-3 py-1 text-xs text-[#9B2335] hover:bg-[#FEF3F2]"
             >
               Reverse
             </button>
@@ -374,23 +374,23 @@ function JournalPanel({ entry, onPost, onReverse }) {
       {lines.length > 0 ? (
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-[#E2E8F0]">
-              <th className="pb-1.5 text-left font-semibold text-[#64748B]">Account</th>
-              <th className="pb-1.5 text-right font-semibold text-[#64748B]">Debit</th>
-              <th className="pb-1.5 text-right font-semibold text-[#64748B]">Credit</th>
+            <tr className="border-b border-[var(--2a-border)]">
+              <th className="pb-1.5 text-left font-semibold text-[var(--2a-text-muted)]">Account</th>
+              <th className="pb-1.5 text-right font-semibold text-[var(--2a-text-muted)]">Debit</th>
+              <th className="pb-1.5 text-right font-semibold text-[var(--2a-text-muted)]">Credit</th>
             </tr>
           </thead>
           <tbody>
             {lines.map((ln) => (
-              <tr key={ln.id} className="border-t border-[#E2E8F0]">
-                <td className="py-1 text-[#334155]">
+              <tr key={ln.id} className="border-t border-[var(--2a-border)]">
+                <td className="py-1 text-[var(--2a-text-secondary)]">
                   {ln.account_code ? `${ln.account_code} ` : ""}
                   {ln.account_name || ln.account_id}
                 </td>
-                <td className="py-1 text-right tabular-nums text-[#0F172A]">
+                <td className="py-1 text-right tabular-nums text-[var(--2a-text)]">
                   {ln.debit != null ? fmtMoney(ln.debit) : ""}
                 </td>
-                <td className="py-1 text-right tabular-nums text-[#0F172A]">
+                <td className="py-1 text-right tabular-nums text-[var(--2a-text)]">
                   {ln.credit != null ? fmtMoney(ln.credit) : ""}
                 </td>
               </tr>
@@ -398,20 +398,20 @@ function JournalPanel({ entry, onPost, onReverse }) {
           </tbody>
         </table>
       ) : (
-        <p className="text-xs text-[#64748B]">No lines attached to this entry.</p>
+        <p className="text-xs text-[var(--2a-text-muted)]">No lines attached to this entry.</p>
       )}
 
       <dl className="mt-4 space-y-1 text-[10px]">
         {entry.ledger_basis && (
           <div className="flex gap-2">
-            <dt className="font-semibold uppercase tracking-wide text-[#64748B]">Basis</dt>
-            <dd className="text-[#334155]">{entry.ledger_basis}</dd>
+            <dt className="font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Basis</dt>
+            <dd className="text-[var(--2a-text-secondary)]">{entry.ledger_basis}</dd>
           </div>
         )}
         {entry.reverses_entry_id && (
           <div className="flex gap-2">
-            <dt className="font-semibold uppercase tracking-wide text-[#64748B]">Reverses</dt>
-            <dd className="font-mono text-[#C5A880]">{entry.reverses_entry_id}</dd>
+            <dt className="font-semibold uppercase tracking-wide text-[var(--2a-text-muted)]">Reverses</dt>
+            <dd className="font-mono text-[var(--2a-gold)]">{entry.reverses_entry_id}</dd>
           </div>
         )}
       </dl>
@@ -439,31 +439,31 @@ function TrialBalanceTab({ vehicleId, basis }) {
       .finally(() => setLoading(false));
   }, [vehicleId, basis]);
 
-  if (loading) return <p className="p-4 text-sm text-[#64748B]">Loading…</p>;
+  if (loading) return <p className="p-4 text-sm text-[var(--2a-text-muted)]">Loading…</p>;
   if (error) return <p className="p-4 text-sm text-[#9B2335]">{error}</p>;
   if (!rows?.length)
-    return <p className="p-4 text-sm text-[#64748B]">No data — post at least one entry.</p>;
+    return <p className="p-4 text-sm text-[var(--2a-text-muted)]">No data — post at least one entry.</p>;
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-[#E2E8F0]">
-            <th className="py-2 text-left font-semibold text-[#64748B]">Code</th>
-            <th className="py-2 text-left font-semibold text-[#64748B]">Account</th>
-            <th className="py-2 text-right font-semibold text-[#64748B]">Total Debit</th>
-            <th className="py-2 text-right font-semibold text-[#64748B]">Total Credit</th>
+          <tr className="border-b border-[var(--2a-border)]">
+            <th className="py-2 text-left font-semibold text-[var(--2a-text-muted)]">Code</th>
+            <th className="py-2 text-left font-semibold text-[var(--2a-text-muted)]">Account</th>
+            <th className="py-2 text-right font-semibold text-[var(--2a-text-muted)]">Total Debit</th>
+            <th className="py-2 text-right font-semibold text-[var(--2a-text-muted)]">Total Credit</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t border-[#E2E8F0]">
-              <td className="py-1.5 font-mono text-[#64748B]">{r.account_code}</td>
-              <td className="py-1.5 text-[#334155]">{r.account_name}</td>
-              <td className="py-1.5 text-right tabular-nums text-[#0F172A]">
+            <tr key={i} className="border-t border-[var(--2a-border)]">
+              <td className="py-1.5 font-mono text-[var(--2a-text-muted)]">{r.account_code}</td>
+              <td className="py-1.5 text-[var(--2a-text-secondary)]">{r.account_name}</td>
+              <td className="py-1.5 text-right tabular-nums text-[var(--2a-text)]">
                 {r.total_debit != null ? fmtMoney(r.total_debit) : ""}
               </td>
-              <td className="py-1.5 text-right tabular-nums text-[#0F172A]">
+              <td className="py-1.5 text-right tabular-nums text-[var(--2a-text)]">
                 {r.total_credit != null ? fmtMoney(r.total_credit) : ""}
               </td>
             </tr>
@@ -494,11 +494,11 @@ function CapitalAccountsTab({ vehicleId, basis }) {
       .finally(() => setLoading(false));
   }, [vehicleId, basis]);
 
-  if (loading) return <p className="p-4 text-sm text-[#64748B]">Loading…</p>;
+  if (loading) return <p className="p-4 text-sm text-[var(--2a-text-muted)]">Loading…</p>;
   if (error) return <p className="p-4 text-sm text-[#9B2335]">{error}</p>;
   if (!rows?.length)
     return (
-      <p className="p-4 text-sm text-[#64748B]">
+      <p className="p-4 text-sm text-[var(--2a-text-muted)]">
         No capital accounts — post a contribution or distribution first.
       </p>
     );
@@ -507,20 +507,20 @@ function CapitalAccountsTab({ vehicleId, basis }) {
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-[#E2E8F0]">
-            <th className="py-2 text-left font-semibold text-[#64748B]">Class</th>
-            <th className="py-2 text-left font-semibold text-[#64748B]">Account</th>
-            <th className="py-2 text-right font-semibold text-[#64748B]">Balance</th>
+          <tr className="border-b border-[var(--2a-border)]">
+            <th className="py-2 text-left font-semibold text-[var(--2a-text-muted)]">Class</th>
+            <th className="py-2 text-left font-semibold text-[var(--2a-text-muted)]">Account</th>
+            <th className="py-2 text-right font-semibold text-[var(--2a-text-muted)]">Balance</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t border-[#E2E8F0]">
-              <td className="py-1.5 font-mono text-[10px] text-[#64748B]">
+            <tr key={i} className="border-t border-[var(--2a-border)]">
+              <td className="py-1.5 font-mono text-[10px] text-[var(--2a-text-muted)]">
                 {r.dim_member_series_id || "—"}
               </td>
-              <td className="py-1.5 text-[#334155]">{r.account_name || r.account_code}</td>
-              <td className="py-1.5 text-right tabular-nums text-[#0F172A]">
+              <td className="py-1.5 text-[var(--2a-text-secondary)]">{r.account_name || r.account_code}</td>
+              <td className="py-1.5 text-right tabular-nums text-[var(--2a-text)]">
                 {fmtMoney(r.balance)}
               </td>
             </tr>
@@ -590,7 +590,7 @@ export default function SPVLedgerClient({ vehicleId }) {
 
   if (loading) {
     return (
-      <div className="flex h-48 items-center justify-center text-sm text-[#64748B]">
+      <div className="flex h-48 items-center justify-center text-sm text-[var(--2a-text-muted)]">
         Loading ledger…
       </div>
     );
@@ -603,12 +603,12 @@ export default function SPVLedgerClient({ vehicleId }) {
         <div>
           <a
             href={`/spvs/${vehicleId}`}
-            className="text-xs text-[#64748B] hover:text-[#C5A880]"
+            className="text-xs text-[var(--2a-text-muted)] hover:text-[var(--2a-gold)]"
           >
             ← SPV Detail
           </a>
           <h1
-            className="mt-1 text-xl font-light text-[#1B2B4B]"
+            className="mt-1 text-xl font-light text-[var(--2a-navy)]"
             style={{ fontFamily: "Spectral, Georgia, serif" }}
           >
             General Ledger
@@ -618,14 +618,14 @@ export default function SPVLedgerClient({ vehicleId }) {
           <select
             value={basis}
             onChange={(e) => setBasis(e.target.value)}
-            className="rounded border border-[#E2E8F0] px-2 py-1 text-xs text-[#334155] focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+            className="rounded border border-[var(--2a-border)] px-2 py-1 text-xs text-[var(--2a-text-secondary)] focus:outline-none focus:ring-1 focus:ring-[var(--2a-gold)]"
           >
             <option value="GAAP">GAAP</option>
             <option value="TAX">TAX</option>
           </select>
           <button
             onClick={() => setShowAddModal(true)}
-            className="rounded bg-[#1B2B4B] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2a3f6f]"
+            className="rounded bg-[var(--2a-navy)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2a3f6f]"
           >
             Add Event
           </button>
@@ -637,7 +637,7 @@ export default function SPVLedgerClient({ vehicleId }) {
       )}
 
       {/* Sub-tabs */}
-      <div className="mb-4 flex gap-4 border-b border-[#E2E8F0]">
+      <div className="mb-4 flex gap-4 border-b border-[var(--2a-border)]">
         {[
           { key: null, label: "Events" },
           { key: "trial-balance", label: "Trial Balance" },
@@ -648,8 +648,8 @@ export default function SPVLedgerClient({ vehicleId }) {
             onClick={() => setReporting(t.key)}
             className={`pb-2 text-sm font-medium transition-colors ${
               reporting === t.key
-                ? "border-b-2 border-[#C5A880] text-[#1B2B4B]"
-                : "text-[#64748B] hover:text-[#0F172A]"
+                ? "border-b-2 border-[var(--2a-gold)] text-[var(--2a-navy)]"
+                : "text-[var(--2a-text-muted)] hover:text-[var(--2a-text)]"
             }`}
           >
             {t.label}
@@ -675,16 +675,16 @@ export default function SPVLedgerClient({ vehicleId }) {
           {/* Left — Events list */}
           <div className="col-span-2 overflow-auto rounded-lg border border-[#ece8dd] bg-white">
             {entries.length === 0 ? (
-              <div className="flex h-32 items-center justify-center text-sm text-[#64748B]">
+              <div className="flex h-32 items-center justify-center text-sm text-[var(--2a-text-muted)]">
                 No entries. Click Add Event to begin.
               </div>
             ) : (
               <table className="w-full text-xs">
-                <thead className="sticky top-0 border-b border-[#E2E8F0] bg-white">
+                <thead className="sticky top-0 border-b border-[var(--2a-border)] bg-white">
                   <tr>
-                    <th className="px-4 py-2 text-left font-semibold text-[#64748B]">Date</th>
-                    <th className="px-2 py-2 text-left font-semibold text-[#64748B]">Type</th>
-                    <th className="px-4 py-2 text-right font-semibold text-[#64748B]">Amount</th>
+                    <th className="px-4 py-2 text-left font-semibold text-[var(--2a-text-muted)]">Date</th>
+                    <th className="px-2 py-2 text-left font-semibold text-[var(--2a-text-muted)]">Type</th>
+                    <th className="px-4 py-2 text-right font-semibold text-[var(--2a-text-muted)]">Amount</th>
                     <th className="px-2 py-2" />
                   </tr>
                 </thead>
@@ -693,15 +693,15 @@ export default function SPVLedgerClient({ vehicleId }) {
                     <tr
                       key={e.id}
                       onClick={() => setSelectedEntry(e)}
-                      className={`cursor-pointer border-t border-[#E2E8F0] hover:bg-[#FAF9F6] ${
-                        selectedEntry?.id === e.id ? "bg-[#FAF9F6]" : ""
+                      className={`cursor-pointer border-t border-[var(--2a-border)] hover:bg-[var(--2a-bg)] ${
+                        selectedEntry?.id === e.id ? "bg-[var(--2a-bg)]" : ""
                       }`}
                     >
-                      <td className="px-4 py-2 text-[#64748B]">{fmtDate(e.entry_date)}</td>
-                      <td className="px-2 py-2 text-[#334155]">
+                      <td className="px-4 py-2 text-[var(--2a-text-muted)]">{fmtDate(e.entry_date)}</td>
+                      <td className="px-2 py-2 text-[var(--2a-text-secondary)]">
                         {(e.transaction_type_code || "").replace(/_/g, " ")}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-[#0F172A]">
+                      <td className="px-4 py-2 text-right tabular-nums text-[var(--2a-text)]">
                         {e._amount ? fmtMoney(e._amount) : ""}
                       </td>
                       <td className="px-2 py-2">

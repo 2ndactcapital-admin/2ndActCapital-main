@@ -128,7 +128,7 @@ export default function NotificationBell() {
         {count > 0 && (
           <span
             className="absolute -right-0.5 -top-0.5 flex min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-semibold text-navy"
-            style={{ backgroundColor: "#C5A880", height: 16 }}
+            style={{ backgroundColor: "var(--2a-gold)", height: 16 }}
           >
             {badge}
           </span>
@@ -174,8 +174,8 @@ export default function NotificationBell() {
                     style={
                       unread
                         ? {
-                            borderLeft: "3px solid #C5A880",
-                            backgroundColor: "#FAF9F6",
+                            borderLeft: "3px solid var(--2a-gold)",
+                            backgroundColor: "var(--2a-bg)",
                           }
                         : { borderLeft: "3px solid transparent" }
                     }

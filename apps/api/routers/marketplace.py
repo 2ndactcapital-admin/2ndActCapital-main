@@ -56,6 +56,7 @@ from services.database import get_pool
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id, is_staff, require_permission
 from services.notifications import notification_bus
+from services.org_settings import get_brand_name
 from services.rbac import get_users_by_role
 from services.storage import upload_bytes
 from services.users import ensure_user
@@ -1678,6 +1679,9 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
 
     deal_context = "\n".join(parts)
 
+    # Sprint 24: the firm's name in the prompt comes from org_settings.
+    _brand = await get_brand_name(await get_pool(), org_id)
+
     try:
         import anthropic as _anthropic
         client = _anthropic.AsyncAnthropic(api_key=api_key)
@@ -1685,7 +1689,7 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
             model=_AI_MODEL,
             max_tokens=1024,
             system=(
-                "You are a financial analyst for 2nd Act Capital, a private investment platform "
+                f"You are a financial analyst for {_brand}, a private investment platform "
                 "for accredited investors. Analyze the deal and respond ONLY with valid JSON "
                 "(no markdown fences) containing exactly these keys: "
                 "summary_text (string), strengths (array of strings), "

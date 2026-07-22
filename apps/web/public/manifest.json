@@ -1,14 +1,4 @@
 {
-  "name": "2nd Act Capital",
-  "short_name": "2nd Act",
-  "icons": [
-    {
-      "src": "/brand/icon/app-icon.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml"
-    }
-  ],
-  "theme_color": "#1B2B4B",
-  "background_color": "#FAF9F6",
+  "_deprecated": "Sprint 24 — superseded by apps/web/app/manifest.js, which generates /manifest.webmanifest per tenant from org_settings. Nothing references this file; safe to git rm.",
   "display": "standalone"
 }

@@ -19,6 +19,7 @@ from services.action_registry import REGISTRY, AssistantAction
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.extraction import call_claude_with_tools
+from services.org_settings import get_brand_name
 from services.rbac import get_user_permissions
 from services.users import ensure_user
 
@@ -26,8 +27,10 @@ router = APIRouter(tags=["assistant"])
 
 ORG_ID = "00000000-0000-0000-0000-000000000001"
 
-SYSTEM_PROMPT = (
-    "You are the member's private AI assistant on the 2nd Act Capital platform — "
+def system_prompt(brand_name: str) -> str:
+    """Sprint 24: the firm's name comes from org_settings, not a literal."""
+    return (
+    f"You are the member's private AI assistant on the {brand_name} platform — "
     "a trust-gated private wealth community. You are calm, precise, and discreet — "
     "a capable presence on the member's side of the table. Never salesy, never an "
     "exclamation point, never emoji. You have tools. Use READ tools freely to gather "
@@ -38,7 +41,7 @@ SYSTEM_PROMPT = (
     "component over describing it in prose. Give a short prose take, then let the "
     "visual carry the detail. Keep replies brief. You are talking to a sophisticated "
     "person who values their time."
-)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +84,12 @@ async def _run_loop(
 
     current = list(api_messages)
 
+    # Resolved once, not per iteration — the brand cannot change mid-loop.
+    system = system_prompt(await get_brand_name(pool, org_id))
+
     for _iteration in range(10):
         response = await call_claude_with_tools(
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=current,
             tools=tool_specs,
             max_tokens=2000,

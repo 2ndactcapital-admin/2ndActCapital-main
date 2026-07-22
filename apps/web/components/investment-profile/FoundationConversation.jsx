@@ -107,7 +107,7 @@ export default function FoundationConversation({
         <div className="h-2 w-full overflow-hidden rounded-full bg-border">
           <div
             className="h-2 rounded-full transition-all"
-            style={{ width: `${pct}%`, backgroundColor: "#C5A880" }}
+            style={{ width: `${pct}%`, backgroundColor: "var(--2a-gold)" }}
           />
         </div>
       </div>
@@ -132,8 +132,8 @@ export default function FoundationConversation({
                 style={{
                   borderRadius: 6,
                   padding: "12px 16px",
-                  backgroundColor: m.role === "user" ? "#1B2B4B" : "#FAF9F6",
-                  color: m.role === "user" ? "#ffffff" : "#0F172A",
+                  backgroundColor: m.role === "user" ? "var(--2a-navy)" : "var(--2a-bg)",
+                  color: m.role === "user" ? "var(--2a-bg)" : "var(--2a-text)",
                 }}
               >
                 {m.content}
@@ -145,7 +145,7 @@ export default function FoundationConversation({
           <div className="flex justify-start">
             <div
               className="text-sm text-text-muted"
-              style={{ borderRadius: 6, padding: "12px 16px", backgroundColor: "#FAF9F6" }}
+              style={{ borderRadius: 6, padding: "12px 16px", backgroundColor: "var(--2a-bg)" }}
             >
               …
             </div>
@@ -159,7 +159,7 @@ export default function FoundationConversation({
       {isComplete ? (
         <div
           className="mt-4 flex items-center justify-between rounded-lg px-4 py-3"
-          style={{ backgroundColor: "#E8D5A3", color: "#1B2B4B" }}
+          style={{ backgroundColor: "var(--2a-gold-light)", color: "var(--2a-navy)" }}
         >
           <span className="text-sm font-medium">Conversation complete ✓</span>
           <a

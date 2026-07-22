@@ -53,7 +53,7 @@ function ScoreDisplay({ composite, scores = [] }) {
       <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-border">
         <div
           className="h-full rounded-full transition-all"
-          style={{ width: `${pct}%`, backgroundColor: "#C5A880" }}
+          style={{ width: `${pct}%`, backgroundColor: "var(--2a-gold)" }}
         />
       </div>
       {scores.length > 0 && (

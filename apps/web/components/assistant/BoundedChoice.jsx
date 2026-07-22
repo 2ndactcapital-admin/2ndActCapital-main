@@ -38,10 +38,10 @@ export default function BoundedChoice({ proposedAction, onResolved, onNavigate }
     return (
       <div className="mt-2">
         {isDecline ? (
-          <p className="text-xs text-[#64748B]">Noted — no action taken.</p>
+          <p className="text-xs text-[var(--2a-text-muted)]">Noted — no action taken.</p>
         ) : (
           <>
-            <p className="text-xs text-[#64748B]">Done.</p>
+            <p className="text-xs text-[var(--2a-text-muted)]">Done.</p>
             <RenderDirective render={resolved.data?.render} onNavigate={onNavigate} />
           </>
         )}
@@ -52,11 +52,11 @@ export default function BoundedChoice({ proposedAction, onResolved, onNavigate }
   return (
     <div className="mt-3 space-y-2">
       {rationale && (
-        <p className="text-sm text-[#334155]">{rationale}</p>
+        <p className="text-sm text-[var(--2a-text-secondary)]">{rationale}</p>
       )}
       {params.draft_text && (
-        <div className="rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm text-[#334155] whitespace-pre-wrap">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#C5A880]">Draft</p>
+        <div className="rounded border border-[#ece8dd] bg-white px-3 py-2 text-sm text-[var(--2a-text-secondary)] whitespace-pre-wrap">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--2a-gold)]">Draft</p>
           {params.draft_text}
         </div>
       )}
@@ -71,10 +71,10 @@ export default function BoundedChoice({ proposedAction, onResolved, onNavigate }
               className={[
                 "rounded px-3 py-2 text-sm font-medium transition-opacity",
                 isDecline
-                  ? "bg-[#F5F1EB] text-[#64748B] hover:bg-[#ece8dd]"
+                  ? "bg-[var(--2a-bg-sidebar)] text-[var(--2a-text-muted)] hover:bg-[#ece8dd]"
                   : i === 0
-                  ? "bg-[#1B2B4B] text-white hover:opacity-90"
-                  : "border border-[#E2E8F0] bg-white text-[#334155] hover:bg-[#FAF9F6]",
+                  ? "bg-[var(--2a-navy)] text-white hover:opacity-90"
+                  : "border border-[var(--2a-border)] bg-white text-[var(--2a-text-secondary)] hover:bg-[var(--2a-bg)]",
                 loading && "opacity-50 cursor-not-allowed",
               ].join(" ")}
             >

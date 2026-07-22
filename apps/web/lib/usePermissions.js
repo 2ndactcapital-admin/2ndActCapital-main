@@ -67,6 +67,8 @@ export function usePermissions() {
   return {
     loading,
     role: me?.role || null,
+    // Raw users.role — what the Sprint 24 admin gates check.
+    accountRole: me?.account_role || null,
     roles,
     permissions,
     can,

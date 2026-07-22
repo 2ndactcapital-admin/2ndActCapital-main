@@ -83,7 +83,7 @@ function ExtractionCard({ entityId, extraction, onReviewed }) {
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
             <div
               className="h-full rounded-full"
-              style={{ width: `${Math.round(confidence * 100)}%`, backgroundColor: "#C5A880" }}
+              style={{ width: `${Math.round(confidence * 100)}%`, backgroundColor: "var(--2a-gold)" }}
             />
           </div>
         </div>

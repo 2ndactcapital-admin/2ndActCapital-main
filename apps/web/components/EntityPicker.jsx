@@ -197,7 +197,7 @@ export default function EntityPicker({
                 {e.is_incomplete && (
                   <span
                     className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                    style={{ backgroundColor: "#E8D5A3", color: "#1B2B4B" }}
+                    style={{ backgroundColor: "var(--2a-gold-light)", color: "var(--2a-navy)" }}
                   >
                     Incomplete
                   </span>
@@ -264,7 +264,7 @@ export default function EntityPicker({
                 type="button"
                 onClick={forceCreate}
                 className="rounded-md px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-                style={{ backgroundColor: "#1B2B4B" }}
+                style={{ backgroundColor: "var(--2a-navy)" }}
               >
                 Create anyway
               </button>

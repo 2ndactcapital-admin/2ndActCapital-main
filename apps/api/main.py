@@ -1,4 +1,8 @@
-"""2nd Act Capital API.
+"""Ripasso API.
+
+Ripasso is the licensable platform; each client firm is a tenant org whose
+branding lives in ``org_settings`` (Sprint 24). Nothing here names a specific
+client.
 
 FastAPI application entrypoint. Exposes a public health check and protects
 every other route with Auth0-issued JWT validation.
@@ -25,6 +29,7 @@ from routers.entity_graph import router as entity_graph_router
 from routers.investment_profile import router as investment_profile_router
 from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
+from routers.org_settings import router as org_settings_router
 from routers.portfolio import router as portfolio_router
 from routers.entity_documents import router as entity_documents_router
 from routers.reference import router as reference_router
@@ -37,7 +42,10 @@ API_VERSION = "0.1.0"
 # Paths that do not require authentication.
 # NOTE: /debug/user-info is intentionally public for production triage — remove
 # it (and the debug router) once the ensure_user 500s are confirmed fixed.
-PUBLIC_PATHS = {"/health", "/debug/user-info"}
+# /api/v1/theme/public is public by design: the login screen must render the
+# tenant's branding before anyone has a token. It serves only is_public
+# settings (colours, fonts, names) — never member data.
+PUBLIC_PATHS = {"/health", "/debug/user-info", "/api/v1/theme/public"}
 
 
 class Settings(BaseSettings):
@@ -110,7 +118,7 @@ def verify_token(token: str) -> dict:
     )
 
 
-app = FastAPI(title="2nd Act Capital API", version=API_VERSION)
+app = FastAPI(title="Ripasso API", version=API_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -198,5 +206,6 @@ app.include_router(admin_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(allocation_lens_router, prefix="/api/v1")
 app.include_router(ledger_router, prefix="/api/v1")
+app.include_router(org_settings_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)
