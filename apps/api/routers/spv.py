@@ -23,11 +23,16 @@ Routes:
   POST   /spvs/{id}/transactions/{txn_id}/void          — void a transaction (staff)
   GET    /spvs/{id}/transactions/{txn_id}/allocations   — allocation rows (staff)
   GET    /spvs/{id}/ledger                              — full ledger view (staff)
+
+  Sprint 23 — Investment / Class:
+  GET    /deals/{deal_id}/classes                       — classes of an investment
+  GET    /deals/{deal_id}/rollup                        — investment-level roll-up (staff)
 """
 import os
 import uuid as _uuid
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
 
@@ -36,8 +41,13 @@ from schemas.spv import (
     AllocationRow,
     CapTableEntry,
     CapTableResponse,
+    ClassRollup,
+    DealClassesResponse,
+    DealClassSummary,
+    DealRollupResponse,
     LedgerResponse,
     LedgerSummary,
+    RollupTotals,
     SPVCreate,
     SPVDocumentResponse,
     SPVFormEntityUpdate,
@@ -57,6 +67,13 @@ from services.transaction_types import get_types as get_txn_types
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.permissions import get_user_id, is_staff, require_permission
+from services.spv_classes import (
+    ClassLabelError,
+    deal_class_state,
+    normalize_class_label,
+    resolve_class_label,
+)
+from services.spv_rollup import deal_rollup, spv_totals
 from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
 
@@ -78,7 +95,7 @@ MEMBER_VISIBLE_STATUSES = ("open", "closing")
 SPV_SELECT = (
     "id, org_id, deal_id, name, spv_status, target_raise, minimum_raise, "
     "hard_cap, min_commitment, carry_pct, mgmt_fee_pct, vehicle_entity_id, "
-    "close_date, created_by, created_at, updated_at"
+    "close_date, class_label, created_by, created_at, updated_at"
 )
 
 # DB column is subscription_status; alias to status for the response.
@@ -153,46 +170,65 @@ async def create_spv(request: Request, body: SPVCreate):
         )
         if not deal_exists:
             raise HTTPException(status_code=400, detail=f"Deal {body.deal_id} not found")
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                f"""
-                INSERT INTO spvs
-                    (org_id, deal_id, name, spv_status, target_raise, minimum_raise,
-                     hard_cap, min_commitment, carry_pct, mgmt_fee_pct, close_date,
-                     created_by)
-                VALUES ($1, $2, $3, 'forming', $4, $5, $6, $7, $8, $9, $10, $11)
-                RETURNING {SPV_SELECT}
-                """,
-                org_id,
-                body.deal_id,
-                body.name,
-                body.target_raise,
-                body.minimum_raise,
-                body.hard_cap,
-                body.min_commitment,
-                body.carry_pct,
-                body.mgmt_fee_pct,
-                body.close_date,
-                user_id,
+
+        # Sprint 23 — a deal's second and later SPVs are Classes and must be
+        # labelled.  Enforced here, not in the form, so the rule holds for any
+        # caller.
+        try:
+            class_label = await resolve_class_label(
+                conn, org_id, body.deal_id, body.class_label
             )
-            await conn.execute(
-                """
-                INSERT INTO spv_status_history
-                    (org_id, spv_id, from_status, to_status, note, changed_by)
-                VALUES ($1, $2, NULL, 'forming', 'SPV created', $3)
-                """,
-                org_id,
-                row["id"],
-                user_id,
-            )
-            await write_audit_log(
-                conn,
-                org_id=org_id,
-                action="create",
-                table_name="spvs",
-                record_id=row["id"],
-                new=dict(row),
-            )
+        except ClassLabelError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    f"""
+                    INSERT INTO spvs
+                        (org_id, deal_id, name, spv_status, target_raise, minimum_raise,
+                         hard_cap, min_commitment, carry_pct, mgmt_fee_pct, close_date,
+                         class_label, created_by)
+                    VALUES ($1, $2, $3, 'forming', $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    RETURNING {SPV_SELECT}
+                    """,
+                    org_id,
+                    body.deal_id,
+                    body.name,
+                    body.target_raise,
+                    body.minimum_raise,
+                    body.hard_cap,
+                    body.min_commitment,
+                    body.carry_pct,
+                    body.mgmt_fee_pct,
+                    body.close_date,
+                    class_label,
+                    user_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO spv_status_history
+                        (org_id, spv_id, from_status, to_status, note, changed_by)
+                    VALUES ($1, $2, NULL, 'forming', 'SPV created', $3)
+                    """,
+                    org_id,
+                    row["id"],
+                    user_id,
+                )
+                await write_audit_log(
+                    conn,
+                    org_id=org_id,
+                    action="create",
+                    table_name="spvs",
+                    record_id=row["id"],
+                    new=dict(row),
+                )
+        except asyncpg.UniqueViolationError as exc:
+            # spvs_deal_class_label_uniq — lost a race with a concurrent create.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Class {class_label} already exists on this deal.",
+            ) from exc
     return _spv_response(row)
 
 
@@ -263,8 +299,10 @@ async def update_spv(request: Request, spv_id: UUID, body: SPVUpdate):
 
     editable = (
         "name", "deal_id", "target_raise", "minimum_raise", "hard_cap",
-        "min_commitment", "carry_pct", "mgmt_fee_pct", "close_date",
+        "min_commitment", "carry_pct", "mgmt_fee_pct", "close_date", "class_label",
     )
+    if "class_label" in updates:
+        updates["class_label"] = normalize_class_label(updates["class_label"])
     set_clauses = ["updated_at = now()"]
     params: list = [spv_id, org_id]
     for field in editable:
@@ -277,14 +315,23 @@ async def update_spv(request: Request, spv_id: UUID, body: SPVUpdate):
             old = await _fetch_spv(conn, org_id, spv_id)
             if old is None:
                 raise HTTPException(status_code=404, detail="SPV not found")
-            row = await conn.fetchrow(
-                f"""
-                UPDATE spvs SET {', '.join(set_clauses)}
-                WHERE id = $1 AND org_id = $2
-                RETURNING {SPV_SELECT}
-                """,
-                *params,
-            )
+            try:
+                row = await conn.fetchrow(
+                    f"""
+                    UPDATE spvs SET {', '.join(set_clauses)}
+                    WHERE id = $1 AND org_id = $2
+                    RETURNING {SPV_SELECT}
+                    """,
+                    *params,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                # spvs_deal_class_label_uniq — one class label per deal.
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Class {updates.get('class_label')} already exists on this deal."
+                    ),
+                ) from exc
             await write_audit_log(
                 conn,
                 org_id=org_id,
@@ -1159,47 +1206,21 @@ async def get_ledger(request: Request, spv_id: UUID):
                 spv_id, org_id,
             )
 
-            # Compute summary from posted transactions using type attributes when available.
-            # Falls back to legacy txn_type string matching for rows without a type_id.
-            totals = await conn.fetchrow(
-                """
-                SELECT
-                  COALESCE(SUM(CASE
-                    WHEN tt.affects_paid_in > 0 THEN t.amount
-                    WHEN t.transaction_type_id IS NULL AND t.txn_type = 'capital_call' THEN t.amount
-                    ELSE 0
-                  END), 0) AS total_called,
-                  COALESCE(SUM(CASE
-                    WHEN tt.affects_nav < 0 AND COALESCE(tt.is_recallable, false) = false THEN t.amount
-                    WHEN t.transaction_type_id IS NULL AND t.txn_type = 'distribution' THEN t.amount
-                    ELSE 0
-                  END), 0) AS total_distributed,
-                  COALESCE(SUM(CASE
-                    WHEN tt.category = 'fee' THEN t.amount
-                    WHEN t.transaction_type_id IS NULL AND t.txn_type IN ('fee', 'return_of_capital') THEN t.amount
-                    ELSE 0
-                  END), 0) AS total_fees,
-                  COALESCE(SUM(CASE
-                    WHEN COALESCE(tt.is_recallable, false) = true THEN t.amount
-                    ELSE 0
-                  END), 0) AS total_recallable
-                FROM spv_transactions t
-                LEFT JOIN transaction_types tt ON tt.id = t.transaction_type_id
-                WHERE t.spv_id = $1 AND t.org_id = $2 AND t.status = 'posted'
-                """,
-                spv_id, org_id,
-            )
+            # Shared with the investment-level roll-up — one implementation of
+            # the Committed/Called/Distributed/Fees/Net math (services/spv_rollup).
+            totals = await spv_totals(conn, org_id, spv_id)
         except Exception as exc:
             import traceback
             print(f"ERROR get_ledger (spv={spv_id}): {exc}")
             print(traceback.format_exc())
             raise
 
+    # LedgerSummary is a float schema (Sprint 14); convert at this boundary only.
     total_called = float(totals["total_called"])
     total_distributed = float(totals["total_distributed"])
     total_fees = float(totals["total_fees"])
     total_recallable = float(totals["total_recallable"])
-    net = total_called - total_distributed - total_fees
+    net = float(totals["net"])
 
     return LedgerResponse(
         spv_id=spv_id,
@@ -1212,4 +1233,102 @@ async def get_ledger(request: Request, spv_id: UUID):
             net=net,
         ),
         transactions=[_txn_response(r) for r in txn_rows],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Investment (deal) level — classes and roll-up  (Sprint 23)
+# ---------------------------------------------------------------------------
+async def _deal_row(conn, org_id, deal_id: UUID):
+    return await conn.fetchrow(
+        """
+        SELECT id, name FROM deals
+        WHERE id = $1 AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL
+        """,
+        deal_id,
+        org_id,
+    )
+
+
+@router.get("/deals/{deal_id}/classes", response_model=DealClassesResponse)
+async def get_deal_classes(request: Request, deal_id: UUID):
+    """Classes (SPVs) of one investment, plus the next label to suggest.
+
+    Members see only member-visible classes; the label suggestion and the
+    "is a label required?" flag always reflect every SPV on the deal, since
+    that is what the unique index and the create guard act on.
+    """
+    org_id = get_org_id(request)
+    staff = is_staff(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        if await _deal_row(conn, org_id, deal_id) is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+
+        state = await deal_class_state(conn, org_id, deal_id)
+
+        conditions = ["deal_id = $1", "org_id = $2"]
+        params: list = [deal_id, org_id]
+        if not staff:
+            params.append(list(MEMBER_VISIBLE_STATUSES))
+            conditions.append(f"spv_status = ANY(${len(params)})")
+
+        rows = await conn.fetch(
+            f"""
+            SELECT id, name, class_label, spv_status, carry_pct, mgmt_fee_pct,
+                   close_date, target_raise, min_commitment
+            FROM spvs
+            WHERE {' AND '.join(conditions)}
+            ORDER BY class_label ASC NULLS FIRST, created_at ASC
+            """,
+            *params,
+        )
+
+    return DealClassesResponse(
+        deal_id=deal_id,
+        spv_count=state["spv_count"],
+        class_label_required=state["class_label_required"],
+        suggested_class_label=state["suggested_class_label"],
+        existing_labels=state["existing_labels"],
+        classes=[
+            DealClassSummary(
+                spv_id=r["id"],
+                spv_name=r["name"],
+                class_label=r["class_label"],
+                status=r["spv_status"],
+                carry_pct=_f(r["carry_pct"]),
+                mgmt_fee_pct=_f(r["mgmt_fee_pct"]),
+                close_date=r["close_date"],
+                target_raise=_f(r["target_raise"]),
+                min_commitment=_f(r["min_commitment"]),
+            )
+            for r in rows
+        ],
+    )
+
+
+@router.get("/deals/{deal_id}/rollup", response_model=DealRollupResponse)
+async def get_deal_rollup(request: Request, deal_id: UUID):
+    """Investment-level roll-up across every class of a deal.
+
+    Same per-SPV math as the SPV ledger, summed by deal_id, with the per-class
+    breakdown returned alongside the totals.
+    """
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        deal = await _deal_row(conn, org_id, deal_id)
+        if deal is None:
+            raise HTTPException(status_code=404, detail="Deal not found")
+        rollup = await deal_rollup(conn, org_id, deal_id)
+
+    return DealRollupResponse(
+        deal_id=deal_id,
+        deal_name=deal["name"],
+        class_count=rollup["class_count"],
+        totals=RollupTotals(**rollup["totals"]),
+        classes=[ClassRollup(**c) for c in rollup["classes"]],
     )

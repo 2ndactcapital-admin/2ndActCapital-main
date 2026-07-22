@@ -29,6 +29,11 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
   const [error, setError] = useState(null);
   const [deals, setDeals] = useState([]);
   const [dealsLoading, setDealsLoading] = useState(false);
+  // Class state for the selected deal: a deal's second and later SPVs are
+  // Classes and must be labelled. The API enforces this too.
+  const [dealId, setDealId] = useState(lockedDealId || "");
+  const [classState, setClassState] = useState(null);
+  const [classLabel, setClassLabel] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -40,6 +45,31 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
       .catch(() => setDeals([]))
       .finally(() => setDealsLoading(false));
   }, [open, lockedDealId]);
+
+  useEffect(() => {
+    if (!open || !dealId) {
+      setClassState(null);
+      setClassLabel("");
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/deals/${dealId}/classes`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setClassState(data);
+        // Pre-fill the suggested next letter; the user can override it.
+        setClassLabel(data.class_label_required ? data.suggested_class_label : "");
+      })
+      .catch(() => {
+        if (!cancelled) setClassState(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, dealId]);
+
+  const classRequired = Boolean(classState?.class_label_required);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -54,6 +84,7 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
       carry_pct: fd.get("carry_pct") ? Number(fd.get("carry_pct")) : null,
       mgmt_fee_pct: fd.get("mgmt_fee_pct") ? Number(fd.get("mgmt_fee_pct")) : null,
       close_date: fd.get("close_date") || null,
+      class_label: (fd.get("class_label") || "").trim() || null,
     };
     try {
       const res = await fetch("/api/spvs", {
@@ -123,7 +154,8 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                   <select
                     name="deal_id"
                     required
-                    defaultValue=""
+                    value={dealId}
+                    onChange={(e) => setDealId(e.target.value)}
                     className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880] bg-white"
                   >
                     <option value="" disabled>Select a deal</option>
@@ -135,6 +167,34 @@ export default function NewSPVForm({ dealId: lockedDealId, dealName: lockedDealN
                   </select>
                 )}
               </div>
+
+              {/* Class — required once the investment already has an SPV */}
+              {classState && (
+                <div>
+                  <label className="block text-xs font-medium text-[#334155] mb-1">
+                    Class {classRequired && "*"}
+                  </label>
+                  <input
+                    name="class_label"
+                    required={classRequired}
+                    value={classLabel}
+                    onChange={(e) => setClassLabel(e.target.value)}
+                    placeholder={classRequired ? classState.suggested_class_label : "Optional"}
+                    className="w-full rounded border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
+                  />
+                  <p className="mt-1 text-xs text-[#64748B]">
+                    {classRequired
+                      ? `This investment already has ${classState.spv_count} SPV${
+                          classState.spv_count === 1 ? "" : "s"
+                        }${
+                          classState.existing_labels?.length
+                            ? ` (Class ${classState.existing_labels.join(", ")})`
+                            : ""
+                        }. Classes carry their own fee, carry, and close terms.`
+                      : "Leave blank for a single-class investment."}
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-[#334155] mb-1">Target Raise ($)</label>

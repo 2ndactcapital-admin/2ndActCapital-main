@@ -1,5 +1,6 @@
 """Pydantic schemas for the SPV Manager (Sprint 12)."""
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -16,6 +17,7 @@ class SPVCreate(BaseModel):
     carry_pct: Optional[float] = None
     mgmt_fee_pct: Optional[float] = None
     close_date: Optional[date] = None
+    class_label: Optional[str] = None  # Sprint 23 — economic class within the deal
 
 
 class SPVUpdate(BaseModel):
@@ -28,6 +30,7 @@ class SPVUpdate(BaseModel):
     carry_pct: Optional[float] = None
     mgmt_fee_pct: Optional[float] = None
     close_date: Optional[date] = None
+    class_label: Optional[str] = None
 
 
 class SPVStatusUpdate(BaseModel):
@@ -53,6 +56,7 @@ class SPVResponse(BaseModel):
     mgmt_fee_pct: Optional[float]
     vehicle_entity_id: Optional[UUID]
     close_date: Optional[date]
+    class_label: Optional[str] = None
     created_by: Optional[UUID]
     created_at: datetime
     updated_at: datetime
@@ -219,3 +223,60 @@ class LedgerResponse(BaseModel):
     spv_name: str
     summary: LedgerSummary
     transactions: list[TransactionResponse]
+
+
+# --- Sprint 23: investment (deal) level roll-up across classes -------------
+# Money is Decimal here, not float — these totals are summed across classes
+# and must not drift.
+
+
+class RollupTotals(BaseModel):
+    total_committed: Decimal
+    total_funded: Decimal
+    total_called: Decimal
+    total_distributed: Decimal
+    total_fees: Decimal
+    total_recallable: Decimal
+    net: Decimal
+
+
+class ClassRollup(RollupTotals):
+    spv_id: UUID
+    deal_id: UUID
+    spv_name: str
+    class_label: Optional[str]
+    status: str
+    carry_pct: Optional[Decimal]
+    mgmt_fee_pct: Optional[Decimal]
+    close_date: Optional[date]
+    target_raise: Optional[Decimal]
+
+
+class DealRollupResponse(BaseModel):
+    deal_id: UUID
+    deal_name: Optional[str] = None
+    class_count: int
+    totals: RollupTotals
+    classes: list[ClassRollup]
+
+
+class DealClassSummary(BaseModel):
+    """One class of an investment, for the marketplace deal page."""
+    spv_id: UUID
+    spv_name: str
+    class_label: Optional[str]
+    status: str
+    carry_pct: Optional[float]
+    mgmt_fee_pct: Optional[float]
+    close_date: Optional[date]
+    target_raise: Optional[float]
+    min_commitment: Optional[float]
+
+
+class DealClassesResponse(BaseModel):
+    deal_id: UUID
+    spv_count: int
+    class_label_required: bool
+    suggested_class_label: str
+    existing_labels: list[str]
+    classes: list[DealClassSummary]

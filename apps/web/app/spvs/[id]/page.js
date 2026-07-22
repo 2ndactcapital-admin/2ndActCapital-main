@@ -111,6 +111,10 @@ export default async function SPVDetailPage({ params, searchParams }) {
                 style={{ fontFamily: "Spectral, Georgia, serif", color: "#1B2B4B" }}
               >
                 {spv.name}
+                {/* Class label only appears on multi-class investments */}
+                {spv.class_label && (
+                  <span className="text-[#64748B]"> — Class {spv.class_label}</span>
+                )}
               </h1>
               {spv.close_date && (
                 <p className="mt-0.5 text-sm text-[#64748B]">

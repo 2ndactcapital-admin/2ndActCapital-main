@@ -17,6 +17,7 @@ import {
   getComplianceRequests,
   getAISummary,
   getMemberInvestments,
+  getDealClasses,
 } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 import {
@@ -70,6 +71,7 @@ export default async function DealDetailPage({ params, searchParams }) {
     dealStagesRes,
     investmentStagesRes,
     documentStatusesRes,
+    dealClassesRes,
   ] = await Promise.allSettled([
     staff ? getConfig("deal_scoring") : Promise.resolve([]),
     listInvestorEntities(),
@@ -79,6 +81,7 @@ export default async function DealDetailPage({ params, searchParams }) {
     getConfig("deal_stages"),
     staff ? getConfig("investment_stages") : Promise.resolve([]),
     staff ? getConfig("document_statuses") : Promise.resolve([]),
+    getDealClasses(id),
   ]);
 
   const dimensions =
@@ -103,6 +106,13 @@ export default async function DealDetailPage({ params, searchParams }) {
   const documentStatuses =
     documentStatusesRes.status === "fulfilled"
       ? documentStatusesRes.value || []
+      : [];
+
+  // Classes (SPVs) of this investment — the API already filters to
+  // member-visible ones for non-staff callers.
+  const dealClasses =
+    dealClassesRes.status === "fulfilled"
+      ? dealClassesRes.value?.classes || []
       : [];
 
   const sponsor = detail.sponsor_name || deal.sponsor_name_override;
@@ -321,13 +331,51 @@ export default async function DealDetailPage({ params, searchParams }) {
               <p className="mt-2 text-sm text-[#334155]">
                 Pool capital with other members through a special purpose vehicle.
               </p>
-              <a
-                href="/spvs"
-                className="mt-3 block rounded-md px-4 py-2 text-center text-sm font-medium text-white transition"
-                style={{ backgroundColor: "#1B2B4B" }}
-              >
-                View open SPVs
-              </a>
+
+              {/* One investment may be offered in several classes, each with its
+                  own carry, management fee, and close date. */}
+              {dealClasses.length > 1 ? (
+                <ul className="mt-3 space-y-2">
+                  {dealClasses.map((c) => (
+                    <li key={c.spv_id}>
+                      <a
+                        href={`/spvs/${c.spv_id}`}
+                        className="block rounded-md border border-[#ece8dd] px-3 py-2.5 transition hover:border-[#C5A880]"
+                      >
+                        <span className="block text-sm font-medium text-[#1B2B4B]">
+                          {c.class_label ? `Class ${c.class_label}` : c.spv_name}
+                        </span>
+                        {c.class_label && (
+                          <span className="block text-xs text-[#64748B]">
+                            {c.spv_name}
+                          </span>
+                        )}
+                        <span className="mt-1 block text-xs tabular-nums text-[#64748B]">
+                          {c.carry_pct != null
+                            ? `${formatPercent(c.carry_pct)} carry`
+                            : "Carry —"}
+                          {" · "}
+                          {c.mgmt_fee_pct != null
+                            ? `${formatPercent(c.mgmt_fee_pct)} mgmt fee`
+                            : "Mgmt fee —"}
+                          {" · "}
+                          {c.close_date
+                            ? `closes ${formatDate(c.close_date)}`
+                            : "close date TBD"}
+                        </span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <a
+                  href={dealClasses.length === 1 ? `/spvs/${dealClasses[0].spv_id}` : "/spvs"}
+                  className="mt-3 block rounded-md px-4 py-2 text-center text-sm font-medium text-white transition"
+                  style={{ backgroundColor: "#1B2B4B" }}
+                >
+                  {dealClasses.length === 1 ? "View SPV" : "View open SPVs"}
+                </a>
+              )}
             </div>
           )}
         </div>

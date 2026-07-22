@@ -312,6 +312,12 @@ export const listSPVDocuments = (id) =>
 export const getSPVHistory = (id) =>
   fetchAPI(`/api/v1/spvs/${id}/history`);
 
+// --- Investment (deal) classes + roll-up (Sprint 23) ---
+export const getDealClasses = (dealId) =>
+  fetchAPI(`/api/v1/deals/${dealId}/classes`);
+export const getDealRollup = (dealId) =>
+  fetchAPI(`/api/v1/deals/${dealId}/rollup`);
+
 // --- SPV Transactions (Sprint 14) ---
 export const listSPVTransactions = (spvId) =>
   fetchAPI(`/api/v1/spvs/${spvId}/transactions`);
