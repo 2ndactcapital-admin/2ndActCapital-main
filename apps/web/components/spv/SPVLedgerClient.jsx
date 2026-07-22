@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 
+import DataGrid from "@/components/ui/DataGrid";
+
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
 function fmtDate(val) {
@@ -533,6 +535,36 @@ function CapitalAccountsTab({ vehicleId, basis }) {
 
 // ─── Main client component ────────────────────────────────────────────────────
 
+// Column definitions for the events grid — prop-driven, consumed by the
+// shared DataGrid. Labels/format live here; all state logic (sort/filter/
+// reorder/column-picker) is handled inside DataGrid via TanStack Table.
+const EVENT_COLUMNS = [
+  {
+    field: "entry_date",
+    headerName: "Date",
+    cell: (v) => fmtDate(v),
+  },
+  {
+    field: "transaction_type_code",
+    headerName: "Type",
+    enableColumnFilter: true,
+    filterPlaceholder: "Filter type…",
+    cell: (v) => (v || "").replace(/_/g, " "),
+  },
+  {
+    field: "_amount",
+    headerName: "Amount",
+    align: "right",
+    cell: (v) => (v ? fmtMoney(v) : ""),
+  },
+  {
+    field: "posted_at",
+    headerName: "Status",
+    align: "center",
+    cell: (v) => <StatusPill posted={!!v} />,
+  },
+];
+
 export default function SPVLedgerClient({ vehicleId }) {
   const [entries, setEntries] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -672,46 +704,18 @@ export default function SPVLedgerClient({ vehicleId }) {
       {/* Two-pane events view */}
       {reporting === null && (
         <div className="grid grid-cols-5 gap-4" style={{ height: "calc(100vh - 240px)" }}>
-          {/* Left — Events list */}
-          <div className="col-span-2 overflow-auto rounded-lg border border-[#ece8dd] bg-white">
-            {entries.length === 0 ? (
-              <div className="flex h-32 items-center justify-center text-sm text-[var(--2a-text-muted)]">
-                No entries. Click Add Event to begin.
-              </div>
-            ) : (
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 border-b border-[var(--2a-border)] bg-white">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-semibold text-[var(--2a-text-muted)]">Date</th>
-                    <th className="px-2 py-2 text-left font-semibold text-[var(--2a-text-muted)]">Type</th>
-                    <th className="px-4 py-2 text-right font-semibold text-[var(--2a-text-muted)]">Amount</th>
-                    <th className="px-2 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.map((e) => (
-                    <tr
-                      key={e.id}
-                      onClick={() => setSelectedEntry(e)}
-                      className={`cursor-pointer border-t border-[var(--2a-border)] hover:bg-[var(--2a-bg)] ${
-                        selectedEntry?.id === e.id ? "bg-[var(--2a-bg)]" : ""
-                      }`}
-                    >
-                      <td className="px-4 py-2 text-[var(--2a-text-muted)]">{fmtDate(e.entry_date)}</td>
-                      <td className="px-2 py-2 text-[var(--2a-text-secondary)]">
-                        {(e.transaction_type_code || "").replace(/_/g, " ")}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-[var(--2a-text)]">
-                        {e._amount ? fmtMoney(e._amount) : ""}
-                      </td>
-                      <td className="px-2 py-2">
-                        <StatusPill posted={!!e.posted_at} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+          {/* Left — Events list (piloted on the shared DataGrid) */}
+          <div className="col-span-2 overflow-auto rounded-lg border border-[#ece8dd] bg-white p-3">
+            <DataGrid
+              gridId="spv-ledger-events"
+              columnDefs={EVENT_COLUMNS}
+              rowData={entries}
+              getRowId={(row) => row.id}
+              onRowClick={(row) => setSelectedEntry(row)}
+              selectedRowId={selectedEntry?.id}
+              quickFilterPlaceholder="Search events…"
+              emptyMessage="No entries. Click Add Event to begin."
+            />
           </div>
 
           {/* Right — Journal preview */}
