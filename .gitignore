@@ -54,3 +54,5 @@ venv/
 .pytest_cache/
 apps/api/venv/
 .mcp.json
+sprint_prompts/logs/*.json
+sprint_prompts/logs/*.err
