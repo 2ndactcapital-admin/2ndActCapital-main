@@ -1,39 +1,47 @@
 #!/bin/bash
 # ============================================================
-# run_sprint.sh — autonomous sprint execution wrapper
+# run_sprint.sh — autonomous sprint execution wrapper (v2)
 #
 # USAGE:
 #   ./scripts/run_sprint.sh sprint23.structural
 #   ./scripts/run_sprint.sh sprint24.lowrisk
 #
-# NAMING CONVENTION (this is how risk tier is set — nothing
-# else in this script infers risk automatically):
+# WHAT'S NEW IN V2 (fixes a real incident from Sprint 23):
+#   Step 2 now runs claude -p DETACHED via nohup, writing
+#   straight to a log file instead of being captured through
+#   $(...) command substitution in the foreground. This means:
+#     - A frozen or interrupted TERMINAL can no longer sever
+#       the running job or lose its output. The job survives
+#       independently of this script/terminal.
+#     - You can watch progress live in another window with:
+#         tail -f sprint_prompts/logs/<name>.sprint.log
+#     - If you Ctrl+C this script, the sprint keeps running in
+#       the background — check on it with the STATUS command
+#       below rather than assuming it died.
+#
+# STATUS / RECOVERY (if this script itself gets interrupted):
+#   Check if a sprint is still running:
+#     ps aux | grep "claude -p"
+#   Watch its output live:
+#     tail -f sprint_prompts/logs/<name>.sprint.log
+#   Once it finishes (process no longer in ps aux), re-run this
+#   same command — it detects a completed-but-unprocessed run
+#   and picks up at Step 3 (verify) instead of restarting Step 2.
+#
+# NAMING CONVENTION:
 #   sprint_prompts/<name>.lowrisk.md    -> auto-merges to main
 #                                          on green verify
 #   sprint_prompts/<name>.structural.md -> commits + pushes the
 #                                          feature branch, then
-#                                          STOPS for your manual
-#                                          review before merge
+#                                          STOPS for manual review
 #
 # WHAT THIS DOES NOT DO:
-#   - It does not design the sprint. Part 1 (SQL) and Part 2
-#     (branch confirm) still happen in chat with Claude, and
-#     you still apply Part 1 SQL in Supabase yourself before
-#     running this script.
-#   - It does not touch production. DATABASE_URL must point at
-#     the dev project only — this script trusts whatever
-#     apps/api/.env is already configured to.
-#   - It does not use --dangerously-skip-permissions. Tool
-#     access is explicitly scoped below.
+#   - Does not design the sprint (Part 1/Part 2 still in chat).
+#   - Does not touch production (trusts apps/api/.env DATABASE_URL).
+#   - Does not use --dangerously-skip-permissions.
 #
-# PREREQUISITES:
-#   - .mcp.json at repo root, already configured (Supabase dev)
-#   - .claude/commands/refresh-schema.md already in place
-#   - apps/api/.env with DATABASE_URL (dev project)
-#   - jq installed (sudo apt install jq / brew install jq)
-#   - The sprint prompt file saved at:
-#       sprint_prompts/<name>.md
-#     (see naming convention above for the risk-tier suffix)
+# PREREQUISITES: same as v1 — .mcp.json, refresh-schema command,
+# apps/api/.env, jq, sprint prompt file saved.
 # ============================================================
 
 set -uo pipefail
@@ -50,22 +58,23 @@ cd "$REPO_ROOT"
 PROMPT_FILE="sprint_prompts/${SPRINT_NAME}.md"
 LOG_DIR="sprint_prompts/logs"
 mkdir -p "$LOG_DIR"
-DECISION_LOG="$LOG_DIR/decision_log.jsonl"   # seeds the future TaskRouter (S27) decision log
+DECISION_LOG="$LOG_DIR/decision_log.jsonl"
+SPRINT_LOG="$LOG_DIR/${SPRINT_NAME}.sprint.log"
+SPRINT_JSON="$LOG_DIR/${SPRINT_NAME}.sprint.json"
+SPRINT_PID_FILE="$LOG_DIR/${SPRINT_NAME}.pid"
+SPRINT_DONE_FILE="$LOG_DIR/${SPRINT_NAME}.done"
 
-# ---- Determine risk tier from filename ----
 if [[ "$SPRINT_NAME" == *".lowrisk"* ]]; then
   RISK_TIER="lowrisk"
 elif [[ "$SPRINT_NAME" == *".structural"* ]]; then
   RISK_TIER="structural"
 else
-  echo "ERROR: sprint name must contain '.lowrisk' or '.structural' so risk tier is explicit." >&2
-  echo "       e.g. sprint23.structural  or  sprint24.lowrisk" >&2
+  echo "ERROR: sprint name must contain '.lowrisk' or '.structural'." >&2
   exit 1
 fi
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
   echo "ERROR: prompt file not found: $PROMPT_FILE" >&2
-  echo "       Save the sprint's Part 3 prompt there first." >&2
   exit 1
 fi
 
@@ -75,74 +84,128 @@ echo " Risk tier:  $RISK_TIER"
 echo " Prompt:     $PROMPT_FILE"
 echo "=================================================="
 
-# ---- Tool scope: explicit allow-list, never a bare bypass ----
 ALLOWED_TOOLS="Read,Write,Edit,Bash(python scripts/*),Bash(git add*),Bash(git commit*),Bash(git push*),Bash(git checkout*),Bash(git merge*),Bash(git fetch*),mcp__supabase-2ndact-dev"
 
 # ============================================================
-# STEP 1 — refresh the schema snapshot
+# RECOVERY CHECK — if a previous run already finished (the
+# .done marker exists) but never got processed past Step 2
+# (e.g. this script was killed before reaching verify), skip
+# straight to Step 3 instead of re-running the sprint.
 # ============================================================
-echo ""
-echo "--- Step 1: refresh-schema ---"
-refresh_result=$(timeout 300 claude -p "/refresh-schema" \
-  --permission-mode acceptEdits \
-  --allowedTools "$ALLOWED_TOOLS" \
-  --output-format json 2>"$LOG_DIR/${SPRINT_NAME}.refresh.err")
-refresh_status=$?
-
-echo "$refresh_result" > "$LOG_DIR/${SPRINT_NAME}.refresh.json"
-
-if [[ $refresh_status -ne 0 ]]; then
-  echo "FATAL: refresh-schema step crashed (exit $refresh_status)." >&2
-  cat "$LOG_DIR/${SPRINT_NAME}.refresh.err" >&2
-  exit 1
+if [[ -f "$SPRINT_DONE_FILE" && -f "$SPRINT_JSON" ]]; then
+  echo ""
+  echo ">>> Found a completed prior run for $SPRINT_NAME that was"
+  echo ">>> never processed (likely an interrupted script, not a"
+  echo ">>> failed sprint). Skipping schema-refresh and re-running"
+  echo ">>> Step 2 — jumping straight to verify."
+  echo ">>> Delete $SPRINT_DONE_FILE first if you want a full re-run."
+  sprint_cost=$(jq -r '.total_cost_usd // "n/a"' "$SPRINT_JSON" 2>/dev/null || echo "n/a")
+  sprint_duration=$(jq -r '.duration_ms // "n/a"' "$SPRINT_JSON" 2>/dev/null || echo "n/a")
+  sprint_turns=$(jq -r '.num_turns // "n/a"' "$SPRINT_JSON" 2>/dev/null || echo "n/a")
+  goto_verify=true
+else
+  goto_verify=false
 fi
 
-refresh_is_error=$(echo "$refresh_result" | jq -r '.is_error // "unknown"')
-if [[ "$refresh_is_error" == "true" ]]; then
-  echo "FATAL: refresh-schema reported an error. See $LOG_DIR/${SPRINT_NAME}.refresh.json" >&2
-  exit 1
-fi
-echo "Schema refresh OK. (Diff, if any, is expected — sprints change schema on purpose.)"
+if [[ "$goto_verify" == "false" ]]; then
+
+  echo ""
+  echo "--- Step 1: refresh-schema ---"
+  refresh_result=$(timeout 300 claude -p "/refresh-schema" \
+    --permission-mode acceptEdits \
+    --allowedTools "$ALLOWED_TOOLS" \
+    --output-format json 2>"$LOG_DIR/${SPRINT_NAME}.refresh.err")
+  refresh_status=$?
+
+  echo "$refresh_result" > "$LOG_DIR/${SPRINT_NAME}.refresh.json"
+
+  if [[ $refresh_status -ne 0 ]]; then
+    echo "FATAL: refresh-schema step crashed (exit $refresh_status)." >&2
+    cat "$LOG_DIR/${SPRINT_NAME}.refresh.err" >&2
+    exit 1
+  fi
+
+  refresh_is_error=$(echo "$refresh_result" | jq -r '.is_error // "unknown"')
+  if [[ "$refresh_is_error" == "true" ]]; then
+    echo "FATAL: refresh-schema reported an error." >&2
+    exit 1
+  fi
+  echo "Schema refresh OK."
+
+  # ==========================================================
+  # STEP 2 — DETACHED execution. This is the fix: claude -p
+  # runs via nohup, writing to a log file, backgrounded, with
+  # its PID recorded. This script then WAITS on that PID, but
+  # if the script itself is killed, the background job survives
+  # and keeps writing to SPRINT_LOG regardless.
+  # ==========================================================
+  echo ""
+  echo "--- Step 2: sprint execution (Part 3) — DETACHED ---"
+  echo "    Live log: $SPRINT_LOG"
+  echo "    Watch it in another terminal with:"
+  echo "      tail -f $SPRINT_LOG"
+  echo ""
+
+  rm -f "$SPRINT_DONE_FILE"
+
+  nohup claude -p "$(cat "$PROMPT_FILE")" \
+    --permission-mode acceptEdits \
+    --allowedTools "$ALLOWED_TOOLS" \
+    --max-turns 60 \
+    --output-format json \
+    > "$SPRINT_JSON" 2>"$SPRINT_LOG" &
+
+  SPRINT_PID=$!
+  echo "$SPRINT_PID" > "$SPRINT_PID_FILE"
+  echo "Running as PID $SPRINT_PID (detached — survives this terminal)."
+
+  # Poll instead of a blind `wait`, so we can print a heartbeat
+  # every 30s and you're never staring at total silence.
+  elapsed=0
+  while kill -0 "$SPRINT_PID" 2>/dev/null; do
+    sleep 30
+    elapsed=$((elapsed + 30))
+    echo "    ...still running (${elapsed}s elapsed, PID $SPRINT_PID). Tail $SPRINT_LOG for detail."
+    if [[ $elapsed -ge 1800 ]]; then
+      echo "FATAL: sprint exceeded 30 min cap. Killing PID $SPRINT_PID." >&2
+      kill -9 "$SPRINT_PID" 2>/dev/null || true
+      exit 1
+    fi
+  done
+
+  wait "$SPRINT_PID" 2>/dev/null
+  sprint_status=$?
+  touch "$SPRINT_DONE_FILE"
+  rm -f "$SPRINT_PID_FILE"
+
+  if [[ $sprint_status -ne 0 ]]; then
+    echo "FATAL: sprint run exited with status $sprint_status." >&2
+    echo "See $SPRINT_LOG for detail." >&2
+    exit 1
+  fi
+
+  if [[ ! -s "$SPRINT_JSON" ]]; then
+    echo "FATAL: sprint finished but $SPRINT_JSON is empty. Check $SPRINT_LOG." >&2
+    exit 1
+  fi
+
+  sprint_is_error=$(jq -r '.is_error // "unknown"' "$SPRINT_JSON")
+  sprint_cost=$(jq -r '.total_cost_usd // "n/a"' "$SPRINT_JSON")
+  sprint_duration=$(jq -r '.duration_ms // "n/a"' "$SPRINT_JSON")
+  sprint_turns=$(jq -r '.num_turns // "n/a"' "$SPRINT_JSON")
+
+  echo "Sprint run complete. cost=\$${sprint_cost}  duration_ms=${sprint_duration}  turns=${sprint_turns}"
+
+  if [[ "$sprint_is_error" == "true" ]]; then
+    echo "FATAL: Claude Code reported an error during the sprint run." >&2
+    jq -r '.result' "$SPRINT_JSON" >&2
+    exit 1
+  fi
+
+fi  # end goto_verify skip
 
 # ============================================================
-# STEP 2 — run the sprint's Part 3 prompt headlessly
-# ============================================================
-echo ""
-echo "--- Step 2: sprint execution (Part 3) ---"
-sprint_result=$(timeout 1800 claude -p "$(cat "$PROMPT_FILE")" \
-  --permission-mode acceptEdits \
-  --allowedTools "$ALLOWED_TOOLS" \
-  --max-turns 60 \
-  --output-format json 2>"$LOG_DIR/${SPRINT_NAME}.sprint.err")
-sprint_status=$?
-
-echo "$sprint_result" > "$LOG_DIR/${SPRINT_NAME}.sprint.json"
-
-if [[ $sprint_status -eq 124 ]]; then
-  echo "FATAL: sprint run timed out (30 min cap)." >&2
-  exit 1
-fi
-if [[ $sprint_status -ne 0 ]]; then
-  echo "FATAL: sprint run crashed (exit $sprint_status)." >&2
-  cat "$LOG_DIR/${SPRINT_NAME}.sprint.err" >&2
-  exit 1
-fi
-
-sprint_is_error=$(echo "$sprint_result" | jq -r '.is_error // "unknown"')
-sprint_cost=$(echo "$sprint_result" | jq -r '.total_cost_usd // "n/a"')
-sprint_duration=$(echo "$sprint_result" | jq -r '.duration_ms // "n/a"')
-sprint_turns=$(echo "$sprint_result" | jq -r '.num_turns // "n/a"')
-
-echo "Sprint run complete. cost=\$${sprint_cost}  duration_ms=${sprint_duration}  turns=${sprint_turns}"
-
-if [[ "$sprint_is_error" == "true" ]]; then
-  echo "FATAL: Claude Code reported an error during the sprint run." >&2
-  echo "$sprint_result" | jq -r '.result' >&2
-  exit 1
-fi
-
-# ============================================================
-# STEP 3 — run the sprint's verify script (pass/fail gate)
+# STEP 3 — verify
 # ============================================================
 echo ""
 echo "--- Step 3: verify ---"
@@ -167,8 +230,8 @@ if [[ $verify_status -ne 0 ]]; then
   echo "VERIFY FAILED (exit $verify_status). Stopping — nothing merged." >&2
   log_line=$(jq -n \
     --arg sprint "$SPRINT_NAME" --arg tier "$RISK_TIER" \
-    --arg cost "$sprint_cost" --arg dur "$sprint_duration" \
-    --arg turns "$sprint_turns" --arg result "verify_failed" \
+    --arg cost "${sprint_cost:-n/a}" --arg dur "${sprint_duration:-n/a}" \
+    --arg turns "${sprint_turns:-n/a}" --arg result "verify_failed" \
     --arg ts "$(date -u +%FT%TZ)" \
     '{timestamp:$ts, sprint:$sprint, risk_tier:$tier, cost_usd:$cost, duration_ms:$dur, turns:$turns, result:$result}')
   echo "$log_line" >> "$DECISION_LOG"
@@ -206,13 +269,12 @@ else
   result_label="held_for_review"
 fi
 
-# ============================================================
-# STEP 5 — decision log (seeds the future TaskRouter S27 log)
-# ============================================================
+rm -f "$SPRINT_DONE_FILE"
+
 log_line=$(jq -n \
   --arg sprint "$SPRINT_NAME" --arg tier "$RISK_TIER" \
-  --arg cost "$sprint_cost" --arg dur "$sprint_duration" \
-  --arg turns "$sprint_turns" --arg result "$result_label" \
+  --arg cost "${sprint_cost:-n/a}" --arg dur "${sprint_duration:-n/a}" \
+  --arg turns "${sprint_turns:-n/a}" --arg result "$result_label" \
   --arg ts "$(date -u +%FT%TZ)" \
   '{timestamp:$ts, sprint:$sprint, risk_tier:$tier, cost_usd:$cost, duration_ms:$dur, turns:$turns, result:$result}')
 echo "$log_line" >> "$DECISION_LOG"
