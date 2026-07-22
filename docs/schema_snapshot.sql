@@ -756,6 +756,19 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY notifications_pkey: (id)
 
+-- ===== org_settings =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   setting_key                              text NOT NULL
+--   setting_value                            jsonb NOT NULL
+--   category                                 text NOT NULL DEFAULT 'general'::text
+--   is_public                                boolean NOT NULL DEFAULT true
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE org_settings_org_id_setting_key_key: (org_id, setting_key)
+--   PRIMARY KEY org_settings_pkey: (id)
+
 -- ===== organizations =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   name                                     text NOT NULL
