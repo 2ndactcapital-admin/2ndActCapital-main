@@ -35,6 +35,9 @@
 --   related_id                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   entity_id                                uuid
+--   proposed_by                              uuid
+--   approved_by                              uuid
 --   PRIMARY KEY assistant_activities_pkey: (id)
 
 -- ===== assistant_autonomy_prefs =====
