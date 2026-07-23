@@ -14,3 +14,11 @@
   "turns": "13",
   "result": "auto_merged"
 }
+{
+  "timestamp": "2026-07-23T10:36:49Z",
+  "sprint": "soc1.structural",
+  "risk_tier": "structural",
+  "cost_usd": "3.70305",
+  "turns": "63",
+  "result": "held_for_review"
+}
