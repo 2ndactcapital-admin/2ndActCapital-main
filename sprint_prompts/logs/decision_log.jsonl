@@ -38,3 +38,11 @@
   "turns": "31",
   "result": "held_for_review"
 }
+{
+  "timestamp": "2026-07-23T14:36:57Z",
+  "sprint": "soc4.structural",
+  "risk_tier": "structural",
+  "cost_usd": "3.79162",
+  "turns": "63",
+  "result": "held_for_review"
+}
