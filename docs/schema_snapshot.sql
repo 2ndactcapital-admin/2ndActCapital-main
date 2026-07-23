@@ -277,6 +277,20 @@
 --   PRIMARY KEY deals_pkey: (id)
 --   UNIQUE deals_slug_key: (slug)
 
+-- ===== doc_category_proposals =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   proposed_code                            text
+--   proposed_label                           text NOT NULL
+--   reasoning                                text
+--   confidence                               numeric
+--   source_excerpt                           text
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   PRIMARY KEY doc_category_proposals_pkey: (id)
+
 -- ===== entities =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
