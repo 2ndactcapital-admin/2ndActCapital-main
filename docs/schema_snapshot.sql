@@ -332,6 +332,7 @@
 --   is_incomplete                            boolean NOT NULL DEFAULT false
 --   created_via                              text
 --   primary_household_id                     uuid
+--   access_restricted                        boolean NOT NULL DEFAULT false
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
@@ -919,6 +920,27 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE reference_data_list_key_code_parent_code_key: (list_key, code, parent_code)
 --   PRIMARY KEY reference_data_pkey: (id)
+
+-- ===== restricted_access_audit =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   action                                   text NOT NULL
+--   performed_by                             uuid
+--   performed_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   notes                                    text
+--   PRIMARY KEY restricted_access_audit_pkey: (id)
+
+-- ===== restricted_access_grants =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   granted_by                               uuid
+--   reason                                   text
+--   UNIQUE restricted_access_grants_entity_id_user_id_key: (entity_id, user_id)
+--   PRIMARY KEY restricted_access_grants_pkey: (id)
 
 -- ===== role_permissions =====
 --   role_id                                  uuid NOT NULL
