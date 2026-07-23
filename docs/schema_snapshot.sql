@@ -1018,6 +1018,33 @@
 --   UNIQUE spvs_deal_class_label_uniq: (deal_id, class_label)
 --   PRIMARY KEY spvs_pkey: (id)
 
+-- ===== staff_assignments =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   assigned_to_user_id                      uuid
+--   assigned_to_team_id                      uuid
+--   role_label                               text
+--   assigned_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   assigned_by                              uuid
+--   PRIMARY KEY staff_assignments_pkey: (id)
+
+-- ===== team_members =====
+--   team_id                                  uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   added_at                                 timestamp with time zone NOT NULL DEFAULT now()
+--   added_by                                 uuid
+--   PRIMARY KEY team_members_pkey: (team_id, user_id)
+
+-- ===== teams =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE teams_org_id_name_key: (org_id, name)
+--   PRIMARY KEY teams_pkey: (id)
+
 -- ===== transaction_types =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid
@@ -1076,6 +1103,7 @@
 --   assistant_panel_posture                  text
 --   nav_pinned                               boolean NOT NULL DEFAULT false
 --   profile_id                               uuid
+--   manager_id                               uuid
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
 --   PRIMARY KEY users_pkey: (id)

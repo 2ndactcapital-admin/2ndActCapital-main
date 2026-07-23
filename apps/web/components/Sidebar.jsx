@@ -21,6 +21,9 @@ const NAV_ITEMS = [
 
 const ADMIN_ITEM = { label: "Admin", href: "/admin", icon: "admin" };
 const USERS_ITEM = { label: "User Management", href: "/admin/users", icon: "investment-profile" };
+// SOC Phase 2 — staff teams + entity assignments (populates the visibility
+// resolver's data; does not change any endpoint's visibility behavior yet).
+const STAFF_VISIBILITY_ITEM = { label: "Staff Visibility", href: "/admin/staff-visibility", icon: "investment-profile" };
 // Sprint 24 — white-label settings. Org Admins see their own org; Super
 // Admins additionally get the platform-wide screen.
 const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
@@ -310,6 +313,11 @@ export default function Sidebar() {
                 item={USERS_ITEM}
                 expanded={expanded}
                 active={isActive(USERS_ITEM.href)}
+              />
+              <NavLink
+                item={STAFF_VISIBILITY_ITEM}
+                expanded={expanded}
+                active={isActive(STAFF_VISIBILITY_ITEM.href)}
               />
             </>
           )}

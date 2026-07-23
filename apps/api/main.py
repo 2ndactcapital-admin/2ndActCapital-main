@@ -34,6 +34,7 @@ from routers.portfolio import router as portfolio_router
 from routers.entity_documents import router as entity_documents_router
 from routers.reference import router as reference_router
 from routers.spv import router as spv_router
+from routers.staff_assignments import router as staff_assignments_router
 from routers.users import router as users_router
 from services.database import close_pool
 
@@ -203,6 +204,7 @@ app.include_router(entity_graph_router, prefix="/api/v1")
 app.include_router(reference_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(staff_assignments_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(allocation_lens_router, prefix="/api/v1")
 app.include_router(ledger_router, prefix="/api/v1")

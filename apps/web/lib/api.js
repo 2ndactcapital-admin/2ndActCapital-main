@@ -286,6 +286,28 @@ export const assignUserRole = (userId, roleId) =>
     body: { role_id: roleId },
   });
 
+// --- Admin: staff teams + entity assignments (SOC Phase 2) ---
+// These populate the data the staff-visibility resolver reads. They do NOT
+// change any existing endpoint's visibility behavior.
+export const getStaffTeams = () => fetchAPI("/api/v1/admin/staff/teams");
+export const createStaffTeam = (body) =>
+  fetchAPI("/api/v1/admin/staff/teams", { method: "POST", body });
+export const addStaffTeamMember = (teamId, userId) =>
+  fetchAPI(`/api/v1/admin/staff/teams/${teamId}/members`, {
+    method: "POST",
+    body: { user_id: userId },
+  });
+export const removeStaffTeamMember = (teamId, userId) =>
+  fetchAPI(`/api/v1/admin/staff/teams/${teamId}/members/${userId}`, {
+    method: "DELETE",
+  });
+export const getStaffAssignments = () =>
+  fetchAPI("/api/v1/admin/staff/assignments");
+export const createStaffAssignment = (body) =>
+  fetchAPI("/api/v1/admin/staff/assignments", { method: "POST", body });
+export const deleteStaffAssignment = (id) =>
+  fetchAPI(`/api/v1/admin/staff/assignments/${id}`, { method: "DELETE" });
+
 // --- SPV Manager (Sprint 12) ---
 export const listSPVs = (searchParams) =>
   fetchAPI("/api/v1/spvs", { searchParams });
