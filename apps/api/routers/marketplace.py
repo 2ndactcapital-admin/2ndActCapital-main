@@ -53,6 +53,7 @@ from schemas.marketplace import (
 from schemas.portfolio import TaxonomyPlacementResponse
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id, is_staff, require_permission
 from services.notifications import notification_bus
@@ -1636,9 +1637,6 @@ AI_SUMMARY_SELECT = (
     "key_strengths AS strengths, key_risks AS risks, market_context"
 )
 
-_AI_MODEL = "claude-haiku-4-5-20251001"
-
-
 @router.post("/deals/{deal_id}/ai-summary", response_model=AISummaryResponse)
 async def generate_ai_summary(request: Request, deal_id: UUID):
     require_permission(request, "manage_deals")
@@ -1682,27 +1680,23 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
     # Sprint 24: the firm's name in the prompt comes from org_settings.
     _brand = await get_brand_name(await get_pool(), org_id)
 
-    try:
-        import anthropic as _anthropic
-        client = _anthropic.AsyncAnthropic(api_key=api_key)
-        message = await client.messages.create(
-            model=_AI_MODEL,
-            max_tokens=1024,
-            system=(
-                f"You are a financial analyst for {_brand}, a private investment platform "
-                "for accredited investors. Analyze the deal and respond ONLY with valid JSON "
-                "(no markdown fences) containing exactly these keys: "
-                "summary_text (string), strengths (array of strings), "
-                "risks (array of strings), market_context (string)."
-            ),
-            messages=[
-                {"role": "user", "content": f"Analyze this investment deal:\n\n{deal_context}"}
-            ],
-        )
-        raw = message.content[0].text
-        parsed = json.loads(raw)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"AI generation failed: {exc}")
+    # mini-bedrock: route through the central helper; the model resolves from
+    # org_settings (ai.model.default) rather than a hardcoded string here.
+    model_used = await resolve_model(org_id)
+    parsed = await call_claude_json(
+        (
+            f"You are a financial analyst for {_brand}, a private investment platform "
+            "for accredited investors. Analyze the deal and respond ONLY with valid JSON "
+            "(no markdown fences) containing exactly these keys: "
+            "summary_text (string), strengths (array of strings), "
+            "risks (array of strings), market_context (string)."
+        ),
+        f"Analyze this investment deal:\n\n{deal_context}",
+        max_tokens=1024,
+        org_id=org_id,
+    )
+    if parsed is None:
+        raise HTTPException(status_code=500, detail="AI generation failed")
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -1724,7 +1718,7 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
                 """,
                 org_id,
                 deal_id,
-                _AI_MODEL,
+                model_used,
                 parsed.get("summary_text"),
                 list(parsed.get("strengths") or []),
                 list(parsed.get("risks") or []),

@@ -11,8 +11,42 @@ Inserts/updates use the shared pool (statement_cache_size=0 — PgBouncer safe).
 import json
 import os
 
-AI_MODEL = "claude-haiku-4-5-20251001"
-ASSISTANT_MODEL = "claude-sonnet-4-6"
+# ---------------------------------------------------------------------------
+# Model resolution (mini-bedrock sprint)
+# ---------------------------------------------------------------------------
+# Which model each call path uses is a CONFIG value, resolved per-org from
+# org_settings (category 'ai'), NOT a hardcoded string. The only place a model
+# string literally lives is DEFAULT_SETTINGS in services/org_settings.py (the
+# fallback for orgs without an explicit override) and the seed/migration.
+# Switching a client — or the whole platform (e.g. a future AWS Bedrock move) —
+# to a different model becomes a settings change, not a code change.
+DEFAULT_MODEL_KEY = "ai.model.default"      # primary: extraction, briefs, summaries
+ASSISTANT_MODEL_KEY = "ai.model.assistant"  # tool-using assistant / narration
+
+
+async def resolve_model(org_id=None, *, key: str = DEFAULT_MODEL_KEY) -> str:
+    """Resolve which model to call for ``org_id`` from org_settings.
+
+    Falls back to DEFAULT_SETTINGS (the platform default) when the org has no
+    explicit override, when no org context is supplied, or on any lookup error —
+    so existing behaviour is identical while the model becomes configurable.
+    """
+    # Local imports avoid any import cycle at module load.
+    from services.org_settings import DEFAULT_SETTINGS, get_setting
+
+    default = DEFAULT_SETTINGS.get(key)
+    if org_id is None:
+        return default
+    try:
+        from services.database import get_pool
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            value = await get_setting(conn, org_id, key)
+        return value or default
+    except Exception as exc:
+        print(f"resolve_model failed for {key}, using default: {exc}")
+        return default
 
 
 def _strip_fences(text: str) -> str:
@@ -28,17 +62,26 @@ def _strip_fences(text: str) -> str:
     return t.strip()
 
 
-async def call_claude_json(system: str, user: str, max_tokens: int = 400) -> dict | None:
+async def call_claude_json(
+    system: str,
+    user: str,
+    max_tokens: int = 400,
+    *,
+    org_id=None,
+    model: str | None = None,
+    model_key: str = DEFAULT_MODEL_KEY,
+) -> dict | None:
     """Call Claude and return parsed JSON, or None if unavailable/unparseable."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
+    resolved = model or await resolve_model(org_id, key=model_key)
     try:
         import anthropic as _anthropic
 
         client = _anthropic.AsyncAnthropic(api_key=api_key)
         message = await client.messages.create(
-            model=AI_MODEL,
+            model=resolved,
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
@@ -55,17 +98,21 @@ async def call_claude_text(
     messages: list[dict],
     max_tokens: int = 400,
     model: str | None = None,
+    *,
+    org_id=None,
+    model_key: str = DEFAULT_MODEL_KEY,
 ) -> str | None:
     """Call Claude with a message history and return the text response."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
+    resolved = model or await resolve_model(org_id, key=model_key)
     try:
         import anthropic as _anthropic
 
         client = _anthropic.AsyncAnthropic(api_key=api_key)
         message = await client.messages.create(
-            model=model or AI_MODEL,
+            model=resolved,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
@@ -80,23 +127,28 @@ async def call_claude_with_tools(
     system: str,
     messages: list[dict],
     tools: list[dict],
-    model: str = ASSISTANT_MODEL,
+    model: str | None = None,
     max_tokens: int = 2000,
+    *,
+    org_id=None,
+    model_key: str = ASSISTANT_MODEL_KEY,
 ) -> dict | None:
-    """Call Claude with tool-use (ASSISTANT_MODEL by default) and return the raw response dict.
+    """Call Claude with tool-use and return the raw response dict.
 
-    Returns a dict with keys: stop_reason, content (list of blocks).
-    Returns None when the API key is absent or the call fails.
+    The model resolves from org_settings (``ai.model.assistant`` by default) —
+    pass ``model`` to override. Returns a dict with keys: stop_reason, content
+    (list of blocks). Returns None when the API key is absent or the call fails.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
+    resolved = model or await resolve_model(org_id, key=model_key)
     try:
         import anthropic as _anthropic
 
         client = _anthropic.AsyncAnthropic(api_key=api_key)
         kwargs: dict = dict(
-            model=model,
+            model=resolved,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
@@ -145,10 +197,12 @@ async def extract_from_answer(
     pool, org_id, entity_id, question_id, answer_id, question_text, answer_text
 ) -> dict:
     """Extract structured fields from one Foundation answer and persist them."""
+    model = await resolve_model(org_id)
     parsed = await call_claude_json(
         _ANSWER_SYSTEM,
         f"Question: {question_text}\nAnswer: {answer_text}",
         max_tokens=500,
+        model=model,
     )
     fields = (parsed or {}).get("fields") or {}
     confidence = (parsed or {}).get("confidence")
@@ -166,7 +220,7 @@ async def extract_from_answer(
             """,
             org_id, entity_id, question_id, answer_id,
             json.dumps(payload),
-            AI_MODEL if parsed is not None else None,
+            model if parsed is not None else None,
             confidence,
         )
     return {"id": str(row["id"]), "fields": fields, "confidence": confidence,
@@ -237,8 +291,9 @@ async def extract_from_note(pool, org_id, note_id, entity_id, note_text) -> dict
     Updates are stored as suggestions in extracted_fields — never auto-applied to
     the entity record; the advisor confirms via the UI.
     """
+    model = await resolve_model(org_id)
     parsed = await call_claude_json(
-        _NOTE_SYSTEM, f"Meeting note: {note_text}", max_tokens=500
+        _NOTE_SYSTEM, f"Meeting note: {note_text}", max_tokens=500, model=model
     )
     if parsed is None:
         # No API key or call failed — mark skipped so the UI doesn't hang.
@@ -265,6 +320,6 @@ async def extract_from_note(pool, org_id, note_id, entity_id, note_text) -> dict
                 updated_at = now()
             WHERE id = $1
             """,
-            note_id, json.dumps(payload), AI_MODEL,
+            note_id, json.dumps(payload), model,
         )
     return payload

@@ -93,6 +93,7 @@ async def _run_loop(
             messages=current,
             tools=tool_specs,
             max_tokens=2000,
+            org_id=org_id,
         )
         if response is None:
             final_text = final_text or "I'm unable to process your request right now."

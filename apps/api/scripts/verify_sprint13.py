@@ -191,15 +191,15 @@ async def run():
         if not has_key:
             print("[N] Check 7: SKIP — ANTHROPIC_API_KEY not set (narration would return null)")
         else:
-            from services.extraction import call_claude_text, ASSISTANT_MODEL
+            from services.extraction import ASSISTANT_MODEL_KEY, call_claude_text
             text = await call_claude_text(
                 system="Say 'OK' and nothing else.",
                 messages=[{"role": "user", "content": "test"}],
                 max_tokens=10,
-                model=ASSISTANT_MODEL,
+                model_key=ASSISTANT_MODEL_KEY,
             )
             if text:
-                ok("Check 7: call_claude_text with ASSISTANT_MODEL returns text")
+                ok("Check 7: call_claude_text with assistant model returns text")
             else:
                 fail("Check 7: call_claude_text returned None")
 

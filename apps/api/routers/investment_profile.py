@@ -26,10 +26,10 @@ from schemas.investment_profile import (
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.extraction import (
-    AI_MODEL,
     call_claude_json,
     call_claude_text,
     extract_all_for_entity,
+    resolve_model,
 )
 from services.permissions import get_user_id, require_staff
 from services.users import ensure_user
@@ -434,7 +434,9 @@ async def conversation_message(
                 for m in messages
                 if m.get("role") in ("user", "assistant")
             ]
-            ai_text = await call_claude_text(system, history, max_tokens=300)
+            ai_text = await call_claude_text(
+                system, history, max_tokens=300, org_id=org_id
+            )
 
         if ai_text is None:
             # No API key / call failed — deterministic fallback so the flow
@@ -723,8 +725,10 @@ async def generate_brief(request: Request, entity_id: UUID):
             parts.append(f"- [{n['note_type']}{when}] {n['note_text']}")
     context = "\n".join(parts)
 
+    model_used = await resolve_model(org_id)
     brief_text = await call_claude_text(
-        _BRIEF_SYSTEM, [{"role": "user", "content": context}], max_tokens=600
+        _BRIEF_SYSTEM, [{"role": "user", "content": context}], max_tokens=600,
+        org_id=org_id,
     )
     if brief_text is None:
         raise HTTPException(
@@ -733,7 +737,9 @@ async def generate_brief(request: Request, entity_id: UUID):
         )
 
     # Best-effort secondary pass for structured summary fields.
-    themes = await call_claude_json(_BRIEF_THEMES_SYSTEM, brief_text, max_tokens=200)
+    themes = await call_claude_json(
+        _BRIEF_THEMES_SYSTEM, brief_text, max_tokens=200, org_id=org_id
+    )
     key_themes = (themes or {}).get("key_themes") or None
     risk_profile = (themes or {}).get("risk_profile")
     decision_style = (themes or {}).get("decision_style")
@@ -758,7 +764,7 @@ async def generate_brief(request: Request, entity_id: UUID):
                 org_id, entity_id, brief_text, key_themes, risk_profile,
                 decision_style,
                 json.dumps({"answers": len(answers), "notes": len(notes)}),
-                AI_MODEL, actor,
+                model_used, actor,
             )
     return BriefOut(**dict(row))
 

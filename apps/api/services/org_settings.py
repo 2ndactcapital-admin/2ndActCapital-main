@@ -60,6 +60,15 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # naming
     "naming.member_label": "Member",
     "naming.deal_label": "Deal",
+    # ai — which model each call path uses (mini-bedrock sprint). Resolved by
+    # services/extraction.resolve_model so switching a client (or the whole
+    # platform, e.g. a future AWS Bedrock move) to another model or provider is
+    # a settings change, not a code change. These string literals are the ONE
+    # allowed home for a model name in application code.
+    "ai.model.default": "claude-haiku-4-5-20251001",
+    "ai.model.provider": "anthropic",
+    "ai.model.fallback": "claude-haiku-4-5-20251001",
+    "ai.model.assistant": "claude-sonnet-4-6",
 }
 
 # Category per key, used when a key is written for the first time and when
@@ -69,6 +78,7 @@ CATEGORY_BY_PREFIX = {
     "footer.": "footer",
     "locale.": "locale",
     "naming.": "naming",
+    "ai.": "ai",
 }
 
 DEFAULT_CATEGORY = "general"

@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.brief_blocks import BRIEF_REGISTRY
 from services.database import get_pool
-from services.extraction import call_claude_text, ASSISTANT_MODEL
+from services.extraction import ASSISTANT_MODEL_KEY, call_claude_text
 from services.org_settings import get_brand_name
 from services.rbac import get_user_permissions
 from services.todo_generators import regenerate_todos
@@ -111,7 +111,8 @@ async def get_brief_narration(request: Request):
         system=_narration_system(await get_brand_name(pool, org_id)),
         messages=[{"role": "user", "content": f"Member brief context:\n{context}"}],
         max_tokens=180,
-        model=ASSISTANT_MODEL,
+        org_id=org_id,
+        model_key=ASSISTANT_MODEL_KEY,
     )
 
     # Cache the result (safe upsert: try UPDATE, INSERT if nothing updated).

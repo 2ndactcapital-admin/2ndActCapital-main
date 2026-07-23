@@ -11,12 +11,12 @@ _DRAFT_SYSTEM = (
 
 async def _draft_note_preview(pool, user_id: str, org_id: str,
                                entity_id: str = "", content_hint: str = "", **_):
-    """Generate a draft note via Sonnet; returns preview data for proposed_action."""
-    from services.extraction import ASSISTANT_MODEL
+    """Generate a draft note; returns preview data for proposed_action."""
     draft_text = await call_claude_text(
         system=_DRAFT_SYSTEM,
         messages=[{"role": "user", "content": content_hint or "Draft a general update note."}],
         max_tokens=400,
+        org_id=org_id,
     )
     return {
         "draft_text": draft_text or content_hint,
