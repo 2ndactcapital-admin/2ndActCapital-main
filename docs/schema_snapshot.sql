@@ -808,6 +808,15 @@
 --   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ownership_change_log_pkey: (id)
 
+-- ===== permission_set_permissions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   permission_set_id                        uuid NOT NULL
+--   permission_key                           text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY permission_set_permissions_pkey: (id)
+--   UNIQUE permission_set_permissions_set_key_unique: (permission_set_id, permission_key)
+
 -- ===== permission_sets =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -860,6 +869,15 @@
 --   created_by                               uuid
 --   UNIQUE profile_conversations_entity_id_status_key: (entity_id, status)
 --   PRIMARY KEY profile_conversations_pkey: (id)
+
+-- ===== profile_permissions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   profile_id                               uuid NOT NULL
+--   permission_key                           text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY profile_permissions_pkey: (id)
+--   UNIQUE profile_permissions_profile_key_unique: (profile_id, permission_key)
 
 -- ===== profiles =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
