@@ -308,6 +308,23 @@ export const createStaffAssignment = (body) =>
 export const deleteStaffAssignment = (id) =>
   fetchAPI(`/api/v1/admin/staff/assignments/${id}`, { method: "DELETE" });
 
+// --- Restricted-access accounts (SOC Phase 4) ---
+// Populate/read the restriction data the unified filter_restricted reads.
+// Super Admin only, enforced server-side. Does NOT change enforcement.
+export const getRestrictedAccounts = () =>
+  fetchAPI("/api/v1/admin/restricted");
+export const setEntityRestricted = (entityId, body) =>
+  fetchAPI(`/api/v1/admin/restricted/${entityId}`, { method: "POST", body });
+export const grantRestrictedAccess = (entityId, body) =>
+  fetchAPI(`/api/v1/admin/restricted/${entityId}/grants`, {
+    method: "POST",
+    body,
+  });
+export const revokeRestrictedAccess = (entityId, userId) =>
+  fetchAPI(`/api/v1/admin/restricted/${entityId}/grants/${userId}`, {
+    method: "DELETE",
+  });
+
 // --- SPV Manager (Sprint 12) ---
 export const listSPVs = (searchParams) =>
   fetchAPI("/api/v1/spvs", { searchParams });

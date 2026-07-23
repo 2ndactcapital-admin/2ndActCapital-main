@@ -28,6 +28,10 @@ const STAFF_VISIBILITY_ITEM = { label: "Staff Visibility", href: "/admin/staff-v
 // Admins additionally get the platform-wide screen.
 const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
 const PLATFORM_ITEM = { label: "Platform", href: "/admin/platform", icon: "admin" };
+// SOC Phase 4 — restrict accounts + manage their allow-list (populates the
+// unified restriction filter's data; does not change enforcement yet). Super
+// Admin only.
+const RESTRICTED_ACCESS_ITEM = { label: "Restricted Access", href: "/admin/restricted-access", icon: "admin" };
 
 // The Ascent mark inline SVG — white on navy, with gold-light top square.
 function AscendMark({ size = 20 }) {
@@ -330,11 +334,18 @@ export default function Sidebar() {
             />
           )}
           {role === "super_admin" && (
-            <NavLink
-              item={PLATFORM_ITEM}
-              expanded={expanded}
-              active={isActive(PLATFORM_ITEM.href)}
-            />
+            <>
+              <NavLink
+                item={RESTRICTED_ACCESS_ITEM}
+                expanded={expanded}
+                active={isActive(RESTRICTED_ACCESS_ITEM.href)}
+              />
+              <NavLink
+                item={PLATFORM_ITEM}
+                expanded={expanded}
+                active={isActive(PLATFORM_ITEM.href)}
+              />
+            </>
           )}
         </nav>
       </div>
