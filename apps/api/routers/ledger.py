@@ -310,7 +310,7 @@ async def list_templates(
     pool = await get_pool()
     async with pool.acquire() as conn:
         templates = await conn.fetch(
-            "SELECT id, name, transaction_type_code, vehicle_type_scope, basis, is_active "
+            "SELECT id, name, transaction_type_code, vehicle_type_scope, is_active "
             "FROM posting_templates "
             "WHERE org_id = $1 AND is_active = true "
             "ORDER BY transaction_type_code",
