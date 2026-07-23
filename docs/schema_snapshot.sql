@@ -808,6 +808,16 @@
 --   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ownership_change_log_pkey: (id)
 
+-- ===== permission_sets =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE permission_sets_org_id_name_key: (org_id, name)
+--   PRIMARY KEY permission_sets_pkey: (id)
+
 -- ===== permissions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   name                                     text NOT NULL
@@ -850,6 +860,17 @@
 --   created_by                               uuid
 --   UNIQUE profile_conversations_entity_id_status_key: (entity_id, status)
 --   PRIMARY KEY profile_conversations_pkey: (id)
+
+-- ===== profiles =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   is_seed                                  boolean NOT NULL DEFAULT false
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE profiles_org_id_name_key: (org_id, name)
+--   PRIMARY KEY profiles_pkey: (id)
 
 -- ===== reference_data =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -1012,6 +1033,13 @@
 --   PRIMARY KEY user_notification_preferences_pkey: (id)
 --   UNIQUE user_notification_preferences_user_id_event_type_channel_key: (user_id, event_type, channel)
 
+-- ===== user_permission_sets =====
+--   user_id                                  uuid NOT NULL
+--   permission_set_id                        uuid NOT NULL
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   granted_by                               uuid
+--   PRIMARY KEY user_permission_sets_pkey: (user_id, permission_set_id)
+
 -- ===== user_roles =====
 --   user_id                                  uuid NOT NULL
 --   role_id                                  uuid NOT NULL
@@ -1029,6 +1057,7 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   assistant_panel_posture                  text
 --   nav_pinned                               boolean NOT NULL DEFAULT false
+--   profile_id                               uuid
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
 --   PRIMARY KEY users_pkey: (id)
