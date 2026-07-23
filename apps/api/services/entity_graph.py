@@ -248,6 +248,42 @@ async def get_lookthrough(pool, org_id: str, root_entity_id: str) -> list[dict]:
     return result
 
 
+async def get_beneficiary_visible(pool, org_id: str, root_entity_id: str) -> set[str]:
+    """Entity ids visible to ``root_entity_id`` through beneficiary edges.
+
+    A ``relationship_type = 'beneficiary'`` edge (from the member entity to the
+    entity they benefit from) confers visibility the SAME WAY ownership does —
+    even though ``ownership_pct`` is null for beneficiary edges (SOC Phase 1).
+    From each entity the root is a beneficiary of, visibility flows down that
+    entity's ownership subtree as well, mirroring an owner's look-through.
+    """
+    async with pool.acquire() as conn:
+        targets = await conn.fetch(
+            """
+            SELECT er.to_entity_id
+            FROM entity_relationships er
+            WHERE er.org_id = $1
+              AND er.from_entity_id = $2
+              AND er.relationship_type = 'beneficiary'
+              AND er.valid_to IS NULL
+              AND er.system_to IS NULL
+            """,
+            org_id,
+            root_entity_id,
+        )
+
+    visible: set[str] = set()
+    for t in targets:
+        target_id = str(t["to_entity_id"])
+        if target_id in visible:
+            continue
+        visible.add(target_id)
+        # Look through the beneficiary target's ownership subtree too.
+        for d in await get_lookthrough(pool, org_id, target_id):
+            visible.add(d["entity_id"])
+    return visible
+
+
 async def resolve_entity_set(pool, org_id: str, selector: dict) -> list[dict]:
     sel_type = selector.get("type")
 
@@ -258,6 +294,7 @@ async def resolve_entity_set(pool, org_id: str, selector: dict) -> list[dict]:
     elif sel_type == "subtree":
         root_id = selector["root_id"]
         result = [{"entity_id": root_id, "weight": "1.000000"}]
+        seen = {root_id}
         descendants = await get_lookthrough(pool, org_id, root_id)
         for d in descendants:
             # effective_pct from get_lookthrough is already a 0–1 fraction
@@ -268,6 +305,14 @@ async def resolve_entity_set(pool, org_id: str, selector: dict) -> list[dict]:
                     "weight": f"{weight:.6f}",
                 }
             )
+            seen.add(d["entity_id"])
+        # Beneficiary edges confer visibility the same way ownership does. They
+        # carry no ownership_pct, so they enter the visible set at full weight
+        # (1.0) rather than an economic fraction.
+        for ent_id in await get_beneficiary_visible(pool, org_id, root_id):
+            if ent_id not in seen:
+                result.append({"entity_id": ent_id, "weight": "1.000000"})
+                seen.add(ent_id)
         return result
 
     elif sel_type == "group":

@@ -161,6 +161,9 @@ async def create_relationship(body: RelationshipCreate, request: Request):
     if from_id == to_id:
         raise HTTPException(status_code=400, detail="An entity cannot own itself")
 
+    # Only 'ownership' edges carry/validate a percentage. Other types such as
+    # 'beneficiary' (SOC Phase 1) are accepted with a null ownership_pct — a
+    # beneficiary confers visibility, not an economic ownership share.
     if (
         body.relationship_type == "ownership"
         and body.ownership_pct is not None

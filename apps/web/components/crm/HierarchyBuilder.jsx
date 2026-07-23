@@ -294,7 +294,7 @@ function TypeBadge({ type }) {
 }
 
 function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookthroughChange, staff, onRefresh }) {
-  const [addForm, setAddForm] = useState({ fromId: "", toId: "", pct: "" });
+  const [addForm, setAddForm] = useState({ fromId: "", toId: "", pct: "", type: "ownership" });
   const [addError, setAddError] = useState(null);
   const [addLoading, setAddLoading] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -318,7 +318,10 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
         body: JSON.stringify({
           from_entity_id: addForm.fromId,
           to_entity_id: addForm.toId,
-          ownership_pct: addForm.pct ? Number(addForm.pct) : null,
+          relationship_type: addForm.type,
+          // Beneficiary edges confer visibility, not ownership — no pct.
+          ownership_pct:
+            addForm.type === "beneficiary" ? null : addForm.pct ? Number(addForm.pct) : null,
         }),
       });
       const data = await res.json();
@@ -329,7 +332,7 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
           setAddError(data?.detail || "Failed to add relationship.");
         }
       } else {
-        setAddForm({ fromId: "", toId: "", pct: "" });
+        setAddForm({ fromId: "", toId: "", pct: "", type: "ownership" });
         if (onRefresh) onRefresh();
       }
     } catch (err) {
@@ -673,6 +676,17 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
             </div>
             <form onSubmit={handleAddRelationship} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div>
+                <label style={labelStyle}>Relationship Type</label>
+                <select
+                  value={addForm.type}
+                  onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value }))}
+                  style={inputStyle}
+                >
+                  <option value="ownership">Ownership</option>
+                  <option value="beneficiary">Beneficiary</option>
+                </select>
+              </div>
+              <div>
                 <label style={labelStyle}>From Entity ID</label>
                 <input
                   type="text"
@@ -694,19 +708,25 @@ function SideRail({ tree, selected, lookthroughMap, showLookthrough, onShowLookt
                   required
                 />
               </div>
-              <div>
-                <label style={labelStyle}>Ownership %</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.01}
-                  value={addForm.pct}
-                  onChange={(e) => setAddForm((f) => ({ ...f, pct: e.target.value }))}
-                  style={inputStyle}
-                  placeholder="0 – 100"
-                />
-              </div>
+              {addForm.type === "ownership" ? (
+                <div>
+                  <label style={labelStyle}>Ownership %</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    value={addForm.pct}
+                    onChange={(e) => setAddForm((f) => ({ ...f, pct: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="0 – 100"
+                  />
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--2a-text)", opacity: 0.7 }}>
+                  Beneficiary edges confer visibility only — no ownership percentage.
+                </div>
+              )}
               {addError && (
                 <div
                   style={{
