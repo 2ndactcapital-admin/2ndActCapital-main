@@ -22,6 +22,12 @@ import os
 # to a different model becomes a settings change, not a code change.
 DEFAULT_MODEL_KEY = "ai.model.default"      # primary: extraction, briefs, summaries
 ASSISTANT_MODEL_KEY = "ai.model.assistant"  # tool-using assistant / narration
+# Task-specific override for the open-set document-type classifier (Sprint 25).
+# Same convention as ASSISTANT_MODEL_KEY: a dedicated ai.model.* key the
+# classifier resolves FIRST, falling back to ai.model.default (Haiku) when the
+# org has not set it. Lets an org_admin pick a stronger model for their own
+# classifier while every org gets Haiku by default.
+DOCUMENT_CLASSIFIER_MODEL_KEY = "ai.model.document_classifier"
 
 
 async def resolve_model(org_id=None, *, key: str = DEFAULT_MODEL_KEY) -> str:

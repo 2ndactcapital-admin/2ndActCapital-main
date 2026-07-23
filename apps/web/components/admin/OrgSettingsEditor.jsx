@@ -12,13 +12,17 @@ import { COLOR_LABELS, COLOR_VARS } from "@/lib/theme";
  * component only decides what to render.
  */
 
-const CATEGORY_ORDER = ["branding", "footer", "locale", "naming", "general"];
+const CATEGORY_ORDER = ["branding", "footer", "locale", "naming", "ai", "general"];
 
 const CATEGORY_LABELS = {
   branding: "Branding",
   footer: "Footer",
   locale: "Locale",
   naming: "Naming",
+  // Mini-Bedrock (S24) built ai.model.* as backend-only config; S25 surfaces it
+  // here so an org_admin can see/edit the default, provider, fallback, and the
+  // document-classifier task override through the real settings screen.
+  ai: "AI Models",
   general: "General",
 };
 

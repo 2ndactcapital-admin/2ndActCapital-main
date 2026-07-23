@@ -69,6 +69,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "ai.model.provider": "anthropic",
     "ai.model.fallback": "claude-haiku-4-5-20251001",
     "ai.model.assistant": "claude-sonnet-4-6",
+    # Task-specific override for the S25 document-type classifier. Defaults to
+    # the same Haiku model as ai.model.default; an org_admin may raise it to a
+    # stronger model per-org. Resolved via extraction.resolve_model with
+    # key=DOCUMENT_CLASSIFIER_MODEL_KEY (falls back to ai.model.default).
+    "ai.model.document_classifier": "claude-haiku-4-5-20251001",
 }
 
 # Category per key, used when a key is written for the first time and when
