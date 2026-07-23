@@ -331,6 +331,7 @@
 --   region_code                              text
 --   is_incomplete                            boolean NOT NULL DEFAULT false
 --   created_via                              text
+--   primary_household_id                     uuid
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
@@ -564,6 +565,21 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE fx_rates_base_ccy_quote_ccy_as_of_date_key: (base_ccy, quote_ccy, as_of_date)
 --   PRIMARY KEY fx_rates_pkey: (id)
+
+-- ===== household_memberships =====
+--   household_id                             uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   added_at                                 timestamp with time zone NOT NULL DEFAULT now()
+--   added_by                                 uuid
+--   PRIMARY KEY household_memberships_pkey: (household_id, entity_id)
+
+-- ===== households =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY households_pkey: (id)
 
 -- ===== investment_profile_answers =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
