@@ -1083,6 +1083,17 @@
 --   UNIQUE teams_org_id_name_key: (org_id, name)
 --   PRIMARY KEY teams_pkey: (id)
 
+-- ===== trading_authority_grants =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   authority_tier                           text NOT NULL
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   granted_by                               uuid
+--   UNIQUE trading_authority_grants_entity_id_user_id_key: (entity_id, user_id)
+--   PRIMARY KEY trading_authority_grants_pkey: (id)
+
 -- ===== transaction_types =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid
