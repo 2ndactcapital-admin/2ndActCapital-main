@@ -32,6 +32,9 @@ const PLATFORM_ITEM = { label: "Platform", href: "/admin/platform", icon: "admin
 // unified restriction filter's data; does not change enforcement yet). Super
 // Admin only.
 const RESTRICTED_ACCESS_ITEM = { label: "Restricted Access", href: "/admin/restricted-access", icon: "admin" };
+// SOC Phase 5: assign per-entity trading-authority tiers (feeds the maker-checker
+// + tier enforcement engine). Super Admin only.
+const TRADING_AUTHORITY_ITEM = { label: "Trading Authority", href: "/admin/trading-authority", icon: "admin" };
 
 // The Ascent mark inline SVG — white on navy, with gold-light top square.
 function AscendMark({ size = 20 }) {
@@ -339,6 +342,11 @@ export default function Sidebar() {
                 item={RESTRICTED_ACCESS_ITEM}
                 expanded={expanded}
                 active={isActive(RESTRICTED_ACCESS_ITEM.href)}
+              />
+              <NavLink
+                item={TRADING_AUTHORITY_ITEM}
+                expanded={expanded}
+                active={isActive(TRADING_AUTHORITY_ITEM.href)}
               />
               <NavLink
                 item={PLATFORM_ITEM}

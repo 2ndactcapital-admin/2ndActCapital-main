@@ -325,6 +325,19 @@ export const revokeRestrictedAccess = (entityId, userId) =>
     method: "DELETE",
   });
 
+// --- Trading authority grants (SOC Phase 5) ---
+// Assign a user's per-entity trading-authority tier (inquiry|limited|full).
+// Super Admin only, enforced server-side. Feeds the maker-checker + tier
+// enforcement engine (services.trading_authority); does NOT enforce here.
+export const getTradingAuthorityGrants = () =>
+  fetchAPI("/api/v1/admin/trading-authority");
+export const upsertTradingAuthorityGrant = (body) =>
+  fetchAPI("/api/v1/admin/trading-authority", { method: "POST", body });
+export const revokeTradingAuthorityGrant = (entityId, userId) =>
+  fetchAPI(`/api/v1/admin/trading-authority/${entityId}/${userId}`, {
+    method: "DELETE",
+  });
+
 // --- SPV Manager (Sprint 12) ---
 export const listSPVs = (searchParams) =>
   fetchAPI("/api/v1/spvs", { searchParams });
