@@ -308,6 +308,48 @@ export const createStaffAssignment = (body) =>
 export const deleteStaffAssignment = (id) =>
   fetchAPI(`/api/v1/admin/staff/assignments/${id}`, { method: "DELETE" });
 
+// --- Profiles + permission sets (SOC Phase A) ---
+// Manage the additive profile-permission layer (services.profiles). Org Admin
+// (own org) or Super Admin, enforced server-side. These do NOT touch roles.
+export const getActionPermissions = () =>
+  fetchAPI("/api/v1/admin/permissions");
+export const getProfiles = () => fetchAPI("/api/v1/admin/profiles");
+export const createProfile = (body) =>
+  fetchAPI("/api/v1/admin/profiles", { method: "POST", body });
+export const toggleProfilePermission = (profileId, permissionKey, granted) =>
+  fetchAPI(`/api/v1/admin/profiles/${profileId}/permissions`, {
+    method: "PUT",
+    body: { permission_key: permissionKey, granted },
+  });
+export const deleteProfile = (profileId) =>
+  fetchAPI(`/api/v1/admin/profiles/${profileId}`, { method: "DELETE" });
+
+export const getPermissionSets = () =>
+  fetchAPI("/api/v1/admin/permission-sets");
+export const createPermissionSet = (body) =>
+  fetchAPI("/api/v1/admin/permission-sets", { method: "POST", body });
+export const togglePermissionSetPermission = (setId, permissionKey, granted) =>
+  fetchAPI(`/api/v1/admin/permission-sets/${setId}/permissions`, {
+    method: "PUT",
+    body: { permission_key: permissionKey, granted },
+  });
+export const deletePermissionSet = (setId) =>
+  fetchAPI(`/api/v1/admin/permission-sets/${setId}`, { method: "DELETE" });
+export const assignPermissionSetToUser = (setId, userId) =>
+  fetchAPI(`/api/v1/admin/permission-sets/${setId}/users`, {
+    method: "POST",
+    body: { user_id: userId },
+  });
+export const removePermissionSetFromUser = (setId, userId) =>
+  fetchAPI(`/api/v1/admin/permission-sets/${setId}/users/${userId}`, {
+    method: "DELETE",
+  });
+export const setUserProfile = (userId, profileId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/profile`, {
+    method: "PUT",
+    body: { profile_id: profileId },
+  });
+
 // --- Restricted-access accounts (SOC Phase 4) ---
 // Populate/read the restriction data the unified filter_restricted reads.
 // Super Admin only, enforced server-side. Does NOT change enforcement.

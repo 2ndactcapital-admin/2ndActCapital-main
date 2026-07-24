@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { assignRoleAction, searchUsersAction } from "@/lib/adminActions";
+import { setUserProfileAction } from "@/lib/permissionActions";
 
 function roleLabel(name) {
   if (!name) return "—";
@@ -11,8 +12,11 @@ function roleLabel(name) {
     .join(" ");
 }
 
-function EditRoleModal({ user, roles, onClose, onSaved }) {
+function EditRoleModal({ user, roles, profiles, onClose, onSaved }) {
   const [roleId, setRoleId] = useState(user.role_id || "");
+  // SOC Phase A: the profile is a NEW, separate, additive field — independent
+  // of the account role above. "" means no profile assigned.
+  const [profileId, setProfileId] = useState(user.profile_id || "");
   const [error, setError] = useState(null);
   const [pending, startTransition] = useTransition();
 
@@ -23,12 +27,35 @@ function EditRoleModal({ user, roles, onClose, onSaved }) {
     }
     setError(null);
     startTransition(async () => {
-      const res = await assignRoleAction(user.id, roleId);
-      if (res.ok) {
-        onSaved(res.user);
-      } else {
-        setError(res.error || "Could not update role.");
+      let updated = { ...user };
+
+      // Persist a role change only when it actually changed (role logic
+      // unchanged from the original screen).
+      if (roleId !== (user.role_id || "")) {
+        const res = await assignRoleAction(user.id, roleId);
+        if (!res.ok) {
+          setError(res.error || "Could not update role.");
+          return;
+        }
+        updated = { ...updated, role: res.user.role, role_id: res.user.role_id };
       }
+
+      // Persist a profile change independently.
+      if (profileId !== (user.profile_id || "")) {
+        const res = await setUserProfileAction(user.id, profileId || null);
+        if (!res.ok) {
+          setError(res.error || "Could not update profile.");
+          return;
+        }
+        const match = profiles.find((p) => p.id === profileId);
+        updated = {
+          ...updated,
+          profile_id: profileId || null,
+          profile_name: match ? match.name : null,
+        };
+      }
+
+      onSaved(updated);
     });
   }
 
@@ -42,7 +69,7 @@ function EditRoleModal({ user, roles, onClose, onSaved }) {
         style={{ borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-semibold text-navy">Edit Role</h3>
+        <h3 className="text-base font-semibold text-navy">Edit Role &amp; Profile</h3>
         <div className="mt-3 rounded-md border border-border bg-bg-app p-3 text-sm">
           <p className="font-medium text-text-primary">
             {user.full_name || "—"}
@@ -65,6 +92,25 @@ function EditRoleModal({ user, roles, onClose, onSaved }) {
             </option>
           ))}
         </select>
+
+        <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
+          Profile
+        </label>
+        <select
+          value={profileId}
+          onChange={(e) => setProfileId(e.target.value)}
+          className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+        >
+          <option value="">No profile</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-text-muted">
+          Additive permission persona — separate from the account role.
+        </p>
 
         {error && <p className="mt-2 text-sm text-[#9B2335]">{error}</p>}
 
@@ -90,7 +136,11 @@ function EditRoleModal({ user, roles, onClose, onSaved }) {
   );
 }
 
-export default function UserManagement({ initialUsers = [], roles = [] }) {
+export default function UserManagement({
+  initialUsers = [],
+  roles = [],
+  profiles = [],
+}) {
   const [users, setUsers] = useState(initialUsers);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
@@ -123,7 +173,13 @@ export default function UserManagement({ initialUsers = [], roles = [] }) {
     setUsers((prev) =>
       prev.map((u) =>
         u.id === updated.id
-          ? { ...u, role: updated.role, role_id: updated.role_id }
+          ? {
+              ...u,
+              role: updated.role,
+              role_id: updated.role_id,
+              profile_id: updated.profile_id,
+              profile_name: updated.profile_name,
+            }
           : u,
       ),
     );
@@ -169,6 +225,7 @@ export default function UserManagement({ initialUsers = [], roles = [] }) {
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Email</th>
               <th className="px-4 py-3 font-medium">Role</th>
+              <th className="px-4 py-3 font-medium">Profile</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
@@ -177,7 +234,7 @@ export default function UserManagement({ initialUsers = [], roles = [] }) {
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={6}
                   className="px-4 py-10 text-center text-text-muted"
                 >
                   No members found.
@@ -198,6 +255,9 @@ export default function UserManagement({ initialUsers = [], roles = [] }) {
                       {roleLabel(u.role)}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-text-secondary">
+                    {u.profile_name || "—"}
+                  </td>
                   <td className="px-4 py-3 text-text-secondary">Active</td>
                   <td className="px-4 py-3 text-right">
                     <button
@@ -205,7 +265,7 @@ export default function UserManagement({ initialUsers = [], roles = [] }) {
                       onClick={() => setEditing(u)}
                       className="text-sm font-medium text-navy hover:underline"
                     >
-                      Edit Role
+                      Edit
                     </button>
                   </td>
                 </tr>
@@ -219,6 +279,7 @@ export default function UserManagement({ initialUsers = [], roles = [] }) {
         <EditRoleModal
           user={editing}
           roles={roles}
+          profiles={profiles}
           onClose={() => setEditing(null)}
           onSaved={onSaved}
         />

@@ -32,6 +32,7 @@ from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
 from routers.portfolio import router as portfolio_router
+from routers.profiles import router as profiles_router
 from routers.entity_documents import router as entity_documents_router
 from routers.reference import router as reference_router
 from routers.restricted_access import router as restricted_access_router
@@ -215,5 +216,6 @@ app.include_router(ledger_router, prefix="/api/v1")
 app.include_router(org_settings_router, prefix="/api/v1")
 app.include_router(restricted_access_router, prefix="/api/v1")
 app.include_router(trading_authority_router, prefix="/api/v1")
+app.include_router(profiles_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)

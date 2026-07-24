@@ -30,6 +30,11 @@ class AdminUser(BaseModel):
     role: str | None = None
     role_id: UUID | None = None
     created_at: str | None = None
+    # SOC Phase A: the additive profile layer (users.profile_id). Separate from
+    # `role`/`role_id` above — surfaced so the user-management screen can show a
+    # profile selector alongside the untouched role dropdown.
+    profile_id: UUID | None = None
+    profile_name: str | None = None
 
 
 class RoleAssignRequest(BaseModel):
@@ -85,10 +90,12 @@ async def list_users(
         rows = await conn.fetch(
             f"""
             SELECT u.id, u.email, u.full_name, u.created_at,
-                   r.id AS role_id, r.name AS role
+                   r.id AS role_id, r.name AS role,
+                   u.profile_id, p.name AS profile_name
             FROM users u
             LEFT JOIN user_roles ur ON ur.user_id = u.id
             LEFT JOIN roles r ON r.id = ur.role_id
+            LEFT JOIN profiles p ON p.id = u.profile_id
             WHERE {' AND '.join(conditions)}
             ORDER BY u.full_name NULLS LAST, u.email
             LIMIT ${limit_pos} OFFSET ${offset_pos}
@@ -103,6 +110,8 @@ async def list_users(
             role=r["role"],
             role_id=r["role_id"],
             created_at=str(r["created_at"]) if r["created_at"] else None,
+            profile_id=r["profile_id"],
+            profile_name=r["profile_name"],
         )
         for r in rows
     ]

@@ -24,6 +24,10 @@ const USERS_ITEM = { label: "User Management", href: "/admin/users", icon: "inve
 // SOC Phase 2 — staff teams + entity assignments (populates the visibility
 // resolver's data; does not change any endpoint's visibility behavior yet).
 const STAFF_VISIBILITY_ITEM = { label: "Staff Visibility", href: "/admin/staff-visibility", icon: "investment-profile" };
+// SOC Phase A — profiles + permission sets (the additive permission layer).
+// Org Admin (own org) or Super Admin.
+const PROFILES_ITEM = { label: "Profiles", href: "/admin/profiles", icon: "investment-profile" };
+const PERMISSION_SETS_ITEM = { label: "Permission Sets", href: "/admin/permission-sets", icon: "admin" };
 // Sprint 24 — white-label settings. Org Admins see their own org; Super
 // Admins additionally get the platform-wide screen.
 const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
@@ -330,11 +334,23 @@ export default function Sidebar() {
           )}
 
           {(role === "org_admin" || role === "super_admin") && (
-            <NavLink
-              item={ORG_SETTINGS_ITEM}
-              expanded={expanded}
-              active={isActive(ORG_SETTINGS_ITEM.href)}
-            />
+            <>
+              <NavLink
+                item={PROFILES_ITEM}
+                expanded={expanded}
+                active={isActive(PROFILES_ITEM.href)}
+              />
+              <NavLink
+                item={PERMISSION_SETS_ITEM}
+                expanded={expanded}
+                active={isActive(PERMISSION_SETS_ITEM.href)}
+              />
+              <NavLink
+                item={ORG_SETTINGS_ITEM}
+                expanded={expanded}
+                active={isActive(ORG_SETTINGS_ITEM.href)}
+              />
+            </>
           )}
           {role === "super_admin" && (
             <>
