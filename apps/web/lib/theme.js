@@ -108,7 +108,12 @@ const EMPTY_THEME = { org_id: null, org_name: null, org_slug: null, settings: {}
  */
 export async function loadTheme() {
   try {
-    return await fetchAPI("/api/v1/theme");
+    // cache: "no-store" is required here: this call carries the caller's role,
+    // and a cached response served a pre-promotion role to /admin/platform (a
+    // freshly-promoted super_admin saw the restricted view). Kept explicit so
+    // it survives independent of fetchAPI's default — matching the public
+    // fallback fetch below.
+    return await fetchAPI("/api/v1/theme", { cache: "no-store" });
   } catch {
     // Not signed in, or the API is unreachable — fall through to public.
   }

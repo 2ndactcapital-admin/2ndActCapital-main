@@ -39,7 +39,7 @@ async function parseError(res) {
  * @param {object} [options.searchParams] - query params (skips empty values)
  */
 export async function fetchAPI(path, options = {}) {
-  const { method = "GET", body, searchParams } = options;
+  const { method = "GET", body, searchParams, cache = "no-store" } = options;
 
   const url = new URL(API_BASE + path);
   if (searchParams) {
@@ -57,7 +57,7 @@ export async function fetchAPI(path, options = {}) {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    cache: "no-store",
+    cache,
   });
   if (!res.ok) throw await parseError(res);
   return res.json();
