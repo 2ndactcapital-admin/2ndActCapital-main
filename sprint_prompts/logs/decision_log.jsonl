@@ -62,3 +62,11 @@
   "turns": "35",
   "result": "held_for_review"
 }
+{
+  "timestamp": "2026-07-24T03:00:11Z",
+  "sprint": "soca.lowrisk",
+  "risk_tier": "lowrisk",
+  "cost_usd": "7.67334",
+  "turns": "106",
+  "result": "auto_merged"
+}
