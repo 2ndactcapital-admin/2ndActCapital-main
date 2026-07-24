@@ -280,6 +280,23 @@
 --   PRIMARY KEY deals_pkey: (id)
 --   UNIQUE deals_slug_key: (slug)
 
+-- ===== delegate_grants =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   principal_entity_id                      uuid NOT NULL
+--   delegate_user_id                         uuid
+--   delegate_email                           text
+--   scope                                    text NOT NULL
+--   effective_from                           timestamp with time zone
+--   effective_until                          timestamp with time zone
+--   is_springing                             boolean NOT NULL DEFAULT false
+--   activated_at                             timestamp with time zone
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   granted_by                               uuid
+--   revoked_at                               timestamp with time zone
+--   revoked_by                               uuid
+--   PRIMARY KEY delegate_grants_pkey: (id)
+
 -- ===== doc_category_proposals =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -557,6 +574,20 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_tax_ids_pkey: (id)
+
+-- ===== external_access_grants =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   grantee_email                            text NOT NULL
+--   grantee_name                             text
+--   scope_description                        text
+--   document_id                              uuid
+--   expires_at                               timestamp with time zone NOT NULL
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   granted_by                               uuid
+--   revoked_at                               timestamp with time zone
+--   PRIMARY KEY external_access_grants_pkey: (id)
 
 -- ===== fx_rates =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -1117,6 +1148,18 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE transaction_types_code_key: (code)
 --   PRIMARY KEY transaction_types_pkey: (id)
+
+-- ===== trusted_contacts =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   member_entity_id                         uuid NOT NULL
+--   contact_name                             text NOT NULL
+--   contact_phone                            text
+--   contact_email                            text
+--   relationship_to_member                   text
+--   added_at                                 timestamp with time zone NOT NULL DEFAULT now()
+--   added_by                                 uuid
+--   PRIMARY KEY trusted_contacts_pkey: (id)
 
 -- ===== user_notification_preferences =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
