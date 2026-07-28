@@ -129,7 +129,8 @@ VEHICLE = "99000000-0000-0000-0000-00000c000001"  # journal_entries.vehicle_id (
 # data (real fx quotes are CAD/CHF/EUR/GBP/JPY; real tt codes never start ZZ_).
 FX_TEST_ID = "99000000-0000-0000-0000-00000cff0001"
 FX_TEST_QUOTE = "XTS"           # ISO 4217 "test" code — no real fx row uses it
-FX_TEST_DATE = "2099-01-01"     # far-future — no real fx row uses it
+import datetime as _dt
+FX_TEST_DATE = _dt.date(2099, 1, 1)     # far-future — no real fx row uses it
 TT_CODE_NULL = "ZZ_RLSC_GLOBAL"  # attempted global (NULL-org) write
 TT_CODE_ORG = "ZZ_RLSC_ORG"      # attempted own-org write
 
