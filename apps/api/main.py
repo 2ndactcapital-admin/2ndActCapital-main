@@ -26,6 +26,7 @@ from routers.dashboard import router as dashboard_router
 from routers.debug import router as debug_router
 from routers.entities import router as entities_router, get_org_id
 from routers.entity_graph import router as entity_graph_router
+from routers.ownership_tree import router as ownership_tree_router
 from routers.households import router as households_router
 from routers.investment_profile import router as investment_profile_router
 from routers.marketplace import router as marketplace_router
@@ -297,6 +298,7 @@ app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(spv_router, prefix="/api/v1")
 app.include_router(entity_graph_router, prefix="/api/v1")
+app.include_router(ownership_tree_router, prefix="/api/v1")
 app.include_router(reference_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
