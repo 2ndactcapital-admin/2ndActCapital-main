@@ -90,7 +90,7 @@ TOTAL_TURNS="0"
 # ============================================================
 echo ""
 echo "--- Step 1: refresh-schema ---"
-refresh_result=$(timeout 300 claude -p "/refresh-schema" \
+refresh_result=$(timeout 600 claude -p "/refresh-schema" \
   --permission-mode acceptEdits \
   --allowedTools "$
 
