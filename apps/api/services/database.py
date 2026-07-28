@@ -9,8 +9,15 @@ ROW-LEVEL SECURITY MECHANISM — PORTABLE, HOST-AGNOSTIC
 Every connection handed out by this module runs inside an explicit
 transaction whose FIRST statements are::
 
-    SELECT set_config('app.current_org_id', <org uuid>, true);   -- SET LOCAL
-    SELECT set_config('app.is_super_admin', 'true'|'false', true);-- SET LOCAL
+    SELECT set_config('app.current_org_id', <org uuid>, true),   -- SET LOCAL
+           set_config('app.is_super_admin', 'true'|'false', true),
+           set_config('app.current_auth0_sub', <raw sub>, true); -- RLS Phase 2
+
+The third GUC, ``app.current_auth0_sub`` (RLS Phase 2), carries the raw Auth0
+``sub`` claim so the ``users`` table's bootstrap policy can let a request read
+and INSERT its OWN row (``auth0_sub = app.current_auth0_sub``) with NO org
+context yet — a brand-new user's very first request. It is set FIRST in the
+request lifecycle (see main.py), before org_id/role are resolved.
 
 ``set_config(..., is_local => true)`` is exactly ``SET LOCAL`` — the value is
 scoped to the current transaction and is reset on COMMIT/ROLLBACK. Postgres
@@ -81,6 +88,14 @@ import asyncpg
 _org_id_var: ContextVar[str | None] = ContextVar("rls_org_id", default=None)
 _is_super_admin_var: ContextVar[bool] = ContextVar("rls_is_super_admin", default=False)
 
+# The raw Auth0 ``sub`` claim (RLS Phase 2). This is set FIRST in the request
+# lifecycle — before org_id/is_super_admin are resolved — so the self-lookup leg
+# of the ``users`` RLS policy (``auth0_sub = app.current_auth0_sub``) lets a
+# request read/insert its OWN users row during bootstrap, when the caller's
+# org_id and role are not yet known. Kept independent of org context on purpose:
+# the bootstrap read must succeed with NO org context at all.
+_auth0_sub_var: ContextVar[str | None] = ContextVar("rls_auth0_sub", default=None)
+
 
 def set_rls_context(org_id, is_super_admin: bool):
     """Set the current task's RLS context; returns tokens for :func:`reset_rls_context`.
@@ -101,9 +116,25 @@ def reset_rls_context(tokens) -> None:
     _is_super_admin_var.reset(super_token)
 
 
-def current_rls_context() -> tuple[str | None, bool]:
-    """Return ``(org_id, is_super_admin)`` currently in effect — for diagnostics."""
-    return (_org_id_var.get(), _is_super_admin_var.get())
+def set_auth0_sub_context(auth0_sub):
+    """Set the current task's raw Auth0 ``sub`` for the bootstrap RLS leg.
+
+    Returns a token for :func:`reset_auth0_sub_context`. Set this FIRST in the
+    request lifecycle (before org_id/is_super_admin are resolved) — see the
+    ``_auth0_sub_var`` note above. A falsy ``auth0_sub`` is left unset (→ '' at
+    apply time → the policy's NULLIF maps it to NULL → matches nothing).
+    """
+    return _auth0_sub_var.set(str(auth0_sub) if auth0_sub else None)
+
+
+def reset_auth0_sub_context(token) -> None:
+    """Restore the auth0_sub context to its prior value (call in a ``finally``)."""
+    _auth0_sub_var.reset(token)
+
+
+def current_rls_context() -> tuple[str | None, bool, str | None]:
+    """Return ``(org_id, is_super_admin, auth0_sub)`` in effect — for diagnostics."""
+    return (_org_id_var.get(), _is_super_admin_var.get(), _auth0_sub_var.get())
 
 
 async def _apply_rls_settings(conn) -> None:
@@ -113,17 +144,22 @@ async def _apply_rls_settings(conn) -> None:
     ContextVars, not any request object, so it is agnostic to how the context
     was established.
     """
-    # Always set BOTH GUCs, deterministically, every transaction — so context
-    # never leaks from a prior transaction on the same pooled backend. No org in
-    # context → '' (the policy's NULLIF maps it to NULL → default-deny), never a
-    # real-or-fake UUID. See the module docstring for why '' + NULLIF is correct.
+    # Always set ALL THREE GUCs, deterministically, every transaction — so
+    # context never leaks from a prior transaction on the same pooled backend.
+    # No org in context → '' (the policy's NULLIF maps it to NULL → default-deny),
+    # never a real-or-fake UUID; likewise no auth0_sub → '' → NULLIF → NULL, so
+    # the bootstrap leg matches nothing rather than every unauthenticated row.
+    # See the module docstring for why '' + NULLIF is correct.
     org_id = _org_id_var.get() or ""
     is_super = "true" if _is_super_admin_var.get() else "false"
+    auth0_sub = _auth0_sub_var.get() or ""
     await conn.execute(
         "SELECT set_config('app.current_org_id', $1, true),"
-        "       set_config('app.is_super_admin', $2, true)",
+        "       set_config('app.is_super_admin', $2, true),"
+        "       set_config('app.current_auth0_sub', $3, true)",
         org_id,
         is_super,
+        auth0_sub,
     )
 
 

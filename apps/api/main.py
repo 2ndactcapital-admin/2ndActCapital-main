@@ -40,7 +40,14 @@ from routers.spv import router as spv_router
 from routers.staff_assignments import router as staff_assignments_router
 from routers.trading_authority import router as trading_authority_router
 from routers.users import router as users_router
-from services.database import close_pool, get_pool, reset_rls_context, set_rls_context
+from services.database import (
+    close_pool,
+    get_pool,
+    reset_auth0_sub_context,
+    reset_rls_context,
+    set_auth0_sub_context,
+    set_rls_context,
+)
 from services.rbac import is_super_admin
 
 API_VERSION = "0.1.0"
@@ -173,26 +180,49 @@ async def rls_context_middleware(request: Request, call_next):
     This is inert while the app connects as the RLS-bypassing ``postgres`` role
     (current production). It only takes effect once the connection is switched
     to the non-bypass ``app_service`` role — a separate, manual step.
+
+    ORDERING (RLS Phase 2): ``app.current_auth0_sub`` is established FIRST, from
+    the raw JWT ``sub``, BEFORE any read of ``users`` — because the identity
+    read below (``_resolve_is_super_admin`` → ``SELECT ... FROM users WHERE
+    auth0_sub = $1``) is itself subject to the ``users`` RLS policy once the app
+    connects as ``app_service``. Only the bootstrap leg (auth0_sub match) lets
+    that self-read succeed when org/role are not yet known. AFTER identity is
+    resolved we set org_id/is_super_admin for the rest of the request. This is a
+    strict ADDITION to the previous sequence — the existing happy path (org +
+    super resolution, default-deny on failure) is unchanged.
     """
+    claims = getattr(request.state, "user", None) or {}
+    sub = claims.get("sub")
+
+    # 1. Bootstrap identity FIRST — before the users read below and before the
+    #    route handler's ensure_user() INSERT. Left unset (→ default-deny) when
+    #    there is no authenticated sub (public routes, missing claim).
+    sub_token = set_auth0_sub_context(sub)
+
     org_id = None
     is_super = False
-    if getattr(request.state, "user", None):
+    if claims:
         try:
             org_id = get_org_id(request)
         except Exception as exc:  # never block the request on context resolution
             print(f"[rls] org_id resolution failed (default-deny): {exc}")
             org_id = None
         try:
+            # Reads users by auth0_sub — now permitted by the bootstrap leg,
+            # since app.current_auth0_sub is already set (step 1 above).
             is_super = await _resolve_is_super_admin(request)
         except Exception as exc:
             print(f"[rls] is_super_admin resolution failed (default False): {exc}")
             is_super = False
 
+    # 2. Now that identity is resolved, set org_id/is_super_admin for the
+    #    remainder of the request's queries.
     tokens = set_rls_context(org_id, is_super)
     try:
         return await call_next(request)
     finally:
         reset_rls_context(tokens)
+        reset_auth0_sub_context(sub_token)
 
 
 @app.middleware("http")
