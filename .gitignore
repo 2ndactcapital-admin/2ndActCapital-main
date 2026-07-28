@@ -56,3 +56,5 @@ apps/api/venv/
 .mcp.json
 sprint_prompts/logs/*.json
 sprint_prompts/logs/*.err
+sprint_prompts/logs/decision_log.jsonl
+sprint_prompts/logs/*.done
