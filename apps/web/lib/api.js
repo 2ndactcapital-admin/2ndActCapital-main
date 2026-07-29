@@ -475,6 +475,17 @@ export const createWorkflow = (body) =>
 export const saveWorkflowVersion = (id, body) =>
   fetchAPI(`/api/v1/admin/workflows/${id}/versions`, { method: "POST", body });
 
+// --- Workflow Manager (Phase 4) — read-only consoles ---
+// Run Console, Scheduler/Routine Viewer, Version History. Org Admin sees their
+// own org; Super Admin sees across all orgs (enforced server-side).
+export const getWorkflowRuns = () => fetchAPI("/api/v1/admin/workflow-runs");
+export const getWorkflowRun = (runId) =>
+  fetchAPI(`/api/v1/admin/workflow-runs/${runId}`);
+export const getWorkflowTriggers = () =>
+  fetchAPI("/api/v1/admin/workflow-triggers");
+export const getWorkflowVersions = (id) =>
+  fetchAPI(`/api/v1/admin/workflows/${id}/versions`);
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

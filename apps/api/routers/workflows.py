@@ -20,6 +20,7 @@ identical to the SOC Profiles / Permission-Sets / Restricted-Access screens.
 every query is scoped to it; it is NEVER read from a request body.
 """
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,7 +29,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.action_registry import REGISTRY
 from services.database import get_pool
-from services.rbac import can_manage_org_settings, load_principal
+from services.rbac import can_manage_org_settings, is_super_admin, load_principal
 from services.users import ensure_user
 from services.workflow_editor import (
     WorkflowEditError,
@@ -113,6 +114,32 @@ async def _require_admin(request: Request) -> tuple[str, str]:
     if not can_manage_org_settings(principal, org_id):
         raise HTTPException(status_code=403, detail="Admin access required")
     return actor_id, org_id
+
+
+async def _require_admin_principal(request: Request) -> tuple[str, str, dict]:
+    """Like ``_require_admin`` but also returns the resolved principal so read
+    screens can widen to all-orgs for a Super Admin (org_admin stays home)."""
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        actor_id = await ensure_user(conn, request)
+        principal = await load_principal(conn, actor_id)
+    if principal is None:
+        principal = {"id": actor_id, "org_id": org_id, "role": None}
+    if not can_manage_org_settings(principal, org_id):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return actor_id, org_id, principal
+
+
+def _jsonb(value):
+    """asyncpg hands jsonb back as a text string (no json codec is registered);
+    decode it so it serializes as nested JSON rather than an escaped string."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+    return value
 
 
 def _action_options() -> list[ActionOption]:
@@ -308,3 +335,140 @@ async def save_workflow_version(request: Request, definition_id: UUID, body: Ver
         version_number=result["version_number"],
         bpmn_xml=xml,
     )
+
+
+# --------------------------------------------------------------------------
+# Phase 4 — read-only consoles (Run Console / Scheduler / Version History)
+#
+# All gated by the same admin contract. Org Admin sees only their own org's
+# rows; Super Admin sees across ALL orgs. org_id is always resolved from the
+# authenticated context, never from the request body.
+# --------------------------------------------------------------------------
+@router.get("/admin/workflow-runs")
+async def list_workflow_runs(request: Request):
+    """Run Console list: the org's workflow runs (all-orgs for Super Admin)."""
+    _, org_id, principal = await _require_admin_principal(request)
+    all_orgs = is_super_admin(principal)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT r.id, r.org_id, r.status, r.started_by, r.started_at,
+                   r.completed_at, r.error_detail,
+                   d.id AS definition_id, d.name AS workflow_name,
+                   v.version_number,
+                   u.full_name AS started_by_name, u.email AS started_by_email
+            FROM workflow_runs r
+            JOIN workflow_versions v ON v.id = r.workflow_version_id
+            JOIN workflow_definitions d ON d.id = v.workflow_definition_id
+            LEFT JOIN users u ON u.id = r.started_by
+            {"" if all_orgs else "WHERE r.org_id = $1"}
+            ORDER BY r.started_at DESC
+            LIMIT 200
+            """,
+            *([] if all_orgs else [org_id]),
+        )
+    return [dict(r) for r in rows]
+
+
+@router.get("/admin/workflow-runs/{run_id}")
+async def get_workflow_run(request: Request, run_id: UUID):
+    """Drill into one run: its status plus each run-step's status/result/error."""
+    _, org_id, principal = await _require_admin_principal(request)
+    all_orgs = is_super_admin(principal)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        run = await conn.fetchrow(
+            f"""
+            SELECT r.id, r.org_id, r.status, r.started_by, r.started_at,
+                   r.completed_at, r.error_detail, r.context,
+                   d.id AS definition_id, d.name AS workflow_name,
+                   v.version_number,
+                   u.full_name AS started_by_name, u.email AS started_by_email
+            FROM workflow_runs r
+            JOIN workflow_versions v ON v.id = r.workflow_version_id
+            JOIN workflow_definitions d ON d.id = v.workflow_definition_id
+            LEFT JOIN users u ON u.id = r.started_by
+            WHERE r.id = $1{"" if all_orgs else " AND r.org_id = $2"}
+            """,
+            *([run_id] if all_orgs else [run_id, org_id]),
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        step_rows = await conn.fetch(
+            """
+            SELECT rs.id, rs.status, rs.result, rs.error_detail,
+                   rs.started_at, rs.completed_at, rs.proposed_by, rs.approved_by,
+                   ws.step_key, ws.step_type, ws.display_name, ws.autonomy_tier
+            FROM workflow_run_steps rs
+            JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
+            WHERE rs.workflow_run_id = $1
+            ORDER BY rs.created_at, ws.step_key
+            """,
+            run_id,
+        )
+    run_out = dict(run)
+    run_out["context"] = _jsonb(run_out.get("context"))
+    steps = []
+    for r in step_rows:
+        d = dict(r)
+        d["result"] = _jsonb(d.get("result"))
+        steps.append(d)
+    return {"run": run_out, "steps": steps}
+
+
+@router.get("/admin/workflow-triggers")
+async def list_workflow_triggers(request: Request):
+    """Scheduler / Routine Viewer: triggers for the org (all-orgs for Super
+    Admin). READ/CONFIGURE only in this phase — nothing fires autonomously."""
+    _, org_id, principal = await _require_admin_principal(request)
+    all_orgs = is_super_admin(principal)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT t.id, t.org_id, t.trigger_type, t.schedule_cron, t.event_type,
+                   t.is_active, t.created_at,
+                   d.id AS definition_id, d.name AS workflow_name
+            FROM workflow_triggers t
+            JOIN workflow_definitions d ON d.id = t.workflow_definition_id
+            {"" if all_orgs else "WHERE t.org_id = $1"}
+            ORDER BY d.name, t.trigger_type
+            """,
+            *([] if all_orgs else [org_id]),
+        )
+    return [dict(r) for r in rows]
+
+
+@router.get("/admin/workflows/{definition_id}/versions")
+async def list_workflow_versions(request: Request, definition_id: UUID):
+    """Version History: every version of a definition in order, exactly one
+    marked is_current. Read-only browsing (no diff rendering this phase)."""
+    _, org_id, principal = await _require_admin_principal(request)
+    all_orgs = is_super_admin(principal)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        definition = await conn.fetchrow(
+            "SELECT id, org_id, name FROM workflow_definitions WHERE id = $1",
+            definition_id,
+        )
+        # Org Admins may only browse their own org's definitions; a 404 (rather
+        # than 403) avoids confirming another org's definition exists.
+        if definition is None or (not all_orgs and str(definition["org_id"]) != str(org_id)):
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        rows = await conn.fetch(
+            """
+            SELECT v.id, v.version_number, v.change_summary, v.is_current,
+                   v.created_at, v.created_by,
+                   u.full_name AS created_by_name, u.email AS created_by_email
+            FROM workflow_versions v
+            LEFT JOIN users u ON u.id = v.created_by
+            WHERE v.workflow_definition_id = $1
+            ORDER BY v.version_number ASC
+            """,
+            definition_id,
+        )
+    return {
+        "definition": {"id": definition["id"], "name": definition["name"]},
+        "versions": [dict(r) for r in rows],
+    }

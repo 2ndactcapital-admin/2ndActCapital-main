@@ -43,6 +43,7 @@ from SpiffWorkflow.bpmn.specs.defaults import NoneTask, ServiceTask, UserTask
 from SpiffWorkflow.util.task import TaskState
 
 from services.action_registry import REGISTRY
+from services import workflow_todos
 
 # SpiffWorkflow task-spec class names that map to our governed workflow_steps.
 _SERVICE_CLS = "ServiceTask"
@@ -250,6 +251,10 @@ async def start_workflow_run(
         if context:
             workflow.set_data(**context)
 
+        # Persist the run + its pending steps up-front, in their own committed
+        # transaction, BEFORE driving the engine. A later failure must be
+        # recordable as 'held' (Wave-4-style HOLD + ALERT) rather than vanishing
+        # on rollback or leaving the run silently stuck in 'running'.
         async with conn.transaction():
             run_id = await conn.fetchval(
                 """
@@ -273,64 +278,85 @@ async def start_workflow_run(
                 )
                 run_step_ids[s["step_key"]] = rsid
 
-            # Drive the engine: Service Tasks execute automatically.
-            global _SERVICE_STEP_MAP
-            _SERVICE_STEP_MAP = {
-                k: v for k, v in step_by_key.items() if v["step_type"] == "service"
-            }
-            executed = _drive(workflow)
-            _SERVICE_STEP_MAP = {}
+        try:
+            async with conn.transaction():
+                # Drive the engine: Service Tasks execute automatically.
+                global _SERVICE_STEP_MAP
+                _SERVICE_STEP_MAP = {
+                    k: v for k, v in step_by_key.items() if v["step_type"] == "service"
+                }
+                try:
+                    executed = _drive(workflow)
+                finally:
+                    _SERVICE_STEP_MAP = {}
 
-            # Mark executed Service Task steps completed.
-            for step_key in executed:
-                rsid = run_step_ids.get(step_key)
-                if rsid is None:
-                    continue
-                await conn.execute(
-                    """
-                    UPDATE workflow_run_steps
-                    SET status = 'completed', started_at = now(), completed_at = now(),
-                        result = $2::jsonb
-                    WHERE id = $1
-                    """,
-                    rsid,
-                    json.dumps(_service_result_for(workflow, step_key)),
-                )
+                # Mark executed Service Task steps completed.
+                for step_key in executed:
+                    rsid = run_step_ids.get(step_key)
+                    if rsid is None:
+                        continue
+                    await conn.execute(
+                        """
+                        UPDATE workflow_run_steps
+                        SET status = 'completed', started_at = now(), completed_at = now(),
+                            result = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        rsid,
+                        json.dumps(_service_result_for(workflow, step_key)),
+                    )
 
-            # Pause point or completion.
-            ready = _ready_user_task(workflow)
-            if ready is not None:
-                # Activate the pausing User Task; started_by "proposes" it so a
-                # different approver is required by maker-checker.
-                rsid = run_step_ids.get(ready.task_spec.bpmn_id)
-                await conn.execute(
-                    """
-                    UPDATE workflow_run_steps
-                    SET status = 'active', started_at = now(), proposed_by = $2
-                    WHERE id = $1
-                    """,
-                    rsid, started_by,
-                )
-                await conn.execute(
-                    """
-                    UPDATE workflow_runs
-                    SET status = 'running', spiff_serialized_state = $2::jsonb
-                    WHERE id = $1
-                    """,
-                    run_id, serialize_state(workflow),
-                )
-                status = "running"
-            else:
-                await conn.execute(
-                    """
-                    UPDATE workflow_runs
-                    SET status = 'completed', completed_at = now(),
-                        spiff_serialized_state = $2::jsonb
-                    WHERE id = $1
-                    """,
-                    run_id, serialize_state(workflow),
-                )
-                status = "completed"
+                # Pause point or completion.
+                ready = _ready_user_task(workflow)
+                if ready is not None:
+                    # Activate the pausing User Task; started_by "proposes" it so
+                    # a different approver is required by maker-checker.
+                    rsid = run_step_ids.get(ready.task_spec.bpmn_id)
+                    await conn.execute(
+                        """
+                        UPDATE workflow_run_steps
+                        SET status = 'active', started_at = now(), proposed_by = $2
+                        WHERE id = $1
+                        """,
+                        rsid, started_by,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE workflow_runs
+                        SET status = 'running', spiff_serialized_state = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        run_id, serialize_state(workflow),
+                    )
+                    # Surface the active User Task as a member_todos entry for
+                    # each user holding its assigned role profile.
+                    active_step = step_by_key.get(ready.task_spec.bpmn_id, {})
+                    await workflow_todos.sync_user_task_todos(
+                        conn,
+                        org_id=org_id,
+                        run_step_id=rsid,
+                        step_key=ready.task_spec.bpmn_id,
+                        display_name=active_step.get("display_name"),
+                        assigned_role_profile_id=active_step.get("assigned_role_profile_id"),
+                    )
+                    status = "running"
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE workflow_runs
+                        SET status = 'completed', completed_at = now(),
+                            spiff_serialized_state = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        run_id, serialize_state(workflow),
+                    )
+                    status = "completed"
+        except Exception as exc:
+            # Wave-4-style failure: HOLD and ALERT, never silently retry — even
+            # for a manually-triggered run. Recorded in its own transaction
+            # because the execution transaction above has rolled back.
+            await _hold_run(conn, run_id, org_id, started_by, exc)
+            raise
 
         return {
             "run_id": run_id,
@@ -338,6 +364,30 @@ async def start_workflow_run(
             "executed_service_steps": executed,
             "paused_at": ready.task_spec.bpmn_id if ready is not None else None,
         }
+
+
+async def _hold_run(conn, run_id, org_id, started_by, exc: Exception) -> None:
+    """Transition a run to 'held' with error_detail and raise the HOLD alert.
+
+    Idempotent-safe to call once per failure; runs in its own transaction so it
+    persists independently of the rolled-back execution transaction."""
+    error_detail = f"{type(exc).__name__}: {exc}"
+    async with conn.transaction():
+        await conn.execute(
+            """
+            UPDATE workflow_runs
+            SET status = 'held', error_detail = $2
+            WHERE id = $1
+            """,
+            run_id, error_detail,
+        )
+        await workflow_todos.create_held_run_alerts(
+            conn,
+            org_id=org_id,
+            run_id=run_id,
+            started_by=started_by,
+            error_detail=error_detail,
+        )
 
 
 def _service_result_for(workflow: BpmnWorkflow, step_key: str) -> dict:
@@ -360,7 +410,7 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             """
             SELECT rs.id, rs.workflow_run_id, rs.org_id, rs.status, rs.proposed_by,
                    ws.step_key, ws.autonomy_tier, ws.assigned_role_profile_id,
-                   r.workflow_version_id, r.spiff_serialized_state
+                   r.workflow_version_id, r.spiff_serialized_state, r.started_by
             FROM workflow_run_steps rs
             JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
             JOIN workflow_runs r ON r.id = rs.workflow_run_id
@@ -387,94 +437,121 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
         org_id = step["org_id"]
         run_id = step["workflow_run_id"]
 
-        # Resume the paused SpiffWorkflow and run the User Task forward.
-        workflow = deserialize_state(step["spiff_serialized_state"])
-        task = _ready_user_task(workflow, step["step_key"])
-        if task is None:
-            raise WorkflowEngineError(
-                f"no ready User Task '{step['step_key']}' in serialized state"
-            )
-        task.set_data(user_task_result=result, completed_by=str(completed_by))
-        task.run()
+        try:
+            # Resume the paused SpiffWorkflow and run the User Task forward.
+            workflow = deserialize_state(step["spiff_serialized_state"])
+            task = _ready_user_task(workflow, step["step_key"])
+            if task is None:
+                raise WorkflowEngineError(
+                    f"no ready User Task '{step['step_key']}' in serialized state"
+                )
+            task.set_data(user_task_result=result, completed_by=str(completed_by))
+            task.run()
 
-        # Continue past any downstream Service Tasks.
-        steps = await _load_steps(conn, step["workflow_version_id"], org_id)
-        step_by_key = {s["step_key"]: dict(s) for s in steps}
-        global _SERVICE_STEP_MAP
-        _SERVICE_STEP_MAP = {
-            k: v for k, v in step_by_key.items() if v["step_type"] == "service"
-        }
-        executed = _drive(workflow)
-        _SERVICE_STEP_MAP = {}
-
-        async with conn.transaction():
-            # Complete this User Task step — the DB CHECK also guards approved_by
-            # != proposed_by, so surface a clear error if it ever fires.
+            # Continue past any downstream Service Tasks.
+            steps = await _load_steps(conn, step["workflow_version_id"], org_id)
+            step_by_key = {s["step_key"]: dict(s) for s in steps}
+            global _SERVICE_STEP_MAP
+            _SERVICE_STEP_MAP = {
+                k: v for k, v in step_by_key.items() if v["step_type"] == "service"
+            }
             try:
-                await conn.execute(
-                    """
-                    UPDATE workflow_run_steps
-                    SET status = 'completed', approved_by = $2, completed_at = now(),
-                        result = $3::jsonb
-                    WHERE id = $1
-                    """,
-                    workflow_run_step_id, completed_by, json.dumps(result),
-                )
-            except asyncpg.CheckViolationError as exc:
-                raise MakerCheckerError(
-                    "maker-checker violation rejected by database CHECK constraint: "
-                    "approver must differ from proposer"
-                ) from exc
+                executed = _drive(workflow)
+            finally:
+                _SERVICE_STEP_MAP = {}
 
-            # Mark any downstream Service Tasks completed.
-            for step_key in executed:
-                await conn.execute(
-                    """
-                    UPDATE workflow_run_steps rs
-                    SET status = 'completed', started_at = now(), completed_at = now(),
-                        result = $3::jsonb
-                    FROM workflow_steps ws
-                    WHERE rs.workflow_step_id = ws.id
-                      AND rs.workflow_run_id = $1 AND ws.step_key = $2
-                    """,
-                    run_id, step_key,
-                    json.dumps(_service_result_for(workflow, step_key)),
+            async with conn.transaction():
+                # Complete this User Task step — the DB CHECK also guards
+                # approved_by != proposed_by, so surface a clear error if it fires.
+                try:
+                    await conn.execute(
+                        """
+                        UPDATE workflow_run_steps
+                        SET status = 'completed', approved_by = $2, completed_at = now(),
+                            result = $3::jsonb
+                        WHERE id = $1
+                        """,
+                        workflow_run_step_id, completed_by, json.dumps(result),
+                    )
+                except asyncpg.CheckViolationError as exc:
+                    raise MakerCheckerError(
+                        "maker-checker violation rejected by database CHECK constraint: "
+                        "approver must differ from proposer"
+                    ) from exc
+
+                # Completing the User Task marks its member_todos entry done.
+                await workflow_todos.complete_user_task_todos(
+                    conn, run_step_id=workflow_run_step_id
                 )
 
-            # New pause point or completion.
-            ready = _ready_user_task(workflow)
-            if ready is not None:
-                await conn.execute(
-                    """
-                    UPDATE workflow_run_steps rs
-                    SET status = 'active', started_at = now()
-                    FROM workflow_steps ws
-                    WHERE rs.workflow_step_id = ws.id
-                      AND rs.workflow_run_id = $1 AND ws.step_key = $2
-                      AND rs.status = 'pending'
-                    """,
-                    run_id, ready.task_spec.bpmn_id,
-                )
-                await conn.execute(
-                    """
-                    UPDATE workflow_runs SET status = 'running',
-                        spiff_serialized_state = $2::jsonb
-                    WHERE id = $1
-                    """,
-                    run_id, serialize_state(workflow),
-                )
-                run_status = "running"
-            else:
-                await conn.execute(
-                    """
-                    UPDATE workflow_runs
-                    SET status = 'completed', completed_at = now(),
-                        spiff_serialized_state = $2::jsonb
-                    WHERE id = $1
-                    """,
-                    run_id, serialize_state(workflow),
-                )
-                run_status = "completed"
+                # Mark any downstream Service Tasks completed.
+                for step_key in executed:
+                    await conn.execute(
+                        """
+                        UPDATE workflow_run_steps rs
+                        SET status = 'completed', started_at = now(), completed_at = now(),
+                            result = $3::jsonb
+                        FROM workflow_steps ws
+                        WHERE rs.workflow_step_id = ws.id
+                          AND rs.workflow_run_id = $1 AND ws.step_key = $2
+                        """,
+                        run_id, step_key,
+                        json.dumps(_service_result_for(workflow, step_key)),
+                    )
+
+                # New pause point or completion.
+                ready = _ready_user_task(workflow)
+                if ready is not None:
+                    new_rsid = await conn.fetchval(
+                        """
+                        UPDATE workflow_run_steps rs
+                        SET status = 'active', started_at = now()
+                        FROM workflow_steps ws
+                        WHERE rs.workflow_step_id = ws.id
+                          AND rs.workflow_run_id = $1 AND ws.step_key = $2
+                          AND rs.status = 'pending'
+                        RETURNING rs.id
+                        """,
+                        run_id, ready.task_spec.bpmn_id,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE workflow_runs SET status = 'running',
+                            spiff_serialized_state = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        run_id, serialize_state(workflow),
+                    )
+                    if new_rsid is not None:
+                        next_step = step_by_key.get(ready.task_spec.bpmn_id, {})
+                        await workflow_todos.sync_user_task_todos(
+                            conn,
+                            org_id=org_id,
+                            run_step_id=new_rsid,
+                            step_key=ready.task_spec.bpmn_id,
+                            display_name=next_step.get("display_name"),
+                            assigned_role_profile_id=next_step.get("assigned_role_profile_id"),
+                        )
+                    run_status = "running"
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE workflow_runs
+                        SET status = 'completed', completed_at = now(),
+                            spiff_serialized_state = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        run_id, serialize_state(workflow),
+                    )
+                    run_status = "completed"
+        except MakerCheckerError:
+            # A rejected approval is a validation outcome, not a run failure —
+            # leave the run/step untouched (still active) and surface the error.
+            raise
+        except Exception as exc:
+            # Any real execution failure holds the run and alerts (Wave-4 style).
+            await _hold_run(conn, run_id, org_id, step["started_by"], exc)
+            raise
 
         return {
             "run_id": run_id,

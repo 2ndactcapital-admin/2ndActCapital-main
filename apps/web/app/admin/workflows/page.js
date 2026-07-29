@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import AppShell from "@/components/AppShell";
@@ -25,11 +26,21 @@ export default async function AdminWorkflowsPage() {
 
   return (
     <AppShell user={session.user}>
-      <div>
-        <h1 className="text-3xl font-semibold text-navy">Workflows</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Governed, executable process definitions
-        </p>
+      <div className="flex items-baseline justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold text-navy">Workflows</h1>
+          <p className="mt-1 text-sm text-text-muted">
+            Governed, executable process definitions
+          </p>
+        </div>
+        <nav className="flex gap-4 text-sm">
+          <Link href="/admin/workflows/runs" className="text-gold hover:underline">
+            Run Console
+          </Link>
+          <Link href="/admin/workflows/triggers" className="text-gold hover:underline">
+            Scheduler & Routines
+          </Link>
+        </nav>
       </div>
 
       {error === "forbidden" ? (
