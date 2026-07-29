@@ -9,12 +9,16 @@ import OwnershipGraph from "./OwnershipGraph";
  * one rendering component is driven identically; only `apiBase` differs.
  *
  * Nodes navigate to the entity's own detail page (`${nodeHrefBase}/{id}`).
+ * When `nodeQuery` is supplied it is appended as a query string, letting the
+ * caller "walk" to a specific view — e.g. `nodeQuery="tab=ownership"` lands the
+ * next entity on its Ownership tab rather than the generic CRM page.
  */
 export default function EntityGraphNavigator({
   apiBase,
   title,
   emptyMessage,
   nodeHrefBase = "/crm",
+  nodeQuery,
 }) {
   const router = useRouter();
   return (
@@ -22,7 +26,9 @@ export default function EntityGraphNavigator({
       apiBase={apiBase}
       title={title}
       emptyMessage={emptyMessage}
-      onNodeClick={(id) => router.push(`${nodeHrefBase}/${id}`)}
+      onNodeClick={(id) =>
+        router.push(`${nodeHrefBase}/${id}${nodeQuery ? `?${nodeQuery}` : ""}`)
+      }
     />
   );
 }

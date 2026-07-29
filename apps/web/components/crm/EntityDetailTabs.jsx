@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import EntityDetailsForm from "@/components/crm/EntityDetailsForm";
 import AttributesSection from "@/components/crm/AttributesSection";
 import OwnershipTree from "@/components/crm/OwnershipTree";
@@ -30,7 +31,16 @@ export default function EntityDetailTabs({ full, graph }) {
     { key: "compliance", label: "Compliance" },
   ];
 
-  const [active, setActive] = useState("overview");
+  // Honor a `?tab=` deep-link so "walking" from an ownership graph node lands
+  // the destination entity on the requested tab (e.g. Ownership) instead of the
+  // generic overview. Falls back to overview for missing/unknown/hidden tabs.
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialTab = tabs.some((t) => t.key === requestedTab)
+    ? requestedTab
+    : "overview";
+
+  const [active, setActive] = useState(initialTab);
 
   return (
     <div>

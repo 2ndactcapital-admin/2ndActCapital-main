@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import EntityPicker from "@/components/EntityPicker";
+import EntityGraphNavigator from "@/components/graph/EntityGraphNavigator";
 
 function formatPct(val) {
   if (val == null) return "—";
@@ -389,15 +390,47 @@ export default function OwnershipTab({ entityId }) {
   }
 
   const isHistorical = !!asOf && asOf < new Date().toISOString().slice(0, 10);
+  const totalPct = data?.owned_by_total_pct ?? 0;
 
-  if (loading) return <p className="py-6 text-sm text-text-muted">Loading ownership…</p>;
-  if (error) return <p className="py-6 text-sm text-error">{error}</p>;
-  if (!data) return null;
+  // The interactive ownership graph, embedded so the tree is reachable in one
+  // click from the entity's own CRM page (no direct-URL hunting). Node clicks
+  // "walk" to the next entity's Ownership tab via nodeQuery, so the graph stays
+  // on-screen at every hop. Its own Owns / Owned-by reverse toggle is preserved
+  // from Sprint A — nothing rebuilt here. Rendered above the loading/error gate
+  // so it shows even while the edit list is still fetching.
+  const graphSection = (
+    <section>
+      <EntityGraphNavigator
+        apiBase={`/api/entities/${entityId}/ownership-graph`}
+        title="Ownership & Beneficiary Tree"
+        emptyMessage="No ownership tree data available for this entity."
+        nodeQuery="tab=ownership"
+      />
+    </section>
+  );
 
-  const totalPct = data.owned_by_total_pct ?? 0;
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        {graphSection}
+        <p className="py-6 text-sm text-text-muted">Loading ownership…</p>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="space-y-8">
+        {graphSection}
+        <p className="py-6 text-sm text-error">{error}</p>
+      </div>
+    );
+  }
+  if (!data) return <div className="space-y-8">{graphSection}</div>;
 
   return (
     <div className="space-y-8">
+      {graphSection}
+
       {/* Time-travel bar */}
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium text-text-secondary">View as of</label>

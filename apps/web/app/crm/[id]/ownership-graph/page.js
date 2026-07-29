@@ -51,6 +51,7 @@ export default async function StaffOwnershipGraphPage({ params }) {
           apiBase={`/api/entities/${id}/ownership-graph`}
           title="Ownership & Beneficiary Tree"
           emptyMessage="You do not have visibility into this entity's ownership tree."
+          nodeQuery="tab=ownership"
         />
       </div>
     </AppShell>
