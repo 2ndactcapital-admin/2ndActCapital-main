@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  id="Defs_workflowmgr1" targetNamespace="http://2ndactcapital.com/bpmn">
+  <bpmn:process id="wfmgr1_test_process" name="Workflow Manager Phase 1 Test" isExecutable="true">
+    <bpmn:startEvent id="Start_1">
+      <bpmn:outgoing>flow_start_service</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Service_1" name="Show New Deals (read-only)">
+      <bpmn:incoming>flow_start_service</bpmn:incoming>
+      <bpmn:outgoing>flow_service_user</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="User_1" name="Member Reviews Result">
+      <bpmn:incoming>flow_service_user</bpmn:incoming>
+      <bpmn:outgoing>flow_user_end</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_1">
+      <bpmn:incoming>flow_user_end</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow_start_service" sourceRef="Start_1" targetRef="Service_1"/>
+    <bpmn:sequenceFlow id="flow_service_user" sourceRef="Service_1" targetRef="User_1"/>
+    <bpmn:sequenceFlow id="flow_user_end" sourceRef="User_1" targetRef="End_1"/>
+  </bpmn:process>
+</bpmn:definitions>
