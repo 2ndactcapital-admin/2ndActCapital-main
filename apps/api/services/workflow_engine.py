@@ -33,11 +33,13 @@ from typing import Any
 import asyncpg
 
 from SpiffWorkflow.bpmn.parser.BpmnParser import BpmnParser
+from SpiffWorkflow.bpmn.parser.task_parsers import TaskParser
+from SpiffWorkflow.bpmn.parser.util import full_tag
 from SpiffWorkflow.bpmn.workflow import BpmnWorkflow
 from SpiffWorkflow.bpmn.serializer.workflow import BpmnWorkflowSerializer
 from SpiffWorkflow.bpmn.serializer.config import DEFAULT_CONFIG
 from SpiffWorkflow.bpmn.serializer.default.task_spec import BpmnTaskSpecConverter
-from SpiffWorkflow.bpmn.specs.defaults import ServiceTask, UserTask
+from SpiffWorkflow.bpmn.specs.defaults import NoneTask, ServiceTask, UserTask
 from SpiffWorkflow.util.task import TaskState
 
 from services.action_registry import REGISTRY
@@ -74,13 +76,40 @@ def _now() -> datetime:
 
 
 # ── BPMN parsing ────────────────────────────────────────────────────────────
+class _BusinessRuleTaskParser(TaskParser):
+    """Parse ``bpmn:businessRuleTask`` as a pass-through task.
+
+    SpiffWorkflow's base parser only supports a Business Rule Task when a full DMN
+    decision table is attached (otherwise it raises "no support implemented").
+    The Phase-2 governance layer *records* a Business Rule Task (a workflow_steps
+    row + a deterministic Tier-3 default) but does not yet evaluate DMN, so we map
+    the element to a plain ``NoneTask`` purely so the process parses and validates.
+    """
+
+    def create_task(self):
+        return NoneTask(self.spec, self.bpmn_id, **self.bpmn_attributes)
+
+
+def _make_bpmn_parser() -> BpmnParser:
+    """A BpmnParser that additionally accepts ``bpmn:businessRuleTask`` (DMN-less).
+
+    Additive to Phase 1: existing service/user/send/gateway XML is unaffected.
+    """
+    parser = BpmnParser()
+    parser.OVERRIDE_PARSER_CLASSES = {
+        **parser.OVERRIDE_PARSER_CLASSES,
+        full_tag("businessRuleTask"): (_BusinessRuleTaskParser, NoneTask),
+    }
+    return parser
+
+
 def parse_bpmn(bpmn_xml: str):
     """Parse a BPMN XML string into a runnable SpiffWorkflow spec.
 
     Returns ``(spec, process_id)``.  ``bpmn_xml`` is the canonical text stored
     in ``workflow_versions.bpmn_xml``.
     """
-    parser = BpmnParser()
+    parser = _make_bpmn_parser()
     # lxml rejects unicode strings that carry an encoding declaration; feed bytes.
     parser.add_bpmn_str(bpmn_xml.encode("utf-8"), "workflow.bpmn")
     process_ids = parser.get_process_ids()

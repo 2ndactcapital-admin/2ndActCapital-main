@@ -1,0 +1,26 @@
+
+=== Task 1 — Discovery Findings ===
+  1(a) NO generic deriver existed in Phase 1: verify_workflowmgr1.py's seed_process() inserts workflow_steps rows BY HAND (INSERT present=True). Phase 2 BUILDS the generic deriver (services/workflow_steps_deriver.py) as a prerequisite.
+  1(b) action registry = services.action_registry.REGISTRY; read vs write is AssistantAction.access_type, a Literal['read','write'] string. e.g. marketplace.show_new_deals=read, spv.record_transaction=write.
+  1(c) TaskRouter (Sprint 27) IS merged/working: the central AI helpers call_claude_text / call_claude_json (services/extraction.py) route through _execute_chain (per-org fallback chain + ai_decision_log). NL generation calls through call_claude_text (imported=True), not the SDK.
+[PASS] Task 1 findings reported (a: manual insert / no deriver, b: access_type, c: TaskRouter)
+
+=== Task 2 — Generic deriver ===
+[PASS] deriver creates one row per actionable element with correct step_type (gateway + events excluded)  — {'Read_1': 'service', 'Rule_1': 'business_rule', 'Send_1': 'send', 'User_1': 'user', 'Write_1': 'service'}, rows=5
+[PASS] Service Task wrapping a KNOWN READ-only action defaults to Tier 3  — Read_1 tier=3 action=marketplace.show_new_deals
+[PASS] Service Task wrapping a KNOWN WRITE-capable action defaults to Tier 2 (NOT Tier 3)  — Write_1 tier=2 action=spv.record_transaction
+[PASS] User Task always defaults to Tier 1 (regardless of assigned profile)  — User_1 tier=1 profile=3e5182de-a31a-4c5f-a0e4-c02a015129a5
+
+=== Task 3 — NL → BPMN generation (hermetic) ===
+[PASS] NL generation produces BPMN that parses via SpiffWorkflow, stored as v1/is_current  — process_id=wfmgr2_generated_proc, v=1, current=True
+[PASS] every action_registry_key + assigned_role_profile_id in generated XML resolves to a REAL row (no hallucinated refs)  — steps_stored=2 
+[PASS] invalid-reference generation triggers ONE error-correction retry, then stores the valid XML  — queue_left=0
+[PASS] persistently-invalid generation FAILS loudly and stores NO definition/version  — raised=True defs_after=0
+
+=== Task 4 — generate once, never regenerate ===
+[PASS] generate_workflow has NO existing-definition/version parameter AND no UPDATE of workflow_versions — regeneration is structurally impossible  — params=['created_by', 'description', 'name', 'org_id', 'pool']; updates_versions=False
+
+=== Teardown ===
+[PASS] Teardown left zero leftover rows  — {'definitions': 0, 'versions': 0, 'steps': 0, 'marker_defs': 0, 'users': 0}
+
+RESULT: ALL ASSERTIONS PASSED ✅

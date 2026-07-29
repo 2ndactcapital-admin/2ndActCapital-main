@@ -38,6 +38,11 @@ class ActionRegistry:
     def get(self, key: str) -> AssistantAction | None:
         return self._actions.get(key)
 
+    def all(self) -> list[AssistantAction]:
+        """Every registered action (unfiltered) — the closed reference list a
+        workflow generator draws valid Service Task action keys from."""
+        return list(self._actions.values())
+
     def list_for_user(self, user_id: str, permissions: set[str]) -> list[AssistantAction]:
         return [
             a for a in self._actions.values()
