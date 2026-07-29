@@ -27,7 +27,10 @@
  *   emptyMessage — shown when the tree is empty for this viewer
  */
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import AsOfPicker from "./AsOfPicker";
+import OwnershipPrintDocument from "./OwnershipPrintDocument";
+import { buildExportModel } from "@/lib/ownershipExport.mjs";
 
 const ENTITY_COLORS = {
   individual: "#EEF4FF",
@@ -341,6 +344,13 @@ export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownershi
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
 
+  // Export / print (Sprint ownershiptreeb). The model is built from the SAME
+  // client-filtered tree this component is already rendering — never a re-query
+  // — so a restricted entity absent from the live view is absent from the
+  // export by construction. `mounted` gates the body-level print portal for SSR.
+  const [printModel, setPrintModel] = useState(null);
+  const [mounted, setMounted] = useState(false);
+
   // Data.
   const [tree, setTree] = useState(null);
   const [focalId, setFocalId] = useState(null);
@@ -447,12 +457,46 @@ export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownershi
     [onNodeClick],
   );
 
+  useEffect(() => setMounted(true), []);
+
   const availableTypes = useMemo(() => (tree ? [...collectTypes(tree)] : []), [tree]);
 
   const viewTree = useMemo(
     () => (tree ? applyClientFilters(tree, { types: typeFilter, minPct }) : null),
     [tree, typeFilter, minPct],
   );
+
+  // Build the print model from the current on-screen (filtered) tree, then hand
+  // off to the browser's print dialog. `expandAll` overrides the collapsed set.
+  const handleExport = useCallback(
+    (expandAll) => {
+      if (!viewTree) return;
+      const today = new Date().toISOString().slice(0, 10);
+      const model = buildExportModel(viewTree, {
+        collapsed,
+        expandAll,
+        focalName: viewTree.display_name,
+        asOf,
+        today,
+        generatedAt: new Date().toLocaleString(),
+      });
+      setPrintModel(model);
+    },
+    [viewTree, collapsed, asOf],
+  );
+
+  // Once the print document has rendered into the portal, open the print dialog
+  // and clear the model when it closes (or is cancelled).
+  useEffect(() => {
+    if (!printModel || typeof window === "undefined") return;
+    const clear = () => setPrintModel(null);
+    window.addEventListener("afterprint", clear);
+    const id = window.requestAnimationFrame(() => window.print());
+    return () => {
+      window.cancelAnimationFrame(id);
+      window.removeEventListener("afterprint", clear);
+    };
+  }, [printModel]);
 
   const toggleType = (t) => {
     setTypeFilter((prev) => {
@@ -488,7 +532,50 @@ export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownershi
           <div style={{ fontFamily: "'Spectral', Georgia, serif", fontSize: 20, fontWeight: 500, color: "var(--2a-navy)" }}>
             {title}
           </div>
-          <Legend />
+          <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+            <Legend />
+            {viewTree && (
+              <div style={{ display: "flex", gap: 6 }} className="ownership-graph-export-controls">
+                <button
+                  type="button"
+                  onClick={() => handleExport(false)}
+                  title="Export / print the current view (collapsed branches stay collapsed)"
+                  style={{
+                    background: "var(--2a-navy)",
+                    color: "var(--2a-gold-light)",
+                    border: "none",
+                    borderRadius: 5,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  Export / Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExport(true)}
+                  title="Expand every branch, then export / print the full tree"
+                  style={{
+                    background: "#fff",
+                    color: "var(--2a-text-secondary)",
+                    border: "1px solid #ece8dd",
+                    borderRadius: 5,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Expand all &amp; print
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
@@ -641,6 +728,25 @@ export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownershi
           </svg>
         )}
       </div>
+
+      {/* Hide the interactive card entirely when printing — the dedicated
+          print document (rendered into a body-level portal below) takes over. */}
+      <style>{`
+        @media print {
+          .ownership-graph-export-controls { display: none !important; }
+        }
+      `}</style>
+
+      {/* Dedicated print renderer, portaled to <body> so the @media print rule
+          that hides every other top-level node can reveal just this document. */}
+      {mounted &&
+        printModel &&
+        createPortal(
+          <div className="ownership-export-portal">
+            <OwnershipPrintDocument model={printModel} focalId={focalId} />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
