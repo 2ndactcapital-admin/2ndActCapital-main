@@ -2,6 +2,21 @@
 -- DO NOT EDIT BY HAND.
 -- Regenerate: cd apps/api && DATABASE_URL='...' python scripts/refresh_schema.py
 
+-- ===== ai_decision_log =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   task_type                                text NOT NULL
+--   model_requested                          text NOT NULL
+--   model_used                               text NOT NULL
+--   fallback_used                            boolean NOT NULL DEFAULT false
+--   fallback_reason                          text
+--   cost_usd                                 numeric
+--   latency_ms                               integer
+--   success                                  boolean NOT NULL
+--   error_detail                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY ai_decision_log_pkey: (id)
+
 -- ===== assistant_action_catalog =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
