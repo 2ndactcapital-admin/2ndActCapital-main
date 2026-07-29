@@ -28,6 +28,7 @@ const STAFF_VISIBILITY_ITEM = { label: "Staff Visibility", href: "/admin/staff-v
 // Org Admin (own org) or Super Admin.
 const PROFILES_ITEM = { label: "Profiles", href: "/admin/profiles", icon: "investment-profile" };
 const PERMISSION_SETS_ITEM = { label: "Permission Sets", href: "/admin/permission-sets", icon: "admin" };
+const WORKFLOWS_ITEM = { label: "Workflows", href: "/admin/workflows", icon: "admin" };
 // Sprint 24 — white-label settings. Org Admins see their own org; Super
 // Admins additionally get the platform-wide screen.
 const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
@@ -344,6 +345,11 @@ export default function Sidebar() {
                 item={PERMISSION_SETS_ITEM}
                 expanded={expanded}
                 active={isActive(PERMISSION_SETS_ITEM.href)}
+              />
+              <NavLink
+                item={WORKFLOWS_ITEM}
+                expanded={expanded}
+                active={isActive(WORKFLOWS_ITEM.href)}
               />
               <NavLink
                 item={ORG_SETTINGS_ITEM}

@@ -157,6 +157,23 @@ def _validate(xml: str | None, valid_action_keys: set[str], valid_profile_ids: s
     return errors
 
 
+async def validate_workflow_bpmn(conn, org_id, xml: str | None) -> list[str]:
+    """Public reuse of Phase 2's reference validation for manually-edited BPMN.
+
+    Phase 3's diagram editor lets an admin hand-edit a definition's BPMN and save
+    it as a new version. That save MUST be validated exactly the way generation
+    is — same SpiffWorkflow parse (via ``derive_steps``) and the same closed-list
+    check that every ``actionRegistryKey`` / ``assignedRoleProfileId`` resolves to
+    a REAL action-registry entry / real org Profile. Returns ``[]`` when valid, a
+    list of human-readable errors otherwise. Never stores anything.
+    """
+    profiles = await _fetch_profiles(conn, org_id)
+    actions = _registry_actions()
+    valid_action_keys = {a["key"] for a in actions}
+    valid_profile_ids = {str(p["id"]) for p in profiles}
+    return _validate(xml, valid_action_keys, valid_profile_ids)
+
+
 async def _generate_once(system, messages, org_id, valid_action_keys, valid_profile_ids):
     text = await call_claude_text(
         system, messages, max_tokens=2000, org_id=org_id, task_type=_TASK_TYPE

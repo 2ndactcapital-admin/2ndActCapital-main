@@ -464,6 +464,17 @@ export const deleteOwnership = (relId) =>
 export const getOwnershipHistory = (entityId) =>
   fetchAPI(`/api/v1/entities/${entityId}/ownership/history`);
 
+// --- Workflow Manager (Phase 3) ---
+// Library + diagram editor. Org Admin (own org) or Super Admin, enforced
+// server-side by the FastAPI /admin/workflows gate. org_id travels in the JWT,
+// never in a request body.
+export const getWorkflows = () => fetchAPI("/api/v1/admin/workflows");
+export const getWorkflow = (id) => fetchAPI(`/api/v1/admin/workflows/${id}`);
+export const createWorkflow = (body) =>
+  fetchAPI("/api/v1/admin/workflows", { method: "POST", body });
+export const saveWorkflowVersion = (id, body) =>
+  fetchAPI(`/api/v1/admin/workflows/${id}/versions`, { method: "POST", body });
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

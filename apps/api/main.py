@@ -41,6 +41,7 @@ from routers.spv import router as spv_router
 from routers.staff_assignments import router as staff_assignments_router
 from routers.trading_authority import router as trading_authority_router
 from routers.users import router as users_router
+from routers.workflows import router as workflows_router
 from services.database import (
     close_pool,
     get_pool,
@@ -311,5 +312,6 @@ app.include_router(org_settings_router, prefix="/api/v1")
 app.include_router(restricted_access_router, prefix="/api/v1")
 app.include_router(trading_authority_router, prefix="/api/v1")
 app.include_router(profiles_router, prefix="/api/v1")
+app.include_router(workflows_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)
