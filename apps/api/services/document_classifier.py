@@ -158,6 +158,8 @@ async def classify_document(
         f"Document text:\n{text}",
         max_tokens=300,
         model=resolved_model,
+        org_id=org_id,
+        task_type="document_classifier",
     )
 
     if parsed is None:

@@ -113,6 +113,7 @@ async def get_brief_narration(request: Request):
         max_tokens=180,
         org_id=org_id,
         model_key=ASSISTANT_MODEL_KEY,
+        task_type="member_brief",
     )
 
     # Cache the result (safe upsert: try UPDATE, INSERT if nothing updated).

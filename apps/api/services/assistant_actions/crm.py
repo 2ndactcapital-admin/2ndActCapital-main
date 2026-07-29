@@ -17,6 +17,7 @@ async def _draft_note_preview(pool, user_id: str, org_id: str,
         messages=[{"role": "user", "content": content_hint or "Draft a general update note."}],
         max_tokens=400,
         org_id=org_id,
+        task_type="crm_draft_note",
     )
     return {
         "draft_text": draft_text or content_hint,

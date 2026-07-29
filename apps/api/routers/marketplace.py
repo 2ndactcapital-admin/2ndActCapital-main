@@ -1694,6 +1694,7 @@ async def generate_ai_summary(request: Request, deal_id: UUID):
         f"Analyze this investment deal:\n\n{deal_context}",
         max_tokens=1024,
         org_id=org_id,
+        task_type="deal_summary",
     )
     if parsed is None:
         raise HTTPException(status_code=500, detail="AI generation failed")

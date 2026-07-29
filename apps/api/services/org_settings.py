@@ -68,6 +68,13 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "ai.model.default": "claude-haiku-4-5-20251001",
     "ai.model.provider": "anthropic",
     "ai.model.fallback": "claude-haiku-4-5-20251001",
+    # Sprint 27 (TaskRouter) — the ORDERED fallback CHAIN the central resolver
+    # actually walks (services/extraction.resolve_fallback_chain). Replaces the
+    # single, never-consumed ai.model.fallback above. A one-item array here
+    # preserves mini-bedrock behaviour exactly: primary (haiku) + [haiku]
+    # dedupes to a single haiku call. An org_admin may configure a longer,
+    # per-org chain (e.g. [primary, cheaper-backup]) without any code change.
+    "ai.model.fallback_chain": ["claude-haiku-4-5-20251001"],
     "ai.model.assistant": "claude-sonnet-4-6",
     # Task-specific override for the S25 document-type classifier. Defaults to
     # the same Haiku model as ai.model.default; an org_admin may raise it to a

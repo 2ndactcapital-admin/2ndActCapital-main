@@ -435,7 +435,8 @@ async def conversation_message(
                 if m.get("role") in ("user", "assistant")
             ]
             ai_text = await call_claude_text(
-                system, history, max_tokens=300, org_id=org_id
+                system, history, max_tokens=300, org_id=org_id,
+                task_type="foundation_reply",
             )
 
         if ai_text is None:
@@ -728,7 +729,7 @@ async def generate_brief(request: Request, entity_id: UUID):
     model_used = await resolve_model(org_id)
     brief_text = await call_claude_text(
         _BRIEF_SYSTEM, [{"role": "user", "content": context}], max_tokens=600,
-        org_id=org_id,
+        org_id=org_id, task_type="client_brief",
     )
     if brief_text is None:
         raise HTTPException(
@@ -738,7 +739,8 @@ async def generate_brief(request: Request, entity_id: UUID):
 
     # Best-effort secondary pass for structured summary fields.
     themes = await call_claude_json(
-        _BRIEF_THEMES_SYSTEM, brief_text, max_tokens=200, org_id=org_id
+        _BRIEF_THEMES_SYSTEM, brief_text, max_tokens=200, org_id=org_id,
+        task_type="brief_themes",
     )
     key_themes = (themes or {}).get("key_themes") or None
     risk_profile = (themes or {}).get("risk_profile")

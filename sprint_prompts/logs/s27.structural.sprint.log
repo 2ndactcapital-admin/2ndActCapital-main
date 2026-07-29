@@ -1,0 +1,15 @@
+  [32m[Y][0m 1. ai_decision_log exists matching the snapshot  (ok)
+      Task 1: central mechanism = services/extraction.py (call_claude_json / call_claude_text / call_claude_with_tools, model via resolve_model + resolve_fallback_chain).
+      .messages.create found only in: ['apps/api/services/extraction.py']
+  [32m[Y][0m 2. Task 1 findings — zero bypasses (only central helper)  (0 bypasses)
+  [32m[Y][0m 3. successful call writes correct row (req==used, no fallback, real cost+latency)  (used=claude-haiku-4-5-20251001 fb=False cost=0.000520 lat=2ms)
+[ai_router] model 'claude-s27a-primary-BROKEN' failed for task 'verify_s27_fallthrough': RuntimeError: simulated outage for model 'claude-s27a-primary-BROKEN'
+  [32m[Y][0m 4. primary failure falls through chain (req!=used, fallback_used, reason set)  (req=claude-s27a-primary-BROKEN used=claude-s27a-backup reason="primary 'claude-s27a-primary-BROKEN' failed: RuntimeError: simulated outage for model 'claude-s27a-primary-BROKEN'")
+[ai_router] model 'claude-s27b-primary-BROKEN' failed for task 'verify_s27_perorg': RuntimeError: simulated outage for model 'claude-s27b-primary-BROKEN'
+  [32m[Y][0m 5. different org uses its OWN fallback_chain (per-org, not shared)  (used=claude-s27b-backup (A's backup was claude-s27a-backup))
+  [32m[Y][0m 6. org with no chain falls back to DEFAULT_SETTINGS (mini-bedrock behaviour preserved)  (chain=['claude-haiku-4-5-20251001'] model=claude-haiku-4-5-20251001)
+[ai_router] decision log write failed (non-blocking): simulated ai_decision_log write failure
+  [32m[Y][0m 7. logging failure does NOT block the AI result (non-blocking)  (result='{"result": "ok"}' rows_written=0)
+  [32m[Y][0m 8. teardown — zero leftover rows (count(*) confirmed)  (log=0 settings=0 orgs=0)
+
+8/8 passed
