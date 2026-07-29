@@ -1218,3 +1218,81 @@
 --   UNIQUE users_email_key: (email)
 --   PRIMARY KEY users_pkey: (id)
 
+-- ===== workflow_definitions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_definitions_pkey: (id)
+
+-- ===== workflow_run_steps =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   workflow_run_id                          uuid NOT NULL
+--   workflow_step_id                         uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   proposed_by                              uuid
+--   approved_by                              uuid
+--   result                                   jsonb
+--   started_at                               timestamp with time zone
+--   completed_at                             timestamp with time zone
+--   error_detail                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_run_steps_pkey: (id)
+
+-- ===== workflow_runs =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   workflow_version_id                      uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   status                                   text NOT NULL DEFAULT 'running'::text
+--   context                                  jsonb
+--   spiff_serialized_state                   jsonb
+--   started_by                               uuid
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   completed_at                             timestamp with time zone
+--   error_detail                             text
+--   PRIMARY KEY workflow_runs_pkey: (id)
+
+-- ===== workflow_steps =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   workflow_version_id                      uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   step_key                                 text NOT NULL
+--   step_type                                text NOT NULL
+--   autonomy_tier                            integer NOT NULL DEFAULT 1
+--   assigned_role_profile_id                 uuid
+--   action_registry_key                      text
+--   display_name                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_steps_pkey: (id)
+--   UNIQUE workflow_steps_workflow_version_id_step_key_key: (workflow_version_id, step_key)
+
+-- ===== workflow_triggers =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   workflow_definition_id                   uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   trigger_type                             text NOT NULL DEFAULT 'manual'::text
+--   schedule_cron                            text
+--   event_type                               text
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_triggers_pkey: (id)
+
+-- ===== workflow_versions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   workflow_definition_id                   uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   version_number                           integer NOT NULL
+--   bpmn_xml                                 text NOT NULL
+--   change_summary                           text
+--   is_current                               boolean NOT NULL DEFAULT false
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY workflow_versions_pkey: (id)
+--   UNIQUE workflow_versions_workflow_definition_id_version_number_key: (workflow_definition_id, version_number)
+
