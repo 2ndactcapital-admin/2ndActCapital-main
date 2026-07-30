@@ -326,6 +326,48 @@
 --   reviewed_at                              timestamp with time zone
 --   PRIMARY KEY doc_category_proposals_pkey: (id)
 
+-- ===== document_drops =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   source                                   text NOT NULL DEFAULT 'upload'::text
+--   file_count                               integer NOT NULL DEFAULT 0
+--   status                                   text NOT NULL DEFAULT 'processing'::text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   completed_at                             timestamp with time zone
+--   PRIMARY KEY document_drops_pkey: (id)
+
+-- ===== document_extractions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   extraction_method                        text NOT NULL
+--   has_native_text_layer                    boolean
+--   extracted_text                           text
+--   extracted_tables                         jsonb
+--   page_count                               integer
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY document_extractions_pkey: (id)
+
+-- ===== documents =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid
+--   original_filename                        text NOT NULL
+--   source                                   text NOT NULL DEFAULT 'upload'::text
+--   mime_type                                text
+--   storage_key                              text
+--   status                                   text NOT NULL DEFAULT 'dropped'::text
+--   doc_family                               text
+--   retention_classification                 text
+--   litigation_hold                          boolean NOT NULL DEFAULT false
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   drop_id                                  uuid
+--   sequence_in_drop                         integer
+--   PRIMARY KEY documents_pkey: (id)
+
 -- ===== entities =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
