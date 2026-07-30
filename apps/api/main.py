@@ -35,6 +35,7 @@ from routers.org_settings import router as org_settings_router
 from routers.portfolio import router as portfolio_router
 from routers.profiles import router as profiles_router
 from routers.entity_documents import router as entity_documents_router
+from routers.documents import router as documents_router
 from routers.reference import router as reference_router
 from routers.restricted_access import router as restricted_access_router
 from routers.spv import router as spv_router
@@ -294,6 +295,7 @@ app.include_router(assistant_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(entities_router, prefix="/api/v1")
 app.include_router(entity_documents_router, prefix="/api/v1")
+app.include_router(documents_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
