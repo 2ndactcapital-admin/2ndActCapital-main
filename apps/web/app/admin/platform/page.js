@@ -5,6 +5,8 @@ import PlatformSettings from "@/components/admin/PlatformSettings";
 import { auth0 } from "@/lib/auth0";
 import { loadTheme } from "@/lib/theme";
 
+export const dynamic = "force-dynamic";
+
 // Sprint 24 — Super Admin only. Ripasso platform staff administer every
 // tenant org from here, including onboarding new clients.
 export default async function PlatformSettingsPage() {

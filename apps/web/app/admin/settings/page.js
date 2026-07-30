@@ -5,6 +5,8 @@ import OrgSettingsEditor from "@/components/admin/OrgSettingsEditor";
 import { auth0 } from "@/lib/auth0";
 import { loadTheme } from "@/lib/theme";
 
+export const dynamic = "force-dynamic";
+
 // Sprint 24 — Org Admin screen. Scoped to the caller's own org: there is no
 // org switcher here, and the org_id comes from the session-resolved theme
 // payload, never from the URL or a request body.
