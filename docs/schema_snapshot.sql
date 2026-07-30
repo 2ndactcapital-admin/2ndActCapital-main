@@ -349,6 +349,19 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY document_extractions_pkey: (id)
 
+-- ===== document_template_extractions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   template_type                            text NOT NULL
+--   extraction_source                        text NOT NULL
+--   raw_extraction                           jsonb
+--   mapped_fields                            jsonb
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY document_template_extractions_pkey: (id)
+
 -- ===== documents =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
