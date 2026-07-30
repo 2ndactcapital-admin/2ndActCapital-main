@@ -14,10 +14,24 @@ already-verified Phase 1/2/3 services:
   * ``POST /admin/workflows/{id}/versions``        — save an edited BPMN as a NEW
         version + re-derive steps (Phase 3 ``save_new_version``)
 
-Gate: ``can_manage_org_settings`` — super_admin anywhere, org_admin at home —
-identical to the SOC Profiles / Permission-Sets / Restricted-Access screens.
-``org_id`` is always resolved server-side from the authenticated context and
-every query is scoped to it; it is NEVER read from a request body.
+Gate (Phase 5): GRANULAR, action-registry-based permissions — the blanket
+``can_manage_org_settings`` gate used by Phases 3-4 is replaced by four
+SEPARATELY grantable permission keys from the SOC ``permissions`` catalog,
+enforced via ``services.profiles.user_has_permission`` (a user's Profile grants
+∪ every assigned Permission Set):
+
+  * ``author_workflows``            — library, editor detail, create, save-new-
+        version, version history (authoring surface). Publishing is not a
+        distinct step in this platform's generate-once + save-new-version model,
+        so it is covered here.
+  * ``view_workflow_runs``          — Run Console list + run drill-in.
+  * ``configure_workflow_triggers`` — scheduler / triggers viewer.
+
+A Super Admin (Ripasso platform staff) always passes and, on the read consoles,
+still widens to all orgs. Everyone else — INCLUDING an Org Admin — must hold the
+specific key; holding another admin-adjacent permission does not grant workflow
+access. ``org_id`` is always resolved server-side from the authenticated context
+and every query is scoped to it; it is NEVER read from a request body.
 """
 
 import json
@@ -29,7 +43,8 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.action_registry import REGISTRY
 from services.database import get_pool
-from services.rbac import can_manage_org_settings, is_super_admin, load_principal
+from services.profiles import user_has_permission
+from services.rbac import is_super_admin, load_principal
 from services.users import ensure_user
 from services.workflow_editor import (
     WorkflowEditError,
@@ -100,10 +115,31 @@ class VersionSave(BaseModel):
 
 
 # --------------------------------------------------------------------------
-# Auth helper — Org Admin (own org) or Super Admin (any org).
-# Same contract as routers/profiles.py::_require_admin.
+# Granular permission keys (Phase 5) — rows in the global ``permissions``
+# catalog seeded by docs/workflowmgr5_part1.sql. Grantable via the SOC
+# Profiles / Permission-Sets admin UI; enforced by _require_workflow_permission.
 # --------------------------------------------------------------------------
-async def _require_admin(request: Request) -> tuple[str, str]:
+PERM_AUTHOR = "author_workflows"                 # library + editor + save + versions
+PERM_VIEW_RUNS = "view_workflow_runs"            # run console + run drill-in
+PERM_CONFIGURE_TRIGGERS = "configure_workflow_triggers"  # scheduler / triggers
+
+
+# --------------------------------------------------------------------------
+# Auth helper — GRANULAR permission gate (Phase 5).
+#
+# Super Admin (platform staff) always passes; everyone else — including an Org
+# Admin — must hold ``permission_key`` via their Profile or an assigned
+# Permission Set (services.profiles.user_has_permission). This replaces the
+# blanket can_manage_org_settings gate so workflow authoring, run-console
+# viewing and scheduler configuration are separately grantable, not bundled.
+#
+# Returns the resolved principal too, so the read consoles can widen a Super
+# Admin to all orgs (Org Admin stays scoped to their own org). ``org_id`` comes
+# from the authenticated context, never a request body.
+# --------------------------------------------------------------------------
+async def _require_workflow_permission(
+    request: Request, permission_key: str
+) -> tuple[str, str, dict]:
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -111,23 +147,11 @@ async def _require_admin(request: Request) -> tuple[str, str]:
         principal = await load_principal(conn, actor_id)
     if principal is None:
         principal = {"id": actor_id, "org_id": org_id, "role": None}
-    if not can_manage_org_settings(principal, org_id):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return actor_id, org_id
-
-
-async def _require_admin_principal(request: Request) -> tuple[str, str, dict]:
-    """Like ``_require_admin`` but also returns the resolved principal so read
-    screens can widen to all-orgs for a Super Admin (org_admin stays home)."""
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        actor_id = await ensure_user(conn, request)
-        principal = await load_principal(conn, actor_id)
-    if principal is None:
-        principal = {"id": actor_id, "org_id": org_id, "role": None}
-    if not can_manage_org_settings(principal, org_id):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    if not is_super_admin(principal):
+        if not await user_has_permission(pool, actor_id, permission_key):
+            raise HTTPException(
+                status_code=403, detail=f"Permission required: {permission_key}"
+            )
     return actor_id, org_id, principal
 
 
@@ -156,7 +180,7 @@ def _action_options() -> list[ActionOption]:
 async def list_workflows(request: Request):
     """Every workflow definition for the caller's org, with a current-version
     step/tier summary. Scoped to ``org_id`` (never returns another org's)."""
-    _, org_id = await _require_admin(request)
+    _, org_id, _ = await _require_workflow_permission(request, PERM_AUTHOR)
     pool = await get_pool()
     async with pool.acquire() as conn:
         defs = await conn.fetch(
@@ -208,7 +232,7 @@ async def create_workflow(request: Request, body: WorkflowCreate):
     """Create a brand-new definition from a natural-language description via
     Phase 2's validated generator. ``org_id`` + ``created_by`` come from the
     authenticated context."""
-    actor_id, org_id = await _require_admin(request)
+    actor_id, org_id, _ = await _require_workflow_permission(request, PERM_AUTHOR)
     if not body.description or not body.description.strip():
         raise HTTPException(status_code=422, detail="A description is required")
     pool = await get_pool()
@@ -246,7 +270,7 @@ async def create_workflow(request: Request, body: WorkflowCreate):
 async def get_workflow(request: Request, definition_id: UUID):
     """Everything the diagram editor needs for one definition: current BPMN,
     derived steps, and the closed reference lists for the properties pickers."""
-    _, org_id = await _require_admin(request)
+    _, org_id, _ = await _require_workflow_permission(request, PERM_AUTHOR)
     pool = await get_pool()
     async with pool.acquire() as conn:
         definition = await conn.fetchrow(
@@ -309,7 +333,7 @@ async def save_workflow_version(request: Request, definition_id: UUID, body: Ver
     Never mutates an existing version. Rejects invalid BPMN (bad SpiffWorkflow
     parse OR a reference to a non-existent action key / profile) with a clear
     error, storing nothing."""
-    actor_id, org_id = await _require_admin(request)
+    actor_id, org_id, _ = await _require_workflow_permission(request, PERM_AUTHOR)
     pool = await get_pool()
     try:
         result = await save_new_version(
@@ -340,14 +364,17 @@ async def save_workflow_version(request: Request, definition_id: UUID, body: Ver
 # --------------------------------------------------------------------------
 # Phase 4 — read-only consoles (Run Console / Scheduler / Version History)
 #
-# All gated by the same admin contract. Org Admin sees only their own org's
-# rows; Super Admin sees across ALL orgs. org_id is always resolved from the
+# Phase 5 gates these granularly: the Run Console + drill-in need
+# ``view_workflow_runs``; the Scheduler viewer needs
+# ``configure_workflow_triggers``; Version History is part of the authoring
+# surface (``author_workflows``). Org Admin sees only their own org's rows;
+# Super Admin sees across ALL orgs. org_id is always resolved from the
 # authenticated context, never from the request body.
 # --------------------------------------------------------------------------
 @router.get("/admin/workflow-runs")
 async def list_workflow_runs(request: Request):
     """Run Console list: the org's workflow runs (all-orgs for Super Admin)."""
-    _, org_id, principal = await _require_admin_principal(request)
+    _, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -374,7 +401,7 @@ async def list_workflow_runs(request: Request):
 @router.get("/admin/workflow-runs/{run_id}")
 async def get_workflow_run(request: Request, run_id: UUID):
     """Drill into one run: its status plus each run-step's status/result/error."""
-    _, org_id, principal = await _require_admin_principal(request)
+    _, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -421,7 +448,9 @@ async def get_workflow_run(request: Request, run_id: UUID):
 async def list_workflow_triggers(request: Request):
     """Scheduler / Routine Viewer: triggers for the org (all-orgs for Super
     Admin). READ/CONFIGURE only in this phase — nothing fires autonomously."""
-    _, org_id, principal = await _require_admin_principal(request)
+    _, org_id, principal = await _require_workflow_permission(
+        request, PERM_CONFIGURE_TRIGGERS
+    )
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -444,7 +473,7 @@ async def list_workflow_triggers(request: Request):
 async def list_workflow_versions(request: Request, definition_id: UUID):
     """Version History: every version of a definition in order, exactly one
     marked is_current. Read-only browsing (no diff rendering this phase)."""
-    _, org_id, principal = await _require_admin_principal(request)
+    _, org_id, principal = await _require_workflow_permission(request, PERM_AUTHOR)
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
     async with pool.acquire() as conn:
