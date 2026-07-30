@@ -57,6 +57,7 @@ async def _document_outcome(conn, doc_id, org_id) -> dict:
     row = await conn.fetchrow(
         """
         SELECT d.id, d.sequence_in_drop, d.original_filename, d.status,
+               d.doc_family, d.storage_key,
                e.has_native_text_layer, e.extraction_method, e.page_count
         FROM documents d
         LEFT JOIN document_extractions e ON e.document_id = d.id
@@ -65,14 +66,21 @@ async def _document_outcome(conn, doc_id, org_id) -> dict:
         doc_id, org_id,
     )
     status = row["status"] if row else "failed"
+    # Post-extraction pipeline states (Phase 2): extraction is no longer terminal
+    # — STORE ('stored') and SORT ('sorted' / 'pending_review') advance it.
+    extracted_or_beyond = ("extracted", "stored", "sorted", "pending_review")
     return {
         "id": str(doc_id),
         "sequence_in_drop": row["sequence_in_drop"] if row else None,
         "original_filename": row["original_filename"] if row else None,
         "status": status,
         # routing produced a decision (not stuck at the initial 'dropped', not 'failed')
-        "routed": status in ("routed", "extracted", "needs_ocr"),
-        "extracted": status == "extracted",
+        "routed": status in ("routed", "needs_ocr") + extracted_or_beyond,
+        "extracted": status in extracted_or_beyond,
+        "stored": status in ("stored", "sorted", "pending_review"),
+        "sorted": status in ("sorted", "pending_review"),
+        "doc_family": row["doc_family"] if row else None,
+        "storage_key": row["storage_key"] if row else None,
         "has_text_layer": row["has_native_text_layer"] if row else None,
         "extraction_method": row["extraction_method"] if row else None,
         "page_count": row["page_count"] if row else None,

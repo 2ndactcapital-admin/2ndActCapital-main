@@ -65,6 +65,11 @@ TEST_USER_ID = "99000000-0000-0000-0000-000000000001"
 ORG_A = "00000000-0000-0000-0000-000000000001"          # default org (exists)
 ORG_B = "0000cafe-0000-0000-0000-0000000000b2"          # a different org (RLS test)
 
+# Phase 2 (STORE + SORT) advances a successfully-extracted document past
+# 'extracted' — accept any post-extraction terminal status as "extraction
+# succeeded" so this Phase-1 verify stays green when the full pipeline runs.
+_EXTRACTED_OK = {"extracted", "stored", "sorted", "pending_review"}
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 APP_SERVICE_DATABASE_URL = os.environ.get("APP_SERVICE_DATABASE_URL")
 
@@ -372,7 +377,7 @@ def task1_and_unit_tests():
     except Exception as exc:  # noqa: BLE001
         fail("Task1(c) S25 classifier import", f"{type(exc).__name__}: {exc}")
 
-    from services.chancery_intake import route_document, extract_native
+    from services.chancery_intake import route_document, extract_native  # noqa: F401
 
     # route_document on a real text-native PDF.
     native_pdf = build_pdf(["CHANCERY VERIFY ALPHA 20260730", "second line"])
@@ -446,7 +451,7 @@ def endpoint_tests():
         else:
             body = r1.json()
             docs = body.get("documents", [])
-            if len(docs) == 1 and docs[0].get("status") == "extracted":
+            if len(docs) == 1 and docs[0].get("status") in _EXTRACTED_OK:
                 single_doc_id = docs[0]["id"]
                 ok("SINGLE-file drop: endpoint returned 1 doc, status 'extracted'",
                    f"drop={body.get('drop_id')}")
@@ -501,7 +506,7 @@ async def verify_single(single_doc_id):
     if row is None:
         fail("SINGLE-file drop: DB row 'extracted' with real extracted text",
              "documents row not found")
-    elif row["status"] == "extracted" and "ALPHA UNIQUE 20260730" in (row["extracted_text"] or ""):
+    elif row["status"] in _EXTRACTED_OK and "ALPHA UNIQUE 20260730" in (row["extracted_text"] or ""):
         ok("SINGLE-file drop: DB documents 'extracted' + extraction holds real text",
            f"method={row['extraction_method']}, has_text={row['has_native_text_layer']}")
     else:
@@ -535,7 +540,7 @@ async def verify_multi(drop_id):
 
     # seq1 + seq3 extracted with real text; seq2 (corrupt) failed on its own row.
     d1, d2, d3 = by_seq.get(1), by_seq.get(2), by_seq.get(3)
-    if d1 and d1["status"] == "extracted" and "BRAVO MULTI ONE" in (d1["extracted_text"] or ""):
+    if d1 and d1["status"] in _EXTRACTED_OK and "BRAVO MULTI ONE" in (d1["extracted_text"] or ""):
         ok("MULTI-file drop: seq1 extracted with real text")
     else:
         fail("MULTI-file drop: seq1 extracted with real text",
@@ -548,7 +553,7 @@ async def verify_multi(drop_id):
         fail("MULTI-file drop: seq2 corrupt failed on its OWN row",
              f"{dict(d2) if d2 else None}")
 
-    if d3 and d3["status"] == "extracted" and "DELTA MULTI THREE" in (d3["extracted_text"] or ""):
+    if d3 and d3["status"] in _EXTRACTED_OK and "DELTA MULTI THREE" in (d3["extracted_text"] or ""):
         ok("MULTI-file drop: seq3 (after the failure) still extracted — batch continued")
     else:
         fail("MULTI-file drop: seq3 still extracted after the failure",
