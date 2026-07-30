@@ -90,21 +90,27 @@ TOTAL_TURNS="0"
 # ============================================================
 echo ""
 echo "--- Step 1: refresh-schema ---"
-refresh_result=$(timeout 600 claude -p "/refresh-schema" \
-  --permission-mode acceptEdits \
-  --allowedTools "$
+for refresh_attempt in 1 2 3; do
+  refresh_result=$(timeout 600 claude -p "/refresh-schema" \
+    --permission-mode acceptEdits \
+    --allowedTools "$
 
-ALLOWED_TOOLS" \
-  --output-format json 2>"$LOG_DIR/${SPRINT_NAME}.refresh.err")
-refresh_status=$?
-
-echo "$refresh_result" > "$LOG_DIR/${SPRINT_NAME}.refresh.json"
-
-if [[ $refresh_status -ne 0 ]]; then
-  echo "FATAL: refresh-schema step crashed (exit $refresh_status)." >&2
+  ALLOWED_TOOLS" \
+    --output-format json 2>"$LOG_DIR/${SPRINT_NAME}.refresh.err")
+  refresh_status=$?
+  echo "$refresh_result" > "$LOG_DIR/${SPRINT_NAME}.refresh.json"
+  if [[ $refresh_status -eq 0 ]]; then
+    break
+  fi
+  echo "WARNING: refresh-schema step crashed (exit $refresh_status) on attempt $refresh_attempt/3." >&2
   cat "$LOG_DIR/${SPRINT_NAME}.refresh.err" >&2
-  exit 1
-fi
+  if [[ $refresh_attempt -eq 3 ]]; then
+    echo "FATAL: refresh-schema step crashed after 3 attempts." >&2
+    exit 1
+  fi
+  echo "Retrying refresh-schema (attempt $((refresh_attempt + 1))/3)..."
+  sleep 2
+done
 
 refresh_is_error=$(echo "$refresh_result" | jq -r '.is_error // "unknown"')
 if [[ "$refresh_is_error" == "true" ]]; then
