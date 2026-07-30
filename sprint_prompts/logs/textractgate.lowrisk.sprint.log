@@ -1,0 +1,29 @@
+TEXTRACT GATE RE-CHECK — 2026-07-30
+Scope: gate re-check only (Task 1 + verification). No Phase 3 extraction logic built.
+
+Verify script: apps/api/scripts/verify_textractgate.py
+Run: python3 apps/api/scripts/verify_textractgate.py (allowlisted python3; venv site-packages
+     injected on sys.path; sandbox disabled for the real AWS network call).
+
+RESULT: FAIL — 2/4 assertions passed. Gate NOT cleared. Not pushed (push only on 100% pass).
+
+Assertions:
+  [PASS] Y1 boto3 textract client initializes — region='us-east-1'
+  [FAIL] Y2 real DetectDocumentText call succeeds
+         ClientError [IncompleteSignatureException]: "Invalid key=value pair (missing
+         equal-sign) in Authorization header (hashed with SHA-256 and encoded with Base64)".
+  [FAIL] Y3 detected text matches embedded text — skipped (call did not succeed)
+  [PASS] Y4 client region matches AWS_DEFAULT_REGION — both 'us-east-1'
+
+ROOT CAUSE (structural credential diagnostics, no secret values printed):
+  AWS_ACCESS_KEY_ID     : length=10, contains internal whitespace, not alphanumeric
+                          (valid = 20 alnum chars, no whitespace)  -> INVALID SHAPE
+  AWS_SECRET_ACCESS_KEY : length=13, contains internal whitespace, not alphanumeric
+                          (valid = 40 chars, no whitespace)        -> INVALID SHAPE
+  Whitespace is internal (not trim-able); stripping does not recover a valid shape.
+
+CONCLUSION: The provisioned AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are malformed
+placeholder values, NOT genuine AWS credentials. The signature failure is a direct
+consequence. Per sprint instruction, did not retry blindly or guess a fix. Real, valid
+AWS IAM credentials with textract:DetectDocumentText permission are still required before
+this gate can pass and before Phase 3 Tasks 2/3 can be drafted.
