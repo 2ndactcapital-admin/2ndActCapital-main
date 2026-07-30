@@ -28,6 +28,23 @@ discipline used by the entity-graph BFS in ``services/entity_graph.py`` —
 
 from collections import deque
 
+from services.rbac import is_super_admin, load_principal
+
+
+async def get_all_org_entity_ids(pool, org_id: str) -> set[str]:
+    """Every entity id in ``org_id`` — the Super Admin's full visible set.
+
+    ``entities.id`` is the primary key (one row per entity), so this is the
+    complete universe of entities for the org. Used only by the super_admin
+    escape hatch below.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id FROM entities WHERE org_id = $1",
+            org_id,
+        )
+    return {str(r["id"]) for r in rows}
+
 
 async def get_report_user_ids(pool, org_id: str, user_id: str) -> set[str]:
     """All users who report to ``user_id`` directly or transitively.
@@ -96,7 +113,25 @@ async def get_staff_visible_entity_ids(
     Returns an EMPTY set when the user has no assignments, is on no assigned
     team, and manages no one with access — i.e. the resolver genuinely
     restricts rather than defaulting to org-wide.
+
+    SUPER ADMIN ESCAPE HATCH:
+        A ``super_admin`` (Ripasso platform staff) sees EVERY entity in the
+        org, bypassing the assignment/team/hierarchy filter entirely — the
+        same ``is_super_admin`` escape hatch every RLS policy,
+        ``restricted_access`` mutator, and trading-authority check in this
+        platform carries. Without it a confirmed Super Admin with no
+        ``staff_assignments`` row was wrongly blocked from an entity via the
+        Ownership Tree staff route. ``org_admin`` is DELIBERATELY excluded —
+        this bypass is scoped to platform staff only. The role is read from
+        ``users.role`` via ``load_principal`` (the same source
+        ``services.restricted_access._require_super_admin`` uses), so callers
+        need only pass ``user_id`` — the function derives the role itself.
     """
+    async with pool.acquire() as conn:
+        principal = await load_principal(conn, user_id)
+    if is_super_admin(principal):
+        return await get_all_org_entity_ids(pool, org_id)
+
     # 1. This user + everyone who rolls up to them (cycle-safe hierarchy walk).
     relevant_user_ids = await get_report_user_ids(pool, org_id, user_id)
 
