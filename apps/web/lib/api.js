@@ -498,3 +498,20 @@ export const getEntityGroup = (id) => fetchAPI(`/api/v1/entity-groups/${id}`);
 export const createEntityGroup = (body) => fetchAPI("/api/v1/entity-groups", { method: "POST", body });
 export const addEntityGroupMember = (groupId, entityId) => fetchAPI(`/api/v1/entity-groups/${groupId}/members`, { method: "POST", body: { entity_id: entityId } });
 export const removeEntityGroupMember = (groupId, entityId) => fetchAPI(`/api/v1/entity-groups/${groupId}/members/${entityId}`, { method: "DELETE" });
+
+// --- Chancery Phase 6 (document review / confirm) ---
+export const getDocumentReview = (documentId) =>
+  fetchAPI(`/api/v1/documents/${documentId}/review`);
+export const submitFieldCorrection = (documentId, body) =>
+  fetchAPI(`/api/v1/documents/${documentId}/corrections`, { method: "POST", body });
+export const confirmDocument = (documentId) =>
+  fetchAPI(`/api/v1/documents/${documentId}/confirm`, { method: "POST" });
+// Phase 5 linkage endpoints, reused directly by the review screen (no duplication).
+export const getDocumentLinks = (documentId) =>
+  fetchAPI(`/api/v1/documents/${documentId}/links`);
+export const linkDocumentEntities = (documentId, entityIds, linkRole) =>
+  fetchAPI(`/api/v1/documents/${documentId}/entity-links`, {
+    method: "POST", body: { entity_ids: entityIds, link_role: linkRole || null },
+  });
+export const unlinkDocumentEntity = (documentId, entityId) =>
+  fetchAPI(`/api/v1/documents/${documentId}/entity-links/${entityId}`, { method: "DELETE" });
