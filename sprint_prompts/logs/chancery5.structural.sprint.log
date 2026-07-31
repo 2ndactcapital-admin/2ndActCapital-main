@@ -1,0 +1,53 @@
+CHANCERY — PHASE 5 (document ↔ entity / record linkage)
+Outcome: VERIFIED GREEN — HELD for manual review (structural).
+
+=== Task 1 discovery findings ===
+1(a) Entity-matching mechanism (REUSE target): POST /entities/stub →
+     create_entity_stub (apps/api/routers/entities.py). Matching is EXACT,
+     case-insensitive display_name match, org-scoped, active rows only
+     (valid_to/system_to IS NULL) — NOT fuzzy. Refactored into two shared
+     helpers so Phase 5 reuses the identical code (no second algorithm):
+       - find_entity_dupes(conn, org_id, display_name, limit)
+       - create_picker_stub_entity(conn, org_id, entity_type, display_name, creator)
+         → inserts the entity (is_incomplete=true, created_via='picker_stub',
+           status='prospect') AND a member_todos "complete profile" row.
+1(b) No pre-existing document-linkage system. grep across apps/api + apps/web
+     found ZERO references to document_entity_links / document_record_links /
+     document_link_proposals before this phase — greenfield. entity_documents.py
+     is unrelated (Sprint-17 CRM file uploads to R2, not Chancery doc↔entity links).
+1(c) K-1 party-name field — MATERIAL FINDING: Phase 3's K-1 template extraction
+     was BLOCKED (no AWS Textract credentials) and NEVER BUILT. There is no
+     existing mapped_fields schema to re-read; document_template_extractions has a
+     mapped_fields jsonb column that nothing populates. Defined the forward
+     contract Phase 3 will fill: party name under mapped_fields key 'partner_name'
+     (Form 1065 Sch K-1 Part II line F), then 'shareholder_name' (1120-S),
+     'beneficiary_name' (1041), 'member_name', 'recipient_name' (tried in order).
+     Task-3 verify SEEDS a document_template_extractions row to stand in for
+     Phase 3's completed K-1 output.
+
+=== Interpretation flag ===
+"Folder" interpreted as documents surfaced under their linked entity via
+document_entity_links (list_documents_for_entity — the Phase-9 query), NOT a
+separate folder hierarchy. Consistent with the codebase (no folder tables exist).
+
+=== Build ===
+- services/document_linkage.py — linkage engine (Tasks 2-4). Reuses the picker
+  helpers verbatim. created_by convention: human=user id, system K-1 auto-link=NULL,
+  approval=reviewer id. Link tables are NOT bi-temporal -> insert/delete, ON CONFLICT
+  DO NOTHING for idempotency.
+- routers/document_links.py — 9 real endpoints (mounted /api/v1), auth/org-scoping
+  identical to routers/documents.py (org_id from JWT, never body).
+- routers/entities.py — extracted the two shared picker helpers; create_entity_stub
+  now calls them (behaviour unchanged).
+- main.py — registered document_links_router.
+NOTE: Task-3 trigger is exposed as service fn auto_link_k1_document + endpoint
+POST /documents/{id}/auto-link-k1. There is no natural in-pipeline call site because
+Phase 3 (which would produce the completed K-1 extraction) is not built; Phase 3
+should call auto_link_k1_document at K-1 completion.
+
+=== Verification (apps/api/scripts/verify_chancery5.py) ===
+PASS=12  FAIL=0  SKIP=0  — all assertions green.
+Cross-org isolation ran LIVE against the real non-bypass app_service role
+(APP_SERVICE_DATABASE_URL present): ORG_A sees links=4/props=2, ORG_B sees 0/0.
+Teardown at start + end; zero leftover rows across all three tables.
+No schema change (Part-1 SQL already applied; tables already in schema_snapshot.sql).

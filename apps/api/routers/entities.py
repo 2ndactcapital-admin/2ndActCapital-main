@@ -330,7 +330,62 @@ async def search_entities(
 
 # ---------------------------------------------------------------------------
 # Sprint 17 — Entity stub (picker create with dupe check)
+#
+# The two helpers below are the SINGLE SOURCE OF TRUTH for the entity-picker
+# "find-or-create" mechanism. They are reused verbatim by Chancery Phase 5
+# (services.document_linkage) so document→entity auto-linkage matches names the
+# EXACT same way the picker does, and proposal-approval creates entities through
+# the EXACT same path — never a second/divergent algorithm or a bare insert.
 # ---------------------------------------------------------------------------
+async def find_entity_dupes(conn, org_id, display_name, limit: int = 5):
+    """Entity-picker dupe check (Sprint 17): exact, case-insensitive
+    ``display_name`` match, scoped to the org, active rows only (``valid_to`` /
+    ``system_to`` IS NULL). NOT fuzzy. Returns the matching rows (``SEARCH_COLS``).
+    """
+    return await conn.fetch(
+        f"""
+        SELECT {SEARCH_COLS}
+        FROM entities
+        WHERE org_id = $1
+          AND LOWER(display_name) = LOWER($2)
+          AND valid_to IS NULL AND system_to IS NULL
+        ORDER BY display_name
+        LIMIT {int(limit)}
+        """,
+        org_id, display_name,
+    )
+
+
+async def create_picker_stub_entity(conn, org_id, entity_type, display_name, creator):
+    """Create an entity via the picker's "stub" path: an incomplete entity
+    (``is_incomplete=true``, ``created_via='picker_stub'``, ``status='prospect'``)
+    PLUS a member_todo to finish the profile. This is what "route through the real
+    creation flow" means — callers must use this, never a bare INSERT into
+    ``entities``. Returns the new entity row (``ENTITY_COLUMNS``).
+    """
+    row = await conn.fetchrow(
+        f"""
+        INSERT INTO entities (
+            org_id, entity_type, display_name,
+            is_incomplete, created_via, status, tags
+        ) VALUES ($1, $2, $3, true, 'picker_stub', 'prospect', '{{}}')
+        RETURNING {ENTITY_COLUMNS}
+        """,
+        org_id, entity_type, display_name,
+    )
+    await conn.execute(
+        """
+        INSERT INTO member_todos (
+            org_id, user_id, kind, category, source, title, detail, priority, status
+        ) VALUES ($1, $2, 'actual', 'crm', 'entity_stub', $3, $4, 5, 'open')
+        """,
+        org_id, creator,
+        f"Complete profile: {display_name}",
+        f"Stub entity created via picker. Please complete the {entity_type} profile.",
+    )
+    return row
+
+
 @router.post("/entities/stub", response_model=EntityOut, status_code=201)
 async def create_entity_stub(request: Request, body: EntityStubCreate):
     org_id = get_org_id(request)
@@ -338,18 +393,7 @@ async def create_entity_stub(request: Request, body: EntityStubCreate):
 
     async with pool.acquire() as conn:
         if not body.force_create:
-            dupes = await conn.fetch(
-                f"""
-                SELECT {SEARCH_COLS}
-                FROM entities
-                WHERE org_id = $1
-                  AND LOWER(display_name) = LOWER($2)
-                  AND valid_to IS NULL AND system_to IS NULL
-                ORDER BY display_name
-                LIMIT 5
-                """,
-                org_id, body.display_name,
-            )
+            dupes = await find_entity_dupes(conn, org_id, body.display_name)
             if dupes:
                 from fastapi.responses import JSONResponse
                 return JSONResponse(
@@ -372,26 +416,8 @@ async def create_entity_stub(request: Request, body: EntityStubCreate):
         from services.users import ensure_user
         creator = await ensure_user(conn, request)
 
-        row = await conn.fetchrow(
-            f"""
-            INSERT INTO entities (
-                org_id, entity_type, display_name,
-                is_incomplete, created_via, status, tags
-            ) VALUES ($1, $2, $3, true, 'picker_stub', 'prospect', '{{}}')
-            RETURNING {ENTITY_COLUMNS}
-            """,
-            org_id, body.entity_type.value, body.display_name,
-        )
-
-        await conn.execute(
-            """
-            INSERT INTO member_todos (
-                org_id, user_id, kind, category, source, title, detail, priority, status
-            ) VALUES ($1, $2, 'actual', 'crm', 'entity_stub', $3, $4, 5, 'open')
-            """,
-            org_id, creator,
-            f"Complete profile: {body.display_name}",
-            f"Stub entity created via picker. Please complete the {body.entity_type.value} profile.",
+        row = await create_picker_stub_entity(
+            conn, org_id, body.entity_type.value, body.display_name, creator
         )
 
     return EntityOut(**dict(row))
