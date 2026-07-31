@@ -1,0 +1,61 @@
+CHANCERY PHASE 8 — correction-learning loop (RAG over the correction log)
+=========================================================================
+Status: VERIFIED GREEN — 11/11 pass, 0 fail, 0 skip. HELD for manual review.
+
+MECHANISM (not fine-tuning): a correction LOG (document_field_corrections) read
+back at inference time. Relevant past corrections steer the NEXT matching
+document — no batch retraining, no delay.
+
+TASK 1 — DISCOVERY (findings, verified against live DB + real code)
+  (a) document_field_corrections: (id, document_id, org_id, template_extraction_id
+      [nullable], field_name, original_value, corrected_value, notes, corrected_by,
+      corrected_at). NO schema change needed.
+        - Extraction/K-1 corrections: join template_extraction_id ->
+          document_template_extractions.template_type ('k1'). Sufficient.
+        - Classification corrections had NO capture path (documents has no
+          `category` column, only doc_family; the only writer wrote template-field
+          corrections). Encoded WITHOUT a schema change via reserved
+          field_name='doc_category' + NULL template_extraction_id.
+        - The table was EMPTY at sprint start (Phase 6/7 verifies tore down their
+          rows) — the loop is proven on freshly seeded data.
+  (b) classify_document builds _build_system_prompt(candidates) then calls
+      call_claude_json — few-shot block appended to the system prompt before that
+      call, gated by use_corrections.
+  (c) K-1 mapping (map_k1_fields) is DETERMINISTIC regex, NOT an AI call. So
+      corrections are applied as a deterministic post-map layer
+      (apply_field_corrections) in run_k1_extraction, gated by use_corrections —
+      not few-shot injection.
+
+TASK 2 — services/correction_retrieval.py
+  get_relevant_corrections(conn, org_id, context) — classification | extraction,
+  org_id-filtered IN THE SQL (data isolation independent of RLS), capped at 5.
+  format_classification_examples() (few-shot text) + apply_field_corrections()
+  (deterministic K-1 override). Empty history -> no-op everywhere.
+
+TASK 3 — wiring
+  - classify_document: retrieves + injects classification few-shot (use_corrections).
+  - run_k1_extraction / extract_k1_and_link: applies field corrections post-map
+    (use_corrections). Zero corrections never alters/breaks either path.
+  - Added submit_classification_correction (service + POST
+    /documents/{id}/classification-correction) to CLOSE the loop (doc_category
+    corrections were previously unrecorded).
+
+TASK 4 — scripts/eval_correction_loop.py (DeepEval, no-judge DocumentTypeSortAccuracy)
+  Realistic dual-purpose cases; before/after, rolled back. MEASURED (Haiku):
+    WITHOUT retrieval: 1/3 = 33.3%
+    WITH    retrieval: 3/3 = 100.0%
+    delta = +66.7 pts (2 cases flipped wrong->right; 1 already correct). Honest.
+
+VERIFY — scripts/verify_chancery8.py (teardown at start AND end; zero leftover incl.
+  throwaway orgs + ai_decision_log). 11/11:
+    1  Task 1 discovery findings reported
+    2  get_relevant_corrections: relevant hits + empty for no-history
+    3  classification WITH vs WITHOUT: different AND correct (will -> estate_plan)
+    4  K-1 mapping WITH vs WITHOUT: different AND correct (1234.00 -> 5678.90)
+    5  zero corrections neither breaks nor alters (K-1 + classifier prompt)
+    6  DeepEval before/after reported honestly (+66.7 pts)
+    7a org isolation in the QUERY logic (bypass role, RLS off)
+    7b org isolation on the REAL app_service role
+    +  teardown: zero leftover rows
+
+NOTE: no Part-1 SQL / no schema change -> schema snapshot not regenerated.

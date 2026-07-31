@@ -34,6 +34,10 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from services import textract
+from services.correction_retrieval import (
+    apply_field_corrections,
+    get_relevant_corrections,
+)
 from services.database import get_pool, set_rls_context, reset_rls_context
 from services.document_linkage import auto_link_k1_document
 from starlette.concurrency import run_in_threadpool
@@ -246,7 +250,9 @@ async def _load_latest_extraction(pool, org_id, document_id):
         )
 
 
-async def run_k1_extraction(pool, doc, org_id, file_bytes: bytes) -> dict:
+async def run_k1_extraction(
+    pool, doc, org_id, file_bytes: bytes, *, use_corrections: bool = True,
+) -> dict:
     """Extract a K-1's template fields and persist a
     ``document_template_extractions`` row; set the document to ``status='sorted'``.
 
@@ -254,6 +260,14 @@ async def run_k1_extraction(pool, doc, org_id, file_bytes: bytes) -> dict:
     (NO Textract); only a scanned / needs_ocr K-1 triggers a Textract
     AnalyzeDocument (TABLES+FORMS) call. Returns an outcome dict including the
     chosen ``source``, the ``mapped_fields``, and the new ``extraction_id``.
+
+    Chancery Phase 8 — correction learning. K-1 mapping is deterministic regex,
+    not an AI call, so corrections cannot be "few-shot" injected; instead, after
+    the raw map, this applies the org's relevant PAST field corrections
+    (``apply_field_corrections``): a value a human already corrected for this
+    org+template+field is auto-corrected when the mapper reproduces it. Empty
+    history → unchanged mapping. Set ``use_corrections=False`` to run the raw
+    pre-Phase-8 mapping (the eval/verify WITHOUT case).
     """
     document_id = doc["id"]
     latest = await _load_latest_extraction(pool, org_id, document_id)
@@ -292,6 +306,22 @@ async def run_k1_extraction(pool, doc, org_id, file_bytes: bytes) -> dict:
 
     mapped_fields = map_k1_fields(text, lines, forms)
 
+    # Phase 8 — apply learned field corrections over the raw mapping. Gated so the
+    # eval/verify can compare the identical extraction WITH vs WITHOUT the loop.
+    corrections_applied: list[dict] = []
+    if use_corrections and mapped_fields:
+        async with pool.acquire() as conn:
+            try:
+                past = await get_relevant_corrections(
+                    conn, org_id,
+                    {"kind": "extraction", "template_type": K1_TEMPLATE_TYPE},
+                )
+            except Exception as exc:
+                print(f"run_k1_extraction correction lookup failed, ignoring: {exc}")
+                past = []
+        mapped_fields, corrections_applied = apply_field_corrections(
+            mapped_fields, past)
+
     async with pool.acquire() as conn:
         extraction_id = await conn.fetchval(
             """
@@ -314,10 +344,13 @@ async def run_k1_extraction(pool, doc, org_id, file_bytes: bytes) -> dict:
         "source": source,
         "mapped_fields": mapped_fields,
         "extraction_id": str(extraction_id),
+        "corrections_applied": corrections_applied,
     }
 
 
-async def extract_k1_and_link(pool, doc, org_id, file_bytes: bytes) -> dict:
+async def extract_k1_and_link(
+    pool, doc, org_id, file_bytes: bytes, *, use_corrections: bool = True,
+) -> dict:
     """Full K-1 step: extract template fields, then fire Phase-5 REAL auto-link.
 
     This is what Phase 2's SORT calls when it classifies a document as a K-1
@@ -328,7 +361,8 @@ async def extract_k1_and_link(pool, doc, org_id, file_bytes: bytes) -> dict:
     """
     tokens = set_rls_context(org_id, False)
     try:
-        extraction = await run_k1_extraction(pool, doc, org_id, file_bytes)
+        extraction = await run_k1_extraction(
+            pool, doc, org_id, file_bytes, use_corrections=use_corrections)
         async with pool.acquire() as conn:
             link = await auto_link_k1_document(conn, org_id, doc["id"])
         return {"extraction": extraction, "link": link}

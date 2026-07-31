@@ -11,6 +11,7 @@ acting user is resolved with ``services.users.ensure_user`` (used as
 Routes (mounted under ``/api/v1``):
   GET  /documents/{document_id}/review        one-call review payload
   POST /documents/{document_id}/corrections   correct one mapped field
+  POST /documents/{document_id}/classification-correction  correct doc_category
   POST /documents/{document_id}/confirm       mark reviewed/confirmed
   GET  /documents/{document_id}/download       presigned R2 URL ("see attached")
 """
@@ -36,6 +37,14 @@ class FieldCorrection(BaseModel):
     # A string keeps monetary values EXACT (no float coercion). The frontend
     # always sends the edited text verbatim.
     corrected_value: str
+    notes: str | None = None
+
+
+class ClassificationCorrection(BaseModel):
+    # The doc_category code the classifier assigned (what is being corrected);
+    # optional because a document may never have been classified.
+    original_category: str | None = None
+    corrected_category: str = Field(..., min_length=1)
     notes: str | None = None
 
 
@@ -65,6 +74,26 @@ async def submit_correction(document_id: UUID, body: FieldCorrection, request: R
                 conn, org_id, document_id,
                 field_name=body.field_name,
                 corrected_value=body.corrected_value,
+                corrected_by=user_id,
+                notes=body.notes,
+            )
+        except review.ReviewError as err:
+            _raise(err)
+
+
+@router.post("/documents/{document_id}/classification-correction", status_code=201)
+async def submit_classification_correction(
+    document_id: UUID, body: ClassificationCorrection, request: Request
+):
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        try:
+            return await review.submit_classification_correction(
+                conn, org_id, document_id,
+                original_category=body.original_category,
+                corrected_category=body.corrected_category,
                 corrected_by=user_id,
                 notes=body.notes,
             )

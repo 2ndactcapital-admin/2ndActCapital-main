@@ -37,6 +37,7 @@ text column) and written back with ``to_jsonb($text)`` so no float ever appears.
 import json
 
 from services import document_linkage as dl
+from services.correction_retrieval import CLASSIFICATION_FIELD
 
 
 class ReviewError(Exception):
@@ -283,6 +284,72 @@ async def submit_field_correction(
         "field_name": field_name,
         "original_value": original_value,
         "corrected_value": str(corrected_value),
+    }
+
+
+async def submit_classification_correction(
+    conn, org_id, document_id, *, original_category, corrected_category,
+    corrected_by, notes=None,
+) -> dict:
+    """Record a human correction to a document's CLASSIFICATION (doc_category).
+
+    Chancery Phase 8 correction-loop writer. Unlike ``submit_field_correction``
+    (template fields), a classification correction has no template extraction — it
+    is logged in ``document_field_corrections`` with the reserved
+    ``field_name = CLASSIFICATION_FIELD`` and a NULL ``template_extraction_id``
+    (original_value = the code the classifier assigned, corrected_value = the
+    human's correct code). ``correction_retrieval.get_relevant_corrections`` reads
+    exactly these rows back as few-shot hints for the next matching document.
+
+    Also re-derives and writes ``doc_family`` on the document from the corrected
+    category, so the live record matches the correction. No schema change: the
+    table's nullable columns already support this encoding.
+    """
+    if not corrected_category or not str(corrected_category).strip():
+        raise ReviewError(422, "corrected_category is required")
+
+    corrected_category = str(corrected_category).strip()
+    original_category = (
+        str(original_category).strip() if original_category is not None else None
+    )
+
+    async with conn.transaction():
+        doc = await conn.fetchrow(
+            "SELECT id FROM documents WHERE id = $1 AND org_id = $2",
+            document_id, org_id,
+        )
+        if not doc:
+            raise ReviewError(404, "Document not found")
+
+        correction_id = await conn.fetchval(
+            """
+            INSERT INTO document_field_corrections
+                (document_id, org_id, template_extraction_id, field_name,
+                 original_value, corrected_value, notes, corrected_by)
+            VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)
+            RETURNING id
+            """,
+            document_id, org_id, CLASSIFICATION_FIELD,
+            original_category, corrected_category, notes, corrected_by,
+        )
+
+        # Re-derive doc_family from the corrected category so the live document
+        # record reflects the human's correction (mirrors sort_document).
+        from services.chancery_intake import doc_family_for_category
+        family = doc_family_for_category(corrected_category)
+        await conn.execute(
+            "UPDATE documents SET doc_family = $1, updated_at = now() "
+            "WHERE id = $2 AND org_id = $3",
+            family, document_id, org_id,
+        )
+
+    return {
+        "correction_id": str(correction_id),
+        "document_id": str(document_id),
+        "field_name": CLASSIFICATION_FIELD,
+        "original_value": original_category,
+        "corrected_value": corrected_category,
+        "doc_family": family,
     }
 
 

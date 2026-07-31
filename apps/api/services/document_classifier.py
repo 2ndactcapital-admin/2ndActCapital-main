@@ -21,6 +21,10 @@ SQL may hold a literal model id.
 import json
 from decimal import Decimal, InvalidOperation
 
+from services.correction_retrieval import (
+    format_classification_examples,
+    get_relevant_corrections,
+)
 from services.extraction import (
     DEFAULT_MODEL_KEY,
     DOCUMENT_CLASSIFIER_MODEL_KEY,
@@ -129,6 +133,7 @@ async def classify_document(
     text: str,
     *,
     model: str | None = None,
+    use_corrections: bool = True,
 ) -> dict:
     """Classify ``text`` for ``org_id``.
 
@@ -153,8 +158,23 @@ async def classify_document(
 
     resolved_model = model or await resolve_classifier_model(conn, org_id)
 
+    # Chancery Phase 8 — retrieval-augmented classification. Look up this org's
+    # relevant PAST doc-category corrections and inject them as few-shot hints so
+    # a human's earlier correction steers the very next matching document. Empty
+    # history (the common early case) → empty block → the prompt is byte-for-byte
+    # the pre-Phase-8 prompt, so the normal path is never degraded. Retrieval
+    # never raises; a lookup failure just yields no examples.
+    system_prompt = _build_system_prompt(candidates)
+    if use_corrections:
+        try:
+            corrections = await get_relevant_corrections(
+                conn, org_id, {"kind": "classification"})
+            system_prompt += format_classification_examples(corrections)
+        except Exception as exc:
+            print(f"classify_document correction lookup failed, ignoring: {exc}")
+
     parsed = await call_claude_json(
-        _build_system_prompt(candidates),
+        system_prompt,
         f"Document text:\n{text}",
         max_tokens=300,
         model=resolved_model,
