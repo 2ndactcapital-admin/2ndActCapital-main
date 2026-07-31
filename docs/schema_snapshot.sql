@@ -386,6 +386,17 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY document_link_proposals_pkey: (id)
 
+-- ===== document_narrative_extractions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   summary                                  text
+--   extracted_provisions                     jsonb
+--   key_dates                                jsonb
+--   key_parties                              jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY document_narrative_extractions_pkey: (id)
+
 -- ===== document_record_links =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   document_id                              uuid NOT NULL
