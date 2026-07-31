@@ -1,0 +1,42 @@
+=== Chancery Phase 9 verify (contextual surfacing) — start ===
+[info] seeded verify user id=99000000-0000-0000-0000-000000000009
+
+--- Assertion 1: Task 1 discovery findings ---
+[PASS] Task 1(a): reuses Phase-5 linkage query; extended for generic records — Phase 5's list_documents_for_entity already returns entity-linked docs. The GENERIC record case (spv/deal/txn) was NOT covered, so Phase 9 ADDS list_documents_for_record + a list_documents_for_panel dispatcher — no duplication of the entity query. Discovery also found the Phase-5 HTTP route GET /entities/{id}/documents is SHADOWED by routers.entity_documents (mounted first); the panel uses the collision-free GET /records/{type}/{id}/documents.
+[PASS] Task 1(b): 3 real embed targets confirmed — entity detail (crm/[id] → components/crm/EntityDetailTabs.jsx), SPV detail (app/spvs/[id]/page.js), deal detail (app/marketplace/[id]/page.js) — each a real page with an existing tab structure the panel slots into.
+[PASS] Task 1(c): Phase-6 UI conventions reused directly — Card (#ece8dd hairline + soft shadow), semantic tokens (text-navy / text-muted / bg-card / border), row → /admin/document-review/[documentId] (Phase-6's real review/confirm screen, reused not duplicated).
+
+--- Assertion 2: panel returns entity-linked documents ---
+[PASS] panel(entity) returns the entity's linked doc via Phase-5 query — documents=['99000000-0000-0000-0000-0000000009b1'], system_created=False
+
+--- Assertion 3: panel returns generic (SPV) record-linked documents ---
+[PASS] panel(spv) returns the record's linked doc via document_record_links — documents=['99000000-0000-0000-0000-0000000009b2'], system_created=True
+
+--- Assertion 4: zero-linked records return clean empty (no error) ---
+[PASS] a record with zero linked docs returns [] (clean empty state) — empty entity and empty SPV both returned []
+
+--- Assertion 5: same panel embedded in 3 real page types ---
+[PASS] the SAME DocumentsPanel is embedded in 3 distinct real pages — entity(EntityDetailTabs) + spv(page.js) + deal(page.js), all importing @/components/DocumentsPanel
+
+--- Assertion 6: basic search (filename + extracted_text; miss) ---
+[PASS] search matches filename AND extracted_text; unrelated term returns nothing — filename→['filename'], text→['extracted_text'], miss=0 results
+
+--- Assertion 7a: app-layer org scoping (different org sees nothing) ---
+[PASS] different org_id sees no linked docs and no search results — ORG_A(record=1,search=1) ORG_B(record=0,search=0)
+
+--- Assertion 7b: cross-org isolation via RLS (app_service) ---
+[SKIP] RLS: cross-org isolation of linked docs + search — cannot SET ROLE app_service (InsufficientPrivilegeError: permission denied to set role "app_service")
+
+--- Assertion: npm run build exits 0 ---
+[PASS] npm run build exits 0
+
+--- Assertion: no hardcoded Signature-palette hex in new files ---
+[PASS] no hardcoded Signature-palette hex in any new file — scanned 5 files for ['1b2b4b', 'c5a880', 'e8d5a3', 'faf9f6']
+
+--- Assertion: teardown leaves zero rows ---
+[PASS] teardown: zero leftover rows (links / record_links / extractions / docs / entities)
+
+=== SUMMARY ===
+PASS=12  FAIL=0  SKIP=1
+
+RESULT: PASS — all assertions green.

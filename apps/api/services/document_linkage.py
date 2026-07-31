@@ -264,6 +264,119 @@ async def list_documents_for_entity(conn, org_id, entity_id) -> list[dict]:
     ]
 
 
+async def list_documents_for_record(conn, org_id, record_type, record_id) -> list[dict]:
+    """Every document linked to a GENERIC record (spv / deal / transaction / …)
+    via ``document_record_links`` — the query Phase 9's contextual-surfacing panel
+    uses for any non-entity record type. Deliberately shaped IDENTICALLY to
+    ``list_documents_for_entity`` so the panel renders both uniformly (``link_role``
+    is always None here — record links carry no role column). Ordered most-
+    recently-linked first. Returns ``[]`` (never raises) for a record with zero
+    links: the polymorphic ``record_id`` cannot be existence-checked, and a record
+    with no documents is a clean empty state, not an error."""
+    if not record_type or not str(record_type).strip():
+        raise LinkageError(422, "record_type is required")
+    rows = await conn.fetch(
+        """
+        SELECT d.id, d.original_filename, d.status, d.doc_family, d.mime_type,
+               d.created_at AS document_created_at,
+               l.id AS link_id, l.created_by, l.created_at AS linked_at
+        FROM document_record_links l
+        JOIN documents d ON d.id = l.document_id AND d.org_id = l.org_id
+        WHERE l.record_type = $1 AND l.record_id = $2 AND l.org_id = $3
+        ORDER BY l.created_at DESC, d.original_filename
+        """,
+        record_type.strip(), record_id, org_id,
+    )
+    return [
+        {
+            "document_id": str(r["id"]),
+            "original_filename": r["original_filename"],
+            "status": r["status"],
+            "doc_family": r["doc_family"],
+            "mime_type": r["mime_type"],
+            "document_created_at": r["document_created_at"].isoformat()
+            if r["document_created_at"] else None,
+            "link_id": str(r["link_id"]),
+            "link_role": None,
+            "system_created": r["created_by"] is None,
+            "linked_at": r["linked_at"].isoformat() if r["linked_at"] else None,
+        }
+        for r in rows
+    ]
+
+
+async def list_documents_for_panel(conn, org_id, record_type, record_id) -> list[dict]:
+    """Single entry point behind the Phase-9 Documents panel: dispatch by
+    ``record_type``. ``entity`` reuses Phase-5's entity-link query verbatim; any
+    other type uses the generic ``document_record_links`` query. One function so
+    the SAME panel component surfaces documents for every record type."""
+    if record_type == "entity":
+        return await list_documents_for_entity(conn, org_id, record_id)
+    return await list_documents_for_record(conn, org_id, record_type, record_id)
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 Task 4 — basic (NON-semantic) document search
+# ---------------------------------------------------------------------------
+async def search_documents(conn, org_id, query, *, limit=50) -> list[dict]:
+    """BASIC metadata search — filename, ``doc_family`` (category), and a plain
+    ILIKE substring match against ``document_extractions.extracted_text``. This is
+    deliberately NOT semantic/vector search (that is Phase 11's INDEX/RETRIEVE
+    work) — it is case-insensitive substring matching and nothing more. Empty /
+    whitespace-only query returns ``[]``. ``matched_on`` reports which field(s)
+    hit so the UI can be honest about why a result appeared."""
+    q = (query or "").strip()
+    if not q:
+        return []
+    like = f"%{q}%"
+    rows = await conn.fetch(
+        """
+        SELECT d.id, d.original_filename, d.status, d.doc_family, d.mime_type,
+               d.created_at,
+               (d.original_filename ILIKE $2) AS match_filename,
+               (d.doc_family ILIKE $2)        AS match_category,
+               EXISTS (
+                   SELECT 1 FROM document_extractions x
+                   WHERE x.document_id = d.id AND x.org_id = d.org_id
+                     AND x.extracted_text ILIKE $2
+               )                              AS match_text
+        FROM documents d
+        WHERE d.org_id = $1
+          AND (
+               d.original_filename ILIKE $2
+               OR d.doc_family ILIKE $2
+               OR EXISTS (
+                   SELECT 1 FROM document_extractions x
+                   WHERE x.document_id = d.id AND x.org_id = d.org_id
+                     AND x.extracted_text ILIKE $2
+               )
+          )
+        ORDER BY d.created_at DESC
+        LIMIT $3
+        """,
+        org_id, like, limit,
+    )
+    results = []
+    for r in rows:
+        matched_on = [
+            label for flag, label in (
+                (r["match_filename"], "filename"),
+                (r["match_category"], "category"),
+                (r["match_text"], "extracted_text"),
+            ) if flag
+        ]
+        results.append({
+            "document_id": str(r["id"]),
+            "original_filename": r["original_filename"],
+            "status": r["status"],
+            "doc_family": r["doc_family"],
+            "mime_type": r["mime_type"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "matched_on": matched_on,
+        })
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Task 3 — automatic entity linkage for a completed K-1
 # ---------------------------------------------------------------------------

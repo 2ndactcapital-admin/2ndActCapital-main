@@ -7,6 +7,7 @@ import ScoringSection from "@/components/marketplace/ScoringSection";
 import DocumentsList from "@/components/marketplace/DocumentsList";
 import ComplianceRequests from "@/components/marketplace/ComplianceRequests";
 import DealDetailTabBar from "@/components/marketplace/DealDetailTabBar";
+import DocumentsPanel from "@/components/DocumentsPanel";
 import DealStagePipeline from "@/components/marketplace/DealStagePipeline";
 import MemberInvestmentTracker from "@/components/marketplace/MemberInvestmentTracker";
 import AISummaryCard from "@/components/marketplace/AISummaryCard";
@@ -242,6 +243,13 @@ export default async function DealDetailPage({ params, searchParams }) {
                 canReview={staff}
                 documentStatuses={documentStatuses}
               />
+            </div>
+          )}
+
+          {/* Linked Documents (Chancery-linked, Phase 9 reusable panel) */}
+          {tab === "linked-documents" && (
+            <div className="mt-6">
+              <DocumentsPanel recordType="deal" recordId={deal.id} title="Linked Documents" />
             </div>
           )}
 

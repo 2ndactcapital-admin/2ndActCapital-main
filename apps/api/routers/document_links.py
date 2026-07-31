@@ -114,7 +114,16 @@ async def get_document_links(document_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/documents")
 async def get_entity_documents(entity_id: UUID, request: Request):
-    """Documents linked to an entity — powers Phase-9 contextual surfacing."""
+    """Documents linked to an entity — powers Phase-9 contextual surfacing.
+
+    NOTE (Phase-9 discovery): this exact path is ALSO declared by
+    ``routers.entity_documents`` (the Sprint-17 CRM R2 upload subsystem), which is
+    mounted FIRST in ``main.py`` and therefore wins the match — so this handler is
+    effectively shadowed at the HTTP layer. The Phase-9 panel deliberately does NOT
+    rely on it; it calls the collision-free generic route below
+    (``/records/{record_type}/{record_id}/documents`` with record_type='entity').
+    Kept for API back-compat and because the underlying service function is the one
+    the panel/verify exercise directly."""
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -123,6 +132,42 @@ async def get_entity_documents(entity_id: UUID, request: Request):
         except dl.LinkageError as err:
             _raise(err)
     return {"entity_id": str(entity_id), "documents": documents}
+
+
+# ── Phase 9 — the reusable Documents panel + basic search ────────────────────
+@router.get("/records/{record_type}/{record_id}/documents")
+async def get_record_documents(record_type: str, record_id: UUID, request: Request):
+    """Documents linked to ANY record — the single, collision-free query behind the
+    Phase-9 reusable Documents panel. ``record_type='entity'`` uses Phase-5's
+    entity-link query; every other type (spv / deal / transaction / …) uses the
+    generic ``document_record_links`` query. A record with no linked documents
+    returns an empty list (clean empty state), not an error."""
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            documents = await dl.list_documents_for_panel(
+                conn, org_id, record_type, record_id)
+        except dl.LinkageError as err:
+            _raise(err)
+    return {
+        "record_type": record_type,
+        "record_id": str(record_id),
+        "documents": documents,
+    }
+
+
+@router.get("/document-search")
+async def search_documents(request: Request, q: str = "", limit: int = 50):
+    """Basic (NON-semantic) document search — filename, category (doc_family), and
+    an ILIKE substring match against extracted text. This is NOT the Phase-11
+    semantic/vector search; it is plain metadata/text substring matching."""
+    org_id = get_org_id(request)
+    limit = max(1, min(int(limit or 50), 200))
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        results = await dl.search_documents(conn, org_id, q, limit=limit)
+    return {"query": q, "count": len(results), "results": results}
 
 
 # ── Task 3 — K-1 auto-linkage trigger ───────────────────────────────────────

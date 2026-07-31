@@ -8,6 +8,7 @@ import SPVStatusControl from "@/components/spv/SPVStatusControl";
 import SPVDocumentsTab from "@/components/spv/SPVDocumentsTab";
 import SPVSubscriptionsTab from "@/components/spv/SPVSubscriptionsTab";
 import SPVTransactionsTab from "@/components/spv/SPVTransactionsTab";
+import DocumentsPanel from "@/components/DocumentsPanel";
 
 const STATUS_CONFIG = {
   forming: { label: "Forming", bg: "bg-[var(--2a-bg-sidebar)]", text: "text-[var(--2a-text-muted)]" },
@@ -91,6 +92,7 @@ export default async function SPVDetailPage({ params, searchParams }) {
     { key: "overview", label: "Overview" },
     ...(staff ? [{ key: "captable", label: "Cap Table" }] : []),
     { key: "documents", label: "Documents" },
+    { key: "linked", label: "Linked Documents" },
     ...(staff ? [{ key: "transactions", label: "Transactions" }] : []),
     ...(staff ? [{ key: "history", label: "History" }] : []),
     ...(staff ? [{ key: "ledger", label: "Ledger", href: `/spvs/${id}/ledger` }] : []),
@@ -198,6 +200,9 @@ export default async function SPVDetailPage({ params, searchParams }) {
                   : null
               }
             />
+          )}
+          {tab === "linked" && (
+            <DocumentsPanel recordType="spv" recordId={id} title="Linked Documents" />
           )}
           {tab === "history" && staff && <HistorySection history={history} />}
         </div>

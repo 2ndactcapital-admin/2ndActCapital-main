@@ -13,6 +13,7 @@ export default function DealDetailTabBar({ staff = false }) {
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "documents", label: "Documents" },
+    { id: "linked-documents", label: "Linked Documents" },
     ...(staff && can("score_deal") ? [{ id: "scoring", label: "Scoring" }] : []),
     ...(staff && can("manage_deals") ? [{ id: "pipeline", label: "Pipeline" }] : []),
   ];

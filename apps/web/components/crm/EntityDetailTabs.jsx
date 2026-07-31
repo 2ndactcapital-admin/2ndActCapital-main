@@ -13,6 +13,7 @@ import ComplianceTab from "@/components/crm/tabs/ComplianceTab";
 import NotesTab from "@/components/crm/tabs/NotesTab";
 import DocumentsTab from "@/components/crm/tabs/DocumentsTab";
 import OwnershipTab from "@/components/crm/tabs/OwnershipTab";
+import DocumentsPanel from "@/components/DocumentsPanel";
 
 export default function EntityDetailTabs({ full, graph }) {
   const entity = full.entity;
@@ -27,6 +28,7 @@ export default function EntityDetailTabs({ full, graph }) {
     { key: "social", label: "Social Profiles" },
     { key: "notes", label: "Notes" },
     { key: "documents", label: "Documents" },
+    { key: "linked_documents", label: "Linked Documents" },
     { key: "ownership", label: "Ownership" },
     { key: "compliance", label: "Compliance" },
   ];
@@ -119,9 +121,14 @@ export default function EntityDetailTabs({ full, graph }) {
           <NotesTab entityId={entity.id} initial={full.notes || []} />
         </div>
 
-        {/* Documents */}
+        {/* Documents (manual uploads) */}
         <div className={active === "documents" ? "" : "hidden"}>
           <DocumentsTab entityId={entity.id} />
+        </div>
+
+        {/* Linked Documents (Chancery-linked, Phase 9 reusable panel) */}
+        <div className={active === "linked_documents" ? "" : "hidden"}>
+          <DocumentsPanel recordType="entity" recordId={entity.id} title="Linked Documents" />
         </div>
 
         {/* Ownership */}
