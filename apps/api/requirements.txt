@@ -11,3 +11,9 @@ anthropic
 deepeval
 SpiffWorkflow==3.1.2
 pdfplumber==0.11.10
+# Chancery Phase 4 — multi-format ingestion (DOCX/XLSX/PPTX/email).
+# Import-tested against Python 3.14 (in-memory round-trip) during the sprint.
+python-docx==1.2.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+extract-msg==0.56.0
