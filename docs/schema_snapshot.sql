@@ -337,6 +337,17 @@
 --   completed_at                             timestamp with time zone
 --   PRIMARY KEY document_drops_pkey: (id)
 
+-- ===== document_entity_links =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   link_role                                text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE document_entity_links_document_id_entity_id_key: (document_id, entity_id)
+--   PRIMARY KEY document_entity_links_pkey: (id)
+
 -- ===== document_extractions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   document_id                              uuid NOT NULL
@@ -348,6 +359,30 @@
 --   page_count                               integer
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY document_extractions_pkey: (id)
+
+-- ===== document_link_proposals =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   proposed_link_type                       text NOT NULL
+--   proposed_name                            text
+--   proposed_record_type                     text
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY document_link_proposals_pkey: (id)
+
+-- ===== document_record_links =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   record_type                              text NOT NULL
+--   record_id                                uuid NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE document_record_links_document_id_record_type_record_id_key: (document_id, record_type, record_id)
+--   PRIMARY KEY document_record_links_pkey: (id)
 
 -- ===== document_template_extractions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
