@@ -27,6 +27,7 @@ idempotent.
 
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 # Reuse the Sprint-17 entity-picker mechanism verbatim (Task 1a). Importing a
@@ -460,6 +461,159 @@ async def auto_link_k1_document(conn, org_id, document_id) -> dict:
         "party_name": party_name,
         "proposal_id": str(proposal_id),
     }
+
+
+# ---------------------------------------------------------------------------
+# Chancery Phase 11a — narrative party linkage (SPECIFIC roles)
+#
+# The K-1 path (auto_link_k1_document) links ONE party under the generic role
+# 'k1_party'. A narrative instrument names SEVERAL parties, each with a distinct,
+# meaningful relationship (trustee, grantor, beneficiary, managing member, …), so
+# this needs a genuinely different call shape: a LIST of {name, role}. It reuses
+# the SAME picker matcher (find_entity_dupes) — no second matching algorithm — and
+# the SAME propose-not-create discipline, but it records the SPECIFIC role on the
+# link and iterates over every party.
+# ---------------------------------------------------------------------------
+
+# Roles too generic to be worth recording as a specific relationship — if the
+# extraction offers only one of these, we fall back to NARRATIVE_FALLBACK_ROLE so
+# the link is still marked as a narrative party without claiming false precision.
+_GENERIC_ROLE_WORDS = frozenset({
+    "party", "related", "other", "unknown", "signatory", "person", "entity",
+    "name", "individual",
+})
+# Neutral role for a matched party whose specific relationship the model did not
+# pin down. Deliberately distinct from the K-1 'k1_party' marker.
+NARRATIVE_FALLBACK_ROLE = "narrative_party"
+
+
+def normalize_role(raw) -> str | None:
+    """Snake-case a free-text role ('Successor Trustee' → 'successor_trustee').
+
+    Returns None for a blank/non-string input. The caller decides whether the
+    result is specific enough to keep (see ``resolve_link_role``)."""
+    if not isinstance(raw, str):
+        return None
+    token = re.sub(r"[^a-z0-9]+", "_", raw.strip().lower()).strip("_")
+    return token or None
+
+
+def resolve_link_role(raw) -> str:
+    """The ``link_role`` to store for a narrative party: the SPECIFIC normalised
+    role when the extraction gave one, else the neutral narrative fallback (never
+    a bare/misleadingly-precise label)."""
+    token = normalize_role(raw)
+    if token and token not in _GENERIC_ROLE_WORDS:
+        return token
+    return NARRATIVE_FALLBACK_ROLE
+
+
+async def _pending_entity_proposal_id(conn, org_id, document_id, name):
+    """An existing PENDING 'entity' proposal for this doc+name, if any — so a
+    re-run proposes each unmatched party at most once (the proposals table has no
+    unique constraint, unlike document_entity_links)."""
+    return await conn.fetchval(
+        """
+        SELECT id FROM document_link_proposals
+        WHERE document_id = $1 AND org_id = $2
+          AND proposed_link_type = 'entity'
+          AND status = 'pending'
+          AND lower(proposed_name) = lower($3)
+        LIMIT 1
+        """,
+        document_id, org_id, name,
+    )
+
+
+async def auto_link_narrative_parties(conn, org_id, document_id, parties) -> dict:
+    """Link (or propose) each narrative key party against existing entities.
+
+    ``parties`` is the list of ``{name, role}`` dicts the narrative extraction
+    produced. For each party with a genuine name (de-duplicated case-insensitively
+    within this call):
+
+      * MATCH (exact, case-insensitive display_name via the picker's
+        ``find_entity_dupes``) → a ``document_entity_links`` row with the SPECIFIC
+        role and ``created_by = NULL`` (system). If a SYSTEM link already exists
+        for the pair, its ``link_role`` is upgraded to this role (create/update);
+        a HUMAN-created link is never overwritten.
+      * NO match → a ``document_link_proposals`` row (proposed_link_type='entity',
+        proposed_name=<the name>), created at most once per pending name. NEVER
+        auto-creates an entity.
+
+    Returns ``{"linked": [...], "proposed": [...]}``.
+    """
+    if not await _document_in_org(conn, org_id, document_id):
+        raise LinkageError(404, "Document not found")
+
+    linked: list[dict] = []
+    proposed: list[dict] = []
+    seen: set[str] = set()
+
+    for party in parties or []:
+        name = None
+        role = None
+        if isinstance(party, dict):
+            raw_name = party.get("name")
+            name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None
+            role = party.get("role")
+        elif isinstance(party, str) and party.strip():
+            name = party.strip()
+        if not name:
+            continue
+        dedupe_key = name.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        link_role = resolve_link_role(role)
+        matches = await find_entity_dupes(conn, org_id, name)
+        if matches:
+            entity_id = matches[0]["id"]
+            row = await conn.fetchrow(
+                """
+                INSERT INTO document_entity_links
+                    (document_id, entity_id, org_id, link_role, created_by)
+                VALUES ($1, $2, $3, $4, NULL)
+                ON CONFLICT (document_id, entity_id) DO UPDATE
+                    SET link_role = EXCLUDED.link_role
+                    WHERE document_entity_links.created_by IS NULL
+                RETURNING id
+                """,
+                document_id, entity_id, org_id, link_role,
+            )
+            linked.append({
+                "name": name,
+                "entity_id": str(entity_id),
+                "link_role": link_role,
+                # row is None only when a HUMAN link already existed (guard held);
+                # the link is present either way.
+                "link_written": row is not None,
+                "system_created": True,
+            })
+        else:
+            existing = await _pending_entity_proposal_id(conn, org_id, document_id, name)
+            if existing is not None:
+                proposal_id, created = existing, False
+            else:
+                proposal_id = await conn.fetchval(
+                    """
+                    INSERT INTO document_link_proposals
+                        (document_id, org_id, proposed_link_type, proposed_name, status)
+                    VALUES ($1, $2, 'entity', $3, 'pending')
+                    RETURNING id
+                    """,
+                    document_id, org_id, name,
+                )
+                created = True
+            proposed.append({
+                "name": name,
+                "proposal_id": str(proposal_id),
+                "identified_role": link_role,
+                "created": created,
+            })
+
+    return {"linked": linked, "proposed": proposed}
 
 
 # ---------------------------------------------------------------------------

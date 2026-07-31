@@ -817,6 +817,11 @@ async def _store_and_sort(pool, doc, org_id, file_bytes, extracted_text):
     # separate manual step.
     await _maybe_extract_k1(pool, doc, org_id, file_bytes, sort_result)
 
+    # Phase 11a: a NARRATIVE instrument (SORT → category in the narrative set,
+    # doc_family='narrative') fires narrative metadata extraction + role-aware
+    # entity linkage in this SAME flow — the exact mirror of the K-1 hook above.
+    await _maybe_extract_narrative(pool, doc, org_id, sort_result)
+
 
 async def _maybe_extract_k1(pool, doc, org_id, file_bytes, sort_result):
     """When SORT classified the document as a K-1, run Phase-3 template
@@ -831,6 +836,26 @@ async def _maybe_extract_k1(pool, doc, org_id, file_bytes, sort_result):
         await textract_extraction.extract_k1_and_link(pool, doc, org_id, file_bytes)
     except Exception as exc:  # noqa: BLE001 — K-1 extraction failure ≠ pipeline failure
         print(f"[chancery] k1 extraction/link failed for {doc['id']}: "
+              f"{type(exc).__name__}: {exc}")
+
+
+async def _maybe_extract_narrative(pool, doc, org_id, sort_result):
+    """When SORT classified the document into a NARRATIVE category, run Phase-11a
+    narrative metadata extraction and hand off to the role-aware entity linkage.
+
+    Scoped to exactly the confirmed narrative categories (llc_formation /
+    trust_instrument / will / estate_plan / operating_agreement) — the same gate
+    discipline as ``_maybe_extract_k1`` (which fires only for 'k1'). Narrative
+    extraction reads the already-stored ``extracted_text`` (no file bytes needed).
+    A failure logs and leaves the document at its last good status rather than
+    failing the whole pipeline."""
+    if not sort_result or sort_result.get("category_code") not in _NARRATIVE_CATEGORIES:
+        return
+    try:
+        from services import narrative_extraction  # local import: only on this path
+        await narrative_extraction.extract_narrative_and_link(pool, doc, org_id)
+    except Exception as exc:  # noqa: BLE001 — narrative extraction failure ≠ pipeline failure
+        print(f"[chancery] narrative extraction/link failed for {doc['id']}: "
               f"{type(exc).__name__}: {exc}")
 
 
