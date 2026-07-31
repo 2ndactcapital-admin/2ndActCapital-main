@@ -6,7 +6,13 @@
 // org_id is resolved server-side from the JWT; it is never passed from the
 // client.
 
-import { createWorkflow, getWorkflows, saveWorkflowVersion } from "@/lib/api";
+import {
+  createWorkflow,
+  createWorkflowTrigger,
+  getWorkflows,
+  getWorkflowTriggers,
+  saveWorkflowVersion,
+} from "@/lib/api";
 
 export async function createWorkflowAction(name, description) {
   try {
@@ -16,6 +22,24 @@ export async function createWorkflowAction(name, description) {
     });
     const workflows = await getWorkflows();
     return { ok: true, workflow, workflows };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function createEventTriggerAction(workflowDefinitionId) {
+  // Chancery Phase 7 — configure a 'document_confirmed' event trigger. Returns
+  // the refreshed trigger list so the viewer updates in place. This only
+  // configures WHICH runs auto-start; every started run still honours each
+  // step's autonomy tier (Tier-1 still pauses for approval).
+  try {
+    const trigger = await createWorkflowTrigger({
+      workflow_definition_id: workflowDefinitionId,
+      event_type: "document_confirmed",
+      is_active: true,
+    });
+    const triggers = await getWorkflowTriggers();
+    return { ok: true, trigger, triggers };
   } catch (error) {
     return { ok: false, error: error.message };
   }

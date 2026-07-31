@@ -114,6 +114,16 @@ class VersionSave(BaseModel):
     change_summary: str | None = None
 
 
+class EventTriggerCreate(BaseModel):
+    """Create a ``document_confirmed`` event trigger pointing at a workflow
+    definition (Chancery Phase 7). Narrowly scoped: only the one wired event
+    type is accepted; ``org_id`` / ``created_by`` come from the authenticated
+    context, never the body."""
+    workflow_definition_id: UUID
+    event_type: str = "document_confirmed"
+    is_active: bool = True
+
+
 # --------------------------------------------------------------------------
 # Granular permission keys (Phase 5) — rows in the global ``permissions``
 # catalog seeded by docs/workflowmgr5_part1.sql. Grantable via the SOC
@@ -467,6 +477,62 @@ async def list_workflow_triggers(request: Request):
             *([] if all_orgs else [org_id]),
         )
     return [dict(r) for r in rows]
+
+
+# Chancery Phase 7 — the ONLY write on the Scheduler surface: create an event
+# trigger (event_type='document_confirmed') pointing at a chosen definition.
+# Gated by the SAME configure_workflow_triggers permission as the viewer.
+# This CONFIGURES which runs auto-start; it does not weaken any per-step tier.
+EVENT_DOCUMENT_CONFIRMED = "document_confirmed"
+
+
+@router.post("/admin/workflow-triggers", status_code=201)
+async def create_workflow_trigger(request: Request, body: EventTriggerCreate):
+    """Create a ``document_confirmed`` event trigger for a definition in the
+    caller's org. Only the one wired event type is accepted this phase."""
+    actor_id, org_id, principal = await _require_workflow_permission(
+        request, PERM_CONFIGURE_TRIGGERS
+    )
+    if body.event_type != EVENT_DOCUMENT_CONFIRMED:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Only the '{EVENT_DOCUMENT_CONFIRMED}' event type is "
+                   "supported for event triggers in this phase",
+        )
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # The definition must exist in the caller's own org — never trust a
+        # body-supplied definition to belong to another org. Super Admin may
+        # target any org's definition, but the trigger is created in THAT
+        # definition's org (org_id follows the definition, not the body).
+        definition = await conn.fetchrow(
+            "SELECT id, org_id FROM workflow_definitions WHERE id = $1",
+            body.workflow_definition_id,
+        )
+        if definition is None or (
+            not is_super_admin(principal)
+            and str(definition["org_id"]) != str(org_id)
+        ):
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        trigger_id = await conn.fetchval(
+            """
+            INSERT INTO workflow_triggers
+                (workflow_definition_id, org_id, trigger_type, event_type,
+                 is_active, created_by)
+            VALUES ($1, $2, 'event', $3, $4, $5)
+            RETURNING id
+            """,
+            body.workflow_definition_id, definition["org_id"],
+            body.event_type, body.is_active, actor_id,
+        )
+    return {
+        "id": str(trigger_id),
+        "workflow_definition_id": str(body.workflow_definition_id),
+        "org_id": str(definition["org_id"]),
+        "trigger_type": "event",
+        "event_type": body.event_type,
+        "is_active": body.is_active,
+    }
 
 
 @router.get("/admin/workflows/{definition_id}/versions")

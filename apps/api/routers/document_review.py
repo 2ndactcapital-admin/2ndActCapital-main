@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
+from services import chancery_workflow_bridge
 from services import document_review as review
 from services import storage
 from services.database import get_pool
@@ -78,10 +79,21 @@ async def confirm(document_id: UUID, request: Request):
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
         try:
-            return await review.confirm_document(
+            result = await review.confirm_document(
                 conn, org_id, document_id, confirmed_by=user_id)
         except review.ReviewError as err:
             _raise(err)
+            return  # unreachable — _raise always raises; keeps type-checkers happy
+
+    # Chancery Phase 7 — fire 'document_confirmed' event triggers AFTER the
+    # status is successfully set to 'confirmed' (a failed confirm above never
+    # reaches here, so a failed confirm can never start a workflow). The bridge
+    # is a graceful no-op when no trigger is configured and never raises, so it
+    # cannot break an already-successful confirm. It automates only WHICH runs
+    # start — every started run still honours each step's autonomy tier.
+    await chancery_workflow_bridge.fire_document_confirmed_triggers(
+        pool, org_id, document_id, started_by=user_id)
+    return result
 
 
 @router.get("/documents/{document_id}/download")

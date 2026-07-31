@@ -483,6 +483,10 @@ export const getWorkflowRun = (runId) =>
   fetchAPI(`/api/v1/admin/workflow-runs/${runId}`);
 export const getWorkflowTriggers = () =>
   fetchAPI("/api/v1/admin/workflow-triggers");
+// Chancery Phase 7 — create a 'document_confirmed' event trigger (the only
+// write on the Scheduler surface). Gated by configure_workflow_triggers.
+export const createWorkflowTrigger = (body) =>
+  fetchAPI("/api/v1/admin/workflow-triggers", { method: "POST", body });
 export const getWorkflowVersions = (id) =>
   fetchAPI(`/api/v1/admin/workflows/${id}/versions`);
 
