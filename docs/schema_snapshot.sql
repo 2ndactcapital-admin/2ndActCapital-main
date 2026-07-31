@@ -1323,6 +1323,18 @@
 --   UNIQUE users_email_key: (email)
 --   PRIMARY KEY users_pkey: (id)
 
+-- ===== vdr_deal_proposals =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   document_drop_id                         uuid NOT NULL
+--   proposed_fields                          jsonb NOT NULL
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   created_deal_id                          uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY vdr_deal_proposals_pkey: (id)
+
 -- ===== workflow_definitions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
