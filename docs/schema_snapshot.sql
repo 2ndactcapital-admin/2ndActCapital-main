@@ -427,6 +427,8 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   drop_id                                  uuid
 --   sequence_in_drop                         integer
+--   confirmed_by                             uuid
+--   confirmed_at                             timestamp with time zone
 --   PRIMARY KEY documents_pkey: (id)
 
 -- ===== entities =====
