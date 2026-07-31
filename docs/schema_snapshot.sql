@@ -360,6 +360,19 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY document_extractions_pkey: (id)
 
+-- ===== document_field_corrections =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   template_extraction_id                   uuid
+--   field_name                               text NOT NULL
+--   original_value                           text
+--   corrected_value                          text NOT NULL
+--   notes                                    text
+--   corrected_by                             uuid
+--   corrected_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY document_field_corrections_pkey: (id)
+
 -- ===== document_link_proposals =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   document_id                              uuid NOT NULL
