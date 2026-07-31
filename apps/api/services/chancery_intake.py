@@ -105,8 +105,11 @@ FAMILY_TABULAR = "tabular"
 FAMILY_NARRATIVE = "narrative"
 FAMILY_OTHER = "other"
 
+# The canonical doc_category code that triggers Phase-3 K-1 template extraction.
+K1_CATEGORY = "k1"
+
 _TABULAR_CATEGORIES = frozenset({
-    "k1", "tax_return", "financial_statement", "subscription_doc",
+    K1_CATEGORY, "tax_return", "financial_statement", "subscription_doc",
     "accreditation", "id_document",
 })
 _NARRATIVE_CATEGORIES = frozenset({
@@ -802,10 +805,32 @@ async def _store_and_sort(pool, doc, org_id, file_bytes, extracted_text):
         print(f"[chancery] store_document failed for {document_id}: "
               f"{type(exc).__name__}: {exc}")
 
+    sort_result = None
     try:
-        await sort_document(pool, document_id, org_id, extracted_text or "")
+        sort_result = await sort_document(pool, document_id, org_id, extracted_text or "")
     except Exception as exc:  # noqa: BLE001 — SORT failure ≠ pipeline failure
         print(f"[chancery] sort_document failed for {document_id}: "
+              f"{type(exc).__name__}: {exc}")
+
+    # Phase 3: a K-1 (SORT → category='k1', doc_family='tabular') fires real
+    # template extraction + Phase-5 auto-link as part of THIS same flow — not a
+    # separate manual step.
+    await _maybe_extract_k1(pool, doc, org_id, file_bytes, sort_result)
+
+
+async def _maybe_extract_k1(pool, doc, org_id, file_bytes, sort_result):
+    """When SORT classified the document as a K-1, run Phase-3 template
+    extraction and hand off to Phase-5's REAL auto-link/propose logic.
+
+    A K-1 extraction or linkage failure logs and leaves the document at its last
+    good status rather than failing the whole pipeline (mirrors STORE/SORT)."""
+    if not sort_result or sort_result.get("category_code") != K1_CATEGORY:
+        return
+    try:
+        from services import textract_extraction  # local import: only on the K-1 path
+        await textract_extraction.extract_k1_and_link(pool, doc, org_id, file_bytes)
+    except Exception as exc:  # noqa: BLE001 — K-1 extraction failure ≠ pipeline failure
+        print(f"[chancery] k1 extraction/link failed for {doc['id']}: "
               f"{type(exc).__name__}: {exc}")
 
 

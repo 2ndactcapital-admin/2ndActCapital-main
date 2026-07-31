@@ -80,22 +80,24 @@ def _client():
     return boto3.client("textract", region_name=region)
 
 
-def detect_document_text(image_bytes: bytes) -> dict:
-    """Run Textract ``DetectDocumentText`` on a single-page image's bytes.
+def _run_textract(op_name: str, document_bytes: bytes, **extra) -> dict:
+    """Invoke a synchronous Textract operation on a single-page document's bytes.
 
-    Returns ``{"lines": [str, ...], "text": str, "block_count": int}`` where
-    ``text`` is the LINE blocks joined with newlines (reading order as Textract
-    returns them). Raises :class:`TextractUnavailable` when Textract is not
-    configured or the client cannot be built; lets a genuine API ``ClientError``
-    propagate so a real service fault is never silently swallowed as "no text".
+    Shared choke point for ``detect_document_text`` (DetectDocumentText) and
+    ``analyze_document`` (AnalyzeDocument). Applies the same size / config
+    pre-checks and the same error taxonomy for BOTH operations: config / auth /
+    credential faults degrade to :class:`TextractUnavailable` (retryable —
+    callers park the doc as needs_ocr); a genuine document/parameter ``ClientError``
+    (e.g. UnsupportedDocumentException) is re-raised as a real fault. Returns the
+    raw boto3 response dict.
 
     Synchronous (boto3) — call via ``run_in_threadpool`` from async handlers.
     """
-    if not image_bytes:
-        raise TextractUnavailable("empty image bytes")
-    if len(image_bytes) > _MAX_SYNC_BYTES:
+    if not document_bytes:
+        raise TextractUnavailable("empty document bytes")
+    if len(document_bytes) > _MAX_SYNC_BYTES:
         raise TextractUnavailable(
-            f"image is {len(image_bytes)} bytes; DetectDocumentText sync limit "
+            f"document is {len(document_bytes)} bytes; Textract sync limit "
             f"is {_MAX_SYNC_BYTES} bytes"
         )
     if not textract_configured():
@@ -120,28 +122,136 @@ def detect_document_text(image_bytes: bytes) -> dict:
         raise TextractUnavailable(f"textract client init failed: {exc}") from exc
 
     try:
-        resp = client.detect_document_text(Document={"Bytes": image_bytes})
+        resp = getattr(client, op_name)(Document={"Bytes": document_bytes}, **extra)
     except (NoCredentialsError, NoRegionError) as exc:
         raise TextractUnavailable(f"{type(exc).__name__}: {exc}") from exc
     except ClientError as exc:
-        # Auth / credential / access ClientErrors mean Textract is not usable in
-        # this environment (bad or placeholder creds, expired token, denied
-        # permission) — a CONFIG problem, not a property of the document. Surface
-        # them as "unavailable" so callers park the doc as needs_ocr (retryable)
-        # rather than permanently failing it. A genuine document/parameter error
-        # (e.g. UnsupportedDocumentException) is re-raised as a real fault.
         code = exc.response.get("Error", {}).get("Code", "")
         if code in _UNAVAILABLE_CLIENT_CODES:
             raise TextractUnavailable(f"ClientError [{code}]: {exc}") from exc
         raise
     except BotoCoreError as exc:
-        # Network/endpoint faults — unavailable, not "no text".
+        # Network/endpoint faults — unavailable, not "no result".
         raise TextractUnavailable(f"{type(exc).__name__}: {exc}") from exc
+    return resp
 
+
+def detect_document_text(image_bytes: bytes) -> dict:
+    """Run Textract ``DetectDocumentText`` on a single-page image's bytes.
+
+    Returns ``{"lines": [str, ...], "text": str, "block_count": int}`` where
+    ``text`` is the LINE blocks joined with newlines (reading order as Textract
+    returns them). Raises :class:`TextractUnavailable` when Textract is not
+    configured or the client cannot be built; lets a genuine API ``ClientError``
+    propagate so a real service fault is never silently swallowed as "no text".
+
+    Synchronous (boto3) — call via ``run_in_threadpool`` from async handlers.
+    """
+    resp = _run_textract("detect_document_text", image_bytes)
     blocks = resp.get("Blocks", [])
     lines = [b["Text"] for b in blocks if b.get("BlockType") == "LINE" and b.get("Text")]
     return {
         "lines": lines,
         "text": "\n".join(lines),
         "block_count": len(blocks),
+    }
+
+
+def _block_text(block: dict, by_id: dict) -> str:
+    """Reconstruct a block's text from its CHILD WORD / SELECTION_ELEMENT blocks."""
+    parts: list[str] = []
+    for rel in block.get("Relationships") or []:
+        if rel.get("Type") != "CHILD":
+            continue
+        for cid in rel.get("Ids", []):
+            child = by_id.get(cid)
+            if not child:
+                continue
+            btype = child.get("BlockType")
+            if btype == "WORD" and child.get("Text"):
+                parts.append(child["Text"])
+            elif btype == "SELECTION_ELEMENT" and child.get("SelectionStatus") == "SELECTED":
+                parts.append("[X]")
+    return " ".join(parts).strip()
+
+
+def parse_analyze_blocks(blocks: list) -> dict:
+    """Parse AnalyzeDocument ``Blocks`` into forms (key→value), tables, lines.
+
+    * ``forms``  — a dict of KEY text → VALUE text (from KEY_VALUE_SET pairs).
+    * ``tables`` — a list of 2-D string grids (row-major, 1-based cell indices
+      flattened to a dense grid).
+    * ``lines``  — LINE block texts in reading order.
+    """
+    by_id = {b["Id"]: b for b in blocks if b.get("Id")}
+
+    forms: dict[str, str] = {}
+    for kb in blocks:
+        if kb.get("BlockType") != "KEY_VALUE_SET":
+            continue
+        if "KEY" not in (kb.get("EntityTypes") or []):
+            continue
+        key_text = _block_text(kb, by_id)
+        value_text = ""
+        for rel in kb.get("Relationships") or []:
+            if rel.get("Type") == "VALUE":
+                for vid in rel.get("Ids", []):
+                    vb = by_id.get(vid)
+                    if vb:
+                        value_text = _block_text(vb, by_id)
+        if key_text:
+            forms[key_text] = value_text
+
+    tables: list[list[list[str]]] = []
+    for tb in blocks:
+        if tb.get("BlockType") != "TABLE":
+            continue
+        cells: dict[tuple[int, int], str] = {}
+        max_r = max_c = 0
+        for rel in tb.get("Relationships") or []:
+            if rel.get("Type") != "CHILD":
+                continue
+            for cid in rel.get("Ids", []):
+                cb = by_id.get(cid)
+                if not cb or cb.get("BlockType") != "CELL":
+                    continue
+                r, c = cb.get("RowIndex", 0), cb.get("ColumnIndex", 0)
+                cells[(r, c)] = _block_text(cb, by_id)
+                max_r, max_c = max(max_r, r), max(max_c, c)
+        grid = [[cells.get((r, c), "") for c in range(1, max_c + 1)]
+                for r in range(1, max_r + 1)]
+        if grid:
+            tables.append(grid)
+
+    lines = [b["Text"] for b in blocks if b.get("BlockType") == "LINE" and b.get("Text")]
+    return {"forms": forms, "tables": tables, "lines": lines}
+
+
+def analyze_document(
+    document_bytes: bytes, feature_types: tuple = ("TABLES", "FORMS")
+) -> dict:
+    """Run Textract ``AnalyzeDocument`` (TABLES + FORMS by default) on one page.
+
+    Used for TABULAR documents (e.g. K-1s) where the value lives in form fields
+    and tables, not free prose. Returns::
+
+        {"lines": [str], "text": str, "forms": {key: value},
+         "tables": [[[cell, ...], ...], ...], "block_count": int,
+         "feature_types": [str, ...]}
+
+    Same :class:`TextractUnavailable` degradation contract as
+    ``detect_document_text``. Synchronous (boto3) — call via ``run_in_threadpool``.
+    """
+    resp = _run_textract(
+        "analyze_document", document_bytes, FeatureTypes=list(feature_types)
+    )
+    blocks = resp.get("Blocks", [])
+    parsed = parse_analyze_blocks(blocks)
+    return {
+        "lines": parsed["lines"],
+        "text": "\n".join(parsed["lines"]),
+        "forms": parsed["forms"],
+        "tables": parsed["tables"],
+        "block_count": len(blocks),
+        "feature_types": list(feature_types),
     }
