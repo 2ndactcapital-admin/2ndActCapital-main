@@ -1,0 +1,56 @@
+=== Chancery Phase 11b — semantic INDEX + RETRIEVE ===
+OUTCOME: BLOCKED at Task 1 (Voyage gate). Tasks 2-4 correctly NOT built.
+Held for manual review. Run date: 2026-07-31.
+
+--- TASK 1: two gates, checked honestly before any build work ---
+
+GATE (a) pgvector .......... PASS (REAL)
+  SELECT extversion FROM pg_extension WHERE extname='vector' -> v0.8.0,
+  installed in schema `public`. Also confirmed via Supabase list_extensions:
+  vector 0.8.0 installed_version present (ivfflat + hnsw access methods).
+  No CREATE EXTENSION needed. Gate (a) is genuinely satisfied.
+
+GATE (b) Voyage AI ......... BLOCKED (no credential exists)
+  What was tried:
+    - Scanned process environment for VOYAGE_API_KEY, VOYAGEAI_API_KEY,
+      VOYAGE_KEY, VOYAGE_AI_API_KEY, and ANY env var whose name contains
+      'VOYAGE'  -> none set.
+    - Scanned ~/.bashrc, ~/.profile, apps/api/.env, apps/web/.env.local,
+      .env.example -> no VOYAGE/EMBED variable of any name.
+    - `voyageai` Python SDK: NOT installed.
+    - Repo grep for 'voyage' across apps/**/*.py|js|jsx|ts|env -> zero hits.
+  What happened:
+    - There is NO key to authenticate with, so NO real embedding call could
+      be attempted. Per the sprint's explicit rule ("IF THIS FAILS OR NO KEY
+      EXISTS: stop immediately ... do NOT proceed to Tasks 2-4"), the build
+      was stopped here. This is a legitimate, expected outcome -- the same
+      discipline as the earlier AWS Textract credential gate. Nothing was
+      mocked or faked.
+  To unblock: Joe provisions a real VOYAGE_API_KEY (Voyage AI dashboard) and
+  exports it (e.g. in ~/.bashrc). Re-running verify_chancery11b.py will then
+  make a genuine live embedding call and report PASS/FAIL truthfully; the
+  sprint can resume at Task 2.
+
+GATE (c) chunking/text-prep discovery .......... NOT RUN
+  Explicitly gated on "IF AND ONLY IF both gates pass". Skipped, as required.
+
+--- Tasks 2-4: NOT BUILT (blocked) ---
+  T2 embedding+index service, T3 semantic search+RETRIEVE, T4 UI entry point:
+  none built. No pgvector table/column created; no migration applied; no RLS
+  added. The DB is unchanged by this sprint.
+
+--- VERIFICATION: apps/api/scripts/verify_chancery11b.py ---
+  Runs the two gates for real; reports [BLOCKED] for every downstream
+  assertion with the exact reason; never a false [PASS]. Exit code 2 = BLOCKED
+  (0 = full pass, 1 = real FAIL). The Voyage gate is written to make a genuine
+  live call the moment a key is present, so it is a real re-runnable gate.
+
+  SUMMARY: PASS=1  FAIL=0  BLOCKED=6
+    [PASS]    GATE (a) pgvector: extension enabled (vector v0.8.0, real)
+    [BLOCKED] GATE (b) Voyage: no credential found; cannot authenticate
+    [BLOCKED] A1 Task-1 findings incl. proof of a REAL Voyage call
+    [BLOCKED] A2 a real test document's content is embedded + stored
+    [BLOCKED] A3 semantic query returns relevant doc, NOT an unrelated one
+    [BLOCKED] A4 restricted-access doc absent from another user's results
+    [BLOCKED] A5 teardown leaves zero leftover rows (nothing built to leak)
+  RESULT: BLOCKED — a Task-1 gate did not pass. Honest, expected outcome.
