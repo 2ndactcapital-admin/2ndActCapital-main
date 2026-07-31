@@ -159,8 +159,8 @@ run_one_leg() {
     sleep 30
     elapsed=$((elapsed + 30))
     echo "    ...still running (${elapsed}s elapsed, PID $pid, leg budget ${MAX_TURNS} turns). Tail $SPRINT_LOG for detail."
-    if [[ $elapsed -ge 1800 ]]; then
-      echo "FATAL: leg exceeded 30 min cap. Killing PID $pid." >&2
+    if [[ $elapsed -ge 5400 ]]; then
+      echo "FATAL: leg exceeded 90 min cap. Killing PID $pid. NOTE: real work may still have completed before the kill - check git status/log before re-running." >&2
       kill -9 "$pid" 2>/dev/null || true
       return 2
     fi
