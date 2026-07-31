@@ -53,6 +53,7 @@ from schemas.marketplace import (
 from schemas.portfolio import TaxonomyPlacementResponse
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.deal_creation import insert_deal
 from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id, is_staff, require_permission
@@ -560,53 +561,10 @@ async def create_deal(request: Request, body: DealCreate):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            slug = await _unique_slug(conn, org_id, body.name)
-            # Note: created_by is intentionally not set on insert, matching the
-            # entities convention and avoiding a FK to users before the
-            # auth->users mapping is finalized.
-            row = await conn.fetchrow(
-                f"""
-                INSERT INTO deals (
-                    org_id, slug, name, description, deal_status,
-                    asset_super_class, asset_class, asset_sub_category,
-                    sponsor_entity_id, sponsor_name_override, target_raise,
-                    minimum_investment, expected_return_pct, term_months,
-                    deal_date, close_date, location, highlights, tags,
-                    is_featured
-                ) VALUES (
-                    $1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11,
-                    $12, $13, $14, $15, $16, $17, $18, $19
-                )
-                RETURNING {DEAL_SELECT}
-                """,
-                org_id,
-                slug,
-                body.name,
-                body.description,
-                body.asset_super_class,
-                body.asset_class,
-                body.asset_sub_category,
-                body.sponsor_entity_id,
-                body.sponsor_name_override,
-                body.target_raise,
-                body.minimum_investment,
-                body.expected_return_pct,
-                body.term_months,
-                body.deal_date,
-                body.close_date,
-                body.location,
-                body.highlights or [],
-                body.tags or [],
-                bool(body.is_featured),
-            )
-            await write_audit_log(
-                conn,
-                org_id=org_id,
-                action="create",
-                table_name="deals",
-                record_id=row["id"],
-                new=dict(row),
-            )
+            # Single shared deal-creation core (services.deal_creation.insert_deal)
+            # — the SAME path Chancery Phase-10 VDR approval uses, so there is
+            # never a second, parallel deal-creation mechanism.
+            row = await insert_deal(conn, org_id, body, returning=DEAL_SELECT)
     return _deal_response(row)
 
 

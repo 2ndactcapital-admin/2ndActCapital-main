@@ -25,11 +25,12 @@ handed to ``process_document``, and discarded.
 
 import uuid as _uuid
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from services.chancery_intake import process_document
 from services.database import get_pool
 from services.users import ensure_user
+from services import vdr_analysis
 
 router = APIRouter(tags=["documents"])
 
@@ -94,8 +95,18 @@ async def _document_outcome(conn, doc_id, org_id) -> dict:
 async def intake_documents(
     request: Request,
     files: list[UploadFile] = File(...),
+    is_vdr: bool = Form(False),
 ):
-    """Batch-capable Chancery intake: one drop, N files, processed in order."""
+    """Batch-capable Chancery intake: one drop, N files, processed in order.
+
+    Phase 10: when ``is_vdr`` is true, the caller is marking this drop as a
+    Virtual Data Room for a NEW deal. After the drop completes, the aggregate
+    VDR analysis runs (``services.vdr_analysis.analyze_drop``) and — only if the
+    documents confidently describe a single deal — a pending
+    ``vdr_deal_proposals`` row is created. This NEVER auto-creates a deal.
+    Reuses the existing drop mechanism entirely; ``is_vdr`` is just a flag on the
+    same upload path (no separate VDR upload endpoint).
+    """
     if not files:
         raise HTTPException(status_code=400, detail="At least one file is required")
 
@@ -160,9 +171,26 @@ async def intake_documents(
             drop_id, org_id,
         )
 
-    return {
+    response = {
         "drop_id": str(drop_id),
         "file_count": len(files),
         "status": "completed",
         "documents": outcomes,
     }
+
+    # 4. VDR intake: aggregate-analyze the whole batch → maybe a deal proposal.
+    #    Best-effort: a failure here never fails the (already-completed) upload.
+    if is_vdr:
+        try:
+            response["vdr_analysis"] = await vdr_analysis.analyze_drop(
+                pool, org_id, drop_id, created_by=uploader)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[chancery] VDR analysis failed for drop {drop_id}: "
+                  f"{type(exc).__name__}: {exc}")
+            response["vdr_analysis"] = {
+                "proposal_created": False,
+                "proposal_id": None,
+                "reason": f"VDR analysis error: {type(exc).__name__}",
+            }
+
+    return response

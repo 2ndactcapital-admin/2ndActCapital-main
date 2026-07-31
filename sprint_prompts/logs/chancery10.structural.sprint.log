@@ -1,0 +1,95 @@
+CHANCERY — PHASE 10 (VDR upload → deal-creation proposal)
+Structural sprint · HELD for manual review (first aggregate cross-document AI capability)
+
+=========================================================================
+TASK 1 — DISCOVERY (reported, not assumed)
+=========================================================================
+1(a) REAL deals table schema (docs/schema_snapshot.sql, refreshed this sprint):
+     deals(id, org_id, name NOT NULL, slug UNIQUE, description,
+           deal_status enum DEFAULT 'draft',
+           asset_super_class / asset_class / asset_sub_category  <- TEXT taxonomy KEYS
+           sponsor_entity_id, sponsor_name_override,
+           target_raise / minimum_investment / expected_return_pct  <- NUMERIC,
+           term_months INT, deal_date / close_date DATE, location,
+           highlights[] / tags[], is_featured, deal_stage TEXT, + bitemporal cols).
+     Only `name` is required. proposed_fields (jsonb) is shaped to this real schema.
+     Taxonomy columns are KEYS the AI cannot know -> left null; the AI's free-text
+     read goes to proposed_fields.asset_class_hint for the human reviewer to map.
+
+1(b) REAL createDeal mechanism: POST /api/v1/deals ->
+     routers.marketplace.create_deal (require_permission 'manage_deals' +
+     validate_taxonomy_fields + unique slug + insert + audit_log).
+     REUSE (not a parallel path): the deterministic slug->insert->audit core was
+     extracted into services.deal_creation.insert_deal; BOTH the marketplace
+     endpoint AND VDR approval now call that one function.
+
+1(c) No pre-existing aggregate cross-document AI pattern anywhere. Every prior AI
+     call is per-document (document_classifier: "a single document";
+     chancery_intake loops one AI call per file). services.vdr_analysis is the
+     FIRST call that concatenates extracted_text across a whole document_drop and
+     reasons over the batch -- genuinely new capability shape.
+
+=========================================================================
+BUILT
+=========================================================================
+services/vdr_analysis.py   aggregate a drop's extracted_text -> call_claude_json
+                           (task_type='vdr_analysis') -> proposed_fields matching
+                           the real deals schema -> insert vdr_deal_proposals
+                           (status='pending'). Honest confidence gate: refuses to
+                           propose from weak signal (needs is_coherent_deal +
+                           confidence>=medium + a name + >=2 substantive fields).
+                           approve_proposal / reject_proposal review helpers.
+services/deal_creation.py  shared insert_deal core (extracted from marketplace).
+routers/vdr.py             GET /vdr-proposals . POST /vdr-proposals/{id}/approve
+                           . POST /vdr-proposals/{id}/reject .
+                           POST /document-drops/{id}/analyze-vdr. approve reuses
+                           deal_creation.insert_deal, records created_deal_id, and
+                           links EVERY drop doc via document_record_links
+                           (record_type='deal', Phase-9 mechanism). manage_deals
+                           gated. Registered in main.py.
+routers/documents.py       intake gains an `is_vdr` Form flag -- reuses the SAME
+                           drop path; when set, runs analyze_drop after the drop
+                           completes (best-effort; never fails the upload).
+routers/marketplace.py     create_deal now calls the shared insert_deal core.
+web (Task 4)               app/admin/vdr-proposals + VDRProposalsManager.jsx
+                           (upload form with the is_vdr checkbox + pending-proposal
+                           list with approve/decline) and Next proxy routes
+                           (/api/documents multipart, /api/vdr-proposals[/id/*]).
+DB                         added FK vdr_deal_proposals.created_deal_id -> deals(id)
+                           (warranted: deals.id is a stable unique PK). RLS policy
+                           on vdr_deal_proposals confirmed correct (NULLIF org GUC).
+                           schema snapshot regenerated.
+
+Task 4 reuse decision: there was NO existing Chancery upload UI to bolt the flag
+onto (intake had been backend/verify-only; entity/SPV uploaders are different
+subsystems), and Phase 5's proposal-review UI was never built as a page either.
+So one minimal admin surface was added that reuses the existing intake endpoint
+(just adds the checkbox) rather than a separate VDR upload screen.
+
+=========================================================================
+VERIFY -- apps/api/scripts/verify_chancery10.py
+=========================================================================
+RESULT: PASS=7  FAIL=0  SKIP=3   (all runnable assertions green)
+
+[PASS] A1  Task-1 discovery findings reported (a/b/c)
+[SKIP] A2  real 3-doc VDR -> proposal with correct fields   -- needs ANTHROPIC_API_KEY
+[SKIP] A3  approve (AI end-to-end) -> real deal + links      -- needs ANTHROPIC_API_KEY
+[PASS] A3' approve MECHANISM (deterministic, no AI): seeded realistic proposal ->
+           approve creates a REAL deal via the createDeal core (target_raise/term
+           carried through), records created_deal_id, links ALL 3 drop docs.
+[PASS] A4  reject -> status 'rejected', NO deal, NO links
+[SKIP] A5  weak/non-deal batch -> no forced proposal        -- needs ANTHROPIC_API_KEY
+[PASS] A6  cross-org isolation on real app_service role (ORG_A visible, ORG_B=0)
+[PASS] A7  teardown: zero leftover rows (incl. the real deal created during test)
+
+WHY 3 SKIPS: ANTHROPIC_API_KEY is a per-session key (CLAUDE.md: "set per session
+when needed") and is NOT present in this environment (not in ~/.bashrc, apps/api/
+.env, or process env). A2/A3/A5 are the three assertions that exercise the live
+aggregate AI's TEXT UNDERSTANDING (produce correct fields from real docs / withhold
+a proposal from weak docs). They SKIP gracefully per CLAUDE.md rather than false-
+pass. The deterministic mechanism (approve->createDeal->link, reject, RLS, teardown,
+schema-shape) is fully green. To finish the AI assertions at true 100%, set
+ANTHROPIC_API_KEY and re-run:  python apps/api/scripts/verify_chancery10.py
+
+HOLD: not merged to main -- held for manual review (first aggregate cross-document
+AI capability), per sprint instruction.
