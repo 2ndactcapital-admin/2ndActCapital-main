@@ -32,6 +32,19 @@ function isColorKey(key) {
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
+// Chancery Phase 11b — the embedding-provider key renders as a dropdown of the
+// real competitive landscape. All four are SHOWN; only Voyage is functionally
+// enabled. Selecting anything else and saving triggers a REAL backend rejection
+// (HTTP 400, "Voyage is the only model enabled right now") which surfaces in the
+// {error} block below — the UI never enforces this on its own.
+const EMBEDDING_PROVIDER_KEY = "ai.embedding.provider";
+const EMBEDDING_PROVIDER_OPTIONS = [
+  { value: "voyage", label: "Voyage AI" },
+  { value: "openai", label: "OpenAI" },
+  { value: "google", label: "Google" },
+  { value: "cohere", label: "Cohere" },
+];
+
 export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
   const [rows, setRows] = useState(null);
   const [draft, setDraft] = useState({});
@@ -191,6 +204,7 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
             {grouped[category].map((row, i) => {
               const value = valueOf(row);
               const color = isColorKey(row.key);
+              const embeddingProvider = row.key === EMBEDDING_PROVIDER_KEY;
               return (
                 <div
                   key={row.key}
@@ -220,19 +234,38 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
                     />
                   )}
 
-                  <input
-                    type="text"
-                    value={value === null ? "" : value}
-                    disabled={!canEdit}
-                    onChange={(e) => setValue(row.key, e.target.value)}
-                    placeholder={color ? "#RRGGBB" : "not set"}
-                    className="flex-1 rounded border px-3 py-1.5 text-sm disabled:opacity-60"
-                    style={{
-                      borderColor: "var(--2a-border)",
-                      background: "var(--2a-bg-card)",
-                      fontFamily: color ? "ui-monospace, monospace" : undefined,
-                    }}
-                  />
+                  {embeddingProvider ? (
+                    <select
+                      value={value || "voyage"}
+                      disabled={!canEdit}
+                      onChange={(e) => setValue(row.key, e.target.value)}
+                      className="flex-1 rounded border px-3 py-1.5 text-sm disabled:opacity-60"
+                      style={{
+                        borderColor: "var(--2a-border)",
+                        background: "var(--2a-bg-card)",
+                      }}
+                    >
+                      {EMBEDDING_PROVIDER_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={value === null ? "" : value}
+                      disabled={!canEdit}
+                      onChange={(e) => setValue(row.key, e.target.value)}
+                      placeholder={color ? "#RRGGBB" : "not set"}
+                      className="flex-1 rounded border px-3 py-1.5 text-sm disabled:opacity-60"
+                      style={{
+                        borderColor: "var(--2a-border)",
+                        background: "var(--2a-bg-card)",
+                        fontFamily: color ? "ui-monospace, monospace" : undefined,
+                      }}
+                    />
+                  )}
 
                   {color && canEdit && (
                     <input

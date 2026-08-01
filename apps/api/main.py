@@ -39,6 +39,7 @@ from routers.documents import router as documents_router
 from routers.document_links import router as document_links_router
 from routers.document_review import router as document_review_router
 from routers.reference import router as reference_router
+from routers.semantic_search import router as semantic_search_router
 from routers.restricted_access import router as restricted_access_router
 from routers.spv import router as spv_router
 from routers.staff_assignments import router as staff_assignments_router
@@ -301,6 +302,7 @@ app.include_router(entity_documents_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(document_links_router, prefix="/api/v1")
 app.include_router(document_review_router, prefix="/api/v1")
+app.include_router(semantic_search_router, prefix="/api/v1")
 app.include_router(vdr_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")

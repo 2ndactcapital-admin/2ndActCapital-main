@@ -22,6 +22,7 @@ from services.database import get_pool
 from services.org_settings import (
     DEFAULT_SETTINGS,
     SettingsPermissionError,
+    SettingsValidationError,
     get_all_settings,
     get_public_settings,
     get_settings_detail,
@@ -156,6 +157,8 @@ async def write_org_settings(request: Request, org_id: str, body: SettingsBulk):
             )
         except SettingsPermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except SettingsValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"org_id": org_id, "settings": settings}
 
 
@@ -172,6 +175,8 @@ async def write_org_setting(
             )
         except SettingsPermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except SettingsValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"org_id": org_id, "key": key, "value": value}
 
 

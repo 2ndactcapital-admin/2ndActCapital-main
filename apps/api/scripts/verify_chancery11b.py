@@ -2,51 +2,58 @@
 
 Pass/fail only. No interactive prompts (runs UNATTENDED). Teardown at START and
 at END. This sprint has TWO real, potentially-blocking Task-1 gates that are
-checked HONESTLY before any build work, exactly like the earlier AWS Textract
-credential gate:
+checked HONESTLY before any downstream assertion, exactly like the earlier AWS
+Textract credential gate:
 
-  GATE (a) pgvector — is the `vector` extension actually enabled in the deployed
-           DB? (real `SELECT ... FROM pg_extension`; if absent, a real
-           `CREATE EXTENSION IF NOT EXISTS vector` is attempted and any
-           permission error is reported verbatim.)
-  GATE (b) Voyage AI — does a REAL Voyage API credential exist anywhere in the
-           environment, and does it GENUINELY authenticate against a real,
-           minimal embedding call? A key-shaped string is NOT enough — we make
-           the actual HTTP call and require a real embedding vector back.
+  GATE (a) pgvector — the `vector` extension is actually enabled in the deployed
+           DB (real SELECT ... FROM pg_extension).
+  GATE (b) Voyage AI — a REAL Voyage credential exists AND a genuine live
+           embedding call returns a real vector. A key-shaped string is NOT
+           enough; we make the actual API call through the real service
+           (services.document_embedding) and require an embedding back.
 
-If EITHER gate fails, Tasks 2-4 are NOT built (that is the sprint's explicit
-rule), and every downstream assertion is reported as [BLOCKED] with the exact
-reason — never a false [PASS].
+If GATE (b) fails, Tasks 2-4 are treated as un-exercisable and every downstream
+assertion is reported [BLOCKED] with the exact reason — never a false [PASS].
 
 ── Outcome of THIS run (2026-07-31) ──────────────────────────────────────────
-  GATE (a) pgvector : PASS   — `vector` extension is installed (real).
-  GATE (b) Voyage   : BLOCKED — no Voyage credential exists in this environment
-                       (process env, ~/.bashrc, ~/.profile, apps/api/.env,
-                       apps/web/.env.local, .env.example all checked; the
-                       `voyageai` SDK is not installed and no repo code
-                       references Voyage). There is no key to authenticate, so
-                       no real embedding call could be attempted.
-  => Tasks 2-4 NOT built. Downstream assertions BLOCKED. Joe must provision a
-     real VOYAGE_API_KEY (Voyage dashboard) before this phase can proceed; the
-     gate below will then authenticate it for real and the sprint can resume.
+  A real VOYAGE_API_KEY is now provisioned (apps/api/.env). GATE (b) makes a
+  live call and PASSES with a 1024-dim embedding; Tasks 2-4 are exercised for
+  real below.
 
-This script is written so that the moment a real VOYAGE_API_KEY is present, the
-Voyage gate ACTUALLY calls the live API and reports PASS/FAIL truthfully — it is
-a genuine re-runnable gate, not a stub.
+Assertions (mirror the sprint prompt):
+  A1  Task-1 findings incl. proof of a REAL successful Voyage embedding call.
+  A2  Setting a NON-Voyage embedding provider is REJECTED by the backend
+      ENDPOINT with the specific message ("Voyage is the only model enabled
+      right now") — tested over real HTTP, not just the UI.
+  A3  Setting Voyage explicitly (the only valid choice) succeeds over HTTP.
+  A4  A real test document's content is embedded + stored with the right vector
+      dimension (1024).
+  A5  A semantic query returns the RELEVANT document and NOT an unrelated one
+      (a real similarity proof — the relevant doc outranks the unrelated one).
+  A6  A restricted-access document does NOT appear in a user's results without a
+      grant, and DOES once granted (the restricted-access filter, real).
+  A7  A different org's documents never appear in this org's results (cross-org
+      isolation) + the org-isolation RLS policy is installed on the new table.
+  A8  Teardown: zero leftover rows.
+
+app_service NOTE: DATABASE_URL connects as the RLS-bypassing `postgres` role and
+cannot SET ROLE app_service (verified — InsufficientPrivilegeError), so RLS
+cannot be exercised as app_service from here (the same known constraint every
+RLS-touching sprint hit). The search's cross-org + restricted enforcement that
+users actually hit lives in the application (the org-scoped query + the reused
+visibility engines); A6/A7 test THAT real path, and A7 additionally proves the
+org-isolation RLS policy is installed as the DB backstop.
 
 Exit codes: 0 = all real assertions green; 1 = a real FAIL; 2 = BLOCKED by a
-Task-1 gate (a legitimate, expected outcome — held for manual review, not a bug).
+Task-1 gate.
 """
 
 import asyncio
 import glob
 import json
 import os
-import ssl
 import sys
 import traceback
-import urllib.error
-import urllib.request
 
 # ── Make runnable via allowlisted system python3 OR venv python ─────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,22 +66,72 @@ for _venv in (os.path.join(_REPO_ROOT, "venv"), os.path.join(_API_ROOT, "venv"))
         if _sp not in sys.path:
             sys.path.insert(0, _sp)
 
+# Ensure VOYAGE_API_KEY is in the process env for anything that reads it there
+# (the service also falls back to apps/api/.env on its own).
+if not os.environ.get("VOYAGE_API_KEY"):
+    _env = os.path.join(_API_ROOT, ".env")
+    try:
+        with open(_env) as _fh:
+            for _line in _fh:
+                _line = _line.strip()
+                if _line.startswith("VOYAGE_API_KEY=") and "=" in _line:
+                    os.environ["VOYAGE_API_KEY"] = (
+                        _line.split("=", 1)[1].strip().strip('"').strip("'")
+                    )
+                    break
+    except OSError:
+        pass
+
 import asyncpg  # noqa: E402
+
+from services import document_embedding as de  # noqa: E402
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# The pgvector-typed table this phase WOULD create (Task 2). Named here only so
-# the teardown + leftover check can prove nothing was created while blocked.
 EMBEDDING_TABLE = "document_embeddings"
 
-# Voyage credential env-var names we accept ("VOYAGE_API_KEY or similar").
-VOYAGE_KEY_NAMES = [
-    "VOYAGE_API_KEY", "VOYAGEAI_API_KEY", "VOYAGE_KEY", "VOYAGE_AI_API_KEY",
-]
-# Candidate current Voyage models to try for the minimal auth check (first that
-# returns a real 200 embedding wins).
-VOYAGE_MODELS = ["voyage-3.5", "voyage-3", "voyage-context-4", "voyage-3-lite"]
-VOYAGE_ENDPOINT = "https://api.voyageai.com/v1/embeddings"
+# ── Fixed test identifiers (all under two THROWAWAY test orgs → full teardown) ─
+ORG_MAIN = "99000000-0000-0000-0000-0000000011b1"
+ORG_OTHER = "99000000-0000-0000-0000-0000000011b2"
+
+U_ADMIN = "99000000-0000-0000-0000-00000000ad11"   # org_admin of ORG_MAIN (HTTP settings)
+U_STAFF = "99000000-0000-0000-0000-00000000f011"   # investment_staff of ORG_MAIN (search)
+SUB_ADMIN = "auth0|verify_11b_admin"
+SUB_STAFF = "auth0|verify_11b_staff"
+
+E_NORMAL = "99000000-0000-0000-0000-0000000e0001"       # not restricted (ORG_MAIN)
+E_RESTRICTED = "99000000-0000-0000-0000-0000000e0002"   # access_restricted (ORG_MAIN)
+E_OTHER = "99000000-0000-0000-0000-0000000e0003"        # ORG_OTHER
+
+D_SOLAR = "99000000-0000-0000-0000-0000000d0001"       # relevant, E_NORMAL
+D_PIE = "99000000-0000-0000-0000-0000000d0002"         # unrelated, E_NORMAL
+D_RESTRICTED = "99000000-0000-0000-0000-0000000d0003"  # relevant, E_RESTRICTED
+D_OTHER = "99000000-0000-0000-0000-0000000d0004"       # relevant, ORG_OTHER
+
+_TEST_ORGS = [ORG_MAIN, ORG_OTHER]
+
+_CONTENT = {
+    D_SOLAR: (
+        "Investment memorandum for a utility-scale solar photovoltaic power "
+        "generation facility. This renewable energy fund finances solar panel "
+        "arrays and clean electricity infrastructure across the southwest region."
+    ),
+    D_PIE: (
+        "Grandmother's classic apple pie recipe. Combine sliced apples with "
+        "cinnamon, nutmeg, butter and sugar; bake the pastry crust until golden "
+        "brown and serve warm with vanilla ice cream for dessert."
+    ),
+    D_RESTRICTED: (
+        "Confidential solar energy infrastructure investment held in a "
+        "restricted account. Photovoltaic renewable power generation project "
+        "financing and clean-energy capital commitments."
+    ),
+    D_OTHER: (
+        "Solar photovoltaic renewable energy investment fund for utility-scale "
+        "clean power generation and grid infrastructure."
+    ),
+}
+_QUERY = "renewable clean energy solar power generation investment fund"
 
 # ── tiny result harness ──────────────────────────────────────────────────────
 _RESULTS: list[tuple[str, str, str]] = []
@@ -95,202 +152,330 @@ def blocked(name, detail=""):
     print(f"[BLOCKED] {name}" + (f" — {detail}" if detail else ""))
 
 
-# ── DB helper ────────────────────────────────────────────────────────────────
 async def _connect(dsn):
     return await asyncpg.connect(dsn, statement_cache_size=0, ssl="require")
 
 
-# ── GATE (a): pgvector ───────────────────────────────────────────────────────
-async def pgvector_gate(conn):
-    """Real check: is the `vector` extension installed? If not, attempt to
-    create it and report any permission error verbatim. Returns (passed, detail)."""
-    row = await conn.fetchrow(
-        "SELECT extversion FROM pg_extension WHERE extname = 'vector'")
-    if row is not None:
-        ok("GATE (a) pgvector: extension enabled",
-           f"vector v{row['extversion']} present (real SELECT pg_extension)")
-        return True, f"vector v{row['extversion']}"
-
-    # Not enabled — try to enable it with the app's DB role.
-    try:
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        row = await conn.fetchrow(
-            "SELECT extversion FROM pg_extension WHERE extname = 'vector'")
-        if row is not None:
-            ok("GATE (a) pgvector: extension enabled by this run",
-               f"CREATE EXTENSION succeeded → vector v{row['extversion']}")
-            return True, f"vector v{row['extversion']} (created)"
-        fail("GATE (a) pgvector",
-             "CREATE EXTENSION reported success but pg_extension still has no row")
-        return False, "create reported success but not present"
-    except Exception as exc:  # noqa: BLE001
-        detail = (f"pgvector NOT enabled and this DB role cannot create it "
-                  f"({type(exc).__name__}: {exc}). Joe must enable it via "
-                  f"Supabase's SQL editor: CREATE EXTENSION IF NOT EXISTS vector;")
-        fail("GATE (a) pgvector", detail)
-        return False, detail
-
-
-# ── GATE (b): Voyage AI — REAL credential + REAL embedding call ──────────────
-def _find_voyage_key():
-    """Return (var_name, key) for the first present Voyage credential, else
-    (None, None). Also scans for ANY env var whose name contains 'VOYAGE'."""
-    for name in VOYAGE_KEY_NAMES:
-        v = os.environ.get(name)
-        if v and v.strip():
-            return name, v.strip()
-    for name, v in os.environ.items():
-        if "VOYAGE" in name.upper() and v and v.strip():
-            return name, v.strip()
-    return None, None
-
-
-def voyage_gate():
-    """If a Voyage key exists, ACTUALLY call the embeddings API and require a
-    real vector back. Never prints the key. Returns (passed, detail)."""
-    var_name, key = _find_voyage_key()
-    if not key:
-        detail = (
-            "no Voyage credential found. Checked env vars "
-            f"{VOYAGE_KEY_NAMES} (+ any name containing 'VOYAGE'); none set. "
-            "Confirmed absent from the process environment, ~/.bashrc, "
-            "~/.profile, apps/api/.env, apps/web/.env.local and .env.example; "
-            "the `voyageai` SDK is not installed and no repo code references "
-            "Voyage. Nothing to authenticate — a real embedding call cannot be "
-            "attempted. This is the expected BLOCKED outcome; Joe must "
-            "provision a real VOYAGE_API_KEY before Phase 11b can proceed."
-        )
-        blocked("GATE (b) Voyage: credential present + authenticates", detail)
-        return False, detail
-
-    # A key exists — make a genuine, minimal embedding call.
-    ctx = ssl.create_default_context()
-    last_err = None
-    for model in VOYAGE_MODELS:
-        body = json.dumps({"input": ["hello world"], "model": model}).encode()
-        req = urllib.request.Request(
-            VOYAGE_ENDPOINT, data=body, method="POST",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                payload = json.loads(resp.read().decode())
-            vec = (payload.get("data") or [{}])[0].get("embedding")
-            if isinstance(vec, list) and vec and all(
-                    isinstance(x, (int, float)) for x in vec[:4]):
-                ok("GATE (b) Voyage: credential authenticates (REAL call)",
-                   f"env var {var_name!r}, model {model!r} returned a real "
-                   f"{len(vec)}-dim embedding (HTTP 200)")
-                return True, f"{model} → dim {len(vec)}"
-            last_err = f"{model}: 200 but no embedding vector in response"
-        except urllib.error.HTTPError as e:
-            emsg = e.read().decode(errors="ignore")[:200]
-            if e.code in (401, 403):
-                detail = (f"env var {var_name!r} exists but Voyage rejected it "
-                          f"(HTTP {e.code}) — the key does NOT authenticate: {emsg}")
-                fail("GATE (b) Voyage: credential authenticates", detail)
-                return False, detail
-            last_err = f"{model}: HTTP {e.code} {emsg}"  # try next model
-        except Exception as exc:  # noqa: BLE001
-            last_err = f"{model}: {type(exc).__name__}: {exc}"
-    detail = (f"env var {var_name!r} exists but no model produced a real "
-              f"embedding. Last error: {last_err}")
-    fail("GATE (b) Voyage: credential authenticates", detail)
-    return False, detail
-
-
-# ── teardown + leftover proof (nothing should exist while blocked) ───────────
+# ── teardown (FK-safe; scoped to the two throwaway test orgs) ─────────────────
 async def teardown(conn):
-    """No embedding artifacts are created while blocked. If the table does not
-    exist yet, there is nothing to delete — that itself is the proof."""
-    exists = await conn.fetchval(
-        "SELECT to_regclass($1) IS NOT NULL", f"public.{EMBEDDING_TABLE}")
-    if exists:
-        # Defensive: if a future run created it, clear our test markers.
+    for tbl in (
+        "document_embeddings",
+        "document_narrative_extractions",
+        "document_template_extractions",
+        "document_extractions",
+        "documents",
+        "staff_assignments",
+        "restricted_access_grants",
+        "delegate_grants",
+        "entities",
+        "org_settings",
+    ):
         await conn.execute(
-            f"DELETE FROM {EMBEDDING_TABLE} WHERE org_id IS NULL")  # no-op placeholder
-    return exists
+            f"DELETE FROM {tbl} WHERE org_id = ANY($1::uuid[])", _TEST_ORGS
+        )
+    await conn.execute(
+        "DELETE FROM users WHERE org_id = ANY($1::uuid[]) OR auth0_sub = ANY($2::text[])",
+        _TEST_ORGS, [SUB_ADMIN, SUB_STAFF],
+    )
+    await conn.execute(
+        "DELETE FROM organizations WHERE id = ANY($1::uuid[])", _TEST_ORGS
+    )
 
 
+async def _leftover_count(conn) -> int:
+    total = 0
+    for tbl in (
+        "document_embeddings", "document_extractions", "documents",
+        "staff_assignments", "restricted_access_grants", "entities",
+        "org_settings",
+    ):
+        total += await conn.fetchval(
+            f"SELECT count(*) FROM {tbl} WHERE org_id = ANY($1::uuid[])", _TEST_ORGS
+        )
+    total += await conn.fetchval(
+        "SELECT count(*) FROM users WHERE org_id = ANY($1::uuid[])", _TEST_ORGS
+    )
+    total += await conn.fetchval(
+        "SELECT count(*) FROM organizations WHERE id = ANY($1::uuid[])", _TEST_ORGS
+    )
+    return total
+
+
+# ── seed ──────────────────────────────────────────────────────────────────────
+async def seed(conn):
+    await conn.execute(
+        "INSERT INTO organizations (id, name, slug) VALUES "
+        "($1,'Verify 11b Main','verify-11b-main'),($2,'Verify 11b Other','verify-11b-other')",
+        ORG_MAIN, ORG_OTHER,
+    )
+    await conn.execute(
+        "INSERT INTO users (id, org_id, email, role, auth0_sub) VALUES "
+        "($1,$2,'verify_11b_admin@test.local','org_admin',$3),"
+        "($4,$2,'verify_11b_staff@test.local','investment_staff',$5)",
+        U_ADMIN, ORG_MAIN, SUB_ADMIN, U_STAFF, SUB_STAFF,
+    )
+    await conn.execute(
+        "INSERT INTO entities (id, org_id, entity_type, display_name, access_restricted) VALUES "
+        "($1,$2,'trust','Normal Trust',false),"
+        "($3,$2,'trust','Restricted Trust',true),"
+        "($4,$5,'trust','Other Org Trust',false)",
+        E_NORMAL, ORG_MAIN, E_RESTRICTED, E_OTHER, ORG_OTHER,
+    )
+    # staff visibility: U_STAFF assigned to BOTH ORG_MAIN entities.
+    await conn.execute(
+        "INSERT INTO staff_assignments (org_id, entity_id, assigned_to_user_id) VALUES "
+        "($1,$2,$3),($1,$4,$3)",
+        ORG_MAIN, E_NORMAL, U_STAFF, E_RESTRICTED,
+    )
+    # documents + their extracted text
+    docs = [
+        (D_SOLAR, ORG_MAIN, E_NORMAL, "solar_memo.pdf", "narrative"),
+        (D_PIE, ORG_MAIN, E_NORMAL, "apple_pie.pdf", "narrative"),
+        (D_RESTRICTED, ORG_MAIN, E_RESTRICTED, "restricted_solar.pdf", "narrative"),
+        (D_OTHER, ORG_OTHER, E_OTHER, "other_solar.pdf", "narrative"),
+    ]
+    for did, oid, eid, fname, fam in docs:
+        await conn.execute(
+            "INSERT INTO documents (id, org_id, entity_id, original_filename, "
+            "source, status, doc_family) VALUES ($1,$2,$3,$4,'upload','stored',$5)",
+            did, oid, eid, fname, fam,
+        )
+        await conn.execute(
+            "INSERT INTO document_extractions (document_id, org_id, extraction_method, "
+            "extracted_text) VALUES ($1,$2,'native_text',$3)",
+            did, oid, _CONTENT[did],
+        )
+
+
+# ── the run ───────────────────────────────────────────────────────────────────
 async def main_async():
     print("=== Chancery Phase 11b verify (semantic INDEX+RETRIEVE) — start ===")
     conn = await _connect(DATABASE_URL)
     gate_a = gate_b = False
     try:
-        # ── Task 1 gates (checked FIRST, honestly) ──────────────────────────
-        print("\n--- TASK 1: two gates (checked before any build work) ---")
-        table_existed_start = await teardown(conn)  # teardown-at-START
-        gate_a, a_detail = await pgvector_gate(conn)
-        gate_b, b_detail = voyage_gate()  # sync HTTP; fine inside async
+        await teardown(conn)  # teardown-at-START
 
-        both = gate_a and gate_b
+        # ── GATE (a): pgvector ──────────────────────────────────────────────
+        row = await conn.fetchrow(
+            "SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+        if row:
+            gate_a = True
+            ok("GATE (a) pgvector enabled", f"vector v{row['extversion']} (real SELECT)")
+        else:
+            fail("GATE (a) pgvector enabled", "vector extension absent")
 
-        # ── Downstream assertions (Tasks 2-4) ───────────────────────────────
-        # Assertion list mirrors the sprint prompt exactly.
-        print("\n--- Downstream assertions (Tasks 2-4) ---")
+        # ── GATE (b): REAL live Voyage embedding call ───────────────────────
+        b_detail = ""
+        key = de._voyage_api_key()
+        if not key:
+            blocked("GATE (b) Voyage credential + live call",
+                    "no VOYAGE_API_KEY in env or apps/api/.env — cannot call")
+        else:
+            try:
+                vecs = await de.embed_texts(
+                    ["the quick brown fox"], provider="voyage",
+                    model=de.DEFAULT_EMBEDDING_MODEL, input_type="document",
+                )
+                dim = len(vecs[0])
+                if dim == de.EMBEDDING_DIMENSIONS:
+                    gate_b = True
+                    b_detail = f"model {de.DEFAULT_EMBEDDING_MODEL} → real {dim}-dim vector"
+                    ok("GATE (b) Voyage credential + live call (REAL)", b_detail)
+                else:
+                    fail("GATE (b) Voyage credential + live call",
+                         f"returned dim {dim}, expected {de.EMBEDDING_DIMENSIONS}")
+            except Exception as exc:  # noqa: BLE001
+                blocked("GATE (b) Voyage credential + live call",
+                        f"live call failed: {type(exc).__name__}: {exc}")
 
-        # A1 — report Task 1 findings incl. PROOF of a real Voyage call + pgvector.
-        if both:
+        # A1 — Task-1 findings + proof of the real Voyage call.
+        if gate_a and gate_b:
             ok("A1: Task-1 findings reported (pgvector + REAL Voyage proof)",
-               f"pgvector={a_detail}; voyage={b_detail}")
+               f"pgvector v{row['extversion']}; voyage {b_detail}; dim="
+               f"{de.EMBEDDING_DIMENSIONS}; providers shown={de.EMBEDDING_PROVIDERS}; "
+               f"enabled={sorted(de.ENABLED_EMBEDDING_PROVIDERS)}")
         else:
-            reason = []
-            if not gate_a:
-                reason.append(f"pgvector gate FAILED ({a_detail})")
-            else:
-                reason.append(f"pgvector OK ({a_detail})")
-            if not gate_b:
-                reason.append("Voyage gate FAILED — cannot prove a real "
-                              f"successful embedding call: {b_detail}")
             blocked("A1: Task-1 findings incl. proof of a REAL Voyage call",
-                    " | ".join(reason))
+                    "a Task-1 gate did not pass — see GATE lines above")
 
-        # A2 — a real test document's content is embedded and stored.
-        if both:
-            fail("A2: test document embedded + stored",
-                 "gates passed but build not implemented in this run")
-        else:
-            blocked("A2: a real test document's content is embedded + stored",
-                    "Task 2 (embedding service + pgvector table) NOT built — "
-                    "blocked by the Voyage gate; no embeddings can be produced "
-                    "without a working Voyage credential.")
+        if not (gate_a and gate_b):
+            # Gate failed → do not exercise Tasks 2-4; block the rest honestly.
+            for a in ("A2: non-Voyage provider REJECTED by endpoint",
+                      "A3: setting Voyage explicitly succeeds",
+                      "A4: real document embedded + stored (dim 1024)",
+                      "A5: semantic query returns relevant, not unrelated",
+                      "A6: restricted doc hidden without grant",
+                      "A7: cross-org isolation + RLS policy installed",
+                      "A8: teardown zero leftover rows"):
+                blocked(a, "blocked by Task-1 gate (no real Voyage embedding path)")
+            await teardown(conn)
+            return gate_a, gate_b
 
-        # A3 — semantic query returns the relevant doc, not an unrelated one.
-        if both:
-            fail("A3: semantic query returns relevant (not unrelated)",
-                 "gates passed but build not implemented in this run")
-        else:
-            blocked("A3: semantic query returns relevant doc, NOT an unrelated one",
-                    "Task 3 (semantic search) NOT built — blocked by the Voyage "
-                    "gate; no query/document embeddings exist to compare.")
+        # ── Build the test corpus ───────────────────────────────────────────
+        await seed(conn)
 
-        # A4 — results respect visibility (restricted doc hidden from other user).
-        if both:
-            fail("A4: results respect visibility engines",
-                 "gates passed but build not implemented in this run")
-        else:
-            blocked("A4: restricted-access doc absent from another user's results",
-                    "Task 3 search + Task 2 store NOT built — blocked by the "
-                    "Voyage gate; no search path exists to enforce visibility on.")
+        # A2 + A3 — real HTTP round-trip against the settings ENDPOINT.
+        await _http_settings_assertions()
 
-        # A5 — teardown: zero leftover rows.
-        table_existed_end = await teardown(conn)  # teardown-at-END
-        if both:
-            fail("A5: teardown zero leftover rows",
-                 "gates passed but build not implemented in this run")
+        # ── INDEX: embed all four documents through the real service ─────────
+        from services.database import get_pool
+        pool = await get_pool()
+        outcomes = {}
+        for did in (D_SOLAR, D_PIE, D_RESTRICTED, D_OTHER):
+            oid = ORG_OTHER if did == D_OTHER else ORG_MAIN
+            outcomes[did] = await de.embed_document(pool, {"id": did}, oid)
+
+        # A4 — the relevant doc is embedded + stored with the right dimension.
+        emb = await conn.fetchrow(
+            "SELECT provider, model, dimensions, content_source, "
+            "vector_dims(embedding) AS vdim FROM document_embeddings WHERE document_id = $1",
+            D_SOLAR,
+        )
+        if (emb and emb["dimensions"] == de.EMBEDDING_DIMENSIONS
+                and emb["vdim"] == de.EMBEDDING_DIMENSIONS
+                and outcomes[D_SOLAR].get("outcome") == "embedded"):
+            ok("A4: real document embedded + stored (dim 1024)",
+               f"provider={emb['provider']} model={emb['model']} "
+               f"dims={emb['dimensions']} vector_dims={emb['vdim']} "
+               f"source={emb['content_source']}")
         else:
-            blocked("A5: teardown leaves zero leftover rows",
-                    f"no embedding artifacts were created while blocked "
-                    f"(table public.{EMBEDDING_TABLE} exists at start="
-                    f"{table_existed_start}, end={table_existed_end}; expected "
-                    f"False/False — nothing built, nothing to leak).")
+            fail("A4: real document embedded + stored (dim 1024)",
+                 f"row={dict(emb) if emb else None} outcome={outcomes[D_SOLAR]}")
+
+        # A5 — relevant beats unrelated (real similarity proof). One search;
+        # results are distance-sorted, so results[0] is the top hit.
+        res_all = await de.semantic_search(
+            pool, ORG_MAIN, U_STAFF, _QUERY, is_staff=True, limit=10)
+        ids_all = [r["document_id"] for r in res_all]
+        sim = {r["document_id"]: r["similarity"] for r in res_all}
+        top_is_solar = bool(res_all) and res_all[0]["document_id"] == D_SOLAR
+        solar_beats_pie = (
+            D_SOLAR in sim and D_PIE in sim and sim[D_SOLAR] > sim[D_PIE]
+        )
+        if top_is_solar and solar_beats_pie:
+            ok("A5: semantic query returns relevant, not unrelated",
+               f"top-1={res_all[0]['document_id'][:8]}(solar) "
+               f"sim(solar)={sim[D_SOLAR]} > sim(pie)={sim[D_PIE]}")
+        else:
+            fail("A5: semantic query returns relevant, not unrelated",
+                 f"top={res_all[0]['document_id'] if res_all else None} sims={sim} all={ids_all}")
+
+        # A6 — restricted doc hidden without a grant, visible once granted.
+        no_grant_ids = ids_all  # same search as A5 (U_STAFF has no grant yet)
+        restricted_hidden = D_RESTRICTED not in no_grant_ids and D_SOLAR in no_grant_ids
+        await conn.execute(
+            "INSERT INTO restricted_access_grants (org_id, entity_id, user_id) "
+            "VALUES ($1,$2,$3)", ORG_MAIN, E_RESTRICTED, U_STAFF,
+        )
+        res_granted = await de.semantic_search(
+            pool, ORG_MAIN, U_STAFF, _QUERY, is_staff=True, limit=10)
+        granted_ids = [r["document_id"] for r in res_granted]
+        restricted_now_visible = D_RESTRICTED in granted_ids
+        if restricted_hidden and restricted_now_visible:
+            ok("A6: restricted doc hidden without grant, shown with grant",
+               f"no-grant results={[i[:8] for i in no_grant_ids]}; "
+               f"after grant restricted present={restricted_now_visible}")
+        else:
+            fail("A6: restricted doc hidden without grant",
+                 f"hidden_without_grant={restricted_hidden} "
+                 f"visible_after_grant={restricted_now_visible} "
+                 f"no_grant={no_grant_ids} granted={granted_ids}")
+
+        # A7 — cross-org isolation (real query path) + RLS policy installed.
+        cross = D_OTHER not in granted_ids and D_OTHER not in no_grant_ids
+        # confirm D_OTHER really was embedded (so its absence is isolation, not a no-op)
+        other_embedded = await conn.fetchval(
+            "SELECT count(*) FROM document_embeddings WHERE document_id = $1", D_OTHER)
+        policy = await conn.fetchval(
+            "SELECT count(*) FROM pg_policy WHERE polrelid = 'public.document_embeddings'::regclass "
+            "AND polname = 'document_embeddings_org_isolation'")
+        rls_on = await conn.fetchval(
+            "SELECT relrowsecurity FROM pg_class WHERE oid = 'public.document_embeddings'::regclass")
+        if cross and other_embedded == 1 and policy == 1 and rls_on:
+            ok("A7: cross-org isolation + RLS policy installed",
+               f"ORG_OTHER doc embedded={other_embedded} yet absent from ORG_MAIN "
+               f"results; RLS enabled={rls_on}, org-isolation policy present={policy==1}")
+        else:
+            fail("A7: cross-org isolation + RLS policy installed",
+                 f"cross_ok={cross} other_embedded={other_embedded} "
+                 f"policy={policy} rls_on={rls_on}")
+
+        # A8 — teardown leaves zero leftover rows.
+        await teardown(conn)  # teardown-at-END
+        left = await _leftover_count(conn)
+        if left == 0:
+            ok("A8: teardown zero leftover rows", "all test rows removed")
+        else:
+            fail("A8: teardown zero leftover rows", f"{left} rows remain")
     finally:
         await conn.close()
+        try:
+            from services.database import close_pool
+            await close_pool()
+        except Exception:  # noqa: BLE001
+            pass
 
     return gate_a, gate_b
+
+
+# ── A2/A3: real HTTP round-trip against the settings endpoint ────────────────
+async def _http_settings_assertions():
+    """Drive the REAL PUT /api/v1/orgs/{org}/settings endpoint via TestClient,
+    proving the non-Voyage rejection and Voyage acceptance are enforced by the
+    BACKEND (HTTP 400 + exact message), not just the UI."""
+    try:
+        import main
+        from starlette.testclient import TestClient
+    except Exception as exc:  # noqa: BLE001
+        fail("A2: non-Voyage provider REJECTED by endpoint",
+             f"could not import app/TestClient: {type(exc).__name__}: {exc}")
+        fail("A3: setting Voyage explicitly succeeds", "app import failed")
+        return
+
+    main.verify_token = lambda _t: {"sub": SUB_ADMIN,
+                                    "email": "verify_11b_admin@test.local",
+                                    "org_id": ORG_MAIN}
+    hdr = {"Authorization": "Bearer stub"}
+    url = f"/api/v1/orgs/{ORG_MAIN}/settings"
+
+    # These are synchronous (TestClient) — run them off the event loop thread.
+    def _drive():
+        out = {}
+        with TestClient(main.app, raise_server_exceptions=False) as c:
+            out["reject"] = c.put(
+                url, headers=hdr, json={"values": {"ai.embedding.provider": "openai"}})
+            out["accept"] = c.put(
+                url, headers=hdr, json={"values": {"ai.embedding.provider": "voyage"}})
+        return out
+
+    out = await asyncio.to_thread(_drive)
+
+    rej = out["reject"]
+    rej_body = {}
+    try:
+        rej_body = rej.json()
+    except Exception:  # noqa: BLE001
+        pass
+    if rej.status_code == 400 and rej_body.get("detail") == de.EMBEDDING_PROVIDER_DISABLED_MSG:
+        ok("A2: non-Voyage provider REJECTED by endpoint",
+           f"HTTP {rej.status_code}, detail={rej_body.get('detail')!r}")
+    else:
+        fail("A2: non-Voyage provider REJECTED by endpoint",
+             f"HTTP {rej.status_code}, body={rej_body}")
+
+    acc = out["accept"]
+    acc_body = {}
+    try:
+        acc_body = acc.json()
+    except Exception:  # noqa: BLE001
+        pass
+    saved = (acc_body.get("settings") or {}).get("ai.embedding.provider")
+    if acc.status_code == 200 and saved == "voyage":
+        ok("A3: setting Voyage explicitly succeeds",
+           f"HTTP {acc.status_code}, ai.embedding.provider={saved!r}")
+    else:
+        fail("A3: setting Voyage explicitly succeeds",
+             f"HTTP {acc.status_code}, body={json.dumps(acc_body)[:200]}")
 
 
 def summarize(gate_a, gate_b):
@@ -308,7 +493,7 @@ def summarize(gate_a, gate_b):
             if s == "FAIL":
                 print(f"  - {name}: {detail}")
     if n_block:
-        print("\nBLOCKED (legitimate — held for manual review):")
+        print("\nBLOCKED:")
         for s, name, detail in _RESULTS:
             if s == "BLOCKED":
                 print(f"  - {name}: {detail}")
@@ -317,9 +502,8 @@ def summarize(gate_a, gate_b):
         print("\nRESULT: FAIL — see failures above.")
         return 1
     if n_block:
-        print("\nRESULT: BLOCKED — a Task-1 gate did not pass. This is an "
-              "honest, expected outcome (no Voyage credential). Tasks 2-4 were "
-              "correctly NOT built. Provision a real VOYAGE_API_KEY and re-run.")
+        print("\nRESULT: BLOCKED — a Task-1 gate did not pass (honest, expected "
+              "outcome). Provision a real VOYAGE_API_KEY and re-run.")
         return 2
     print("\nRESULT: PASS — all assertions green.")
     return 0
@@ -332,7 +516,7 @@ if __name__ == "__main__":
     ga = gb = False
     try:
         ga, gb = asyncio.run(main_async())
-    except Exception:  # noqa: BLE001 — a crash is itself a failure to report
+    except Exception:  # noqa: BLE001
         print("[FATAL] verify crashed:")
         traceback.print_exc()
         _RESULTS.append(("FAIL", "verify run", "crashed — see traceback"))

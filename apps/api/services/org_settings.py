@@ -81,6 +81,15 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # stronger model per-org. Resolved via extraction.resolve_model with
     # key=DOCUMENT_CLASSIFIER_MODEL_KEY (falls back to ai.model.default).
     "ai.model.document_classifier": "claude-haiku-4-5-20251001",
+    # Chancery Phase 11b — the org's semantic-embedding provider + model. Same
+    # dotted ai.* namespace / auto-categorization as ai.model.* above. Every org
+    # defaults to Voyage, which is the ONLY functionally-enabled provider right
+    # now (see the write-time validation below and services/document_embedding).
+    # An org_admin may see OpenAI/Google/Cohere in the settings dropdown, but the
+    # backend REJECTS setting any of them until they are actually enabled.
+    "ai.embedding.provider": "voyage",
+    "ai.embedding.model": "voyage-3.5",
+    "ai.embedding.dimensions": 1024,
 }
 
 # Category per key, used when a key is written for the first time and when
@@ -105,6 +114,36 @@ def category_for(key: str) -> str:
 
 class SettingsPermissionError(Exception):
     """Raised when a caller may not write the requested org's settings."""
+
+
+class SettingsValidationError(Exception):
+    """Raised when a setting's VALUE is not allowed (router maps this to 400).
+
+    Distinct from SettingsPermissionError (403): the caller MAY write settings,
+    but the specific value is rejected — e.g. selecting an embedding provider
+    that is not yet functionally enabled.
+    """
+
+
+def _validate_setting(key: str, value) -> None:
+    """Reject values that are not allowed for a given key.
+
+    This is the SOURCE-OF-TRUTH backend enforcement (Chancery Phase 11b): an org
+    may SEE the full embedding-provider landscape in the UI, but only Voyage is
+    functionally enabled, so any attempt to SET a non-Voyage provider is rejected
+    here — not merely hidden in the client, which could be bypassed by calling
+    the API directly. Clearing the key (value None) resets it to the default
+    (Voyage) and is allowed.
+    """
+    if key == "ai.embedding.provider" and value is not None:
+        # Lazy import avoids a module-load cycle (document_embedding imports
+        # get_setting from this module).
+        from services.document_embedding import (
+            EMBEDDING_PROVIDER_DISABLED_MSG,
+            ENABLED_EMBEDDING_PROVIDERS,
+        )
+        if str(value).lower() not in ENABLED_EMBEDDING_PROVIDERS:
+            raise SettingsValidationError(EMBEDDING_PROVIDER_DISABLED_MSG)
 
 
 def _decode(value):
@@ -231,6 +270,10 @@ async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=No
         raise SettingsPermissionError(
             f"Role '{role}' may not manage settings for org {org_id}"
         )
+
+    # Value-level validation (may raise SettingsValidationError → HTTP 400). Runs
+    # AFTER the permission check so a forbidden caller learns 403, not 400.
+    _validate_setting(key, value)
 
     # json.dumps handles every scalar correctly: "USD" -> '"USD"', None ->
     # 'null', True -> 'true'. Passing the raw scalar would violate the jsonb

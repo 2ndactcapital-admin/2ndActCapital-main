@@ -822,6 +822,34 @@ async def _store_and_sort(pool, doc, org_id, file_bytes, extracted_text):
     # entity linkage in this SAME flow — the exact mirror of the K-1 hook above.
     await _maybe_extract_narrative(pool, doc, org_id, sort_result)
 
+    # Phase 11b: semantic INDEX. Runs LAST — after K-1/narrative extraction — so
+    # its content assembly can incorporate the summary/provisions/mapped_fields
+    # those hooks just produced. Fires for ANY document that made it through
+    # STORE+SORT (every doc type is searchable), self-skipping when there is no
+    # extractable content or no Voyage credential. Same degrade-gracefully
+    # discipline as the K-1/narrative hooks.
+    await _maybe_embed_document(pool, doc, org_id, sort_result)
+
+
+async def _maybe_embed_document(pool, doc, org_id, sort_result):
+    """Phase 11b: after STORE+SORT, embed the document's content for semantic
+    search and upsert it into ``document_embeddings``.
+
+    Unlike the K-1/narrative hooks (which gate on a specific SORT category),
+    embedding fires for EVERY document that reached SORT — all document types are
+    searchable. It self-skips inside ``embed_document`` when there is no
+    extractable content or no Voyage credential. A failure logs and leaves the
+    document at its last good status rather than failing the whole pipeline
+    (mirrors STORE/SORT and the other extraction hooks)."""
+    if sort_result is None:
+        return
+    try:
+        from services import document_embedding  # local import: only on this path
+        await document_embedding.embed_document(pool, doc, org_id)
+    except Exception as exc:  # noqa: BLE001 — embedding failure ≠ pipeline failure
+        print(f"[chancery] embedding failed for {doc['id']}: "
+              f"{type(exc).__name__}: {exc}")
+
 
 async def _maybe_extract_k1(pool, doc, org_id, file_bytes, sort_result):
     """When SORT classified the document as a K-1, run Phase-3 template
