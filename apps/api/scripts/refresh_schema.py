@@ -7,12 +7,29 @@ Writes the snapshot to docs/schema_snapshot.sql at the repo root.
 PgBouncer-safe: statement_cache_size=0.
 """
 import asyncio
+import glob
 import os
 import pathlib
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+API_ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT_FILE = REPO_ROOT / "docs" / "schema_snapshot.sql"
+
+
+def _bootstrap_env() -> None:
+    """Make `python3 scripts/refresh_schema.py` self-sufficient: put the venv
+    site-packages on the path (asyncpg) and load apps/api/.env if present."""
+    for sp in glob.glob(str(API_ROOT / "venv" / "lib" / "python*" / "site-packages")):
+        if sp not in sys.path:
+            sys.path.insert(0, sp)
+    env_path = API_ROOT / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k, v)
 
 
 async def main() -> None:
@@ -92,4 +109,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    _bootstrap_env()
     asyncio.run(main())
