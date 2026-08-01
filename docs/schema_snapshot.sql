@@ -337,6 +337,21 @@
 --   completed_at                             timestamp with time zone
 --   PRIMARY KEY document_drops_pkey: (id)
 
+-- ===== document_embeddings =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   document_id                              uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   provider                                 text NOT NULL
+--   model                                    text NOT NULL
+--   dimensions                               integer NOT NULL
+--   content_source                           text NOT NULL
+--   content_chars                            integer NOT NULL DEFAULT 0
+--   embedding                                USER-DEFINED NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE document_embeddings_document_id_key: (document_id)
+--   PRIMARY KEY document_embeddings_pkey: (id)
+
 -- ===== document_entity_links =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   document_id                              uuid NOT NULL
