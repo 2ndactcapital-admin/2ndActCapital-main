@@ -1345,8 +1345,14 @@
 --   nav_pinned                               boolean NOT NULL DEFAULT false
 --   profile_id                               uuid
 --   manager_id                               uuid
+--   invite_token                             text
+--   invite_status                            text
+--   invited_by                               uuid
+--   invited_at                               timestamp with time zone
+--   invite_expires_at                        timestamp with time zone
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
+--   UNIQUE users_invite_token_key: (invite_token)
 --   PRIMARY KEY users_pkey: (id)
 
 -- ===== vdr_deal_proposals =====
