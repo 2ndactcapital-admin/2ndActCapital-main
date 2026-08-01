@@ -20,6 +20,7 @@ from services.audit import write_audit_log
 from services.database import get_pool
 from services.extraction import call_claude_with_tools
 from services.org_settings import get_brand_name
+from services.permissions import is_staff
 from services.rbac import get_user_permissions
 from services.users import ensure_user
 
@@ -70,11 +71,17 @@ async def _run_loop(
     pool,
     user_id: str,
     org_id: str,
+    caller_is_staff: bool,
 ) -> dict:
     """Run the assistant LLM loop.
 
     READ tools execute automatically; WRITE tools stop the loop and are returned
     as proposed_action — they are NEVER executed from here.
+
+    ``caller_is_staff`` is resolved once (``services.permissions.is_staff``) and
+    threaded into every handler so visibility-scoped READ actions (e.g. the
+    entities/investments count actions) pick the correct staff-vs-member
+    visibility engine — the SAME signal ``routers.semantic_search`` uses.
     """
     disclosures: list[str] = []
     render: dict | None = None
@@ -169,6 +176,7 @@ async def _run_loop(
                                 pool=pool,
                                 user_id=user_id,
                                 org_id=org_id,
+                                is_staff=caller_is_staff,
                                 **tool_input,
                             )
                         except Exception as exc:
@@ -188,6 +196,7 @@ async def _run_loop(
                         pool=pool,
                         user_id=user_id,
                         org_id=org_id,
+                        is_staff=caller_is_staff,
                         **tool_input,
                     )
                     disclosures.append(action.description)
@@ -382,6 +391,11 @@ async def post_message(request: Request, body: MessageBody):
     tool_specs = REGISTRY.to_tool_specs(allowed)
     action_map = {a.key.replace(".", "_"): a for a in allowed}
 
+    # Staff-vs-member decides the visibility engine for scoped READ actions —
+    # resolved from the token exactly as routers.semantic_search does, never
+    # from the request body.
+    caller_is_staff = is_staff(request)
+
     # Append new user message
     user_msg = {"role": "user", "content": body.message, "_display": None}
     stored_messages.append(user_msg)
@@ -390,7 +404,9 @@ async def post_message(request: Request, body: MessageBody):
     api_messages = _to_api_messages(stored_messages)
 
     # Run the loop
-    result = await _run_loop(api_messages, tool_specs, action_map, pool, user_id, org_id)
+    result = await _run_loop(
+        api_messages, tool_specs, action_map, pool, user_id, org_id, caller_is_staff
+    )
 
     # Persist updated messages
     all_stored = stored_messages + result["new_messages"]

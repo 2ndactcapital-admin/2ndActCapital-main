@@ -3,7 +3,9 @@
 Import and call each module's register_actions() at app startup so they load
 into the global REGISTRY before any request is served.
 """
-from services.assistant_actions import crm, entity_graph, marketplace, portfolio, spv, tasks
+from services.assistant_actions import (
+    crm, entity_graph, marketplace, portfolio, queries, spv, tasks,
+)
 
 
 def register_all() -> None:
@@ -13,3 +15,4 @@ def register_all() -> None:
     tasks.register_actions()
     spv.register_actions()
     entity_graph.register_actions()
+    queries.register_actions()

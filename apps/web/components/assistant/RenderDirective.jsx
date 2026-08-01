@@ -72,11 +72,74 @@ function ToDoList({ todos = [] }) {
   );
 }
 
+function CountCard({ count = 0, noun = "result", plural, filters = {}, rows = [], renderRow }) {
+  const chips = Object.entries(filters).filter(([, v]) => v);
+  return (
+    <div className="mt-2 rounded border border-[#ece8dd] bg-white px-3 py-2">
+      <p className="text-sm">
+        <span className="text-2xl font-semibold text-[var(--2a-navy)]">{count}</span>
+        <span className="ml-1 text-[var(--2a-text-secondary)]">
+          {count === 1 ? noun : (plural || `${noun}s`)}
+        </span>
+      </p>
+      {chips.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {chips.map(([k, v]) => (
+            <span key={k} className="rounded-full bg-[var(--2a-bg-sidebar)] px-2 py-0.5 text-xs text-[var(--2a-text-muted)]">
+              {k}: {String(v)}
+            </span>
+          ))}
+        </div>
+      )}
+      {rows.length > 0 && (
+        <ul className="mt-2 space-y-1">{rows.map(renderRow)}</ul>
+      )}
+    </div>
+  );
+}
+
+function EntityCount({ count = 0, entities = [], filters = {} }) {
+  return (
+    <CountCard
+      count={count}
+      noun="entity"
+      plural="entities"
+      filters={filters}
+      rows={entities}
+      renderRow={(e) => (
+        <li key={e.id} className="flex items-center justify-between rounded border border-[#ece8dd] px-3 py-1.5 text-sm">
+          <span className="text-[var(--2a-text)]">{e.display_name}</span>
+          <span className="text-xs capitalize text-[var(--2a-text-muted)]">{e.entity_type}</span>
+        </li>
+      )}
+    />
+  );
+}
+
+function InvestmentCount({ count = 0, investments = [], filters = {} }) {
+  return (
+    <CountCard
+      count={count}
+      noun="investment"
+      filters={filters}
+      rows={investments}
+      renderRow={(inv) => (
+        <li key={inv.id} className="flex items-center justify-between rounded border border-[#ece8dd] px-3 py-1.5 text-sm">
+          <span className="text-[var(--2a-text)]">{inv.deal_name}</span>
+          <span className="text-xs text-[var(--2a-text-muted)]">{inv.investment_stage}</span>
+        </li>
+      )}
+    />
+  );
+}
+
 const COMPONENT_MAP = {
   DealList,
   InvestmentCard,
   NoteDraft,
   ToDoList,
+  EntityCount,
+  InvestmentCount,
   SPVList,
   CapTable,
   SPVLedger,
