@@ -58,8 +58,21 @@ async def _has_any_role(pool, user_id) -> bool:
 async def has_permission(pool, user_id, org_id, permission_name: str) -> bool:
     """True if the user holds ``permission_name``.
 
+    Super Admin (platform staff) always passes — checked FIRST, before any
+    other logic runs. This mirrors the explicit ``is_super_admin`` escape hatch
+    every RLS policy, ``restricted_access`` check, ``staff_visibility`` gate and
+    the Workflow Manager's own permission resolver already carry. Without it, a
+    super_admin who ever picks up *any* row in ``user_roles`` would fall through
+    to the strict per-permission check below and be silently locked out of every
+    endpoint using ``require_permission`` — the "zero roles = default-allow"
+    posture only shields them by the accident of that table being empty.
+
     Default-allow when the user has no roles assigned (single-admin stage).
     """
+    async with pool.acquire() as conn:
+        principal = await load_principal(conn, user_id)
+    if is_super_admin(principal):
+        return True
     if not await _has_any_role(pool, user_id):
         return True
     perms = await get_user_permissions(pool, user_id, org_id)
