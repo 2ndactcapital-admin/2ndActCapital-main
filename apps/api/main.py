@@ -34,6 +34,7 @@ from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
 from routers.portfolio import router as portfolio_router
 from routers.profiles import router as profiles_router
+from routers.tenant import router as tenant_router
 from routers.entity_documents import router as entity_documents_router
 from routers.documents import router as documents_router
 from routers.document_links import router as document_links_router
@@ -65,7 +66,15 @@ API_VERSION = "0.1.0"
 # /api/v1/theme/public is public by design: the login screen must render the
 # tenant's branding before anyone has a token. It serves only is_public
 # settings (colours, fonts, names) — never member data.
-PUBLIC_PATHS = {"/health", "/debug/user-info", "/api/v1/theme/public"}
+PUBLIC_PATHS = {
+    "/health",
+    "/debug/user-info",
+    "/api/v1/theme/public",
+    # Pre-auth tenant resolution: must run before anyone has a token so a future
+    # per-tenant SAML step knows which org a login attempt is for. Resolves only
+    # public org metadata (id/name/slug) — never member data. See routers/tenant.
+    "/api/v1/tenant/resolve",
+}
 
 
 class Settings(BaseSettings):
@@ -319,6 +328,7 @@ app.include_router(users_router, prefix="/api/v1")
 app.include_router(allocation_lens_router, prefix="/api/v1")
 app.include_router(ledger_router, prefix="/api/v1")
 app.include_router(org_settings_router, prefix="/api/v1")
+app.include_router(tenant_router, prefix="/api/v1")
 app.include_router(restricted_access_router, prefix="/api/v1")
 app.include_router(trading_authority_router, prefix="/api/v1")
 app.include_router(profiles_router, prefix="/api/v1")

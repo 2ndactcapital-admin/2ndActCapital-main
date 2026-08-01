@@ -12,8 +12,6 @@ theme otherwise); reading *another* org requires super_admin. Writes go through
 ``can_manage_org_settings``.
 """
 
-import re
-
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -30,11 +28,10 @@ from services.org_settings import (
     set_settings,
 )
 from services.rbac import is_super_admin, load_principal
+from services.tenant import SlugValidationError, validate_slug
 from services.users import ensure_user
 
 router = APIRouter(tags=["org-settings"])
-
-SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class SettingValue(BaseModel):
@@ -98,14 +95,17 @@ async def list_orgs(request: Request):
 async def create_org(request: Request, body: OrgCreate):
     """Create a tenant org. Onboarding a Ripasso client starts here."""
     name = body.name.strip()
-    slug = body.slug.strip().lower()
+    slug = body.slug.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Organization name is required")
-    if not SLUG_RE.match(slug):
-        raise HTTPException(
-            status_code=400,
-            detail="Slug must be lowercase alphanumeric words separated by hyphens",
-        )
+    # A slug is about to become a LIVE public subdomain, so validate it is
+    # genuinely DNS-safe and not a reserved platform host. Uppercase/special
+    # input is REJECTED, not coerced — the caller must supply exactly the
+    # subdomain they will get.
+    try:
+        validate_slug(slug)
+    except SlugValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     pool = await get_pool()
     async with pool.acquire() as conn:
