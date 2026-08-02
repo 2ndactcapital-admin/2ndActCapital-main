@@ -29,6 +29,7 @@ from routers.entity_graph import router as entity_graph_router
 from routers.ownership_tree import router as ownership_tree_router
 from routers.households import router as households_router
 from routers.investment_profile import router as investment_profile_router
+from routers.invites import router as invites_router
 from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
@@ -322,6 +323,7 @@ app.include_router(ownership_tree_router, prefix="/api/v1")
 app.include_router(reference_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(invites_router, prefix="/api/v1")
 app.include_router(staff_assignments_router, prefix="/api/v1")
 app.include_router(households_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
