@@ -857,6 +857,17 @@
 --   UNIQUE jl_line_unique: (entry_id, line_no)
 --   PRIMARY KEY journal_lines_pkey: (id)
 
+-- ===== marketing_contacts =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   name                                     text NOT NULL
+--   firm                                     text NOT NULL
+--   email                                    text NOT NULL
+--   aum                                      text
+--   note                                     text
+--   source_host                              text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY marketing_contacts_pkey: (id)
+
 -- ===== member_investments =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL

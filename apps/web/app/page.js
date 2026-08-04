@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import { brandName, loadTheme } from "@/lib/theme";
+import { resolveTenant } from "@/lib/tenant";
+import HollisworksMarketing from "@/components/HollisworksMarketing";
 
 const AscentMark = ({ size = 64 }) => (
   <svg
@@ -15,7 +17,31 @@ const AscentMark = ({ size = 64 }) => (
   </svg>
 );
 
+// On the platform apex, the page is the Hollisworks marketing site and carries
+// its own title/description (overriding the tenant-themed layout metadata). On a
+// tenant subdomain we defer to the layout's tenant-branded metadata.
+export async function generateMetadata() {
+  const tenant = await resolveTenant();
+  if (tenant.marketing) {
+    return {
+      title: "Hollisworks — AI orchestration for the modern RIA",
+      description:
+        "Hollis maps, watches, reads, drafts, and proves. AI orchestration for the modern RIA.",
+    };
+  }
+  return {};
+}
+
 export default async function MarketingPage() {
+  // Hollisworks multi-tenant: the platform apex (hollisworks.com / www) is the
+  // Hollisworks marketing site, not a tenant. A real firm subdomain (e.g.
+  // 2ndactcapital.hollisworks.com) resolves to that tenant and falls through to
+  // its own app landing below. This decision is owned by the pre-auth resolver.
+  const tenant = await resolveTenant();
+  if (tenant.marketing) {
+    return <HollisworksMarketing />;
+  }
+
   const session = await auth0.getSession();
   if (session) redirect("/dashboard");
 

@@ -30,6 +30,7 @@ from routers.ownership_tree import router as ownership_tree_router
 from routers.households import router as households_router
 from routers.investment_profile import router as investment_profile_router
 from routers.invites import router as invites_router
+from routers.marketing import router as marketing_router
 from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
@@ -75,6 +76,11 @@ PUBLIC_PATHS = {
     # per-tenant SAML step knows which org a login attempt is for. Resolves only
     # public org metadata (id/name/slug) — never member data. See routers/tenant.
     "/api/v1/tenant/resolve",
+    # Hollisworks marketing surface (platform apex, pre-tenant). Firm-search
+    # reads only public org metadata; contact stores an anonymous lead. Both run
+    # before anyone has a token. See routers/marketing.
+    "/api/v1/marketing/firm-search",
+    "/api/v1/marketing/contact",
 }
 
 
@@ -315,6 +321,7 @@ app.include_router(document_review_router, prefix="/api/v1")
 app.include_router(semantic_search_router, prefix="/api/v1")
 app.include_router(vdr_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
+app.include_router(marketing_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(spv_router, prefix="/api/v1")

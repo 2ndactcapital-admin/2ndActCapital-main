@@ -140,23 +140,40 @@ def extract_subdomain(host) -> str | None:
 async def resolve_tenant(conn, host) -> dict:
     """Resolve a request's Host header to a tenant org, pre-auth-safe.
 
-    Returns a dict with ``org_id`` (always populated — the resolved tenant or
-    :data:`DEFAULT_ORG_ID`), ``org_slug``, ``org_name``, ``subdomain``,
-    ``source`` (``"subdomain"`` | ``"default"``) and ``resolved`` (True only
-    when a matching org was found for the subdomain). NEVER raises: any error,
-    an unknown subdomain, or a malformed Host all fall back to the default org
-    so 2nd Act's own operation is unchanged.
+    Headless Multi-Tenant Sprint 1 CORRECTION (Hollisworks marketing): the
+    bare/default host is NOT a tenant. Hollisworks is the licensable *platform*;
+    the apex ``hollisworks.com`` / ``www.hollisworks.com`` is the platform's own
+    marketing site, and each client firm (2nd Act included) is reached ONLY via
+    its own ``<slug>.hollisworks.com`` subdomain. So the no-subdomain case now
+    signals "show the Hollisworks marketing page" rather than silently resolving
+    to 2nd Act's :data:`DEFAULT_ORG_ID` as if that were a real tenant match.
+
+    Returns a dict with:
+      * ``org_id``   — the resolved tenant's id, or ``None`` in the marketing
+        case (deliberately NOT DEFAULT_ORG_ID — there is no real tenant).
+      * ``org_slug`` / ``org_name`` — populated only for a resolved tenant.
+      * ``subdomain`` — the extracted label (``None`` for apex/www/malformed).
+      * ``source``   — ``"subdomain"`` for a resolved tenant, else ``"platform"``.
+      * ``resolved`` — True only when a matching org was found for the subdomain.
+      * ``marketing``— True whenever there is no resolved tenant, i.e. the
+        Hollisworks marketing page should be served. ``marketing == not resolved``.
+
+    NEVER raises: any error, an apex host, an unknown subdomain, or a malformed
+    Host all yield the marketing case. 2nd Act's own app is unchanged — it simply
+    resolves through its ``2ndactcapital.hollisworks.com`` subdomain like any
+    other tenant.
 
     ``conn`` must come from the shared RLS-aware pool; the pre-auth read relies
     on the ``organizations_preauth_resolve`` carve-out under app_service.
     """
     result = {
-        "org_id": str(DEFAULT_ORG_ID),
+        "org_id": None,
         "org_slug": None,
         "org_name": None,
         "subdomain": None,
-        "source": "default",
+        "source": "platform",
         "resolved": False,
+        "marketing": True,
     }
     try:
         sub = extract_subdomain(host)
@@ -172,15 +189,13 @@ async def resolve_tenant(conn, host) -> dict:
                     org_name=row["name"],
                     source="subdomain",
                     resolved=True,
+                    marketing=False,
                 )
                 return result
-        # Fallback: the default org. Best-effort enrich name/slug for the
-        # caller; org_id is already the default and stays so on any failure.
-        row = await conn.fetchrow(
-            "SELECT id, name, slug FROM organizations WHERE id = $1", DEFAULT_ORG_ID
-        )
-        if row is not None:
-            result.update(org_slug=row["slug"], org_name=row["name"])
+        # No subdomain (apex/www), an unknown subdomain, or a malformed Host:
+        # this is the platform's own marketing surface, NOT a tenant. Leave
+        # org_id None + marketing True so the frontend serves the Hollisworks
+        # page instead of mistaking the request for 2nd Act's app.
     except Exception as exc:  # never block a request on tenant resolution
-        print(f"[tenant] resolve failed, falling back to default org: {exc}")
+        print(f"[tenant] resolve failed, serving platform marketing: {exc}")
     return result

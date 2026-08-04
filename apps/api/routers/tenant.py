@@ -19,10 +19,17 @@ router = APIRouter(tags=["tenant"])
 
 
 @router.get("/tenant/resolve")
-async def resolve(request: Request):
-    """Resolve the caller's Host header to a tenant org (pre-auth-safe)."""
-    host = request.headers.get("host")
+async def resolve(request: Request, host: str | None = None):
+    """Resolve a Host to a tenant org (pre-auth-safe).
+
+    The Next.js frontend runs server-side, so a plain fetch to this endpoint
+    would carry the API's own Host, not the browser's. It therefore forwards the
+    real browser host as the ``?host=`` query param, which takes precedence here.
+    Absent the param we fall back to the request's own Host header (direct/curl
+    callers). Either way resolution is identical and never raises.
+    """
+    effective_host = host or request.headers.get("host")
     pool = await get_pool()
     async with pool.acquire() as conn:
-        tenant = await resolve_tenant(conn, host)
+        tenant = await resolve_tenant(conn, effective_host)
     return tenant

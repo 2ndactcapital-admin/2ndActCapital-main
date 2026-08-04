@@ -8,9 +8,10 @@ What this proves (each [Y] reported explicitly):
     plain organizations.slug column, proxy.js having no tenant logic, and the
     real POST /orgs shape) — reported explicitly.
   * Host "myria.ripasso.com" resolves to the seeded org with slug 'myria'.
-  * Host "2ndactcapital.com" (bare domain) falls back to DEFAULT_ORG_ID.
-  * An unrecognized subdomain falls back gracefully to DEFAULT_ORG_ID.
-  * A malformed/garbage Host does not crash the resolver.
+  * The bare apex (no subdomain) yields the platform MARKETING case (no tenant,
+    org_id None) — the Sprint 1 correction, NOT DEFAULT_ORG_ID.
+  * An unrecognized subdomain also yields the marketing case, gracefully.
+  * A malformed/garbage Host does not crash the resolver (→ marketing case).
   * POST /orgs REJECTS an invalid slug (uppercase / special char / reserved).
   * POST /orgs accepts a valid, available slug.
   * The pre-auth lookup genuinely works under LIVE RLS via the NON-BYPASS
@@ -225,15 +226,27 @@ async def resolver_unit_checks(conn):
     for g in garbage:
         try:
             r = await resolve_tenant(conn, g)
-            if r.get("org_id") != DEFAULT_ORG_ID and not r.get("resolved"):
-                crashed = f"host={g!r} unexpected result {r}"
+            # Sprint 1 CORRECTION: the resolver must never raise and must always
+            # return a well-formed dict. A garbage/no-subdomain host yields the
+            # marketing case (org_id None); the ONE input that happens to carry a
+            # real subdomain ("myria.ripasso.com:" — trailing colon stripped)
+            # legitimately resolves. Either way: no raise, and marketing is the
+            # boolean complement of resolved.
+            well_formed = (
+                isinstance(r, dict)
+                and "marketing" in r
+                and isinstance(r.get("marketing"), bool)
+                and r.get("marketing") is not r.get("resolved")
+            )
+            if not well_formed:
+                crashed = f"host={g!r} malformed result {r}"
         except Exception as exc:  # noqa: BLE001
             crashed = f"host={g!r} raised {type(exc).__name__}: {exc}"
             break
     if crashed is None:
         ok(
-            "[malformed] resolver never crashes on garbage Host, falls back to default",
-            f"tested {len(garbage)} malformed inputs — all → DEFAULT_ORG_ID, no raise",
+            "[malformed] resolver never crashes on garbage Host, always well-formed",
+            f"tested {len(garbage)} inputs — no raise; marketing == not resolved throughout",
         )
     else:
         fail("[malformed] resolver never crashes on garbage Host", crashed)
@@ -268,44 +281,48 @@ def endpoint_tests():
             fail("[resolve] Host 'myria.ripasso.com' → seeded org id",
                  f"status={r.status_code} body={b}")
 
-        # 3 — bare domain 2ndactcapital.com → DEFAULT_ORG_ID
-        r = c.get("/api/v1/tenant/resolve", headers={"host": "2ndactcapital.com"})
+        # 3 — bare domain (no subdomain) → platform MARKETING, not a tenant.
+        # Sprint 1 CORRECTION: the apex is Hollisworks' own marketing site; it
+        # must NOT resolve to 2nd Act's DEFAULT_ORG_ID as if a real tenant.
+        r = c.get("/api/v1/tenant/resolve", headers={"host": "hollisworks.com"})
         b = r.json() if r.status_code == 200 else {}
         if (
             r.status_code == 200
-            and str(b.get("org_id")) == DEFAULT_ORG_ID
+            and b.get("marketing") is True
             and b.get("resolved") is False
-            and b.get("source") == "default"
+            and b.get("org_id") is None
+            and b.get("source") == "platform"
         ):
-            ok("[resolve] Host '2ndactcapital.com' (no subdomain) → DEFAULT_ORG_ID",
-               f"org_id={b.get('org_id')} — 2nd Act's own behavior unchanged")
+            ok("[resolve] apex 'hollisworks.com' (no subdomain) → marketing (no tenant)",
+               f"marketing={b.get('marketing')} org_id={b.get('org_id')} — NOT DEFAULT_ORG_ID")
         else:
-            fail("[resolve] Host '2ndactcapital.com' → DEFAULT_ORG_ID",
+            fail("[resolve] apex → marketing case",
                  f"status={r.status_code} body={b}")
 
-        # 4 — unrecognized subdomain → DEFAULT_ORG_ID, no error
+        # 4 — unrecognized subdomain → marketing (no tenant match), no error
         r = c.get("/api/v1/tenant/resolve",
-                  headers={"host": "nosuchtenant-xyz.ripasso.com"})
+                  headers={"host": "nosuchtenant-xyz.hollisworks.com"})
         b = r.json() if r.status_code == 200 else {}
         if (
             r.status_code == 200
-            and str(b.get("org_id")) == DEFAULT_ORG_ID
+            and b.get("marketing") is True
             and b.get("resolved") is False
+            and b.get("org_id") is None
         ):
-            ok("[resolve] unrecognized subdomain → DEFAULT_ORG_ID (graceful)",
-               f"subdomain={b.get('subdomain')} org_id={b.get('org_id')}")
+            ok("[resolve] unrecognized subdomain → marketing (graceful)",
+               f"subdomain={b.get('subdomain')} marketing={b.get('marketing')}")
         else:
-            fail("[resolve] unrecognized subdomain → DEFAULT_ORG_ID",
+            fail("[resolve] unrecognized subdomain → marketing",
                  f"status={r.status_code} body={b}")
 
-        # 5 — malformed Host via the endpoint does not crash (200 + default)
+        # 5 — malformed Host via the endpoint does not crash (200 + marketing)
         r = c.get("/api/v1/tenant/resolve", headers={"host": "garbage.value"})
         b = r.json() if r.status_code == 200 else {}
-        if r.status_code == 200 and str(b.get("org_id")) == DEFAULT_ORG_ID:
-            ok("[resolve] malformed Host via endpoint → 200 + DEFAULT_ORG_ID (no crash)",
-               f"org_id={b.get('org_id')}")
+        if r.status_code == 200 and b.get("marketing") is True and b.get("org_id") is None:
+            ok("[resolve] malformed Host via endpoint → 200 + marketing (no crash)",
+               f"marketing={b.get('marketing')}")
         else:
-            fail("[resolve] malformed Host via endpoint → 200 + DEFAULT",
+            fail("[resolve] malformed Host via endpoint → 200 + marketing",
                  f"status={r.status_code} body={b}")
 
         # 6 — POST /orgs rejects invalid slugs (uppercase / special / reserved)
