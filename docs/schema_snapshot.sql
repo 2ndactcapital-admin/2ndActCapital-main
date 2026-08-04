@@ -985,6 +985,9 @@
 --   name                                     text NOT NULL
 --   slug                                     text NOT NULL
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   saml_connection_name                     text
+--   login_url                                text
+--   enroll_url                               text
 --   PRIMARY KEY organizations_pkey: (id)
 --   UNIQUE organizations_slug_key: (slug)
 
