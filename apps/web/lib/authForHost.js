@@ -1,5 +1,9 @@
 import { auth0 } from "@/lib/auth0";
 import { getHollisworksAuth0 } from "@/lib/auth0Hollisworks";
+import {
+  HOLLISWORKS_ADMIN_HOST,
+  isHollisworksAdminHost,
+} from "@/lib/authHostConfig";
 
 /**
  * Host → Auth0 client selection (Hollisworks admin tenant wiring).
@@ -9,27 +13,23 @@ import { getHollisworksAuth0 } from "@/lib/auth0Hollisworks";
  * subdomain, the Hollisworks marketing apex, localhost — continues to use the
  * EXISTING 2nd Act client (`lib/auth0.js`) with no change whatsoever.
  *
- * Kept in its own module (not inlined in proxy.js) so the login page and any
- * future admin route resolve the exact same client the middleware used, and so
- * the selection rule has a single source of truth.
+ * The host predicate and the tenant-config resolution now live in the pure,
+ * dependency-free `lib/authHostConfig.mjs` so there is a SINGLE source of truth
+ * that both the app (middleware + login page) and the hermetic Node test harness
+ * exercise. `HOLLISWORKS_ADMIN_HOST` / `isHollisworksAdminHost` are re-exported
+ * here so existing importers (e.g. app/login/page.js) keep working unchanged.
  */
 
-export const HOLLISWORKS_ADMIN_HOST = "admin.hollisworks.com";
-
-/** True when the request's Host is the Hollisworks admin surface. */
-export function isHollisworksAdminHost(host) {
-  if (!host) return false;
-  // Strip any :port and lowercase for a robust compare.
-  const bare = String(host).split(":")[0].trim().toLowerCase();
-  return bare === HOLLISWORKS_ADMIN_HOST;
-}
+export { HOLLISWORKS_ADMIN_HOST, isHollisworksAdminHost };
 
 /**
  * Return the Auth0 client for a given request Host.
  *
  * DEFAULT is the existing 2nd Act client — so for every non-admin host the
  * behavior is provably identical to before this sprint. Only the exact
- * admin.hollisworks.com host diverges to the Hollisworks tenant.
+ * admin.hollisworks.com host diverges to the Hollisworks tenant. If the
+ * Hollisworks tenant is misconfigured, `getHollisworksAuth0()` throws (fail
+ * loud) rather than silently authenticating admin staff against 2nd Act.
  */
 export function getAuthClientForHost(host) {
   return isHollisworksAdminHost(host) ? getHollisworksAuth0() : auth0;

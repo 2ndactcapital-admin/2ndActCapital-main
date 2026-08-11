@@ -1,0 +1,85 @@
+# hollisworksroutingfix.structural — sprint log
+
+Two real, production-observed routing bugs. Discovery-first, then fixes, then
+live-equivalent verification. HELD for manual review regardless of tier.
+
+## TASK 1 — Discovery (real deployed files, real root cause per bug)
+
+### 1a — Bug 2 (admin.hollisworks.com login → wrong Auth0 tenant)
+Deployed route path (all present on main, i.e. deployed):
+  - `apps/web/app/login/page.js` reads Host, picks the client via
+    `getAuthClientForHost(host)`, then `redirect("/auth/login?returnTo=...")`.
+  - `apps/web/proxy.js` (Next 16 middleware) ALSO calls
+    `getAuthClientForHost(request.headers.get("host"))` and runs
+    `authClient.middleware(request)` — this is what actually mounts/handles
+    `/auth/login` and builds the authorize redirect.
+  - `apps/web/lib/authForHost.js` → admin host → `getHollisworksAuth0()`
+    (`apps/web/lib/auth0Hollisworks.js`), else the 2nd Act `auth0` client.
+REAL ROOT CAUSE: `auth0Hollisworks.js` built the client with
+`domain: process.env.HOLLISWORKS_AUTH0_DOMAIN`. Those `HOLLISWORKS_AUTH0_*` env
+vars are NOT set in the deployed environment (absent from apps/web/.env.local;
+not in Vercel prod). The Auth0 SDK constructor silently falls back —
+`domain: options.domain ?? process.env.AUTH0_DOMAIN`
+(node_modules/@auth0/nextjs-auth0/dist/server/client.js:804-805) — so the
+"Hollisworks" client was actually pointed at 2nd Act's tenant
+(dev-smmrfubsfscif3t1). Auth then completed against the wrong tenant and the
+callback (Hollisworks `__hw_session`/clientId mismatch) failed with "the state
+parameter is invalid". The isolated sprint test masked this: it SET
+`HOLLISWORKS_AUTH0_DOMAIN` and only grep'd source strings, so it never observed
+the SDK's fallback under production env.
+
+### 1b — Bug 1 (2ndactcapital.com → Hollisworks marketing)
+The bare `2ndactcapital.com` (2nd Act's OWN, separate root marketing domain) is
+served by the SAME Vercel app. Path: `app/page.js` → `lib/tenant.js`
+`resolveTenant()` → `GET /api/v1/tenant/resolve` → `services/tenant.py`
+`resolve_tenant`.
+REAL ROOT CAUSE: `extract_subdomain("2ndactcapital.com")` is a 2-label host →
+returns `None`, and `resolve_tenant` treated EVERY no-subdomain/apex host as the
+Hollisworks platform apex → `marketing=True`. So 2nd Act's own root domain
+rendered Hollisworks' marketing page. The marketing-vs-tenant decision was never
+scoped to the `hollisworks.com` domain family.
+
+### 1c — Deployment/caching
+NOT a stale build. The `hollisworksmarketing` and `hollisworksauth` commits are
+on `main` (HEAD == main at discovery: 0cfe70e). Production runs the merged code,
+so both were live LOGIC bugs, not deploy lag.
+
+## TASK 2 — Bug 1 fix (services/tenant.py)
+Added `HOLLISWORKS_PLATFORM_DOMAIN` + `is_hollisworks_platform_host()`.
+`resolve_tenant` now applies the marketing/tenant logic ONLY within the
+`hollisworks.com` family. Any host NOT under hollisworks.com (2ndactcapital.com,
+its www, localhost, direct API host) → default org (2nd Act), `marketing=False`
+— restoring 2nd Act's own operation. `*.hollisworks.com` behavior unchanged.
+
+## TASK 3 — Bug 2 fix (apps/web/lib/)
+New pure module `lib/authHostConfig.mjs` (zero imports): single source of truth
+for host→tenant resolution with a FAIL-LOUD `resolveAuthTenantForHost()` that
+THROWS `HollisworksAuthConfigError` when `HOLLISWORKS_AUTH0_*` are missing —
+NEVER silently falls back to 2nd Act. `auth0Hollisworks.js` now builds the client
+through it (explicit domain/clientId/secret, so the SDK fallback can't trigger).
+`authForHost.js` re-exports the host predicate from the shared module (login and
+admin-console pages unchanged). 2nd Act's `lib/auth0.js` untouched; every
+non-admin host still uses it.
+
+## TASK 4 / VERIFICATION — verify_hollisworksroutingfix.py  → 12 passed, 0 failed
+Bug 1: FastAPI TestClient with REAL Host headers hits the REAL resolver:
+  - "2ndactcapital.com"              → marketing=False, org=2nd Act (FIXED)
+  - "2ndactcapital.hollisworks.com"  → 2nd Act app (no regression)
+  - "hollisworks.com"                → Hollisworks marketing (no regression)
+Bug 2: Node subprocess harness (authhostconfig_harness.mjs) exercises the REAL
+deployed `lib/authHostConfig.mjs`:
+  - admin.hollisworks.com            → Hollisworks tenant (dev-gy85vzuf6mruzv3j)
+  - 2nd Act subdomain + root domain  → 2nd Act tenant (dev-smmrfubsfscif3t1) [regression]
+  - missing Hollisworks env          → THROWS (pre-fix would have used 2nd Act) [fail-loud]
+  - 2nd Act path unaffected by Hollisworks misconfig [regression]
+Teardown: sentinel marketing_contacts row round-tripped and removed → 0 leftover.
+
+Also updated the prior HELD `verify_hollisworksauth.py` [2:web] grep to the new
+single-source layout (env refs now live in authHostConfig.mjs) — intent preserved.
+
+## PRODUCTION FOLLOW-UP (config, cannot be done from code) — REQUIRED for Bug 2
+Set in Vercel (Production + Preview): HOLLISWORKS_AUTH0_DOMAIN=
+dev-gy85vzuf6mruzv3j.us.auth0.com, HOLLISWORKS_AUTH0_CLIENT_ID,
+HOLLISWORKS_AUTH0_CLIENT_SECRET (and optionally HOLLISWORKS_AUTH0_SECRET /
+_AUDIENCE). Until set, admin.hollisworks.com/login now FAILS LOUD (clear config
+error) instead of silently logging staff into the 2nd Act tenant.

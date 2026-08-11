@@ -156,19 +156,25 @@ def uses_new_config():
     hollis_src = _read(os.path.join(_WEB_ROOT, "lib", "auth0Hollisworks.js"))
     forhost_src = _read(os.path.join(_WEB_ROOT, "lib", "authForHost.js"))
     login_src = _read(os.path.join(_WEB_ROOT, "app", "login", "page.js"))
+    # hollisworksroutingfix: the host literal + the HOLLISWORKS_AUTH0_* references
+    # now live in the single-source, fail-loud resolver lib/authHostConfig.mjs;
+    # auth0Hollisworks.js builds its client THROUGH that resolver.
+    cfg_src = _read(os.path.join(_WEB_ROOT, "lib", "authHostConfig.mjs"))
 
     # Web: the Hollisworks client is built from the real HOLLISWORKS_AUTH0_* vars,
     # and the host selector maps admin.hollisworks.com → that client.
     web_ok = (
-        "process.env.HOLLISWORKS_AUTH0_DOMAIN" in hollis_src
-        and "process.env.HOLLISWORKS_AUTH0_CLIENT_ID" in hollis_src
-        and "admin.hollisworks.com" in forhost_src
+        "HOLLISWORKS_AUTH0_DOMAIN" in cfg_src
+        and "HOLLISWORKS_AUTH0_CLIENT_ID" in cfg_src
+        and "resolveAuthTenantForHost" in hollis_src
+        and "admin.hollisworks.com" in cfg_src
         and "getHollisworksAuth0" in forhost_src
         and "getAuthClientForHost" in login_src
     )
     if web_ok:
         ok("[2:web] admin.hollisworks.com flow references the NEW Hollisworks config",
-           "auth0Hollisworks.js reads HOLLISWORKS_AUTH0_DOMAIN + CLIENT_ID; "
+           "authHostConfig.mjs reads HOLLISWORKS_AUTH0_DOMAIN + CLIENT_ID (fail-loud); "
+           "auth0Hollisworks.js builds through resolveAuthTenantForHost(); "
            "authForHost.js maps admin.hollisworks.com → getHollisworksAuth0(); "
            "the login page selects the client by Host.")
     else:

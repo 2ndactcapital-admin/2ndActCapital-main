@@ -1,4 +1,8 @@
 import { Auth0Client } from "@auth0/nextjs-auth0/server";
+import {
+  HOLLISWORKS_ADMIN_HOST,
+  resolveAuthTenantForHost,
+} from "@/lib/authHostConfig";
 
 /**
  * SECOND, SEPARATE Auth0 tenant — the Hollisworks platform-staff tenant.
@@ -29,15 +33,23 @@ let _client = null;
 
 export function getHollisworksAuth0() {
   if (_client) return _client;
+
+  // Bug 2 fix: resolve the Hollisworks tenant's config through the single,
+  // fail-loud resolver. If HOLLISWORKS_AUTH0_DOMAIN / _CLIENT_ID / _CLIENT_SECRET
+  // are missing this THROWS instead of returning 2nd Act's config — so we can
+  // never build a client that the Auth0 SDK would silently point at 2nd Act's
+  // tenant (via its `domain: options.domain ?? process.env.AUTH0_DOMAIN`
+  // fallback). Passing the resolved values EXPLICITLY guarantees the SDK uses
+  // the Hollisworks tenant and never the AUTH0_* fallback.
+  const cfg = resolveAuthTenantForHost(HOLLISWORKS_ADMIN_HOST);
+
   _client = new Auth0Client({
-    domain: process.env.HOLLISWORKS_AUTH0_DOMAIN,
-    clientId: process.env.HOLLISWORKS_AUTH0_CLIENT_ID,
-    clientSecret: process.env.HOLLISWORKS_AUTH0_CLIENT_SECRET,
-    secret: process.env.HOLLISWORKS_AUTH0_SECRET || process.env.AUTH0_SECRET,
+    domain: cfg.domain,
+    clientId: cfg.clientId,
+    clientSecret: cfg.clientSecret,
+    secret: cfg.secret,
     authorizationParameters: {
-      audience:
-        process.env.HOLLISWORKS_AUTH0_AUDIENCE ||
-        "https://api.2ndactcapital.com",
+      audience: cfg.audience,
       scope: "openid profile email",
     },
     // Distinct session cookie so a Hollisworks staff session is never confused

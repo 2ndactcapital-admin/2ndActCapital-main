@@ -35,6 +35,57 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SLUG_MIN_LEN = 2
 SLUG_MAX_LEN = 63  # a single DNS label may not exceed 63 octets
 
+# The Hollisworks *platform* domain family. The marketing-vs-tenant decision
+# below is scoped to THIS domain only: `hollisworks.com` / `www.hollisworks.com`
+# is the platform marketing site, and each client firm is reached via its own
+# `<slug>.hollisworks.com` subdomain.
+#
+# Bug 1 fix: `2ndactcapital.com` is 2nd Act's OWN, separate root marketing domain
+# — NOT part of the Hollisworks family. Before this fix, `resolve_tenant` treated
+# every bare/apex host (2 labels) as the platform apex and returned the
+# Hollisworks marketing page, so 2ndactcapital.com wrongly rendered Hollisworks'
+# site. Any host that is not under `hollisworks.com` now falls back to the
+# default org (2nd Act's own operation), exactly as it did before the platform
+# existed, and never shows the Hollisworks marketing page.
+HOLLISWORKS_PLATFORM_DOMAIN = "hollisworks.com"
+
+
+def _bare_host(host) -> str | None:
+    """Normalize a Host header to a bare lowercase hostname, or ``None``.
+
+    Strips any ``:port`` and a trailing FQDN dot; rejects IPv6 literals and
+    empty/garbage input. NEVER raises.
+    """
+    if not host or not isinstance(host, str):
+        return None
+    try:
+        h = host.strip().lower()
+        if not h or h.startswith("[") or "]" in h:
+            return None
+        h = h.split(":", 1)[0].rstrip(".")
+        return h or None
+    except Exception:
+        return None
+
+
+def is_hollisworks_platform_host(host) -> bool:
+    """True when ``host`` belongs to the Hollisworks platform domain family.
+
+    That is ``hollisworks.com`` itself or any ``*.hollisworks.com`` subdomain
+    (incl. ``www`` and any tenant slug). The Hollisworks marketing-vs-tenant
+    logic applies ONLY within this family. 2nd Act's own root domain
+    (``2ndactcapital.com``), localhost, direct API hosts and bare IPs are
+    deliberately NOT part of it, so they fall back to the default org instead of
+    the Hollisworks marketing page (Bug 1 fix).
+    """
+    bare = _bare_host(host)
+    if not bare:
+        return False
+    return (
+        bare == HOLLISWORKS_PLATFORM_DOMAIN
+        or bare.endswith("." + HOLLISWORKS_PLATFORM_DOMAIN)
+    )
+
 # Subdomains that would collide with real platform / infrastructure hosts, or
 # with 2nd Act's / Ripasso's own bare hosts. A new tenant may not claim any of
 # these because the slug becomes a literal, live subdomain.
@@ -176,6 +227,25 @@ async def resolve_tenant(conn, host) -> dict:
         "marketing": True,
     }
     try:
+        # Bug 1 fix: the Hollisworks marketing-vs-tenant logic is scoped to the
+        # Hollisworks platform domain family ONLY. Any host that is NOT under
+        # hollisworks.com — 2nd Act's own root domain (2ndactcapital.com), its
+        # www, localhost, a direct API host, a bare IP — is 2nd Act's own
+        # operation and resolves to the default org, NEVER the Hollisworks
+        # marketing page. This restores the pre-platform behavior for those
+        # hosts.
+        if not is_hollisworks_platform_host(host):
+            result.update(
+                org_id=DEFAULT_ORG_ID,
+                source="default",
+                resolved=False,
+                marketing=False,
+            )
+            return result
+
+        # Within the Hollisworks platform family: a real firm subdomain resolves
+        # to that tenant; the apex/www or an unknown subdomain is the platform's
+        # own marketing surface.
         sub = extract_subdomain(host)
         result["subdomain"] = sub
         if sub:
@@ -192,7 +262,7 @@ async def resolve_tenant(conn, host) -> dict:
                     marketing=False,
                 )
                 return result
-        # No subdomain (apex/www), an unknown subdomain, or a malformed Host:
+        # Apex/www of hollisworks.com, or an unknown *.hollisworks.com subdomain:
         # this is the platform's own marketing surface, NOT a tenant. Leave
         # org_id None + marketing True so the frontend serves the Hollisworks
         # page instead of mistaking the request for 2nd Act's app.
