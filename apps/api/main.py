@@ -91,6 +91,14 @@ class Settings(BaseSettings):
 
     auth0_domain: str = "dev-smmrfubsfscif3t1.us.auth0.com"
     auth0_audience: str = "https://api.2ndactcapital.com"
+    # Second, SEPARATE Auth0 tenant — Hollisworks platform-staff tenant, used
+    # ONLY for admin.hollisworks.com. Purely additive: when the domain is unset
+    # (current production) NOTHING below runs and token validation behaves
+    # exactly as it did for the single 2nd Act tenant. Audience defaults to the
+    # same platform API so a single backend accepts staff tokens, differentiated
+    # only by issuer.
+    hollisworks_auth0_domain: str = ""
+    hollisworks_auth0_audience: str = "https://api.2ndactcapital.com"
     # Comma-separated list of allowed CORS origins.  Defaults to local dev;
     # override with ALLOWED_ORIGINS in production to include the Render URL.
     allowed_origins: str = "http://localhost:3000,https://2ndactcapital.com"
@@ -102,6 +110,18 @@ class Settings(BaseSettings):
     @property
     def jwks_url(self) -> str:
         return f"https://{self.auth0_domain}/.well-known/jwks.json"
+
+    @property
+    def hollisworks_enabled(self) -> bool:
+        return bool(self.hollisworks_auth0_domain)
+
+    @property
+    def hollisworks_issuer(self) -> str:
+        return f"https://{self.hollisworks_auth0_domain}/"
+
+    @property
+    def hollisworks_jwks_url(self) -> str:
+        return f"https://{self.hollisworks_auth0_domain}/.well-known/jwks.json"
 
 
 @lru_cache
@@ -118,14 +138,22 @@ def get_jwks() -> dict:
     return response.json()
 
 
-def verify_token(token: str) -> dict:
-    """Validate a Bearer token against the Auth0 tenant.
-
-    Returns the decoded claims on success and raises ``JWTError`` otherwise.
-    """
+@lru_cache
+def get_hollisworks_jwks() -> dict:
+    """Fetch and cache the Hollisworks tenant JWKS (second, separate tenant)."""
     settings = get_settings()
-    jwks = get_jwks()
+    response = httpx.get(settings.hollisworks_jwks_url, timeout=10.0)
+    response.raise_for_status()
+    return response.json()
 
+
+def _decode_against(token: str, jwks: dict, *, audience: str, issuer: str) -> dict:
+    """Decode+validate ``token`` against one tenant's JWKS/audience/issuer.
+
+    Raises ``JWTError`` on any mismatch (unknown kid, bad signature, wrong
+    audience/issuer). This is the exact validation the single-tenant path always
+    performed — factored out so a second tenant can reuse it verbatim.
+    """
     unverified_header = jwt.get_unverified_header(token)
     rsa_key = next(
         (
@@ -149,9 +177,59 @@ def verify_token(token: str) -> dict:
         token,
         rsa_key,
         algorithms=["RS256"],
-        audience=settings.auth0_audience,
-        issuer=settings.issuer,
+        audience=audience,
+        issuer=issuer,
     )
+
+
+def is_hollisworks_claims(claims: dict | None) -> bool:
+    """True when a validated token was issued by the Hollisworks tenant.
+
+    Platform staff authenticate against the Hollisworks tenant, so its issuer IS
+    the Super Admin signal (see ``_resolve_is_super_admin`` and
+    ``services.users.ensure_user``). Returns False when Hollisworks is not
+    configured, so the 2nd Act path is never treated as staff.
+    """
+    settings = get_settings()
+    if not settings.hollisworks_enabled or not claims:
+        return False
+    return claims.get("iss") == settings.hollisworks_issuer
+
+
+def verify_token(token: str) -> dict:
+    """Validate a Bearer token against the Auth0 tenant(s).
+
+    The 2nd Act tenant is tried FIRST with its exact original parameters, so a
+    2nd Act token takes the identical code path it always did. Only if that
+    rejects the token AND the Hollisworks tenant is configured do we additively
+    try the Hollisworks tenant (admin.hollisworks.com staff). If both reject,
+    the original 2nd Act ``JWTError`` is raised — unchanged failure behavior.
+
+    Returns the decoded claims on success and raises ``JWTError`` otherwise.
+    """
+    settings = get_settings()
+
+    # 1. Existing 2nd Act tenant — unchanged.
+    try:
+        return _decode_against(
+            token,
+            get_jwks(),
+            audience=settings.auth0_audience,
+            issuer=settings.issuer,
+        )
+    except JWTError as primary_error:
+        # 2. Additive fallback: the separate Hollisworks tenant, only when set.
+        if settings.hollisworks_enabled:
+            try:
+                return _decode_against(
+                    token,
+                    get_hollisworks_jwks(),
+                    audience=settings.hollisworks_auth0_audience,
+                    issuer=settings.hollisworks_issuer,
+                )
+            except JWTError:
+                pass
+        raise primary_error
 
 
 app = FastAPI(title="Ripasso API", version=API_VERSION)
@@ -181,6 +259,11 @@ async def _resolve_is_super_admin(request: Request) -> bool:
     sub = claims.get("sub")
     if not sub:
         return False
+    # Hollisworks-tenant identity IS platform staff — recognized directly from the
+    # validated token issuer, before (and independent of) any users-row read, so a
+    # first request establishes Super Admin context without a write race.
+    if is_hollisworks_claims(claims):
+        return True
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT role FROM users WHERE auth0_sub = $1", sub)

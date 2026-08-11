@@ -53,12 +53,30 @@ async def ensure_user(conn, request: Request) -> str:
     if not sub:
         return get_user_id(request)
 
+    # Hollisworks-tenant identity IS platform staff → role 'super_admin'. Detected
+    # from the validated token issuer (lazy import avoids a circular import with
+    # main). Non-Hollisworks callers are unaffected and stay 'member'.
+    try:
+        from main import is_hollisworks_claims
+
+        is_staff = is_hollisworks_claims(claims)
+    except Exception:
+        is_staff = False
+    role = "super_admin" if is_staff else "member"
+
     try:
         # 1. Canonical lookup by auth0_sub.
         by_sub = await conn.fetchrow(
-            "SELECT id FROM users WHERE auth0_sub = $1", sub
+            "SELECT id, role FROM users WHERE auth0_sub = $1", sub
         )
         if by_sub:
+            # Promote an existing Hollisworks staff row if it predates this
+            # mapping. Never demotes and never touches non-staff rows.
+            if is_staff and by_sub["role"] != "super_admin":
+                await conn.execute(
+                    "UPDATE users SET role = 'super_admin' WHERE id = $1",
+                    by_sub["id"],
+                )
             return str(by_sub["id"])
 
         # 2. Verify scripts stub sub = a seeded user's UUID id.
@@ -86,15 +104,19 @@ async def ensure_user(conn, request: Request) -> str:
         inserted = await conn.fetchrow(
             """
             INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
-            VALUES (uuid_generate_v4(), $1, $2, $3, $4, 'member')
+            VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5)
             ON CONFLICT (auth0_sub) DO UPDATE
                 SET email = COALESCE(
                     NULLIF(EXCLUDED.email, EXCLUDED.auth0_sub || '@placeholder.local'),
                     users.email
-                )
+                ),
+                role = CASE
+                    WHEN EXCLUDED.role = 'super_admin' THEN 'super_admin'
+                    ELSE users.role
+                END
             RETURNING id
             """,
-            org_id, email, full_name, sub,
+            org_id, email, full_name, sub, role,
         )
         if inserted:
             return str(inserted["id"])
