@@ -23,6 +23,20 @@
 
 export const HOLLISWORKS_ADMIN_HOST = "admin.hollisworks.com";
 
+/**
+ * The public base URL the Auth0 SDK must build `redirect_uri` from for the
+ * Hollisworks admin surface — derived from the admin host itself, NEVER from the
+ * shared `APP_BASE_URL` env var (which points at 2nd Act, https://2ndactcapital.com).
+ *
+ * Callback-base-URL bug (this sprint): tenant SELECTION was already correct
+ * (admin.hollisworks.com → Hollisworks Auth0 tenant), but the SDK still built
+ * `redirect_uri` from `appBaseUrl ?? process.env.APP_BASE_URL`. Since neither
+ * Auth0 client passed `appBaseUrl`, the Hollisworks client inherited 2nd Act's
+ * `APP_BASE_URL` and sent `redirect_uri=https://2ndactcapital.com/auth/callback`
+ * — the WRONG base domain — which Auth0 rejected with "Callback URL mismatch."
+ */
+export const HOLLISWORKS_ADMIN_BASE_URL = `https://${HOLLISWORKS_ADMIN_HOST}`;
+
 // Real Auth0 tenant issuer hints — used for assertions/telemetry only. The
 // authoritative domains come from env (below); these let a test prove which
 // tenant a host resolved to without hardcoding the full domain in app code.
@@ -51,6 +65,37 @@ export class HollisworksAuthConfigError extends Error {
     this.name = "HollisworksAuthConfigError";
     this.missing = missing;
   }
+}
+
+/**
+ * Resolve the base URL the Hollisworks Auth0 client must build `redirect_uri`
+ * from. Defaults to the admin host itself (`https://admin.hollisworks.com`);
+ * overridable via `HOLLISWORKS_APP_BASE_URL` for non-prod hosts (e.g. a preview
+ * deployment). The override MUST be an absolute https URL — if it can't be
+ * parsed as one, we FAIL LOUD rather than risk silently falling back to a wrong
+ * (2nd Act) base, the same discipline as the tenant-config resolver below.
+ *
+ * Returns the URL's ORIGIN only (no path/query) so `createRouteUrl` appends
+ * `/auth/callback` cleanly.
+ */
+export function hollisworksAppBaseUrl(env = process.env) {
+  const raw = env.HOLLISWORKS_APP_BASE_URL;
+  const value =
+    raw && String(raw).trim() ? String(raw).trim() : HOLLISWORKS_ADMIN_BASE_URL;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new HollisworksAuthConfigError([
+      `a valid HOLLISWORKS_APP_BASE_URL (got "${value}", which is not an absolute URL)`,
+    ]);
+  }
+  if (url.protocol !== "https:") {
+    throw new HollisworksAuthConfigError([
+      `an https HOLLISWORKS_APP_BASE_URL (got "${value}")`,
+    ]);
+  }
+  return url.origin;
 }
 
 /**
@@ -87,6 +132,10 @@ export function resolveAuthTenantForHost(host, env = process.env) {
       secret: env.HOLLISWORKS_AUTH0_SECRET || env.AUTH0_SECRET,
       audience:
         env.HOLLISWORKS_AUTH0_AUDIENCE || "https://api.2ndactcapital.com",
+      // Callback-base-URL fix: the client passes this as a single-entry
+      // ALLOW-LIST to the SDK so `redirect_uri` is built from the REAL request
+      // Host (admin.hollisworks.com), NOT from the shared APP_BASE_URL (2nd Act).
+      appBaseUrl: hollisworksAppBaseUrl(env),
     };
   }
   // Every other host = the existing 2nd Act tenant, exactly as before.
@@ -97,5 +146,9 @@ export function resolveAuthTenantForHost(host, env = process.env) {
     clientSecret: env.AUTH0_CLIENT_SECRET,
     secret: env.AUTH0_SECRET,
     audience: "https://api.2ndactcapital.com",
+    // Documentational only: 2nd Act's client (lib/auth0.js) is left UNTOUCHED and
+    // continues to rely on the SDK reading process.env.APP_BASE_URL directly, so
+    // its redirect_uri behavior is provably unchanged by this sprint.
+    appBaseUrl: env.APP_BASE_URL || null,
   };
 }

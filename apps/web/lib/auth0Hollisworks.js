@@ -48,6 +48,19 @@ export function getHollisworksAuth0() {
     clientId: cfg.clientId,
     clientSecret: cfg.clientSecret,
     secret: cfg.secret,
+    // Callback-base-URL fix: pass appBaseUrl as a single-entry ALLOW-LIST
+    // (array), NOT a bare string. The SDK builds redirect_uri as
+    // `resolveAppBaseUrl(this.appBaseUrl, req)` + "/auth/callback"; given an
+    // array it derives the effective base from the REAL request Host header
+    // (admin.hollisworks.com) and VALIDATES it against this list — producing
+    // https://admin.hollisworks.com/auth/callback. Without this, the SDK fell
+    // through to `this.appBaseUrl ?? process.env.APP_BASE_URL`; since we passed
+    // nothing, it inherited the shared APP_BASE_URL (https://2ndactcapital.com)
+    // and built redirect_uri against 2nd Act's domain — the exact "Callback URL
+    // mismatch" Auth0 rejected. The array form ALSO fails loud: a request whose
+    // Host is not in the allow-list throws instead of silently using 2nd Act's
+    // base. (auth0.js — the 2nd Act client — is left untouched.)
+    appBaseUrl: [cfg.appBaseUrl],
     authorizationParameters: {
       audience: cfg.audience,
       scope: "openid profile email",
