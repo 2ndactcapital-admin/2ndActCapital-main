@@ -37,6 +37,37 @@ export const HOLLISWORKS_ADMIN_HOST = "admin.hollisworks.com";
  */
 export const HOLLISWORKS_ADMIN_BASE_URL = `https://${HOLLISWORKS_ADMIN_HOST}`;
 
+/**
+ * The API audience the Hollisworks staff access token must be minted for.
+ *
+ * AUDIENCE BUG (this sprint — the THIRD field with the identical shape as the
+ * tenant-domain and callback-base-URL bugs): `admin.hollisworks.com` login sent
+ * `audience=https://api.2ndactcapital.com` to the SEPARATE Hollisworks Auth0
+ * tenant. That tenant has NO resource server (API) registered under 2nd Act's
+ * identifier, so Auth0's /authorize endpoint rejected the request outright with
+ *   "Service not found: https://api.2ndactcapital.com".
+ *
+ * Root cause: `resolveAuthTenantForHost` derived the audience as
+ *   env.HOLLISWORKS_AUTH0_AUDIENCE || "https://api.2ndactcapital.com"
+ * i.e. it SILENTLY fell back to 2nd Act's audience — the exact bug shape as
+ * `domain ?? AUTH0_DOMAIN` and `appBaseUrl ?? APP_BASE_URL`. Setting
+ * HOLLISWORKS_AUTH0_AUDIENCE in Vercel could not be *verified* to take effect,
+ * because a silent default is indistinguishable from a working value: any gap in
+ * env propagation reverts to precisely `https://api.2ndactcapital.com`, the very
+ * string in the error. The audience is a TENANT-SCOPED identifier — a 2nd Act
+ * value here is always wrong for the Hollisworks tenant.
+ *
+ * The Hollisworks tenant's own API is `https://api.hollisworks.com`. Like
+ * `appBaseUrl`, this is Hollisworks-specific by DEFAULT (host-derived, never
+ * 2nd Act) and overridable via HOLLISWORKS_AUTH0_AUDIENCE — see
+ * `hollisworksAudience` below, which FAILS LOUD instead of ever returning
+ * 2nd Act's audience.
+ */
+export const HOLLISWORKS_API_AUDIENCE = "https://api.hollisworks.com";
+
+/** 2nd Act's API audience — the value that must NEVER leak into the Hollisworks tenant. */
+export const TWOACT_API_AUDIENCE = "https://api.2ndactcapital.com";
+
 // Real Auth0 tenant issuer hints — used for assertions/telemetry only. The
 // authoritative domains come from env (below); these let a test prove which
 // tenant a host resolved to without hardcoding the full domain in app code.
@@ -99,6 +130,52 @@ export function hollisworksAppBaseUrl(env = process.env) {
 }
 
 /**
+ * Resolve the API audience the Hollisworks staff access token is minted for.
+ * Defaults to the Hollisworks tenant's OWN API (`https://api.hollisworks.com`);
+ * overridable via `HOLLISWORKS_AUTH0_AUDIENCE` for non-prod / alternate APIs.
+ *
+ * FAIL LOUD, NEVER 2nd Act (same discipline as the tenant-config resolver and
+ * `hollisworksAppBaseUrl`):
+ *   - a malformed override (not an absolute https URL) throws, rather than
+ *     silently degrading to a wrong audience;
+ *   - an override equal to 2nd Act's audience (`https://api.2ndactcapital.com`)
+ *     throws — that identifier does not exist in the Hollisworks tenant and is
+ *     the exact value that produced "Service not found" in production.
+ *
+ * Returns the EXACT audience string (not `url.origin`/`url.href`) — Auth0
+ * audiences are matched verbatim, so an added/stripped trailing slash would
+ * itself break resolution.
+ */
+export function hollisworksAudience(env = process.env) {
+  const raw = env.HOLLISWORKS_AUTH0_AUDIENCE;
+  const value =
+    raw && String(raw).trim() ? String(raw).trim() : HOLLISWORKS_API_AUDIENCE;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new HollisworksAuthConfigError([
+      `a valid HOLLISWORKS_AUTH0_AUDIENCE (got "${value}", which is not an absolute URL)`,
+    ]);
+  }
+  if (url.protocol !== "https:") {
+    throw new HollisworksAuthConfigError([
+      `an https HOLLISWORKS_AUTH0_AUDIENCE (got "${value}")`,
+    ]);
+  }
+  if (value === TWOACT_API_AUDIENCE) {
+    // Refuse to mint a Hollisworks token against 2nd Act's API identifier — the
+    // Hollisworks tenant has no such resource server (this is the production bug).
+    throw new HollisworksAuthConfigError([
+      `a Hollisworks-specific HOLLISWORKS_AUTH0_AUDIENCE — got 2nd Act's own ` +
+        `audience "${value}", which does not exist in the Hollisworks tenant ` +
+        `(Auth0 returns "Service not found"). Use "${HOLLISWORKS_API_AUDIENCE}".`,
+    ]);
+  }
+  return value;
+}
+
+/**
  * Resolve which Auth0 tenant a given Host authenticates against, and the
  * EFFECTIVE credentials the client must be built with.
  *
@@ -115,10 +192,20 @@ export function resolveAuthTenantForHost(host, env = process.env) {
     const domain = env.HOLLISWORKS_AUTH0_DOMAIN;
     const clientId = env.HOLLISWORKS_AUTH0_CLIENT_ID;
     const clientSecret = env.HOLLISWORKS_AUTH0_CLIENT_SECRET;
+    // Cookie-encryption secret. This is the ONE field that MAY legitimately reuse
+    // the 2nd Act value: it is a symmetric key used only to encrypt/sign this
+    // client's OWN session cookie (`__hw_session`, a distinct name on a distinct
+    // host) — it is NOT a tenant-scoped identifier like domain/clientId/audience,
+    // so sharing it never authenticates a Hollisworks request against 2nd Act.
+    // The share is therefore ALLOWED and documented, but we still FAIL LOUD when
+    // NEITHER a Hollisworks-specific nor a shared secret exists (never pass
+    // undefined to the SDK).
+    const secret = env.HOLLISWORKS_AUTH0_SECRET || env.AUTH0_SECRET;
     const missing = [];
     if (!domain) missing.push("HOLLISWORKS_AUTH0_DOMAIN");
     if (!clientId) missing.push("HOLLISWORKS_AUTH0_CLIENT_ID");
     if (!clientSecret) missing.push("HOLLISWORKS_AUTH0_CLIENT_SECRET");
+    if (!secret) missing.push("HOLLISWORKS_AUTH0_SECRET (or shared AUTH0_SECRET)");
     if (missing.length) {
       // FAIL LOUD — do NOT return 2nd Act's config here.
       throw new HollisworksAuthConfigError(missing);
@@ -128,10 +215,12 @@ export function resolveAuthTenantForHost(host, env = process.env) {
       domain,
       clientId,
       clientSecret,
-      // Cookie-encryption secret may share the 2nd Act secret in dev.
-      secret: env.HOLLISWORKS_AUTH0_SECRET || env.AUTH0_SECRET,
-      audience:
-        env.HOLLISWORKS_AUTH0_AUDIENCE || "https://api.2ndactcapital.com",
+      secret,
+      // Audience fix (this sprint): Hollisworks-specific by default
+      // (https://api.hollisworks.com), overridable via HOLLISWORKS_AUTH0_AUDIENCE,
+      // and FAIL LOUD before it can EVER be 2nd Act's audience. See
+      // `hollisworksAudience` for the full root-cause writeup.
+      audience: hollisworksAudience(env),
       // Callback-base-URL fix: the client passes this as a single-entry
       // ALLOW-LIST to the SDK so `redirect_uri` is built from the REAL request
       // Host (admin.hollisworks.com), NOT from the shared APP_BASE_URL (2nd Act).

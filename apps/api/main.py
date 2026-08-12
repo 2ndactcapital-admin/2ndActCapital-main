@@ -94,11 +94,20 @@ class Settings(BaseSettings):
     # Second, SEPARATE Auth0 tenant — Hollisworks platform-staff tenant, used
     # ONLY for admin.hollisworks.com. Purely additive: when the domain is unset
     # (current production) NOTHING below runs and token validation behaves
-    # exactly as it did for the single 2nd Act tenant. Audience defaults to the
-    # same platform API so a single backend accepts staff tokens, differentiated
-    # only by issuer.
+    # exactly as it did for the single 2nd Act tenant.
+    #
+    # AUDIENCE (fixed this sprint): the Hollisworks tenant mints staff tokens for
+    # its OWN API, https://api.hollisworks.com — NOT 2nd Act's audience. This MUST
+    # stay in lockstep with the frontend's HOLLISWORKS_API_AUDIENCE
+    # (apps/web/lib/authHostConfig.mjs); the frontend requests that audience at
+    # /authorize and this backend validates the returned token against the SAME
+    # value here. It previously defaulted to https://api.2ndactcapital.com — the
+    # exact 2nd-Act-value-leaking bug shape — which the Hollisworks tenant's
+    # /authorize rejects with "Service not found", and which would fail audience
+    # validation here even if a token were somehow issued. Override per-env with
+    # HOLLISWORKS_AUTH0_AUDIENCE.
     hollisworks_auth0_domain: str = ""
-    hollisworks_auth0_audience: str = "https://api.2ndactcapital.com"
+    hollisworks_auth0_audience: str = "https://api.hollisworks.com"
     # Comma-separated list of allowed CORS origins.  Defaults to local dev;
     # override with ALLOWED_ORIGINS in production to include the Render URL.
     allowed_origins: str = "http://localhost:3000,https://2ndactcapital.com"

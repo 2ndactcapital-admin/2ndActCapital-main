@@ -20,9 +20,13 @@ import {
  *                                      falls back to AUTH0_SECRET so a single
  *                                      secret works in dev.
  *   HOLLISWORKS_AUTH0_AUDIENCE       — API audience the staff access token is
- *                                      minted for; defaults to the SAME platform
- *                                      API so the one FastAPI backend accepts it,
- *                                      differentiated only by issuer.
+ *                                      minted for. OPTIONAL override; defaults to
+ *                                      the Hollisworks tenant's OWN API
+ *                                      (https://api.hollisworks.com). NEVER falls
+ *                                      back to 2nd Act's audience — the Hollisworks
+ *                                      tenant has no such resource server, so that
+ *                                      value makes Auth0 return "Service not found"
+ *                                      (the production bug this sprint fixed).
  *
  * Lazily constructed: the client is only built on the first admin.hollisworks.com
  * request. Non-admin traffic never touches this config, so a missing Hollisworks
