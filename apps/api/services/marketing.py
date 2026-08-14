@@ -21,17 +21,23 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
-# ── Hollisworks self-match special case ─────────────────────────────────────
-# "Hollisworks" is the platform itself, NOT a tenant org (deliberately no seed
-# row in `organizations`). Typing it into the interstitial routes to the
-# platform admin host's login / enroll path. This is an explicit, narrow branch
-# in the matcher — it is checked before any org fuzzy-match.
-HOLLISWORKS_ADMIN_HOST = "admin.hollisworks.com"
-HOLLISWORKS_LOGIN_URL = f"https://{HOLLISWORKS_ADMIN_HOST}/login"
-HOLLISWORKS_ENROLL_URL = f"https://{HOLLISWORKS_ADMIN_HOST}/enroll"
 # The apex the tenant subdomains hang off — used to synthesize a fallback
 # destination for a matched org that has no explicit login_url/enroll_url yet.
 PLATFORM_APEX = "hollisworks.com"
+
+# Firm-name aliases → org slug. Hollisworks is now a REAL org row (slug
+# 'hollisworks'), so there is no hardcoded self-match branch any more — typing
+# "Hollisworks" resolves through the normal fuzzy matcher against
+# organizations.name. These aliases only cover short nicknames the fuzzy matcher
+# would miss ('hollis') or the admin host's own reserved-slug label ('admin'):
+# each resolves to a real org row and returns that org's REAL stored
+# login_url/enroll_url — never a hardcoded redirect. Keys are normalized,
+# space-collapsed query strings.
+FIRM_ALIASES = {
+    "admin": "hollisworks",
+    "hollis": "hollisworks",
+    "hollisworks": "hollisworks",
+}
 
 VALID_INTENTS = ("login", "enroll")
 
@@ -57,15 +63,6 @@ def _normalize(name: str) -> str:
 
 def _ratio(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
-
-
-def _is_hollisworks(normalized_query: str) -> bool:
-    """True when the typed name is the platform itself (narrow special case)."""
-    # Collapse spaces so "hollis works" == "hollisworks"; require an exact hit on
-    # the collapsed token so a real firm named e.g. "Hollis Wealth" does NOT trip
-    # this branch.
-    collapsed = normalized_query.replace(" ", "")
-    return collapsed == "hollisworks"
 
 
 def _destination(org: dict, intent: str) -> str:
@@ -108,17 +105,26 @@ async def match_firm(conn, query: str, intent: str) -> dict:
             "redirect_url": None,
         }
 
-    # Special case FIRST: the platform itself → admin host (per intent).
-    if _is_hollisworks(q):
-        return {
-            "status": "matched",
-            "org_name": "Hollisworks",
-            "redirect_url": (
-                HOLLISWORKS_LOGIN_URL if intent == "login" else HOLLISWORKS_ENROLL_URL
-            ),
-            "message": None,
-            "is_platform": True,
-        }
+    # Alias expansion FIRST: a short nickname or the admin host's reserved-slug
+    # label maps to a real org slug. Resolve that org row and return its REAL
+    # stored login_url/enroll_url — this is normal org resolution, not a
+    # hardcoded redirect. Falls through to fuzzy matching if the aliased org is
+    # somehow absent.
+    alias_slug = FIRM_ALIASES.get(q.replace(" ", ""))
+    if alias_slug:
+        row = await conn.fetchrow(
+            "SELECT id, name, slug, login_url, enroll_url FROM organizations WHERE slug = $1",
+            alias_slug,
+        )
+        if row is not None:
+            org = dict(row)
+            return {
+                "status": "matched",
+                "org_name": org["name"],
+                "redirect_url": _destination(org, intent),
+                "message": None,
+                "is_platform": False,
+            }
 
     rows = await conn.fetch("SELECT id, name, slug, login_url, enroll_url FROM organizations")
     scored = []

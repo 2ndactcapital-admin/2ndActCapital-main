@@ -49,6 +49,16 @@ SLUG_MAX_LEN = 63  # a single DNS label may not exceed 63 octets
 # existed, and never shows the Hollisworks marketing page.
 HOLLISWORKS_PLATFORM_DOMAIN = "hollisworks.com"
 
+# Explicit host -> org-slug overrides, for the rare case where a platform host's
+# subdomain label deliberately DIFFERS from the org's real slug. `admin` is a
+# RESERVED slug (see RESERVED_SLUGS / validate_slug) and MUST stay reserved, so
+# `admin.hollisworks.com` cannot resolve by the normal "subdomain == slug" path.
+# This narrow map lets that host resolve to the 'hollisworks' org WITHOUT ever
+# assigning the org the reserved 'admin' slug. Keys are bare lowercase hosts.
+HOST_SLUG_OVERRIDES = {
+    "admin.hollisworks.com": "hollisworks",
+}
+
 
 def _bare_host(host) -> str | None:
     """Normalize a Host header to a bare lowercase hostname, or ``None``.
@@ -245,8 +255,10 @@ async def resolve_tenant(conn, host) -> dict:
 
         # Within the Hollisworks platform family: a real firm subdomain resolves
         # to that tenant; the apex/www or an unknown subdomain is the platform's
-        # own marketing surface.
-        sub = extract_subdomain(host)
+        # own marketing surface. An explicit host override (admin.hollisworks.com
+        # -> 'hollisworks') takes precedence over the subdomain label so a host
+        # whose label is a RESERVED slug still resolves to its real org.
+        sub = HOST_SLUG_OVERRIDES.get(_bare_host(host)) or extract_subdomain(host)
         result["subdomain"] = sub
         if sub:
             row = await conn.fetchrow(
