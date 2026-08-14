@@ -1,172 +1,226 @@
 # Hollisworks / 2nd Act Capital — Project Status
 
-**Purpose of this file:** the single, durable, git-committed source of truth for project status. Lives in the repo specifically because chat memory and generated documents have both proven unreliable at different points — git survives sandbox resets, session boundaries, and everything else. **Every sprint's own prompt should update this file as part of its commit, going forward** — this is the fix for the exact failure mode that necessitated rebuilding this document from a full conversation re-read.
+**This file is the single, durable source of truth for what has actually been built.** It lives in git specifically because both chat memory and Drive-hosted generated documents have been lost at different points — git survives sandbox resets, session boundaries, and everything else.
 
-**Last full rebuild:** this version (v1), reconstructed from a complete re-read of an extremely long session, prior to which a comprehensive status document existed only as generated Word docs (delivered as downloads, not committed to the repo) and was lost when the generating sandbox reset. **Joe has a more recent version of that Word doc to reconcile against — treat that as a secondary source to merge in, not this file's replacement.**
+**Every sprint prompt should include a final task: update this file as part of the same commit.** Record real gaps and blocked items honestly, not only successes.
 
----
-
-## 0 · Identity, naming, and core architecture decisions
-
-- **"Hollisworks" is the platform's name, fully replacing "Ripasso."** The AI assistant embedded in the platform is "Hollis." Tagline: *"Hollis works. For you."* / *"AI orchestration for the modern RIA."*
-- **2nd Act Capital** is the first client/tenant — an RIA/membership-club business, now explicitly "the demo RIA" for Hollisworks. Ripasso Holdings → 501(c)(6) nonprofit membership club → Access (the RIA) + Hollisworks (the licensable software).
-- **No Mesh integration** (Jeremy's separate product) — repeatedly, deliberately reconfirmed. 2nd Act's own bitemporal entity graph (from Sprint 15) is authoritative.
-- **Stack:** Next.js/Vercel (frontend), FastAPI/Render (backend), Supabase Postgres (project `mmgwmcinimzuhargsazs`), Auth0 (two separate tenants — see §5), Cloudflare R2 (storage, bucket `2ndactcapital-docs` — cosmetic rename to something Hollisworks-branded still pending), Anthropic API direct, AWS à la carte (Textract, SES), Voyage AI (embeddings).
-- **Light theme only, everywhere** — whites/cream, never dark mode. 2nd Act's Signature palette: Navy `#1B2B4B`, Gold `#C5A880`. Hollisworks marketing site has its own, separate brand tokens (holly `#1F4034`, bronze `#8A6220`) — do not confuse the two or accidentally cross-apply hex values.
-- **Testing is exclusively against live production** (`2ndactcapital.com` historically; now also `hollisworks.com` and its subdomains) — no staging environment exists.
+**Companion file:** `docs/DEVELOPMENT_ENVIRONMENT.md` — how we work (stack, sprint methodology, conventions). This file is what exists.
 
 ---
 
-## 1 · Security foundation — RLS (Row-Level Security)
+## 0 · Identity and core decisions
 
-**STATUS: Policy-writing phase fully complete. Connection cutover to enforcement is DONE — RLS is genuinely live in production.**
-
-- All ~77 original tables + `users` + pilot table (`trusted_contacts`) have real, live-proven RLS policies, built across 6 batches (pilot, `users`/Phase 2, Batch A SOC/RBAC, Batch B Entity/CRM, Batch C Financial/ledger, Batch D Deals/Marketplace, Batch E+F combined Assistant/Notifications/Audit + Config/Reference).
-- **A final, comprehensive sweep before the cutover caught 15 more tables with zero policy** (7 from same-session Workflow Manager/TaskRouter work, 8 from earlier work the original batches simply missed — including `organizations` itself and the global `permissions` catalog). All fixed with the correct policy shape per table (standard direct, indirect via parent, or global-read/admin-write for genuinely platform-wide reference data).
-- **`DATABASE_URL` now points at the non-bypass `app_service` role in production** — tenant isolation is genuinely enforced, not just proven-in-isolation.
-- **A real production incident occurred during/after cutover**: a stray duplicate Auth0 identity for the Super Admin account, combined with a genuine gap in `services/rbac.py`'s `has_permission()` (no `is_super_admin` bypass — only "worked" via the accident of zero rows in `user_roles`), caused a real lockout. **Root cause found and fixed** (`is_super_admin` now checked first, before any role-based logic). A second, related but distinct RBAC system (`services/permissions.py`, JWT-claim-based, gates marketplace/SPV/VDR endpoints) was identified but **not** checked for the same class of bug — worth verifying later, not urgent.
-- **Known, non-fatal, recurring issue**: every backend startup logs `sync_catalog failed (non-fatal): new row violates row-level security policy for table "assistant_action_catalog"` — confirmed reproducible across multiple deploys. Some startup/background process writes with no org context set. Not blocking, not yet fixed.
+- **"Hollisworks" is the platform name, fully replacing "Ripasso"** — both public brand and internal reference. The embedded AI assistant is **Hollis**. Tagline: *"Hollis works. For you."* / *"AI orchestration for the modern RIA."*
+- **2nd Act Capital** is the first client/tenant and current demo account — an RIA and private membership club. Structure: Ripasso Holdings (holdco) → 501(c)(6) membership club → Access (the RIA) + Hollisworks (the licensable software).
+- **No Mesh integration** — repeatedly, deliberately reconfirmed. 2nd Act's own bitemporal entity graph (Sprint 15) is authoritative.
+- **Light theme only, everywhere.** 2nd Act Signature palette: Navy `#1B2B4B`, Gold `#C5A880`. Hollisworks marketing has its own distinct tokens: holly `#1F4034`, bronze `#8A6220`. Never cross-apply.
+- **Testing is exclusively against live production** — no staging environment exists.
+- **Not yet in real production use** — all current data is dummy/test data, which substantially de-risks structural changes.
 
 ---
 
-## 2 · SOC / RBAC (access control)
+## 1 · Completed — platform spine (S11–S22)
 
-**STATUS: Complete, all 6 phases + follow-on UI, merged.**
+Assistant framework · SPV manager · immutable general ledger · bitemporal entity/ownership graph · reference data · EntityPicker · ownership editing + time-travel · transaction types · marketing site · portfolio allocation lens (sunburst).
 
-Profiles + Permission Sets (org-defined, additive grants) · Staff visibility (hierarchy+teams+assignment — built additive/standalone, **not yet wired into real enforcement**, staff still see org-wide today, needs a `staff_assignments` data backfill first) · Households (flexible + strict-primary) · Restricted-access accounts (existence-hiding) · Trading authority tiers + hard maker-checker (confirmed intentionally broad, not money-movement-only) · Member-side relationships (Trusted Contact / POA-Delegate / External Professional Access).
+## 2 · Completed — S23 through S27
+
+| Item | Status |
+|---|---|
+| S23 — Investment/Class restructure | DONE |
+| S24 — White-label config (org_settings, RBAC, brand sweep) | DONE |
+| Grid UX A + B — DataGrid (TanStack Table + dnd-kit, **not** AG-Grid) | DONE |
+| Mini-Bedrock — org_settings-driven model selection | DONE (extended by S27) |
+| S25 — DeepEval + open-set document classifier | DONE |
+| S27 — TaskRouter | DONE |
+
+**S27 TaskRouter**: real decision log (`ai_decision_log`: model requested/used, fallback_used+reason, cost, latency, success) + genuine per-org **ordered** fallback chain (upgrading Mini-Bedrock's single-value fallback) + non-blocking logging wired into the central AI-calling mechanism. Later independently confirmed as the real path Chancery's NL generation calls through.
+
+---
+
+## 3 · Completed — SOC / RBAC (6 phases + follow-on UI)
+
+Profiles + Permission Sets on the fixed action-registry vocabulary + beneficiary edges · staff visibility (hierarchy+teams+assignment — additive/standalone, **not yet enforced**, see Known Gaps) · households (flexible rollup + strict primary) · restricted-access accounts (existence-hiding, wraps both visibility engines) · trading-authority tiers (Inquiry/Limited/Full) + maker-checker (confirmed intentionally broad, not money-movement-only) · Trusted Contact / POA-Delegate / External Professional Access · Profiles/Permission-Sets admin UI.
 
 Full spec: `2nd Act SOC Access Control Design.docx`.
 
 ---
 
-## 3 · Ownership Tree Graph
+## 4 · Completed — RLS / tenant isolation, including the production cutover
 
-**STATUS: Complete — Sprints A (interactive) and B (printable export), both merged.**
+**Policy-writing phase fully closed.** All tables in the public schema have RLS enabled with at least one policy — confirmed via a comprehensive final sweep, not assumed.
 
-Dual staff/member routes sharing one component. Both ownership and beneficiary edges shown, visually distinct. Time-travel, reverse/owned-by toggle. Restricted-access enforcement proven end-to-end, including in export. Export: a real stress test proved a simple print-stylesheet approach fails on large trees (SVG can't page-break) — built a dedicated paginated renderer instead, proven on a 36-node/10-page real tree.
+That sweep caught a real gap immediately before cutover: **15 tables had no policy at all** — 7 from the Workflow Manager/TaskRouter build (`workflow_definitions`/`versions`/`steps`/`runs`/`run_steps`/`triggers` + `ai_decision_log`) plus 8 the original batches simply missed (`member_target_allocations`, `organizations`, `permissions`, `posting_template_lines`, `role_permissions`, `team_members`, `user_permission_sets`, `user_roles`). Three distinct policy shapes were needed: standard direct `org_id`; a self-referencing policy for `organizations` (its `id` **is** the org); global-read/super-admin-write for `permissions` (genuinely global, no `org_id` column at all); and indirect EXISTS-subquery policies via a real parent for 5 junction tables.
 
-**Known, separately-tracked gap**: `staff_visibility.get_staff_visible_entity_ids` originally had no Super Admin bypass — **found and fixed** (same session, separate small sprint) using the exact same fail-loud/explicit-bypass discipline as everything else.
+**CUTOVER COMPLETE.** Render's `DATABASE_URL` points at the non-bypass `app_service` role — tenant isolation is genuinely enforced in production. Core functionality confirmed working post-cutover across entities/SPVs/marketplace/ownership graph/workflow manager.
 
----
-
-## 4 · Workflow Manager (S29a/S29b)
-
-**STATUS: Wave 2 (safe, non-autonomous) fully complete — all 5 phases. Wave 4 (autonomous scheduled/event triggers) deliberately not built, its own later effort.**
-
-Architecture: `bpmn-js` for visual authoring, `SpiffWorkflow` for real execution (paired, not competing — SpiffWorkflow is built to consume bpmn-js output). Five core tables: `workflow_definitions`, `workflow_versions`, `workflow_steps`, `workflow_runs`+`workflow_run_steps`, `workflow_triggers`. A workflow's effective autonomy = its single highest-tier step. Tier-1 proposed state lives in the schema as real rows.
-
-- **Phase 1**: object model + SpiffWorkflow engine — proven pause/resume + maker-checker with real seeded data.
-- **Phase 2**: NL-to-BPMN generation + generic step deriver + safe tier defaults (read→Tier 3, write→Tier 2, never silently autonomous).
-- **Phase 3**: diagram editor (bpmn-js + properties panel) + Library screen.
-- **Phase 4**: Run console + Scheduler/Routine Viewer + Task/Alert integration (reuses existing `member_todos`, not a new notification system) + Version history. Found and fixed: runs that failed previously vanished entirely (rolled back) rather than getting stuck — now correctly transition to `held` status with an alert.
-- **Phase 5**: Permissions — replaced a blanket admin gate with 3 granular, action-registry-based permissions. Proven genuinely granular (a user with an unrelated admin permission is still rejected from all 3 surfaces).
-
-**S27 TaskRouter** (a real prerequisite, built alongside): `ai_decision_log` table + genuine per-org ordered fallback chain (upgrading Mini-Bedrock's single-value fallback) + non-blocking logging wired into the real central AI-calling mechanism (`call_claude_text`/`call_claude_json` → `_execute_chain`). Confirmed working via real downstream usage (Chancery's NL generation calls through it).
+**Two issues surfaced during the cutover smoke test**, both since resolved — see §9.
 
 ---
 
-## 5 · Chancery (Document Vault) — reframed as the platform's universal input + surfacing layer
+## 5 · Completed — Ownership Tree Graph (Sprints A, B, C)
 
-**STATUS: All 11 phases complete.** What began as a document-vault sketch became a comprehensive system: multi-format ingestion, broad linkage with propose-not-create discipline, a real human review/correction screen, governed Workflow Manager integration, a measured learning loop, ambient contextual surfacing, VDR-to-deal-creation, narrative extraction, and real semantic search.
+**Sprint A (interactive)**: dual staff/member routes sharing one component, both ownership and beneficiary edges shown distinctly, time-travel, reverse/owned-by toggle, restricted-access enforcement proven end-to-end.
+
+**Sprint B (export)**: a real stress test proved a simple print-stylesheet fails on large trees (SVG can't page-break — content either clips or shrinks to ~2px text). Built a dedicated paginated renderer instead, proven on a 36-node/10-page tree.
+
+**Sprint C (CRM integration)**: the Ownership tab now embeds the graph directly; clicking a node navigates to the destination entity's CRM page with the Ownership tab pre-selected via a `?tab=` query param, proven with a real generated route.
+
+**Feature complete.**
+
+---
+
+## 6 · Completed — Workflow Manager Wave 2 (S29a)
+
+`bpmn-js` for authoring, **SpiffWorkflow** for execution (paired — SpiffWorkflow is built to consume bpmn-js output). Five-table object model. A workflow's effective autonomy = its **single highest-tier step**. Tier-1 proposed state lives in the schema as real rows. User Task assignment is role-based, specified by the process author, referencing the real Profiles table. Task/alert surface reuses existing `member_todos`, not a new notification system.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | DROP + ROUTE + EXTRACT (native PDF only) | Done — proven batch/sequencing + cross-org RLS isolation |
-| 2 | SORT (existing classifier) + STORE (R2, versioned) | Done — propose-new-category queue + real R2 versioning proven |
-| 3 | TABULAR K-1 extraction via Textract | Done, after a real credential-setup saga (see §6) |
-| 3b | Closing a real gap — Phase 3's actual extraction logic was never built after the access gate passed; found during Phase 5, closed with real end-to-end proof | Done |
-| 4 | Multi-format ingestion (DOCX/XLSX/PPTX/email+attachments/text/images) | Done — anti-spoofing (magic-byte, not extension) proven, zero PDF regression |
-| 5 | Entity/transaction linkage + propose-new-record fork | Done — many-to-many + generic polymorphic linkage, exact-name matching, propose-not-create |
-| 6 | Review/confirm screen — the actual data-entry moment | Done — honest finding: neither Textract nor native extraction currently captures source coordinates (Textract discards available geometry data; a real, fixable future enhancement) — degrades to a page reference rather than faking precision |
-| 7 | Workflow Manager integration | Done — FIRST real event-triggered execution in the platform, narrowly scoped to one event type, governance proven preserved (a Tier-1 step still pauses even on an auto-started run) |
-| 8 | Correction-learning loop (correction log + retrieval-augmented classification, NOT fine-tuning) | Done — DeepEval measured a real 33.3%→100% accuracy improvement |
-| 9 | Contextual surfacing — reusable Documents panel | Done — same component proven embedded in 3 distinct real pages |
-| 10 | VDR upload → propose a new deal record | Done — first aggregate cross-document AI capability; existing `createDeal` logic refactored into a shared service, not duplicated |
-| 11a | Narrative metadata extraction (provisions, specific-role party linkage) | Done — real live AI extraction proven, human-corrected links never silently overwritten by later automation |
-| 11b | Semantic INDEX + RETRIEVE (Voyage embeddings → pgvector) | Done — both real external gates (pgvector extension, Voyage credentials) passed live; org-configurable embedding provider (Mini-Bedrock pattern) with only Voyage functionally enabled, others listed but backend-rejected if selected |
+| 1 | Object model + SpiffWorkflow engine | DONE — pause/resume + maker-checker proven with real seeded data |
+| 2 | NL-to-BPMN generation + generic step deriver + safe tier defaults (read→T3, write→T2, never silently autonomous) | DONE — real failure-path testing, TaskRouter integration confirmed |
+| 3 | Diagram editor (bpmn-js 18.22.1 + properties-panel 5.63.0) + Library screen | DONE — version-increment/re-derive proven (v1 untouched, v2 fresh) |
+| 4 | Run console + Scheduler/Routine Viewer + Task/Alert integration + Version history | DONE — found and fixed: a failing run previously **vanished entirely** (rolled back) rather than getting stuck; now correctly transitions to `held` with an alert |
+| 5 | Permissions — 3 granular action-registry permissions replacing a blanket admin gate | DONE — proven genuinely granular (an unrelated admin permission still gets rejected from all 3 surfaces); Profiles UI picked them up with zero frontend changes |
+
+**Wave 4** (autonomous scheduled/event triggers) remains deliberately deferred — holds-and-alerts on failure, never silently retries. Note: Chancery Phase 7 built the **first real event-triggered execution** in a narrowly-scoped way (see §7), but general Wave 4 is still unbuilt.
+
+Also deferred: dry-run/simulation mode. bpmn-js's attribution watermark accepted as-is. *"Jeremy's context framework"* resolved as historical-only (tied to the dropped Mesh plan), not a live dependency.
 
 ---
 
-## 6 · AWS / external vendor credential setup (real, completed work)
+## 7 · Completed — Chancery (the platform's universal input + surfacing layer)
 
-- **AWS Textract**: real credentials configured after a genuine troubleshooting chain (truncated keys, local-vs-Render env distinction, an accidentally-attached AWS deny policy from using the console UI instead of a custom JSON policy). Working IAM setup: `AmazonTextractFullAccess` on a dedicated IAM user with long-lived keys.
-- **Voyage AI**: real credentials configured, confirmed working via a real, live embedding call (`voyage-3.5`, real 1024-dim vectors).
-- **AWS SES**: credentials configured (separate dedicated IAM user, `ses:SendEmail`/`ses:SendRawEmail`/`ses:GetSendQuota`). **Domain verification (DKIM/SPF/DMARC) not yet completed** — real DNS records need adding once `hollisworks.com` is the confirmed sending domain (see §7). Sandbox-mode status not yet confirmed for real production sending.
+**Reframed from a document vault into the platform's alternate INPUT mechanism** (documents replace/supplement manual data entry) **and its CONTEXTUAL SURFACING layer** (documents appear ambiently wherever relevant, not via a search box). Full design: `2nd Act Chancery Expanded Design.docx`.
 
----
+**All 11 phases complete.**
 
-## 7 · Hollisworks headless multi-tenant / SAML architecture
-
-**STATUS: Foundational pieces built and proven working end-to-end in production. A full SAML federation (2nd Act's tenant → Hollisworks broker) is designed but not yet built.**
-
-### 7.1 · Domain / DNS (real, live)
-- `hollisworks.com` purchased via Cloudflare (same account as `2ndactcapital.com`).
-- **Real, hard constraint discovered**: Cloudflare Registrar domains cannot have nameservers changed to a third party at all — not a UI-discoverability issue, confirmed directly by Cloudflare support/docs. A true wildcard (`*.hollisworks.com`, requiring Vercel-controlled nameservers) is therefore not currently possible without a registrar transfer.
-- **Pragmatic, working solution in place**: each subdomain added individually — one CNAME record in Cloudflare + one custom domain in Vercel per subdomain — the same simple pattern already proven working for `2ndactcapital.com`. Genuinely fine given client count stays small and grows slowly.
-- **Live, working domains today**: `hollisworks.com`, `www.hollisworks.com`, `admin.hollisworks.com`, `2ndactcapital.hollisworks.com` — all confirmed "Valid Configuration" in Vercel.
-- **Dated reminder set**: on/after **Oct 1, 2026** (past the likely 60-day ICANN transfer lock from the Aug 1 purchase date), revisit whether a registrar transfer + true wildcard is worth it versus continuing the manual per-client pattern indefinitely — genuinely may remain the simpler long-term choice regardless.
-- Cloudflare Email Routing separately configured (MX + DKIM records added; the SPF TXT record deliberately deferred until SES domain verification, to write one correct combined record instead of two conflicting ones).
-
-### 7.2 · Identity architecture (designed, partially built)
-- **Two separate Auth0 tenants, not three**: (1) **2nd Act's existing tenant** — not deprecated, to be *reconfigured* as a federatable SAML/OIDC IdP source; (2) **a new Hollisworks tenant** (`dev-gy85vzuf6mruzv3j.us.auth0.com`) serving BOTH Hollisworks' own staff corporate identity AND the central broker other RIA clients' IdPs federate into.
-- The application itself never implements raw SAML — Auth0 does that work and hands back a JWT the existing `verify_token()` logic already knows how to validate. This architecture requires no change to that core verification logic.
-- **Auth0's free tier gives exactly ONE real, permanent SAML/Enterprise connection** — enough to pilot with one real client. Scaling past that has real, documented cost implications ($5,000–$34,000+/year per multiple independent sources) — a genuine business decision for later, not a blocker now. Okta directly ruled out as a cheaper alternative (same company as Auth0, worse free-tier situation — 30-day trial only, $1,500/year minimum after).
-- **Enrollment model, confirmed**: RIA-initiated, not Hollisworks-invite-initiated. The RIA gives Hollisworks staff a list (email + role); Hollisworks creates a pending record; the RIA separately enrolls that person in their own IdP on their own timeline. Matching is by **exact email address** (SAML NameID, `emailAddress` format — zero extra IdP configuration burden). **No match = hard reject, always**, never auto-create.
-- **`admin.hollisworks.com`** is the reserved, staff-only login subdomain — deliberately kept OUT of the `organizations` table (a special-cased resolver route, not a seed row) to avoid entangling real-client resolver logic with this one special case.
-- Auth0 URL configuration convention: **explicit listing, not wildcards** — Auth0's own docs caution against wildcards in production, and independent reports describe real, documented bugs with wildcard support specifically for "Allowed Web Origins."
-
-### 7.3 · What's actually built and proven working right now
-- `hollisworks.com` (bare) correctly shows the real Hollisworks marketing page (full HTML/CSS/JS provided and integrated faithfully).
-- `2ndactcapital.com` correctly shows 2nd Act's own, separate marketing page (regression-fixed after initially breaking).
-- The shared firm-search interstitial: both Login and Enroll buttons on the Hollisworks marketing page route to one search flow, remembering original intent; fuzzy-matches against `organizations.name`; redirects to the org's real, explicitly-**stored** `login_url`/`enroll_url` (not constructed by convention — this is what allows a future custom-domain client with zero special-case logic elsewhere). Ambiguous or no match: **asks the user to clarify/retry, never guesses, never shows a pick-list** (explicit design decision).
-- Typing "Hollisworks" itself into the search resolves to `admin.hollisworks.com`'s login/enroll paths (a narrow, explicit special case in the matching logic).
-- A real contact-form endpoint (`POST /api/v1/marketing/contact`) persists submissions.
-- **`admin.hollisworks.com` login is fully working end-to-end**, confirmed via real, live browser testing (not just automated tests) — see §7.4 for the debugging chain that got it there.
-- The new Hollisworks Auth0 tenant is correctly wired as a **second, additive** auth path, used ONLY for `admin.hollisworks.com` — 2nd Act's own existing login is proven, repeatedly, to be completely unaffected (`lib/auth0.js` confirmed byte-identical to git HEAD after the integration work).
-
-### 7.4 · The admin.hollisworks.com debugging chain — six real, sequential issues, all resolved
-
-| # | Issue | Type | Fix |
-|---|---|---|---|
-| 1 | Tenant/domain selection silently fell back to 2nd Act's Auth0 tenant (SDK's own `domain ?? AUTH0_DOMAIN` default) | Code bug | Fail-loud `resolveAuthTenantForHost()` |
-| 2 | Callback/Login URIs in Auth0's dashboard were missing the app's real `/auth/` route prefix | Dashboard config | Corrected to `https://admin.hollisworks.com/auth/callback` etc. |
-| 3 | `appBaseUrl` silently fell back to the shared, 2nd-Act-scoped `APP_BASE_URL` env var | Code bug | Host-derived `hollisworksAppBaseUrl()` |
-| 4 | `audience` (both frontend AND a separately-broken backend default) silently fell back to 2nd Act's API audience | Code bug | Found via a comprehensive field-by-field audit (not reactive one-off fixes) — 22/22 assertions, every field proven with explicit before/after |
-| 5 | The audience value (`https://api.hollisworks.com`) was never registered as a real API in the Hollisworks Auth0 tenant | Dashboard config | Created a real API identity: Applications → APIs → Create API |
-| 6 | The real Application was never authorized for **User-delegated** access to that API (a separate axis from Client/M2M access — easy to configure the wrong one) | Dashboard config | Application → APIs tab → granted User-delegated Access |
-
-**Confirmed, real, complete login now works.** Every application-code layer (tenant selection, base URL, audience resolution, fail-loud guards) is proven correct through live testing, not just automated assertions.
-
-### 7.5 · Not yet built
-- Full SAML federation of 2nd Act's tenant *into* the Hollisworks broker tenant (the actual Enterprise Connection, "SAML2 Web App" addon on 2nd Act's side) — genuinely large, was explicitly paused ("pause on this thread, pick up in the am") before the Auth0 tenant setup itself needed real-time debugging attention.
-- The "back door" (password fallback for RIA clients without real SAML) — deliberately deferred to later, per-org-toggle-vs-universal decision also deferred.
-- Per-tenant SAML setup automation — deliberately manual for now (Auth0 Management API automation is premature until there's real, recurring multi-client demand).
-- A minor, non-urgent follow-up: `hollisworks.com/login` (typed directly, bypassing the real button) falls through to 2nd Act's tenant — confirmed **not** a bug (real users reach the correct flow via the actual button), but worth guarding eventually to avoid confusing anyone who bookmarks or types the raw URL.
+| Phase | Scope | Notable |
+|---|---|---|
+| 1 | DROP + ROUTE + EXTRACT (native PDF) | 23/23 — batch sequencing proven with real timestamps, partial-failure recovery within a batch |
+| 2 | SORT (classifier) + STORE (R2, versioned) | 16/16 — propose-new-category queue; real R2 versioning (re-upload creates v2, v1 retained) |
+| 3 | TABULAR K-1 extraction via Textract | Real Textract access after genuine troubleshooting (truncated keys, local-vs-Render env, an accidentally-attached AWS deny policy) |
+| 3b | **Gap closure** — Phase 3's actual extraction logic was never built after the access gate passed; found during Phase 5 | Real end-to-end proof: DROP→extract→SORT→K-1→Phase 5's real auto-link/propose logic, both matched and no-match branches |
+| 4 | Multi-format ingestion (DOCX/XLSX/PPTX/email+attachments/text/images) | 22/22 — mislabelled-extension anti-spoofing (magic bytes, not extension); email with 2 attachments recursively processed; zero PDF regression |
+| 5 | Entity/transaction linkage + propose-new-record fork | 12/12 — many-to-many + generic polymorphic linking; approve routes through the **real** Sprint-17 entity-creation flow, never a bare insert |
+| 6 | Review/confirm screen — the data-entry moment | 11/11 — **honest finding**: neither path captures source coordinates (Textract *does* return Geometry/BoundingBox but the code discards it — a real, fixable enhancement; pdfplumber never captured it). Degrades to a page reference rather than faking precision |
+| 7 | Workflow Manager integration | **First real event-triggered execution in the platform.** Governance preserved: a Tier-1 step still genuinely pauses for approval even on an auto-started run (`run='running'`, User Task `'active'`, `approved_by=None`) |
+| 8 | Correction-learning loop | **Not fine-tuning** — a correction log read back at inference time. DeepEval measured a real 33.3% → 100% accuracy improvement (+66.7 points). Org isolation proven twice (query logic + real `app_service` role) |
+| 9 | Contextual surfacing — reusable Documents panel | 13/13 — discovery caught a real route collision (`/entities/{id}/documents` already claimed); same component proven embedded in 3 genuinely different pages |
+| 10 | VDR upload → propose a new deal record | **First aggregate cross-document AI capability.** Existing `createDeal` logic refactored into a shared service so both paths call identical code |
+| 11a | Narrative metadata extraction | 11/11, zero skips — 3 parties extracted with **specific** roles (Grantor/Trustee/Beneficiary). A human-corrected link role is never overwritten by later automation |
+| 11b | Semantic INDEX + RETRIEVE (Voyage → pgvector) | 10/10 — both external gates passed live. Org-configurable provider (4 listed, only Voyage wired; others **backend-rejected**, HTTP 400). Restricted-access documents correctly hidden from search without a grant |
 
 ---
 
-## 8 · Other completed fixes this session
+## 8 · Hollisworks headless multi-tenant architecture
 
-- **AI sidebar missing count/filter queries**: found (via real user testing — "how many investments," "how many entities in CT" both correctly said no tool existed) and fixed for entities + investments, reusing existing endpoints and the same visibility-composition pattern as the Ownership Graph/semantic search. **Same gap confirmed to also exist** for SPVs, workflow runs, deals-by-attribute, member investments, documents, and task/notification counts — deliberately not fixed yet, a real, honest follow-up list.
+**Foundational pieces built and proven working in production. Full SAML federation designed but not yet built.**
+
+### 8.1 · Domain / DNS — live and working
+
+- `hollisworks.com` purchased via Cloudflare Registrar (Aug 1, 2026), same account as `2ndactcapital.com`.
+- **Hard constraint discovered**: Cloudflare Registrar domains **cannot** point nameservers to a third party — confirmed directly by Cloudflare support and docs, not a UI-discoverability issue. A true wildcard (`*.hollisworks.com`, which requires Vercel-controlled nameservers) is therefore not currently possible.
+- **Working solution**: each subdomain added individually — one CNAME in Cloudflare + one custom domain in Vercel — the same pattern already proven for `2ndactcapital.com`. Genuinely fine at expected client volume.
+- **Live and confirmed "Valid Configuration" in Vercel**: `hollisworks.com`, `www.hollisworks.com`, `admin.hollisworks.com`, `2ndactcapital.hollisworks.com`.
+- Cloudflare Email Routing configured (MX + DKIM added; the SPF TXT record deliberately deferred until SES domain verification, so one correct combined record is written instead of two conflicting ones).
+- **Dated reminder — on/after Oct 1, 2026** (past the likely 60-day ICANN transfer lock): revisit whether a registrar transfer + true wildcard is worth it, versus continuing the manual per-client pattern — which may honestly remain simpler long-term.
+
+### 8.2 · Identity architecture
+
+- **Two Auth0 tenants, not three**: (1) 2nd Act's existing tenant — **not deprecated**, to be *reconfigured* as a federatable IdP source; (2) a new Hollisworks tenant (`dev-gy85vzuf6mruzv3j.us.auth0.com`) serving **both** Hollisworks staff corporate identity **and** the central broker other RIAs' IdPs federate into.
+- The application never implements raw SAML — Auth0 does that work and returns a JWT the existing `verify_token()` already validates. **No change to core verification logic required.**
+- **Auth0's free tier includes exactly one permanent SAML/Enterprise connection** — enough to pilot with one real client. Beyond that, multiple independent sources report **$5,000–$34,000+/year** per additional connection — a real business decision for later. **Okta ruled out** as a cheaper alternative (same company as Auth0; no permanent free tier, $1,500/year minimum).
+- **Enrollment model**: RIA-initiated, not Hollisworks-invite-initiated. The RIA supplies a list (email + role); Hollisworks creates a pending record; the RIA separately enrolls that person in their own IdP. Matching is by **exact email** (SAML NameID, `emailAddress` format — zero extra IdP configuration burden). **No match = hard reject**, never auto-create.
+- `admin.hollisworks.com` is a **reserved, special-cased subdomain**, deliberately kept out of the `organizations` table so real-client resolver logic isn't entangled with this one case.
+- **Auth0 URL config convention: explicit listing, not wildcards** — Auth0's own docs caution against wildcards in production, and independent reports describe real bugs with wildcard support for "Allowed Web Origins" specifically.
+
+### 8.3 · Built and proven working
+
+- **Sprint 1 — host-header tenant resolver** (16/16). Subdomain-to-org resolution proven RLS-safe. Discovery found `/theme/public`'s pre-auth lookup only worked because production still ran the bypass role at the time; added a narrowly-scoped SELECT-only carve-out (`organizations_preauth_resolve`) — proven to allow reads but block writes, and not to leak cross-tenant data. Slug validation added to org creation (rejects uppercase/special characters/reserved words).
+- **Hollisworks marketing page** — real HTML integrated faithfully; `hollisworks.com` (bare) serves it, `2ndactcapital.com` correctly serves 2nd Act's own separate page.
+- **Shared firm-search interstitial** — both Login and Enroll route to one search flow, remembering original intent; fuzzy-matches `organizations.name`; redirects to the org's explicitly **stored** `login_url`/`enroll_url` (stored, not constructed by convention — this is what enables a future custom-domain client with no special-case logic). Ambiguous or no match: **asks the user to clarify/retry, never guesses, never shows a pick-list.**
+- **Contact endpoint** — `POST /api/v1/marketing/contact` persists real submissions.
+- **Second Auth0 tenant wired additively** — used only for `admin.hollisworks.com`. 2nd Act's own login proven unaffected (`lib/auth0.js` confirmed **byte-identical** to git HEAD).
+- **`admin.hollisworks.com` login works end-to-end**, confirmed by real browser testing.
+- **Sprint 2 (invite flow)** — the invite data model, token generation, expiry, and revocation are **done and proven**, including cross-org isolation. The email-delivery tasks were correctly **blocked** at an honest SES credential gate; SES credentials have since been configured, so those tasks are ready to complete.
+
+### 8.4 · The admin.hollisworks.com debugging chain — six real issues, all resolved
+
+| # | Issue | Type |
+|---|---|---|
+| 1 | Tenant/domain selection silently fell back to 2nd Act's tenant (SDK's `domain ?? AUTH0_DOMAIN` default) | Code |
+| 2 | Auth0 dashboard callback/login URIs missing the app's real `/auth/` route prefix | Config |
+| 3 | `appBaseUrl` silently fell back to the shared, 2nd-Act-scoped `APP_BASE_URL` | Code |
+| 4 | `audience` — **both** frontend and a separately-broken backend default — silently fell back to 2nd Act's API audience | Code |
+| 5 | `https://api.hollisworks.com` was never registered as a real API in the Hollisworks tenant | Config |
+| 6 | The real Application was never authorized for **User-delegated** access to that API (a separate axis from Client/M2M — easy to configure the wrong one) | Config |
+
+Issue 4 was found by a **comprehensive field-by-field audit** (22/22) rather than another reactive one-off fix — that audit is what caught the backend-side default that would otherwise have caused a fourth round of debugging.
+
+**Lesson worth keeping**: for any *new* API/Application pairing in Auth0, items 5 and 6 are real, necessary, one-time dashboard steps — not automatic.
+
+### 8.5 · Not yet built
+
+- Full SAML federation of 2nd Act's tenant into the Hollisworks broker (the actual Enterprise Connection + "SAML2 Web App" addon on 2nd Act's side).
+- The password "back door" for RIAs without SAML — deferred; per-org-toggle vs. universal also deferred.
+- Per-tenant SAML setup automation — deliberately manual until there's real recurring multi-client demand.
+- **Minor**: `hollisworks.com/login` typed directly (bypassing the real button) falls through to 2nd Act's tenant. Confirmed **not** a bug — real users reach the correct flow via the button — but worth guarding eventually.
 
 ---
 
-## 9 · Backlog — ready to build, blocked on external input
+## 9 · Resolved issues
 
-- **Member Business Registration & EIN Capture** — full spec already written (sole-proprietorship path, no SSN ever stored, guided wizard + staff maker-checker verification). **Blocking gate: written carrier confirmation that a sole-proprietor EIN is accepted** — not yet obtained. Parked, not forgotten.
+**AI sidebar missing count/filter queries** — found via real user testing (*"how many investments are there"*, *"how many entities reside in CT"* both correctly said no tool existed rather than guessing). Fixed for entities (state/region filter) and investments (status filter), reusing existing endpoints and the same visibility-composition pattern as the Ownership Graph and semantic search. **Proven**: a staff/member user with limited visibility gets a count scoped to only what they can see (1 of 3 org-wide CT entities), not the org total.
+
+**Staff visibility Super Admin bypass** — `get_staff_visible_entity_ids` now derives the caller's role internally and returns the full org set for Super Admin, with Org Admin correctly **excluded** and regular staff still restricted. No call sites needed changing.
+
+**RBAC Super Admin bypass (`services/rbac.py`)** — the remaining piece of the cutover incident. `has_permission()` previously default-allowed **only** when a user had zero `user_roles` rows; a Super Admin who acquired any role row fell through to a strict per-permission check with no escape hatch. Fixed: `is_super_admin` checked **first**. Proven against the exact incident scenario and real call sites, with non-super-admin behavior unchanged in both directions.
+
+**Database password exposure** — a live `app_service` password was accidentally pasted into a chat. Rotated immediately via Supabase, Render updated and redeployed, chat message deleted. No indication of actual unauthorized access; handled as precaution.
 
 ---
 
-## 10 · Real security incident, resolved
+## 10 · Known gaps — real, tracked, not forgotten
 
-**A live, plaintext production database password (`app_service` role) was accidentally pasted into this chat.** Immediately rotated directly via Supabase (`ALTER ROLE ... WITH PASSWORD`), new value provided once, Render updated and redeployed, chat message deleted. No indication of any actual unauthorized access — handled as a precaution, not in response to confirmed compromise.
+| Gap | Detail |
+|---|---|
+| `services/permissions.py` never checked for the super-admin bypass gap | This platform has **three** separate, independently-evolved permission systems: `services/rbac.py` (fixed), `services/permissions.py` (JWT-claim-based, gates marketplace/SPV/VDR — **unverified**), and `services/profiles.py` (Workflow Manager's, already correct). Worth checking; not urgent. |
+| `staff_assignments` has almost no real data | Only 2 entities (test fixtures) have any assignment. Real staff-visibility enforcement isn't usable platform-wide until this is populated — a data backfill, separate from any code fix. |
+| Stray duplicate user identity for jlarizza@culmina.io | Two user rows exist (normal, Jun 26; dormant, Jul 2 — promoted to super_admin as a cutover unblock). Root cause not fully diagnosed. **Explicit decision: leave as-is** — deliberately parked, not worth the risk of cleanup in a mature codebase for a low-harm item. |
+| Aggregate-query gap in the AI sidebar, beyond what was fixed | Same missing count/filter capability confirmed for SPVs, workflow runs, deals-by-attribute, member investments, documents, and task/notification counts. Reuse the proven visibility-composition pattern. |
+| Recurring non-fatal RLS startup warning | Every backend startup logs `sync_catalog failed (non-fatal): new row violates row-level security policy for table "assistant_action_catalog"` — reproducible across deploys. Some startup process writes with no org context. Non-blocking, unfixed. |
+| Chancery source-coordinate tracing | Textract returns Geometry/BoundingBox data that the processing code currently discards before storage — a real, fixable enhancement (the data exists, it's just thrown away). pdfplumber never captured it at all. |
+| Ownership Graph bidirectional view (Option B) | A single view showing owners **and** owned entities fanning both directions at once. Deliberately not built (Option A — the toggle — was chosen). A genuinely different rendering shape; its own future sprint. |
+| No confirmed UI for AI model settings | `ai.model.*` and `ai.embedding.*` exist as real `org_settings` rows but may only be editable via direct DB access. Unknown whether `OrgSettingsEditor.jsx` is a generic key/value renderer (in which case they may already surface) or curated. Quick discovery task, not urgent. |
+| R2 bucket name | Still `2ndactcapital-docs` — cosmetic but misleading for a multi-tenant platform. Cheap to rename while there's no real data. |
+| No 2nd-Act-tier competitor research | Only Quorum's ($100M–$1B UHNW tier) research exists — a different tier from 2nd Act's post-liquidity-founder audience. |
+
+**Operational gotcha worth remembering**: Vercel **preview** deployments don't inherit production environment variables — preview-branch errors about missing Auth0 config are expected and are *not* production issues.
 
 ---
 
-## 11 · Process / tooling notes worth preserving
+## 11 · Remaining backlog — unbuilt
 
-- **Direct Supabase MCP access is available in-chat** — Part 1 SQL should be applied directly (`apply_migration`) rather than handed to Joe to paste manually. **Every new table must get its RLS policy in the SAME migration it's created in** — never deferred, given RLS is now genuinely enforced in production.
-- `run_sprint.sh`'s refresh-schema step has a retry-up-to-3× patch (was failing intermittently on `exit 124`) and its wall-clock leg cap was raised from 30 to 90 minutes (a fully correct, 11/11-passing sprint was once killed by the old cap before it could commit — real work was recovered manually from disk, not lost, but the cap was raised to prevent recurrence).
-- **A sprint's own "report before proceeding" instruction can be misread as "stop and wait for a human"** — for any sprint expected to run unattended, prompts must explicitly state that discovery-reporting is followed immediately by continued work in the same response, not a checkpoint requiring reply.
-- Generated documents (Word docs) are useful deliverables but are **not** a durable system of record on their own — the generating sandbox can reset, losing the ability to further edit them. **This file (committed to git) is the actual fix for that.**
-- Two different, unrelated permission systems exist in this codebase (`services/rbac.py` and `services/permissions.py`) — a fix to one does not imply the other is safe; verify each independently if touching either.
+Deal Diligence Engine (scaffolding/UI exist; AI-generation wiring doesn't — Chancery Phase 10's VDR intake is its natural front door) · Opportunity/Pipeline member-acquisition funnel (deal-side largely built; member-side is the gap) · S28 Drift monitor (deprioritized) · Client Profitability/Revenue Module · Correspondence tracking · Voice onboarding · MCP connector registry + secrets · User-created scheduled agents · Retention policy system · AWS Secrets Manager migration (decided, not built).
+
+**Deferred / placeholder**: staging environment · branch protection on `main` · mobile app for advisers · live video conferencing with AI-suggested questions · securities-based lending (sequenced last) · live voice/Nova Sonic · standing rules + full 'Send' action · user invite/pre-creation flow for 2nd Act itself.
+
+---
+
+## 12 · Ready to build — blocked on external input
+
+**Member Business Registration & EIN Capture.** Full spec written. Fills the previously-empty "Insurance" nav placeholder. Risk tier `.structural`, small surface area.
+
+**BLOCKING GATE — do not open this sprint without it**: written carrier confirmation that a sole-proprietor EIN (nine digits only; no state registration, formation date, or certificate of good standing; no minimum employee count) is accepted, plus the arrangement type on record. **If the carrier requires a registered entity, this sprint is void** and must be re-scoped to per-member formation — materially larger and more expensive. Store the confirmation in Chancery before opening.
+
+**Locked decisions**: no entity formation (a sole proprietorship satisfies the requirement, $0/same-day) · no formation-vendor integration (there's no state filing to automate) · the **member** is the IRS responsible party, never the platform · the platform **never** stores an SSN (the member keys it directly into the IRS online assistant) · guided member-facing wizard with a staff verification gate.
+
+**Data model**: `member_businesses` (member_entity_id FK, business_name, business_type, `ein` masked in list views, ein_status, ein_issued_date, formation_state/date nullable, source, confirmation_document_id → Chancery document, bitemporal timestamps, retention/classification columns). **Hard constraint: no `ssn` column, ever** — with an explicit code comment stating this is intentional. Org-scoped RLS; member visibility via `resolve_entity_set`, staff via the standard engine.
+
+**Workflow**: (1) *"Do you already own a business with an EIN?"* asked **first** — an individual can hold only one sole-prop EIN, so this prevents a guaranteed-fail application; (2) if no, explain the sole-prop path; (3) a pre-filled SS-4 worksheet from CRM data, every field **except** SSN; (4) hand off to the IRS's own online assistant side-by-side with the worksheet; (5) member returns, enters the EIN, uploads the CP-575 into Chancery; (6) staff verification gate (maker-checker) validates format + document presence before status becomes `verified`.
+
+**Out of scope**: formation-vendor APIs · registered agent services · state filing/annual-report tracking · foreign qualification · payroll/W2 · the carrier integration itself · any advice on entity choice (factual options + referral to the member's own counsel only).
+
+**Compliance**: insurance economics sit in the club or a licensed services entity, **never in Access (the RIA)** — preserves fiduciary integrity, avoids an ADV disclosure conflict. The carrier's written characterization of the arrangement is the file's regulatory defense for the owner-only-business fact pattern.
+
+**White-label**: zero hardcoded brand strings/hex. Feature-flagged (`features.insurance_benefit.enabled`), default **off**, 2nd Act's org seeded on.
