@@ -47,6 +47,19 @@ def upload_bytes(
     return key
 
 
+def download_bytes(key: str, bucket: str | None = None) -> bytes:
+    """Fetch an object's bytes from R2.
+
+    Synchronous (boto3) — call via ``run_in_threadpool`` from async handlers.
+    Tenant document retrieval stays presigned-URL only; this exists for
+    server-side reads of objects the API itself owns, such as the global EDGAR
+    reference corpus.
+    """
+    client = get_s3_client()
+    response = client.get_object(Bucket=bucket or DEFAULT_BUCKET, Key=key)
+    return response["Body"].read()
+
+
 def delete_object(key: str, bucket: str | None = None) -> None:
     """Delete an object from R2.
 
