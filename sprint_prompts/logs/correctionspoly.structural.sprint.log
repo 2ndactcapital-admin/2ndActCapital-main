@@ -231,3 +231,59 @@ TO UNBLOCK: set ANTHROPIC_API_KEY and re-run
   cd apps/api && python3 scripts/verify_correctionspoly.py
 Assertion 9 then prints the actual re-run figure inline. Merge only if
 WITH-retrieval accuracy is at or near 100%.
+
+
+================================================================================
+ADDENDUM — 2026-08-22 — BLOCKED GATE CLEARED, SPRINT NOW 19/19
+================================================================================
+
+ANTHROPIC_API_KEY is now present in the shell (via ~/.bashrc), which was the sole
+blocker on Task 3. No code, schema, migration or verifier change was needed or
+made to clear it — only the measurement that could not previously be taken.
+
+TASK 3 — DeepEval regression, RE-RUN (apps/api/scripts/eval_correction_loop.py,
+the exact script identified in Task 1b), against the SAME self-contained
+AMBIGUOUS_CASES fixtures, with the polymorphic schema live:
+
+  expected=accreditation   WITHOUT[miss ]=subscription_doc     WITH[MATCH]=accreditation    <= FLIPPED wrong->right
+  expected=llc_formation   WITHOUT[miss ]=operating_agreement  WITH[MATCH]=llc_formation    <= FLIPPED wrong->right
+  expected=estate_plan     WITHOUT[MATCH]=estate_plan          WITH[MATCH]=estate_plan
+
+  WITHOUT correction retrieval: 1/3 = 33.3%
+  WITH    correction retrieval: 3/3 = 100.0%
+  delta = +66.7 pts (improvement)
+
+EXACT reproduction of the on-record 33.3% -> 100.0% (+66.7 pts) — not merely
+"at or near" it. Per-case predictions match the original run as well. The schema
+change did not disturb the document correction-retrieval path, which is the one
+thing this sprint was forbidden to touch.
+
+Worth noting WHY this run proves more than the verifier's synthetic inserts do:
+eval_correction_loop._seed_correction writes document_field_corrections naming
+NONE of the new columns. Its passing is live end-to-end evidence that the
+DEFAULT 'document' + BEFORE INSERT trigger keeps an unmodified legacy writer
+working through the real classifier path.
+
+VERIFY — apps/api/scripts/verify_correctionspoly.py — 19 PASS / 0 FAIL / 0 FLAGGED
+  Run twice, identical result (idempotent). Teardown at start and END, zero
+  leftover rows. Assertions 1-8c and 10 are unchanged from the 2026-08-22 run
+  above and all still PASS. The count moved 18 -> 19 because assertion 9 splits
+  into two live checks once it actually runs (it could only FAIL as one before):
+
+   9  DEEPEVAL REGRESSION — WITH-retrieval at the on-record 100%    PASS
+      (prints the figures inline, not a boolean: "re-run: WITHOUT 1/3 = 33.3%
+      -> WITH 3/3 = 100.0% (delta +66.7 pts)")
+   9b DEEPEVAL baseline — WITHOUT-retrieval still at/below 33.3%    PASS
+      (guards against the inverse failure: a baseline that silently drifted up
+      would make the delta look smaller than it is)
+
+SCOPE-CREEP FLAG: still none. Assertion 10 re-confirms all 8 call-site files
+byte-for-byte unmodified vs origin/main AND the working tree.
+
+STATUS: the HELD condition is discharged. All 4 tasks + verification complete.
+docs/PROJECT_STATUS.md updated: 7d heading no longer "HELD — one gate unrun",
+verification line 17/1 -> 19/0, the BLOCKED-gate subsection replaced with the
+re-measured figures, and the known-gaps row for the unrun regression removed.
+
+UNCHANGED, by design: nothing yet PRODUCES a note_terms correction. The table is
+schema-ready to receive one; extraction is the next sprint.
