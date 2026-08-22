@@ -377,8 +377,8 @@
 
 -- ===== document_field_corrections =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
---   document_id                              uuid NOT NULL
---   org_id                                   uuid NOT NULL
+--   document_id                              uuid
+--   org_id                                   uuid
 --   template_extraction_id                   uuid
 --   field_name                               text NOT NULL
 --   original_value                           text
@@ -386,6 +386,8 @@
 --   notes                                    text
 --   corrected_by                             uuid
 --   corrected_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   target_type                              text NOT NULL DEFAULT 'document'::text
+--   target_id                                uuid NOT NULL
 --   PRIMARY KEY document_field_corrections_pkey: (id)
 
 -- ===== document_link_proposals =====

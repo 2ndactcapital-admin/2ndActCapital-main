@@ -1,0 +1,233 @@
+correctionspoly.structural — CORRECTIONS POLYMORPHISM
+Applied 2026-08-22. Supabase migration 20260822125432
+  "corrections_polymorphism_target_type_target_id".
+
+STATUS: HELD — 17 PASS / 1 FAIL. The single FAIL is the Task 3 DeepEval gate,
+blocked on a missing credential (see BLOCKED below). NOT merged to main.
+
+
+TASK 1 — DISCOVERY
+
+1a. Every read/write of document_field_corrections (whole apps/api tree)
+
+  WRITERS
+   * services/document_review.py::submit_field_correction (~L256)
+       INSERT (document_id, org_id, template_extraction_id, field_name,
+               original_value, corrected_value, notes, corrected_by)
+       document_id = the path document, org_id = get_org_id(request) via the
+       router (NEVER from the body). Both always non-NULL.
+   * services/document_review.py::submit_classification_correction (~L326)
+       Same shape, template_extraction_id explicitly NULL, reserved
+       field_name = 'doc_category'. Both ids always non-NULL.
+   * scripts/eval_correction_loop.py::_seed_correction (~L136)
+       Same 6-column shape, inside a rolled-back transaction.
+   * scripts/verify_chancery8.py (L210/223/240) — three seeds.
+
+  READERS
+   * services/correction_retrieval.py::get_relevant_corrections
+       - kind='classification' (~L85): filters c.org_id = $1 AND
+         c.field_name = 'doc_category'; LEFT JOIN LATERAL document_extractions
+         ON document_id = c.document_id AND org_id = c.org_id.
+       - kind='extraction' (~L124): JOIN document_template_extractions dte
+         ON dte.id = c.template_extraction_id AND dte.org_id = c.org_id,
+         filters c.org_id = $1 AND dte.template_type = $2.
+   * scripts/verify_chancery6.py L263, L355, L429 — count/select by document_id.
+   * scripts/verify_chancery8.py L520 — count by org.
+
+  CONSUMERS (indirect, via correction_retrieval)
+   * services/document_classifier.py L170 — few-shot injection, org_id from caller.
+   * services/textract_extraction.py L315 — deterministic K-1 post-map override.
+
+  DOES ANY CALL SITE ASSUME org_id IS ALWAYS PRESENT?
+    get_relevant_corrections opens with `if org_id is None: return []` — an
+    explicit NULL check — and then filters `c.org_id = $1` in the SQL. This is
+    the load-bearing fact for this sprint: an org_id IS NULL row can never
+    satisfy that predicate, so the new global rows are invisible to the document
+    retrieval path BY CONSTRUCTION, not merely by RLS policy. No call site
+    dereferences org_id in a way that breaks when the COLUMN becomes nullable,
+    because every writer still supplies it.
+
+1b. The DeepEval measurement behind the 33.3% -> 100% figure
+
+    PATH: apps/api/scripts/eval_correction_loop.py
+    Metric: services/eval_metrics.py::DocumentTypeSortAccuracy (no-judge, exact
+    category-code match, zero grading model calls).
+    Golden set: AMBIGUOUS_CASES, 3 dual-purpose cases hardcoded IN THE SCRIPT.
+    Fixtures are fully self-contained — _seed_correction creates its own
+    documents + document_extractions + corrections inside a transaction that is
+    ROLLED BACK. Nothing it depends on has gone missing.
+    On-record run (sprint_prompts/logs/chancery8.structural.sprint.log L43-47):
+      WITHOUT retrieval 1/3 = 33.3%   WITH retrieval 3/3 = 100.0%   +66.7 pts
+      (Haiku; 2 cases flipped wrong->right, 1 already correct)
+
+    NOT BLOCKED at this gate: the script exists and its data/state is intact.
+    The blocker surfaced at Task 3 and is a missing credential, not missing data.
+
+1c. document_template_extractions (touched by the existing FK)
+
+    id uuid PK · document_id uuid NOT NULL · org_id uuid NOT NULL ·
+    template_type text NOT NULL · extraction_source text NOT NULL ·
+    raw_extraction jsonb · mapped_fields jsonb · reviewed_by uuid ·
+    reviewed_at timestamptz · created_at timestamptz NOT NULL DEFAULT now()
+
+    document_field_corrections.template_extraction_id -> dte(id), NULLABLE.
+    Downstream it is used for exactly one thing: the kind='extraction' retrieval
+    joins through it to reach dte.template_type ('k1') so K-1 corrections are
+    scoped to the template. submit_field_correction also writes the corrected
+    value back into dte.mapped_fields via jsonb_set in the same transaction, so
+    the audit row and the live value never diverge. NULL means "not a template
+    field correction" (i.e. a classification correction). Untouched by this
+    sprint.
+
+1d. Prior-sprint tables confirmed deployed
+
+    portfolio.securities_global_note_terms — EXISTS. id uuid NOT NULL
+      DEFAULT uuid_generate_v4(). No org_id column (global).
+    portfolio.reference_filings — EXISTS. id uuid NOT NULL. No org_id (global).
+    Both carry the four-policy global RLS shape (global_read / super_admin
+    insert / update / delete), which is the shape this sprint copies.
+
+  CURRENT RLS ON document_field_corrections (pre-sprint, verbatim)
+    document_field_corrections_org_isolation — PERMISSIVE, FOR ALL, both
+    USING and WITH CHECK:
+      org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+      OR current_setting('app.is_super_admin', true) = 'true'
+    Left completely untouched by this sprint.
+
+  Row count at migration time: 0.
+
+
+TASK 2 — SCHEMA (additive)
+
+  Applied exactly as specified, PLUS one deliberate addition:
+
+   * document_id, org_id -> DROP NOT NULL (FKs retained)
+   * ADD target_type text, target_id uuid
+   * backfill ('document', document_id) — covered 0 rows, table was empty
+   * both SET NOT NULL
+   * document_field_corrections_target_type_chk:
+       target_type IN ('document','note_terms','template_proposal')
+   * document_field_corrections_document_pairing_chk:
+       (target_type='document' AND document_id IS NOT NULL AND org_id IS NOT NULL)
+       OR (target_type<>'document' AND org_id IS NULL)
+   * CREATE INDEX idx_doc_field_corr_target (target_type, target_id)
+   * NO FK on target_id (cannot span three tables). Reason recorded in a
+     COMMENT ON COLUMN on target_id itself, per the sprint's instruction.
+
+  *** THE ADDITION NOT IN THE SPRINT'S LITERAL DDL — and why ***
+  A bare `target_type SET NOT NULL` with no default breaks EVERY existing
+  writer listed in 1a; none of them mention the new columns. Fixing that by
+  editing call sites is precisely the scope creep this sprint forbids. Instead:
+     ALTER COLUMN target_type SET DEFAULT 'document'
+     + BEFORE INSERT trigger document_field_corrections_default_target_trg
+       -> NEW.target_id := NEW.document_id, ONLY when target_id IS NULL
+          AND target_type = 'document'
+  An explicitly supplied target_id is never rewritten, so polymorphic writers
+  are unaffected. Result: every pre-existing INSERT statement stays byte-for-byte
+  valid and lands correctly typed. ZERO call sites were modified.
+
+  RLS — both shapes coexist
+    UNCHANGED: document_field_corrections_org_isolation (as quoted in 1a).
+    ADDED, all scoped to target_type <> 'document':
+      document_field_corrections_global_read           FOR SELECT
+      document_field_corrections_global_super_admin_insert  FOR INSERT
+      document_field_corrections_global_super_admin_update  FOR UPDATE
+      document_field_corrections_global_super_admin_delete  FOR DELETE
+    All five policies are PERMISSIVE, so they OR together. A 'document' row
+    scores false on global_read and is therefore still governed solely by the
+    org predicate -> cross-org invisibility arithmetically unchanged. A
+    'note_terms' row scores true -> globally readable. Both asserted live under
+    the real non-bypass app_service role (verify assertion 8).
+
+
+TASK 3 — DEEPEVAL REGRESSION: *** BLOCKED ***
+
+  Could not be run. ANTHROPIC_API_KEY is not present in this environment:
+    shell env         — unset
+    apps/api/.env     — not present (APP_SERVICE_DATABASE_URL, AWS_*,
+                        DATABASE_URL, EDGAR_USER_AGENT, R2_*, VOYAGE_API_KEY)
+    ~/.bashrc         — exports PATH, SUPABASE_URL,
+                        SUPABASE_SERVICE_ROLE_KEY, DATABASE_URL only
+    render.yaml       — no match
+  Direct attempt: `python3 scripts/eval_correction_loop.py`
+    -> "[eval] SKIP — ANTHROPIC_API_KEY not set (classifier cannot run)"
+
+  NO SUBSTITUTE MEASUREMENT WAS FABRICATED. verify_correctionspoly.py assertion
+  9 reports this as a hard FAIL, not a SKIP, and prints the on-record figure it
+  is gating against. When the key is set, assertion 9 runs the real
+  ecl.evaluate() inside a rolled-back transaction, prints the actual before/after
+  inline, and FAILs if WITH-retrieval accuracy is not within 1 point of 100%.
+
+  What WAS proven instead, and labelled as such (assertion 4): the real
+  correction_retrieval.get_relevant_corrections returns BOTH shapes
+  (classification + extraction) post-migration against freshly seeded rows.
+  That proves the SQL, its LATERAL join, its dte join and its org filter all
+  survived the schema change. It does NOT prove the accuracy figure held, and
+  the verify output says so.
+
+  CONSEQUENCE: this sprint is HELD. Not merged to main.
+
+
+TASK 4 — PROJECT STATUS
+  docs/PROJECT_STATUS.md §7d added (polymorphism, the backward-compat trigger,
+  the RLS coexistence, the honest 0-row backfill note, and the BLOCKED DeepEval
+  gate stated as a figure that was NOT re-measured rather than "still passes").
+  §10 Known gaps gained a tracked row for the unrun regression.
+  docs/schema_snapshot.sql regenerated from the live DB.
+
+
+VERIFY — apps/api/scripts/verify_correctionspoly.py — 17 PASS / 1 FAIL
+  Idempotent (run twice, identical result), teardown at START and END, zero
+  leftover rows.
+
+   1  document_id and org_id are nullable                          PASS
+   2  target_type (text) + target_id (uuid) exist, both NOT NULL   PASS
+   2b target_id has NO FK, reason documented in COMMENT ON COLUMN  PASS
+   3  backfill correctness — sampled and value-compared            PASS (see note)
+   4  all 3 pre-existing INSERT shapes succeed UNMODIFIED and land
+      as target_type='document', target_id=document_id            PASS
+   4b get_relevant_corrections still returns both shapes           PASS (structural,
+      explicitly NOT a substitute for the DeepEval measurement)
+   5  'document' + NULL document_id rejected by
+      document_field_corrections_document_pairing_chk              PASS
+   5b 'document' + NULL org_id rejected by the same constraint     PASS
+   6  'note_terms' WITH an org_id rejected by the same constraint  PASS
+   6b unknown target_type rejected by _target_type_chk             PASS
+   7  real note_terms correction inserted: target_id -> a real
+      securities_global_note_terms.id, org_id NULL, document_id
+      NULL — protection_type 'floor' -> 'buffer'                   PASS
+   7b that global row never surfaces in the org-scoped document
+      retrieval path                                               PASS
+   8  RLS/app_service: note_terms row READABLE with NO org context PASS
+   8b RLS/app_service: ORG_B's target_type='document' correction
+      INVISIBLE to an ORG_A session, which still sees its own 3
+      (the critical non-regression check)                          PASS
+   8c get_relevant_corrections leaks nothing cross-org on
+      the real app_service role                                    PASS
+   9  DEEPEVAL REGRESSION                                          FAIL — BLOCKED,
+      ANTHROPIC_API_KEY absent; measurement not taken, not faked
+  10  no existing call site modified (git diff vs origin/main AND
+      the working tree, 8 files)                                   PASS
+   +  teardown: zero leftover rows                                 PASS
+
+  BACKFILL NOTE (assertion 3, reported honestly rather than as a silent pass):
+  the table held 0 rows when the migration ran, so the backfill UPDATE covered
+  nothing and there is no historical row to sample. The verifier says exactly
+  that instead of claiming a vacuous pass, and proves the same 'document' rule
+  through the legacy-INSERT path in assertion 4.
+
+  SCOPE-CREEP FLAG: none. Assertion 10 confirms
+  services/correction_retrieval.py, services/document_review.py,
+  routers/document_review.py, services/document_classifier.py,
+  services/textract_extraction.py, scripts/eval_correction_loop.py,
+  scripts/verify_chancery6.py and scripts/verify_chancery8.py are all
+  byte-for-byte unmodified vs origin/main and the working tree.
+
+NOT BUILT, by design: extraction logic for note terms (nothing yet produces a
+note_terms correction), any change to how document corrections are read or
+applied, and any parallel corrections table.
+
+TO UNBLOCK: set ANTHROPIC_API_KEY and re-run
+  cd apps/api && python3 scripts/verify_correctionspoly.py
+Assertion 9 then prints the actual re-run figure inline. Merge only if
+WITH-retrieval accuracy is at or near 100%.
