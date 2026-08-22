@@ -144,6 +144,41 @@ Also deferred: dry-run/simulation mode. bpmn-js's attribution watermark accepted
 
 ---
 
+## 7c · Completed — Payoff DSL (versioned note-terms schema + field registry)
+
+**Schema only.** This sprint defines *where* extracted structured-note terms will live and *what* is permitted to be extracted. It contains **no extraction logic, no LLM calls, and no read of `reference_filings.extracted_text`**. Term extraction plus the hazard-field verification path is the next sprint and depends on this one. `document_field_corrections` was deliberately not touched — corrections polymorphism is its own sprint and is a prerequisite for extraction, not for this.
+
+### The versioning decision — RECORDED SO IT CANNOT DRIFT BACK
+
+**`portfolio.securities_global_note_terms` is VERSIONED, not a 1:1 extension of `securities_global`.** Earlier design drafts specified 1:1; that was wrong and was corrected before build. One `global_security_id` legitimately holds **many** terms rows over its life:
+
+- **preliminary** terms from the FWP,
+- **final** terms from the 424B2 that priced it,
+- occasionally a **restated** / corrected 424B2.
+
+These must not collapse into one row. The gap between offered and final terms — a barrier that got worse at pricing, a cap that shrank — **is itself the signal** the comparison model exists to surface. Overwriting the preliminary row destroys it. Accordingly the uniqueness key among current rows is `(global_security_id, terms_status, reference_filing_id)` and is **deliberately not unique on `global_security_id` alone**. Any future change that adds such a constraint is a regression, and `verify_notetermsdsl.py` asserts against it from both directions.
+
+| Piece | Detail |
+|---|---|
+| `portfolio.securities_global_note_terms` | Global reference data extended from public filings: **no `org_id` column**. FK to `securities_global(id)`, nullable FK to `reference_filings(id)`. Bitemporal columns copied exactly from `securities_global` (`valid_from`/`valid_to`/`system_from`/`system_to`, `timestamptz`, the two `_from` columns `NOT NULL DEFAULT now()`). Every monetary/percentage column is `numeric` — never float — read as `Decimal` in Python. CHECKs pin `terms_status`, `product_archetype`, `protection_type`, `basket_type`, `return_basis`, `autocall_frequency`, `extraction_confidence`. |
+| Uniqueness | `sec_global_note_terms_current_unique` on `(global_security_id, terms_status, reference_filing_id)` `WHERE system_to IS NULL AND valid_to IS NULL`, with **`NULLS NOT DISTINCT`** (PG 17.6). Without that clause two current rows with the same security + status and *no* source filing would compare as distinct and un-sourced duplicates would slip through. |
+| `portfolio.note_terms_field_registry` | **19 rows seeded**, one per extractable term column. Excluded by design: `id`, the four bitemporal columns, `global_security_id` / `reference_filing_id` (linkage, not extracted from prose), `field_status` (registering it would be self-referential), and `extraction_confidence` / `source_char_start` / `source_char_end` (provenance about the row, not a term of the note). `applies_to_archetypes text[]` is `NULL` for universal fields; an empty array is rejected by CHECK. |
+| Six hazard fields | `protection_type`, `basket_type`, `return_basis`, `is_decrement_index`, `autocall_frequency`, `terms_status` — flagged `hazard_field = true`. These are the misreads that are **catastrophic *and* arithmetically clean**: the wrong answer is as plausible as the right one, so nothing downstream trips. A 10% *buffer* absorbs the first 10% of loss; a 90% *floor* caps loss at 10% — opposite payoffs, and both get marketed as "10% downside protection". `basket` (weighted average) vs `worst_of` (single worst performer) is the same trap. The extraction sprint gives these six their own verification path. |
+| The four-state model | A NULL term is three different facts wearing one hat. `coupon_barrier_pct` is NULL on a principal-protected note because it is **inapplicable**; NULL on an unprocessed autocallable because it is **unresolved**; NULL on a note whose barrier table defeated the parser because extraction **failed**. `field_status jsonb` carries this per-row, per-field: `extracted` \| `not_applicable` \| `extraction_failed` \| `not_in_template`. `applies_to_archetypes` answers the static half; `field_status` answers the per-row half. |
+| **Stated limitation — jsonb enum is NOT enforced in Postgres** | A CHECK constraint validating per-key enum values inside `field_status` would have to iterate the object's values, which is not `IMMUTABLE`-safe. So it is enforced at the **application layer only**, by `models.note_terms.validate_field_status()`, which `NoteTerms.__post_init__` also calls. **The database will accept an invalid state string if that function is bypassed.** This is documented in the migration and the model docstring rather than silently skipped — every writer must call the validator. |
+| `apps/api/models/note_terms.py` | Shapes only, no extraction functions. `NoteTerms` and `NoteTermsFieldRegistryEntry` dataclasses; `Decimal` on every numeric field; controlled vocabularies kept in lockstep with the CHECK constraints; `validate_field_status()` raising `FieldStatusError`. Underlyings are deliberately absent from the model — they hang off `securities_global_relationships` (`relationship_type='underlying_of'`, `link_state` resolved/unresolved/ambiguous), because a worst-of basket has N underlyings and some never resolve, which no direct FK could express. |
+| RLS | Both tables carry the **exact four-policy global shape read live off `securities_global`**: `{table}_global_read FOR SELECT USING (true)`; `{table}_super_admin_insert / _update / _delete` gated on `current_setting('app.is_super_admin', true) = 'true'`. Four separate policies, never one `FOR ALL`. No `NULLIF` guard is used or needed — these read a text flag, not an org uuid, so the `''`-cast hazard does not apply. `SELECT/INSERT/UPDATE/DELETE` granted to `app_service`. |
+
+**Verification — `apps/api/scripts/verify_notetermsdsl.py`, 24/24 PASS**, idempotent across consecutive runs, teardown at start and end.
+
+The **versioning proof** is the core assertion: a `preliminary` row and a `final` row are inserted for one `global_security_id`, both persist as separate current rows, and the `protection_pct` delta (10.00 → 8.00) is asserted to survive. From the other direction, a true duplicate `(security, status, filing)` is asserted **rejected** by name, while a third differing `terms_status` is asserted **accepted** — three current rows sharing one security. Also asserted: no `org_id` on either table; exactly four policies each with commands SELECT/INSERT/UPDATE/DELETE; all seven monetary columns are `numeric`; every registry `field_key` resolves to a real column; exactly six `hazard_field` rows matching both the specification and `models.HAZARD_FIELD_KEYS`; the validator accepts all four states and raises on a fifth; and a **negative** test on each table proving an insert without `app.is_super_admin` is rejected.
+
+**`APP_SERVICE_DATABASE_URL` is now required, with no fallback.** §7b's verifier preferred that credential but fell back to `SET ROLE app_service` when it failed — which means an RLS regression could pass under a differently-privileged session. This verifier connects with it, asserts `rolbypassrls = false`, and **aborts loudly** if it cannot. The credential in `apps/api/.env` **authenticates correctly as of this sprint**, closing the environment finding recorded in §7b.
+
+**Not built, by design**: any extraction logic or LLM call, any read of `reference_filings.extracted_text`, any change to `document_field_corrections`, hazard-field verification, and any API router or UI over these tables.
+
+---
+
 ## 8 · Hollisworks headless multi-tenant architecture
 
 **Foundational pieces built and proven working in production. Full SAML federation designed but not yet built.**
