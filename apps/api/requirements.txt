@@ -17,3 +17,15 @@ python-docx==1.2.0
 openpyxl==3.1.5
 python-pptx==1.0.2
 extract-msg==0.56.0
+# Sprint 31 — SSVI volatility surface engine (services/pricing/).
+# numpy/scipy back the calibration math; pandas/yfinance are the live-quote
+# path and are imported inside the request handler, not at module scope, so the
+# base service does not carry them at idle. psutil is an OPTIONAL fallback tier
+# for the memory guard — it degrades to /proc/meminfo if absent.
+# matplotlib is deliberately NOT listed: the engine imports it only under the
+# CLI's --plot flag and it must never be imported server-side.
+numpy>=1.26
+scipy>=1.10
+pandas>=2.0
+yfinance>=0.2
+psutil>=5.9

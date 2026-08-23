@@ -44,6 +44,10 @@ const TRADING_AUTHORITY_ITEM = { label: "Trading Authority", href: "/admin/tradi
 // tenant data — Super Admin only, same gate as the two items above.
 const NOTE_TERMS_QUEUE_ITEM = { label: "Note Terms Review", href: "/admin/pricing/note-terms-queue", icon: "admin" };
 
+// Sprint 31 — SSVI volatility surface viewer. Super Admin only; the API
+// enforces it too (a hidden link is not a permission).
+const VOL_SURFACE_ITEM = { label: "Volatility Surface", href: "/admin/pricing/surface", icon: "admin" };
+
 // The Ascent mark inline SVG — white on navy, with gold-light top square.
 function AscendMark({ size = 20 }) {
   return (
@@ -377,6 +381,11 @@ export default function Sidebar() {
                 item={NOTE_TERMS_QUEUE_ITEM}
                 expanded={expanded}
                 active={isActive(NOTE_TERMS_QUEUE_ITEM.href)}
+              />
+              <NavLink
+                item={VOL_SURFACE_ITEM}
+                expanded={expanded}
+                active={isActive(VOL_SURFACE_ITEM.href)}
               />
               <NavLink
                 item={PLATFORM_ITEM}
