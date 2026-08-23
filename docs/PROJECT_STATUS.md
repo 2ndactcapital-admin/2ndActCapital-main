@@ -224,6 +224,22 @@ The verifier was run again the same day. **17 PASS, 2 FAIL, 0 flagged**, and the
 
 **Verifier hardening (the only code change in this pass).** The re-run exposed a real hole in the load-bearing gate: with the API dead, both arms score 0%, so assertion 9 failed with the misleading label "WITH-retrieval accuracy COLLAPSED" while assertion **9b passed vacuously** (0.0% ≤ 33.3%) — precisely the "check that passes without running" this sprint's design forbids. `verify_correctionspoly.py` now detects the no-measurement condition (both predictions `None` on every case, which a live classifier never produces) and reports it as an explicit **NOT MEASURED** hard FAIL on *both* checks, with the cause named. No application code, schema, migration or fixture was touched; assertion 10 still reports zero scope creep.
 
+#### Third re-verification, 2026-08-22 — 17/2 unchanged, plus the root cause of the missing key
+
+Re-run once more with nothing re-applied: **17 PASS, 2 FAIL, 0 flagged** — byte-identical to the run above, same two DeepEval assertions, same `400 invalid_request_error` credit-balance response. The hardening worked as designed: both 9 and 9b reported **NOT MEASURED** as hard FAILs and named the cause, so the outage could not clear the gate vacuously.
+
+Root cause of the "key not set" half of the problem, which earlier passes had misattributed to non-interactive shells: **`~/.bashrc` line 125 reads `export ANTHROPIC_API_KEY =sk-ant-...`, with a space before the `=`.** Shell assignment permits no space, so bash exports the name *unset* and then tries to execute `=sk-ant-...`. The key is therefore set in **no** shell, interactive included. The file was not edited — it is outside the repo and outside this sprint's scope. **Two independent fixes are needed to clear the gate: (1) delete that space in `~/.bashrc`; (2) restore Anthropic account credit.** Fixing only (1) still yields 17/2 — the key already reaches the API today and is rejected on billing, not auth.
+
+#### Fourth re-verification, 2026-08-22 — 17 PASS / 1 FAIL; the key is now gone from the machine entirely
+
+Re-run again with nothing re-applied: **17 PASS, 1 FAIL, 0 flagged.** Assertions 1–8c and 10 are unchanged and green — the polymorphic schema, both CHECK constraints, the real `note_terms` insert, the four-policy RLS shape, cross-org invisibility of document rows, and all 8 call sites byte-for-byte unmodified.
+
+The single failure is the DeepEval gate, and **the cause has changed**: `ANTHROPIC_API_KEY` is no longer present anywhere on this machine. The malformed `export ANTHROPIC_API_KEY =sk-ant-...` line described above is **no longer in `~/.bashrc` at all**, and the key does not appear in `~/.profile`, `apps/api/.env`, `apps/web/.env.local`, or the repo root `.env`. So the previous pass's fix (1) is moot — there is nothing left to un-malform; the key must be re-added. Consequently the run fails **once** (key-absent) rather than twice (both arms scoring 0/3 on billing 400s), which is the hardened verifier behaving correctly: absence is a hard FAIL, never a SKIP.
+
+**DeepEval figure from this run: NOT MEASURED** — no substitute was fabricated. The on-record **33.3% → 100.0% (+66.7 pts)**, exactly reproduced on the polymorphic schema on 2026-08-22 while credit was available, remains the standing measurement. Assertion 4 independently re-confirms the retrieval SQL path is intact (`get_relevant_corrections`: classification hits=2, extraction hits=1), so there is no evidence of regression in the path this sprint was forbidden to touch. **To clear the gate: re-add `ANTHROPIC_API_KEY=sk-ant-...` (no space around `=`) to `~/.bashrc` or `apps/api/.env`, ensure the Anthropic account has credit, then re-run `python3 scripts/verify_correctionspoly.py` from `apps/api`.**
+
+Still unchanged, by design: nothing yet **produces** a `note_terms` correction — the table is schema-ready only.
+
 ---
 
 ## 8 · Hollisworks headless multi-tenant architecture

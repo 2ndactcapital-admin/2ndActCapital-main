@@ -346,3 +346,121 @@ TO RE-TAKE THE MEASUREMENT: restore Anthropic account credit, then
 Expect 19/0 again once the classifier can respond.
 
 UNCHANGED, by design: nothing yet PRODUCES a note_terms correction.
+
+
+================================================================================
+ADDENDUM 3 — 2026-08-22 (third pass) — RE-VERIFICATION, 17/2 (unchanged)
+================================================================================
+
+The sprint prompt was re-issued a second time. Again nothing was re-applied: the
+migration is live (b3108b8), all 4 tasks are complete (c01018d), and the verifier
+hardening is in (b6ffb63). The deployed state was re-verified only.
+
+RESULT: verify_correctionspoly.py — 17 PASS / 2 FAIL / 0 FLAGGED. Byte-identical
+outcome to ADDENDUM 2. Assertions 1-8c and 10 all PASS; the only failures are
+assertion 9 / 9b, still the Anthropic credit balance:
+
+  400 invalid_request_error — "Your credit balance is too low to access the
+  Anthropic API." on every call, all three AMBIGUOUS_CASES, both arms.
+
+The ADDENDUM 2 hardening did its job: rather than assertion 9 failing with a
+misleading "accuracy COLLAPSED" label while 9b passed vacuously at 0.0% <= 33.3%,
+BOTH now report NOT MEASURED as a hard FAIL and name the cause. The gate can no
+longer be cleared by an outage.
+
+Confirmed again: the 400 is a BILLING error, not a 401. The key is valid and
+reaches Anthropic; the ACCOUNT has no credit. Not a retrieval regression, and
+assertion 4 independently re-confirms the retrieval SQL path is intact
+(get_relevant_corrections: classification hits=2, extraction hits=1).
+
+NEW FINDING — ~/.bashrc line 125 is malformed, and has been all along:
+
+  export ANTHROPIC_API_KEY =sk-ant-api03-...
+                           ^ space before the '='
+
+Shell assignment permits no space around '='. Bash parses this as two words:
+`export ANTHROPIC_API_KEY` (exports the name, still UNSET) followed by an attempt
+to run `=sk-ant-...`, which errors with "not a valid identifier". So the variable
+is not exported in ANY shell — interactive included, contrary to what ADDENDUM 2
+inferred ("present but not exported into non-interactive shells"). Evidence:
+sourcing ~/.bashrc and dumping `env -0` does not contain the key; it only became
+visible to this run once the loader's parser was relaxed to tolerate whitespace
+around '='. The user's ~/.bashrc was NOT edited — that file is outside the repo
+and outside this sprint's scope; flagged for the operator instead.
+
+Two independent things must therefore be fixed before the gate can clear:
+  1. ~/.bashrc line 125 — delete the space: export ANTHROPIC_API_KEY=sk-ant-...
+  2. Restore Anthropic account credit (Plans & Billing).
+Fixing only (1) still yields 17/2; the key already reaches the API today.
+
+STATUS: unchanged. Schema + RLS + backward compatibility verified green for the
+third time. The DeepEval regression remains UNMEASURED-since-ADDENDUM-1; the
+33.3% -> 100.0% figure on record stands as last taken while credit was available.
+
+UNCHANGED, by design: nothing yet PRODUCES a note_terms correction.
+
+
+================================================================================
+ADDENDUM 4 — 2026-08-22 (fourth pass) — RE-VERIFICATION, 17/1
+================================================================================
+
+The sprint prompt was re-issued a third time. Nothing was re-applied. The
+migration is live (b3108b8), all 4 tasks complete (c01018d), verifier hardening
+in (b6ffb63). The deployed state was re-verified only; no schema, migration,
+application code, fixture or call site was touched in this pass.
+
+RESULT: verify_correctionspoly.py — 17 PASS / 1 FAIL / 0 FLAGGED.
+
+Assertions 1-8c and 10 all PASS, identical to ADDENDUM 2 and 3:
+  1   document_id + org_id nullable
+  2   target_type (text) / target_id (uuid), both NOT NULL; no FK, reason in a
+      404-char COMMENT ON COLUMN
+  3   backfill vacuously true (0 pre-existing rows); the rule itself proven by 4
+  4   all 3 legacy INSERT shapes succeed UNMODIFIED and land as
+      ('document', document_id); get_relevant_corrections returns both shapes
+      (classification hits=2, extraction hits=1)
+  5/6 all four CHECK rejections asserted BY CONSTRAINT NAME
+  7   real note_terms correction (protection_type: floor -> buffer) inserted
+      against a live securities_global_note_terms.id with org_id NULL
+  8   under the real non-bypass app_service role: global read with no org
+      context; ORG_A session sees 0 of ORG_B's document corrections and 3 of its
+      own; get_relevant_corrections leaks nothing cross-org
+  10  all 8 call-site files byte-for-byte unmodified; teardown zero leftovers
+
+THE ONE FAILURE IS THE DEEPEVAL GATE, AND ITS CAUSE HAS CHANGED:
+
+  ANTHROPIC_API_KEY is no longer present ANYWHERE on this machine.
+
+ADDENDUM 3 found the key on ~/.bashrc line 125 with a space before the '='
+(exported the name unset). That line is now GONE from ~/.bashrc entirely — a
+relaxed textual parse tolerant of whitespace around '=' recovers nothing, and
+the key does not appear in ~/.profile, apps/api/.env, apps/web/.env.local, or
+the repo-root .env either. ADDENDUM 3's fix (1) is therefore moot: there is no
+malformed line left to correct; the key must be re-added.
+
+That is why the count moved 17/2 -> 17/1 rather than improving. With a key
+present-but-refused, the run failed twice (assertions 9 and 9b, both arms
+scoring 0/3 on billing 400s). With NO key, the verifier short-circuits to a
+single hard FAIL before making any call. Both are FAILs, never SKIPs — the
+ADDENDUM 2 hardening still holds: an absent or dead classifier can never clear
+this gate vacuously.
+
+DEEPEVAL FIGURE FROM THIS RUN: NOT MEASURED. No substitute was fabricated. The
+on-record 33.3% -> 100.0% (+66.7 pts), exactly reproduced on the polymorphic
+schema in ADDENDUM 1 while credit was available, remains the standing figure.
+Assertion 4 independently re-confirms the retrieval SQL path is intact, so
+there is no evidence of a regression in the path this sprint is forbidden to
+touch. It is unmeasured, not broken.
+
+TO CLEAR THE GATE (operator action, outside this repo):
+  1. Re-add the key with NO space around '=':
+       export ANTHROPIC_API_KEY=sk-ant-...      (~/.bashrc)
+     or add ANTHROPIC_API_KEY=sk-ant-... to apps/api/.env
+  2. Ensure the Anthropic account has credit (Plans & Billing).
+  3. cd apps/api && python3 scripts/verify_correctionspoly.py
+Expect 19/0 once the classifier can respond.
+
+STATUS: unchanged. Schema + RLS + backward compatibility verified green for the
+fourth time. HELD pending the DeepEval re-measurement.
+
+UNCHANGED, by design: nothing yet PRODUCES a note_terms correction.
