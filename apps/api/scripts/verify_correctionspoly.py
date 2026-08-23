@@ -554,6 +554,24 @@ async def a9_deepeval(conn):
               f"{wo * 100:.1f}%  ->  WITH {report['with_pass']}/{report['n']} = "
               f"{w * 100:.1f}%  (delta {(w - wo) * 100:+.1f} pts); "
               f"on record 33.3% -> 100.0% (+66.7 pts)")
+
+    # A live classifier always returns SOME category_code. Both predictions None
+    # on every case means call_claude_json exhausted (dead key, no credit, outage)
+    # and NO measurement was taken. Distinguish that from a genuine collapse:
+    # scored as 0%/0%, the baseline check would otherwise pass VACUOUSLY, which is
+    # precisely the "check that passes without running" this gate forbids.
+    if all(c["without_pred"] is None and c["with_pred"] is None
+           for c in report["cases"]):
+        blocked = ("the classifier returned NO prediction on any case (both arms "
+                   "None) — call_claude_json exhausted, so the measurement was "
+                   "NOT TAKEN. This is NOT evidence of a retrieval regression; "
+                   "check the Anthropic key/credit balance and re-run. Scored "
+                   "0%/0%, hence reported as FAIL on BOTH the WITH and the "
+                   "WITHOUT check so neither can pass vacuously.")
+        fail("DeepEval regression NOT MEASURED — measurement unavailable", blocked)
+        fail("DeepEval baseline NOT MEASURED — measurement unavailable", blocked)
+        return
+
     if w >= DEEPEVAL_ON_RECORD_WITH - DEEPEVAL_TOLERANCE:
         ok("DeepEval regression — WITH-retrieval accuracy is at the on-record "
            "100% figure", detail)

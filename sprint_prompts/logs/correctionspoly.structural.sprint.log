@@ -287,3 +287,62 @@ re-measured figures, and the known-gaps row for the unrun regression removed.
 
 UNCHANGED, by design: nothing yet PRODUCES a note_terms correction. The table is
 schema-ready to receive one; extraction is the next sprint.
+
+
+================================================================================
+ADDENDUM 2 — 2026-08-22 (later same day) — RE-VERIFICATION, 17/2
+================================================================================
+
+The sprint prompt was re-issued. Nothing was re-applied: the migration is already
+live (commit b3108b8) and all 4 tasks were already complete (commit c01018d).
+Instead the deployed state was re-verified.
+
+RESULT: verify_correctionspoly.py — 17 PASS / 2 FAIL / 0 FLAGGED.
+
+Both failures are the SAME gate (assertion 9 and 9b) and both are environmental,
+not defects:
+
+  Every Anthropic call returned
+    400 invalid_request_error — "Your credit balance is too low to access the
+    Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+  call_claude_json exhausted its chain, classify_document returned None on all
+  three AMBIGUOUS_CASES, and BOTH arms scored 0/3 = 0.0%.
+
+  This is NOT a retrieval regression. The 33.3% -> 100.0% figure recorded in
+  ADDENDUM 1 stands, taken while credit was available. Assertion 4's structural
+  check independently confirms the retrieval SQL path is intact post-migration
+  (get_relevant_corrections: classification hits=2, extraction hits=1).
+
+  Note ANTHROPIC_API_KEY IS present in ~/.bashrc (108 chars) but is not exported
+  into non-interactive shells; it was loaded explicitly for this run. The key is
+  valid — the ACCOUNT has no credit. Distinct failure from the ADDENDUM 1 blocker.
+
+ASSERTIONS 1-8c AND 10 ALL STILL PASS — the polymorphic schema and its RLS are
+intact exactly as deployed: nullability, target_type/target_id NOT NULL, the
+COMMENT-documented absent FK, all four CHECK rejections by constraint name, the
+real note_terms insert against securities_global_note_terms with org_id NULL,
+global read under app_service with no org context, cross-org invisibility of
+target_type='document' rows, and all 8 call-site files byte-for-byte unmodified.
+
+VERIFIER HARDENING — the only code change in this pass, and a real one:
+
+  The dead API exposed a hole in the load-bearing gate. Scored 0%/0%, assertion 9
+  failed with the MISLEADING label "WITH-retrieval accuracy COLLAPSED" (pointing a
+  reader at a schema regression that did not happen), while assertion 9b PASSED
+  VACUOUSLY, because 0.0% <= 33.3% satisfies "baseline has not drifted up". That
+  is exactly the "check that passes without running" this sprint's design forbids
+  — the verifier enforced the rule against a missing KEY but not against a key
+  that is present and refused.
+
+  Fixed: assertion 9 now detects the no-measurement condition first — both
+  predictions None on EVERY case, which a live classifier never produces — and
+  reports NOT MEASURED as a hard FAIL on BOTH checks, naming the cause, so neither
+  can pass vacuously. Only scripts/verify_correctionspoly.py changed. No
+  application code, schema, migration or fixture touched; assertion 10 re-confirms
+  zero scope creep.
+
+TO RE-TAKE THE MEASUREMENT: restore Anthropic account credit, then
+  cd apps/api && python3 scripts/verify_correctionspoly.py
+Expect 19/0 again once the classifier can respond.
+
+UNCHANGED, by design: nothing yet PRODUCES a note_terms correction.
