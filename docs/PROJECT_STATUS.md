@@ -456,6 +456,43 @@ Auto-resolution of single-name equities to tickers (share classes, reassigned ti
 
 ---
 
+## 7h · Completed — Portfolio A1, the global security layer
+
+**Schema and services only. A1 is the global master layer that both the portfolio track and the structured-investments corpus build on; it unblocks the corpus track.** `apps/api/services/securities_global.py` + `apps/api/scripts/verify_portfolioa1.py`. **39 PASS, 0 FAIL**, idempotent across consecutive runs.
+
+The Part 1 SQL was applied directly via Supabase MCP before the sprint, so A1 built *against* four existing tables rather than creating them: `portfolio.securities_global` (no `org_id` — deliberately global), `..._identifiers`, `..._prices`, `..._relationships`. All four have RLS enabled with exactly **4 policies each**, in the inverted shape that `public.permissions` uses: `USING (true)` global read, `app.is_super_admin` on insert/update/delete.
+
+### What the service layer contains
+
+`get_by_identifier` (identifier → surviving security, **following the merge chain in one statement**) · `create_security` / `add_identifier` / `add_price` / `add_relationship` (all Super-Admin-gated) · `resolve_scoreability` (derived, never stored) · `merge_securities` and `backfill_canonical_ids` (the helpers that keep reads cheap) · `set_price_coverage`.
+
+**The underlyings-only pricing rule is enforced in code, not by convention.** `add_price` raises `StructuredNotePricingError` — its own class, naming the security and pointing at `resolve_scoreability` — when the target's `security_type` is `structured_note`. A note's secondary prices are sporadic TRACE prints, not a daily series. The natural implementation of a price loader (`for security in securities: fetch_prices(security)`) would not crash and would not log anything alarming; it would quietly write ~250k individually-plausible, collectively-meaningless rows. Deliberately **not** log-and-continue: a "54 skipped" counter at the end of a run is indistinguishable from a healthy run and converts a design invariant into a statistic.
+
+**`resolve_scoreability` returns the reason, not just `False`.** Scoreable = at least one current relationship, every one `link_state='resolved'`, every target `price_coverage='has_series'`. Each gap names the specific `raw_underlying_text` or the specific uncovered target. `False` alone turns into "we couldn't score 4,000 notes" with nothing to act on. Zero relationships is reported as an honest gap rather than treated as vacuously true — a note with no recorded underlyings is one we have not finished reading. Derived on read because all three inputs move independently, and a stale scoreability flag silently stops (or starts) scoring notes.
+
+### Task 1 findings worth keeping
+
+- **1c — `portfolio` is NOT on the `search_path`. Every query must schema-qualify.** Measured, not assumed: `app_service` has no `pg_db_role_setting` row, so it inherits `"$user", public`. An unqualified `SELECT ... FROM securities_global` raises `UndefinedTableError` under the production role while working fine in a psql session that happened to `SET search_path` — invisible in development, total in production. **A2 and the SI track both need this.** The service layer routes every table name through schema-qualified module constants, and the verify script parses the module with `ast`, strips docstrings, and fails on any bare `FROM`/`INTO`/`UPDATE` of a portfolio table.
+- **1b — the RLS GUCs are connection-level `SET LOCAL`, not schema-scoped.** `_RLSPool.acquire()` opens an explicit transaction whose first statement is `set_config('app.current_org_id'/'app.is_super_admin'/'app.current_auth0_sub', ..., is_local => true)`. A `SET LOCAL` GUC has no schema binding, which is exactly why policies in a non-`public` schema read it with no extra work.
+- **1d — verified live, under real `app_service` (`rolbypassrls = false`).** Global read works with `is_super_admin='false'`; INSERT into all four tables is rejected with `InsufficientPrivilegeError`; the same connection with `is_super_admin='true'` inserts successfully.
+- **1a policy-shape inconsistency, not fixed (it is Part 1 SQL, already applied).** `securities_global` and `..._relationships` guard with `NULLIF(current_setting('app.is_super_admin', true), '') = 'true'`; `..._identifiers` and `..._prices` use the bare `current_setting(...) = 'true'`. Both deny correctly here — it is a text compare, not a uuid cast, so the `''` reset artifact cannot raise — but the shapes differ and the bare form is the one that bites the moment anyone copies it onto a uuid column.
+- **`canonical_id` shipped NULL on all 67 live corpus rows.** The Part 1 SQL added the column; nothing populated it. A read path trusting a bare `canonical_id` would have returned zero rows for the entire corpus. Every read uses `COALESCE(canonical_id, id)` (still one join, still no walk), `create_security` mints the id in Python so `canonical_id = id` in the same INSERT (no NULL window), and `backfill_canonical_ids` closed the legacy gap — **67 rows backfilled, permanently**. `canonical_id` is the one column deliberately exempt from Rule 3 bitemporal supersede: it is a materialized derivation, not a business fact, and minting a new `id` to change it would orphan every FK pointing at the old one.
+- **`docs/PORTFOLIO_REPORTING_DESIGN_V6.md` does not exist in the repo.** A1 was built against the deployed schema, which is the source of truth per CLAUDE.md anyway. If that design doc exists somewhere, it is not in git.
+
+### Two things the verification caught about itself
+
+**The four tables were never empty.** They held the live EDGAR corpus (67 securities / 64 identifiers / 97 relationships) throughout. The brief's "teardown leaves zero rows in all four tables" would have deleted verified production data, so it is enforced as the form that actually means something: **all four tables are counted before the run and after teardown, and must match exactly.** A leaked fixture row fails as hard as a deleted corpus row. Fixtures are tagged `VERIFY-PORTFOLIOA1` and deleted by exact match, and every fixture name is declared up front — a name appended at runtime is one the *next* run's start-teardown cannot find.
+
+**The CHECK-constraint test passed while proving nothing, and the fix was to assert on the constraint name.** BEFORE triggers fire ahead of CHECK constraints, and `sec_global_rel_confirm_gate` carries its own belt-and-braces `RAISE ... ERRCODE 23514` for a resolved edge with a NULL target. So the obvious test — INSERT a resolved row with a NULL target — was stopped by the *trigger*; `sec_global_rel_resolved_has_target` was never consulted, and dropping it entirely would not have failed the test. The check now drives an edge into `resolved` through the real `confirm_resolution` path and *then* nulls the target: the trigger does not re-gate an already-resolved row, so it steps aside and the constraint is the only thing standing there. Both mechanisms are now asserted separately. **Generalizable: "an exception was raised" is not a passing test when two layers can raise the same error class.**
+
+Also proven: the merge chain resolves B's identifier to A with `EXPLAIN` showing no recursive node (N+1 impossible — the chain is collapsed at write time by `merge_securities`, including re-pointing transitive rows, so reading it is a join and not a traversal); `add_relationship` inserts with `to_global_security_id` NULL and `raw_underlying_text` populated (**the case v5 got wrong**); `add_price` stores `Decimal`, and `_money()` refuses `float` outright because `Decimal(0.1)` silently preserves the binary error with no exception anywhere downstream.
+
+### Deliberately NOT built (A2 and later, per the brief)
+
+`portfolio.assets` / `positions` / `valuations` / `transactions` / `external_references` · `account` in the `entity_type` enum · `market` on transaction types · `rate_type` / bitemporal on `fx_rates` · any ingestion, EDGAR fetching or price feed · any UI · any extension table. `securities_global_note_terms` already exists from the note-terms sprints; A1 does not preclude it and does not touch it. `add_relationship` cannot write `link_state='resolved'` or `'ambiguous'` — those belong to `services/underlying_resolution.py`'s propose/human-confirm path and to `trg_sec_global_rel_confirm_gate`, and A1 defers to both rather than opening a second door.
+
+---
+
 ## 8 · Hollisworks headless multi-tenant architecture
 
 **Foundational pieces built and proven working in production. Full SAML federation designed but not yet built.**
