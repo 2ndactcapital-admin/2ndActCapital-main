@@ -746,6 +746,11 @@
 --   as_of_date                               date NOT NULL
 --   source                                   text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   rate_type                                text NOT NULL DEFAULT 'spot'::text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
 --   UNIQUE fx_rates_base_ccy_quote_ccy_as_of_date_key: (base_ccy, quote_ccy, as_of_date)
 --   PRIMARY KEY fx_rates_pkey: (id)
 
@@ -1308,6 +1313,7 @@
 --   display_order                            integer NOT NULL DEFAULT 100
 --   notes                                    text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   market                                   text
 --   UNIQUE transaction_types_code_key: (code)
 --   PRIMARY KEY transaction_types_pkey: (id)
 
@@ -1461,6 +1467,55 @@
 --   PRIMARY KEY workflow_versions_pkey: (id)
 --   UNIQUE workflow_versions_workflow_definition_id_version_number_key: (workflow_definition_id, version_number)
 
+-- ===== portfolio.asset_identifiers =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   asset_id                                 uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   id_type                                  text NOT NULL
+--   id_value                                 text NOT NULL
+--   is_primary                               boolean NOT NULL DEFAULT false
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY asset_identifiers_pkey: (id)
+
+-- ===== portfolio.assets =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid
+--   name                                     text NOT NULL
+--   short_name                               text
+--   asset_class                              text NOT NULL DEFAULT 'financial'::text
+--   asset_type                               text NOT NULL
+--   ownership_basis                          text NOT NULL DEFAULT 'units'::text
+--   valuation_method                         text NOT NULL DEFAULT 'market_price'::text
+--   include_in_performance                   boolean NOT NULL DEFAULT true
+--   default_taxonomy_key                     text
+--   currency_code                            text
+--   issuer_entity_id                         uuid
+--   internal_spv_id                          uuid
+--   inception_date                           date
+--   maturity_date                            date
+--   is_active                                boolean NOT NULL DEFAULT true
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY assets_pkey: (id)
+
+-- ===== portfolio.external_references =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   source_system                            text NOT NULL
+--   external_id                              text NOT NULL
+--   record_type                              text NOT NULL
+--   record_id                                uuid NOT NULL
+--   first_seen                               timestamp with time zone NOT NULL DEFAULT now()
+--   last_seen                                timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY external_references_pkey: (id)
+--   UNIQUE external_references_source_system_external_id_record_type_key: (source_system, external_id, record_type)
+
 -- ===== portfolio.note_terms_field_registry =====
 --   field_key                                text NOT NULL
 --   display_label                            text NOT NULL
@@ -1481,6 +1536,32 @@
 --   revoked_at                               timestamp with time zone
 --   notes                                    text
 --   PRIMARY KEY note_terms_stp_policy_pkey: (id)
+
+-- ===== portfolio.positions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   owner_entity_id                          uuid NOT NULL
+--   asset_id                                 uuid NOT NULL
+--   as_of_date                               date NOT NULL
+--   ownership_basis                          text NOT NULL DEFAULT 'units'::text
+--   quantity                                 numeric
+--   ownership_pct                            numeric
+--   cost_basis                               numeric
+--   market_value                             numeric
+--   market_value_native                      numeric
+--   fx_rate_id                               uuid
+--   accrued_income                           numeric
+--   authority                                text NOT NULL
+--   source_system                            text NOT NULL
+--   taxonomy_key                             text
+--   is_reconciled                            boolean NOT NULL DEFAULT false
+--   reconciled_at                            timestamp with time zone
+--   superseded_by_source                     text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY positions_pkey: (id)
 
 -- ===== portfolio.reference_filings =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -1602,4 +1683,49 @@
 --   resolved_by                              uuid
 --   resolved_at                              timestamp with time zone
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
+
+-- ===== portfolio.transactions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   position_id                              uuid NOT NULL
+--   transaction_type_code                    text NOT NULL
+--   corporate_action_id                      uuid
+--   trade_date                               date NOT NULL
+--   settle_date                              date
+--   quantity                                 numeric
+--   price                                    numeric
+--   gross_amount                             numeric
+--   fees                                     numeric
+--   taxes                                    numeric
+--   net_amount                               numeric
+--   currency_code                            text
+--   fx_rate_id                               uuid
+--   authority                                text NOT NULL
+--   source_system                            text NOT NULL
+--   external_ref                             text
+--   related_transaction_id                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY transactions_pkey: (id)
+
+-- ===== portfolio.valuations =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   asset_id                                 uuid NOT NULL
+--   valuation_date                           date NOT NULL
+--   value                                    numeric NOT NULL
+--   value_basis                              text NOT NULL
+--   currency_code                            text
+--   purpose                                  text NOT NULL DEFAULT 'market'::text
+--   status                                   text NOT NULL DEFAULT 'final'::text
+--   valuation_method                         text
+--   valuation_source                         text
+--   supersedes_valuation_id                  uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY valuations_pkey: (id)
 

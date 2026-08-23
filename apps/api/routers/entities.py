@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from schemas.entities import (
+    OPERATIONAL_ENTITY_TYPES,
     PERSON_ENTITY_TYPES,
     AddressCreate,
     AddressResponse,
@@ -78,6 +79,32 @@ INVESTOR_ENTITY_TYPES = (
     "individual", "trust", "llc", "lp", "household", "family_office",
 )
 
+# Portfolio A2 — the CRM-facing exclusion, applied in exactly three places:
+# `list_entities`, `search_entities` and `find_entity_dupes`. See
+# `schemas.entities.OPERATIONAL_ENTITY_TYPES` for what these types are and why
+# they are hidden.
+#
+# INVESTOR_ENTITY_TYPES above is an allow-list and already excluded accounts by
+# construction, so `investor_only=true` needed no change. The three below are
+# not allow-listed — they returned every type in the org, which is why an
+# account would have shown up in the CRM table, the entity picker and the
+# document-linkage duplicate check the day the first one was created.
+_NOT_OPERATIONAL = "entity_type::text <> ALL($%d::text[])"
+
+
+def _operational_filter(params: list, include_operational: bool) -> str | None:
+    """Append the exclusion parameter and return its SQL fragment, or None.
+
+    Takes the live `params` list so the placeholder number is derived from the
+    actual parameter position rather than assumed — these three queries build
+    their WHERE clauses incrementally and a hard-coded $n silently binds the
+    wrong value the next time a condition is inserted above it.
+    """
+    if include_operational:
+        return None
+    params.append(sorted(OPERATIONAL_ENTITY_TYPES))
+    return _NOT_OPERATIONAL % len(params)
+
 
 def get_org_id(request: Request) -> str:
     """Resolve the caller's org_id from JWT claims, or the default org."""
@@ -128,6 +155,7 @@ async def list_entities(
     search: str | None = None,
     investor_only: bool = False,
     include_inactive: bool = False,
+    include_operational: bool = False,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -140,6 +168,13 @@ async def list_entities(
     if type is not None:
         params.append(type.value)
         conditions.append(f"entity_type::text = ${len(params)}")
+    else:
+        # Only when no explicit type was asked for. `?type=account` is a
+        # deliberate request for accounts and is honoured — the exclusion is a
+        # default for the unfiltered CRM list, not a prohibition.
+        operational = _operational_filter(params, include_operational)
+        if operational:
+            conditions.append(operational)
     if investor_only:
         # Return ALL org entities of investor-capable types so the IOI /
         # compliance selectors populate. The entities table has no user_id, so
@@ -263,6 +298,7 @@ async def search_entities(
     page_size: int = Query(20, ge=1, le=100),
     include_inactive: bool = False,
     include_incomplete: bool = True,
+    include_operational: bool = False,
 ):
     org_id = get_org_id(request)
     pool = await get_pool()
@@ -282,6 +318,12 @@ async def search_entities(
     if entity_type:
         params.append(entity_type)
         conditions.append(f"entity_type::text = ANY(${len(params)})")
+    else:
+        # As in `list_entities`: an explicit `?entity_type=account` is honoured,
+        # an unfiltered picker search is not shown accounts.
+        operational = _operational_filter(params, include_operational)
+        if operational:
+            conditions.append(operational)
     if exclude_ids:
         params.append(exclude_ids)
         conditions.append(f"id != ALL(${len(params)}::uuid[])")
@@ -337,22 +379,42 @@ async def search_entities(
 # EXACT same way the picker does, and proposal-approval creates entities through
 # the EXACT same path — never a second/divergent algorithm or a bare insert.
 # ---------------------------------------------------------------------------
-async def find_entity_dupes(conn, org_id, display_name, limit: int = 5):
+async def find_entity_dupes(
+    conn, org_id, display_name, limit: int = 5, include_operational: bool = False
+):
     """Entity-picker dupe check (Sprint 17): exact, case-insensitive
     ``display_name`` match, scoped to the org, active rows only (``valid_to`` /
     ``system_to`` IS NULL). NOT fuzzy. Returns the matching rows (``SEARCH_COLS``).
+
+    Portfolio A2 — operational entity types (``account``, ``spv``) are excluded
+    by default. This helper is NOT only the picker's dupe check: Chancery
+    Phase 5 (``services.document_linkage``) reuses it verbatim to match document
+    parties to entities, and Phase 11a reuses it again for narrative parties. An
+    account named after the institution that holds it ("Fidelity", "Schwab") is
+    exactly the kind of string a document party matcher hits, and a match would
+    silently link a K-1 to a brokerage account instead of the trust that owns
+    it. Both callers want the CRM-facing behaviour, so the exclusion is the
+    default here rather than a flag they would each have to remember to pass.
     """
+    params: list = [org_id, display_name]
+    conditions = [
+        "org_id = $1",
+        "LOWER(display_name) = LOWER($2)",
+        "valid_to IS NULL",
+        "system_to IS NULL",
+    ]
+    operational = _operational_filter(params, include_operational)
+    if operational:
+        conditions.append(operational)
     return await conn.fetch(
         f"""
         SELECT {SEARCH_COLS}
         FROM entities
-        WHERE org_id = $1
-          AND LOWER(display_name) = LOWER($2)
-          AND valid_to IS NULL AND system_to IS NULL
+        WHERE {' AND '.join(conditions)}
         ORDER BY display_name
         LIMIT {int(limit)}
         """,
-        org_id, display_name,
+        *params,
     )
 
 

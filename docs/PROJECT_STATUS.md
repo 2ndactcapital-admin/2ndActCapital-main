@@ -477,7 +477,7 @@ The Part 1 SQL was applied directly via Supabase MCP before the sprint, so A1 bu
 - **1d — verified live, under real `app_service` (`rolbypassrls = false`).** Global read works with `is_super_admin='false'`; INSERT into all four tables is rejected with `InsufficientPrivilegeError`; the same connection with `is_super_admin='true'` inserts successfully.
 - **1a policy-shape inconsistency, not fixed (it is Part 1 SQL, already applied).** `securities_global` and `..._relationships` guard with `NULLIF(current_setting('app.is_super_admin', true), '') = 'true'`; `..._identifiers` and `..._prices` use the bare `current_setting(...) = 'true'`. Both deny correctly here — it is a text compare, not a uuid cast, so the `''` reset artifact cannot raise — but the shapes differ and the bare form is the one that bites the moment anyone copies it onto a uuid column.
 - **`canonical_id` shipped NULL on all 67 live corpus rows.** The Part 1 SQL added the column; nothing populated it. A read path trusting a bare `canonical_id` would have returned zero rows for the entire corpus. Every read uses `COALESCE(canonical_id, id)` (still one join, still no walk), `create_security` mints the id in Python so `canonical_id = id` in the same INSERT (no NULL window), and `backfill_canonical_ids` closed the legacy gap — **67 rows backfilled, permanently**. `canonical_id` is the one column deliberately exempt from Rule 3 bitemporal supersede: it is a materialized derivation, not a business fact, and minting a new `id` to change it would orphan every FK pointing at the old one.
-- **`docs/PORTFOLIO_REPORTING_DESIGN_V6.md` does not exist in the repo.** A1 was built against the deployed schema, which is the source of truth per CLAUDE.md anyway. If that design doc exists somewhere, it is not in git.
+- **`docs/PORTFOLIO_REPORTING_DESIGN_V6.md` does not exist in the repo.** A1 was built against the deployed schema, which is the source of truth per CLAUDE.md anyway. If that design doc exists somewhere, it is not in git. **Resolved in A2** — see §7i.
 
 ### Two things the verification caught about itself
 
@@ -490,6 +490,69 @@ Also proven: the merge chain resolves B's identifier to A with `EXPLAIN` showing
 ### Deliberately NOT built (A2 and later, per the brief)
 
 `portfolio.assets` / `positions` / `valuations` / `transactions` / `external_references` · `account` in the `entity_type` enum · `market` on transaction types · `rate_type` / bitemporal on `fx_rates` · any ingestion, EDGAR fetching or price feed · any UI · any extension table. `securities_global_note_terms` already exists from the note-terms sprints; A1 does not preclude it and does not touch it. `add_relationship` cannot write `link_state='resolved'` or `'ambiguous'` — those belong to `services/underlying_resolution.py`'s propose/human-confirm path and to `trg_sec_global_rel_confirm_gate`, and A1 defers to both rather than opening a second door.
+
+---
+
+## 7i · Completed — Portfolio A2, tenant assets / positions / transactions
+
+**Schema-facing services + the `account` entity node. No router, no UI.** `apps/api/services/portfolio_assets.py` + `apps/api/scripts/verify_portfolioa2.py`. **63 PASS, 0 FAIL**, idempotent across consecutive runs, real `app_service` connection (`rolbypassrls = false`).
+
+The Part 1 SQL was applied directly via Supabase MCP before the sprint, so A2 built *against* six existing tables: `portfolio.assets`, `asset_identifiers`, `positions`, `valuations`, `transactions`, `external_references`. All six had RLS enabled with **exactly ONE policy each** — `org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid OR is_super_admin`, `cmd=ALL`.
+
+**The policy shape is the inverse of A1's and the difference is the point.** A1's four-policy `USING (true)` global-read shape copy-pasted onto one of these six tenant tables would be a silent cross-org read — it raises nothing, logs nothing, and returns every other tenant's positions. The verification asserts the count is exactly one per table **and** that the single policy is org-scoped, because "one policy" that happened to be `USING (true)` would pass a count check on its own.
+
+### What the service layer contains
+
+`create_asset` / `add_identifier` (org-scoped, **not** Super-Admin-gated — this is tenant data) · `create_position` (the entity↔asset edge, with the three-basis contract) · `record_transaction` (type existence + `market` compatibility) · `record_valuation` (append-only supersession) · `resolve_current_value` (the status ladder) · `upsert_external_reference`.
+
+`_OrgWrite` mirrors A1's `_SuperAdminWrite` but raises **org context** rather than privilege, so the RLS `WITH CHECK` — not a Python `if` — is what refuses a cross-tenant write. It deliberately does **not** touch `app.is_super_admin`: elevating on a Super Admin's behalf would mean the module could not tell the two cases apart, and a bug that wrote to the wrong org would pass silently.
+
+**The ownership-basis contract has no database backstop.** `units → quantity` (pct NULL), `percent → ownership_pct` (qty NULL), `value → market_value` (both NULL). Introspection found `portfolio.positions` carries only `positions_basis_chk` / `_authority_chk` / `_source_chk` — **nothing** ties the basis to which measure is populated, so `_validate_basis` is the only enforcement in the system. It matters because a row declaring `value` while carrying a quantity is not a harmless extra field: one rollup computes from `market_value`, another from quantity × price, and the two silently disagree about the same holding.
+
+**Supersession is an INSERT, never an UPDATE.** `supersedes_valuation_id` is a forward pointer on the *new* row; the prior row is left byte-identical (the verify script snapshots every column before the restatement and re-compares, not just `value` — comparing only the amount would miss an implementation that closed the row with `valid_to`). This is *not* a Rule 3 supersede: Rule 3 closes a row because the old value stopped being true, and a superseded valuation never stopped being true — it remains, permanently, the number struck on that date by that source. What changed is which number is *current*, and that is answered on read.
+
+**The resolver demotes rather than excludes, and never returns zero.** Ladder: latest `valuation_date`, then `audited > final > preliminary > estimated`, and **any row another current valuation supersedes drops below all four regardless of its own status** — a rule keyed only to `status` would return a restated-away `audited` figure forever. When nothing qualifies it returns `value=None` with a reason naming which of three cases applies. A zero for "we have no mark" is indistinguishable from a genuine zero position the instant it is summed into a rollup, and by then the fact that it was never measured is gone.
+
+### The `account` node
+
+`entity_type='account'` (custodial accounts) is a **real entity** — a position's `owner_entity_id` points straight at one, so account-level reporting is an ordinary graph query rather than a special case in every rollup. It is also **optional**: a position may name a trust directly with no account in between, proven explicitly rather than left implied.
+
+Accounts are excluded from every CRM-facing surface. `OPERATIONAL_ENTITY_TYPES = {account, spv}` in `schemas/entities.py` is **default-deny on purpose** — a new operational type added to the enum is hidden from the CRM the moment its name lands in that set, with no further edits. An allow-list would have to be found and updated instead, and the failure mode of forgetting is the account leaking into the CRM.
+
+### Task 1 findings worth keeping
+
+- **1d — the account node could not be created at all.** `schemas/entities.py::EntityType` was missing both `account` and `spv`, so `POST /entities` returned 422 for either. The Postgres enum had carried them for some time; the Pydantic enum had never been updated. **A schema-level enum and a database enum drifting apart fails at the API boundary and nowhere else** — no verify script, no query and no migration would have caught it.
+- **1d — three CRM call sites needed the exclusion**, and the third is the dangerous one: `find_entity_dupes` is reused *verbatim* by Chancery Phase 5 (document-party linkage) and Phase 11a (narrative parties). An account named after the institution holding it — "Fidelity", "Schwab" — is exactly the string a document-party matcher hits, and a match would have linked a K-1 to a brokerage account instead of the trust that owns it. The exclusion is the **default** there rather than a flag both callers would have to remember to pass. `INVESTOR_ENTITY_TYPES` needed no change — it is an allow-list and excluded accounts by construction.
+- **1b — `entity_type` also carries `spv`, which the brief did not mention.** It landed alongside `account` and has the identical CRM-visibility problem, so it is covered too. **Generalizable: when a brief names one new enum value, read the whole enum.**
+- **1a DRIFT — `portfolio.external_references` UNIQUE is `(source_system, external_id, record_type)` and is NOT org-scoped**, despite the table carrying `org_id` and an org-isolation policy. Two tenants ingesting from the same source with colliding external ids hard-conflict, and the loser gets a unique violation **on a row RLS will not let it see** — an error with no visible cause. `upsert_external_reference` guards its `ON CONFLICT ... DO UPDATE` with an org equality clause so a cross-org collision raises a legible message instead of silently re-pointing another tenant's row. **Widening the constraint to include `org_id` is a required Phase B migration.**
+- **1b DRIFT — `fx_rates` gained `rate_type` but its UNIQUE was not widened.** `UNIQUE (base_ccy, quote_ccy, as_of_date)` means a spot and a period-end rate cannot coexist for the same pair/date, and a Rule 3 supersede on `fx_rates` is *impossible* — closing the old row and inserting a new one violates the constraint. **Blocks Phase B FX.**
+- **1a — `assets.asset_type` is NOT NULL with no CHECK.** Validated for non-emptiness and nothing more, deliberately: inventing a vocabulary in Python that the database does not share would reject rows the database would take, and the next person would have no way to tell which layer was wrong. It is also why the transaction market check keys off `valuation_method` (which *does* have a CHECK) rather than the obvious `asset_type` — a check keyed to open text starts silently passing everything the first time somebody types "Equity".
+- **1a — no triggers exist on any of the six tables**, so A1's "a BEFORE trigger can silently mask a CHECK constraint" hazard has no instance in A2. Asserted rather than assumed, so adding one later fails this check and forces the two mechanisms to be tested separately.
+- **1c — confirmed again under `app_service`:** `search_path` is `"$user", public`, `portfolio` is not on it, and an unqualified `SELECT FROM assets` raises `UndefinedTableError`. The AST check is replicated and extended to catch bare `JOIN` as well as `FROM`/`INTO`/`UPDATE`.
+
+### Task 2 — `transaction_types.market`, all 16 rows
+
+All 16 were `NULL`. Classified: **private (10)** — `call_investment`, `call_mgmt_fee`, `call_org_cost`, `call_partnership_expense`, `dist_roc`, `dist_gain`, `dist_income`, `dist_recallable`, `dist_stock`, `valuation`. **public (3)** — `buy`, `sell`, `dividend`. **both (3)** — `adjustment`, `fee_expense`, `interest`.
+
+`valuation` is private because a valuation mark *as a transaction* (`affects_nav=+1`) is how an illiquid holding's NAV moves; a listed position is marked by its price series, not by a transaction row.
+
+**`interest` is `both`, a deliberate deviation from the brief's suggested `public`.** The deployed row already records `applies_to_security_types = {unitized, alt}` — it is *already* classified as spanning both, and it genuinely does: a bond coupon is public, private-credit interest is not. Classifying it `public` would have made `record_transaction` reject private-credit interest, which is real and common. **The deployed data won over the brief.** SQL and full rationale in `docs/portfolioa2_part2_backfill.sql`.
+
+### `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` now exists
+
+It was missing at A1 and still missing at A2, and no original was recoverable — `git log --all` has nothing. It is now committed as an **as-built reconstruction**, labelled as such at the top, written from the deployed schema and the A1/A2 briefs. It is the design of record going forward; if the original ever surfaces, reconcile rather than overwrite.
+
+### One thing the verification caught about itself
+
+**Signature checks do not prove an endpoint runs.** The first version asserted `include_operational` was present with a `False` default on all three call sites and passed — while `list_entities` and `search_entities` had never been executed. `_operational_filter` derives its `$n` placeholder from the live length of the params list (these queries build their WHERE clauses incrementally, so a hard-coded `$n` binds the wrong value the moment a condition is inserted above it), and that is exactly the class of bug `inspect.signature` cannot see. Both endpoints are now *called* against real rows, with and without the opt-out. **Generalizable: an `inspect`-based check proves an interface exists, never that it works.**
+
+Also proven: cross-org isolation on `assets` *and* `positions` under real `app_service` — including the **write** half (`WITH CHECK`), because a policy with a correct `USING` and a missing `WITH CHECK` reads correctly and writes across the boundary, and only the INSERT catches it. Teardown asserts exact before/after counts on all six tables even though they measured empty: "it was empty when I looked" is a fact about one afternoon, and the moment Phase B writes the first real position an unconditional `TRUNCATE` becomes a data-loss bug nobody notices until quarter-end.
+
+### Deliberately NOT built (Phase B and later, per the brief)
+
+Any real ingestion (Altruist, reporting-tool import, Chancery consumption) · source-precedence resolution — `positions.superseded_by_source` is written when a caller supplies it and is never *computed* · the S21 sunburst rollup into `entity_holdings` (Phase C) · the SPV derivation view (Phase D) · cash modelling, corporate actions, commitments, UDFs · any router and any UI.
+
+**Next: Phase B — ingestion.** Its two prerequisites are both recorded above: widen the `external_references` UNIQUE to include `org_id`, and widen the `fx_rates` UNIQUE to include `rate_type` (or drop it for a bitemporal-aware one).
 
 ---
 

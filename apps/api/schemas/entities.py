@@ -12,6 +12,28 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 PERSON_ENTITY_TYPES: frozenset[str] = frozenset({"individual"})
 
+# ── Operational entity types (Portfolio A2) ─────────────────────────────────
+# Entity types that exist to hold structure, not to hold a relationship.
+#
+# `account` is a custodial account (Altruist, Schwab, Fidelity). It is a REAL
+# entity — a position's `owner_entity_id` may point straight at one, and
+# account-level reporting is then an ordinary graph query rather than a special
+# case in every rollup. `spv` is the same shape: a vehicle, not a counterparty.
+#
+# They must NOT appear in CRM-facing lists. A CRM list is a list of people and
+# vehicles you have a *relationship* with; a brokerage account is neither, and
+# a firm with 400 members and 1,200 accounts would find its entity picker
+# three-quarters filled with account numbers, its duplicate check matching
+# documents against custodial accounts, and its member count wrong.
+#
+# Every CRM-facing query in `routers/entities.py` excludes these by default and
+# takes an explicit `include_operational=true` opt-out for portfolio surfaces.
+# The exclusion is DEFAULT-DENY on purpose: a new operational type added to the
+# enum is hidden from the CRM the moment its name lands in this set, with no
+# further edits. An allow-list would have to be found and updated instead, and
+# the failure mode of forgetting is the account leaking into the CRM.
+OPERATIONAL_ENTITY_TYPES: frozenset[str] = frozenset({"account", "spv"})
+
 
 def derive_legal_name(
     name_prefix: str | None,
@@ -42,6 +64,12 @@ class EntityType(str, Enum):
     corp_luxembourg = "corp_luxembourg"
     corp_other_intl = "corp_other_intl"
     other = "other"
+    # Operational nodes — see OPERATIONAL_ENTITY_TYPES above. Both landed in the
+    # Postgres `entity_type` enum (values 18 and 19) but were missing here, so
+    # `POST /entities` with either one returned 422 and the account node could
+    # not be created through the real creation path at all.
+    spv = "spv"
+    account = "account"
 
 
 class TaxIdType(str, Enum):
