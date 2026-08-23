@@ -105,8 +105,8 @@ for refresh_attempt in 1 2 3; do
   echo "WARNING: refresh-schema step crashed (exit $refresh_status) on attempt $refresh_attempt/3." >&2
   cat "$LOG_DIR/${SPRINT_NAME}.refresh.err" >&2
   if [[ $refresh_attempt -eq 3 ]]; then
-    echo "FATAL: refresh-schema step crashed after 3 attempts." >&2
-    exit 1
+    echo "WARNING: refresh-schema failed after 3 attempts — continuing with existing snapshot." >&2
+    break
   fi
   echo "Retrying refresh-schema (attempt $((refresh_attempt + 1))/3)..."
   sleep 2

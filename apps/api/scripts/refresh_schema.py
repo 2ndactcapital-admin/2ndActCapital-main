@@ -16,6 +16,28 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 API_ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT_FILE = REPO_ROOT / "docs" / "schema_snapshot.sql"
 
+# Schemas owned by Supabase/Postgres, not by us. Everything else is an app
+# schema and gets snapshotted — app schemas beyond 'public' (e.g. 'portfolio')
+# are picked up automatically rather than needing this script edited.
+SYSTEM_SCHEMAS = (
+    "pg_catalog",
+    "information_schema",
+    "auth",
+    "storage",
+    "realtime",
+    "vault",
+    "extensions",
+    "graphql",
+    "graphql_public",
+    "pgbouncer",
+    "supabase_migrations",
+    "supabase_functions",
+    "cron",
+    "net",
+    "pgsodium",
+    "pgsodium_masks",
+)
+
 
 def _bootstrap_env() -> None:
     """Make `python3 scripts/refresh_schema.py` self-sufficient: put the venv
@@ -43,12 +65,14 @@ async def main() -> None:
 
     tables = await conn.fetch(
         """
-        SELECT table_name
+        SELECT table_schema, table_name
         FROM information_schema.tables
-        WHERE table_schema = 'public'
+        WHERE table_schema <> ALL($1::text[])
+          AND table_schema NOT LIKE 'pg_%'
           AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-        """
+        ORDER BY (table_schema <> 'public'), table_schema, table_name
+        """,
+        list(SYSTEM_SCHEMAS),
     )
 
     lines: list[str] = [
@@ -58,17 +82,21 @@ async def main() -> None:
         "",
     ]
 
-    for (table_name,) in tables:
-        lines.append(f"-- ===== {table_name} =====")
+    for table_schema, table_name in tables:
+        # 'public' tables stay bare so the snapshot reads the way it always has;
+        # other app schemas are qualified.
+        label = table_name if table_schema == "public" else f"{table_schema}.{table_name}"
+        lines.append(f"-- ===== {label} =====")
         cols = await conn.fetch(
             """
             SELECT column_name, data_type, is_nullable, column_default
             FROM information_schema.columns
             WHERE table_name   = $1
-              AND table_schema = 'public'
+              AND table_schema = $2
             ORDER BY ordinal_position
             """,
             table_name,
+            table_schema,
         )
         for c in cols:
             nullable = "" if c["is_nullable"] == "YES" else " NOT NULL"
@@ -83,11 +111,12 @@ async def main() -> None:
               ON tc.constraint_name = kcu.constraint_name
              AND tc.table_schema    = kcu.table_schema
             WHERE tc.table_name   = $1
-              AND tc.table_schema = 'public'
+              AND tc.table_schema = $2
               AND tc.constraint_type IN ('UNIQUE', 'PRIMARY KEY')
             ORDER BY tc.constraint_name, kcu.ordinal_position
             """,
             table_name,
+            table_schema,
         )
         if constraints:
             by_constraint: dict[str, list[str]] = {}

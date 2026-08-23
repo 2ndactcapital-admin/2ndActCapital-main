@@ -256,7 +256,76 @@ The rest of the run is unchanged and green: both columns nullable; `target_type`
 
 A live introspection of the deployed table confirmed the migration is fully in place as recorded in `apps/api/migrations/correctionspoly_document_field_corrections.sql`: 12 columns with `target_type text NOT NULL DEFAULT 'document'` and `target_id uuid NOT NULL`, both CHECK constraints, the four retained FKs, `idx_doc_field_corr_target`, the `document_field_corrections_default_target_trg` BEFORE INSERT trigger, and five RLS policies — the untouched `_org_isolation` (`FOR ALL`, `NULLIF` on the org GUC) plus the four-policy global shape scoped to `target_type <> 'document'`.
 
-Still unchanged, by design: nothing yet **produces** a `note_terms` correction — the table is schema-ready only. The next sprint (note-terms extraction) is what will write the first one.
+Still unchanged, by design: nothing yet **produces** a `note_terms` correction — the table is schema-ready only. The next sprint (note-terms extraction) is what will write the first one. **Superseded by §7e**, which now writes them: 29 rows and counting, all machine-generated hazard-ensemble disagreements with `corrected_by NULL`.
+
+---
+
+## 7e · Completed — note-terms extraction (LLM extraction + six-field hazard ensemble)
+
+**The first sprint that actually reads `reference_filings.extracted_text` and produces terms.** 424B2 / FWP filings in → one `portfolio.securities_global_note_terms` row each, plus unresolved underlying edges. Deterministic validators run around an LLM extraction pass; a second, different model re-reads only the six hazard fields, and any disagreement flags the row for review.
+
+**Explicitly NOT built** (each was named out of scope and each stayed out): underlying **resolution**, comparability scoring / percentiles, staff UI, template induction / clustering, and any change to `securities_global_note_terms`' schema.
+
+### Task 5 — the bounded run (50 filings, real numbers)
+
+Capped at 50 deliberately: this proves the pipeline and produces the evidence a scaling decision needs. Input population is **165** filings (`extraction_status='extracted'`, non-fixture, ≥2000 chars) out of 166 `extracted` / 35 `skipped`.
+
+| Measure | Result |
+|---|---|
+| Filings processed / rows created / failed | **50 / 50 / 0** |
+| `field_status` distribution (950 slots = 50 rows × 19 registry fields) | `extracted` 749 (78.8%) · `not_applicable` 144 (15.2%) · `not_in_template` 43 (4.5%) · `extraction_failed` 14 (1.5%) |
+| Hazard ensemble genuinely measured (2 distinct models) | **50/50** |
+| Rows with ≥1 hazard disagreement | **22 (44.0%)** |
+| Disagreements by field | `protection_type` 16 · `autocall_frequency` 5 · `return_basis` 2 · `terms_status` 2 · `is_decrement_index` 1 · `basket_type` 1 |
+| Validator hard-failure rate | **9/50 (18.0%)** — `cik_matches_filer` 6, `tenor_consistent` 3; 0 warning-only rows |
+| `extraction_confidence` | `needs_review` 26 (52.0%) · `high` 24 (48.0%) |
+| Source spans populated | 50/50 |
+| Unresolved underlying edges | 93 |
+
+**The 44% disagreement rate is the sprint's most useful output, and `protection_type` is 16 of the 22.** That is exactly the field the hazard list was built around — buffer absorbs the first *n*% of loss, floor caps total loss at *n*%, opposite payoffs, and both are marketed as "*n*% downside protection". Every one of those 16 rows passed all five arithmetic validators. Nothing except the ensemble would have caught them. **Treat the current per-row output as review-grade, not trusted**, and do not scale past 50 until the `protection_type` prompt is sharpened and re-measured.
+
+### What was built
+
+| Piece | Detail |
+|---|---|
+| `services/note_terms_validators.py` | Five deterministic checks, each returning `(ok, reason)`: `cusip_checksum` (mod-10 Luhn variant, verified against 4 real CUSIPs), `cik_matches_filer` (issuer read from the prose vs the EDGAR registrant — free ground truth; a 17-CIK stem map seeded from the actual corpus, unknown CIK returns "not contradicted, not verified"), `barrier_price_consistent`, `autocall_le_coupon_barrier`, `tenor_consistent`. `Decimal` throughout. A validator that **cannot** run returns `ok=True` with a reason saying so — absent data never fabricates a failure. The module docstring states in full that **these cover arithmetic only and cannot catch a single hazard field**, so nobody later mistakes them for a sufficient gate. |
+| `services/note_terms_extraction.py` | The pipeline. Windowing (head 12k + densest keyword window 24k — the median filing is 69k chars and the terms occupy a few thousand of them); primary Haiku extraction constrained to the live registry's field keys with out-of-vocab enum answers discarded rather than crashing the CHECK; four-state `field_status` for **every** registry field; validators; hazard ensemble; bitemporal-safe persistence. `extract_underlying_mentions()` writes each mention verbatim with `link_state='unresolved'`, `to_global_security_id NULL`. |
+| `services/note_terms_corrections.py` | Task 4. `log_note_terms_correction()` — one place, not inlined at call sites — writing `target_type='note_terms'`, `target_id`, `org_id NULL`, setting `app.is_super_admin` inside its own transaction. Plus `log_hazard_disagreement()` and `get_note_terms_corrections()`. |
+| `scripts/run_note_terms_extraction.py` | The bounded runner (`--limit`, `--force`). Exits non-zero when 0 rows are created, and refuses to run at all without `ANTHROPIC_API_KEY` rather than reporting a vacuous success. |
+| **Real offsets, not hallucinated integers** | Models are unreliable at reporting character offsets and reliable at copying a phrase. So the model returns a **verbatim quote** per field and the code locates it in the full text (exact match, then a whitespace-normalised index with a map back to real positions). `source_char_start/end` is therefore a measured fact. Populated on 50/50 rows. |
+| **Idempotent by default** | A filing that already has a current terms row is returned untouched with no model call. `--force` supersedes bitemporally (close the old row, insert a new one — Rule 3, never an in-place update). |
+
+### The ensemble can silently collapse — guarded
+
+The platform fallback chain is `["claude-haiku-4-5-20251001"]`, the **same model as the primary**. If Sonnet were unreachable, `call_claude_json` would transparently retry on Haiku and return a good answer — and the "two model" ensemble would become one model agreeing with itself, reporting 100% agreement and upgrading every row in the run to `high` confidence while having checked nothing. This is the same failure shape as §7d's vacuous DeepEval pass.
+
+So the model that actually served each hazard call is read back from `ai_decision_log` and compared to the primary. If it is not independent, the six fields are marked **not cross-checked** and confidence drops to `low` — never `high`. Confirmed genuinely independent on **50/50** rows (`claude-haiku-4-5-20251001` vs `claude-sonnet-4-6`, `fallback_used=false`).
+
+### Two schema gaps found and reported, not silently worked around
+
+Both were explicit STOP gates in the sprint prompt.
+
+**1 · `reference_filings.extraction_status` collision — real. Task 3 step 7 was NOT implemented.** That column already means "did the HTML yield text, and did it pass the prefilter", and its CHECK permits exactly `pending|fetched|extracted|failed|skipped` — **no value can express "terms were extracted"**. Writing `failed` on a terms failure would tell the corpus pipeline the HTML produced no text, and any write would corrupt the prefilter positive/negative set §7b keeps precisely so precision can be measured later. **Resolution: the terms pipeline never touches that column.** Progress is derived — a current terms row exists with that `reference_filing_id` (`filings_with_terms_extracted()`). One column, one meaning. Asserted three ways by the verifier.
+
+**2 · The hazard disagreement record has nowhere to live on the terms row.** `securities_global_note_terms` has exactly one jsonb column, `field_status`, and `validate_field_status()` rejects any value outside the four states — so the ensemble record cannot go on the row, and this sprint did not alter the table. Both answers are written to `document_field_corrections` (`target_type='note_terms'`, `org_id NULL`, `corrected_by NULL`, `notes.source='hazard_ensemble_disagreement'`) — the only existing store that is field-level, note-terms-targeted and org-NULL. `correction_retrieval` filters on `org_id = $1`, and NULL never equals a uuid, so **the tenant few-shot corpus is not polluted**. This is a workaround, recorded as a gap: the right long-term fix is an `extraction_notes jsonb` column on the terms row.
+
+### Model resolution with no org context (Task 1c finding)
+
+`resolve_model(org_id=None)` returns `DEFAULT_SETTINGS[key]` directly with no DB lookup (`services/extraction.py:76-77`), so `ai.model.default` → `claude-haiku-4-5-20251001` and `ai.model.assistant` → `claude-sonnet-4-6`. **The org-less case is handled; nothing needed patching.**
+
+The real finding: **`ai_decision_log.org_id` is NOT NULL**, so `extraction.py:51,189` attributes every org-less platform call to `DEFAULT_ORG_ID` (`00000000-…-0001`). This sprint writes to global tables with no tenant, so **its AI cost and decision log land on 2nd Act's ledger**. Reported, not patched around — a nullable `org_id` or a reserved platform org is the fix, and it is a decision, not a bug fix.
+
+### Other honest notes
+
+- **Underlying resolution is NOT done.** 93 edges exist from the run (98 including earlier trial rows), **all** `link_state='unresolved'` with `to_global_security_id NULL`. The verifier asserts resolved edges = 0. Resolving them is the next sprint.
+- **`securities_global` was empty (0 rows).** `global_security_id` is `NOT NULL`, so extraction had to create the security row — unavoidable, and not mentioned in the prompt. CUSIP is the natural key (an FWP and the 424B2 that prices it are the *same* security, which is what makes §7c's versioning real); only a **checksum-valid** CUSIP is attached, because a mistyped one would silently merge two unrelated notes. 52 CUSIP identifiers attached across 54 securities. Filings with no CUSIP get a filing-scoped security and their preliminary/final rows will **not** link — an honest limitation of preliminary filings, not papered over with a name match.
+- **`cik_matches_filer` failed on 6 of 50** — the model reading the guarantor or an index sponsor as the issuer. This is the validator doing its job; the extraction prompt needs work.
+- **A leaked test fixture sits in the corpus**: `reference_filings` row `cik=9999999999`, `filer_name='VERIFY FIXTURE'`, 110 chars, `extraction_status='extracted'`, from an earlier sprint's teardown miss. Excluded from the run rather than deleted — it is another sprint's row.
+- **One source span per row, covering all located quotes.** Spans run 28→48428 chars. Good enough to locate the term-sheet region; **not** good enough for per-field UI highlighting, which would need per-field offsets the schema cannot hold. Same family as gap 2 above.
+
+**Verification — `apps/api/scripts/verify_notetermsextraction.py`: 26 PASS, 0 FAIL.** Run twice, identical result; teardown at start and end; corpus returned to exactly 166 `extracted` / 35 `skipped` with zero leftover rows. `APP_SERVICE_DATABASE_URL` required with **no** `SET ROLE` fallback. Proven: all five validators on known-good **and** known-bad fixtures (a validator hardcoded to `True` fails these); `cusip_checksum` rejects `17333HJG0` → `71333HJG0`, a real corpus CUSIP with one transposed digit; `field_status` covers all 19 registry fields on all 54 rows with none omitted; **the core assertion — scripted disagreement forces `needs_review` with both answers recorded (`protection_type` buffer/floor, `basket_type` single/worst_of) and neither silently chosen**; the isolated agreement case stays `high` with zero validator failures, proving the ensemble is not simply failing closed; source spans sliced and the **actual substrings printed** (all three real term-sheet headers); `log_note_terms_correction` readable under the non-bypass `app_service` role with no org context; and the `extraction_status` resolution asserted internally consistent.
+
+**The two ensemble assertions are mocked on purpose.** A live two-model comparison is nondeterministic — an assertion that depends on Sonnet happening to disagree with Haiku today is a flaky test. The mock pins the comparison logic; the real disagreement **rate** is reported separately from live data.
 
 ---
 
@@ -342,6 +411,10 @@ Issue 4 was found by a **comprehensive field-by-field audit** (22/22) rather tha
 | No confirmed UI for AI model settings | `ai.model.*` and `ai.embedding.*` exist as real `org_settings` rows but may only be editable via direct DB access. Unknown whether `OrgSettingsEditor.jsx` is a generic key/value renderer (in which case they may already surface) or curated. Quick discovery task, not urgent. |
 | R2 bucket name (`2ndactcapital-docs` → `hollisworks-docs`) | **Migration attempted 2026-08-14 — BLOCKED, not done.** Two independent honest gates tripped: (1) **No R2 credentials or copy tooling in the sprint environment** — `R2_ACCOUNT_ID/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET_NAME` live only in Render (`render.yaml`, `sync:false`); absent from `apps/api/.env`, shell, and `~/.bashrc`. No `rclone`/`aws`/`cloudflared`; `boto3` only in the venv. Cannot create the new bucket or copy objects. (2) **Bucket name is embedded in row data** — `deal_documents.r2_bucket` (1 row = `'2ndactcapital-docs'`); this makes it a data migration, not just an object copy, which is out of this sprint's scope. **Findings worth keeping:** stored keys are bucket-**relative** (`chancery/{org}/…`, `deals/{id}/…`, `spvs/{id}/…`) except the `deal_documents.r2_bucket` column; **versioning is application-level** (distinct keys `…/v{n}/{document_id}`, tracked in Postgres — *not* R2 native), so a byte-for-byte key copy preserves all versions with no history loss; retrieval is **presigned-only** (no public `r2.dev`/custom-domain URL); **frontend has zero R2 references** (no Vercel var needed). Bucket name is read via `R2_BUCKET_NAME` (default fallback `'2ndactcapital-docs'` in `services/storage.py`, `routers/entity_documents.py`, `routers/marketplace.py`, `routers/spv.py`). **To unblock:** run with real R2 creds available; the migration must then also rewrite `deal_documents.r2_bucket`. **Old bucket retained** — deletion is a separate follow-up sprint after a soak period. Verifier: `apps/api/scripts/verify_r2rename.py` (gates cleanly to BLOCKED when creds absent). **UPDATE 2026-08-22 (EDGAR sprint discovery):** blocker (1) is gone — all four `R2_*` vars are now present in `apps/api/.env`, and `hollisworks-docs` **exists and is writable** (proven by a real round-trip). Local `R2_BUCKET_NAME` already reads `hollisworks-docs`, so anything running locally now writes to the new bucket while the old objects still sit in `2ndactcapital-docs`; Render's value was not inspected. Blocker (2) is unchanged — `deal_documents.r2_bucket` still holds `'2ndactcapital-docs'` (1 row). **The object copy and that data rewrite remain undone.** The rename is now genuinely runnable and should be its own sprint. |
 | No 2nd-Act-tier competitor research | Only Quorum's ($100M–$1B UHNW tier) research exists — a different tier from 2nd Act's post-liquidity-founder audience. |
+| Note-terms extraction accuracy — `protection_type` (§7e) | **44% of extracted rows had a hazard disagreement and 16 of 22 were `protection_type`** (buffer vs floor — opposite payoffs, identical marketing language, invisible to every arithmetic validator). The ensemble catches them; the extraction prompt does not yet get them right. **Do not scale past the 50-filing bounded run** until the prompt is sharpened and re-measured. `cik_matches_filer` also failed on 6/50 (guarantor or index sponsor read as the issuer). |
+| `securities_global_note_terms` has no home for extraction metadata (§7e) | Its only jsonb column, `field_status`, is enum-constrained to the four states, so the hazard-ensemble disagreement record had to go to `document_field_corrections` instead. Same column shortage means **one** `source_char_start/end` pair per row, so per-field UI highlighting is impossible. Fix: an `extraction_notes jsonb` column and per-field offsets on the terms row. Deliberately not added — §7e was forbidden to alter that schema. |
+| Platform AI calls are billed to 2nd Act (§7e) | `ai_decision_log.org_id` is `NOT NULL`, so every org-less platform call — all of note-terms extraction, which writes to global tables with no tenant — is attributed to `DEFAULT_ORG_ID` (`00000000-…-0001`) by `services/extraction.py:51,189`. Cost and decision history for global reference work pollute a real tenant's ledger. Fix is a nullable `org_id` or a reserved platform org; it is a decision, not a bug fix. |
+| Leaked test fixture in `reference_filings` | One row (`cik=9999999999`, `filer_name='VERIFY FIXTURE'`, 110 chars, `extraction_status='extracted'`) from an earlier sprint's teardown miss. Harmless but it sits in the "real" corpus population; §7e excludes it by filter rather than deleting another sprint's row. |
 
 **Operational gotcha worth remembering**: Vercel **preview** deployments don't inherit production environment variables — preview-branch errors about missing Auth0 config are expected and are *not* production issues.
 

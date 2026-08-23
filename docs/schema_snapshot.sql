@@ -1461,3 +1461,123 @@
 --   PRIMARY KEY workflow_versions_pkey: (id)
 --   UNIQUE workflow_versions_workflow_definition_id_version_number_key: (workflow_definition_id, version_number)
 
+-- ===== portfolio.note_terms_field_registry =====
+--   field_key                                text NOT NULL
+--   display_label                            text NOT NULL
+--   data_type                                text NOT NULL
+--   applies_to_archetypes                    ARRAY
+--   hazard_field                             boolean NOT NULL DEFAULT false
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY note_terms_field_registry_pkey: (field_key)
+
+-- ===== portfolio.reference_filings =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   cik                                      text NOT NULL
+--   filer_name                               text NOT NULL
+--   form_type                                text NOT NULL
+--   accession_number                         text NOT NULL
+--   filing_date                              date NOT NULL
+--   file_number                              text
+--   primary_document                         text NOT NULL
+--   source_url                               text NOT NULL
+--   r2_key                                   text
+--   content_hash                             text
+--   byte_size                                bigint
+--   extracted_text                           text
+--   extraction_status                        text NOT NULL DEFAULT 'pending'::text
+--   extraction_error                         text
+--   retention_classification                 text NOT NULL DEFAULT 'public_reference'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE reference_filings_accession_document_unique: (accession_number, primary_document)
+--   PRIMARY KEY reference_filings_pkey: (id)
+
+-- ===== portfolio.securities_global =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   name                                     text NOT NULL
+--   short_name                               text
+--   security_type                            text NOT NULL
+--   currency_code                            text
+--   price_coverage                           text NOT NULL DEFAULT 'unknown'::text
+--   merged_into_id                           uuid
+--   canonical_id                             uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY securities_global_pkey: (id)
+
+-- ===== portfolio.securities_global_identifiers =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   global_security_id                       uuid NOT NULL
+--   id_type                                  text NOT NULL
+--   id_value                                 text NOT NULL
+--   is_primary                               boolean NOT NULL DEFAULT false
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY securities_global_identifiers_pkey: (id)
+
+-- ===== portfolio.securities_global_note_terms =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   global_security_id                       uuid NOT NULL
+--   reference_filing_id                      uuid
+--   terms_status                             text NOT NULL
+--   product_archetype                        text
+--   protection_type                          text
+--   basket_type                              text
+--   return_basis                             text
+--   is_decrement_index                       boolean NOT NULL DEFAULT false
+--   notional_currency                        text
+--   protection_pct                           numeric
+--   cap_pct                                  numeric
+--   participation_rate                       numeric
+--   coupon_rate                              numeric
+--   coupon_barrier_pct                       numeric
+--   autocall_barrier_pct                     numeric
+--   autocall_frequency                       text
+--   has_no_call_period                       boolean
+--   no_call_months                           integer
+--   initial_valuation_date                   date
+--   final_valuation_date                     date
+--   tenor_years                              numeric
+--   field_status                             jsonb NOT NULL DEFAULT '{}'::jsonb
+--   extraction_confidence                    text
+--   source_char_start                        integer
+--   source_char_end                          integer
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY securities_global_note_terms_pkey: (id)
+
+-- ===== portfolio.securities_global_prices =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   global_security_id                       uuid NOT NULL
+--   price_date                               date NOT NULL
+--   price                                    numeric NOT NULL
+--   currency_code                            text
+--   price_type                               text NOT NULL DEFAULT 'close'::text
+--   source                                   text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY securities_global_prices_pkey: (id)
+
+-- ===== portfolio.securities_global_relationships =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   from_global_security_id                  uuid NOT NULL
+--   to_global_security_id                    uuid
+--   raw_underlying_text                      text NOT NULL
+--   link_state                               text NOT NULL DEFAULT 'unresolved'::text
+--   relationship_type                        text NOT NULL DEFAULT 'underlying_of'::text
+--   weight                                   numeric
+--   resolution_notes                         text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY securities_global_relationships_pkey: (id)
+
