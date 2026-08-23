@@ -1593,5 +1593,13 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   proposed_global_security_id              uuid
+--   proposal_confidence                      text
+--   proposal_kind                            text
+--   proposal_hint                            text
+--   proposed_at                              timestamp with time zone
+--   normalized_underlying_text               text
+--   resolved_by                              uuid
+--   resolved_at                              timestamp with time zone
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
 

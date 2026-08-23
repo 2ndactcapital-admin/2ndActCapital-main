@@ -1,10 +1,14 @@
-"""Admin endpoints: the note-terms review queue and the STP trust policy.
+"""Admin endpoints: the note-terms review queue, the STP trust policy, and the
+underlying-resolution review queue.
 
     GET    /admin/pricing/note-terms/queue        rows a human still has to look at
     POST   /admin/pricing/note-terms/{id}/resolve settle one disagreed field
     GET    /admin/pricing/stp-policy              active policies (the panel)
     POST   /admin/pricing/stp-policy              grant STP for (cik, form_type)
     DELETE /admin/pricing/stp-policy/{id}         revoke it
+    GET    /admin/pricing/underlying-queue        unresolved + proposed edges
+    POST   /admin/pricing/underlying-queue/{id}/confirm  settle one edge
+    POST   /admin/pricing/underlying-queue/{id}/reject   discard its proposal
 
 SUPER ADMIN ONLY, AND NOT ORG-SCOPED
 ──────────────────────────────────────────────────────────────────────────────
@@ -59,6 +63,13 @@ from services.note_terms_routing import (
     revoke_stp,
 )
 from services.rbac import is_super_admin, load_principal
+from services.underlying_resolution import (
+    UnderlyingResolutionError,
+    UnderlyingResolutionPermissionError,
+    confirm_resolution,
+    load_queue,
+    reject_proposal,
+)
 from services.users import ensure_user
 
 router = APIRouter(tags=["admin", "pricing"])
@@ -113,6 +124,18 @@ class GrantPolicy(BaseModel):
     cik: str
     form_type: str
     notes: str | None = None
+
+
+class ConfirmUnderlying(BaseModel):
+    """The reviewer's decision about one unresolved underlying edge.
+
+    Both fields optional and both defaulting to "no": an empty body means
+    "accept the standing proposal", which is the overwhelmingly common action
+    and should not require the client to echo back an id the server already has.
+    """
+
+    global_security_id: UUID | None = None
+    create_new: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -552,3 +575,111 @@ async def delete_stp_policy(request: Request, policy_id: UUID):
     except NoteTermsRoutingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "id": str(policy_id), "cik": row["cik"], "form_type": row["form_type"]}
+
+
+# --------------------------------------------------------------------------
+# Underlying resolution — the review queue
+# --------------------------------------------------------------------------
+#
+# WHY THESE LIVE HERE AND NOT IN A NEW ROUTER
+# The gate, the scope and the data are identical to the note-terms queue above:
+# Super Admin only, no org anywhere, global reference data derived from SEC
+# filings. A second router would mean a second copy of _require_super_admin and
+# a second place for the two to drift apart.
+#
+# WHAT THE CONFIRM ENDPOINT IS
+# It is the ONLY route in this application to link_state='resolved'. That is
+# enforced three deep: this function is the sole caller of
+# services.underlying_resolution.confirm_resolution; that function is the sole
+# setter of the app.underlying_confirm GUC; and trg_sec_global_rel_confirm_gate
+# rejects the UPDATE outright without it. The proposal pipeline is not trusted
+# to stay on its side of the line — it is prevented from crossing it.
+
+
+@router.get("/admin/pricing/underlying-queue")
+async def underlying_queue(request: Request):
+    """Edges awaiting a decision, each joined to the note that references it.
+
+    Membership is ``link_state IN ('unresolved', 'ambiguous')`` — the two
+    non-terminal states. 'ambiguous' means a proposal is standing and a person
+    has to accept or refuse it; 'unresolved' means either nothing has been
+    proposed yet or the matcher looked and declined. Both need a human, so both
+    are in the queue, and ``proposal.confidence`` on each row is what tells them
+    apart on screen.
+    """
+    await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        items = await load_queue(conn)
+
+    counts = {
+        "total": len(items),
+        "proposed": 0,
+        "needs_manual_match": 0,
+        "unexamined": 0,
+    }
+    for item in items:
+        proposal = item["proposal"]
+        if proposal is None:
+            counts["unexamined"] += 1
+        elif proposal["confidence"] == "high":
+            counts["proposed"] += 1
+        else:
+            counts["needs_manual_match"] += 1
+
+    return {"queue": items, "counts": counts}
+
+
+@router.post("/admin/pricing/underlying-queue/{relationship_id}/confirm")
+async def confirm_underlying(
+    request: Request, relationship_id: UUID, body: ConfirmUnderlying | None = None
+):
+    """Resolve one edge. THE only path that sets ``link_state='resolved'``.
+
+    ``resolved_by`` is the authenticated caller, resolved server-side and never
+    read from the body — for the same reason ``granted_by`` is not in the STP
+    grant body. "Who decided this underlying is the S&P 500" is the audit trail.
+    """
+    actor_id = await _require_super_admin(request)
+    body = body or ConfirmUnderlying()
+    pool = await get_pool()
+    try:
+        result = await confirm_resolution(
+            pool,
+            str(relationship_id),
+            actor_id=str(actor_id),
+            global_security_id=(
+                str(body.global_security_id) if body.global_security_id else None
+            ),
+            create_new=body.create_new,
+            is_super_admin=True,  # checked above; passed explicitly, never inferred
+        )
+    except UnderlyingResolutionPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except UnderlyingResolutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
+@router.post("/admin/pricing/underlying-queue/{relationship_id}/reject")
+async def reject_underlying(request: Request, relationship_id: UUID):
+    """Discard a standing proposal; the edge returns to a clean 'unresolved'.
+
+    Takes no body. There is nothing to parameterise — refusing a proposal is one
+    act with one outcome, and the alternative (a free-text reason) would be an
+    unread field on a queue that already records who acted and when.
+    """
+    actor_id = await _require_super_admin(request)
+    pool = await get_pool()
+    try:
+        result = await reject_proposal(
+            pool,
+            str(relationship_id),
+            actor_id=str(actor_id),
+            is_super_admin=True,
+        )
+    except UnderlyingResolutionPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except UnderlyingResolutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}

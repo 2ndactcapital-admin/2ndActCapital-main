@@ -394,6 +394,68 @@ Underlying **resolution** (still the next sprint) · any change to extraction or
 
 ---
 
+## 7g · Completed — underlying resolution (normalize → match → propose → human confirm)
+
+**The 97 unresolved `securities_global_relationships` edges §7e left behind now carry a machine proposal and a human-gated confirm path.** §7e wrote each underlying's name verbatim off the prospectus with `link_state='unresolved'` and an explicit note that resolution was a later sprint. This is that sprint. **Nothing is auto-resolved**: the pipeline proposes, and only a Super Admin pressing confirm writes `link_state='resolved'`.
+
+### The live population, measured (Task 1a) — it was not what the brief described
+
+97 edges, **57 distinct `raw_underlying_text` values**, not the 15 the prompt listed. The five major index families are 57 of the 97 edges once formatting noise is collapsed; the remaining 40 edges are a real tail the top-15 view hides: 11 single-name equities, 7 ETFs/funds, 6 foreign indices, 5 decrement/risk-control indices, 2 Nasdaq-100 *sub*-indices, and one 340-character description of a WTI CL1/CL2 futures roll.
+
+Two noise patterns the brief did not list, found only by pulling the full distinct set: **trailing parenthetical ticker glosses** (`(the "NDX Index")`, `(ticker: "NDX")`, `(SPXFP)`, `(SPXF40D4)`) and **spaces stranded in front of punctuation** by a removed mark character (`S&P ® /ASX 200`, `Swiss Market Index (SMI ® )`). Both had to be handled or six S&P/Nasdaq/Russell edges would have fallen to manual review for a typesetting artifact.
+
+Also confirmed before writing anything: `securities_global` held **54 rows, all `structured_note`, zero indices** — every index row in the table today was created by this sprint. And the table had **no unique constraint of any kind** (pkey, one FK, two value CHECKs), so nothing prevented a duplicate "S&P 500 Index".
+
+### The precedent (Task 1d) was inspected and rejected for a structural reason
+
+The platform's "AI proposes, human confirms" table is Chancery's `document_link_proposals`. It is **not reusable here**: its shape is `document_id uuid NOT NULL → documents(id)` and `org_id uuid NOT NULL → organizations(id)`, and an unresolved underlying edge has neither — these hang off `portfolio.reference_filings`, global public SEC data with no org anywhere in its lineage. Satisfying those FKs would mean inventing a document and attributing a public fact to one tenant. So the **pattern** was reused (pending → `reviewed_by`/`reviewed_at`, approve or reject) on the edge itself, per the sprint's stated fallback, with the proposal in a **new `proposed_global_security_id` column** — `to_global_security_id` is not overloaded, because `sec_global_rel_resolved_has_target` pins its meaning to "resolved's target".
+
+### Maker-checker is enforced in the database, not just in Python
+
+A CHECK constraint cannot express *who wrote this*, so the gate is a `BEFORE INSERT OR UPDATE` trigger, `trg_sec_global_rel_confirm_gate`, keyed to a transaction-local GUC. **Any transition into `link_state='resolved'` raises `42501` unless `app.underlying_confirm='true'` is set `LOCAL` in that transaction**, and `confirm_resolution` is the only function in the codebase that sets it. This is stronger than the existing RLS: the verifier proves that a caller holding `app.is_super_admin='true'` — full write rights on the table — **still cannot resolve an edge** without going through the confirm path. A future refactor that points the proposal pipeline at the wrong column gets a database error, not a silently auto-approved corpus.
+
+### What was built
+
+| Piece | Detail |
+|---|---|
+| `docs/underlyingresolution_part1.sql` | Eight additive nullable columns on `securities_global_relationships` (`proposed_global_security_id`, `proposal_confidence`, `proposal_kind`, `proposal_hint`, `proposed_at`, `normalized_underlying_text`, `resolved_by`, `resolved_at`); four new CHECKs locking the vocabularies and forbidding contradictory states (a `'high'` confidence with no proposed target; an `'ambiguous'` edge with nothing to confirm; a `'resolved'` edge with no `resolved_by`/`resolved_at`); the confirm-gate trigger; RLS re-asserted DROP-then-CREATE on both tables with `NULLIF` on every GUC read. |
+| `uq_sec_global_active_index_name` | Closes the Task-1e gap. Partial unique on `lower(name)` `WHERE security_type='index' AND valid_to IS NULL AND system_to IS NULL`. **Scoped to indices deliberately** — the 54 `structured_note` names are prospectus titles ("Callable Contingent Income Securities due March 17, 2028") that genuinely repeat across issuers, so a table-wide name index would reject legitimate data. |
+| `services/underlying_normalization.py` | `normalize_underlying_text` — five ordered rules, no LLM. Trailing parenthetical → mark characters (`® ™ ℠`) → trailing `SM` → punctuation spacing → whitespace → leading article. `'SM'` is stripped **only as a whole uppercase token at end-of-string**, because `SMI` (Swiss Market Index) is in the same corpus and a blanket strip would corrupt it. Casing is preserved per the brief, so `normalization_key()` (casefolded) is what every lookup uses — the corpus contains both `Common Stock` and `common stock` for NVIDIA. |
+| `services/underlying_index_registry.py` | A hand-maintained `dict`, **not** a fuzzy matcher: exact case-folded equality or nothing. 13 securities over 14 lookup keys. `resolve_or_create_index_security` is idempotent three ways — SELECT-then-INSERT in one transaction, the new unique index, and a catch-and-re-SELECT so a losing concurrent INSERT returns the winner's id instead of an error. Raises `KeyError` for any name not in the table: it will not invent a security. Also writes a `ticker` identifier row so a future price sprint has a handle. |
+| `services/underlying_resolution.py` | `propose_resolution` / `propose_all_unresolved` / `confirm_resolution` / `reject_proposal` / `load_queue`. Confidence is deliberately **not a number** — a percentage invites a threshold, and a threshold is an auto-approval rule in disguise. Two values only: `high` (exact registry hit) and `needs_manual_match`. |
+| `routers/pricing_admin.py` (+3 endpoints) | `GET /admin/pricing/underlying-queue`, `POST …/{id}/confirm`, `POST …/{id}/reject`. Same `_require_super_admin` gate and same file as the §7f note-terms queue — the scope, the gate and the data are identical, and a second router would mean a second copy of the gate to drift. `resolved_by` is the authenticated caller, never from the body. |
+
+### The index registry, seeded — 13 securities across the families
+
+**Tier 1 (the five the brief names, plus the required split):** S&P 500 (SPX) · Russell 2000 (RTY) · Nasdaq-100 (NDX) · Dow Jones Industrial Average (INDU) · EURO STOXX 50 (SX5E) · **S&P 500 Futures Excess Return Index (SPXFP) as a SEPARATE entry**. That last one is not pedantry: the futures ER series is net of a financing cost and drifts persistently below spot, so collapsing it into "S&P 500 Index" would silently substitute a materially worse price history — a real error, not a formatting one.
+
+**Tier 2 (the unambiguous, exchange-published remainder of the live tail):** MSCI EAFE (MXEA) · FTSE 100 (UKX) · S&P/ASX 200 (AS51) · Swiss Market Index (SMI) · TOPIX (TPX) · Nasdaq-100 Equal Weighted (NDXE) · Nasdaq-100 Technology Sector (NDXT). The same reasoning splits NDXE and NDXT from NDX — shared branding, different constituents. Conversely `TOPIX Index` and `Tokyo Stock Price Index` are **one index under two names**, and are the registry's only alias pair.
+
+### The result against the real 97 — 69 proposed, 28 to manual review
+
+Normalization collapsed **57 distinct raw strings to 37**.
+
+| Outcome | Edges | What it means |
+|---|---|---|
+| **`high` — index proposal** | **69** | Exact registry hit. Edge moved to `link_state='ambiguous'` with a target awaiting one click. 57 of these are the five brief-named families; the other 12 are Tier 2 + the futures ER. |
+| `needs_manual_match` · `single_name` | 15 | Company name extracted as a **hint** (`'NVIDIA Corporation'`), never a ticker. |
+| `needs_manual_match` · `fund_etf` | 7 | SPDR sector funds, iShares, VanEck. A fund tracking an index is not the index. |
+| `needs_manual_match` · `decrement_candidate` | 5 | MerQube ×2, S&P 500 Futures 40% Intraday 4% Decrement VT ×2, GS Momentum Builder Focus ER. |
+| `needs_manual_match` · `unclassified` | 1 | The WTI CL1/CL2 futures-roll description. |
+| **`resolved`** | **0** | Correct. No human has confirmed anything yet — which is the entire point. |
+
+16 of the 28 manual-review edges carry an extracted name hint. **Every one of the 97 remains human-gated.**
+
+### Explicitly NOT built, per the brief
+
+Auto-resolution of single-name equities to tickers (share classes, reassigned tickers and foreign private issuers all break a name match at scale) · a fuzzy/similarity matcher of any kind · **price-series wiring for decrement indices** — out of scope, possibly permanently; a reviewer's `create_new` will make a placeholder row at `price_coverage='no_public_source'`, and that is the extent of it · auto-approval above any confidence threshold · comparability scoring or percentile ranking (the next sprint, which depends on this one) · a frontend screen — the three endpoints exist and are proven; the queue UI is not in this sprint's task list.
+
+**Verification — `apps/api/scripts/verify_underlyingresolution.py`: 53 PASS, 0 FAIL** (idempotent — two consecutive runs, identical result). Teardown at start and end; `APP_SERVICE_DATABASE_URL` required with **no** `SET ROLE` fallback. Every assertion runs against the **real corpus**: 13 verbatim duplicate pairs from the database collapse to one string, and 5 verbatim distinct pairs (spot vs futures-ER, NDX vs NDXE/NDXT, index vs ETF, index vs decrement) stay apart. Proven: the registry creates at most one row per security across repeated calls with the index row count unchanged, and refuses a name outside the table; **the core governance assertion — `propose_resolution` on a real high-confidence index match leaves `link_state` NOT `'resolved'`, with `to_global_security_id` still NULL**; a source scan of every `UPDATE` statement in `services/`, `routers/`, `scripts/`, `models/`, `migrations/` and `docs/` finds **exactly one** write site setting `link_state='resolved'` and it is `confirm_resolution` (scoped to UPDATE statements on purpose — a naive grep for the literal reports five sites, most of them `<>` guards and the trigger's own comparison); all three service functions refuse without `is_super_admin`; **RLS blocks the resolve for `app_service` with no context, and the trigger independently blocks it for a caller that *has* super-admin rights but no confirm token**; the full 97-edge pass with the counts above; one real proposed index resolution confirmed end to end (`resolved`, non-null target, target is a `security_type='index'` row) and then **restored to its pre-test state**; `create_new` building a decrement placeholder named from the normalized text at `price_coverage='no_public_source'`; reject clearing the proposal back to a clean `unresolved` while keeping `normalized_underlying_text`; the queue joining **97/97** edges to their real `note_terms` row, filer and accession; global read under `app_service` with no org context returning the same 97; and 403 on all three endpoints for a non-Super-Admin.
+
+**One design change the database caught.** The first cut of `confirm_resolution` nulled `proposed_global_security_id` on the way out and hit `sec_global_rel_high_needs_proposed_target`. The fix is the better design: the proposal is **kept** alongside the confirmed target, so "did the reviewer accept the matcher's answer or override it" is answerable from the row itself — the only direct measure of whether the registry is any good, and it would have been erased on exactly the rows where it matters most.
+
+---
+
 ## 8 · Hollisworks headless multi-tenant architecture
 
 **Foundational pieces built and proven working in production. Full SAML federation designed but not yet built.**
@@ -480,6 +542,8 @@ Issue 4 was found by a **comprehensive field-by-field audit** (22/22) rather tha
 | `securities_global_note_terms` has no home for extraction metadata (§7e) | Its only jsonb column, `field_status`, is enum-constrained to the four states, so the hazard-ensemble disagreement record had to go to `document_field_corrections` instead. Same column shortage means **one** `source_char_start/end` pair per row, so per-field UI highlighting is impossible. Fix: an `extraction_notes jsonb` column and per-field offsets on the terms row. Deliberately not added — §7e was forbidden to alter that schema. |
 | Platform AI calls are billed to 2nd Act (§7e) | `ai_decision_log.org_id` is `NOT NULL`, so every org-less platform call — all of note-terms extraction, which writes to global tables with no tenant — is attributed to `DEFAULT_ORG_ID` (`00000000-…-0001`) by `services/extraction.py:51,189`. Cost and decision history for global reference work pollute a real tenant's ledger. Fix is a nullable `org_id` or a reserved platform org; it is a decision, not a bug fix. |
 | No `--2a-error` / `--2a-success` theme tokens | The Design Tokens list names Error `#9B2335` and Success `#2D6A4F`, but the tenant theme layer publishes no custom property for either, so no component can read them at runtime. Every admin screen hardcodes the hex (`DocumentReviewManager`, `DocumentSearch`, `TopBar`, and now `NoteTermsQueueManager`, which at least names them once as module constants instead of inlining them). A white-label tenant therefore cannot restyle error or success ink. Small, real, and a one-line fix in the theme route + `globals.css` whenever someone is in there. |
+| Underlying-resolution queue has no UI (§7g) | The three `/admin/pricing/underlying-queue` endpoints are built and proven (53/53), but the sprint's task list contained no frontend task, so nothing renders them. **69 confirmable index proposals and 28 manual-review edges are sitting in the queue with no screen to clear them from.** Natural shape: the same TanStack `DataGrid` + detail pattern as `NoteTermsQueueManager.jsx`, with a bulk-confirm for the 69 (they group to 13 distinct securities). Small and well-specified; blocks nothing else in the codebase, blocks everything for the human. |
+| Underlying resolution is upstream of comparability (§7g) | Comparability scoring / percentile ranking — the sprint after §7g — needs edges at `link_state='resolved'`, and **0 of 97 are resolved today** because resolution is human-gated by design. That gate cannot be opened by code; it needs the UI above, then a person. Sequencing note, not a defect. |
 | Leaked test fixture in `reference_filings` | One row (`cik=9999999999`, `filer_name='VERIFY FIXTURE'`, 110 chars, `extraction_status='extracted'`) from an earlier sprint's teardown miss. Harmless but it sits in the "real" corpus population; §7e excludes it by filter rather than deleting another sprint's row. |
 
 **Operational gotcha worth remembering**: Vercel **preview** deployments don't inherit production environment variables — preview-branch errors about missing Auth0 config are expected and are *not* production issues.
