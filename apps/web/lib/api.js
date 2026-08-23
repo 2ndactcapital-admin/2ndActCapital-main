@@ -503,6 +503,22 @@ export const createEntityGroup = (body) => fetchAPI("/api/v1/entity-groups", { m
 export const addEntityGroupMember = (groupId, entityId) => fetchAPI(`/api/v1/entity-groups/${groupId}/members`, { method: "POST", body: { entity_id: entityId } });
 export const removeEntityGroupMember = (groupId, entityId) => fetchAPI(`/api/v1/entity-groups/${groupId}/members/${entityId}`, { method: "DELETE" });
 
+// --- Note-terms review queue + STP trust policy (Super Admin, global data) ---
+// No org_id in any of these: securities_global_note_terms / reference_filings /
+// note_terms_stp_policy are global SEC reference data with no tenant.
+export const getNoteTermsQueue = () =>
+  fetchAPI("/api/v1/admin/pricing/note-terms/queue");
+export const resolveNoteTermsField = (noteTermsId, body) =>
+  fetchAPI(`/api/v1/admin/pricing/note-terms/${noteTermsId}/resolve`, {
+    method: "POST", body,
+  });
+export const listStpPolicies = () =>
+  fetchAPI("/api/v1/admin/pricing/stp-policy");
+export const grantStpPolicy = (body) =>
+  fetchAPI("/api/v1/admin/pricing/stp-policy", { method: "POST", body });
+export const revokeStpPolicy = (policyId) =>
+  fetchAPI(`/api/v1/admin/pricing/stp-policy/${policyId}`, { method: "DELETE" });
+
 // --- Chancery Phase 6 (document review / confirm) ---
 export const getDocumentReview = (documentId) =>
   fetchAPI(`/api/v1/documents/${documentId}/review`);

@@ -1470,6 +1470,18 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY note_terms_field_registry_pkey: (field_key)
 
+-- ===== portfolio.note_terms_stp_policy =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   cik                                      text NOT NULL
+--   form_type                                text NOT NULL
+--   enabled                                  boolean NOT NULL DEFAULT true
+--   granted_by                               text
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   revoked_by                               text
+--   revoked_at                               timestamp with time zone
+--   notes                                    text
+--   PRIMARY KEY note_terms_stp_policy_pkey: (id)
+
 -- ===== portfolio.reference_filings =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   cik                                      text NOT NULL
@@ -1550,6 +1562,8 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   routing_decision                         text
+--   routed_at                                timestamp with time zone
 --   PRIMARY KEY securities_global_note_terms_pkey: (id)
 
 -- ===== portfolio.securities_global_prices =====

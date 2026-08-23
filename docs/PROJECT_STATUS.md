@@ -329,6 +329,71 @@ The real finding: **`ai_decision_log.org_id` is NOT NULL**, so `extraction.py:51
 
 ---
 
+## 7f · Completed — STP policy + note-terms review queue
+
+**The routing decision that sits on top of §7e's confidence, plus the screen that makes it reviewable.** A newly-extracted terms row now either goes straight through (auto-confirmed, no human touch) or lands in a review queue, decided by a per-`(cik, form_type)` trust policy. Nothing in the extraction or hazard-ensemble logic changed; this sprint only *reads* what §7e produced and decides who looks at it.
+
+### The rule, in order — and the one thing it must never do
+
+1. **Any hazard-ensemble disagreement → `queued`. Always.** No policy overrides this. STP is a statement of trust in *agreement* between the two readers; it is never a bypass of disagreement detection. The ensemble runs on every row regardless of STP status and its result is stored identically either way.
+2. Else, an **active policy** for `(reference_filings.cik, form_type)` → `stp`.
+3. Else → `queued`. The safe default: a pairing nobody has explicitly trusted stays queued forever until somebody grants it.
+
+**One refinement to step 2, stated rather than slipped in:** it fires only when `extraction_confidence = 'high'`. That is the only value meaning the two readers agreed *and* the comparison actually happened. `needs_review` means either a disagreement (step 1 caught it) or a failed arithmetic validator — not agreement about anything, and routing it `stp` would contradict the queue query, which returns every `needs_review` row by definition. `low` means the ensemble did not run or ran on the primary model and compared nothing; straight-through on an unmeasured row would let an Anthropic outage silently clear a batch — the exact failure §7e's confidence ladder exists to prevent. **Trust in an issuer is not trust in a run that did not happen.**
+
+**Disagreement is read from two places and either one queues.** `route_note_terms_row` takes the caller's in-memory ensemble result *and* independently queries the recorded rows in `document_field_corrections`. §7e logs disagreements in a `try/except` that deliberately never loses a good row over a logging failure, so the database can under-report; trusting it alone would let a failed INSERT promote a disagreeing row to straight-through. Both sources must be silent for a row to go STP.
+
+### Why `(cik, form_type)` and not a global switch
+
+"Trust this issuer's 424B2s" is a defensible statement; "trust everything" collapses the distinction between a prospectus template read forty times and one seen once. `cik` is the stable key — `filer_name` is display-only and drifts: the live corpus holds **`JPMORGAN CHASE & CO` at cik 19617** and **`JPMorgan Chase Financial Co. LLC` at cik 1665650**, different issuers a name-based key would merge or split arbitrarily. **No auto-granting**: STP is granted by an explicit human act from the queue screen, never inferred from accuracy statistics.
+
+### The 54 pre-existing rows have `routing_decision = NULL`, by design
+
+They were created before any routing policy existed. **NULL here means "no routing decision was ever made for this row", which is the truth**, and the migration deliberately does not backfill. `'queued'` would claim a human was asked to look when none was; `'stp'` would claim trust that was never granted. Nothing is lost: the 28 of them at `extraction_confidence='needs_review'` still surface through the confidence half of the queue query. The verifier asserts this on the **rows themselves** (54 rows, 54 NULL, 0 non-NULL) — not merely that the migration ran, because a stray backfilling UPDATE would pass the weaker check.
+
+### The live corpus, measured (Task 1a)
+
+All 54 note-terms-linked filings have a populated `cik` and `form_type`; zero NULL `reference_filing_id`. **17 distinct `(cik, form_type)` pairings**, none dominant — the largest is Goldman Sachs Group 424B2 at 6 rows. **48 of 54 rows are 424B2**, 6 are FWP. (The sprint prompt's "48/54 from one JPMorgan CIK" was not what the database says: 48/54 is the *form type* split, spread across sixteen issuers. JPMorgan's two CIKs hold 10 rows between them.)
+
+| Pairing | Rows | needs_review | high |
+|---|---|---|---|
+| GOLDMAN SACHS GROUP INC · 424B2 (886982) | 6 | 6 | 0 |
+| Morgan Stanley Finance LLC · 424B2 (1666268) | 6 | 4 | 2 |
+| JPMorgan Chase Financial Co. LLC · 424B2 (1665650) | 5 | 3 | 2 |
+| BofA Finance LLC · 424B2 (1682472) | 5 | 1 | 4 |
+| MORGAN STANLEY · 424B2 (895421) | 5 | 3 | 2 |
+| GS Finance Corp. · 424B2 (1419828) | 4 | 1 | 3 |
+| JPMORGAN CHASE & CO · 424B2 (19617) | 4 | 1 | 3 |
+| BANK OF AMERICA CORP /DE/ · 424B2 (70858) | 4 | 1 | 3 |
+| BARCLAYS BANK PLC · 424B2 (312070) | 3 | 3 | 0 |
+| BANK OF MONTREAL /CAN/ · 424B2 (927971) | 3 | 0 | 3 |
+| *seven pairings at 1–2 rows* | 11 | 5 | 6 |
+
+### What was built
+
+| Piece | Detail |
+|---|---|
+| `portfolio.note_terms_stp_policy` | Global, **no `org_id`** — SEC filings are public reference data with no tenant. `CHECK form_type IN ('424B2','FWP')`; a **partial** unique index on `(cik, form_type) WHERE enabled` so unlimited revoked history coexists with one live grant; a second CHECK forcing `enabled=false` to carry `revoked_by`/`revoked_at`, so "revoked" can never be an assertion with no evidence behind it. Four-policy RLS (global read, super-admin insert/update/delete), copied verbatim from `securities_global_note_terms`. A re-grant **inserts a new row** rather than flipping the old one back, so who trusted this issuer the first time, and why, survives. |
+| `securities_global_note_terms.routing_decision` / `routed_at` | Additive, nullable, `CHECK IN ('queued','stp') OR NULL`. In-place columns, not a Rule-3 supersede: `routing_decision` is metadata about the extraction *event*, stamped once at the end of it, and the partial current-row unique index would force a supersede to retire a perfectly good terms row to record an annotation. |
+| `services/note_terms_routing.py` | `route_note_terms_row` (the three-step rule), `grant_stp`, `revoke_stp`, plus policy/ledger readers. Called as the **last** step of `extract_terms`, after the ensemble has run, been compared, and been recorded — routing reads that outcome, it does not participate in producing it. A routing failure is caught and leaves `routing_decision` NULL rather than losing a good extraction. |
+| `routers/pricing_admin.py` | Five endpoints under `/api/v1/admin/pricing/…`: the queue, resolve, list/grant/revoke policy. **Super Admin only**, same `_require_super_admin` shape as `restricted_access.py` and `trading_authority.py` — but returning no `org_id`, because there is no org in play and inventing one to match a helper signature later reads as a real scoping rule. |
+| `app/admin/pricing/note-terms-queue/page.js` + `components/admin/NoteTermsQueueManager.jsx` | List on the shared TanStack `DataGrid`; per-row detail showing **primary vs. secondary answer side by side** with the model that produced each, and the **actual source sentence** sliced at `[source_char_start:source_char_end]` — not a page reference. Nav entry gated on `role === "super_admin"` alongside Restricted Access / Trading Authority. |
+| The grant moment | When the last outstanding row for a pairing is settled, the detail view **offers** the grant with a notes field and a confirm button. No separate settings page, and no grant without a person pressing the button. A small STP POLICY panel lists active policies with a revoke action. |
+
+### Resolve is an in-place field write, deliberately
+
+`POST …/{id}/resolve` logs through `log_note_terms_correction` **first** (`target_type='note_terms'`, `org_id` and `document_id` NULL, `corrected_by` = the reviewer), then writes the column and sets `field_status[field] = 'extracted'`. Rule 3 exists so a changed fact does not erase the previous one — and nothing is erased here: the corrections ledger records the original value, the chosen value, who chose it and when, which is richer than a superseded row. A supersede would also **break the screen it serves**: corrections and disagreements are keyed to `target_id`, so superseding on the first of three disagreed fields would hand the next two a new row id with no records attached. Stable identity is a requirement of per-field resolution, not a shortcut around Rule 3.
+
+`routing_decision` and `extraction_confidence` are **not** rewritten by a resolve. The row was queued because at extraction time it had a disagreement; that remains true about that moment. "Done" is derived instead — every ensemble-flagged field now carrying a human correction — so no historical record is edited to make a screen look tidy.
+
+### Explicitly NOT built
+
+Underlying **resolution** (still the next sprint) · any change to extraction or hazard-ensemble logic · a global STP on/off toggle · auto-granting STP from a clean run.
+
+**Verification — `apps/api/scripts/verify_notetermsrouting.py`: 26 PASS, 0 FAIL.** Teardown at start and end; `APP_SERVICE_DATABASE_URL` required with **no** `SET ROLE` fallback. Every routing assertion runs the **real** pipeline end to end — real inserts, real ensemble comparison, real correction logging — with only the two Anthropic calls scripted, on **synthetic CIKs** (`99999xxxxx`) so a missed teardown could never leave a real trust decision behind. Proven: all three routing proofs, including **PROOF 1 — a disagreeing row queues even with an active policy for its pairing**; that an STP'd row stores the *same* ensemble result as a queued one (six fields compared, ensemble measured, identical `field_status` and source offsets — only `routing_decision` differs); that a disagreement **under** an active policy is recorded byte-identically to one with no policy; the partial-unique behaviour (revoked + new active coexist, a second active is rejected); `grant_stp`/`revoke_stp` rejected without `is_super_admin` **and** independently rejected by RLS under `app_service`; global read with no org context; a member getting 403 from the queue; the queue returning **exactly** the query-definition set (31 rows: 28 corpus + 3 fixtures) checked against an independent re-derivation in SQL rather than a hand-listed fixture set; resolve writing the value, the `field_status`, and the ledger row; and the grant offer **not** appearing while the pairing still has unresolved fields.
+
+---
+
 ## 8 · Hollisworks headless multi-tenant architecture
 
 **Foundational pieces built and proven working in production. Full SAML federation designed but not yet built.**
@@ -414,6 +479,7 @@ Issue 4 was found by a **comprehensive field-by-field audit** (22/22) rather tha
 | Note-terms extraction accuracy — `protection_type` (§7e) | **44% of extracted rows had a hazard disagreement and 16 of 22 were `protection_type`** (buffer vs floor — opposite payoffs, identical marketing language, invisible to every arithmetic validator). The ensemble catches them; the extraction prompt does not yet get them right. **Do not scale past the 50-filing bounded run** until the prompt is sharpened and re-measured. `cik_matches_filer` also failed on 6/50 (guarantor or index sponsor read as the issuer). |
 | `securities_global_note_terms` has no home for extraction metadata (§7e) | Its only jsonb column, `field_status`, is enum-constrained to the four states, so the hazard-ensemble disagreement record had to go to `document_field_corrections` instead. Same column shortage means **one** `source_char_start/end` pair per row, so per-field UI highlighting is impossible. Fix: an `extraction_notes jsonb` column and per-field offsets on the terms row. Deliberately not added — §7e was forbidden to alter that schema. |
 | Platform AI calls are billed to 2nd Act (§7e) | `ai_decision_log.org_id` is `NOT NULL`, so every org-less platform call — all of note-terms extraction, which writes to global tables with no tenant — is attributed to `DEFAULT_ORG_ID` (`00000000-…-0001`) by `services/extraction.py:51,189`. Cost and decision history for global reference work pollute a real tenant's ledger. Fix is a nullable `org_id` or a reserved platform org; it is a decision, not a bug fix. |
+| No `--2a-error` / `--2a-success` theme tokens | The Design Tokens list names Error `#9B2335` and Success `#2D6A4F`, but the tenant theme layer publishes no custom property for either, so no component can read them at runtime. Every admin screen hardcodes the hex (`DocumentReviewManager`, `DocumentSearch`, `TopBar`, and now `NoteTermsQueueManager`, which at least names them once as module constants instead of inlining them). A white-label tenant therefore cannot restyle error or success ink. Small, real, and a one-line fix in the theme route + `globals.css` whenever someone is in there. |
 | Leaked test fixture in `reference_filings` | One row (`cik=9999999999`, `filer_name='VERIFY FIXTURE'`, 110 chars, `extraction_status='extracted'`) from an earlier sprint's teardown miss. Harmless but it sits in the "real" corpus population; §7e excludes it by filter rather than deleting another sprint's row. |
 
 **Operational gotcha worth remembering**: Vercel **preview** deployments don't inherit production environment variables — preview-branch errors about missing Auth0 config are expected and are *not* production issues.

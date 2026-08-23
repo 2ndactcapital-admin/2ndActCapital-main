@@ -40,6 +40,9 @@ const RESTRICTED_ACCESS_ITEM = { label: "Restricted Access", href: "/admin/restr
 // SOC Phase 5: assign per-entity trading-authority tiers (feeds the maker-checker
 // + tier enforcement engine). Super Admin only.
 const TRADING_AUTHORITY_ITEM = { label: "Trading Authority", href: "/admin/trading-authority", icon: "admin" };
+// Note-terms review queue + STP trust policy. Global SEC reference data, not
+// tenant data — Super Admin only, same gate as the two items above.
+const NOTE_TERMS_QUEUE_ITEM = { label: "Note Terms Review", href: "/admin/pricing/note-terms-queue", icon: "admin" };
 
 // The Ascent mark inline SVG — white on navy, with gold-light top square.
 function AscendMark({ size = 20 }) {
@@ -369,6 +372,11 @@ export default function Sidebar() {
                 item={TRADING_AUTHORITY_ITEM}
                 expanded={expanded}
                 active={isActive(TRADING_AUTHORITY_ITEM.href)}
+              />
+              <NavLink
+                item={NOTE_TERMS_QUEUE_ITEM}
+                expanded={expanded}
+                active={isActive(NOTE_TERMS_QUEUE_ITEM.href)}
               />
               <NavLink
                 item={PLATFORM_ITEM}

@@ -74,6 +74,7 @@ from services.extraction import (
     resolve_model,
 )
 from services.note_terms_corrections import log_hazard_disagreement
+from services.note_terms_routing import route_note_terms_row
 from services.note_terms_validators import cusip_checksum, run_numeric_validators
 
 TERMS_TABLE = "portfolio.securities_global_note_terms"
@@ -150,6 +151,10 @@ class ExtractionResult:
     primary_model: str | None = None
     secondary_model: str | None = None
     reused_existing: bool = False
+    # 'queued' | 'stp', decided by services.note_terms_routing AFTER everything
+    # above is computed and stored. None when no routing decision was made —
+    # a reused row, or a run that failed before persisting.
+    routing_decision: str | None = None
     error: str | None = None
 
     @property
@@ -898,6 +903,26 @@ async def extract_terms(filing_id, pool, *, force: bool = False) -> ExtractionRe
                     f"[note_terms_extraction] filing {filing_id}: failed to record "
                     f"hazard disagreement on {key}: {type(exc).__name__}: {exc}"
                 )
+
+    # ── Routing — the LAST step, on a row that is already fully written ───────
+    # Deliberately after the ensemble has run, been compared, and been recorded:
+    # routing reads that outcome, it does not participate in producing it. The
+    # in-memory `disagreements` dict is handed over as well as being on disk,
+    # because the logging loop above swallows its own failures — a disagreement
+    # that failed to persist must still queue the row.
+    try:
+        result.routing_decision = await route_note_terms_row(
+            pool, {"id": note_terms_id, "extraction_confidence": confidence},
+            hazard_disagreements=disagreements,
+        )
+    except Exception as exc:  # noqa: BLE001 — never lose a good extraction to routing
+        # routing_decision stays None, which is the honest record: the row was
+        # extracted but never routed. It surfaces in the queue anyway whenever
+        # confidence is needs_review, and a later re-run can route it.
+        print(
+            f"[note_terms_extraction] filing {filing_id}: routing failed for "
+            f"terms row {note_terms_id}: {type(exc).__name__}: {exc}"
+        )
 
     result.ok = True
     result.note_terms_id = note_terms_id
