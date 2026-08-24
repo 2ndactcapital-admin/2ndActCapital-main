@@ -637,6 +637,7 @@
 --   source                                   text NOT NULL DEFAULT 'manual'::text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE entity_holdings_bucket_key: (org_id, entity_id, taxonomy_key, as_of_date, source)
 --   PRIMARY KEY entity_holdings_pkey: (id)
 
 -- ===== entity_notes =====

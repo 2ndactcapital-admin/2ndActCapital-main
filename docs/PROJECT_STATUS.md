@@ -616,7 +616,60 @@ Teardown asserts exact before/after counts on all six portfolio tables **and `pu
 
 The S21 sunburst rollup into `entity_holdings` (Phase C) · the SPV derivation view (Phase D) · cash modelling, corporate actions, commitments, UDFs · any UI beyond the file-upload endpoint · real-time or intraday anything — daily is the maximum frequency per the design · Chancery consumption as an ingestion source (the `chancery` vocabulary slot and its precedence rank exist; nothing writes through it yet).
 
-**Next: Phase C — the S21 sunburst rollup into `entity_holdings`.** Its input is now real: positions exist, and precedence decides which of several competing rows the rollup should count. A rollup built before precedence would have double-counted every holding reported by two sources.
+**Next: Phase C — the S21 sunburst rollup into `entity_holdings`.** Its input is now real: positions exist, and precedence decides which of several competing rows the rollup should count. A rollup built before precedence would have double-counted every holding reported by two sources. ✅ Built — see 7k.
+
+---
+
+## 7k · Completed — Portfolio C, the rollup into `entity_holdings`
+
+**The sprint that finally puts data in front of the Sprint 21 sunburst.** `services/portfolio_rollup.py` · `POST /api/v1/portfolio/rollup` in `routers/portfolio_ingest.py` · `scripts/verify_portfolioc.py`. **22 PASS, 0 FAIL**, idempotent across consecutive runs, real `app_service` connection.
+
+### The headline: the S21 sunburst renders real data for the first time since it shipped
+
+`services/allocation_lens.py` reads `entity_holdings` and nothing else (line ~138). That table has had **no writer at all** since Sprint 21 shipped, so the allocation lens has spent its entire life drawing an empty actuals tree against real targets — a screen that looked finished and reported nothing. Phase C is the writer. **Given a rollup run for an org and an as-of date, the sunburst now renders real positions.** No change was made to `allocation_lens.py` or to the sunburst UI; the rollup's output grain was read off the lens's actual query rather than guessed at.
+
+### What it does
+
+`rollup_entity_holdings(conn, *, org_id, as_of_date)` groups current, non-superseded positions by `(entity_id, taxonomy_key)` and writes one `entity_holdings` row per bucket under `source = 'portfolio'`. `taxonomy_key` falls back from `positions.taxonomy_key` to `assets.default_taxonomy_key`.
+
+**Look-through attribution, not direct ownership.** A position's value lands in the direct owner's bucket *and* in every ancestor's, each at its own compounded percentage. An individual who holds everything through a trust owns nothing by `owner_entity_id`, and a rollup keyed to that column would have rendered them an empty sunburst that is not wrong so much as meaningless. The percentages come from **`entity_graph.get_lookthrough`** — the same BFS `resolve_entity_set` and the Ownership Tree Graph use. This module computes no ownership percentages of its own; it calls the existing engine once per entity that owns anything and inverts the direction. Verified with an exact figure: an individual owning 50% of a trust that owns 60% of an LLC holding $100,000 gets **exactly $30,000.00** — 50% and 60% and their product are three different plausible bugs and only the exact number tells them apart.
+
+**Callable, not trigger-fired — deliberately.** Positions arrive in batches; a row-level trigger would rebuild the buckets after every individual write, and every intermediate state is a real, readable, *wrong* number a member could refresh into mid-import. Rolling up is something you do when a batch is finished, which is a fact only the caller knows.
+
+### Two things the brief did not ask for and the design needed
+
+| | |
+|---|---|
+| **The rollup DELETES as well as upserts** | An upsert alone is not idempotent in the way that matters. If a position is retired or superseded between runs its bucket is no longer computed, the upsert never touches it, and a stale figure survives forever under the current date. Every run also deletes the `source = 'portfolio'` rows for that `(org, as_of_date)` the new computation did not produce — scoped to this source, so a manual or S21-era holding row from another track is never touched. Asserted separately: retire a position, re-run, the bucket is gone rather than standing at its last figure. |
+| **A position with no mark is skipped and COUNTED, never zeroed** | Same rule `resolve_current_value` already enforces. A zero for "we have no valuation" is indistinguishable from a genuine zero once summed, and the fact that it was never measured is gone. `RollupResult` reports every drop with its reason, so "the sunburst looks light" has an answer. |
+
+### Percent-basis and compounding (Task 3)
+
+`ownership_basis = 'percent'` means `ownership_pct` is the authoritative measure, so the position's value is that fraction of the **asset's own resolved valuation** via `portfolio_assets.resolve_current_value` — *not* the stored `market_value`, which on a percent position is a convenience copy that a revaluation of the underlying does not update. Trusting it would freeze an LLC interest at whatever it was worth the day somebody typed it in. Proven: a 25% position with no stored `market_value` reads $100,000 against a $400,000 appraisal, and $200,000 on the next run after a superseding $800,000 appraisal.
+
+### Reported, not papered over — the `subtree` selector double-counts
+
+`aggregate_allocation` accepts two selector shapes and weights them differently. `{"type": "entity", "id": E}` is E alone at weight 1.0 — **exactly correct** against look-through buckets, and it is the default the assistant action uses. `{"type": "subtree", "root_id": R}` is R at 1.0 **plus** every descendant at its `effective_pct` — which double-counts, because R's own bucket already contains the descendants' compounded value and the lens then adds a weighted copy of each descendant's row on top.
+
+`services/allocation_lens.py` is explicitly out of scope for Phase C, so the buckets were written as mandated and this is recorded here rather than silently absorbed. **The fix belongs in the lens** — a `subtree` selector should stop re-weighting descendants now that holdings are themselves look-through — and is a one-line change there. Related and smaller: the lens does not filter on `source`, so a manual `entity_holdings` row and a rollup row for the same `(entity, key, date)` are tie-broken arbitrarily by its `DISTINCT ON`. Phase C owns `source = 'portfolio'` and never reads, writes or deletes another source's rows.
+
+### The endpoint
+
+`POST /api/v1/portfolio/rollup`, form field `as_of_date` (**required**, not defaulted to today: a rollup labels every bucket with that date and the lens picks the latest on or before the queried date, so a mistaken default would stamp a quarter-end position set with today's date and shadow the real one). Gated on **`manage_portfolio`** via the same `require_permission` call every other write on that router already uses — no new gating invented. Synchronous, because the caller wants to know it actually happened.
+
+### Verification — 22/22
+
+`scripts/verify_portfolioc.py`, real DB, real RLS, real `app_service` connection, no `SET ROLE` fallback. Two real ownership chains (100%→100% for reach, 50%→60% for compounding), one contested holding resolved by the **real** `resolve_holding` rather than a hand-set `superseded_by_source`, exact-Decimal assertions throughout. Covers: direct rollup · look-through two levels up · exact $30,000.00 compounding · precedence loser excluded · re-run updates rather than duplicates (row count + a duplicate-group query) · a superseding valuation reflected on the second run · stale bucket removal · cross-org isolation in both directions · the endpoint's 403 for a non-admin and 200 for an authorised caller.
+
+**A trap worth recording:** `rbac.has_permission` **default-allows** a user with zero `user_roles` rows, and `permissions.get_user_id` does **not** look users up by `auth0_sub` — with no namespaced claim and a non-UUID `sub` it returns `uuid5(NAMESPACE_URL, sub)`. A fixture user seeded under a hand-picked `99000000-…` id is therefore a user the endpoint never finds, `load_principal` returns None, and the "non-admin is denied" test passes an endpoint with **no gate at all**. The script seeds under the derived id and gives the member a real role granting a different permission — the only shape in which the strict check actually runs. It caught a genuine false-pass on the first run.
+
+Teardown asserts exact before/after counts on all six portfolio tables **plus `public.entity_holdings` and `public.entity_relationships`**. `entity_holdings` is deleted by fixture *entity*, never by `source` or `as_of_date`: it is a public, tenant-visible table that S21, `services/households.py` and the RLS Batch-A verification all read, and a source-keyed delete would take out a real rollup another track had run for the same date.
+
+### Deliberately NOT built (Phase D and later, per the brief)
+
+The SPV derivation view (Phase D) · any change to `services/allocation_lens.py` or the sunburst UI · cash modelling, corporate actions, commitments, UDFs · a trigger firing the rollup on every position write (see above) · automatic invocation at the end of Phase B's import — the function is callable and the endpoint exists; wiring it into `import_positions` was left out because an import's rows can span several as-of dates and picking one silently would be worse than an explicit call.
+
+**Next: Phase D — the SPV derivation view.**
 
 ---
 

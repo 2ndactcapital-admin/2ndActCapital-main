@@ -1,8 +1,9 @@
-"""Portfolio ingestion endpoints — Phase B.
+"""Portfolio ingestion endpoints — Phase B, plus Phase C's rollup trigger.
 
 Minimal by mandate: one file-upload endpoint, one precedence read, one honest
-Altruist status probe. No UI beyond what a file upload needs, no rollup, no
-reconciliation screen — those are Phase C and later.
+Altruist status probe, and (Phase C) one endpoint that rebuilds
+``entity_holdings`` from the positions those endpoints wrote. No reconciliation
+screen — that is later.
 
 ``org_id`` comes from ``routers.entities.get_org_id`` (JWT claims) on every
 route and is never accepted from a request body or read out of an uploaded
@@ -30,6 +31,11 @@ from services.portfolio_precedence import (
     PRECEDENCE_SETTING_KEY,
     get_source_order,
     resolve_holding,
+)
+from services.portfolio_rollup import (
+    ROLLUP_PERMISSION,
+    RollupError,
+    rollup_entity_holdings,
 )
 from services.rbac import require_permission
 
@@ -178,3 +184,50 @@ async def altruist_status(request: Request):
         "missing_env_vars": list(gate.missing_vars),
         "status_code": gate.status_code,
     }
+
+
+# ── Phase C: the rollup trigger ─────────────────────────────────────────────
+
+
+@router.post("/portfolio/rollup")
+async def trigger_rollup(
+    request: Request,
+    as_of_date: date = Form(...),
+):
+    """Rebuild ``entity_holdings`` for the caller's org as of ``as_of_date``.
+
+    This is the endpoint that finally puts data in front of the Sprint 21
+    sunburst: ``services.allocation_lens`` reads ``entity_holdings`` and has had
+    no writer since it shipped.
+
+    ``as_of_date`` is REQUIRED rather than defaulted to today. A rollup labels
+    every bucket it writes with that date and ``allocation_lens`` picks the
+    latest bucket on or before the date it is asked about, so a mistaken
+    default would stamp a quarter-end position set with today's date and shadow
+    the real one. The caller knows which date they are closing; the server does
+    not.
+
+    Gated on ``manage_portfolio`` — Phase B's portfolio-write permission, via
+    the same ``require_permission`` call every other write on this router uses.
+    A rollup rewrites the numbers every member's allocation view is drawn from,
+    which is a write however much it reads.
+
+    Deliberately synchronous. The work is proportional to an org's position
+    count, the caller wants to know it actually happened, and a 202 with no
+    result would hand back "accepted" for a rollup that then found nothing to
+    value.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, ROLLUP_PERMISSION)
+
+    async with pool.acquire() as conn:
+        try:
+            result = await rollup_entity_holdings(
+                conn, org_id=org_id, as_of_date=as_of_date
+            )
+        except RollupError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return result.as_dict()
