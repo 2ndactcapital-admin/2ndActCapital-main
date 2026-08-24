@@ -686,8 +686,20 @@ async def record_transaction(
     external_ref: str | None = None,
     related_transaction_id: str | None = None,
     corporate_action_id: str | None = None,
+    is_corporate_action_adjustment: bool = False,
 ) -> str:
     """Record a transaction against a position. Returns its id.
+
+    ``is_corporate_action_adjustment`` (added by Phase F, whose Part 1 SQL added
+    the column — A2 shipped before it existed, so this INSERT did not name it and
+    every adjustment would have silently stored the column default) is the flag a
+    realized-gain calculation filters on. It is deliberately a plain boolean
+    parameter rather than something derived from ``corporate_action_id IS NOT
+    NULL``: a report must be able to exclude adjustments **without knowing the
+    corporate-action machinery exists**, and a derived flag would make the two
+    facts impossible to disagree — including in the case where they should, e.g.
+    a genuine cash-in-lieu *sale* that cites a corporate action and IS a realized
+    gain. See ``services.portfolio_corporate_actions``.
 
     Two validations beyond the vocabularies:
 
@@ -779,9 +791,10 @@ async def record_transaction(
                  corporate_action_id, trade_date, settle_date, quantity, price,
                  gross_amount, fees, taxes, net_amount, currency_code,
                  fx_rate_id, authority, source_system, external_ref,
-                 related_transaction_id)
+                 related_transaction_id, is_corporate_action_adjustment)
             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid, $6, $7, $8, $9,
-                    $10, $11, $12, $13, $14, $15::uuid, $16, $17, $18, $19::uuid)
+                    $10, $11, $12, $13, $14, $15::uuid, $16, $17, $18, $19::uuid,
+                    $20)
             """,
             new_id, org_id, str(position_id), transaction_type_code,
             str(corporate_action_id) if corporate_action_id else None,
@@ -789,6 +802,7 @@ async def record_transaction(
             currency_code, str(fx_rate_id) if fx_rate_id else None,
             authority, source_system, external_ref,
             str(related_transaction_id) if related_transaction_id else None,
+            bool(is_corporate_action_adjustment),
         )
     return new_id
 

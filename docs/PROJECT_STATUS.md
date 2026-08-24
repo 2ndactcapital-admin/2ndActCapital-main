@@ -831,7 +831,96 @@ Teardown asserts exact before/after counts on **eleven** tables including `portf
 
 Corporate actions (Phase F) · UDFs (Phase G) · the reconciliation engine, performance calculations and cross-client analysis (Phase H — designed for, not built) · any change to Phase D's SPV derivation view or Phase C's rollup · a capital-account-statement extraction template (Chancery's work; the gap is named in `COMMITMENT_FIELDS_NOT_EXTRACTED` rather than papered over) · a second auto-fire hanging off `POST /documents/{id}/confirm` (see Task 1a) · any UI beyond the one endpoint · the `allocation_lens` `subtree` double-count Phase C flagged, still open.
 
-**Next: Phase F — corporate actions.** `portfolio.transactions.corporate_action_id` already exists as a nullable column with no referent table, which is the shape Phase F fills in.
+**Next: Phase F — corporate actions.** `portfolio.transactions.corporate_action_id` already exists as a nullable column with no referent table, which is the shape Phase F fills in. ✅ Built — see 7n.
+
+---
+
+## 7n · Completed — Portfolio F, corporate actions
+
+**A split, a reverse split and a spinoff are recorded once, globally, and applied by each org to its own positions independently.** Part 1 SQL applied directly (`portfolio.securities_global_corporate_actions`, RLS enabled with A1's four-policy global shape; `transactions.corporate_action_id` given a real FK; `transactions.is_corporate_action_adjustment` added) · `services/portfolio_corporate_actions.py` · one additive change to `services/portfolio_assets.record_transaction` · `scripts/verify_portfoliof.py`. **57 PASS, 0 FAIL**, idempotent across consecutive runs, real `app_service` connection.
+
+### The §10 correction — global, not tenant — and why it was necessary
+
+The design's original §10 sketch keyed `corporate_actions` to `asset_id`, which is **tenant-scoped**. That was wrong for exactly the reason A1 keeps prices and identifiers global: a 2-for-1 split of one security is **one real-world event about one security**, not a fact that becomes true once per tenant that happens to hold it.
+
+Keyed to `asset_id`, the same split would have been recorded N times — once per holder — with N independently editable copies of the ratio and the ex-date. Nothing would raise when two of them disagreed; two tenants would simply restate the same holding by different multipliers, and there would be no row anywhere that was *the* split. Corrections would be worse: a ratio republished by the issuer would have to be chased across every tenant copy, and the ones missed would stay silently wrong.
+
+Corrected in this sprint's Part 1 SQL to `portfolio.securities_global_corporate_actions` — **global scope, no `org_id`**, RLS identical in shape to A1's other global tables (`USING (true)` read + Super-Admin `INSERT`/`UPDATE`/`DELETE`). Two consequences that are the whole architecture of this phase:
+
+- **RECORDING is global and Super-Admin-gated.** One fact, once. `record_corporate_action` composes A1's real conventions rather than inventing parallel ones — the same `_require_super_admin` app-layer gate for a legible refusal, the same `_SuperAdminWrite` transaction-local elevation so RLS stays the real gate, and the same `COALESCE(canonical_id, id)` merge-chain forwarding `add_price` uses.
+- **APPLYING is tenant-scoped.** Every org holding the security applies the SAME recorded event to its own assets and positions, independently. One org's apply provably does not touch another's — asserted directly against the `app_service` connection with a control, not inferred from the existence of a policy.
+
+Also fixed: `portfolio.transactions.corporate_action_id` had existed as a **bare `uuid` with no FK since A2** (the referent table did not exist yet when A2 shipped) and now has `transactions_corporate_action_fkey`. `transactions.is_corporate_action_adjustment boolean NOT NULL DEFAULT false` was added so an adjustment can never be misread as an ordinary trade.
+
+### `applied_at` is never written by an apply function
+
+It is a column on the **global** row, and "applied" is a per-org fact. Stamping it when the first org applies would tell the second org the event had already been handled. Whether a given org has applied an action is answered by `already_applied_transactions`, which reads that org's own transactions — which is also the idempotency key.
+
+### Consumed, not computed
+
+`terms` is published data — a custodian feed or a market-data provider's already-declared ratio and Form-8937 allocation. Nothing in this module derives a split ratio from a price discontinuity or invents a cost-basis split. `record_corporate_action` therefore validates that `terms` is present and is a **non-empty JSON object and nothing further**: the keys that matter differ per `action_type` and are read at apply time by the function that needs them, so a `merger` recorded for future use is not forced to invent a `ratio`. `cash_in_lieu_per_share` is read, reported back on `ApplyOutcome.unapplied_terms`, and deliberately **not** turned into a cash movement this module would have to compute.
+
+### `adjustment` is the honest type — measured, not assumed
+
+Read from the deployed `public.transaction_types`: of the 16 rows, `adjustment` is the **only** one that is simultaneously `direction='none'`, `performance_impact='none'`, `affects_paid_in=0`, `affects_unfunded=0`, `affects_nav=0` and `market='both'` — so it attaches to a listed equity and a private fund interest alike and registers as neither gain, income, contribution nor distribution. `sell` carries `performance_impact='gain'` and would put every split into realized gains; `fee_expense` is `market='both'` but `direction='debit'`/`affects_nav=-1`; `valuation` is `direction='none'` but `market='private'`/`affects_nav=1`.
+
+**Reported mismatch, not papered over:** `adjustment.amount_basis='currency'` while a split adjustment carries a **unit** delta. There is no units-based, performance-neutral type in the deployed vocabulary, and adding one is a schema change this sprint did not ask for.
+
+### The flag is set explicitly, not derived
+
+`is_corporate_action_adjustment` is a real parameter on `record_transaction`, not something computed from `corporate_action_id IS NOT NULL`. Two reasons. A report must be able to write `WHERE is_corporate_action_adjustment = false` and get a correct realized-gain population **without knowing the corporate-action machinery exists at all** — that is Task 5's whole requirement. And deriving it would collapse the one case where the two legitimately differ: a cash-in-lieu *sale* cites a corporate action and genuinely **is** a realized gain.
+
+A2 shipped before the column existed, so `record_transaction`'s INSERT did not name it — every adjustment would have silently stored the column default. That was the one additive change made outside the new module.
+
+### Bi-temporal restatement, and the two things that are silent if you get them wrong
+
+A split changes quantity, so per Rule 3 the current row is closed (`valid_to = now()`) and a successor inserted through A2's real `create_position`. The only `UPDATE` in the module is that close; it touches `valid_to` and nothing else. Writes go through `create_position` / `create_asset` / `record_transaction` rather than direct SQL because `create_position` is the only code in the codebase enforcing the ownership-basis contract (`positions` has no CHECK covering it) and `record_transaction` is the only thing checking a type's `market` against the asset's.
+
+- **The position id changes.** Idempotency therefore keys on `(org_id, corporate_action_id)`, never on a position id — a position-keyed check would be looking for a marker on a row the restatement just closed, and would happily double-adjust.
+- **`as_of_date` is preserved deliberately.** Advancing it to the ex-date would mint a second holding under a different natural key `(owner_entity_id, asset_id, as_of_date)` — which is exactly what `portfolio_precedence.resolve_precedence` resolves on, and it would then see two holdings where there is one.
+
+Precedence *losers* (`superseded_by_source IS NOT NULL`) are adjusted too. They are still current rows, and leaving one at its pre-split quantity means the day the org re-orders its sources, `resolve_precedence` promotes a number wrong by the split ratio.
+
+### Atomicity is the outer transaction, not `_OrgWrite`
+
+`_apply` opens **one** transaction and calls A2's writers inside it, where their `_OrgWrite` nests as a SAVEPOINT. Left to `_OrgWrite` alone, each writer commits per call — a spinoff would commit the parent's restated basis and then, if the resulting-side insert failed, leave the org holding half an event with no error visible in the data.
+
+### Three states a caller must be able to tell apart
+
+`ApplyOutcome` distinguishes them explicitly, because two of them are both "zero positions affected":
+
+| State | `positions_affected` | `already_applied` |
+|---|---|---|
+| Org holds none of the security | 0 | `False` — and **nothing is written**, so a later apply after the org buys in still works |
+| Org already applied it | 0 | `True`, plus the prior transaction ids |
+| Applied now | *n* | `False` |
+
+`percent`- and `value`-basis positions are **skipped with a reason** on `ApplyOutcome.skipped`, not failed and not silently adjusted: a share ratio does not change a percentage of ownership or a stated currency value. "12 affected" out of a 14-position holding is a number somebody has to be able to reconcile.
+
+`merger`, `tender`, `delisting`, `name_change` and `cusip_change` **record** cleanly and are refused **by name** by `apply_corporate_action` (`UnapplicableActionError`) rather than returning a clean zero — which would be indistinguishable from "this org holds none of it".
+
+### Verification — 57/57
+
+`scripts/verify_portfoliof.py`, real DB, real RLS, real `app_service` connection, no `SET ROLE` fallback. All four Task-1 findings **reported AND asserted**.
+
+The four assertions this phase is easiest to fake, and how they are written:
+
+- **"The split was applied."** `quantity = 200` proves nothing alone — it is also what a fixture seeded at 200 gives you. The pre-split row is asserted at `100` **first**, the successor at `200`, and the closed predecessor asserted to still read `100` with a non-null `valid_to`.
+- **"Total cost basis is unchanged."** Trivially true of code that never touches cost basis. So the spinoff case, on the same code path, asserts basis **did** move (30,000 → 24,000 on the parent, 6,000 to the resulting position, summing back to 30,000) — a module that ignored `cost_basis` passes the split assertion and fails this one.
+- **"The adjustment is excluded from realized gains."** A filtered query returning one row proves nothing if the fixture only ever had one. The holding's history is built with a real `buy` **before** the split and a real `sell` **after** it, spanning the bi-temporal restatement; the unfiltered query must return all three, the `= false` filter exactly the buy and the sell, and the realized-gain sum exactly −5,000 + 2,600 = −2,400.
+- **"The other org is unaffected."** Snapshotted before the first org's apply and asserted byte-identical after — **and** the second org is then made to apply the same action successfully through `app_service` (400 → 800), proving "unaffected" was isolation and not a broken apply, with the first org re-asserted at 200 afterwards.
+
+Also covered: the four-policy shape read from `pg_policies` · `ACTION_TYPES` asserted equal to the deployed `corp_actions_type_chk` · the non-super-admin refusal **with a row-count assertion**, plus a separate proof that RLS is the real gate (a direct `INSERT` from `app_service` with no elevation raises `InsufficientPrivilegeError`) · reverse split 500 → 50 with a negative −450 delta · `parse_ratio` refusing float, zero, negative, empty and non-numeric · schema-qualification of every `portfolio.*` reference.
+
+Teardown asserts exact before/after counts on six tables **including the new global `securities_global_corporate_actions` and `securities_global` itself** — the latter holds the real 67-row reference corpus, so an unconditional truncate would be a data-loss bug against another track. FK order is load-bearing now: adjustment transactions before corporate actions (the new FK), tenant assets before the global securities they point at.
+
+### Deliberately NOT built (per the brief)
+
+UDFs (Phase G) · the reconciliation engine, performance calculations and cross-client analysis (Phase H — designed for, not built) · deriving a split ratio or a spinoff allocation independently — terms are always supplied · merger / tender / delisting application logic beyond recording the `action_type` · cash movement for `cash_in_lieu_per_share` · any router and any UI · the `allocation_lens` `subtree` double-count Phase C flagged and the `routers/ledger.py` `entry_date` bug Phase D flagged, both still open.
+
+**One documentation gap, same shape as Phase E's.** The brief cited `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` **§10**. That document still has no sections past §9 — the specification actually in force is its §7 phase-map row plus the brief. The phase map is updated (F shipped, G next); the findings are recorded here rather than back-filled as sections nobody wrote.
+
+**Next: Phase G — UDFs (user-defined fields).**
 
 ---
 

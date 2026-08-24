@@ -183,14 +183,25 @@ same reason.
 | **C** | S21 sunburst rollup into `entity_holdings` | Shipped (22/22) |
 | **D** | SPV derivation view, cash modelling, document drill-through | Shipped (56/56) — this sprint |
 | **E** | Chancery-sourced alts / hard assets, commitments, tax-doc tracking | Shipped (39/39) — this sprint |
-| **F** | Corporate actions (`transactions.corporate_action_id` exists and has no referent table) | Next |
-| **later** | UDFs (G), reconciliation / performance / cross-client analysis (H), UI | Later |
+| **F** | Corporate actions — recorded GLOBALLY (§10 correction below), applied per org | Shipped (57/57) — this sprint |
+| **G** | UDFs | Next |
+| **later** | Reconciliation / performance / cross-client analysis (H), UI | Later |
 
-> **Note on this document's sections.** Phase E's brief cited "§12, §13"; this
-> design has never had sections past §9. The Phase-E specification actually in
-> force is the phase-map row above plus the brief itself, and the findings are
-> recorded in `docs/PROJECT_STATUS.md` §7m rather than back-filled here as
-> sections that were never written.
+> **§10 correction, applied in Phase F.** The original §10 sketch keyed corporate
+> actions to `asset_id`, which is tenant-scoped. A split is ONE real-world event
+> about ONE security, not a fact recorded once per tenant that happens to hold
+> it — so the record lives in `portfolio.securities_global_corporate_actions`,
+> **global, no `org_id`**, with A1's four-policy RLS shape. RECORDING is global
+> and Super-Admin-gated; APPLYING is tenant-scoped and every org applies the same
+> recorded event to its own rows independently. `transactions.corporate_action_id`
+> gained a real FK, and `transactions.is_corporate_action_adjustment` was added.
+> Full rationale in `docs/PROJECT_STATUS.md` §7n.
+
+> **Note on this document's sections.** Phase E's brief cited "§12, §13" and
+> Phase F's cited "§10"; this design has never had sections past §9. The
+> specification actually in force for both is the phase-map row above plus the
+> brief itself, and the findings are recorded in `docs/PROJECT_STATUS.md` §7m and
+> §7n rather than back-filled here as sections that were never written.
 
 ## 8 · The SPV derivation view (Phase D)
 

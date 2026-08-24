@@ -1622,6 +1622,23 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY securities_global_pkey: (id)
 
+-- ===== portfolio.securities_global_corporate_actions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   global_security_id                       uuid NOT NULL
+--   resulting_global_security_id             uuid
+--   action_type                              text NOT NULL
+--   ex_date                                  date NOT NULL
+--   record_date                              date
+--   pay_date                                 date
+--   terms                                    jsonb NOT NULL
+--   source_system                            text
+--   applied_at                               timestamp with time zone
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY securities_global_corporate_actions_pkey: (id)
+
 -- ===== portfolio.securities_global_identifiers =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   global_security_id                       uuid NOT NULL
@@ -1730,6 +1747,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   is_corporate_action_adjustment           boolean NOT NULL DEFAULT false
 --   PRIMARY KEY transactions_pkey: (id)
 
 -- ===== portfolio.valuations =====
