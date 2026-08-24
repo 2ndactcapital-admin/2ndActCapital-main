@@ -1,9 +1,10 @@
-"""Portfolio ingestion endpoints — Phase B, plus Phase C's rollup trigger.
+"""Portfolio ingestion endpoints — Phase B, plus Phase C's rollup trigger and
+Phase E's tax-document chase list.
 
 Minimal by mandate: one file-upload endpoint, one precedence read, one honest
-Altruist status probe, and (Phase C) one endpoint that rebuilds
-``entity_holdings`` from the positions those endpoints wrote. No reconciliation
-screen — that is later.
+Altruist status probe, (Phase C) one endpoint that rebuilds ``entity_holdings``
+from the positions those endpoints wrote, and (Phase E) one read that answers
+"who is missing a K-1". No reconciliation screen — that is later.
 
 ``org_id`` comes from ``routers.entities.get_org_id`` (JWT claims) on every
 route and is never accepted from a request body or read out of an uploaded
@@ -16,13 +17,18 @@ from __future__ import annotations
 import uuid as _uuid
 from datetime import date
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
 from routers.entities import get_org_id
 from services.database import get_pool
 from services.permissions import get_user_id
 from services.portfolio_altruist import ALTRUIST_ENV_VARS, probe
-from services.portfolio_assets import WRITE_PERMISSION
+from services.portfolio_assets import READ_PERMISSION, WRITE_PERMISSION
+from services.portfolio_commitments import (
+    CommitmentError,
+    tax_chase_list,
+    to_json,
+)
 from services.portfolio_import import (
     ImportError_,
     import_positions_file,
@@ -231,3 +237,47 @@ async def trigger_rollup(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return result.as_dict()
+
+
+# ── Phase E: the tax-document chase list ────────────────────────────────────
+
+
+@router.get("/portfolio/tax-chase")
+async def tax_chase(request: Request, tax_year: int = Query(...)):
+    """Every commitment for ``tax_year`` still missing its tax document.
+
+    The "who is missing a K-1" list. Three states, proven distinct in
+    `verify_portfolioe.py`: `tax_doc_expected = false` never appears at any
+    status; `tax_doc_status = 'received'` is off the list; everything else that
+    expects a document is on it.
+
+    ``tax_year`` is REQUIRED and not defaulted to the prior calendar year. It is
+    the second key column of ``idx_commitments_tax_chase``, and — more to the
+    point — a chase list is worked against a filing deadline the caller knows
+    and the server does not. In January, "last year" is two different years to
+    two different people in the same office.
+
+    Gated on ``view_portfolio``, not ``manage_portfolio``: this reads and writes
+    nothing. Which commitments are outstanding is exactly what an administrator
+    chasing documents needs and is not a portfolio-management action.
+
+    Monetary values are serialised as STRINGS by ``to_json``. A float here would
+    be a rounding error introduced at the last layer, after the figures survived
+    the database and the service as exact Decimals.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+
+    async with pool.acquire() as conn:
+        try:
+            rows = await tax_chase_list(conn, org_id=org_id, tax_year=tax_year)
+        except CommitmentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "tax_year": tax_year,
+        "count": len(rows),
+        "commitments": [to_json(r) for r in rows],
+    }

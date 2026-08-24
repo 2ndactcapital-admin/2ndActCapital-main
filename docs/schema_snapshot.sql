@@ -1505,6 +1505,27 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY assets_pkey: (id)
 
+-- ===== portfolio.commitments =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   position_id                              uuid NOT NULL
+--   commitment_amount                        numeric
+--   commitment_date                          date
+--   called_to_date                           numeric NOT NULL DEFAULT 0
+--   distributed_to_date                      numeric NOT NULL DEFAULT 0
+--   recallable_amount                        numeric NOT NULL DEFAULT 0
+--   unfunded                                 numeric
+--   vintage_year                             integer
+--   liquidity_terms                          jsonb
+--   tax_doc_expected                         boolean NOT NULL DEFAULT false
+--   tax_year                                 integer
+--   tax_doc_status                           text NOT NULL DEFAULT 'not_expected'::text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY commitments_pkey: (id)
+
 -- ===== portfolio.external_references =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL

@@ -753,7 +753,85 @@ Covers: the view's `security_invoker` / non-updatability / SELECT-only grants / 
 
 Corporate actions · commitments-table population · tax-doc tracking · UDFs · any change to `entity_holdings` or the Phase C rollup · any new UI · the `allocation_lens` `subtree` double-count Phase C flagged (its own separate follow-up) · any write path against the view, now or ever.
 
-**Next: Phase E — Chancery-sourced alts and hard assets, commitments, and tax-document tracking.**
+**Next: Phase E — Chancery-sourced alts and hard assets, commitments, and tax-document tracking.** ✅ Built — see 7m.
+
+---
+
+## 7m · Completed — Portfolio E, Chancery-sourced positions, commitments, tax-doc tracking
+
+**A confirmed Chancery document becomes an asset + position with drill-through to the page it came from; commitments derive their running totals from real transactions; a hard asset carries two valuations at once; and there is finally a list of who is missing a K-1.** Part 1 SQL applied directly (`portfolio.commitments` + `idx_commitments_tax_chase`, RLS enabled, one org-isolation policy) · `services/portfolio_commitments.py` · `services/portfolio_chancery.py` · `GET /portfolio/tax-chase` in `routers/portfolio_ingest.py` · `scripts/verify_portfolioe.py`. **39 PASS, 0 FAIL**, idempotent across consecutive runs, real `app_service` connection.
+
+**A documentation gap found on the way in, recorded rather than papered over:** the brief cited `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` **§12, §13**. That document has never had sections past §9 — the Phase-E specification actually in force is its §7 phase-map row plus the brief itself. The phase map is now updated (E shipped, F next) with a note saying so; the findings below are recorded here rather than back-filled into the design as sections nobody wrote.
+
+### Task 1a — the real Chancery hook point
+
+`services/document_review.py:356` — `confirm_document(conn, org_id, document_id, *, confirmed_by)`. Its entire body is **one UPDATE** setting `documents.status='confirmed'` plus `confirmed_by` / `confirmed_at`, returning those three values. **It has no extension point at all** — no callback, no event row, and it does not return any extracted field.
+
+The seam that exists is one layer up, in `routers/document_review.py:104` (`POST /documents/{id}/confirm`): the router calls `review.confirm_document` and *then*, only on success, calls `chancery_workflow_bridge.fire_document_confirmed_triggers(pool, org_id, document_id, started_by=user_id)`. That ordering — status write first, fire second, bridge written never to raise — is the established Phase-7 pattern and the verification asserts it still holds in the source.
+
+**What is available at that point, and nothing more:** `org_id` (JWT claims via `get_org_id`), `document_id`, `user_id`, the pool. **Confirmed extraction fields are NOT passed** and must be read back by `document_id` — which is what `portfolio_chancery.read_document_extractions` does.
+
+**Phase E deliberately adds no second auto-fire to that router.** "This document represents a position" is not a decision an auto-fire can make: the same confirmed capital-account statement is a NEW position in the first quarter and a VALUATION on an existing one every quarter after, and nothing in the document distinguishes them. `create_position_from_chancery_document` is therefore explicitly called, and *verifies* the document reached the confirm hook (`status='confirmed'`, overridable only by an explicit `require_confirmed=False` for a deliberate historical backfill) rather than hanging off it.
+
+### Task 1b — the extraction-field mapping is a GAP, and it is reported as one
+
+Both deployed extractors were read and the live `reference_data` catalogue queried. **No deployed Chancery extractor produces commitment figures.**
+
+| | |
+|---|---|
+| **Narrative (Phase 11a)** | `document_narrative_extractions` has exactly four payload columns: `summary`, `extracted_provisions`, `key_dates`, `key_parties`. Item shapes are fixed by `normalize_extraction` at `{provision_type, description}` / `{date, description}` / `{name, role}`. **Not one monetary key anywhere.** It also would not run on this document: `run_narrative_extraction` is gated on `_NARRATIVE_CATEGORIES = {llc_formation, trust_instrument, will, estate_plan, operating_agreement}`. |
+| **The catalogue** | 12 `doc_category` codes deployed (org_id NULL, all active) and **there is no capital-account-statement code among them**. The nearest — `financial_statement`, `subscription_doc` — are both `doc_family='tabular'`, i.e. routed to the K-1 extractor, not the narrative one. |
+| **Tabular (Phase 3)** | `'k1'` is the **only** template that exists. Its `mapped_fields` keys are five income boxes (`ordinary_business_income`, `net_rental_real_estate_income`, `interest_income`, `ordinary_dividends`, `net_long_term_capital_gain`) plus the **recipient's** name (`partner_name` / `shareholder_name` / `beneficiary_name`). |
+
+**So `commitment_amount`, `called_to_date`, `distributed_to_date` and `recallable_amount` require a NEW extraction template that does not exist**, and building it is Chancery's work, not the portfolio layer's — guessing at its output shape now would mean writing a mapper against field names nobody has chosen. `portfolio_chancery.COMMITMENT_FIELDS_NOT_EXTRACTED` names the four, and `commitment_fields_from_document()` returns them as `missing` with the reason on every call, so a caller that assumed extraction would supply them finds out **at the call** and not from a zero in a report.
+
+**What genuinely exists is what gets mapped.** `derive_asset_name` is a three-rung ladder over real fields and reports which rung it used: an explicit human-supplied name → the first `key_parties[].name` from narrative extraction (a real, document-stated name; for an `llc_formation` or `operating_agreement` the instrument's own named entity genuinely *is* the asset) → `documents.original_filename` (NOT NULL, so this rung never fails, and a filename is visibly provisional, which is what makes somebody fix it). **Deliberately not a rung: the K-1's `partner_name`** — that is the recipient, not the partnership, and using it would name the asset after its holder, a mistake that looks correct in a list.
+
+### Commitments — derived, explicitly, never by trigger
+
+`recompute_commitment` sums the position's real transactions joined to `public.transaction_types`, reading `affects_paid_in` / `affects_unfunded` / `is_recallable` off the catalogue. **Nothing pattern-matches the `call_` / `dist_` prefix** — a new type with the right flags is picked up with no code change, which is the whole point of the flags existing.
+
+It is not a trigger, for Phase C's reason: a capital call posts as several transactions (`call_investment` + `call_mgmt_fee` + `call_org_cost`), and a row-level trigger would fire between them and leave the commitment stating a called-to-date that was never true. It is also **idempotent by construction** — it re-derives from the ledger rather than incrementing, so a double call, a replayed import or a crash between transaction and recompute all converge.
+
+`create_commitment` leaves `unfunded` **NULL**, not `commitment_amount`. That NULL means "not yet derived"; writing the commitment amount there would make a derived column look like a stated one and erase the difference between a commitment that has never been recomputed and one whose recompute happened to return the full amount.
+
+**One thing flagged, implemented as specified rather than silently changed.** The brief's formula is `unfunded = commitment_amount - called_to_date + recallable_amount`, and that is what ships (`portfolio_commitments.UNFUNDED_FORMULA`). But on the deployed catalogue `affects_unfunded` is the **exact negation** of `affects_paid_in` on all five non-zero codes, so a purely flag-driven accumulator gives `commitment_amount - called_to_date` — **10,000 lower** after a 10,000 recallable distribution, because `dist_recallable`'s `affects_paid_in = -1` has already restored that capacity through `called_to_date`. The brief's formula adds `recallable_amount` on top, so a recallable distribution moves `unfunded` by twice its face value. `CommitmentTotals.unfunded_flag_driven` computes the alternative and the verification asserts the difference is **exactly** the recallable amount (970,000 vs 960,000) — so the choice is a measured number rather than a claim in prose. If it should change, it is one line plus the constant, and every stored figure is re-derivable by re-running the recompute.
+
+Smaller decisions worth not re-deriving: the amount is `COALESCE(gross_amount, net_amount)` (a 50,000 call with a 500 fee on the same row *was* a call for 50,000, and `called_to_date` is a gross figure in every LP statement it will be reconciled against); `distributed_to_date` is keyed on the real `transaction_types.category = 'distribution'` column, not a code prefix; transactions carrying neither amount are counted and returned as `amountless_transactions`, because a units-only stock distribution silently valued at zero is exactly the absence that reads as a number. The recompute **UPDATEs in place** and that is not a Rule 3 violation: these four columns are an arithmetic projection of `portfolio.transactions`, which *is* the bitemporal history — and superseding the commitment row on every recompute would bury the one thing on this table that *is* a bitemporal fact, `tax_doc_status`'s `awaiting → received` timeline, under a torrent of arithmetic.
+
+### Composition — Phase D's writers, unchanged
+
+`portfolio_chancery.py` calls `portfolio_documents.create_asset_from_document` and `create_position_from_document` and contains **no `INSERT INTO portfolio.*` and no write against `document_record_links`** (AST-asserted in the verification, the same way Phase D asserted it of the cash module). That is load-bearing rather than tidy: `portfolio_assets.create_position` is the only code in the codebase enforcing the ownership-basis contract (`positions` has no CHECK covering it), and `link_portfolio_document` is the only thing checking the record-type vocabulary against a column that has no CHECK either.
+
+Two shapes are fixed, not parameters: `authority='stated'` and `source_system='chancery'` — a caller able to pass `authority='custodial'` would be asserting a custodian confirmed what a PDF asserted, and Phase B's precedence engine ranks sources by exactly that field. `valuation_method` defaults to `'nav'`, **not** A2's `'market_price'`: a holding whose source of truth is a PDF has no listed price series, and A2's `record_transaction` derives an asset's market from that column — `market_price` would make `call_investment` illegal against the position this function just created. The ownership basis is resolved **once** and passed to both writers (`infer_ownership_basis`), because A2's create-position inherits an omitted basis from the asset and this function creates both in the same breath: an asset defaulted to `units` while the caller supplied `ownership_pct` yields an error about a basis nobody chose.
+
+### The hard asset — and why "the final state is right" is not the assertion
+
+`asset_class='hard_asset'` and `include_in_performance=false` being true of the stored row proves the row has those values, which is *also* what you get if the defaults were those values all along. So the verification reads the deployed defaults out of `information_schema` (`'financial'::text` / `true`, confirmed live), asserts the stored values differ from **both**, and creates a **control** asset through the same function with no overrides and asserts it lands **on** them. Only the pair means the override did work.
+
+The two-purpose assertion is fixture-designed the same way. An `insurance` valuation of 1,450,000 and a `net_worth` valuation of 1,200,000 coexist on one asset — and the `net_worth` one is deliberately dated **later** (2026-06-30 vs 2026-01-31), so a purpose-blind "latest row wins" resolver would return 1,200,000 for both and the insurance assertion fails. A2's `resolve_current_value` filters on `purpose` and returns each correctly, plus an honest `None`-with-a-reason for `market`, which has no valuation at all.
+
+### The chase list, and asking the index question properly
+
+`GET /portfolio/tax-chase?tax_year=…`, gated on `view_portfolio` (it reads and writes nothing; which commitments are outstanding is what an administrator chasing documents needs, not a portfolio-management action). `tax_year` is required and not defaulted to "last year" — in January that is two different years to two people in the same office.
+
+The query spells out every term of `idx_commitments_tax_chase`'s **partial** predicate (`tax_doc_expected = true AND system_to IS NULL AND valid_to IS NULL`) because that is the only way the planner can prove the index applies; dropping `system_to IS NULL` because "nothing writes it yet" would silently cost the index. Three cases are proven **distinctly**: expected + `awaiting` appears, `received` does not, `tax_doc_expected=false` does not — plus a wrong-tax-year control, so the year filter is shown doing real work.
+
+**The EXPLAIN assertion runs with `enable_seqscan=off`, and that is the only honest way to ask.** The planner is cost-based: on a four-row fixture table a sequential scan genuinely *is* cheaper than any index, so a plain EXPLAIN measures the row count and not the query. With seqscan discouraged, a query the partial index could not serve still cannot use it — it falls back to `idx_commitments_org` or to a seq scan anyway — so seeing `idx_commitments_tax_chase` **by name** in the plan is a real proof of applicability. Both plans are printed: the cost-based one as a FINDING, the forced one as the assertion.
+
+### Verification — 39/39
+
+`scripts/verify_portfolioe.py`, real DB, real RLS, real `app_service` connection, no `SET ROLE` fallback. All four Task-1 findings are **reported AND asserted** — a finding printed from a docstring and never checked is a claim.
+
+Covers: the confirm hook's real signature and the router's ordering · the narrative and K-1 field inventories, and the absence of any capital-account category · the AST proof of composition · the deployed defaults · exact-Decimal commitment arithmetic through a 50,000 call (called +50,000, unfunded −50,000), a 10,000 recallable distribution (called −10,000, distributed and recallable +10,000 each) and a 7,500 `dist_income` that moves **nothing** but `distributed_to_date` · recompute idempotence and the amountless-transaction count · the Chancery position's `stated`/`chancery` shape, both links read back through Chancery's real `list_documents_for_panel`, and an unconfirmed document refused with nothing left behind · the hard-asset override against a control · two purposes at once with the later one deliberately the wrong answer for a purpose-blind resolver · the three chase-list cases, the wrong-year control, the endpoint, and the index by name · cross-org isolation on the commitment, the chase list, the recompute and the Chancery creation function, each with a control assertion that the owning org still succeeds.
+
+Teardown asserts exact before/after counts on **eleven** tables including `portfolio.commitments`, `public.documents`, `public.document_record_links` and `public.entities` — all of which hold real production rows, so an unconditional truncate would be a data-loss bug against another track. Every fixture row carries the `VERIFY-PORTFOLIOE` tag in a natural-key column and is deleted by it, child tables first.
+
+### Deliberately NOT built (per the brief)
+
+Corporate actions (Phase F) · UDFs (Phase G) · the reconciliation engine, performance calculations and cross-client analysis (Phase H — designed for, not built) · any change to Phase D's SPV derivation view or Phase C's rollup · a capital-account-statement extraction template (Chancery's work; the gap is named in `COMMITMENT_FIELDS_NOT_EXTRACTED` rather than papered over) · a second auto-fire hanging off `POST /documents/{id}/confirm` (see Task 1a) · any UI beyond the one endpoint · the `allocation_lens` `subtree` double-count Phase C flagged, still open.
+
+**Next: Phase F — corporate actions.** `portfolio.transactions.corporate_action_id` already exists as a nullable column with no referent table, which is the shape Phase F fills in.
 
 ---
 

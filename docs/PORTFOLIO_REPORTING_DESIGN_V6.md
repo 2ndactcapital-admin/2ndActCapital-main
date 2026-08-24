@@ -182,8 +182,15 @@ same reason.
 | **B** | Real ingestion (reporting-tool file import; source precedence / `superseded_by_source` logic) | Shipped — Altruist BLOCKED on absent credentials, Chancery consumption not built |
 | **C** | S21 sunburst rollup into `entity_holdings` | Shipped (22/22) |
 | **D** | SPV derivation view, cash modelling, document drill-through | Shipped (56/56) — this sprint |
-| **E** | Chancery-sourced alts / hard assets, commitments, tax-doc tracking | Next |
-| **later** | Corporate actions, UDFs, UI | Later |
+| **E** | Chancery-sourced alts / hard assets, commitments, tax-doc tracking | Shipped (39/39) — this sprint |
+| **F** | Corporate actions (`transactions.corporate_action_id` exists and has no referent table) | Next |
+| **later** | UDFs (G), reconciliation / performance / cross-client analysis (H), UI | Later |
+
+> **Note on this document's sections.** Phase E's brief cited "§12, §13"; this
+> design has never had sections past §9. The Phase-E specification actually in
+> force is the phase-map row above plus the brief itself, and the findings are
+> recorded in `docs/PROJECT_STATUS.md` §7m rather than back-filled here as
+> sections that were never written.
 
 ## 8 · The SPV derivation view (Phase D)
 
