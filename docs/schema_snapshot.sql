@@ -1730,3 +1730,66 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY valuations_pkey: (id)
 
+-- ===== v_capital_accounts =====  [VIEW]
+--   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
+--   org_id                                   uuid
+--   vehicle_id                               uuid
+--   ledger_basis                             text
+--   dim_member_series_id                     uuid
+--   account_code                             text
+--   account_name                             text
+--   tax_character_code                       text
+--   balance                                  numeric
+
+-- ===== v_trial_balance =====  [VIEW]
+--   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
+--   org_id                                   uuid
+--   vehicle_id                               uuid
+--   ledger_basis                             text
+--   account_code                             text
+--   account_name                             text
+--   account_type                             text
+--   tax_character_code                       text
+--   total_debit                              numeric
+--   total_credit                             numeric
+--   net_debit                                numeric
+
+-- ===== portfolio.spv_derived_positions =====  [VIEW]
+--   security_invoker: true — RLS applies to the querying role
+--   id                                       uuid
+--   org_id                                   uuid
+--   owner_entity_id                          uuid
+--   asset_id                                 uuid
+--   as_of_date                               date
+--   ownership_basis                          text
+--   quantity                                 numeric
+--   ownership_pct                            numeric
+--   cost_basis                               numeric
+--   market_value                             numeric
+--   market_value_native                      numeric
+--   fx_rate_id                               uuid
+--   accrued_income                           numeric
+--   authority                                text
+--   source_system                            text
+--   taxonomy_key                             text
+--   is_reconciled                            boolean
+--   reconciled_at                            timestamp with time zone
+--   superseded_by_source                     text
+--   valid_from                               timestamp with time zone
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone
+--   system_to                                timestamp with time zone
+--   subscription_id                          uuid
+--   spv_id                                   uuid
+--   subscription_status                      text
+--   commitment_amount                        numeric
+--   funded_amount                            numeric
+--   valuation_id                             uuid
+--   valuation_date                           date
+--   valuation_status                         text
+--   spv_total_value                          numeric
+--   value_basis                              text
+--   currency_code                            text
+--   is_superseded                            boolean
+--   value_reason                             text
+

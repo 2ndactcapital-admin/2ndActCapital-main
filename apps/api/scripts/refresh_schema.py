@@ -130,6 +130,51 @@ async def main() -> None:
 
         lines.append("")
 
+    # ── Views ───────────────────────────────────────────────────────────────
+    # Added in Portfolio Phase D. The table loop above filters
+    # `table_type = 'BASE TABLE'`, so until now a VIEW was invisible to the
+    # snapshot — and CLAUDE.md's rule is "if it is not in the snapshot, it is
+    # not deployed yet". Phase D's whole deliverable is a view, and
+    # `v_capital_accounts` / `v_trial_balance` had been undocumented here since
+    # Sprint 22. Reading a view's columns is exactly as necessary as reading a
+    # table's.
+    #
+    # `security_invoker` is recorded because it is the difference between an
+    # org-isolated view and a silent cross-tenant read: a view WITHOUT it runs
+    # as its owner, and every owner here is `postgres`, which has rolbypassrls.
+    views = await conn.fetch(
+        """
+        SELECT n.nspname AS table_schema, c.relname AS table_name, c.reloptions
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'v'
+          AND n.nspname <> ALL($1::text[])
+          AND n.nspname NOT LIKE 'pg_%'
+        ORDER BY (n.nspname <> 'public'), n.nspname, c.relname
+        """,
+        list(SYSTEM_SCHEMAS),
+    )
+    for table_schema, table_name, reloptions in views:
+        label = table_name if table_schema == "public" else f"{table_schema}.{table_name}"
+        invoker = "security_invoker=true" in (reloptions or [])
+        lines.append(f"-- ===== {label} =====  [VIEW]")
+        lines.append(
+            f"--   security_invoker: {'true — RLS applies to the querying role' if invoker else 'FALSE — runs as the view owner, RLS on the base tables is BYPASSED'}"
+        )
+        cols = await conn.fetch(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = $1 AND table_schema = $2
+            ORDER BY ordinal_position
+            """,
+            table_name,
+            table_schema,
+        )
+        for c in cols:
+            lines.append(f"--   {c['column_name']:40s} {c['data_type']}")
+        lines.append("")
+
     await conn.close()
 
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)

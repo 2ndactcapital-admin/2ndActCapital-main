@@ -180,6 +180,86 @@ same reason.
 | **A1** | Global security master + service layer | Shipped (39/39) |
 | **A2** | Tenant assets / positions / transactions / valuations, the `account` node, `market` backfill | Shipped — this sprint |
 | **B** | Real ingestion (reporting-tool file import; source precedence / `superseded_by_source` logic) | Shipped — Altruist BLOCKED on absent credentials, Chancery consumption not built |
-| **C** | S21 sunburst rollup into `entity_holdings` | Next |
-| **D** | SPV derivation view | Later |
-| **later** | Cash modelling, corporate actions, commitments, UDFs, UI | Later |
+| **C** | S21 sunburst rollup into `entity_holdings` | Shipped (22/22) |
+| **D** | SPV derivation view, cash modelling, document drill-through | Shipped (56/56) — this sprint |
+| **E** | Chancery-sourced alts / hard assets, commitments, tax-doc tracking | Next |
+| **later** | Corporate actions, UDFs, UI | Later |
+
+## 8 · The SPV derivation view (Phase D)
+
+`portfolio.spv_derived_positions` projects CURRENT `spv_subscriptions` into
+position shape — `authority='internal'`, `source_system='spv_subscriptions'`,
+`ownership_basis='percent'`. It is a **view**: nothing is stored twice, and
+`spv_subscriptions` remains the book of record, so a correction goes there
+(through `routers/spv.py`, which already implements the Rule 3 supersede) and
+never through the projection.
+
+**Where an SPV interest's current value comes from.** Nowhere, before Phase D.
+`commitment_amount` / `funded_amount` are a commitment and a cost; `spvs` has no
+NAV column at all; `member_investments` repeats the same two figures. The
+Sprint-22 GL's `v_capital_accounts` is structurally right and **not connected** —
+it groups by `journal_lines.dim_member_series_id`, which has no FK, no referent
+relation anywhere in the database, and is NULL on every deployed row; and
+`member_series` is a `spvs.vehicle_type`, so that dimension is grained at the
+series, not the subscriber. The path Phase D uses is the one join that already
+existed:
+
+```
+spv_subscriptions → spvs.id → portfolio.assets.internal_spv_id (ONE per SPV)
+                  → portfolio.valuations, resolved by §3.3's ladder
+                  × ownership_pct / 100
+```
+
+If the GL ever writes a real per-subscriber capital-account dimension, that
+becomes the better source and this join should be revisited.
+
+**Which subscriptions project.** `valid_to IS NULL` — unlike every `portfolio.*`
+table, `spv_subscriptions` has only ONE temporal axis: no `system_from` /
+`system_to`, no trigger, and no history or audit table anywhere, so `valid_to IS
+NULL` alone means "current" — plus
+`subscription_status IN ('committed','funded')` and `ownership_pct IS NOT NULL`
+— all three lifted verbatim from `services/spv_allocation.py`. The last is also
+required by §3.2: a `percent` position without `ownership_pct` is not a valid
+position. `unprojected_subscriptions()` reports every subscription that does not
+project, with its reason, because silently dropping a row is a derived view's
+one failure mode that a stored table does not have.
+
+**`security_invoker = true` is mandatory, not optional.** Every base table is
+RLS-protected and owned by `postgres`, which has `rolbypassrls`. A view built the
+default way executes as its owner and would return every tenant's subscriptions
+to every tenant, through a relation that looks exactly like the org-isolated
+table it derives from. Read-only is enforced three ways: not auto-updatable,
+write grants explicitly revoked (the schema's `ALTER DEFAULT PRIVILEGES` would
+otherwise grant them), and v5-UUID row ids under a namespace of their own so an
+id reaching a write function is refused rather than matching something.
+
+## 9 · Cash, and document drill-through (Phase D)
+
+**Cash is a position, not a special case.** One asset per `(org, currency_code)`,
+`asset_type='cash'`, `ownership_basis='value'` (no unit, no percentage — the
+amount *is* the fact), `valuation_method='amortized_cost'`, which maps to `both`
+markets so public and private transaction types are both legal against it. Cash
+is the settlement leg of every transaction in either book; `market_price` would
+have made every capital call against cash illegal.
+
+A **bank account** is an `entity_type='account'` entity as the `owner_entity_id`
+of a cash position — the identical call to a trust holding cash directly, with a
+different owner. Nothing inspects `entity_type`, and per §5 no account node is
+required.
+
+Idempotency is enforced by partial unique indexes on the current-row predicate
+(`assets_cash_active_uniq`, `assets_internal_spv_active_uniq`), not by a Python
+`SELECT` alone — otherwise two concurrent callers both miss and both insert, and
+the failure is silent. `assets.currency_code` is nullable and NULL is not equal
+to itself in a unique index, so `ensure_cash_asset` refuses a NULL currency to
+close the hole the index cannot.
+
+**Document drill-through** adds four `document_record_links.record_type` values —
+`portfolio_position`, `portfolio_valuation`, `portfolio_transaction`,
+`portfolio_asset`. That column is unconstrained text with **no CHECK**, so no
+migration was needed; the vocabulary lives in `services/portfolio_documents.py`
+so a typo fails at the call. Values are **prefixed** because `record_type` is a
+namespace shared with Chancery's `entity` / `spv` / `deal` / `transaction`, and a
+bare `'transaction'` would collide with links that already exist. Reads go
+through `document_linkage.list_documents_for_panel` — the same function behind
+Phase 9's `DocumentsPanel` — so links render with no UI work.

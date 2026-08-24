@@ -395,6 +395,12 @@ class ImportResult:
     errors: list[RowError] = field(default_factory=list)
     header_mapping: dict[str, int] = field(default_factory=dict)
     resolved_holdings: int = 0
+    #: Phase D. How many positions were linked back to the source document, and
+    #: why the linking stopped if it did. ``documents_linked=0`` with
+    #: ``document_link_error=None`` means no ``document_id`` was supplied — the
+    #: normal case for a file that was never a document — and is not a failure.
+    documents_linked: int = 0
+    document_link_error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -469,6 +475,8 @@ async def import_positions_file(
     as_of_date: date | None = None,
     source_system: str = IMPORT_SOURCE_SYSTEM,
     resolve_precedence_after: bool = True,
+    document_id: str | None = None,
+    linked_by: str | None = None,
 ) -> ImportResult:
     """Import a reporting-tool holdings export into assets + positions.
 
@@ -494,6 +502,17 @@ async def import_positions_file(
     import interact correctly with data that was already there — including the
     manual entry it is supposed to supersede, which the importer would otherwise
     never see because it did not write it.
+
+    ``document_id`` (Phase D) is the Chancery hook. When the imported bytes came
+    from a document, every position this call writes is linked to it through
+    ``portfolio_documents.link_imported_positions``, so each resulting holding
+    drills back to the upload it came from in the Phase-9 Documents panel.
+    OPTIONAL and defaulting to ``None``: the importer must stay usable for a
+    file that was never a document, and — more importantly — a linkage failure
+    must not be able to fail an import. The link is written AFTER precedence
+    resolution and its failures are recorded on the result rather than raised;
+    an unlinked position is a documentation gap, an abandoned import is data
+    loss.
     """
     org_id = _require_org(org_id)
     if not owner_entity_id:
@@ -584,6 +603,29 @@ async def import_positions_file(
             )
             if outcome is not None:
                 result.resolved_holdings += 1
+
+    if document_id and result.positions:
+        # Imported LAST and caught, deliberately. Every position is already
+        # committed by this point; a document-linkage failure is a missing
+        # cross-reference, and letting it propagate would turn a cosmetic
+        # problem into a failed import of rows that are already in the table.
+        # The import is imported here rather than at module scope because
+        # `portfolio_documents` pulls in the Chancery linkage engine (which
+        # imports `routers.entities`), and this module must stay importable in
+        # a context with no document subsystem loaded.
+        try:
+            from services.portfolio_documents import link_imported_positions
+
+            links = await link_imported_positions(
+                conn,
+                org_id=org_id,
+                document_id=str(document_id),
+                position_ids=list(result.positions),
+                created_by=linked_by,
+            )
+            result.documents_linked = len(links)
+        except Exception as exc:  # noqa: BLE001
+            result.document_link_error = f"{type(exc).__name__}: {exc}"
 
     return result
 

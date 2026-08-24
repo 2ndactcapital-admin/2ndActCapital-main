@@ -669,7 +669,91 @@ Teardown asserts exact before/after counts on all six portfolio tables **plus `p
 
 The SPV derivation view (Phase D) · any change to `services/allocation_lens.py` or the sunburst UI · cash modelling, corporate actions, commitments, UDFs · a trigger firing the rollup on every position write (see above) · automatic invocation at the end of Phase B's import — the function is callable and the endpoint exists; wiring it into `import_positions` was left out because an import's rows can span several as-of dates and picking one silently would be worse than an explicit call.
 
-**Next: Phase D — the SPV derivation view.**
+**Next: Phase D — the SPV derivation view.** ✅ Built — see 7l. The `allocation_lens` `subtree` double-count flagged above is explicitly *not* part of it and remains open.
+
+---
+
+## 7l · Completed — Portfolio D, the SPV derivation view, cash, and document drill-through
+
+**SPV subscriptions become portfolio holdings without being copied; cash becomes an ordinary asset; portfolio records gain document drill-through.** `docs/portfoliod_part1.sql` · `services/portfolio_spv.py` · `services/portfolio_cash.py` · `services/portfolio_documents.py` · `scripts/verify_portfoliod.py`. **56 PASS, 0 FAIL**, idempotent across consecutive runs, real `app_service` connection.
+
+**No Part 1 SQL was pre-specified for this phase, deliberately** — the correct SPV-valuation join was a real discovery question, not a known shape. `docs/portfoliod_part1.sql` was written *after* Task 1 and reflects what the deployed database actually supports.
+
+### The headline finding: where an SPV interest's current value lives — nowhere, until now
+
+This is the fact worth carrying forward; anyone touching SPV valuation later will otherwise re-derive it. All four plausible homes were traced against the live database:
+
+| Candidate | Verdict |
+|---|---|
+| `spv_subscriptions.commitment_amount` / `funded_amount` | A commitment and a cost. Neither is a mark. |
+| `spvs` | `target_raise` / `minimum_raise` / `hard_cap` / `min_commitment` — fundraising parameters. **There is no NAV, value or market column on the table at all.** |
+| `member_investments` | `amount_committed` / `amount_funded`. Same shape, same problem. |
+| Sprint-22 GL, `v_capital_accounts` | Structurally the right idea — `sum(credit − debit)` over `is_capital_account` accounts — and **not connected to anything.** |
+
+The GL finding is the important one. `v_capital_accounts` groups by `journal_lines.dim_member_series_id`, which has **no foreign key** (the table's only FKs are `account_id` and `entry_id`), **no referent relation anywhere in the database**, is written solely from a caller-supplied `dims['member_series_id']` in `services/ledger/posting.py`, and is **NULL on every deployed row**. `scripts/verify_sprint22.py` itself passes `str(uuid.uuid4())` for it. And `member_series` is a `spvs.vehicle_type` value — so even fully populated, that dimension is grained at the **series**, not the **subscriber**, and still could not answer "what is this member's interest worth".
+
+**The path Phase D establishes**, using the one join between the two subsystems that was already deployed (`assets_internal_spv_id_fkey`):
+
+```
+spv_subscriptions  (valid_to IS NULL, status IN ('committed','funded'), ownership_pct NOT NULL)
+  → spvs.id → portfolio.assets.internal_spv_id      (ONE asset per SPV)
+  → portfolio.valuations, purpose='market', resolved by A2's ladder
+  → value × ownership_pct / 100
+```
+
+**If the GL ever starts writing a real per-subscriber capital-account dimension, that becomes the better source and this join should be revisited.** Recorded in the `portfolio_spv.py` module docstring as well as here.
+
+### The view
+
+`portfolio.spv_derived_positions` — a real view, projecting current subscriptions into the full `portfolio.positions` shape (`authority='internal'`, `source_system='spv_subscriptions'`, `ownership_basis='percent'`, `quantity` NULL) plus provenance columns that get from a derived position back to the book of record in one hop. Nothing is stored twice: **zero** rows exist in `portfolio.positions` with `source_system='spv_subscriptions'`.
+
+**`WITH (security_invoker = true)` is the single most important line in the file.** Every base table has RLS with one org-isolation policy, and all of them — plus the view — are owned by `postgres`, which has `rolbypassrls`. A view built the DEFAULT way executes as its owner, so it would have returned **every tenant's subscriptions to every tenant**, through a relation that looks exactly like the org-isolated table it derives from, and nothing would have raised. The verification asserts both the reloption *and* the behaviour on the real `app_service` connection, with a control assertion that the owning org still sees its row — otherwise "the other org sees zero" is satisfied just as well by app_service being unable to read the view at all.
+
+**The read-only contract is enforced three independent ways**, because corrections belong in `spv_subscriptions`: the view is not auto-updatable (`pg_relation_is_updatable = 0`); its write grants are explicitly revoked (`ALTER DEFAULT PRIVILEGES` in the `portfolio` schema grants `app_service` `arwd` on every new relation, and a view is a relation — so it would otherwise have held INSERT/UPDATE/DELETE, harmless only by rewrite-rule technicality); and row ids are **v5 UUIDs under a namespace of their own**, so an id that reaches `record_transaction` is refused by that function's existence check rather than matching something. Proven: `record_transaction` against a derived id raises `PortfolioError` naming the id, with a transaction type that would otherwise have been accepted.
+
+**The value ladder is A2's `resolve_current_value` transcribed into SQL**, and the verification asserts the two agree **exactly** (Decimal equality, no tolerance) rather than approximately — a second, subtly different resolver is how this goes wrong. The fixture is built so a status-only ladder returns the wrong number: an `audited` 500,000 mark superseded by a `final` 800,000 mark on the same date, where forgetting the supersession demotion yields 125,000 instead of 200,000. Arithmetic is `value * pct / 100`, multiplying before dividing — `value * (pct/100)` rounds the quotient first and loses cents on any percentage that is not a terminating decimal.
+
+**Which subscriptions project, and why those.** The predicate is lifted verbatim from `services/spv_allocation.py` — `valid_to IS NULL`, `subscription_status IN ('committed','funded')`, `ownership_pct IS NOT NULL` (its own "skip subs without a post-close ownership pct") — not invented here. The last one is also a hard requirement of the shape: A2's `_validate_basis` refuses `percent` with a NULL `ownership_pct`. **Consequence, stated plainly: both currently-deployed subscriptions are `status='soft'` with `ownership_pct` NULL, so the view returns zero rows in production today.** That is correct, and it means an empty result is the expected state until an SPV closes. `unprojected_subscriptions()` reports every non-projecting subscription with its reason (`superseded` / `status_not_active` / `no_ownership_pct` / `no_spv_asset`) — a derived view's one failure mode a stored table does not have is dropping a row silently, and this is what makes it diagnosable.
+
+### Cash — a position, with no special case anywhere
+
+`ensure_cash_asset(org, currency)` + `record_cash_balance(...)`, both **thin compositions of A2's `create_asset` / `create_position`**. There is no `INSERT INTO portfolio.assets` or `portfolio.positions` in either new module (AST-asserted) — `create_position` is the only thing in the codebase enforcing the ownership-basis contract, so a cash writer that inserted directly would be the one holding type whose basis nobody validated.
+
+`ownership_basis='value'` (no unit, no percentage, the amount *is* the fact) and `valuation_method='amortized_cost'`, which is load-bearing rather than decorative: A2's `record_transaction` derives an asset's market from `valuation_method`, and `amortized_cost` maps to `both`, so public-market and private-market transaction types are both legal against cash. They have to be — cash is the settlement leg of every transaction in either book. `market_price` would have made every capital call against cash illegal.
+
+**A bank account is not a new concept**: an `entity_type='account'` entity as the `owner_entity_id` of a cash position — the identical call to a trust holding cash directly, with a different owner. Nothing inspects `entity_type` or requires an account node. Asserted by writing both and checking they share an asset, a basis and a mechanism.
+
+**Idempotency is enforced by an index, not only by a Python `SELECT`.** `assets_cash_active_uniq` on `(org_id, currency_code) WHERE asset_type='cash' AND valid_to IS NULL AND system_to IS NULL`, and `assets_internal_spv_active_uniq` on `(org_id, internal_spv_id)` likewise — both partial on the current-row predicate, so unlimited bitemporal history stays legal. Without them, two concurrent callers both miss the SELECT and both insert, and the failure is silent: an org's cash split across two lines that neither sums nor reconciles; an SPV projected twice into every rollup. Note the deliberate asymmetry — `assets.currency_code` is NULLABLE and NULL is not equal to itself in a unique index, so `ensure_cash_asset` refuses a NULL currency to close the hole the index cannot.
+
+### Document drill-through — no migration was needed, and that was checked before assuming it
+
+`document_record_links.record_type` is plain `text` with **zero CHECK constraints**; there is no vocabulary in `document_linkage` (non-emptiness only), in `routers/document_links.py` (`record_type: str`), or in the frontend (`DocumentsPanel` passes it through to the URL). The four new values — `portfolio_position`, `portfolio_valuation`, `portfolio_transaction`, `portfolio_asset` — are added **by writing them**. `services/portfolio_documents.py` supplies a Python-side vocabulary so a typo fails at the call instead of writing a link nothing reads back.
+
+**Prefixed, not bare**, because `record_type` is a global namespace shared with Chancery's `entity` / `spv` / `deal` / `transaction` — a bare `'transaction'` would collide with the SPV-ledger links that already use it, and since `record_id` is an unconstrained uuid nothing would raise: the panel would just show one record's documents against another's.
+
+Every function delegates to `services.document_linkage` — no second INSERT, no second lookup query. The read side is `list_documents_for_panel`, byte-for-byte the function behind `GET /records/{record_type}/{record_id}/documents` and the Phase-9 `DocumentsPanel`, so a link written here renders in the existing panel with **no UI work**. Wired at the natural points: `record_valuation_from_document` / `record_transaction_from_document` / `create_position_from_document` / `create_asset_from_document`, plus an optional `document_id` on Phase B's `import_positions_file` (linkage runs last and its failures are recorded on `ImportResult`, never raised — an unlinked position is a documentation gap, an abandoned import is data loss).
+
+### Two things fixed outside the brief, and one flagged and not fixed
+
+| | |
+|---|---|
+| **`scripts/refresh_schema.py` could not see views** | It filtered `table_type = 'BASE TABLE'`, so a VIEW never reached `docs/schema_snapshot.sql` — and CLAUDE.md's rule is "if it is not in the snapshot, it is not deployed yet". Phase D's entire deliverable is a view, and `v_capital_accounts` / `v_trial_balance` had been undocumented there since Sprint 22. The script now emits a `[VIEW]` section per view with its columns and its `security_invoker` state. |
+| **`routers/ledger.py` filters `v_capital_accounts` and `v_trial_balance` on `entry_date`, a column neither view selects** | `GET /ledger/capital-accounts?as_of=…` and `GET /ledger/trial-balance?as_of=…` raise `UndefinedColumn` today. Found while tracing Task 1b. **Not fixed — Sprint 22's territory, out of Phase D's scope.** |
+| **`v_capital_accounts` and `v_trial_balance` both run WITHOUT `security_invoker`** | Now visible in the snapshot. They are owned by `postgres` (`rolbypassrls`), so RLS on `journal_entries` / `journal_lines` is bypassed, and `routers/ledger.py` takes `vehicle_id` straight from a query parameter — a caller can read another org's trial balance. **Flagged, not fixed:** it is Sprint 22's surface and warrants its own verification rather than a drive-by `ALTER VIEW`. |
+
+### Verification — 56/56
+
+`scripts/verify_portfoliod.py`, real DB, real RLS, real `app_service` connection, no `SET ROLE` fallback — which matters more here than in any previous phase, because the thing being isolated is a view and a view is org-isolated only if somebody remembered `security_invoker`. All four Task-1 findings are **reported AND asserted** — a finding printed from a docstring and never checked is a claim.
+
+Covers: the view's `security_invoker` / non-updatability / SELECT-only grants / full position-shape column parity · one asset per SPV, idempotent and index-enforced under a simulated race · NULL-with-a-reason before any valuation, never zero · the exact 200,000.00 against the 125,000.00 a naive ladder gives · exact Decimal agreement with `resolve_current_value` · the retired subscription excluded *and* surfaced as `unprojected` · four independent proofs of no write path · an edit to `spv_subscriptions` changing the view on the next read under the same derived id, and a later valuation doing the same · cash idempotency across three calls including a lower-cased currency · bank-account and direct-holder cash sharing one mechanism · float refused · all four record types written with the CHECK count 0 before and 0 after · readback through Chancery's real panel function · cross-org isolation on the view, the cash position, `ensure_spv_asset` and `link_portfolio_document`.
+
+**The cash fixtures use ISO-4217 `XTS` and `XXX`, not `USD`, on purpose.** A cash asset is keyed on `(org_id, currency_code)` and is therefore org-global — it carries no fixture name to delete by. A fixture creating `Cash (USD)` would either delete a real org-wide cash asset on teardown, or, if one already existed, find it instead of creating it and prove nothing about creation. Teardown asserts exact before/after counts on twelve tables including `spv_subscriptions`, `spvs`, `deals` and `document_record_links` — the first three hold real SPV Manager rows, so an unconditional truncate would be a data-loss bug against another track.
+
+### Deliberately NOT built (per the brief)
+
+Corporate actions · commitments-table population · tax-doc tracking · UDFs · any change to `entity_holdings` or the Phase C rollup · any new UI · the `allocation_lens` `subtree` double-count Phase C flagged (its own separate follow-up) · any write path against the view, now or ever.
+
+**Next: Phase E — Chancery-sourced alts and hard assets, commitments, and tax-document tracking.**
 
 ---
 
