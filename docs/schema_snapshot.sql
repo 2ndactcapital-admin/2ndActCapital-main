@@ -1750,6 +1750,40 @@
 --   is_corporate_action_adjustment           boolean NOT NULL DEFAULT false
 --   PRIMARY KEY transactions_pkey: (id)
 
+-- ===== portfolio.udf_definitions =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid
+--   owner_scope                              text NOT NULL
+--   owner_scope_id                           uuid
+--   applies_to                               text NOT NULL
+--   field_key                                text NOT NULL
+--   label                                    text NOT NULL
+--   data_type                                text NOT NULL
+--   options                                  jsonb
+--   display_order                            integer NOT NULL DEFAULT 0
+--   is_active                                boolean NOT NULL DEFAULT true
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY udf_definitions_pkey: (id)
+
+-- ===== portfolio.udf_values =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   definition_id                            uuid NOT NULL
+--   target_type                              text NOT NULL
+--   target_id                                uuid NOT NULL
+--   value_text                               text
+--   value_numeric                            numeric
+--   value_date                               date
+--   value_json                               jsonb
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY udf_values_pkey: (id)
+
 -- ===== portfolio.valuations =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL

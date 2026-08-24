@@ -920,7 +920,102 @@ UDFs (Phase G) · the reconciliation engine, performance calculations and cross-
 
 **One documentation gap, same shape as Phase E's.** The brief cited `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` **§10**. That document still has no sections past §9 — the specification actually in force is its §7 phase-map row plus the brief. The phase map is updated (F shipped, G next); the findings are recorded here rather than back-filled as sections nobody wrote.
 
-**Next: Phase G — UDFs (user-defined fields).**
+**Next: Phase G — UDFs (user-defined fields).** ✅ Built — see 7o.
+
+---
+
+## 7o · Completed — Portfolio G, user-defined fields · **THE PORTFOLIO REPORTING LAYER (A1–G) IS NOW COMPLETE**
+
+**Four parties author custom fields — the platform, an org, a team, a person — and they do not compete.** Part 1 SQL applied directly (`portfolio.udf_definitions`, `portfolio.udf_values`, both RLS-enabled) · `services/portfolio_udf.py` · `scripts/verify_portfoliog.py`. **63 PASS, 0 FAIL**, idempotent across consecutive runs, real `app_service` connection, no `SET ROLE` fallback. No changes to any existing module.
+
+### The §15 refinement — parallel namespaces, not a cascade
+
+The obvious design is an override chain: user beats team beats org beats platform, one winner per `field_key`. That is **not** what this is, and the difference is the whole phase.
+
+Under a cascade, the platform's `asset_classification` and a client's `asset_classification` are the same field with two candidate values, and something must pick one. That silently destroys the ability to say *"the industry-standard feed says **equity**, **and** this client books it as **debt**."* Both are true, both are wanted, and a report that can only see the winner cannot reconcile them — which is precisely what a reconciliation engine (Phase H) will need to do.
+
+So there is **no merge and no override anywhere in the module**. `resolve_visible_definitions` returns every definition a user can see, from all four scopes, side by side, each carrying its own `owner_scope` and its own `id`. Two definitions sharing a `field_key` across scopes is a normal, expected, non-error state. Values bind to a `definition_id`, **never** to a `field_key`, so there is never a question of which definition a stored value belongs to — `get_udf_value` has no `field_key` parameter at all, which is asserted by signature inspection.
+
+### Where enforcement lives, and why it is split in two
+
+RLS carries the **hard boundary and only that**: cross-org isolation, platform global read, Super-Admin for platform-scope writes. Team and user narrowing lives in Python, in `resolve_visible_definitions`.
+
+That is the **same division A2 already made** for the ownership-basis contract, and for the same reason. The database can cheaply prove a tenant boundary because `org_id` is on the row. It cannot cheaply prove "this user is on that team" without a correlated subquery on every row of every read — and a policy that is expensive gets disabled, at which point the boundary it was protecting is gone.
+
+**Stated plainly rather than glossed:** a caller who bypasses `resolve_visible_definitions` and issues a raw `SELECT * FROM portfolio.udf_definitions` **will** see their own org's team-scope rows for teams they are not on. That is not a hole in RLS; it is the boundary drawn where it was designed to be drawn. There is exactly one resolver, and `list_udf_values_for_target` reuses its predicate rather than filtering after the fact — so a team-scope *value* cannot leak by the simple route of reading the value table directly.
+
+### The membership mechanism is `team_members` — `staff_assignments` was considered and rejected
+
+The brief offered "SOC Phase 2's `staff_assignments` or an equivalent membership table". Introspected, the real answer is **`public.team_members`** — PK `(team_id, user_id)`. `staff_assignments` maps a team-or-user to an **entity** (`staff_assignments_exactly_one_target`) and answers *"who covers this client"*, which is a different question that happens to mention teams.
+
+`team_members` carries **no `org_id` of its own** — its RLS policy reaches the org through an `EXISTS` on `teams` — so every membership predicate in the module `JOIN`s `public.teams` and constrains `t.org_id`. Precedent: `services.staff_visibility.get_team_ids_for_users` already does exactly this. Dropping that join would let a membership row from another tenant satisfy the check.
+
+### What the database gates, and what only Python can
+
+**Duplicates are the database.** There is no pre-flight `SELECT` looking for an existing `field_key` — the `INSERT` is issued and the deployed partial index raises. Two reasons: a pre-check is a race (two concurrent creates both see nothing and both insert), and, worse, it would pass a verification suite **even if the index had been dropped**. The verification asserts the raised exception carries `constraint='idx_udf_def_key_unique'` — a name an application-level check could not produce.
+
+**Cross-scope ownership is Python, because it cannot be anything else.** `owner_scope_id` is polymorphic — a team id under `team` scope, a user id under `user` scope — so it carries **no FK** and the database cannot check it at all. A `team_id` from another org would sit in the row looking entirely valid and fail only as a silent absence from every resolution months later. Both are refused at creation with `UdfScopeError`, against a **real** team in a **real** other org (a randomly minted uuid would also be refused, and for the wrong reason).
+
+### Findings from the introspection, recorded
+
+- **`udf_def_scope_org_chk` is stricter than the brief described.** The brief said only that `org_id` is NULL for platform scope. The deployed CHECK **also** requires `owner_scope_id IS NULL` for platform — a real schema-level gate, not a runtime one.
+- **`idx_udf_def_key_unique` COALESCEs `org_id` and `owner_scope_id` to a zero uuid.** That is load-bearing, not stylistic: NULLs are distinct in a btree, so a bare column list would never catch a duplicate **platform** definition at all.
+- **`udf_values` has no unique CONSTRAINT — only the partial INDEX.** So `ON CONFLICT ON CONSTRAINT` is impossible and the conflict target must be inferred by repeating both the column list **and** the predicate; omit the `WHERE` and PostgreSQL raises 42P10.
+- **RLS is enabled but NOT FORCED on either table.** `postgres` owns them and has `rolbypassrls`, which is why the verification refuses to start without `APP_SERVICE_DATABASE_URL`.
+- **Policy counts confirmed exactly** — 4 on `udf_definitions` (SELECT/INSERT/UPDATE/DELETE), 1 on `udf_values` (ALL).
+
+### The value contract
+
+Typed against the definition's real `data_type`, with A2's float refusal carried over verbatim: a UDF numeric is no less load-bearing than a position measure just because a tenant defined it. `Decimal`/`int`/`str` accepted, `float` refused (`Decimal(0.1)` is `0.1000000000000000055…` and no error is raised anywhere downstream). A `datetime` is **refused, not truncated**, because it is a subclass of `date` and the column is `date`. `"true"` and `1` are refused as booleans — truthiness would read the string `"false"` as True. A `select` value must be in its definition's own option list, and a `select` definition with no options is refused at creation because it could never accept any value.
+
+`coerce_value` returns **all four** value columns with exactly one populated, so an upsert writes NULL over the other three — a definition whose `data_type` was corrected cannot strand a value in the old column beside the new one, where two readers would disagree about which is the value.
+
+**A `target_type` that disagrees with its definition's `applies_to` is refused.** `udf_values.target_id` is polymorphic and has no FK, so a mismatched row would not error — it would just never join to anything, and the value would look like it was never recorded.
+
+### One deliberate divergence from Rule 3, named
+
+`record_udf_value` **UPSERTs** — `ON CONFLICT … DO UPDATE` on the real partial index — rather than closing the old row and inserting a successor. That is a departure from CLAUDE.md Rule 3 and it is deliberate: the design's own requirement is "one current value per definition per target". A UDF value is a tenant's own annotation with no accounting consequence and no downstream restatement, unlike a position quantity that a corporate action restates and that a report must read "as of" a past date. Closing and re-inserting would grow an unbounded history of edits to a free-text note nothing reads. The bi-temporal columns remain on the table and the partial index is predicated on them, so if Phase H ever needs value history the change is to one statement and nothing else.
+
+### Verification — 63/63
+
+All four Task-1 findings **reported AND asserted**, including the real team-membership mechanism.
+
+The five assertions this phase is easiest to fake, and how they are written:
+
+- **"A non-member does not see the team's field."** A resolver returning an empty list satisfies this on its own. So **both** directions are asserted against the same call — the member's list must **contain** the team field, the non-member's must **omit** it — **and** the non-member's list is separately asserted non-empty and to contain the platform and org fields, proving the resolver ran and genuinely narrowed. `is_team_member` is also asserted directly in both directions, because "the definition did not appear" is also what a broken query returns.
+- **"A duplicate is refused."** Any exception satisfies "it raised" (Phase B's finding). The refusal is asserted to be a `UdfDuplicateError` whose `.constraint` is literally `idx_udf_def_key_unique`. Plus the converse: the **same** `field_key` in a **different** namespace (team scope) is asserted to succeed — so the refusal was a real collision, not a blanket ban on the key.
+- **"A platform write is refused for a non-super-admin."** Trivially true of code that never writes. The platform-scope row count is snapshotted before the refusal and asserted unchanged after, the refused `field_key` asserted absent everywhere — and the **same arguments** are then accepted under a Super-Admin caller through the real `app_service` connection, proving the refusal was the privilege check and not a broken statement.
+- **"A numeric round-trips."** `str()` of the returned value is compared against the literal `1234.56789012` digit-for-digit **and** the type asserted to be `Decimal` — equality alone can pass on a silently converted float. The float refusal then asserts the previously stored value is **untouched** by the attempt.
+- **"The two `asset_classification` definitions coexist."** Two rows existing proves nothing about disambiguation. A **different** value is recorded against each on the **same** target — `equity` from the feed, `debt` as the house view — and each is read back **by `definition_id`** and asserted to be its own value. An implementation matching on `field_key` would return the same row twice and fail.
+
+Cross-org isolation is asserted with a **control** in both directions: org B can create its own definition and record its own value against the identical `target_id`, so "org A's rows are invisible" is isolation and not a broken write. `get_definition` and `get_udf_value` both return `None` from org B's context with org A's ids in hand.
+
+**One thing the verification reports rather than asserts as a win.** A2's `_OrgWrite` **sets `app.current_org_id` from its `org_id` argument** — that is the entire point of the class. So `record_udf_value(org_id=<org A>)` called on a connection whose context is org B **succeeds**. RLS is not a defence against a caller that passes the wrong `org_id`; it is a defence against a connection that never set one — demonstrated in a deliberately rolled-back transaction, with the raw-INSERT case (GUC left at org B) asserted to raise `InsufficientPrivilegeError`. This is exactly why CLAUDE.md's standing rule is *"`org_id` never from a request body"*: the router's JWT claim is the boundary. The module never defaults `org_id` and never reads it back off the connection. Reads are genuinely RLS-gated; writes are gated by the caller's honesty about the claim, and always have been across every phase since A2.
+
+Teardown asserts exact before/after counts on five tables — `udf_values`, `udf_definitions`, `team_members`, `teams`, `users` — all by fixture tag, never a truncate. Platform-scope fixtures have `org_id IS NULL` and cannot be found by any org predicate, so they are matched by the tagged `field_key`.
+
+### Deliberately NOT built (per the brief)
+
+The reconciliation engine, performance calculations and cross-client analysis (**Phase H — designed for, not built**) · any UI beyond what was needed to prove the resolution logic · **any general "override" or "merge" mechanism** — see the §15 refinement above · any router (`portfolio_udf` is a service module only) · the `allocation_lens` `subtree` double-count Phase C flagged, the `routers/ledger.py` `entry_date` bug and the two GL views missing `security_invoker` Phase D flagged — all still open.
+
+### The layer is complete
+
+**Portfolio Reporting phases A1, A2, B, C, D, E, F and G are ALL COMPLETE.** Every phase `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` designed has shipped and is verified against the deployed database:
+
+| Phase | Scope | Verification |
+|---|---|---|
+| **A1** | Global security layer | 39/39 |
+| **A2** | Tenant assets / positions / transactions / valuations | 63/63 |
+| **B** | Ingestion + source precedence | 50/50 (+2 BLOCKED — Altruist credentials) |
+| **C** | Rollup into `entity_holdings` | 22/22 |
+| **D** | SPV derivation view, cash, document drill-through | 56/56 |
+| **E** | Chancery-sourced positions, commitments, tax-doc tracking | 39/39 |
+| **F** | Corporate actions (global record, per-org apply) | 57/57 |
+| **G** | User-defined fields (parallel namespaces) | 63/63 |
+
+**What remains is Phase H, and it is explicitly designed-for-not-built:** the **reconciliation engine**, **performance calculations**, and **cross-client analysis**. The schema and the service layer were shaped to accommodate all three — bi-temporal columns throughout, `superseded_by_source` precedence annotation rather than deletion, `is_corporate_action_adjustment` so a realized-gain population is correct without knowing the corporate-action machinery exists, and Phase G's parallel namespaces so a standard feed and a house view can be compared rather than collapsed. None of it is implemented, and nothing in A1–G should be read as a partial implementation of it.
+
+**One documentation gap, the third in a row and now a pattern rather than a typo.** The brief cited `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` **§15**; that document has never had sections past §9 (Phase E cited §12/§13, Phase F cited §10). The specification actually in force is its §7 phase-map row plus the brief. The phase map is updated (G shipped, A1–G complete, H designed-for-not-built) and now says so explicitly.
 
 ---
 
@@ -1019,6 +1114,8 @@ Issue 4 was found by a **comprehensive field-by-field audit** (22/22) rather tha
 ---
 
 ## 11 · Remaining backlog — unbuilt
+
+**Portfolio Reporting Phase H — designed for, not built.** The reconciliation engine, performance calculations, and cross-client analysis. Phases A1–G are all complete (see §7o); H is the only designed phase remaining, and none of A1–G should be read as a partial implementation of it. Also still open from those phases: the `allocation_lens` `subtree` double-count (Phase C), the `routers/ledger.py` `entry_date` bug and the two GL views missing `security_invoker` (Phase D), and Altruist ingestion (Phase B, BLOCKED on absent credentials). No router or UI exists for Phase G's UDFs — `services/portfolio_udf.py` is a service module only.
 
 Deal Diligence Engine (scaffolding/UI exist; AI-generation wiring doesn't — Chancery Phase 10's VDR intake is its natural front door) · Opportunity/Pipeline member-acquisition funnel (deal-side largely built; member-side is the gap) · S28 Drift monitor (deprioritized) · Client Profitability/Revenue Module · Correspondence tracking · Voice onboarding · MCP connector registry + secrets · User-created scheduled agents · Retention policy system · AWS Secrets Manager migration (decided, not built).
 

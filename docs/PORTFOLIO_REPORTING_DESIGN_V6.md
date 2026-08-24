@@ -184,8 +184,25 @@ same reason.
 | **D** | SPV derivation view, cash modelling, document drill-through | Shipped (56/56) — this sprint |
 | **E** | Chancery-sourced alts / hard assets, commitments, tax-doc tracking | Shipped (39/39) — this sprint |
 | **F** | Corporate actions — recorded GLOBALLY (§10 correction below), applied per org | Shipped (57/57) — this sprint |
-| **G** | UDFs | Next |
-| **later** | Reconciliation / performance / cross-client analysis (H), UI | Later |
+| **G** | UDFs — parallel platform/org/team/user namespaces, NOT a cascade | Shipped (63/63) — this sprint |
+| **later** | Reconciliation / performance / cross-client analysis (H), UI | Designed for, NOT built |
+
+> **A1 through G are now ALL COMPLETE.** Every phase this document designed has
+> shipped. What remains is Phase H — the reconciliation engine, performance
+> calculations and cross-client analysis — which the schema and the service
+> layer were designed to accommodate and which is **deliberately not built**.
+
+> **§15 refinement, applied in Phase G.** The original §15 sketch read as a
+> cascading override chain (user beats team beats org beats platform, one winner
+> per `field_key`). Phase G's Part 1 SQL corrected it to **parallel namespaces**:
+> the platform's `asset_classification` and a client's `asset_classification`
+> coexist as two rows with two ids and two values, and nothing picks a winner —
+> because "the standard feed says equity, AND this client books it as debt" is
+> two true facts, and a cascade can only ever report one of them. RLS carries
+> the hard boundary (cross-org isolation + platform global read); team and user
+> narrowing lives in `resolve_visible_definitions`, the same division A2 made
+> for the ownership-basis contract. Full rationale in
+> `docs/PROJECT_STATUS.md` §7o.
 
 > **§10 correction, applied in Phase F.** The original §10 sketch keyed corporate
 > actions to `asset_id`, which is tenant-scoped. A split is ONE real-world event
@@ -197,11 +214,15 @@ same reason.
 > gained a real FK, and `transactions.is_corporate_action_adjustment` was added.
 > Full rationale in `docs/PROJECT_STATUS.md` §7n.
 
-> **Note on this document's sections.** Phase E's brief cited "§12, §13" and
-> Phase F's cited "§10"; this design has never had sections past §9. The
-> specification actually in force for both is the phase-map row above plus the
-> brief itself, and the findings are recorded in `docs/PROJECT_STATUS.md` §7m and
-> §7n rather than back-filled here as sections that were never written.
+> **Note on this document's sections.** Phase E's brief cited "§12, §13",
+> Phase F's cited "§10" and Phase G's cited "§15"; this design has never had
+> sections past §9. The specification actually in force for all three is the
+> phase-map row above plus the brief itself, and the findings are recorded in
+> `docs/PROJECT_STATUS.md` §7m, §7n and §7o rather than back-filled here as
+> sections that were never written. Three consecutive briefs citing sections
+> that do not exist is a pattern, not a typo: the phase map IS this document's
+> specification, and anything more detailed lives in the brief and in
+> PROJECT_STATUS.
 
 ## 8 · The SPV derivation view (Phase D)
 
