@@ -552,7 +552,71 @@ Also proven: cross-org isolation on `assets` *and* `positions` under real `app_s
 
 Any real ingestion (Altruist, reporting-tool import, Chancery consumption) · source-precedence resolution — `positions.superseded_by_source` is written when a caller supplies it and is never *computed* · the S21 sunburst rollup into `entity_holdings` (Phase C) · the SPV derivation view (Phase D) · cash modelling, corporate actions, commitments, UDFs · any router and any UI.
 
-**Next: Phase B — ingestion.** Its two prerequisites are both recorded above: widen the `external_references` UNIQUE to include `org_id`, and widen the `fx_rates` UNIQUE to include `rate_type` (or drop it for a bitemporal-aware one).
+**Next: Phase B — ingestion.** Its two prerequisites are both recorded above: widen the `external_references` UNIQUE to include `org_id`, and widen the `fx_rates` UNIQUE to include `rate_type` (or drop it for a bitemporal-aware one). ✅ Both applied — see 7j.
+
+---
+
+## 7j · Completed — Portfolio B, ingestion + source precedence
+
+**File-based reporting-tool import, org-configurable source precedence, and an honest Altruist gate.** `services/portfolio_import.py` · `services/portfolio_precedence.py` · `services/portfolio_altruist.py` · `routers/portfolio_ingest.py` · `scripts/verify_portfoliob.py`. **50 PASS, 0 FAIL, 2 BLOCKED**, idempotent across consecutive runs, real `app_service` connection.
+
+A **BLOCKED** assertion is not a pass and is not counted as one. Both belong to Altruist and are reported separately, so "all green" can never quietly mean "all green except the thing that was never measured".
+
+### The Altruist gate — BLOCKED, and honestly so
+
+**Credentials are absent.** `ALTRUIST_CLIENT_ID`, `ALTRUIST_CLIENT_SECRET` and `ALTRUIST_BASE_URL` are unset in the process environment and in `apps/api/.env`. **No call was attempted**, because there was nothing to authenticate with. Nothing was mocked, simulated or fabricated.
+
+`services/portfolio_altruist.py` is real and is only a gate: `credential_state()` reads the environment, `probe()` makes **one** genuinely authenticated request if and only if all three credentials are present, and `ingest_positions()` raises `AltruistBlocked` carrying the exact reason. `GET /portfolio/altruist/status` surfaces the live probe rather than a stored flag.
+
+The probe deliberately hits an authenticated accounts call rather than a health endpoint — an unauthenticated liveness check returns 200 whether or not our credentials work, which is precisely the question. `AltruistGate.attempted` separates **"no credentials, nothing tried"** (a provisioning gap) from **"credentials present, real call refused"** (partner access) — different findings that go to different people, and one boolean would lose that.
+
+**There is no mapping function, on purpose.** Writing `_map_altruist_position()` against a guessed response shape is worth nothing and costs something real: Altruist's field names, nesting, pagination, quantity-vs-value conventions and cost-basis lot handling are unknown here, so a guessed mapping gets rewritten — and in the meantime it reads to everyone downstream, and to the verify script, as though the integration is built and merely unconfigured.
+
+**Phase B does not depend on it.** File-based reporting-tool import works completely independently of Altruist and is what actually gets data into the portfolio today. That was the design intent, and it is why the block is contained rather than fatal.
+
+### Source precedence is DATA, not code
+
+`org_settings` key **`portfolio.precedence.source_order`** — an ordered JSON array of `source_system` values, most-trusted first, following the same convention as `ai.model.fallback_chain`. Default (design V6 §1.1): `reporting_tool_bd > reporting_tool_addepar > reporting_tool_orion > reporting_tool_apx > reporting_tool_import > altruist > spv_subscriptions > chancery > manual`. A firm that trusts its custodian over its reporting tool re-orders the setting and **deploys nothing**.
+
+The literal lives in `org_settings.DEFAULT_SETTINGS`, not in the precedence module — that module's own docstring makes it the one place allowed to hold default data, and it keeps the dependency one-directional so `_validate_setting` can reach back with a lazy import instead of a cycle. **Both the configured and the unconfigured case are tested**, and the fixture order deliberately *inverts* the default's top and bottom: a "configured order wins" test whose configured order happens to produce the same winner as the default proves nothing.
+
+`resolve_precedence()` re-reads every candidate from the database under RLS and uses **only** the caller's ids — a caller passing its own `source_system` alongside an id would be trusting the ingestion pipeline to remember what it wrote, and precedence exists because pipelines disagree. Candidates must share one `(owner_entity_id, asset_id, as_of_date)`; spanning two holdings is refused, because it would mark a position superseded by a source describing a different asset. Recency is the within-source tie-break (a restatement), never a cross-source one.
+
+**Losers are annotated, never deleted**, and the winner's stale flag is **cleared**. A row that lost a previous resolution and wins the next one — because the org re-ordered its sources — would otherwise stay flagged as superseded by a source that no longer outranks it, and every downstream reader would skip the actual answer.
+
+**Why the annotation is an UPDATE, and why that is not a Rule 3 violation.** Rule 3 closes a row because its content stopped being true. Nothing here stopped being true: the losing row remains, permanently, what that source said on that date. `superseded_by_source` records the *resolution over* a set of facts, not a change to one. The Rule-3 shape is actively wrong twice over — closing the loser with `valid_to` drops it out of every current-row query, which defeats the design's own "keep it for reconciliation"; doing it as a system-time correction mints a **new `id`**, and `portfolio.transactions.position_id` is an FK onto that id, so every transaction booked against the position would be left pointing at the corrected-away row. It is therefore a narrow, idempotent, single-column write, and **the verification snapshots every column of the losing row and asserts only that one changed**.
+
+### File-based import — works with no external credential
+
+`POST /api/v1/portfolio/import/positions` (CSV or XLSX). Parsing **reuses Chancery**: `detect_file_type` (magic bytes — a CSV renamed `.xlsx` still parses as a CSV), `extract_xlsx` (the existing openpyxl path), `extract_text`. Chancery has no CSV-specific path, so CSV is that text path plus the stdlib `csv` reader — not a second parsing stack.
+
+Header mapping is alias-based against headers reporting tools actually emit, **longest alias first**, so `Ending Market Value` is not swallowed by the `value` alias. Assets match by identifier (CUSIP/ISIN/SEDOL before ticker — a ticker is reused across exchanges and after a delisting) then by exact name; **no fuzzy name matching**, because the same leniency that merges "Apple Inc" and "Apple Inc." merges "Blackstone Real Estate Income Trust" and "Blackstone Real Estate Partners", and only one of those is a disaster.
+
+**Idempotency is a pre-insert READ, not an `ON CONFLICT`.** Each row gets a stable `external_id` — the file's own row id, else a SHA-256 over the row's *normalised meaningful fields*. `find_external_reference` is consulted **before** anything is written. Writing the position first and upserting the mapping afterwards makes the *mapping* idempotent while the *position* duplicates — exactly the bug the assertion exists to catch. The hash covers the row's meaning and **not** the filename, so the same holdings re-sent as `q2.csv` and `q2-final.csv` is one position; proven, not asserted.
+
+**One bad row never fails the file.** A malformed row is skipped with its 1-based file line number and a reason; the rest imports. A file that is unusable *as a file* (a PDF, a header with no data rows, a table naming no security) is a 400 — a different failure, kept distinct.
+
+`source_system = 'reporting_tool_import'`, `authority = 'aggregated'`. Vendor-agnostic on purpose: BD, Addepar, Orion and APX export the same tabular shape, and sniffing the vendor from column headers would manufacture provenance the file does not carry.
+
+### Task 1 findings worth keeping
+
+- **A2's `upsert_external_reference` was broken by its own prerequisite, and would have failed closed.** The Part-1 SQL replaced the UNIQUE with `(org_id, source_system, external_id, record_type)`; the function still said `ON CONFLICT (source_system, external_id, record_type)`. Postgres matches an inference clause against a real unique index, so the old target matched **nothing** and raised `InvalidColumnReferenceError` on every call. Re-pointed, and the now-redundant cross-org guard removed — `org_id` is part of the key, so two tenants can hold the same upstream id independently. **Generalizable: widening a constraint is not a backward-compatible change for any code that names it in an `ON CONFLICT`.**
+- **`positions_source_chk` did not admit `reporting_tool_import`.** Introspected, not inferred from the sprint prompt, which mandated that exact value. Every import would have raised 23514. Widened additively in `docs/portfoliob_part1.sql`.
+- **openpyxl's `datetime` does not survive Chancery's serialisation.** `_json_cell` keeps only int/float/bool/str/None as-is and stringifies everything else, so an XLSX date cell arrives at the importer as `'2026-06-30 00:00:00'`, **not** as a `datetime`. Found by running the XLSX path — reading openpyxl's docs tells you what openpyxl returns, not what survives the step after it. `_to_date` now tries `fromisoformat` first.
+- **`_json_cell` also keeps numeric cells as `float`.** That precision is gone before the importer is reached and cannot be recovered; `Decimal(str(f))` recovers the shortest decimal that round-trips — the number the spreadsheet was displaying — rather than `Decimal(float)`'s binary expansion.
+- **Altruist was genuinely greenfield.** The complete pre-existing set: a comment in `schemas/entities.py`, the vocabulary string `'altruist'`, a fixture constant in A2's verify script, `services/trading_authority.py` explicitly recording that the assumed custodian subsystem does not exist, and design-doc prose. No client, no stub, no env var.
+
+### One thing the verification caught about itself
+
+**A vacuous pass, caught only because the detail string was printed.** The "resolving candidates that span different holding keys is refused" assertion passed on its first run — with the refusal message `position_candidates contains None`. The XLSX import was broken, so the second candidate id was `None` and the guard that fired was the null check, not the holding-key rule. It now asserts the id **exists** *and* that the refusal names the key spanning. **Generalizable: an assertion that only checks "it raised" passes on any raise, including the one proving your fixture never got built.**
+
+Teardown asserts exact before/after counts on all six portfolio tables **and `public.org_settings`** — this script writes to live tenant configuration, so it captures the org's real precedence setting before starting and restores it byte-for-byte. The one value it will not restore is one identical to its own fixture order: that is a previous crashed run's residue, not the org's setting, and restoring it would make every future run inherit the wreckage.
+
+### Deliberately NOT built (Phase C and later, per the brief)
+
+The S21 sunburst rollup into `entity_holdings` (Phase C) · the SPV derivation view (Phase D) · cash modelling, corporate actions, commitments, UDFs · any UI beyond the file-upload endpoint · real-time or intraday anything — daily is the maximum frequency per the design · Chancery consumption as an ingestion source (the `chancery` vocabulary slot and its precedence rank exist; nothing writes through it yet).
+
+**Next: Phase C — the S21 sunburst rollup into `entity_holdings`.** Its input is now real: positions exist, and precedence decides which of several competing rows the rollup should count. A rollup built before precedence would have double-counted every holding reported by two sources.
 
 ---
 

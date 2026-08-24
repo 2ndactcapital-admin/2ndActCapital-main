@@ -143,9 +143,16 @@ AUTHORITIES = frozenset({"aggregated", "custodial", "internal", "stated", "manua
 # positions_source_chk. transactions has NO source CHECK, but the same
 # vocabulary is applied there anyway — a transaction whose source_system is not
 # one a position could have carried is a typo, not a new integration.
+#
+# `reporting_tool_import` was added by Phase B (docs/portfoliob_part1.sql). The
+# four vendor-specific tokens each ASSERT which tool produced the data; the file
+# importer cannot honestly assert that, because Black Diamond, Addepar, Orion and
+# APX all export the same tabular shape and sniffing the vendor from column
+# headers would manufacture provenance the file does not carry.
 SOURCE_SYSTEMS = frozenset({
     "reporting_tool_bd", "reporting_tool_addepar", "reporting_tool_orion",
-    "reporting_tool_apx", "altruist", "spv_subscriptions", "chancery", "manual",
+    "reporting_tool_apx", "reporting_tool_import", "altruist",
+    "spv_subscriptions", "chancery", "manual",
 })
 
 # valuations_basis_chk
@@ -1049,18 +1056,25 @@ async def upsert_external_reference(
 ) -> str:
     """Map an upstream system's id onto one of our records. Returns the row id.
 
-    KNOWN DEFECT, DOCUMENTED RATHER THAN WORKED AROUND: the deployed UNIQUE
-    constraint is ``(source_system, external_id, record_type)`` and does NOT
-    include ``org_id``, even though the table carries one and is org-isolated by
-    RLS. Two tenants ingesting from the same source system with colliding
-    external ids will hard-conflict, and the loser gets a unique violation on a
-    row RLS will not let it see — an error with no visible cause.
+    THE A2 DEFECT IS FIXED — and this function had to change with it. A2 shipped
+    against a UNIQUE of ``(source_system, external_id, record_type)`` with no
+    ``org_id``: two tenants ingesting from the same source system with colliding
+    external ids hard-conflicted, and the loser got a unique violation on a row
+    RLS would not let it see. That constraint was replaced ahead of Phase B by
+    ``external_references_org_source_ext_type_key``, UNIQUE on
+    ``(org_id, source_system, external_id, record_type)``.
 
-    The ``ON CONFLICT`` below therefore targets the constraint as it actually
-    exists, and the ``WHERE`` clause on the ``DO UPDATE`` refuses to silently
-    re-point another tenant's row: a cross-org collision leaves the existing row
-    alone and raises here, where the message can say what happened. Widening the
-    constraint to include ``org_id`` is a Phase B migration.
+    The ``ON CONFLICT`` target below is not cosmetic. Postgres matches an
+    inference clause against a real unique index, so the old three-column target
+    now matches NOTHING and raises ``InvalidColumnReferenceError`` on every
+    call — which would have made Phase B's whole idempotency story fail closed
+    the first time an import re-ran. It is re-pointed at the constraint as it
+    actually exists, re-introspected from the live database, not assumed.
+
+    The cross-org guard A2 needed is gone because the constraint now does that
+    job: ``org_id`` is part of the key, so two tenants can hold the same
+    ``(source_system, external_id, record_type)`` independently and neither can
+    conflict with, or re-point, the other's row.
     """
     org_id = _require_org(org_id)
     _check_choice(record_type, EXT_REF_RECORD_TYPES, "record_type")
@@ -1075,19 +1089,45 @@ async def upsert_external_reference(
             INSERT INTO {TABLE_EXT_REF}
                 (org_id, source_system, external_id, record_type, record_id)
             VALUES ($1::uuid, $2, $3, $4, $5::uuid)
-            ON CONFLICT (source_system, external_id, record_type)
+            ON CONFLICT (org_id, source_system, external_id, record_type)
             DO UPDATE SET record_id = EXCLUDED.record_id, last_seen = now()
-            WHERE {TABLE_EXT_REF}.org_id = EXCLUDED.org_id
             RETURNING id::text
             """,
             org_id, source_system.strip(), external_id.strip(), record_type,
             str(record_id),
         )
-        if row_id is None:
-            raise PortfolioError(
-                f"external reference ({source_system!r}, {external_id!r}, "
-                f"{record_type!r}) already exists in a DIFFERENT org. The "
-                f"deployed UNIQUE constraint is not org-scoped, so this pair is "
-                f"globally unique across tenants — see the docstring."
-            )
         return row_id
+
+
+async def find_external_reference(
+    conn,
+    *,
+    org_id: str,
+    source_system: str,
+    external_id: str,
+    record_type: str,
+) -> str | None:
+    """Return the ``record_id`` an upstream id already maps to, or ``None``.
+
+    The read half of the idempotency key, and the reason a re-import is a no-op
+    rather than a second row. :func:`upsert_external_reference` alone is not
+    enough: it makes the MAPPING idempotent, but a caller that inserts a
+    position first and re-points the mapping afterwards has already written the
+    duplicate. The check has to happen BEFORE the insert, which needs a read.
+
+    ``org_id`` is part of the lookup as well as the RLS context, deliberately
+    belt-and-braces: the lookup must not depend on the GUC having been set
+    correctly, because the failure mode if it were not is a cross-tenant read.
+    """
+    org_id = _require_org(org_id)
+    _check_choice(record_type, EXT_REF_RECORD_TYPES, "record_type")
+    async with _OrgWrite(conn, org_id) as c:
+        return await c.fetchval(
+            f"""
+            SELECT record_id::text FROM {TABLE_EXT_REF}
+            WHERE org_id = $1::uuid AND source_system = $2
+              AND external_id = $3 AND record_type = $4
+            """,
+            org_id, (source_system or "").strip(), (external_id or "").strip(),
+            record_type,
+        )

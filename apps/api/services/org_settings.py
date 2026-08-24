@@ -90,6 +90,35 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "ai.embedding.provider": "voyage",
     "ai.embedding.model": "voyage-3.5",
     "ai.embedding.dimensions": 1024,
+    # Portfolio Phase B — the ORDERED list of `positions.source_system` values,
+    # most-trusted first, deciding which of several sources reporting the same
+    # holding is the portfolio's answer (design V6 §1.1). Same shape as
+    # ai.model.fallback_chain above: a JSON array that is meaningful as data.
+    # A firm that trusts its custodian over its reporting tool re-orders this
+    # and deploys nothing.
+    #
+    # The literal lives HERE and not in services/portfolio_precedence, per this
+    # module's own docstring: DEFAULT_SETTINGS *is* the default data. It also
+    # keeps the dependency one-directional — portfolio_precedence imports this,
+    # never the reverse — which is what lets `_validate_setting` reach back into
+    # the precedence validator with a lazy import instead of a cycle.
+    #
+    # Ordering rationale: a reporting tool sits DOWNSTREAM of the custodian it
+    # was fed, having already reconciled that feed, so it outranks `altruist`
+    # rather than competing with it. `manual` is last — a human typing a number
+    # exists so an asset with no feed still has a position, not so that it can
+    # overrule one that does.
+    "portfolio.precedence.source_order": [
+        "reporting_tool_bd",
+        "reporting_tool_addepar",
+        "reporting_tool_orion",
+        "reporting_tool_apx",
+        "reporting_tool_import",
+        "altruist",
+        "spv_subscriptions",
+        "chancery",
+        "manual",
+    ],
 }
 
 # Category per key, used when a key is written for the first time and when
@@ -100,6 +129,7 @@ CATEGORY_BY_PREFIX = {
     "locale.": "locale",
     "naming.": "naming",
     "ai.": "ai",
+    "portfolio.": "portfolio",
 }
 
 DEFAULT_CATEGORY = "general"
@@ -145,6 +175,25 @@ def _validate_setting(key: str, value) -> None:
         if str(value).lower() not in ENABLED_EMBEDDING_PROVIDERS:
             raise SettingsValidationError(EMBEDDING_PROVIDER_DISABLED_MSG)
 
+    if key == "portfolio.precedence.source_order" and value is not None:
+        # Same lazy-import shape as above, same reason: portfolio_precedence
+        # imports DEFAULT_SETTINGS from this module, so a top-level import here
+        # would be a cycle.
+        #
+        # Validating at WRITE time is the point. A precedence order naming a
+        # source_system no position can carry ranks nothing — the source it was
+        # meant to promote just silently stays where the unranked-tail rule puts
+        # it. Caught here, it is a 400 on the save; caught at resolve time it is
+        # every ingestion run since the save having quietly mis-ranked.
+        from services.portfolio_precedence import (
+            PrecedenceConfigError,
+            validate_source_order,
+        )
+        try:
+            validate_source_order(value)
+        except PrecedenceConfigError as exc:
+            raise SettingsValidationError(str(exc)) from exc
+
 
 def _decode(value):
     """asyncpg returns jsonb as a str; decode to the Python value."""
@@ -174,6 +223,28 @@ async def get_setting(conn, org_id, key: str):
     if row is None:
         return DEFAULT_SETTINGS.get(key)
     return _decode(row["setting_value"])
+
+
+async def get_setting_with_origin(conn, org_id, key: str) -> tuple[object, bool]:
+    """``(value, is_default)`` for one key — the single-key form of the flag
+    ``get_settings_detail`` already exposes as ``is_default``.
+
+    ``get_setting`` alone cannot answer this. It folds "the org stored nothing"
+    and "the org stored exactly the default" into the same return value, and a
+    caller that has to report WHERE a number came from — which is every
+    reconciliation and provenance surface — needs them apart. An org that
+    deliberately saves an order identical to the platform default has still
+    configured it, and saying "using the platform default" about a deliberate
+    choice misreports the provenance.
+    """
+    row = await conn.fetchrow(
+        "SELECT setting_value FROM org_settings "
+        "WHERE org_id = $1 AND setting_key = $2",
+        org_id, key,
+    )
+    if row is None:
+        return DEFAULT_SETTINGS.get(key), True
+    return _decode(row["setting_value"]), False
 
 
 async def get_all_settings(conn, org_id) -> dict:

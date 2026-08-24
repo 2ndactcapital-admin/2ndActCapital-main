@@ -35,6 +35,7 @@ from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
 from routers.portfolio import router as portfolio_router
+from routers.portfolio_ingest import router as portfolio_ingest_router
 from routers.profiles import router as profiles_router
 from routers.tenant import router as tenant_router
 from routers.entity_documents import router as entity_documents_router
@@ -418,6 +419,7 @@ app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketing_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
+app.include_router(portfolio_ingest_router, prefix="/api/v1")
 app.include_router(spv_router, prefix="/api/v1")
 app.include_router(entity_graph_router, prefix="/api/v1")
 app.include_router(ownership_tree_router, prefix="/api/v1")

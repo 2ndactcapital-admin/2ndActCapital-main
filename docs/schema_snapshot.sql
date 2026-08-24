@@ -751,7 +751,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
---   UNIQUE fx_rates_base_ccy_quote_ccy_as_of_date_key: (base_ccy, quote_ccy, as_of_date)
+--   UNIQUE fx_rates_pair_date_type_key: (base_ccy, quote_ccy, as_of_date, rate_type)
 --   PRIMARY KEY fx_rates_pkey: (id)
 
 -- ===== household_memberships =====
@@ -1513,8 +1513,8 @@
 --   record_id                                uuid NOT NULL
 --   first_seen                               timestamp with time zone NOT NULL DEFAULT now()
 --   last_seen                                timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE external_references_org_source_ext_type_key: (org_id, source_system, external_id, record_type)
 --   PRIMARY KEY external_references_pkey: (id)
---   UNIQUE external_references_source_system_external_id_record_type_key: (source_system, external_id, record_type)
 
 -- ===== portfolio.note_terms_field_registry =====
 --   field_key                                text NOT NULL

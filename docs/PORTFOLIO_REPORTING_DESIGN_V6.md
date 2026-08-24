@@ -179,7 +179,7 @@ same reason.
 |---|---|---|
 | **A1** | Global security master + service layer | Shipped (39/39) |
 | **A2** | Tenant assets / positions / transactions / valuations, the `account` node, `market` backfill | Shipped — this sprint |
-| **B** | Real ingestion (Altruist, reporting-tool import, Chancery consumption); source precedence / `superseded_by_source` logic | Next |
-| **C** | S21 sunburst rollup into `entity_holdings` | Later |
+| **B** | Real ingestion (reporting-tool file import; source precedence / `superseded_by_source` logic) | Shipped — Altruist BLOCKED on absent credentials, Chancery consumption not built |
+| **C** | S21 sunburst rollup into `entity_holdings` | Next |
 | **D** | SPV derivation view | Later |
 | **later** | Cash modelling, corporate actions, commitments, UDFs, UI | Later |
