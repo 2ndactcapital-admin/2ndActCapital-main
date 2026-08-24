@@ -208,6 +208,19 @@ def is_hollisworks_claims(claims: dict | None) -> bool:
     return claims.get("iss") == settings.hollisworks_issuer
 
 
+def _unverified_issuer(token: str) -> str | None:
+    """The ``iss`` claim WITHOUT validating the signature.
+
+    Used only to produce a diagnosable error message (see ``verify_token``).
+    Never trusted for an authorization decision — a token that fails validation
+    is still rejected regardless of what this returns.
+    """
+    try:
+        return jwt.get_unverified_claims(token).get("iss")
+    except Exception:
+        return None
+
+
 def verify_token(token: str) -> dict:
     """Validate a Bearer token against the Auth0 tenant(s).
 
@@ -216,6 +229,18 @@ def verify_token(token: str) -> dict:
     rejects the token AND the Hollisworks tenant is configured do we additively
     try the Hollisworks tenant (admin.hollisworks.com staff). If both reject,
     the original 2nd Act ``JWTError`` is raised — unchanged failure behavior.
+
+    FAIL LOUD ON A MISSING ENV VAR (superadminmenu sprint). The Hollisworks leg
+    is skipped entirely when ``HOLLISWORKS_AUTH0_DOMAIN`` is unset, and the error
+    surfaced was 2nd Act's ("Unable to find a matching signing key") — which
+    names the wrong tenant and mentions no env var. Every request from a valid
+    admin.hollisworks.com session therefore 401'd for an undiagnosable reason,
+    and since ``ensure_user`` only runs INSIDE route handlers, no ``users`` row
+    was ever created for platform staff. This is the fourth instance of the same
+    bug shape as ``domain ?? AUTH0_DOMAIN``, ``appBaseUrl ?? APP_BASE_URL`` and
+    ``audience || <2nd Act>`` — a silent config gap that is indistinguishable
+    from a working one. When the token self-identifies as Hollisworks-issued but
+    the tenant is unconfigured, we now say exactly that.
 
     Returns the decoded claims on success and raises ``JWTError`` otherwise.
     """
@@ -241,6 +266,20 @@ def verify_token(token: str) -> dict:
                 )
             except JWTError:
                 pass
+        else:
+            # Not configured. If the token is not 2nd Act's, name the gap
+            # instead of re-raising 2nd Act's misleading key-lookup error.
+            issuer = _unverified_issuer(token)
+            if issuer and issuer != settings.issuer:
+                message = (
+                    f"Token issuer {issuer!r} is not the 2nd Act tenant and no "
+                    f"second Auth0 tenant is configured on this API — "
+                    f"HOLLISWORKS_AUTH0_DOMAIN is unset. Set it (and "
+                    f"HOLLISWORKS_AUTH0_AUDIENCE) in the API service's "
+                    f"environment; see render.yaml."
+                )
+                print(f"[auth] {message}")
+                raise JWTError(message) from primary_error
         raise primary_error
 
 

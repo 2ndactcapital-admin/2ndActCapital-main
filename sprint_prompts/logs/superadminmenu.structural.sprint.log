@@ -1,0 +1,123 @@
+
+=== TASK 1a (cont.) — live evidence for the second layer ===
+[PASS] 1a: confirmed live — zero pre-existing rows for jlarizza@gmail.com — matches the reported symptom
+[PASS] 1a: rows created by a REAL Auth0 login carry a placeholder email — auth0|6a3af4c9a1c6aeb8baddf3eb → auth0|6a3af4c9a1c6aeb8baddf3eb@placeholder.local
+       root cause layer 2: ensure_user read claims['email'] off the ACCESS token, which for a custom API audience carries no email/name claims (they are in the ID token). So the email column could NEVER hold the real address.
+
+=== TASK 1a — the provisioning gap (token validation) ===
+[PASS] 1a: HOLLISWORKS_AUTH0_DOMAIN unset disables the Hollisworks tenant entirely — Settings.hollisworks_auth0_domain defaults to '' → hollisworks_enabled False
+[auth] Token issuer 'https://dev-gy85vzuf6mruzv3j.us.auth0.com/' is not the 2nd Act tenant and no second Auth0 tenant is configured on this API — HOLLISWORKS_AUTH0_DOMAIN is unset. Set it (and HOLLISWORKS_AUTH0_AUDIENCE) in the API service's environment; see render.yaml.
+[PASS] 1a: a Hollisworks token is rejected when the tenant is unconfigured — verify_token raised JWTError
+[PASS] 1a: the rejection names the missing env var (fail loud, not silent) — Token issuer 'https://dev-gy85vzuf6mruzv3j.us.auth0.com/' is not the 2nd Act tenant and no second Auth0 tenant is configured on this API — HOLLISWORKS_AUTH0_DOM
+[PASS] 1a: the rejection no longer reports 2nd Act's misleading key error — previously surfaced 'Unable to find a matching signing key' — wrong tenant, no env hint
+[PASS] 1a: ensure_user is reachable ONLY from route handlers (so a 401 skips it) — 60 routers call ensure_user; the auth middleware runs before all of them
+[PASS] 1a: render.yaml now declares HOLLISWORKS_AUTH0_DOMAIN on the API service — was absent — only AUTH0_DOMAIN / AUTH0_AUDIENCE were declared
+[PASS] 1a: render.yaml also declares HOLLISWORKS_AUTH0_AUDIENCE on the API service
+
+=== TASK 2 — Hollisworks login creates a real users row ===
+[PASS] 2: with the env var UNSET, staff are silently filed as plain members — role = member — HOLLISWORKS_AUTH0_DOMAIN gates role assignment as well as token validation
+[PASS] 2: a Hollisworks-tenant login creates a real users row — users.id = 25e20199-0cc2-4263-a2f4-e8df44abb841
+[PASS] 2: the row is findable by the person's REAL email, not a placeholder — email = jlarizza@gmail.com
+[PASS] 2: role follows the established convention (Hollisworks issuer → super_admin) — role = super_admin
+[PASS] 2: org_id follows the established convention (get_org_id → default org) — org_id = 00000000-0000-0000-0000-000000000001 — unchanged; cross-org placement is separate, tracked work
+[PASS] 2: ensure_user returns the DB-generated id that FKs must use
+[PASS] 2: /userinfo failure still creates the row (placeholder fallback intact) — email = auth0|superadminmenu_verify_noemail@placeholder.local
+[PASS] 2: an existing placeholder row is back-filled with the real email — email = backfilled.superadminmenu_verify@example.com
+[PASS] 2: the same request also promotes an existing staff row to super_admin
+[PASS] 2: /userinfo is never called for an issuer this API is not configured to accept — the iss claim cannot choose an arbitrary outbound host
+[BLOCKED] 2: end-to-end with a genuinely Hollisworks-SIGNED token — no HOLLISWORKS_AUTH0_CLIENT_ID/SECRET in this environment — a real tenant-signed token cannot be minted here. The signature leg is unproven; the row-creation leg above is proven against the live database.
+
+=== TASK 1b/1c + TASK 3 — menu gating ===
+       Task 1b — every gate found, from lib/menuVisibility.mjs:
+         none                               Dashboard (/dashboard)
+         none                               CRM (/crm)
+         none                               Marketplace (/marketplace)
+         none                               Investments (/portfolio)
+         none                               Portfolio Reporting (/portfolio-reporting)
+         none                               SPV Manager (/spvs)
+         none                               Insurance (/insurance)
+         none                               Community (/community)
+         none                               Notifications (/notifications)
+         perm:manage_members                Admin (/admin)
+         perm:manage_members                User Management (/admin/users)
+         perm:manage_members                Staff Visibility (/admin/staff-visibility)
+         roles:org_admin|super_admin        Profiles (/admin/profiles)
+         roles:org_admin|super_admin        Permission Sets (/admin/permission-sets)
+         roles:org_admin|super_admin        Workflows (/admin/workflows)
+         roles:org_admin|super_admin        Organization (/admin/settings)
+         roles:super_admin                  Restricted Access (/admin/restricted-access)
+         roles:super_admin                  Trading Authority (/admin/trading-authority)
+         roles:super_admin                  Note Terms Review (/admin/pricing/note-terms-queue)
+         roles:super_admin                  Volatility Surface (/admin/pricing/surface)
+         roles:super_admin                  Platform (/admin/platform)
+[PASS] 1b: every menu gate enumerated from the real shipped module — 21 items; gate kinds: permission, account-role, or none
+       Task 1c — items a super_admin with no Profile LOST under the old rule:
+         /admin
+         /admin/users
+         /admin/staff-visibility
+[PASS] 1c: the gap was real — the pre-fix rule hid items from a super_admin — /admin, /admin/users, /admin/staff-visibility
+[PASS] 3: a super_admin with ZERO Profiles sees EVERY menu item — 21/21 items visible
+[PASS] 3:   super_admin sees /dashboard
+[PASS] 3:   super_admin sees /crm
+[PASS] 3:   super_admin sees /marketplace
+[PASS] 3:   super_admin sees /portfolio
+[PASS] 3:   super_admin sees /portfolio-reporting
+[PASS] 3:   super_admin sees /spvs
+[PASS] 3:   super_admin sees /insurance
+[PASS] 3:   super_admin sees /community
+[PASS] 3:   super_admin sees /notifications
+[PASS] 3:   super_admin sees /admin
+[PASS] 3:   super_admin sees /admin/users
+[PASS] 3:   super_admin sees /admin/staff-visibility
+[PASS] 3:   super_admin sees /admin/profiles
+[PASS] 3:   super_admin sees /admin/permission-sets
+[PASS] 3:   super_admin sees /admin/workflows
+[PASS] 3:   super_admin sees /admin/settings
+[PASS] 3:   super_admin sees /admin/restricted-access
+[PASS] 3:   super_admin sees /admin/trading-authority
+[PASS] 3:   super_admin sees /admin/pricing/note-terms-queue
+[PASS] 3:   super_admin sees /admin/pricing/surface
+[PASS] 3:   super_admin sees /admin/platform
+[PASS] 3: a super_admin with NO granted roles also sees every item
+[PASS] 3: the live shape (super_admin + granted 'admin') sees every item
+[PASS] 3: /admin index and sidebar now agree on the super-admin section list — 11/11 admin sections
+[PASS] 3: a role gate that omits super_admin still admits platform staff — defence in depth against a future gate forgetting the bypass
+[PASS] 3: REGRESSION — plain_member's menu is unchanged — 9 items, identical to the pre-fix rule
+[PASS] 3: REGRESSION — member_with_manage_members's menu is unchanged — 12 items, identical to the pre-fix rule
+[PASS] 3: REGRESSION — org_admin's menu is unchanged — 16 items, identical to the pre-fix rule
+[PASS] 3: REGRESSION — no_roles_yet's menu is unchanged — 12 items, identical to the pre-fix rule
+
+=== TASK 1d + TASK 4 — user creation via /admin/users ===
+[PASS] 1d/4: org_id cannot be supplied in the request body (no such field) — InviteCreateRequest fields = ['email', 'full_name', 'role']
+[PASS] 1d/4: the endpoint sources org_id from the caller's context
+[PASS] 1d/4: the frontend now has a server action that reaches the invite endpoint — lib/inviteActions.js — previously NO route, action, or button existed
+[PASS] 1d/4: /admin/users now has a create path in the UI — an Invite Member button + modal, wired to the action
+[PASS] 1d/4: the frontend never sends org_id in the invite body — body carries email / full_name / role only
+[PASS] 4: a real user can be created via the /admin/users invite path — users.id = 19e9a549-ae1e-42e5-84f7-624b5f768ae5
+[PASS] 4: the created row carries the caller's org_id — org_id = 00000000-0000-0000-0000-000000000001 (caller context = 00000000-0000-0000-0000-000000000001)
+[PASS] 4: the created row is a usable pending invite — invite_status = pending
+[PASS] 4: the invite is attributed to the acting admin
+[PASS] 4: GET /admin/users surfaces the new row's invite status — the list previously hardcoded every row as Active
+[PASS] 4: super_admin is not an invitable role (staff come from the Auth0 tenant) — ALLOWED_INVITE_ROLES = ('member', 'org_admin')
+
+=== TASK 1e — invite email delivery status (honest) ===
+[PASS] 1e: NO email-sending code exists anywhere in the API — no SES / SMTP / SendGrid / Postmark / Resend client in services/ or routers/
+[PASS] 1e: the invite endpoint still carries the unbuilt send hook — Task 3 of multitenant2b was never completed
+[PASS] 1e: creation returns an enrollment_url for manual sharing instead
+[PASS] 1e: the /enroll page the invite link points at does NOT exist yet — an invited member cannot self-enroll — reported, not fixed in this sprint
+       HONEST STATUS: invite email was NEVER completed. The SES credential gate failed (the Textract IAM user has zero SES permissions) and no send call was ever written. User creation today inserts a pending row and returns an enrollment URL the admin must share by hand; there is no notification path at all, and no /enroll page to redeem the link.
+
+=== TASK 5 — project status ===
+[PASS] 5: docs/PROJECT_STATUS.md updated
+[PASS] 5: PROJECT_STATUS records the provisioning root cause
+[PASS] 5: PROJECT_STATUS records the placeholder-email root cause
+[PASS] 5: PROJECT_STATUS records the menu-gating fix
+[PASS] 5: PROJECT_STATUS records cross-org UI remains separate, tracked, not-yet-built
+[PASS] 5: PROJECT_STATUS states the invite-email status honestly
+
+=== TEARDOWN ===
+[PASS] teardown: zero leftover rows — 0 rows remain
+
+==================================================================
+RESULT: 73 passed, 0 failed, 1 blocked
+==================================================================

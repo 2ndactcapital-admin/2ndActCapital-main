@@ -3,6 +3,15 @@
 import { useMemo, useState, useTransition } from "react";
 import { assignRoleAction, searchUsersAction } from "@/lib/adminActions";
 import { setUserProfileAction } from "@/lib/permissionActions";
+import { createInviteAction, revokeInviteAction } from "@/lib/inviteActions";
+
+// The two account roles POST /admin/invites accepts (services.invites
+// ALLOWED_INVITE_ROLES). 'super_admin' is deliberately NOT invitable — platform
+// staff come from the Hollisworks Auth0 tenant, not from an org admin's invite.
+const INVITE_ROLES = [
+  { value: "member", label: "Member" },
+  { value: "org_admin", label: "Organization Admin" },
+];
 
 function roleLabel(name) {
   if (!name) return "—";
@@ -10,6 +19,148 @@ function roleLabel(name) {
     .split("_")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+function statusLabel(inviteStatus) {
+  // invite_status is NULL for an ordinary enrolled account.
+  if (!inviteStatus) return "Active";
+  return roleLabel(inviteStatus);
+}
+
+function InviteModal({ onClose, onInvited }) {
+  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [role, setRole] = useState("member");
+  const [error, setError] = useState(null);
+  const [invite, setInvite] = useState(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit() {
+    const trimmed = email.trim();
+    if (!trimmed || !trimmed.includes("@")) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const res = await createInviteAction({
+        email: trimmed,
+        fullName: fullName.trim() || null,
+        role,
+      });
+      if (!res.ok) {
+        setError(res.error || "Could not create the invitation.");
+        return;
+      }
+      setInvite(res.invite);
+      onInvited(res.invite);
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-navy/30 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border bg-bg-card p-6"
+        style={{ borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-semibold text-navy">Invite a Member</h3>
+
+        {invite ? (
+          <>
+            <p className="mt-3 text-sm text-text-secondary">
+              {invite.email} has been added as a pending member. Email delivery
+              is not yet enabled, so share this enrollment link directly.
+            </p>
+            <div className="mt-3 rounded-md border border-border bg-bg-app p-3">
+              <p className="break-all font-mono text-xs text-text-primary">
+                {invite.enrollment_url}
+              </p>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app transition-opacity hover:opacity-90"
+              >
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-text-muted">
+              Creates a pending account in your organization.
+            </p>
+
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
+              Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+              className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+            />
+
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
+              Full Name
+            </label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Optional"
+              className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+            />
+
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
+              Role
+            </label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+            >
+              {INVITE_ROLES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-text-muted">
+              The member joins your organization. Organization is taken from
+              your own account and cannot be chosen here.
+            </p>
+
+            {error && <p className="mt-2 text-sm text-[#9B2335]">{error}</p>}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={pending}
+                className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {pending ? "Inviting…" : "Send Invitation"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function EditRoleModal({ user, roles, profiles, onClose, onSaved }) {
@@ -145,6 +296,7 @@ export default function UserManagement({
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [editing, setEditing] = useState(null);
+  const [inviting, setInviting] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
@@ -166,6 +318,38 @@ export default function UserManagement({
         role: nextRole || undefined,
       });
       if (res.ok) setUsers(res.users || []);
+    });
+  }
+
+  function onInvited(invite) {
+    // Show the new pending account immediately. The shape matches what
+    // GET /admin/users returns for the same row (invite_status 'pending',
+    // account_role from users.role, no granted user_roles row yet).
+    setUsers((prev) => [
+      {
+        id: invite.id,
+        email: invite.email,
+        full_name: invite.full_name,
+        role: null,
+        role_id: null,
+        profile_id: null,
+        profile_name: null,
+        invite_status: invite.invite_status,
+        account_role: invite.role,
+      },
+      ...prev,
+    ]);
+  }
+
+  function onRevoke(user) {
+    startTransition(async () => {
+      const res = await revokeInviteAction(user.id);
+      if (!res.ok) return;
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === user.id ? { ...u, invite_status: "revoked" } : u,
+        ),
+      );
     });
   }
 
@@ -213,6 +397,13 @@ export default function UserManagement({
           ))}
         </select>
         {pending && <span className="text-xs text-text-muted">Loading…</span>}
+        <button
+          type="button"
+          onClick={() => setInviting(true)}
+          className="ml-auto rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app transition-opacity hover:opacity-90"
+        >
+          Invite Member
+        </button>
       </div>
 
       <div
@@ -258,8 +449,19 @@ export default function UserManagement({
                   <td className="px-4 py-3 text-text-secondary">
                     {u.profile_name || "—"}
                   </td>
-                  <td className="px-4 py-3 text-text-secondary">Active</td>
+                  <td className="px-4 py-3 text-text-secondary">
+                    {statusLabel(u.invite_status)}
+                  </td>
                   <td className="px-4 py-3 text-right">
+                    {u.invite_status === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => onRevoke(u)}
+                        className="mr-4 text-sm font-medium text-[#9B2335] hover:underline"
+                      >
+                        Revoke
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setEditing(u)}
@@ -274,6 +476,13 @@ export default function UserManagement({
           </tbody>
         </table>
       </div>
+
+      {inviting && (
+        <InviteModal
+          onClose={() => setInviting(false)}
+          onInvited={onInvited}
+        />
+      )}
 
       {editing && (
         <EditRoleModal

@@ -15,10 +15,24 @@ returns the **DB-generated** id, which is the value callers must use for FKs.
 
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 
 from services.permissions import get_user_id
 from routers.entities import get_org_id
+
+PLACEHOLDER_EMAIL_SUFFIX = "@placeholder.local"
+
+# Subs whose /userinfo lookup has already been attempted in this process. An
+# Auth0 outage (or a token without the openid scope) must not make every
+# subsequent request retry the call — one attempt per sub per process is enough
+# to back-fill, and a restart retries.
+_userinfo_attempted: set[str] = set()
+
+
+def placeholder_email(sub: str) -> str:
+    """The synthetic address ``ensure_user`` falls back to when no real one is known."""
+    return f"{sub}{PLACEHOLDER_EMAIL_SUFFIX}"
 
 
 def _claims(request: Request) -> dict:
@@ -31,6 +45,70 @@ def _as_uuid(value) -> str | None:
         return str(UUID(str(value)))
     except (ValueError, TypeError):
         return None
+
+
+def _bearer_token(request: Request) -> str | None:
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    return token if scheme.lower() == "bearer" and token else None
+
+
+async def fetch_auth0_identity(request: Request, claims: dict) -> tuple[str | None, str | None]:
+    """Return ``(email, full_name)`` from the issuing tenant's ``/userinfo``.
+
+    WHY THIS EXISTS. ``ensure_user`` reads ``claims.get("email")`` off the
+    **access token**, but an Auth0 access token minted for a custom API audience
+    carries only ``sub``/``iss``/``aud``/``azp``/``scope`` — ``email`` and
+    ``name`` live in the **ID token**, which the API never sees. So the email
+    claim was ALWAYS absent and every row a real login created got the
+    ``{sub}@placeholder.local`` fallback. The live database proves it: the one
+    row created by a real Auth0 login holds
+    ``auth0|6a3af4c9a1c6aeb8baddf3eb@placeholder.local``. A row does exist, but
+    it is unfindable by the person's actual address and renders as noise in
+    /admin/users.
+
+    ``/userinfo`` is the trustworthy fix — it returns the verified profile for
+    exactly the sub the presented access token was issued to, needs no Auth0
+    dashboard change (the ``openid profile email`` scope is already requested),
+    and cannot be spoofed by the caller the way a client-supplied header could.
+
+    The URL is derived from the token's **validated** ``iss`` claim, and only
+    after checking it against the issuers this API is configured to accept — a
+    claim is never used to choose an outbound host on its own.
+
+    Best-effort by contract: any failure returns ``(None, None)`` and the caller
+    keeps the placeholder. Identity resolution must never break a read path.
+    """
+    token = _bearer_token(request)
+    issuer = claims.get("iss")
+    if not token or not issuer:
+        return None, None
+
+    from main import get_settings
+
+    settings = get_settings()
+    allowed = {settings.issuer}
+    if settings.hollisworks_enabled:
+        allowed.add(settings.hollisworks_issuer)
+    if issuer not in allowed:
+        return None, None
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                f"{issuer.rstrip('/')}/userinfo",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        response.raise_for_status()
+        profile = response.json()
+    except Exception as exc:
+        print(f"[users] /userinfo lookup failed for sub={claims.get('sub')!r}: {exc}")
+        return None, None
+
+    email = (profile.get("email") or "").strip() or None
+    full_name = (
+        profile.get("name") or profile.get("nickname") or email or None
+    )
+    return email, full_name
 
 
 async def ensure_user(conn, request: Request) -> str:
@@ -67,7 +145,7 @@ async def ensure_user(conn, request: Request) -> str:
     try:
         # 1. Canonical lookup by auth0_sub.
         by_sub = await conn.fetchrow(
-            "SELECT id, role FROM users WHERE auth0_sub = $1", sub
+            "SELECT id, role, email FROM users WHERE auth0_sub = $1", sub
         )
         if by_sub:
             # Promote an existing Hollisworks staff row if it predates this
@@ -77,6 +155,24 @@ async def ensure_user(conn, request: Request) -> str:
                     "UPDATE users SET role = 'super_admin' WHERE id = $1",
                     by_sub["id"],
                 )
+            # Back-fill a row still carrying the synthetic address. Rows created
+            # before this fix ALL hold `{sub}@placeholder.local`, because the
+            # access token never carried an email claim (see
+            # `fetch_auth0_identity`). One attempt per sub per process.
+            if by_sub["email"] == placeholder_email(sub) and sub not in _userinfo_attempted:
+                _userinfo_attempted.add(sub)
+                real_email, real_name = await fetch_auth0_identity(request, claims)
+                if real_email:
+                    await conn.execute(
+                        """
+                        UPDATE users
+                        SET email = $2,
+                            full_name = COALESCE($3, full_name),
+                            updated_at = now()
+                        WHERE id = $1
+                        """,
+                        by_sub["id"], real_email, real_name,
+                    )
             return str(by_sub["id"])
 
         # 2. Verify scripts stub sub = a seeded user's UUID id.
@@ -89,18 +185,22 @@ async def ensure_user(conn, request: Request) -> str:
                 return str(by_id["id"])
 
         # 3. Create the user; the DB generates the v4 id.
-        # Some Auth0 strategies (e.g. social login without verified email) omit
-        # the email claim. users.email is NOT NULL, so use a deterministic
-        # placeholder so the insert never violates the constraint. The real email
-        # should be back-filled via the Auth0 management API or a profile-complete
-        # flow once the user verifies their address.
-        email = claims.get("email") or f"{sub}@placeholder.local"
-        full_name = (
-            claims.get("name")
-            or claims.get("nickname")
-            or claims.get("email")
-            or "Member"
-        )
+        # An Auth0 access token minted for a custom API audience carries NO
+        # email/name claims — they live in the ID token, which this API never
+        # sees — so these lookups essentially always miss. Ask the issuing
+        # tenant's /userinfo for the real profile before falling back.
+        email = claims.get("email")
+        full_name = claims.get("name") or claims.get("nickname")
+        if not email and sub not in _userinfo_attempted:
+            _userinfo_attempted.add(sub)
+            email, resolved_name = await fetch_auth0_identity(request, claims)
+            full_name = full_name or resolved_name
+
+        # users.email is NOT NULL, so a deterministic placeholder keeps the
+        # insert legal when /userinfo is unavailable. The back-fill on the
+        # by_sub path above repairs such a row on a later request.
+        email = email or placeholder_email(sub)
+        full_name = full_name or claims.get("email") or "Member"
         inserted = await conn.fetchrow(
             """
             INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)

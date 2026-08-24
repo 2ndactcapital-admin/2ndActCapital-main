@@ -6,6 +6,11 @@ import { IconAddressBook } from "@tabler/icons-react";
 import BrandNavIcon from "./BrandNavIcon";
 import { useBrand } from "@/components/ThemeProvider";
 import { usePermissions } from "@/lib/usePermissions";
+import {
+  GATE_ORG_OR_SUPER_ADMIN,
+  GATE_SUPER_ADMIN,
+  canAccess,
+} from "@/lib/menuVisibility";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
@@ -163,7 +168,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const brand = useBrand();
   // navPinned comes from /api/users/me (cached by usePermissions).
-  const { can, navPinned, accountRole: role } = usePermissions();
+  const { can, navPinned, me } = usePermissions();
   const mouseLeaveTimer = useRef(null);
   // Track whether the account value has been applied so we only sync once.
   const accountSynced = useRef(false);
@@ -341,7 +346,7 @@ export default function Sidebar() {
             </>
           )}
 
-          {(role === "org_admin" || role === "super_admin") && (
+          {canAccess(me, GATE_ORG_OR_SUPER_ADMIN) && (
             <>
               <NavLink
                 item={PROFILES_ITEM}
@@ -365,7 +370,7 @@ export default function Sidebar() {
               />
             </>
           )}
-          {role === "super_admin" && (
+          {canAccess(me, GATE_SUPER_ADMIN) && (
             <>
               <NavLink
                 item={RESTRICTED_ACCESS_ITEM}

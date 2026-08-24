@@ -36,6 +36,19 @@ services:
         sync: false
       - key: AUTH0_AUDIENCE
         sync: false
+      # SECOND Auth0 tenant — Hollisworks platform staff (admin.hollisworks.com).
+      # REQUIRED, not optional: main.Settings.hollisworks_auth0_domain defaults to
+      # "", which makes hollisworks_enabled False and skips the Hollisworks leg of
+      # verify_token entirely. Every request from a valid admin.hollisworks.com
+      # session then 401s, so ensure_user never runs and platform staff get no
+      # users row at all. Must match the frontend's HOLLISWORKS_AUTH0_* values
+      # (apps/web/lib/authHostConfig.mjs) exactly.
+      - key: HOLLISWORKS_AUTH0_DOMAIN
+        sync: false
+      # Optional override; the code already defaults to https://api.hollisworks.com.
+      # Declared here so the pair is visible in one place.
+      - key: HOLLISWORKS_AUTH0_AUDIENCE
+        sync: false
       # Comma-separated list of allowed CORS origins, e.g.
       # https://2ndactcapital.com,https://2ndactcapital-web.onrender.com
       - key: ALLOWED_ORIGINS

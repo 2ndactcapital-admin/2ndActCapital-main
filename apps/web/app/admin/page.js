@@ -2,92 +2,35 @@ import { redirect } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getMe } from "@/lib/api";
+import { visibleAdminSections } from "@/lib/menuVisibility";
 
 export const metadata = {
   title: "Admin — 2nd Act Capital",
 };
 
-// The admin sections, each gated by the SAME real checks the sidebar uses:
-//   * `perm`  — an effective permission key (services/profiles user_has_permission
-//               → surfaced in /users/me `permissions`). Single-admin safety:
-//               when the user has no roles assigned yet, permission gates
-//               default-allow, mirroring the backend + usePermissions().
-//   * `roles` — the raw account role (users.role), for the Sprint 24+ gates that
-//               key off org_admin / super_admin directly.
-// This is deliberately NOT a new gating system — it reads the exact same
-// /users/me payload the client sidebar consumes.
-const SECTIONS = [
-  {
-    href: "/admin/users",
-    label: "User Management",
-    desc: "Manage member access and roles.",
-    perm: "manage_members",
-  },
-  {
-    href: "/admin/staff-visibility",
-    label: "Staff Visibility",
-    desc: "Staff teams and per-entity assignments.",
-    perm: "manage_members",
-  },
-  {
-    href: "/admin/profiles",
-    label: "Profiles",
-    desc: "Permission profiles for members.",
-    roles: ["org_admin", "super_admin"],
-  },
-  {
-    href: "/admin/permission-sets",
-    label: "Permission Sets",
-    desc: "Reusable bundles of permissions.",
-    roles: ["org_admin", "super_admin"],
-  },
-  {
-    href: "/admin/workflows",
-    label: "Workflows",
-    desc: "Governance and approval workflows.",
-    roles: ["org_admin", "super_admin"],
-  },
-  {
-    href: "/admin/settings",
-    label: "Organization",
-    desc: "White-label and organization settings.",
-    roles: ["org_admin", "super_admin"],
-  },
-  {
-    href: "/admin/restricted-access",
-    label: "Restricted Access",
-    desc: "Restrict accounts and manage allow-lists.",
-    roles: ["super_admin"],
-  },
-  {
-    href: "/admin/trading-authority",
-    label: "Trading Authority",
-    desc: "Per-entity trading-authority tiers.",
-    roles: ["super_admin"],
-  },
-  {
-    href: "/admin/platform",
-    label: "Platform",
-    desc: "Platform-wide settings across all orgs.",
-    roles: ["super_admin"],
-  },
-];
-
-function visibleSections(me) {
-  const permissions = me?.permissions || [];
-  const roles = me?.roles || [];
-  const accountRole = me?.account_role || null;
-  // No roles assigned yet → default-allow permission gates (matches backend +
-  // usePermissions()). Role gates still require the actual account role.
-  const noRolesYet = roles.length === 0;
-  const can = (perm) => noRolesYet || permissions.includes(perm);
-
-  return SECTIONS.filter((s) => {
-    if (s.perm && !can(s.perm)) return false;
-    if (s.roles && !s.roles.includes(accountRole)) return false;
-    return true;
-  });
-}
+// The admin sections and their gates now live in the SINGLE pure module
+// lib/menuVisibility.mjs, which the sidebar uses too. Previously this page kept
+// its own independent copy of both the section list and the gate logic, and the
+// two drifted: Note Terms Review and Volatility Surface were in the sidebar's
+// super-admin block but missing here, so the /admin index showed a strictly
+// smaller menu than the sidebar it claims to mirror. Neither copy had a Super
+// Admin bypass. Both problems are fixed at the source now.
+//
+// The descriptions stay here — presentation copy specific to this landing page.
+const SECTION_DESCRIPTIONS = {
+  "/admin/users": "Manage member access and roles.",
+  "/admin/staff-visibility": "Staff teams and per-entity assignments.",
+  "/admin/profiles": "Permission profiles for members.",
+  "/admin/permission-sets": "Reusable bundles of permissions.",
+  "/admin/workflows": "Governance and approval workflows.",
+  "/admin/settings": "White-label and organization settings.",
+  "/admin/restricted-access": "Restrict accounts and manage allow-lists.",
+  "/admin/trading-authority": "Per-entity trading-authority tiers.",
+  "/admin/pricing/note-terms-queue":
+    "Structured-note terms review queue and STP policy.",
+  "/admin/pricing/surface": "SSVI volatility surface viewer.",
+  "/admin/platform": "Platform-wide settings across all orgs.",
+};
 
 export default async function AdminIndexPage() {
   const session = await getHostSession();
@@ -100,7 +43,7 @@ export default async function AdminIndexPage() {
     // If /users/me fails we render an empty state rather than crashing.
   }
 
-  const sections = visibleSections(me);
+  const sections = visibleAdminSections(me);
 
   return (
     <AppShell user={session.user}>
@@ -125,7 +68,9 @@ export default async function AdminIndexPage() {
               style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
             >
               <div className="text-base font-semibold text-navy">{s.label}</div>
-              <p className="mt-1 text-sm text-text-muted">{s.desc}</p>
+              <p className="mt-1 text-sm text-text-muted">
+                {SECTION_DESCRIPTIONS[s.href]}
+              </p>
             </a>
           ))}
         </div>

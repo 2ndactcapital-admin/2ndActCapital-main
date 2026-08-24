@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { canPerm } from "@/lib/menuVisibility";
 
 // Module-level cache so the profile is fetched once per page load and shared
 // across every component that gates on permissions.
@@ -56,19 +57,24 @@ export function usePermissions() {
 
   const permissions = me?.permissions || [];
   const roles = me?.roles || [];
-  const noRolesYet = roles.length === 0;
+  const accountRole = me?.account_role || null;
 
+  // Delegates to the single, pure rule in lib/menuVisibility.mjs — which checks
+  // Super Admin FIRST, then the "no roles yet → default-allow" posture, then the
+  // granted permission set. See that module for why the missing super-admin
+  // bypass was a real (not theoretical) lockout.
   function can(permission) {
-    // No roles assigned yet → default allow (matches backend posture).
-    if (noRolesYet) return true;
-    return permissions.includes(permission);
+    return canPerm(me, permission);
   }
 
   return {
     loading,
+    // The raw /users/me payload — pass it to lib/menuVisibility's canAccess()
+    // so role gates use the same rule (super-admin-first) as permission gates.
+    me,
     role: me?.role || null,
     // Raw users.role — what the Sprint 24 admin gates check.
-    accountRole: me?.account_role || null,
+    accountRole,
     roles,
     permissions,
     can,

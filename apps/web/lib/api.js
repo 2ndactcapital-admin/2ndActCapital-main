@@ -294,6 +294,21 @@ export const assignUserRole = (userId, roleId) =>
     body: { role_id: roleId },
   });
 
+// --- Admin: invites (Multi-tenant Sprint 2 backend, wired to the UI here) ---
+// POST /admin/invites is what actually creates the users row. NOTE the body:
+// email / full_name / role ONLY. `org_id` is deliberately absent — the backend
+// takes it from the caller's own request context via get_org_id(), never from
+// the body (standing multi-tenant rule). Adding it here would be the bug.
+export const createInvite = ({ email, fullName, role }) =>
+  fetchAPI("/api/v1/admin/invites", {
+    method: "POST",
+    body: { email, full_name: fullName || null, role: role || "member" },
+  });
+export const getInvites = (status) =>
+  fetchAPI("/api/v1/admin/invites", { searchParams: { status } });
+export const revokeInvite = (inviteId) =>
+  fetchAPI(`/api/v1/admin/invites/${inviteId}/revoke`, { method: "POST" });
+
 // --- Admin: staff teams + entity assignments (SOC Phase 2) ---
 // These populate the data the staff-visibility resolver reads. They do NOT
 // change any existing endpoint's visibility behavior.

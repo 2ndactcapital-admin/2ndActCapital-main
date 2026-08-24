@@ -35,6 +35,14 @@ class AdminUser(BaseModel):
     # profile selector alongside the untouched role dropdown.
     profile_id: UUID | None = None
     profile_name: str | None = None
+    # Multi-tenant Sprint 2 added invite columns to `users`, but this list never
+    # selected them, so an invited (pending) account was indistinguishable from
+    # an enrolled one — the screen hardcoded every row as "Active". Surfacing it
+    # is what makes the invite flow legible on the screen that creates it.
+    invite_status: str | None = None
+    # users.role — the ACCOUNT role ('member' / 'org_admin' / 'super_admin'),
+    # distinct from the granted `role` above (which comes from user_roles).
+    account_role: str | None = None
 
 
 class RoleAssignRequest(BaseModel):
@@ -91,7 +99,8 @@ async def list_users(
             f"""
             SELECT u.id, u.email, u.full_name, u.created_at,
                    r.id AS role_id, r.name AS role,
-                   u.profile_id, p.name AS profile_name
+                   u.profile_id, p.name AS profile_name,
+                   u.invite_status, u.role AS account_role
             FROM users u
             LEFT JOIN user_roles ur ON ur.user_id = u.id
             LEFT JOIN roles r ON r.id = ur.role_id
@@ -112,6 +121,8 @@ async def list_users(
             created_at=str(r["created_at"]) if r["created_at"] else None,
             profile_id=r["profile_id"],
             profile_name=r["profile_name"],
+            invite_status=r["invite_status"],
+            account_role=r["account_role"],
         )
         for r in rows
     ]
