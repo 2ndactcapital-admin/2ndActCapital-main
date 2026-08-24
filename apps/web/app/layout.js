@@ -5,9 +5,9 @@ import {
   brandName,
   faviconUrl,
   fontHref,
-  loadTheme,
   themeToCssVars,
 } from "@/lib/theme";
+import { loadTheme } from "@/lib/themeServer";
 
 // Sprint 24: title, icons and the entire palette come from the tenant's
 // org_settings. Nothing here is hardcoded to a particular client.

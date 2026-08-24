@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import DocumentSearch from "@/components/admin/DocumentSearch";
 
@@ -8,7 +8,7 @@ import DocumentSearch from "@/components/admin/DocumentSearch";
 // metadata + extracted-text substring matching only — NOT semantic/vector search
 // (that is Phase 11). Auth + org-scoping are enforced server-side by FastAPI.
 export default async function DocumentSearchPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/document-search");
   }

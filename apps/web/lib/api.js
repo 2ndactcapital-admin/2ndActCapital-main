@@ -1,4 +1,4 @@
-import { auth0 } from "@/lib/auth0";
+import { getRequestAuthClient } from "@/lib/authServer";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -6,9 +6,17 @@ const API_BASE =
 // Resolve the user's Auth0 access token for the API audience. Returns an empty
 // header object if no token is available so callers can render an error/empty
 // state instead of crashing.
+//
+// HOST-AWARE: the client is picked from the request's own Host, so a session
+// held in the Hollisworks tenant (admin.hollisworks.com) yields a token for the
+// Hollisworks API audience instead of silently producing none. Resolving the
+// client OUTSIDE the try keeps a Hollisworks misconfiguration fail-loud rather
+// than degrading to an unauthenticated request. Every other host resolves to
+// the existing 2nd Act client, unchanged.
 async function authHeaders() {
+  const authClient = await getRequestAuthClient();
   try {
-    const result = await auth0.getAccessToken();
+    const result = await authClient.getAccessToken();
     const token = result?.token || result?.accessToken;
     if (token) return { Authorization: `Bearer ${token}` };
   } catch {

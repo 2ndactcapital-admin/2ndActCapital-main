@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import VDRProposalsManager from "@/components/admin/VDRProposalsManager";
 
@@ -14,7 +14,7 @@ import VDRProposalsManager from "@/components/admin/VDRProposalsManager";
 // creates a REAL deal via the same createDeal core the marketplace uses and
 // links every document in the drop; NO deal is ever auto-created.
 export default async function VDRProposalsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/vdr-proposals");
   }

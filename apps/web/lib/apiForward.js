@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth0 } from "@/lib/auth0";
+import { getRequestAuthClient } from "@/lib/authServer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -11,9 +11,14 @@ export async function forwardToApi(
   path,
   { method = "GET", body, searchParams } = {},
 ) {
+  // HOST-AWARE: read the session/token with the client belonging to THIS
+  // request's tenant. admin.hollisworks.com → the Hollisworks tenant; every
+  // other host → the existing 2nd Act client, unchanged.
+  const authClient = await getRequestAuthClient();
+
   let session;
   try {
-    session = await auth0.getSession();
+    session = await authClient.getSession();
   } catch {
     // ignore
   }
@@ -23,7 +28,7 @@ export async function forwardToApi(
 
   let token;
   try {
-    const result = await auth0.getAccessToken();
+    const result = await authClient.getAccessToken();
     token = result?.token || result?.accessToken;
   } catch (error) {
     console.error("[apiForward] getAccessToken failed:", error?.message || error);

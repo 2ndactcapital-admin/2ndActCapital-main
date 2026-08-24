@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import WorkflowDiagramEditor from "@/components/admin/WorkflowDiagramEditor";
 import { getWorkflow } from "@/lib/api";
@@ -11,7 +11,7 @@ import { getWorkflow } from "@/lib/api";
 // org) or Super Admin, enforced server-side; a 403 surfaces as "forbidden".
 export default async function WorkflowEditorPage({ params }) {
   const { id } = await params;
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/admin/workflows/${id}/edit`);
   }

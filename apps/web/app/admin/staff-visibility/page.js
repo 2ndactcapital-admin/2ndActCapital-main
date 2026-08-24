@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import StaffVisibilityManager from "@/components/admin/StaffVisibilityManager";
 import {
@@ -13,7 +13,7 @@ import {
 // team to an entity. This only POPULATES the assignment data the staff-
 // visibility resolver reads — it does NOT change any endpoint's visibility.
 export default async function StaffVisibilityPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/staff-visibility");
   }

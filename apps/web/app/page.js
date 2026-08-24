@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
-import { brandName, loadTheme } from "@/lib/theme";
+import { getHostSession } from "@/lib/authServer";
+import { brandName } from "@/lib/theme";
+import { loadTheme } from "@/lib/themeServer";
 import { resolveTenant } from "@/lib/tenant";
 import HollisworksMarketing from "@/components/HollisworksMarketing";
 
@@ -42,7 +43,7 @@ export default async function MarketingPage() {
     return <HollisworksMarketing />;
   }
 
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (session) redirect("/dashboard");
 
   // Unauthenticated landing page — branding comes from the public theme

@@ -1,20 +1,23 @@
 import { NextResponse } from "next/server";
-import { auth0 } from "@/lib/auth0";
+import { getRequestAuthClient } from "@/lib/authServer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // Forward the raw query string to preserve repeated entity_type params.
 // forwardToApi uses searchParams.set() which collapses duplicate keys.
 export async function GET(request) {
+  // Host-aware Auth0 client: admin.hollisworks.com resolves to the Hollisworks
+  // tenant, every other host to the existing 2nd Act client, unchanged.
+  const authClient = await getRequestAuthClient();
   let session;
   try {
-    session = await auth0.getSession();
+    session = await authClient.getSession();
   } catch {}
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let token;
   try {
-    const result = await auth0.getAccessToken();
+    const result = await authClient.getAccessToken();
     token = result?.token || result?.accessToken;
   } catch {}
   if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });

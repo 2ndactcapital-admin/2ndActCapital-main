@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getMe } from "@/lib/api";
 
@@ -90,7 +90,7 @@ function visibleSections(me) {
 }
 
 export default async function AdminIndexPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) redirect("/auth/login?returnTo=/admin");
 
   let me = null;

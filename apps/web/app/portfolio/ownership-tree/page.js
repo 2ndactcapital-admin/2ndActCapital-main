@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import EntityGraphNavigator from "@/components/graph/EntityGraphNavigator";
 
@@ -9,7 +9,7 @@ import EntityGraphNavigator from "@/components/graph/EntityGraphNavigator";
 // beneficiary look-through) + restricted-access filter. A member only ever
 // sees their own tree — the route takes no focal from the client.
 export default async function MemberOwnershipTreePage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/portfolio/ownership-tree`);
   }

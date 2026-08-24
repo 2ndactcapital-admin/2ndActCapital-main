@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import { getNotifications } from "@/lib/api";
 
 export default async function NotificationsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/notifications");
   }

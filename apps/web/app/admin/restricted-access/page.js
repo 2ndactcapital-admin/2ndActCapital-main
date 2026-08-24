@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import RestrictedAccessManager from "@/components/admin/RestrictedAccessManager";
 import {
@@ -13,7 +13,7 @@ import {
 // unified filter_restricted reads — it does NOT change any endpoint's
 // visibility enforcement.
 export default async function RestrictedAccessPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/restricted-access");
   }

@@ -1,7 +1,3 @@
-import { fetchAPI } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 /**
  * Sprint 24 — white-label theme.
  *
@@ -97,38 +93,20 @@ export function fontHref(settings = {}) {
   return `https://fonts.googleapis.com/css2?${families.join("&")}&display=swap`;
 }
 
-const EMPTY_THEME = { org_id: null, org_name: null, org_slug: null, settings: {} };
+export const EMPTY_THEME = {
+  org_id: null,
+  org_name: null,
+  org_slug: null,
+  settings: {},
+};
 
-/**
- * Server-side theme load for the root layout.
- *
- * Tries the authenticated endpoint first (the caller's own org), then falls
- * back to the public one so the login screen is still branded. Never throws —
- * an unreachable API yields an unstyled-but-working shell rather than a 500.
- */
-export async function loadTheme() {
-  try {
-    // cache: "no-store" is required here: this call carries the caller's role,
-    // and a cached response served a pre-promotion role to /admin/platform (a
-    // freshly-promoted super_admin saw the restricted view). Kept explicit so
-    // it survives independent of fetchAPI's default — matching the public
-    // fallback fetch below.
-    return await fetchAPI("/api/v1/theme", { cache: "no-store" });
-  } catch {
-    // Not signed in, or the API is unreachable — fall through to public.
-  }
-
-  try {
-    const res = await fetch(`${API_BASE}/api/v1/theme/public`, {
-      cache: "no-store",
-    });
-    if (res.ok) return await res.json();
-  } catch {
-    // API down.
-  }
-
-  return EMPTY_THEME;
-}
+// `loadTheme` lives in `lib/themeServer.js`, NOT here. This module is reachable
+// from client components (ThemeProvider -> Sidebar -> AppShell), and a static
+// import of `lib/api.js` from here dragged the whole server-only auth chain
+// into the client graph. It happened to build while api.js only pulled in the
+// Auth0 SDK; the moment api.js became host-aware (`next/headers`) Turbopack
+// rejected it outright. Keeping the server-only loader in its own module makes
+// that boundary explicit instead of latent.
 
 /** Convenience readers so callers never index the settings map by hand. */
 export function brandName(settings = {}) {

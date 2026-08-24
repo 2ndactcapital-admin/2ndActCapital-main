@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth0 } from "@/lib/auth0";
+import { getRequestAuthClient } from "@/lib/authServer";
 import { forwardToApi } from "@/lib/apiForward";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -13,11 +13,14 @@ export async function GET(request, { params }) {
 }
 
 export async function POST(request, { params }) {
+  // Host-aware Auth0 client: admin.hollisworks.com resolves to the Hollisworks
+  // tenant, every other host to the existing 2nd Act client, unchanged.
+  const authClient = await getRequestAuthClient();
   const { id } = await params;
 
   let token;
   try {
-    const result = await auth0.getAccessToken();
+    const result = await authClient.getAccessToken();
     token = result?.token || result?.accessToken;
   } catch {}
   if (!token) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });

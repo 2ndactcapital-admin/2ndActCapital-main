@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import SurfaceCalibrator from "@/components/admin/SurfaceCalibrator";
 
@@ -15,7 +15,7 @@ import SurfaceCalibrator from "@/components/admin/SurfaceCalibrator";
 //
 // `.js`, not `.tsx`: apps/web has no TypeScript anywhere.
 export default async function SurfacePage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/pricing/surface");
   }

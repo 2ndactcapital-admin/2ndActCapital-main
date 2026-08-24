@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getWorkflowVersions } from "@/lib/api";
 import { formatDateTime, personLabel } from "@/lib/workflowFormat";
@@ -10,7 +10,7 @@ import { formatDateTime, personLabel } from "@/lib/workflowFormat";
 // diff rendering this phase). Org Admin (own org) or Super Admin.
 export default async function WorkflowVersionsPage({ params }) {
   const { id } = await params;
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/admin/workflows/${id}/versions`);
   }

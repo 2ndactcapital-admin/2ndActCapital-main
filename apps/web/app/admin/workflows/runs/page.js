@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getWorkflowRuns } from "@/lib/api";
 import { formatDateTime, statusPillClass, personLabel } from "@/lib/workflowFormat";
@@ -10,7 +10,7 @@ import { formatDateTime, statusPillClass, personLabel } from "@/lib/workflowForm
 // links into the per-run step detail. Read-only; Org Admin (own org) or Super
 // Admin, enforced server-side by the FastAPI gate.
 export default async function WorkflowRunsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/workflows/runs");
   }

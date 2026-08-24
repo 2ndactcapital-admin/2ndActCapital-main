@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import DocumentReviewManager from "@/components/admin/DocumentReviewManager";
 import { getDocumentReview } from "@/lib/api";
@@ -11,7 +11,7 @@ import { getDocumentReview } from "@/lib/api";
 // enforced server-side by FastAPI (org_id travels in the JWT).
 export default async function DocumentReviewPage({ params }) {
   const { documentId } = await params;
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/admin/document-review/${documentId}`);
   }

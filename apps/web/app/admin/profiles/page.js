@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import ProfilesManager from "@/components/admin/ProfilesManager";
 import { getActionPermissions, getProfiles } from "@/lib/api";
@@ -9,7 +9,7 @@ import { getActionPermissions, getProfiles } from "@/lib/api";
 // org) or Super Admin, enforced server-side. Profiles are the additive
 // permission layer read by services.profiles — this does NOT change roles.
 export default async function AdminProfilesPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/profiles");
   }

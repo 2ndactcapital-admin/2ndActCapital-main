@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import EntityTable from "@/components/crm/EntityTable";
 import { fetchAPI } from "@/lib/api";
 import { FILTER_TABS, STATUS_FILTERS } from "@/lib/entityTypes";
 
 export default async function CrmPage({ searchParams }) {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/crm");
   }

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import PermissionSetsManager from "@/components/admin/PermissionSetsManager";
 import { getActionPermissions, getAdminUsers, getPermissionSets } from "@/lib/api";
@@ -8,7 +8,7 @@ import { getActionPermissions, getAdminUsers, getPermissionSets } from "@/lib/ap
 // and assign them to specific members on top of their profile. Org Admin (own
 // org) or Super Admin, enforced server-side. Does NOT change roles.
 export default async function AdminPermissionSetsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/permission-sets");
   }

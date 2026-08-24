@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth0 } from "@/lib/auth0";
+import { getRequestAuthClient } from "@/lib/authServer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -19,9 +19,12 @@ export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 export async function POST(request) {
+  // Host-aware Auth0 client: admin.hollisworks.com resolves to the Hollisworks
+  // tenant, every other host to the existing 2nd Act client, unchanged.
+  const authClient = await getRequestAuthClient();
   let session;
   try {
-    session = await auth0.getSession();
+    session = await authClient.getSession();
   } catch {
     // treated as unauthenticated below
   }
@@ -34,7 +37,7 @@ export async function POST(request) {
 
   let token;
   try {
-    const result = await auth0.getAccessToken();
+    const result = await authClient.getAccessToken();
     token = result?.token || result?.accessToken;
   } catch (error) {
     console.error("[surface] getAccessToken failed:", error?.message || error);

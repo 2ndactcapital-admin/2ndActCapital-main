@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import TradingAuthorityManager from "@/components/admin/TradingAuthorityManager";
 import {
@@ -13,7 +13,7 @@ import {
 // data the maker-checker + tier enforcement engine reads — it does not itself
 // change any money-movement endpoint's behavior.
 export default async function TradingAuthorityPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/trading-authority");
   }

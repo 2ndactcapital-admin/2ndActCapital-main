@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getWorkflowRun } from "@/lib/api";
 import { formatDateTime, statusPillClass, personLabel } from "@/lib/workflowFormat";
@@ -9,7 +9,7 @@ import { formatDateTime, statusPillClass, personLabel } from "@/lib/workflowForm
 // each run-step's status / result / error_detail. Read-only.
 export default async function WorkflowRunDetailPage({ params }) {
   const { runId } = await params;
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/admin/workflows/runs/${runId}`);
   }

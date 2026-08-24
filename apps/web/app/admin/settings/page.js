@@ -2,8 +2,8 @@ import { redirect } from "next/navigation";
 
 import AppShell from "@/components/AppShell";
 import OrgSettingsEditor from "@/components/admin/OrgSettingsEditor";
-import { auth0 } from "@/lib/auth0";
-import { loadTheme } from "@/lib/theme";
+import { getHostSession } from "@/lib/authServer";
+import { loadTheme } from "@/lib/themeServer";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 // org switcher here, and the org_id comes from the session-resolved theme
 // payload, never from the URL or a request body.
 export default async function OrgSettingsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/settings");
   }

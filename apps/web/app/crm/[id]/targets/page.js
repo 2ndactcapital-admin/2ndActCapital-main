@@ -1,5 +1,5 @@
 import { redirect, notFound } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import EntityTypeBadge from "@/components/EntityTypeBadge";
 import TargetEditor from "@/components/crm/TargetEditor";
@@ -21,7 +21,7 @@ export default async function EntityTargetsPage({ params, searchParams }) {
   const { id } = await params;
   const { tab = "targets" } = await searchParams;
 
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/crm/${id}/targets`);
   }

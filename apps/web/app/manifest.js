@@ -1,4 +1,5 @@
-import { brandName, brandShortName, loadTheme, logoUrl } from "@/lib/theme";
+import { brandName, brandShortName, logoUrl } from "@/lib/theme";
+import { loadTheme } from "@/lib/themeServer";
 
 // Sprint 24: the PWA manifest is generated per tenant. Replaces the static
 // public/manifest.json, which hardcoded one client's name and palette.

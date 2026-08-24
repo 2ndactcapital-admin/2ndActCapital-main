@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import ProfileClient from "@/components/investment-profile/ProfileClient";
 import { fetchAPI } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 
 export default async function InvestmentProfilePage({ searchParams }) {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/investment-profile");
   }

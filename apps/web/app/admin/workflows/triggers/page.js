@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getWorkflowTriggers, getWorkflows } from "@/lib/api";
 import WorkflowTriggerScheduler from "@/components/admin/WorkflowTriggerScheduler";
@@ -11,7 +11,7 @@ import WorkflowTriggerScheduler from "@/components/admin/WorkflowTriggerSchedule
 // actually fires. Configuring a trigger only automates WHICH runs auto-start;
 // every started run still honours each step's autonomy tier.
 export default async function WorkflowTriggersPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/workflows/triggers");
   }

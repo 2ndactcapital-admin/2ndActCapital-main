@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { listSPVs } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
@@ -47,7 +47,7 @@ function ProgressBar({ committed, target }) {
 }
 
 export default async function SPVListPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) redirect("/auth/login?returnTo=/spvs");
 
   const staff = isStaff(session.user);

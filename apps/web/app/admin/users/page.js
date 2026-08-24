@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import UserManagement from "@/components/admin/UserManagement";
 import { getAdminUsers, getAdminRoles, getProfiles } from "@/lib/api";
 
 export default async function AdminUsersPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/users");
   }

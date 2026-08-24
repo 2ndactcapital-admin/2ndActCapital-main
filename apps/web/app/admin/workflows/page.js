@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import WorkflowLibraryManager from "@/components/admin/WorkflowLibraryManager";
 import { getWorkflows } from "@/lib/api";
@@ -11,7 +11,7 @@ import { getWorkflows } from "@/lib/api";
 // to the diagram editor. Org Admin (own org) or Super Admin, enforced
 // server-side by the FastAPI gate; a 403 surfaces as the "forbidden" panel.
 export default async function AdminWorkflowsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/workflows");
   }

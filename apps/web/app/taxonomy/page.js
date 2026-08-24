@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import TaxonomyBrowser from "@/components/TaxonomyBrowser";
 import { getTaxonomy } from "@/lib/api";
-import { brandName, loadTheme } from "@/lib/theme";
+import { brandName } from "@/lib/theme";
+import { loadTheme } from "@/lib/themeServer";
 
 export async function generateMetadata() {
   const theme = await loadTheme();
@@ -12,7 +13,7 @@ export async function generateMetadata() {
 }
 
 export default async function TaxonomyPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/taxonomy");
   }

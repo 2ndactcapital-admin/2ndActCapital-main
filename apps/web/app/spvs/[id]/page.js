@@ -1,5 +1,5 @@
 import { redirect, notFound } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getSPV, getSPVCapTable, listSPVDocuments, getSPVHistory } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
@@ -65,7 +65,7 @@ export default async function SPVDetailPage({ params, searchParams }) {
   const sp = (await searchParams) || {};
   const tab = typeof sp.tab === "string" ? sp.tab : "overview";
 
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) redirect(`/auth/login?returnTo=/spvs/${id}`);
 
   const staff = isStaff(session.user);

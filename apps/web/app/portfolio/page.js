@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import StageBar from "@/components/marketplace/StageBar";
 import StatusBadge from "@/components/marketplace/StatusBadge";
@@ -17,7 +17,7 @@ const TABS = [
 const LENS_LINK = { href: "/portfolio/allocation", label: "Allocation Lens" };
 
 export default async function PortfolioPage({ searchParams }) {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/portfolio");
   }

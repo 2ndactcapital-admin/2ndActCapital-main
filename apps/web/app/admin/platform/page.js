@@ -2,15 +2,15 @@ import { redirect } from "next/navigation";
 
 import AppShell from "@/components/AppShell";
 import PlatformSettings from "@/components/admin/PlatformSettings";
-import { auth0 } from "@/lib/auth0";
-import { loadTheme } from "@/lib/theme";
+import { getHostSession } from "@/lib/authServer";
+import { loadTheme } from "@/lib/themeServer";
 
 export const dynamic = "force-dynamic";
 
 // Sprint 24 — Super Admin only. Ripasso platform staff administer every
 // tenant org from here, including onboarding new clients.
 export default async function PlatformSettingsPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/platform");
   }

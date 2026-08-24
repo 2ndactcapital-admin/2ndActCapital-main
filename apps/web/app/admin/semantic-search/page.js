@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import SemanticSearch from "@/components/admin/SemanticSearch";
 
@@ -8,7 +8,7 @@ import SemanticSearch from "@/components/admin/SemanticSearch";
 // documents by meaning (pgvector cosine similarity), not substring matching.
 // Auth, org-scoping, and per-user visibility are enforced server-side by FastAPI.
 export default async function SemanticSearchPage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/semantic-search");
   }

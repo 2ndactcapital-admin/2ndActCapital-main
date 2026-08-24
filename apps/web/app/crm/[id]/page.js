@@ -1,5 +1,5 @@
 import { redirect, notFound } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import EntityTypeBadge from "@/components/EntityTypeBadge";
 import EntityDetailTabs from "@/components/crm/EntityDetailTabs";
@@ -8,7 +8,7 @@ import { fetchAPI } from "@/lib/api";
 export default async function EntityDetailPage({ params }) {
   const { id } = await params;
 
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect(`/auth/login?returnTo=/crm/${id}`);
   }

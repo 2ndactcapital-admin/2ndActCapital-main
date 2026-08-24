@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { auth0 } from "@/lib/auth0";
+import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import NoteTermsQueueManager from "@/components/admin/NoteTermsQueueManager";
 import { getNoteTermsQueue } from "@/lib/api";
@@ -16,7 +16,7 @@ import { getNoteTermsQueue } from "@/lib/api";
 // component files, zero .tsx). Matching the house convention was the point of
 // the discovery step; introducing the repo's first TS file here would not.
 export default async function NoteTermsQueuePage() {
-  const session = await auth0.getSession();
+  const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/pricing/note-terms-queue");
   }
