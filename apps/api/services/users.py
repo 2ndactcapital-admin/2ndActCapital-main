@@ -6,7 +6,14 @@ deal_votes, deal_interest, compliance_override_requests, member_investments,
 notification_recipients — needs a real users row.
 
 Identity model: the ``users`` table is keyed on ``auth0_sub`` (the raw JWT
-``sub`` string) and its primary key is a DB-generated ``uuid_generate_v4()``.
+``sub`` string) and its primary key is a DB-generated
+``extensions.uuid_generate_v4()``. The schema qualification is REQUIRED: the
+uuid-ossp functions live only in the ``extensions`` schema, and the application
+role's ``search_path`` is ``"$user", public`` — a bare ``uuid_generate_v4()`` in
+statement text resolves at parse time against that search_path and raises
+``function uuid_generate_v4() does not exist``. Column DEFAULTs are exempt
+because they are name-resolved once at DDL time and stored as a parse tree
+holding the function's OID, not as text.
 The token ``sub`` is NOT a UUID and the v5-derived id from ``get_user_id`` is
 only a last-resort fallback — it never matches a v4 PK, which is why FK inserts
 were failing. ``ensure_user`` therefore resolves strictly by ``auth0_sub`` and
@@ -119,7 +126,9 @@ async def ensure_user(conn, request: Request) -> str:
       2. If ``sub`` is itself a UUID that matches an existing row id (the verify
          scripts stub ``sub`` = a seeded user's UUID), use that row.
       3. Insert a new row, letting Postgres generate the id
-         (``uuid_generate_v4()``); return the generated id.
+         (``extensions.uuid_generate_v4()`` — schema-qualified; see the module
+         docstring for why a bare call breaks under the app role's
+         search_path); return the generated id.
 
     Never raises — on unexpected error it falls back to the token-derived id so
     read paths are unaffected (the traceback below is the signal in the logs).
@@ -204,7 +213,7 @@ async def ensure_user(conn, request: Request) -> str:
         inserted = await conn.fetchrow(
             """
             INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
-            VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5)
+            VALUES (extensions.uuid_generate_v4(), $1, $2, $3, $4, $5)
             ON CONFLICT (auth0_sub) DO UPDATE
                 SET email = COALESCE(
                     NULLIF(EXCLUDED.email, EXCLUDED.auth0_sub || '@placeholder.local'),

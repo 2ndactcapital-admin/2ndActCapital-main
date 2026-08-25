@@ -562,7 +562,8 @@ async def create_security(
 ) -> str:
     """Insert a global security. Returns its id.
 
-    The id is minted here rather than left to ``uuid_generate_v4()`` so that
+    The id is minted here rather than left to the column DEFAULT
+    (``extensions.uuid_generate_v4()``) so that
     ``canonical_id`` can be set to it in the SAME statement. A security that is
     canonical from the instant it exists has no window in which a concurrent
     reader sees ``canonical_id IS NULL`` — which is exactly the state that made

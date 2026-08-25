@@ -361,7 +361,7 @@ async def task_2_provisioning(conn):
         await conn.execute(
             """
             INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
-            VALUES (uuid_generate_v4(), $1, $2, 'Member', $3, 'member')
+            VALUES (extensions.uuid_generate_v4(), $1, $2, 'Member', $3, 'member')
             ON CONFLICT (auth0_sub) DO NOTHING
             """,
             DEFAULT_ORG, su.placeholder_email(HW_SUB_BACKFILL), HW_SUB_BACKFILL,

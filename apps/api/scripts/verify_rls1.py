@@ -108,7 +108,7 @@ def report_discovery():
     info("  - Resolves the caller by SELECT id FROM users WHERE auth0_sub = $1.")
     info("  - Fallback: if the token `sub` is itself a UUID matching users.id,")
     info("    uses that row (verify scripts stub sub = a seeded user's UUID).")
-    info("  - Otherwise INSERT INTO users (...) VALUES (uuid_generate_v4(), ...)")
+    info("  - Otherwise INSERT INTO users (...) VALUES (extensions.uuid_generate_v4(), ...)")
     info("    ON CONFLICT (auth0_sub) DO UPDATE ... RETURNING id.")
     info("  - Never raises; on error falls back to a token-derived id.")
     info("  IMPLICATION: `users` has RLS enabled with NO policy. This bootstrap")

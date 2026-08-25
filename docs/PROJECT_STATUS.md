@@ -1086,6 +1086,8 @@ The menu-gating gap was real (§below), but it was **not** the root cause. Two i
 
 ### 8.4c · Super Admin menu gating — the last two holdouts
 
+> **Retrospective correction**: the drift documented here was real and worth fixing, but it was **not** what made `jlarizza@gmail.com` see limited access. That was `ensure_user` failing outright — see **§8.4e**.
+
 `is_super_admin` is checked **first** in every enforcement layer (RLS, `restricted_access`, `staff_visibility`, `trading_authority`, Workflow Manager, and `services/rbac.has_permission` since commit 470eb26). Two **frontend** menus were the remaining exceptions, each with its own independently-copied gate logic and neither with a bypass: `lib/usePermissions.can()` (the sidebar) and `app/admin/page.js visibleSections()` (the `/admin` index).
 
 **The "no roles yet → default-allow" posture did not cover it.** That shield only holds while `user_roles` is empty, and it is not: `jlarizza@culmina.io` (`users.role = 'super_admin'`) holds a granted `admin` role, so that account takes the strict per-permission branch. Its menu survives today only because `admin` happens to include `manage_members` — granting it any role that does not (e.g. `member`) would silently remove **Admin**, **User Management** and **Staff Visibility** from the sidebar while the backend continued to authorize all three pages.
@@ -1104,6 +1106,45 @@ The invite backend from §8.3 works and is correctly org-scoped (`org_id` from `
 
 *Verifier*: `apps/api/scripts/verify_superadminmenu.py`. Note one honest limitation it reports as BLOCKED rather than PASS: no Hollisworks Auth0 client credentials exist in the sprint environment, so a genuinely tenant-signed token cannot be minted and the JWT **signature** leg is unproven end-to-end. Everything else — the row writes, the `/userinfo` back-fill, the invite creation — runs against the live database, and the menu assertions run against the shipped module.
 
+### 8.4e · Issue #8 — `uuid_generate_v4()` was unqualified: **new-user provisioning was broken for every brand-new identity** (ensureuseruuidfix sprint)
+
+**This is the actual root cause behind the "jlarizza@gmail.com sees limited access" investigation.** It was never a menu-gating problem. §8.4c fixed a real and separate drift in the two frontend menus, but the account's degraded experience came from here: `ensure_user` was failing outright, so no `users` row was ever created and the caller ran under an id that matches no row.
+
+**The live evidence** — a real Render production log, not a hypothesis:
+
+```
+ERROR in ensure_user (sub='auth0|6a7c8b473069946d5a6d5400'):
+function uuid_generate_v4() does not exist
+HINT: No function matches the given name and argument types.
+```
+
+**Why it was silent.** `ensure_user` never re-raises — by contract it swallows every exception and returns `get_user_id(request)`, a **uuid5** derived from the token `sub`. So the symptom was not a 500. Every affected caller got a plausible-looking UUID that matches **no** `users` row, and every FK-bearing feature behind it degraded quietly. Eighth member of the same silent-fallback family as issues 1–7.
+
+**Blast radius: every brand-new identity, on every tenant.** Not Hollisworks-specific and not admin-specific — any first-time login on any host hit the same INSERT. Existing users were unaffected (they resolve by `auth0_sub` and never reach the insert), which is exactly why it went unnoticed.
+
+**The genuine open question, and the confirmed answer.** 107 `id` columns — including `users.id` itself and every `portfolio.*` table — also default to `uuid_generate_v4()`, and those tables had been inserting successfully all evening. The difference is **where the name is resolved**:
+
+- `uuid_generate_v4` exists **only** in the `extensions` schema (confirmed: one row in `pg_proc`). The application role's `search_path` is `"$user", public` — the same reason every `portfolio.*` reference needs schema-qualification.
+- A **column DEFAULT** is parsed and name-resolved **once, at DDL time**, and stored as a parse tree holding the function's **OID**: `{FUNCEXPR :funcid 16548 ...}`. No schema name is stored, so the default never consults `search_path` at runtime. (`pg_get_expr` *deparses* that OID, so it prints `uuid_generate_v4()` to a reader who can see `extensions` and `extensions.uuid_generate_v4()` to one who cannot — the schema name is the reader's rendering, never the stored value.)
+- **Literal SQL text** in a statement is re-resolved against the **session's** `search_path` on every parse. `ensure_user` named `id` in its column list and supplied `uuid_generate_v4()` explicitly in `VALUES` — it did *not* omit `id` and fall back to the default. That one difference is the whole bug.
+
+**Why dev never caught it.** Local `DATABASE_URL` authenticates as `postgres`, whose `rolconfig` is `search_path="$user", public, extensions`. Under that path the bare call resolves fine and every existing verify script passed. The verifier for this fix therefore pins `search_path = public` on every probe connection — without that pin the assertions would pass vacuously, fix or no fix.
+
+**Not isolated to `ensure_user`.** An AST scan of every SQL string literal in `apps/api` (docstrings excluded, so prose describing the function is not miscounted) found four live call sites, all now `extensions.uuid_generate_v4()`:
+
+| Call site | Consequence before the fix |
+|---|---|
+| `services/users.py:214` — `ensure_user` | the production break; no `users` row for any new identity |
+| `services/invites.py:71` — `create_invite` | same latent break; admin invite creation would have failed the same way |
+| `scripts/verify_sprint19.py:211` | verify-script INSERT |
+| `scripts/verify_superadminmenu.py:362` | verify-script INSERT |
+
+Table-level `DEFAULT` clauses in migrations were deliberately **left alone** — they are already OID-resolved and are not the failure mode. No DDL was run; all 107 defaulting columns are unchanged.
+
+*Verifier*: `apps/api/scripts/verify_ensureuseruuidfix.py` — **28/28**, run twice, real database, no mocks. It proves a real `ensure_user` call for a genuinely never-seen `auth0_sub` mints a real v4 id and that the row is findable afterward on an **independent** connection; it asserts the returned id is **not** the swallowed-error uuid5 fallback (asserting only "it returned a UUID" would have passed against the broken code); it replays the **pre-fix** form of each of the four statements under the same pinned `search_path` and requires each to still raise, so no assertion can pass vacuously; and it confirms the `users` and `portfolio.assets` DEFAULT-driven inserts still work untouched.
+
+*Incidental hardening found while writing the verifier*: `DATABASE_URL` goes through PgBouncer, so a **session-level** `SET search_path` leaks onto the pooled *server* connection and outlives the client that issued it — an early draft polluted later runs and produced two contradictory readings of the same stored default. Every probe now uses transaction-scoped `SET LOCAL`, and each connection issues `RESET search_path` on open.
+
 ### 8.5 · Not yet built
 
 - Full SAML federation of 2nd Act's tenant into the Hollisworks broker (the actual Enterprise Connection + "SAML2 Web App" addon on 2nd Act's side).
@@ -1120,6 +1161,8 @@ The invite backend from §8.3 works and is correctly org-scoped (`org_id` from `
 **Staff visibility Super Admin bypass** — `get_staff_visible_entity_ids` now derives the caller's role internally and returns the full org set for Super Admin, with Org Admin correctly **excluded** and regular staff still restricted. No call sites needed changing.
 
 **RBAC Super Admin bypass (`services/rbac.py`)** — the remaining piece of the cutover incident. `has_permission()` previously default-allowed **only** when a user had zero `user_roles` rows; a Super Admin who acquired any role row fell through to a strict per-permission check with no escape hatch. Fixed: `is_super_admin` checked **first**. Proven against the exact incident scenario and real call sites, with non-super-admin behavior unchanged in both directions.
+
+**New-user provisioning broken by an unqualified `uuid_generate_v4()`** — a real, live production failure, found in Render logs and fixed. `ensure_user`'s INSERT supplied `id` with a bare `uuid_generate_v4()`, which resolves against the session `search_path` (`"$user", public`) while the function lives only in `extensions` — so **every brand-new identity on every tenant** failed to get a `users` row, silently, because `ensure_user` swallows the error and returns a uuid5 fallback. The 107 tables whose `id` DEFAULTs to the same function were never affected: a DEFAULT is OID-resolved at DDL time and never consults `search_path`. This, not menu gating, was the root cause of the "limited access" report. Four call sites fixed; verifier 28/28. Full detail: **§8.4e**.
 
 **Database password exposure** — a live `app_service` password was accidentally pasted into a chat. Rotated immediately via Supabase, Render updated and redeployed, chat message deleted. No indication of actual unauthorized access; handled as precaution.
 

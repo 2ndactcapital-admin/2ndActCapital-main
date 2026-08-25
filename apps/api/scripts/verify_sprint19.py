@@ -210,7 +210,7 @@ async def main() -> None:
             test_sub_user_id = await conn.fetchval(
                 """
                 INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
-                VALUES (uuid_generate_v4(), $1, $2, 'No-email Test', $3, 'member')
+                VALUES (extensions.uuid_generate_v4(), $1, $2, 'No-email Test', $3, 'member')
                 ON CONFLICT (auth0_sub) DO UPDATE SET email = users.email
                 RETURNING id
                 """,

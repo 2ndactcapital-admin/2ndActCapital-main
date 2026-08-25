@@ -74,7 +74,7 @@ async def create_invite(
             invite_token, invite_status, invited_by, invited_at, invite_expires_at
         )
         VALUES (
-            uuid_generate_v4(), $1, $2, $3, $4, NULL,
+            extensions.uuid_generate_v4(), $1, $2, $3, $4, NULL,
             $5, 'pending', $6, now(), now() + make_interval(days => $7)
         )
         RETURNING id, org_id, email, full_name, role, invite_token, invite_status,
