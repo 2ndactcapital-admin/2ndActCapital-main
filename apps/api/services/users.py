@@ -26,9 +26,18 @@ import httpx
 from fastapi import Request
 
 from services.permissions import get_user_id
-from routers.entities import get_org_id
+from routers.entities import HOLLISWORKS_ORG_ID, get_org_id
 
 PLACEHOLDER_EMAIL_SUFFIX = "@placeholder.local"
+
+# How stale ``users.last_login_at`` may get before the next authenticated
+# request refreshes it. ``ensure_user`` runs on EVERY request, not only at
+# login, so an unconditional UPDATE would mean a row write (and a row lock, and
+# WAL) per API call for every active member. Throttling makes the column a
+# truthful "last seen, to within this window" without that cost — which is all
+# an admin screen needs. Expressed as a Postgres interval literal; the
+# comparison is made with the DATABASE clock, never the app server's.
+LOGIN_TOUCH_INTERVAL = "5 minutes"
 
 # Subs whose /userinfo lookup has already been attempted in this process. An
 # Auth0 outage (or a token without the openid scope) must not make every
@@ -118,6 +127,40 @@ async def fetch_auth0_identity(request: Request, claims: dict) -> tuple[str | No
     return email, full_name
 
 
+async def touch_last_login(conn, user_id) -> bool:
+    """Stamp ``users.last_login_at`` for ``user_id``. Returns True if it wrote.
+
+    THE HOOK. ``ensure_user`` is the one function every authenticated request
+    passes through to resolve its identity, and its ``auth0_sub`` lookup /
+    ``ON CONFLICT DO UPDATE`` is precisely "this person has just presented a
+    valid token" — i.e. a login. Putting the stamp anywhere else would either
+    miss a tenant (the two Auth0 clients have separate callback routes) or need
+    a new call site on every future endpoint.
+
+    Throttled by :data:`LOGIN_TOUCH_INTERVAL`: the predicate is evaluated by
+    Postgres, so a row that was stamped inside the window costs an UPDATE that
+    matches zero rows rather than a real write. NULL always writes, so a first
+    login is recorded immediately.
+
+    Never raises — a failure to record "last seen" must not fail the request.
+    """
+    try:
+        status = await conn.execute(
+            f"""
+            UPDATE users
+            SET last_login_at = now()
+            WHERE id = $1
+              AND (last_login_at IS NULL
+                   OR last_login_at < now() - interval '{LOGIN_TOUCH_INTERVAL}')
+            """,
+            user_id,
+        )
+        return status.rsplit(" ", 1)[-1] != "0"
+    except Exception as exc:  # noqa: BLE001
+        print(f"[users] last_login_at touch failed for {user_id!r}: {exc}")
+        return False
+
+
 async def ensure_user(conn, request: Request) -> str:
     """Return the caller's ``users.id``, inserting the row if it does not exist.
 
@@ -154,7 +197,7 @@ async def ensure_user(conn, request: Request) -> str:
     try:
         # 1. Canonical lookup by auth0_sub.
         by_sub = await conn.fetchrow(
-            "SELECT id, role, email FROM users WHERE auth0_sub = $1", sub
+            "SELECT id, role, email, org_id FROM users WHERE auth0_sub = $1", sub
         )
         if by_sub:
             # Promote an existing Hollisworks staff row if it predates this
@@ -164,6 +207,18 @@ async def ensure_user(conn, request: Request) -> str:
                     "UPDATE users SET role = 'super_admin' WHERE id = $1",
                     by_sub["id"],
                 )
+            # Same shape, for org. A staff row created BEFORE the org fix holds
+            # 2nd Act's org_id (get_org_id had no issuer branch, so every token
+            # fell through to the default). Fixing only new inserts would fix
+            # nothing — the Hollisworks org has no users, so every affected row
+            # already exists. Scoped strictly to Hollisworks-issued identities;
+            # a 2nd Act row is never touched by this branch.
+            if is_staff and str(by_sub["org_id"]) != HOLLISWORKS_ORG_ID:
+                await conn.execute(
+                    "UPDATE users SET org_id = $2, updated_at = now() WHERE id = $1",
+                    by_sub["id"], HOLLISWORKS_ORG_ID,
+                )
+            await touch_last_login(conn, by_sub["id"])
             # Back-fill a row still carrying the synthetic address. Rows created
             # before this fix ALL hold `{sub}@placeholder.local`, because the
             # access token never carried an email claim (see
@@ -191,6 +246,7 @@ async def ensure_user(conn, request: Request) -> str:
                 "SELECT id FROM users WHERE id = $1", maybe_uuid
             )
             if by_id:
+                await touch_last_login(conn, by_id["id"])
                 return str(by_id["id"])
 
         # 3. Create the user; the DB generates the v4 id.
@@ -212,8 +268,10 @@ async def ensure_user(conn, request: Request) -> str:
         full_name = full_name or claims.get("email") or "Member"
         inserted = await conn.fetchrow(
             """
-            INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
-            VALUES (extensions.uuid_generate_v4(), $1, $2, $3, $4, $5)
+            INSERT INTO users (
+                id, org_id, email, full_name, auth0_sub, role, last_login_at
+            )
+            VALUES (extensions.uuid_generate_v4(), $1, $2, $3, $4, $5, now())
             ON CONFLICT (auth0_sub) DO UPDATE
                 SET email = COALESCE(
                     NULLIF(EXCLUDED.email, EXCLUDED.auth0_sub || '@placeholder.local'),
@@ -222,7 +280,12 @@ async def ensure_user(conn, request: Request) -> str:
                 role = CASE
                     WHEN EXCLUDED.role = 'super_admin' THEN 'super_admin'
                     ELSE users.role
-                END
+                END,
+                -- The other half of the last_login_at hook (see
+                -- `touch_last_login`). This branch fires when a row appeared
+                -- between the lookup above and this insert, which is still a
+                -- login.
+                last_login_at = now()
             RETURNING id
             """,
             org_id, email, full_name, sub, role,

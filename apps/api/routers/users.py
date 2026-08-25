@@ -28,6 +28,13 @@ class MeResponse(BaseModel):
     permissions: list[str] = []
     nav_pinned: bool | None = None
     assistant_panel_posture: str | None = None
+    # Account lifecycle (user-management sprint). `is_active` is always True by
+    # the time a caller can read this — the middleware gate rejects an inactive
+    # account's requests before any handler runs — so it is here for
+    # completeness and for the admin screens that reuse this shape, not as the
+    # enforcement point.
+    is_active: bool | None = None
+    last_login_at: str | None = None
 
 
 class MePatch(BaseModel):
@@ -43,7 +50,8 @@ async def get_me(request: Request):
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
         profile = await conn.fetchrow(
-            "SELECT id, email, full_name, role, nav_pinned, assistant_panel_posture "
+            "SELECT id, email, full_name, role, nav_pinned, assistant_panel_posture, "
+            "is_active, last_login_at "
             "FROM users WHERE id = $1",
             user_id,
         )
@@ -66,6 +74,12 @@ async def get_me(request: Request):
         permissions=permissions,
         nav_pinned=profile["nav_pinned"] if profile else None,
         assistant_panel_posture=profile["assistant_panel_posture"] if profile else None,
+        is_active=profile["is_active"] if profile else None,
+        last_login_at=(
+            str(profile["last_login_at"])
+            if profile and profile["last_login_at"]
+            else None
+        ),
     )
 
 

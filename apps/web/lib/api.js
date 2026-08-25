@@ -294,15 +294,48 @@ export const assignUserRole = (userId, roleId) =>
     body: { role_id: roleId },
   });
 
+// --- Admin: account lifecycle (user-management sprint) ---
+// NOTE, as with createInvite below: no `org_id` in any body. The backend
+// resolves the caller's org from the request context and refuses a target
+// outside it (404), so an admin can only ever act on their own members.
+//
+// `deleteUser` is named for the verb the UI offers, but the backend ANONYMIZES:
+// users.id has 92 FK dependents across 69 public tables, 89 of them ON DELETE
+// NO ACTION, so a real row delete is impossible without destroying the audit
+// trail (and the 3 that cascade would take votes/interest with them). The
+// response carries `hard_deleted: false, anonymized: true` — the screen shows
+// the user what actually happened rather than the word "deleted" alone.
+export const updateAdminUser = (userId, { fullName }) =>
+  fetchAPI(`/api/v1/admin/users/${userId}`, {
+    method: "PATCH",
+    body: { full_name: fullName },
+  });
+export const deactivateUser = (userId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/deactivate`, { method: "POST" });
+export const reactivateUser = (userId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/reactivate`, { method: "POST" });
+export const deleteUser = (userId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}`, { method: "DELETE" });
+export const getUserManagementSettings = () =>
+  fetchAPI("/api/v1/admin/users/settings");
+
 // --- Admin: invites (Multi-tenant Sprint 2 backend, wired to the UI here) ---
 // POST /admin/invites is what actually creates the users row. NOTE the body:
 // email / full_name / role ONLY. `org_id` is deliberately absent — the backend
 // takes it from the caller's own request context via get_org_id(), never from
 // the body (standing multi-tenant rule). Adding it here would be the bug.
-export const createInvite = ({ email, fullName, role }) =>
+// `profile_id` is OPTIONAL and additive — the account role is still carried by
+// `role`, which stays required. The backend validates the profile against the
+// caller's OWN org, so passing one from another tenant is a 404, not a grant.
+export const createInvite = ({ email, fullName, role, profileId }) =>
   fetchAPI("/api/v1/admin/invites", {
     method: "POST",
-    body: { email, full_name: fullName || null, role: role || "member" },
+    body: {
+      email,
+      full_name: fullName || null,
+      role: role || "member",
+      profile_id: profileId || null,
+    },
   });
 export const getInvites = (status) =>
   fetchAPI("/api/v1/admin/invites", { searchParams: { status } });

@@ -1,0 +1,116 @@
+/mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/verify_usermanagementfinish.py:308: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient
+
+=== TASK 1 — discovery findings (each asserted, not just stated) ===
+
+[1a] A Hollisworks login landed in the DEFAULT org because routers/entities.py::get_org_id read ONLY the three ORG_ID_CLAIMS and otherwise returned DEFAULT_ORG_ID. An Auth0 access token minted for a custom API audience carries none of them, so EVERY token — from either tenant — fell through to the default. ensure_user writes that value into the users row. The issuer, which was ALREADY trusted two lines later to grant role='super_admin', was never consulted for org.
+     FIX POINT: get_org_id itself (now org_id_from_claims), plus an org repair on ensure_user's existing-row path.
+[PASS] T1a: pre-sprint get_org_id had no issuer branch at all — git HEAD copy of routers/entities.py: ORG_ID_CLAIMS loop then `return DEFAULT_ORG_ID`, zero references to is_hollisworks_claims
+[PASS] T1a: shipped get_org_id resolves the Hollisworks issuer to the real org — routers/entities.py now maps a Hollisworks-issued token to bb347258-8f28-4f49-8cc9-e29ccad82884
+
+[1b] ALLOWED_INVITE_ROLES == ('member', 'org_admin') — 'super_admin' is deliberately excluded so an org admin cannot mint platform staff. profile_id was accepted NOWHERE in the create-invite path: not on InviteCreateRequest, not as a create_invite() parameter, and not in its INSERT column list. users.profile_id existed but was only ever set afterwards, by PUT /admin/users/{id}/profile.
+[PASS] T1b: ALLOWED_INVITE_ROLES is exactly ('member', 'org_admin') — ('member', 'org_admin')
+[PASS] T1b: pre-sprint create-invite path had no profile_id anywhere — neither services/invites.py nor routers/invites.py mentioned profile_id at HEAD
+
+[1c] There was NO general /admin/users edit endpoint. routers/admin.py exposed exactly two routes — GET /admin/users and PUT /admin/users/{id}/role — and the PUT writes the user_roles JOIN table, not the users row. routers/profiles.py added PUT /admin/users/{id}/profile, which writes users.profile_id and nothing else. So full_name, email and account state were un-editable by an admin: the ONLY writes to a users row from a UI were PATCH /users/me (self; nav_pinned + assistant_panel_posture only).
+       pre-sprint routers/admin.py routes: ['@router.get("/admin/roles", response_model=list[RoleOption])', '@router.get("/admin/users", response_model=list[AdminUser])', '@router.put("/admin/users/{user_id}/role", response_model=AdminUser)']
+[PASS] T1c: pre-sprint admin router had no PATCH/DELETE/lifecycle route — 3 routes at HEAD (['@router.get("/admin/roles", response_model=list[RoleOption])', '@router.get("/admin/users", response_model=list[AdminUser])', '@router.put("/admin/users/{user_id}/role", response_model=AdminUser)']) — none of them edit the users row
+[PASS] T1c: the only pre-sprint users-row write from a UI was PATCH /users/me — MePatch carried nav_pinned + assistant_panel_posture only — no name field
+
+[1d] org_settings convention: dotted keys, jsonb NOT NULL values (scalars json-encoded on write, decoded on read), UNIQUE on (org_id, setting_key), plain upsert — Rule 3 does NOT apply. DEFAULT_SETTINGS *is* the default data and is the one place in application code allowed to hold literal defaults; CATEGORY_BY_PREFIX derives `category` from the key namespace; _validate_setting is the write-time value gate (400).
+       live row: 'ai.model.assistant' = '"claude-sonnet-4-6"' (category='ai')
+       live row: 'ai.model.default' = '"claude-haiku-4-5-20251001"' (category='ai')
+       live row: 'ai.model.document_classifier' = '"claude-haiku-4-5-20251001"' (category='ai')
+       live row: 'ai.model.fallback' = '"claude-haiku-4-5-20251001"' (category='ai')
+[PASS] T1d: live org_settings rows are dotted keys with json-encoded values — 4 sampled rows all match the convention
+[PASS] T1d: this sprint's two keys follow that convention exactly — invite.expiry_days=7, user.inactivity_timeout_days=90, both category 'membership' (derived from the key namespace)
+
+=== TASK 2 — Hollisworks-tenant org assignment (+ 2nd Act regression) ===
+       HOLLISWORKS_AUTH0_DOMAIN was absent from this environment; the script set it so the issuer branch is reachable. issuer='https://hollisworks-verify.us.auth0.com/'
+[PASS] T2: the Hollisworks tenant is enabled for this run — is_hollisworks_claims will compare iss against 'https://hollisworks-verify.us.auth0.com/'
+[PASS] T2: the target org is the REAL Hollisworks row in the live database — organizations bb347258-8f28-4f49-8cc9-e29ccad82884 = 'Hollisworks' (slug='hollisworks')
+[PASS] T2: a Hollisworks-issued claim set resolves to the Hollisworks org — org_id_from_claims(iss='https://hollisworks-verify.us.auth0.com/') -> bb347258-8f28-4f49-8cc9-e29ccad82884
+[PASS] T2 REGRESSION: a 2nd Act claim set still resolves to the default org — org_id_from_claims(iss='https://dev-smmrfubsfscif3t1.us.auth0.com/') -> 00000000-0000-0000-0000-000000000001 (unchanged)
+[PASS] T2 REGRESSION: an explicit org_id claim still wins over both branches — the ORG_ID_CLAIMS loop is still checked first
+[PASS] T2 REGRESSION: a claimless request still resolves to the default org — empty/None claims -> DEFAULT_ORG_ID, exactly as before
+[users] /userinfo lookup failed for sub='auth0|usermgmtfinish_verify_staff_new': Client error '404 Not Found' for url 'https://hollisworks-verify.us.auth0.com/userinfo'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+[PASS] T2: a REAL Hollisworks login creates its users row in the Hollisworks org — GET /users/me -> 200; users.org_id = bb347258-8f28-4f49-8cc9-e29ccad82884 (role=super_admin)
+[PASS] T2: an EXISTING staff row holding the wrong org is repaired on next login — org_id 00000000-0000-0000-0000-000000000001 -> bb347258-8f28-4f49-8cc9-e29ccad82884 (the Hollisworks org has no users, so fixing only new inserts would fix nothing)
+[PASS] T2 REGRESSION: a REAL 2nd Act login's org assignment is UNCHANGED — GET /users/me -> 200; users.org_id stayed 00000000-0000-0000-0000-000000000001
+
+=== TASK 3 — optional, validated profile_id on the invite ===
+[PASS] T3: role is still required and still refuses super_admin — POST with role='super_admin' -> 400 'role must be one of member, org_admin'
+[PASS] T3: an invite can carry an optional, validated profile_id — 201; users row has profile_id=99000000-0000-0000-0000-0000f0220001, role=member — profile is ADDITIVE, role kept
+[PASS] T3: profile_id is genuinely optional (omitting it still works) — 201; profile_id NULL, role='org_admin' — the existing shape is unchanged
+[PASS] T3: a profile from ANOTHER org is refused, and no row is created — POST with the Hollisworks org's profile -> 404 'Profile not found in org'; 0 users rows created
+[PASS] T3: an unknown profile_id is refused — -> 404
+[PASS] T3: org_id in the invite body is REJECTED (422), never silently ignored — InviteCreateRequest sets extra='forbid' — the standing rule is mechanical
+
+=== TASK 4 — edit full_name within the caller's own org ===
+[PASS] T4: full_name can be edited for a user in the caller's own org — PATCH -> 200; users.full_name is now 'Renamed By Verify usermgmtfinish_verify' (read back from the DB)
+[PASS] T4: a cross-org edit is refused AND the target row is unchanged — PATCH a Hollisworks user as a 2nd Act admin -> 404; full_name still 'Verify Member HW' (404 not 403: confirming the id exists elsewhere would itself be a disclosure)
+[PASS] T4: org_id in the edit body is REJECTED (422), never accepted from a body — UserUpdateRequest sets extra='forbid'
+[PASS] T4: is_active cannot be set through the rename endpoint — 422; the account is still active — lifecycle has its own audited endpoints
+[PASS] T4: a blank full_name is refused — -> 400
+
+=== TASK 5 — deactivate / reactivate / delete ===
+[PASS] T5 CONTROL: the target's own request SUCCEEDS before deactivation — GET /users/me as the target -> 200
+[PASS] T5: deactivation sets is_active / deactivated_at / deactivated_by for real — is_active=False, deactivated_at=2026-08-25 07:09:25.185402+00:00, deactivated_by=99000000-0000-0000-0000-0000f0110001 (= the calling admin)
+[PASS] T5: a deactivated user's SUBSEQUENT request genuinely fails (not just the flag) — same valid token, same endpoint: 200 before -> 403 after, detail='This account has been deactivated. Contact your administrator.'
+[PASS] T5: the refusal applies to EVERY authenticated route (middleware gate) — GET /admin/users as the deactivated user -> 403; the check lives in main.rls_context_middleware, so no endpoint can forget it
+[PASS] T5: the gate does not affect public routes — /health still 200 while the deactivated identity is in play
+[PASS] T5: reactivation clears the stamps and restores access — is_active=True, stamps cleared; the same token gets 200 again
+[PASS] T5: an admin cannot deactivate their own account — 400 — the gate would then refuse the very request that undoes it, so a lone org admin would lock the tenant out of member management
+
+--- Task 5 hard-delete safety: measured, then decided ---
+
+FINDING: users.id has 92 foreign-key columns pointing at it, across 69 distinct public tables. 89 are ON DELETE NO ACTION and 3 are ON DELETE CASCADE.
+       NO ACTION examples: assistant_activities.approved_by, assistant_activities.proposed_by, assistant_activities.user_id, assistant_autonomy_prefs.user_id, assistant_conversations.user_id, audit_log.user_id
+       They include audit_log.user_id, deals.created_by, documents.created_by,
+       entities.created_by, member_investments.user_id and users.invited_by —
+       i.e. the audit trail and the provenance of essentially every record.
+       CASCADE: deal_interest.user_id, deal_votes.user_id, user_roles.user_id
+       Those three make the case STRONGER, not weaker: if the NO ACTION
+       constraints were ever relaxed to let a delete succeed, they would
+       silently take the member's votes and expressions of interest with them.
+DECISION: a hard delete is NOT safe and was NOT built. DELETE /admin/users/{id} is implemented as ANONYMIZATION — the row is kept so every FK still resolves, and the PII on it is destroyed: auth0_sub cleared (this is what severs the login), email/full_name replaced with sentinels, avatar/profile/manager/invite cleared, every user_roles and user_permission_sets grant revoked, account marked inactive. The response says so in its own body (hard_deleted=false, anonymized=true) so the caller is never told a deletion happened.
+[PASS] T5: the hard-delete-safety finding is real and measured — 92 FK columns across 69 public tables: 89 NO ACTION (incl. audit_log.user_id) + 3 CASCADE
+[PASS] T5: a REAL hard DELETE on a user with one dependent row actually raises — attempted DELETE FROM users -> ForeignKeyViolationError: Key (id)=(99000000-0000-0000-0000-0000f0110006) is still referenced from table "audit_log".; row still present after rollback (one audit_log row was enough — a real member has hundreds)
+[PASS] T5: DELETE anonymizes and SAYS SO (hard_deleted=false, anonymized=true) — response body reports hard_deleted=False, anonymized=True
+[PASS] T5: the row SURVIVES (so the dependent audit_log row still resolves) — users row retained — every one of the 92 FK references stays valid
+[PASS] T5: the PII is genuinely gone and the login is severed — email 'usermgmtfinish_verify_delete_2a@example.com' -> 'deleted-99000000-0000-0000-0000-0000f0110006@deleted.invalid', full_name -> 'Deleted account', auth0_sub -> NULL, is_active -> False
+[PASS] T5: the anonymized identity can no longer reclaim its old row — signing in again with the same sub creates a NEW, empty account (52f58127-d19e-4de6-a1f5-7d027a67406c) rather than resuming the old one
+[PASS] T5: an anonymized account cannot be re-deleted or reactivated — second DELETE -> 409; reactivate -> 409 (reactivating would produce an active account nobody can sign into)
+
+=== TASK 6 — invite.expiry_days + user.inactivity_timeout_days ===
+[PASS] T6: both keys are readable via the real org-settings admin surface — GET /orgs/{id}/settings?detail=1 returns both keys at their defaults (7 / 90), flagged is_default, category 'membership'
+[PASS] T6: with the key unset, a new invite still expires in the default 7 days — invite_expires_at - invited_at = 7 days
+[PASS] T6: a value posted as a string is stored as a real jsonb NUMBER — org_settings.setting_value = '21' (not '"21"')
+[PASS] T6: a custom invite.expiry_days changes the REAL invite_expires_at written — same endpoint, same body: 7 days before the setting -> 21 days after. Read from users.invite_expires_at, computed by the DATABASE clock.
+[PASS] T6: the setting is per-org — the other tenant still gets its own default — Hollisworks invite still expires in 7 days while 2nd Act's is 21
+[PASS] T6: clearing the key falls back to the platform default — back to 7 days
+[PASS] T6: nonsense expiry values are rejected at write time (400), not at read time — {"'two weeks'": 400, '0': 400, '-5': 400, '99999': 400} — an invite token is a bearer credential, so an unbounded expiry would make it a permanent one
+[PASS] T6: both keys are readable from the user-management surface too — GET /admin/users/settings -> {'invite_expiry_days': 7, 'user_inactivity_timeout_days': 30}
+
+=== TASK 7 — last_login_at written on a real login ===
+[PASS] T7: a real login writes last_login_at (proven by direct query, before/after) — direct SELECT: None -> datetime.datetime(2026, 8, 25, 7, 9, 48, 65270, tzinfo=datetime.timezone.utc)
+[PASS] T7: a stale last_login_at is REFRESHED on the next login, not only set once — back-dated to 2026-08-24T07:09:49.726671+00:00 -> refreshed to 2026-08-25T07:09:49.173022+00:00
+[PASS] T7: the write is throttled — a second immediate request does not re-write — unchanged within the 5 minutes window; ensure_user runs on EVERY request, so an unconditional UPDATE would be a row write per API call
+[PASS] T7: GET /admin/users surfaces last_login_at (what the list column renders) — row for the test user carries last_login_at='2026-08-25 07:09:49.173022+00:00', is_active=True, is_deleted=False
+[PASS] T7: the UI has the deactivate/reactivate/delete controls and the column — UserManagement.jsx wires all three lifecycle actions and renders a Last Sign-in column from last_login_at
+
+=== TASK 8 — cross-org isolation on every new endpoint ===
+[PASS] T8: every new lifecycle endpoint refuses a cross-org target — {'PATCH /admin/users/{id}': 404, 'POST /admin/users/{id}/deactivate': 404, 'POST /admin/users/{id}/reactivate': 404, 'DELETE /admin/users/{id}': 404} — all 404
+[PASS] T8: and the cross-org target row is provably untouched — name, is_active, auth0_sub and email are all exactly as seeded
+[PASS] T8: isolation holds in the reverse direction too — a Hollisworks admin editing a 2nd Act user -> 404
+[PASS] T8: GET /admin/users returns only the caller's own org — the Hollisworks admin sees 5 test rows, none of them 2nd Act's
+[BLOCKED] T8: cross-org isolation on the real app_service connection — could not use APP_SERVICE_DATABASE_URL: password authentication failed for user "app_service". The app connects as `postgres` (rolbypassrls) today, so RLS is inert in production too; the cross-org isolation PASSED above is the application's own org predicates, driven through the real endpoints. This leg is defence-in-depth and was NOT measured — not known-broken.
+[PASS] T9: teardown leaves zero leftover rows — 0 rows match the test marker / ids / settings keys
+
+========================================================================
+verify_usermanagementfinish: 60/61 PASS, 0 FAIL, 1 BLOCKED
+
+BLOCKED (not counted as pass):
+  - T8: cross-org isolation on the real app_service connection: could not use APP_SERVICE_DATABASE_URL: password authentication failed for user "app_service". The app connects as `postgres` (rolbypassrls) today, so RLS is inert in production too; the cross-org isolation PASSED above is the application's own org predicates, driven through the real endpoints. This leg is defence-in-depth and was NOT measured — not known-broken.
+========================================================================

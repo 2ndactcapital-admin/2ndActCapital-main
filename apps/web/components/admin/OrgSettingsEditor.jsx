@@ -12,13 +12,29 @@ import { COLOR_LABELS, COLOR_VARS } from "@/lib/theme";
  * component only decides what to render.
  */
 
-const CATEGORY_ORDER = ["branding", "footer", "locale", "naming", "ai", "general"];
+// Categories not listed here are NOT rendered — the filter below is an
+// allow-list, so a new key namespace has to be added in both places or it
+// silently never appears on the screen.
+const CATEGORY_ORDER = [
+  "branding",
+  "footer",
+  "locale",
+  "naming",
+  "membership",
+  "ai",
+  "general",
+];
 
 const CATEGORY_LABELS = {
   branding: "Branding",
   footer: "Footer",
   locale: "Locale",
   naming: "Naming",
+  // User-management sprint — invite.expiry_days and
+  // user.inactivity_timeout_days. Both are whole numbers of days; the backend
+  // coerces the string this text field posts and rejects anything that is not a
+  // positive integer within range.
+  membership: "Membership",
   // Mini-Bedrock (S24) built ai.model.* as backend-only config; S25 surfaces it
   // here so an org_admin can see/edit the default, provider, fallback, and the
   // document-classifier task override through the real settings screen.

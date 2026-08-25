@@ -301,12 +301,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def _resolve_is_super_admin(request: Request) -> bool:
-    """Best-effort, READ-ONLY resolution of super-admin status for RLS context.
+# The detail string a deactivated account's requests are rejected with. Named so
+# the frontend can recognise this specific 403 (an ordinary permission failure
+# needs a different message and a different remedy) and so the verify script
+# asserts the real value rather than a substring it invented.
+ACCOUNT_DEACTIVATED_DETAIL = (
+    "This account has been deactivated. Contact your administrator."
+)
 
-    Reads ``users.role`` by ``auth0_sub`` and reuses ``services.rbac.is_super_admin``.
-    Unlike ``ensure_user`` it never inserts — a brand-new user simply resolves to
-    not-super, which is the safe default. Any failure returns False.
+
+async def _resolve_account_state(request: Request) -> tuple[bool, bool]:
+    """``(is_super_admin, is_active)`` for the caller — ONE read, READ-ONLY.
+
+    Reads ``users.role`` and ``users.is_active`` by ``auth0_sub`` and reuses
+    ``services.rbac.is_super_admin``. Unlike ``ensure_user`` it never inserts — a
+    brand-new user simply resolves to not-super, which is the safe default.
+
+    ``is_active`` defaults to True when NO row exists: a first-ever request has
+    nothing to be deactivated yet, and ``ensure_user`` is about to create the
+    row (``users.is_active`` is ``NOT NULL DEFAULT true``). Denying here would
+    lock out every new member.
 
     Future note: once the app connects as the non-bypass ``app_service`` role,
     this read is itself subject to RLS on ``users`` (RLS enabled, and as of this
@@ -317,16 +331,35 @@ async def _resolve_is_super_admin(request: Request) -> bool:
     claims = getattr(request.state, "user", None) or {}
     sub = claims.get("sub")
     if not sub:
-        return False
+        return False, True
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT role, is_active FROM users WHERE auth0_sub = $1", sub
+        )
+
     # Hollisworks-tenant identity IS platform staff — recognized directly from the
     # validated token issuer, before (and independent of) any users-row read, so a
     # first request establishes Super Admin context without a write race.
-    if is_hollisworks_claims(claims):
-        return True
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT role FROM users WHERE auth0_sub = $1", sub)
-    return is_super_admin(dict(row)) if row else False
+    #
+    # Deliberately does NOT exempt staff from the is_active gate: the Super Admin
+    # escape hatch is about authorisation, and a deactivated account is not an
+    # authorisation question — it is a closed account. A platform admin who
+    # deactivates themselves is locked out, same as anyone else, and is
+    # reactivated by another admin (or by SQL). Making staff the one identity
+    # that cannot be switched off would be the more dangerous default.
+    is_super = is_hollisworks_claims(claims) or (
+        is_super_admin(dict(row)) if row else False
+    )
+    is_active = bool(row["is_active"]) if row else True
+    return is_super, is_active
+
+
+async def _resolve_is_super_admin(request: Request) -> bool:
+    """Back-compat wrapper — the super-admin half of :func:`_resolve_account_state`."""
+    is_super, _ = await _resolve_account_state(request)
+    return is_super
 
 
 # NOTE ON ORDERING: this middleware is defined BEFORE auth0_jwt_middleware on
@@ -375,10 +408,35 @@ async def rls_context_middleware(request: Request, call_next):
         try:
             # Reads users by auth0_sub — now permitted by the bootstrap leg,
             # since app.current_auth0_sub is already set (step 1 above).
-            is_super = await _resolve_is_super_admin(request)
+            is_super, is_active = await _resolve_account_state(request)
         except Exception as exc:
-            print(f"[rls] is_super_admin resolution failed (default False): {exc}")
-            is_super = False
+            print(f"[rls] account state resolution failed (default False/active): {exc}")
+            is_super, is_active = False, True
+
+        # THE ACTIVE-ACCOUNT GATE (user-management sprint, Task 5).
+        #
+        # This is the real session check point, and it is here for a reason: it
+        # is the ONE place every authenticated request already passes through
+        # AFTER the token is validated and BEFORE any route handler runs, and it
+        # already performs exactly the ``users``-by-``auth0_sub`` read the gate
+        # needs — so enforcement costs zero extra queries and cannot be missed by
+        # a new endpoint that forgets to opt in.
+        #
+        # It could NOT go in the Auth0 layer: Auth0 issued the token and knows
+        # nothing about ``users.is_active``, and a token already in a browser
+        # stays valid for its full lifetime, so revoking access has to happen on
+        # OUR side of the boundary. It could not go in ``ensure_user`` either —
+        # that function's contract is "never raises", because every read path
+        # depends on it.
+        #
+        # Deliberately 403 and not 401: the credential is valid, the account is
+        # closed. A 401 would send the frontend into a re-login loop that
+        # re-presents the same working token.
+        if not is_active:
+            reset_auth0_sub_context(sub_token)
+            return JSONResponse(
+                status_code=403, content={"detail": ACCOUNT_DEACTIVATED_DETAIL}
+            )
 
     # 2. Now that identity is resolved, set org_id/is_super_admin for the
     #    remainder of the request's queries.

@@ -25,6 +25,28 @@ import json
 
 from services.rbac import can_manage_org_settings, load_principal
 
+# ── Keys owned by user management ─────────────────────────────────────────
+# Named constants because two other modules resolve them (services.invites for
+# the expiry, routers.admin for the inactivity window) and a typo'd key string
+# would silently resolve to None and then to a hardcoded fallback — a config
+# that looks configured and is not.
+INVITE_EXPIRY_DAYS_KEY = "invite.expiry_days"
+USER_INACTIVITY_TIMEOUT_DAYS_KEY = "user.inactivity_timeout_days"
+
+# Keys whose value MUST be a positive whole number of days. The settings editor
+# posts every field as a string, so "14" has to become 14 before it is stored —
+# otherwise the jsonb holds '"14"' and `int(value)` at read time works by
+# accident until someone stores "two weeks". Coerced and validated on write.
+POSITIVE_INT_DAY_KEYS = (
+    INVITE_EXPIRY_DAYS_KEY,
+    USER_INACTIVITY_TIMEOUT_DAYS_KEY,
+)
+
+# Upper bound, applied to both. Not arbitrary caution: an invite token is a
+# bearer credential that grants an account in the org, and an unbounded expiry
+# turns it into a permanent one.
+MAX_SETTING_DAYS = 3650
+
 # ── Defaults ──────────────────────────────────────────────────────────────
 # Mirrors the values seeded for 2nd Act Capital. Any org that has not set a
 # given key resolves to the value here. Categories must match the `category`
@@ -119,6 +141,19 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "chancery",
         "manual",
     ],
+    # ── User management (this sprint) ──────────────────────────────────────
+    # How long an admin-minted invite token stays redeemable. Was the module
+    # constant services.invites.INVITE_TTL_DAYS; that constant now READS this
+    # value, so an org that never configures the key behaves exactly as before.
+    # A firm that runs slower onboarding raises it and deploys nothing.
+    INVITE_EXPIRY_DAYS_KEY: 7,
+    # How long a member may go without signing in before the account is
+    # considered dormant. Surfaced on the user-management screen and resolved by
+    # routers.admin alongside users.last_login_at. Deliberately REPORTING ONLY:
+    # nothing auto-deactivates on this threshold, because an automatic lockout
+    # that no admin initiated is not something to ship without a decision. The
+    # column and the setting are what a later sprint would need to enforce it.
+    USER_INACTIVITY_TIMEOUT_DAYS_KEY: 90,
 }
 
 # Category per key, used when a key is written for the first time and when
@@ -130,6 +165,11 @@ CATEGORY_BY_PREFIX = {
     "naming.": "naming",
     "ai.": "ai",
     "portfolio.": "portfolio",
+    # Both new user-management keys group under one heading on the settings
+    # screen — an admin configuring invite lifetime and dormancy is doing one
+    # job, not two.
+    "invite.": "membership",
+    "user.": "membership",
 }
 
 DEFAULT_CATEGORY = "general"
@@ -155,6 +195,24 @@ class SettingsValidationError(Exception):
     """
 
 
+def _coerce_setting(key: str, value):
+    """Normalise a value before validation/storage. Returns the value to store.
+
+    Only the positive-integer day keys need this today. The settings editor is a
+    text field, so it posts ``"14"``; storing that verbatim gives a jsonb string
+    where every reader expects a number. Coercing on the WRITE side means the
+    read side (``resolve_invite_ttl_days``) never has to guess which shape it
+    got. A non-numeric string is left alone so ``_validate_setting`` can reject
+    it with a message about the actual key, rather than this function raising a
+    bare ValueError.
+    """
+    if key in POSITIVE_INT_DAY_KEYS and isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return value
+
+
 def _validate_setting(key: str, value) -> None:
     """Reject values that are not allowed for a given key.
 
@@ -174,6 +232,19 @@ def _validate_setting(key: str, value) -> None:
         )
         if str(value).lower() not in ENABLED_EMBEDDING_PROVIDERS:
             raise SettingsValidationError(EMBEDDING_PROVIDER_DISABLED_MSG)
+
+    if key in POSITIVE_INT_DAY_KEYS and value is not None:
+        # Clearing the key (None) resets it to the DEFAULT_SETTINGS value and is
+        # allowed — that is how an org un-configures a setting everywhere else
+        # in this module, and the same must hold here.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise SettingsValidationError(
+                f"{key} must be a whole number of days, got {value!r}"
+            )
+        if value < 1 or value > MAX_SETTING_DAYS:
+            raise SettingsValidationError(
+                f"{key} must be between 1 and {MAX_SETTING_DAYS} days, got {value}"
+            )
 
     if key == "portfolio.precedence.source_order" and value is not None:
         # Same lazy-import shape as above, same reason: portfolio_precedence
@@ -342,8 +413,12 @@ async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=No
             f"Role '{role}' may not manage settings for org {org_id}"
         )
 
-    # Value-level validation (may raise SettingsValidationError → HTTP 400). Runs
-    # AFTER the permission check so a forbidden caller learns 403, not 400.
+    # Normalise first (the settings editor posts every field as a string), then
+    # validate the normalised value — otherwise a perfectly good "14" would be
+    # rejected for not being an int. Value-level validation may raise
+    # SettingsValidationError → HTTP 400, and runs AFTER the permission check so
+    # a forbidden caller learns 403, not 400.
+    value = _coerce_setting(key, value)
     _validate_setting(key, value)
 
     # json.dumps handles every scalar correctly: "USD" -> '"USD"', None ->

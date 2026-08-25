@@ -19,7 +19,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from routers.entities import get_org_id
 from services.audit import write_audit_log
@@ -39,9 +39,19 @@ router = APIRouter(tags=["invites"])
 
 
 class InviteCreateRequest(BaseModel):
+    # `extra="forbid"` is the standing-rule guard made mechanical: a body that
+    # carries `org_id` (or any other field this endpoint does not own) is a 422,
+    # not a silently-ignored key. The org comes from get_org_id, always.
+    model_config = ConfigDict(extra="forbid")
+
     email: str
     full_name: str | None = None
     role: str = "member"
+    # OPTIONAL, additive permission persona granted at invite time. Validated
+    # against the CALLER'S OWN org below — never trusted from the body beyond
+    # being an id to look up. `role` above stays required and unchanged; this
+    # does not replace it.
+    profile_id: UUID | None = None
 
 
 class InviteResponse(BaseModel):
@@ -49,6 +59,7 @@ class InviteResponse(BaseModel):
     email: str
     full_name: str | None = None
     role: str | None = None
+    profile_id: UUID | None = None
     invite_status: str | None = None
     invite_token: str | None = None
     enrollment_url: str | None = None
@@ -83,6 +94,22 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
 
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # The profile is validated against the CALLER'S OWN org, resolved from
+        # the request context — so an admin cannot attach another tenant's
+        # profile to an invite even by guessing a real id. Same predicate and
+        # same 404 as the existing PUT /admin/users/{id}/profile, deliberately:
+        # one rule for what "a profile this admin may grant" means.
+        profile_id = str(body.profile_id) if body.profile_id else None
+        if profile_id is not None:
+            profile_ok = await conn.fetchval(
+                "SELECT 1 FROM profiles WHERE id = $1 AND org_id = $2",
+                body.profile_id, org_id,
+            )
+            if not profile_ok:
+                raise HTTPException(
+                    status_code=404, detail="Profile not found in org"
+                )
+
         try:
             row = await create_invite(
                 conn,
@@ -91,6 +118,7 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
                 full_name=(body.full_name or None),
                 role=role,
                 invited_by=actor_id,
+                profile_id=profile_id,
             )
         except EnrollmentUrlError as exc:
             # The org has no usable enrollment base. Fail loudly with the real
@@ -114,6 +142,7 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
             new={
                 "email": email,
                 "role": role,
+                "profile_id": profile_id,
                 "invited_by": str(actor_id),
                 "invite_status": "pending",
             },
@@ -130,6 +159,7 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
         email=row["email"],
         full_name=row["full_name"],
         role=row["role"],
+        profile_id=row["profile_id"],
         invite_status=row["invite_status"],
         invite_token=row["invite_token"],
         # Built by services.invites from THIS org's organizations.enroll_url —
@@ -158,8 +188,8 @@ async def list_invites(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT id, email, full_name, role, invite_status, invite_token,
-                   invited_by, invited_at, invite_expires_at
+            SELECT id, email, full_name, role, profile_id, invite_status,
+                   invite_token, invited_by, invited_at, invite_expires_at
             FROM users
             WHERE {' AND '.join(conditions)}
             ORDER BY invited_at DESC NULLS LAST
@@ -188,6 +218,7 @@ async def list_invites(
             email=r["email"],
             full_name=r["full_name"],
             role=r["role"],
+            profile_id=r["profile_id"],
             invite_status=r["invite_status"],
             invite_token=r["invite_token"],
             enrollment_url=_url(r["invite_token"]),

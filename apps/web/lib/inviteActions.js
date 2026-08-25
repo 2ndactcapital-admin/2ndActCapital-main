@@ -18,9 +18,9 @@ import { createInvite, getInvites, revokeInvite } from "@/lib/api";
  * the endpoint, not to widen it.
  */
 
-export async function createInviteAction({ email, fullName, role }) {
+export async function createInviteAction({ email, fullName, role, profileId }) {
   try {
-    const invite = await createInvite({ email, fullName, role });
+    const invite = await createInvite({ email, fullName, role, profileId });
     return { ok: true, invite };
   } catch (error) {
     return { ok: false, error: error.message };

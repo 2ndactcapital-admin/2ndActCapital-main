@@ -32,6 +32,12 @@ instead. See the sprint report / verify_multitenant2.py for the gate details.
 import secrets
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from services.org_settings import (
+    DEFAULT_SETTINGS,
+    INVITE_EXPIRY_DAYS_KEY,
+    get_setting,
+)
+
 # 32 random bytes → ~43 URL-safe chars. Comfortably beyond guessing range while
 # staying short enough for a clean enrollment link.
 _TOKEN_BYTES = 32
@@ -47,7 +53,41 @@ DEFAULT_ENROLL_PATH = "/enroll"
 TOKEN_PARAM = "invite_token"
 
 # Default invite lifetime. Reasonable window for a member to accept.
-INVITE_TTL_DAYS = 7
+#
+# This is now only the FALLBACK. The effective lifetime is the org's own
+# ``invite.expiry_days`` setting, resolved by :func:`resolve_invite_ttl_days`;
+# an org that has never configured one still gets exactly this value, so
+# behaviour for every existing org is unchanged. The number itself lives in
+# ``services.org_settings.DEFAULT_SETTINGS`` (that module's docstring: it *is*
+# the default data) and is read from there rather than duplicated.
+INVITE_TTL_DAYS = DEFAULT_SETTINGS[INVITE_EXPIRY_DAYS_KEY]
+
+
+async def resolve_invite_ttl_days(conn, org_id: str) -> int:
+    """The invite lifetime, in days, THIS org is configured for.
+
+    Reads ``invite.expiry_days`` through the normal settings resolver, so an org
+    that has never set it transparently gets :data:`INVITE_TTL_DAYS`. The value
+    is re-validated here as well as at write time: settings rows predate the
+    write-time validator, and an invite with a nonsense expiry is worse than one
+    with the default.
+
+    NULL is "not configured", not "broken". ``get_setting`` only falls back to
+    DEFAULT_SETTINGS when NO row exists — an org that CLEARS the key keeps a row
+    holding jsonb ``null``, which is the documented way to un-configure a
+    setting. That has to resolve quietly to the default; logging it as unusable
+    would put an error in the logs every time an invite is created by an org
+    that has deliberately reset the key.
+    """
+    value = await get_setting(conn, org_id, INVITE_EXPIRY_DAYS_KEY)
+    if value is None:
+        return INVITE_TTL_DAYS
+    try:
+        days = int(value)
+    except (TypeError, ValueError) as exc:
+        print(f"[invites] unusable {INVITE_EXPIRY_DAYS_KEY} for org {org_id!r}: {exc}")
+        return INVITE_TTL_DAYS
+    return days if days > 0 else INVITE_TTL_DAYS
 
 # Roles an admin may mint via an invite. Deliberately excludes 'super_admin'
 # (Ripasso platform staff) so an org admin can never escalate a new account to
@@ -153,7 +193,8 @@ async def create_invite(
     full_name: str | None,
     role: str,
     invited_by: str,
-    ttl_days: int = INVITE_TTL_DAYS,
+    profile_id: str | None = None,
+    ttl_days: int | None = None,
 ):
     """Insert a pending invite ``users`` row and return it.
 
@@ -161,22 +202,40 @@ async def create_invite(
     ``now() + ttl_days``. Raises ``asyncpg.UniqueViolationError`` if the email
     (or, astronomically unlikely, the token) already exists — the caller maps
     that to a 409.
+
+    ``ttl_days`` defaults to the ORG'S configured ``invite.expiry_days`` (see
+    :func:`resolve_invite_ttl_days`), resolved on this same connection so the
+    setting and the insert see one consistent state. An explicit value still
+    wins — the verify script and any future "invite valid for N days" control
+    need to override it.
+
+    ``profile_id`` is the OPTIONAL, additive permission persona. It is written
+    at invite time so the account carries its profile from the moment it is
+    created, rather than needing a second admin action after enrolment. It is
+    NOT a substitute for ``role``, which stays required: the two are separate
+    grants (see the SOC Phase A note on ``users.profile_id``), and the caller is
+    responsible for having validated the profile against its own org — this
+    function is org-blind by design, like everything else here.
     """
+    if ttl_days is None:
+        ttl_days = await resolve_invite_ttl_days(conn, org_id)
+
     token = generate_invite_token()
     row = await conn.fetchrow(
         """
         INSERT INTO users (
-            id, org_id, email, full_name, role, auth0_sub,
+            id, org_id, email, full_name, role, auth0_sub, profile_id,
             invite_token, invite_status, invited_by, invited_at, invite_expires_at
         )
         VALUES (
-            extensions.uuid_generate_v4(), $1, $2, $3, $4, NULL,
+            extensions.uuid_generate_v4(), $1, $2, $3, $4, NULL, $8,
             $5, 'pending', $6, now(), now() + make_interval(days => $7)
         )
-        RETURNING id, org_id, email, full_name, role, invite_token, invite_status,
+        RETURNING id, org_id, email, full_name, role, profile_id,
+                  invite_token, invite_status,
                   invited_by, invited_at, invite_expires_at
         """,
-        org_id, email, full_name, role, token, invited_by, ttl_days,
+        org_id, email, full_name, role, token, invited_by, ttl_days, profile_id,
     )
     # The returned link is built HERE, from the creating org's own stored
     # enroll_url — so the value the admin copies is always fully qualified and

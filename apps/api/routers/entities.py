@@ -54,6 +54,12 @@ router = APIRouter(tags=["entities"])
 
 DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
 
+# The REAL Hollisworks org row (organizations.slug = 'hollisworks'). Platform
+# staff authenticate against the separate Hollisworks Auth0 tenant, and their
+# users row must land in THIS org — not in 2nd Act's, which is what the default
+# fallback below silently did. See `get_org_id`.
+HOLLISWORKS_ORG_ID = "bb347258-8f28-4f49-8cc9-e29ccad82884"
+
 ORG_ID_CLAIMS = (
     "org_id",
     "https://2ndactcapital.com/org_id",
@@ -106,14 +112,48 @@ def _operational_filter(params: list, include_operational: bool) -> str | None:
     return _NOT_OPERATIONAL % len(params)
 
 
-def get_org_id(request: Request) -> str:
-    """Resolve the caller's org_id from JWT claims, or the default org."""
-    claims = getattr(request.state, "user", None) or {}
+def org_id_from_claims(claims: dict | None) -> str:
+    """The org a set of VALIDATED token claims belongs to.
+
+    THE BUG THIS FIXES (real, observed): an Auth0 access token minted for a
+    custom API audience carries ``sub``/``iss``/``aud``/``azp``/``scope`` and
+    nothing else — none of ``ORG_ID_CLAIMS`` is ever present. (Same root cause as
+    the missing ``email`` claim documented in ``services.users``.) So EVERY
+    token, from either tenant, fell through to ``DEFAULT_ORG_ID`` and a
+    Hollisworks platform-staff login was assigned 2nd Act's org.
+
+    The issuer is the fix. It is already the trusted tenant signal used two lines
+    into ``ensure_user`` to grant ``role='super_admin'``; the same validated
+    claim now also decides the org. A Hollisworks-issued token resolves to the
+    REAL Hollisworks org row; every other token — including every 2nd Act token —
+    takes the identical path it always did and still resolves to
+    ``DEFAULT_ORG_ID``. That is the regression guarantee: the only behavior that
+    changes is the branch that was previously wrong.
+
+    ``is_hollisworks_claims`` returns False whenever the Hollisworks tenant is
+    unconfigured, so an unconfigured deployment is unaffected. The import is lazy
+    because ``main`` imports this module.
+    """
+    claims = claims or {}
     for key in ORG_ID_CLAIMS:
         value = claims.get(key)
         if value:
             return value
+
+    try:
+        from main import is_hollisworks_claims
+
+        if is_hollisworks_claims(claims):
+            return HOLLISWORKS_ORG_ID
+    except Exception as exc:  # never block a request on tenant resolution
+        print(f"[org] Hollisworks issuer check failed (default org): {exc}")
+
     return DEFAULT_ORG_ID
+
+
+def get_org_id(request: Request) -> str:
+    """Resolve the caller's org_id from JWT claims, or the default org."""
+    return org_id_from_claims(getattr(request.state, "user", None))
 
 
 def _mask_tax_id(last4: str) -> str:
