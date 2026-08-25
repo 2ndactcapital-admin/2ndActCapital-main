@@ -306,6 +306,61 @@ export const createInvite = ({ email, fullName, role }) =>
   });
 export const getInvites = (status) =>
   fetchAPI("/api/v1/admin/invites", { searchParams: { status } });
+
+/**
+ * Classify an invite token — PRE-AUTH, so deliberately NOT via fetchAPI.
+ *
+ * An invitee has no session, which is the whole point of an invite. Going
+ * through fetchAPI would call getRequestAuthClient(), and on
+ * admin.hollisworks.com that fail-loud client THROWS when the Hollisworks env
+ * vars are unset — breaking a page that needs no token at all. So this is a
+ * plain fetch against the public endpoint, the same shape lib/tenant.js uses
+ * for /tenant/resolve, forwarding the browser's Host for the cross-tenant check.
+ *
+ * Never throws: an unreachable API yields `status: "unreachable"`, which the
+ * page renders as its own honest message rather than a blank error.
+ */
+export async function validateInvite({ inviteToken, host }) {
+  try {
+    const url = new URL(API_BASE + "/api/v1/enroll/validate");
+    if (inviteToken) url.searchParams.set("invite_token", inviteToken);
+    if (host) url.searchParams.set("host", host);
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return { status: "unreachable", message: null };
+    return await res.json();
+  } catch {
+    return { status: "unreachable", message: null };
+  }
+}
+
+/**
+ * Claim the pending invite row for the just-authenticated identity.
+ *
+ * Needs the user's bearer token, so it goes through the authenticated path —
+ * but deliberately NOT through fetchAPI's throw-on-!ok behaviour. Every failure
+ * here already comes back with the backend's own `{status, message}` describing
+ * precisely what went wrong; fetchAPI would reduce that to an Error whose only
+ * survivor is the string, forcing the page to guess the reason back out of the
+ * HTTP code (where expired and revoked are both 400). Returning the body lets
+ * the page render the right message with no inference at all.
+ *
+ * Never throws: an unreachable API yields `status: "unreachable"`.
+ */
+export async function acceptInvite({ inviteToken, host }) {
+  try {
+    const res = await fetch(new URL(API_BASE + "/api/v1/enroll/accept"), {
+      method: "POST",
+      headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+      body: JSON.stringify({ invite_token: inviteToken, host: host || null }),
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => ({}));
+    if (body?.status) return { ...body, ok: res.ok };
+    return { status: "unreachable", message: body?.detail || null, ok: false };
+  } catch {
+    return { status: "unreachable", message: null, ok: false };
+  }
+}
 export const revokeInvite = (inviteId) =>
   fetchAPI(`/api/v1/admin/invites/${inviteId}/revoke`, { method: "POST" });
 

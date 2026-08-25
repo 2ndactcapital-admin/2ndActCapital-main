@@ -15,7 +15,6 @@ to the admin for manual sharing. When SES is provisioned, Task 3 wires a send
 call at the marked point in ``create_invite_endpoint``.
 """
 
-import os
 from uuid import UUID
 
 import asyncpg
@@ -27,23 +26,16 @@ from services.audit import write_audit_log
 from services.database import get_pool
 from services.invites import (
     ALLOWED_INVITE_ROLES,
+    EnrollmentUrlError,
+    build_enrollment_url,
     create_invite,
+    org_enrollment_base,
     revoke_invite,
 )
 from services.rbac import require_permission
 from services.users import ensure_user
 
 router = APIRouter(tags=["invites"])
-
-
-def _enrollment_url(token: str) -> str:
-    """Build the enrollment link for an invite token.
-
-    Base comes from WEB_BASE_URL / APP_BASE_URL when set; otherwise a relative
-    path so the value is still usable (and never a wrong hardcoded host).
-    """
-    base = (os.environ.get("WEB_BASE_URL") or os.environ.get("APP_BASE_URL") or "").rstrip("/")
-    return f"{base}/enroll?invite_token={token}"
 
 
 class InviteCreateRequest(BaseModel):
@@ -100,6 +92,11 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
                 role=role,
                 invited_by=actor_id,
             )
+        except EnrollmentUrlError as exc:
+            # The org has no usable enrollment base. Fail loudly with the real
+            # reason rather than handing back an unusable relative link — that
+            # silent degradation IS the bug this sprint fixes.
+            raise HTTPException(status_code=500, detail=str(exc))
         except asyncpg.UniqueViolationError:
             # Email already exists (this org or, unseen under RLS, another org),
             # or a token collision. Either way the invite cannot be created.
@@ -123,18 +120,21 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
             actor=actor_id,
         )
 
-    # --- Task 3 hook (BLOCKED — SES gate failed): once SES is provisioned, send
-    # the invite email here, e.g. await send_invite_email(email, token). ---
+    # --- SES hook (still BLOCKED — the Textract IAM user has no SES permission):
+    # once SES is provisioned, send the invite email here, e.g.
+    # await send_invite_email(email, row["enrollment_url"]). The link itself is
+    # now fully qualified, so it is shareable by hand in the meantime. ---
 
-    token = row["invite_token"]
     return InviteResponse(
         id=row["id"],
         email=row["email"],
         full_name=row["full_name"],
         role=row["role"],
         invite_status=row["invite_status"],
-        invite_token=token,
-        enrollment_url=_enrollment_url(token),
+        invite_token=row["invite_token"],
+        # Built by services.invites from THIS org's organizations.enroll_url —
+        # always absolute, always this org's own subdomain.
+        enrollment_url=row["enrollment_url"],
         invited_by=row["invited_by"],
         invited_at=str(row["invited_at"]) if row["invited_at"] else None,
         invite_expires_at=str(row["invite_expires_at"]) if row["invite_expires_at"] else None,
@@ -166,6 +166,21 @@ async def list_invites(
             """,
             *params,
         )
+        # One org lookup for the whole list — every row here belongs to the
+        # caller's own org by construction (org_id = $1 above), so they all share
+        # the same enrollment base. Same builder as create_invite: this listing
+        # had the IDENTICAL relative-path bug and is fixed by the same change.
+        enroll_url, slug = await org_enrollment_base(conn, org_id)
+
+    def _url(token):
+        if not token:
+            return None
+        try:
+            return build_enrollment_url(enroll_url, token, slug=slug)
+        except EnrollmentUrlError:
+            # A misconfigured org must not break the whole listing — omit the
+            # link rather than emit a relative one.
+            return None
 
     return [
         InviteResponse(
@@ -175,7 +190,7 @@ async def list_invites(
             role=r["role"],
             invite_status=r["invite_status"],
             invite_token=r["invite_token"],
-            enrollment_url=_enrollment_url(r["invite_token"]) if r["invite_token"] else None,
+            enrollment_url=_url(r["invite_token"]),
             invited_by=r["invited_by"],
             invited_at=str(r["invited_at"]) if r["invited_at"] else None,
             invite_expires_at=str(r["invite_expires_at"]) if r["invite_expires_at"] else None,
