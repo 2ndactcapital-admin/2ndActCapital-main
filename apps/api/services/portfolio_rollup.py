@@ -325,6 +325,26 @@ async def _position_value(conn, org_id: str, row, as_of_date: date):
     return None, f"no market_value and none derivable: {resolved.reason}"
 
 
+async def position_current_value(conn, org_id: str, row, as_of_date: date | None):
+    """PUBLIC name for :func:`_position_value`. Returns ``(Decimal|None, reason)``.
+
+    Added by the Positions-grid sprint so the screen's "current value" column is
+    not a second, parallel derivation. The number a member reads off the grid and
+    the number ``allocation_lens`` renders in the sunburst are produced by the
+    same function — if they could disagree, one of them would be wrong and
+    nothing would say which.
+
+    ``row`` needs only ``ownership_basis``, ``asset_id``, ``quantity``,
+    ``ownership_pct`` and ``market_value``; a plain dict is fine.
+
+    ``as_of_date`` may be ``None``, which means "no date ceiling — the latest
+    valuation that exists". ``rollup_entity_holdings`` always passes a real date
+    because a rollup labels its buckets with one; a grid asking "what is this
+    worth right now" has no such date and must not invent one.
+    """
+    return await _position_value(conn, org_id, row, as_of_date)
+
+
 async def _ownership_weights(conn, org_id: str, owner_ids: set[str]) -> dict:
     """``{ancestor_entity_id: {owned_entity_id: compounded_fraction}}``.
 

@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { label: "CRM", href: "/crm", TablerIcon: IconAddressBook },
   { label: "Marketplace", href: "/marketplace", icon: "marketplace" },
   { label: "Investments", href: "/portfolio", icon: "portfolio" },
+  { label: "Positions", href: "/portfolio/positions", icon: "portfolio-reporting" },
   { label: "Portfolio Reporting", href: "/portfolio-reporting", icon: "portfolio-reporting" },
   { label: "SPV Manager", href: "/spvs", icon: "spv-manager" },
   { label: "Insurance", href: "/insurance", icon: "insurance" },
