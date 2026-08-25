@@ -126,9 +126,33 @@ def discovery_findings():
         fail("[1b] Hollisworks client now sets appBaseUrl from its own host",
              "expected `appBaseUrl: [cfg.appBaseUrl]` in auth0Hollisworks.js")
 
-    # 1c — how 2nd Act's own client gets its base URL today (the pattern to preserve).
-    twoact_untouched = "appBaseUrl" not in twoact_src
-    if twoact_untouched:
+    # 1c — how 2nd Act's own client gets its base URL.
+    #
+    # SUPERSEDED by the later `twoactbaseurl` sprint. THIS sprint's finding was that
+    # auth0.js relied on the static process.env.APP_BASE_URL and that this was
+    # CORRECT for 2nd Act — true at the time, because every 2nd Act login then
+    # happened on the bare domain (https://2ndactcapital.com), where the static
+    # value matched. It stopped being true once the enrollment flow put members on
+    # 2ndactcapital.hollisworks.com: the same static string then produced a
+    # bare-domain redirect_uri for a subdomain login, and the callback failed with
+    # "the state parameter is invalid". auth0.js now passes its OWN host-derived
+    # allow-list (`twoActAppBaseUrls()`), the same pattern this sprint introduced.
+    #
+    # What THIS sprint must still prove is unchanged and is asserted below by the
+    # Node harness: 2nd Act's bare-domain login still builds exactly
+    # https://2ndactcapital.com/auth/callback. See verify_twoactbaseurl.py for the
+    # newer host's proof.
+    twoact_now_host_derived = "twoActAppBaseUrls" in twoact_src
+    if twoact_now_host_derived:
+        ok("[1c] 2nd Act client base URL — finding superseded by the later twoactbaseurl sprint",
+           "At THIS sprint auth0.js passed no appBaseUrl and inherited "
+           "process.env.APP_BASE_URL = https://2ndactcapital.com, which was correct while "
+           "every 2nd Act login happened on the bare domain. The later twoactbaseurl sprint "
+           "fixed the case this could not cover (a login begun on "
+           "2ndactcapital.hollisworks.com) by giving auth0.js its own host-derived "
+           "allow-list. The bare-domain value it produces is unchanged and is still "
+           "asserted below.")
+    elif "appBaseUrl" not in twoact_src:
         ok("[1c] 2nd Act client (auth0.js) gets its base from process.env.APP_BASE_URL — untouched",
            "auth0.js passes no appBaseUrl and relies on the SDK reading "
            "process.env.APP_BASE_URL = https://2ndactcapital.com directly. That is "
@@ -136,8 +160,8 @@ def discovery_findings():
            "leaves auth0.js byte-for-byte unchanged and only gives the Hollisworks "
            "client its own host-derived base.")
     else:
-        fail("[1c] 2nd Act client left untouched (still relies on APP_BASE_URL)",
-             "auth0.js unexpectedly references appBaseUrl")
+        fail("[1c] 2nd Act client base URL is either untouched or host-derived",
+             "auth0.js references appBaseUrl but not via twoActAppBaseUrls()")
 
 
 # ── The real proof: constructed redirect_uri via REAL SDK + REAL config (Node) ──

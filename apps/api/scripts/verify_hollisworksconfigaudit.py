@@ -164,19 +164,46 @@ def source_findings():
     else:
         fail("[src] frontend audience fix present", "expected `audience: hollisworksAudience(env)`")
 
-    # 2nd Act client (auth0.js) byte-for-byte untouched: still hardcodes its own
-    # audience and nothing Hollisworks-specific leaked in.
-    twoact_ok = (
-        f'audience: "{TWOACT_AUDIENCE}"' in twoact_src
-        and "HOLLISWORKS" not in twoact_src
-        and "hollisworks" not in twoact_src
+    # 2nd Act client (auth0.js): no HOLLISWORKS TENANT config leaked in, and its
+    # audience is still 2nd Act's.
+    #
+    # This assertion originally read "the string 'hollisworks' does not appear in
+    # auth0.js" — a proxy for the real invariant, valid while auth0.js was a bare
+    # 4-line client. The later `twoactbaseurl` sprint deliberately broke that proxy
+    # WITHOUT breaking the invariant: auth0.js now lists 2nd Act's own tenant
+    # subdomain, `2ndactcapital.hollisworks.com`, in its appBaseUrl allow-list.
+    # That host is 2nd Act's — `hollisworks.com` is merely its DNS parent, the
+    # platform domain every client firm gets a subdomain under. It has nothing to
+    # do with the SEPARATE Hollisworks Auth0 tenant, which is reachable only at
+    # admin.hollisworks.com and only through auth0Hollisworks.js.
+    #
+    # So the check now tests the INVARIANT rather than the proxy: 2nd Act's client
+    # must never bind to the Hollisworks Auth0 tenant's config, and must keep its
+    # own audience.
+    hollisworks_tenant_markers = (
+        "HOLLISWORKS_AUTH0",
+        "getHollisworksAuth0",
+        "hollisworksAudience",
+        "hollisworksAppBaseUrl",
+        "HOLLISWORKS_API_AUDIENCE",
+        "HOLLISWORKS_ADMIN_HOST",
+        "api.hollisworks.com",
+        "admin.hollisworks.com",
     )
+    leaked = [m for m in hollisworks_tenant_markers if m in twoact_src]
+    twoact_ok = f'audience: "{TWOACT_AUDIENCE}"' in twoact_src and not leaked
     if twoact_ok:
-        ok("[regress] auth0.js (2nd Act client) untouched; audience still 2nd Act",
-           f'auth0.js hardcodes audience: "{TWOACT_AUDIENCE}" and references nothing '
-           "Hollisworks — provably unaffected by this sprint.")
+        ok("[regress] auth0.js (2nd Act client) never binds the Hollisworks tenant; audience still 2nd Act",
+           f'auth0.js hardcodes audience: "{TWOACT_AUDIENCE}" and references NONE of the '
+           "Hollisworks Auth0 tenant's config (HOLLISWORKS_AUTH0_*, getHollisworksAuth0, "
+           "hollisworksAudience/AppBaseUrl, api.hollisworks.com, admin.hollisworks.com) — "
+           "provably unaffected by this sprint. Its appBaseUrl allow-list does contain "
+           "2ndactcapital.hollisworks.com, which is 2nd ACT's OWN tenant subdomain "
+           "(added by the later twoactbaseurl sprint), not the Hollisworks tenant.")
     else:
-        fail("[regress] auth0.js untouched", "auth0.js changed or references Hollisworks")
+        fail("[regress] auth0.js never binds the Hollisworks tenant",
+             f"audience_ok={f'audience: \"{TWOACT_AUDIENCE}\"' in twoact_src} "
+             f"leaked_hollisworks_tenant_markers={leaked}")
 
     # Backend default fixed and actually used by verify_token.
     backend_default_ok = re.search(

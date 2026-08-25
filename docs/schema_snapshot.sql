@@ -1373,6 +1373,10 @@
 --   invited_by                               uuid
 --   invited_at                               timestamp with time zone
 --   invite_expires_at                        timestamp with time zone
+--   is_active                                boolean NOT NULL DEFAULT true
+--   deactivated_at                           timestamp with time zone
+--   deactivated_by                           uuid
+--   last_login_at                            timestamp with time zone
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
 --   UNIQUE users_invite_token_key: (invite_token)

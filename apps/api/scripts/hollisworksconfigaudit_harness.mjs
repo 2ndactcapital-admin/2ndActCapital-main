@@ -143,12 +143,31 @@ const twoactCfg = resolveAuthTenantForHost("2ndactcapital.com", envFull);
 //     Each field: Hollisworks value is the Hollisworks-specific one AND differs
 //     from 2nd Act's, while the 2nd Act cfg keeps its original value.
 {
+  // 2nd Act's `appBaseUrl` is no longer a single string. The later `twoactbaseurl`
+  // sprint replaced the static APP_BASE_URL inheritance with a host-derived
+  // ALLOW-LIST array (twoActAppBaseUrls), because a signup started on
+  // 2ndactcapital.hollisworks.com was building its callback on the bare domain.
+  // Its exact contents vary with env (NODE_ENV gates the loopback entries), so
+  // assert the INVARIANTS this sprint actually cares about: 2nd Act's own base is
+  // still in the list, and the Hollisworks ADMIN origin never is.
+  const TWOACT_BASE_URL = "https://2ndactcapital.com";
+  const HOLLIS_ADMIN_BASE_URL = "https://admin.hollisworks.com";
+  const twoactList = Array.isArray(twoactCfg.appBaseUrl)
+    ? twoactCfg.appBaseUrl
+    : [twoactCfg.appBaseUrl];
+  const TWOACT_BASE_OK =
+    "allow-list keeps 2nd Act's base and excludes the Hollisworks admin origin";
+  const twoactBaseSummary =
+    twoactList.includes(TWOACT_BASE_URL) && !twoactList.includes(HOLLIS_ADMIN_BASE_URL)
+      ? TWOACT_BASE_OK
+      : `UNEXPECTED allow-list ${JSON.stringify(twoactList)}`;
+
   const rows = [
     ["domain", hollisCfg.domain, HOLLIS_DOMAIN, twoactCfg.domain, TWOACT_DOMAIN, true],
     ["clientId", hollisCfg.clientId, "hollis_client", twoactCfg.clientId, "twoact_client", true],
     ["clientSecret", hollisCfg.clientSecret, "hollis_secret", twoactCfg.clientSecret, "twoact_secret", true],
     ["audience", hollisCfg.audience, HOLLIS_API(), twoactCfg.audience, TWOACT_API_AUDIENCE, true],
-    ["appBaseUrl", hollisCfg.appBaseUrl, "https://admin.hollisworks.com", twoactCfg.appBaseUrl, "https://2ndactcapital.com", true],
+    ["appBaseUrl", hollisCfg.appBaseUrl, HOLLIS_ADMIN_BASE_URL, twoactBaseSummary, TWOACT_BASE_OK, true],
     // secret: Hollisworks-specific here (HOLLISWORKS_AUTH0_SECRET set); NON-tenant-
     // scoped so a value-difference is not required, only that it is resolved.
     ["secret", hollisCfg.secret, "1".repeat(64), twoactCfg.secret, "0".repeat(64), false],

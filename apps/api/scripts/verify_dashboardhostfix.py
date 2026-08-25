@@ -279,15 +279,35 @@ def source_guards(pages, routes, libs):
         fail("[src] proxy.js free of next/headers",
              "middleware now transitively imports next/headers")
 
-    # 5. 2nd Act's client untouched.
+    # 5. 2nd Act's client never binds the Hollisworks Auth0 tenant.
+    #
+    # This originally asserted the literal string "hollisworks" was absent from
+    # auth0.js — a proxy for the real invariant, valid while auth0.js was a bare
+    # 4-line client. The later `twoactbaseurl` sprint broke the proxy but not the
+    # invariant: auth0.js now lists 2nd Act's OWN tenant subdomain,
+    # 2ndactcapital.hollisworks.com, in its appBaseUrl allow-list (hollisworks.com
+    # is just the platform DNS parent every client firm gets a subdomain under).
+    # The check now tests the invariant directly.
     a0 = _read(os.path.join(_WEB_ROOT, "lib", "auth0.js"))
-    if ('audience: "https://api.2ndactcapital.com"' in a0
-            and "hollisworks" not in a0.lower()):
-        ok("[regress] lib/auth0.js (2nd Act client) byte-for-byte untouched",
-           "still hardcodes audience https://api.2ndactcapital.com and references "
-           "nothing Hollisworks.")
+    hollisworks_tenant_markers = (
+        "HOLLISWORKS_AUTH0",
+        "getHollisworksAuth0",
+        "hollisworksAudience",
+        "hollisworksAppBaseUrl",
+        "HOLLISWORKS_API_AUDIENCE",
+        "api.hollisworks.com",
+        "admin.hollisworks.com",
+    )
+    leaked = [m for m in hollisworks_tenant_markers if m in a0]
+    if 'audience: "https://api.2ndactcapital.com"' in a0 and not leaked:
+        ok("[regress] lib/auth0.js (2nd Act client) never binds the Hollisworks tenant",
+           "still hardcodes audience https://api.2ndactcapital.com and references none of "
+           "the Hollisworks Auth0 tenant's config. (Its appBaseUrl allow-list contains "
+           "2ndactcapital.hollisworks.com — 2nd Act's own tenant subdomain, added by the "
+           "later twoactbaseurl sprint — not the Hollisworks tenant.)")
     else:
-        fail("[regress] lib/auth0.js untouched", "2nd Act client changed")
+        fail("[regress] lib/auth0.js never binds the Hollisworks tenant",
+             f"leaked_hollisworks_tenant_markers={leaked}")
 
     # 5b. Client/server boundary: lib/theme.js is reachable from client
     #     components (ThemeProvider -> Sidebar -> AppShell). It statically

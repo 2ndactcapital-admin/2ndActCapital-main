@@ -175,6 +175,160 @@ export function hollisworksAudience(env = process.env) {
   return value;
 }
 
+/* ---------------------------------------------------------------------------
+ * 2nd Act's OWN client — host-derived appBaseUrl (the FOURTH bug of this shape)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The hosts 2nd Act's Auth0 client (`lib/auth0.js`) legitimately serves.
+ *
+ * THE BUG (live, observed): a signup started on
+ * `https://2ndactcapital.hollisworks.com` came back to
+ * `https://2ndactcapital.com/auth/callback` — the BARE domain — and Auth0
+ * reported "the state parameter is invalid". The transaction cookie (`__txn_*`)
+ * was written on the .hollisworks.com host, so the callback on 2ndactcapital.com
+ * could not see it and the state lookup failed.
+ *
+ * Root cause: IDENTICAL in shape to the three Hollisworks bugs above, but on
+ * 2nd Act's own client. `lib/auth0.js` passes no `appBaseUrl`, so the SDK used
+ * `process.env.APP_BASE_URL` — a STATIC string, `https://2ndactcapital.com`.
+ * `resolveAppBaseUrl` returns a string verbatim WITHOUT ever looking at the
+ * request, so every host 2nd Act's client serves got the bare domain baked into
+ * `redirect_uri`. This was never exercised before tonight's enrollment flow:
+ * every prior 2nd Act login happened ON the bare domain, where the static value
+ * was accidentally correct.
+ *
+ * THE FIX is the SAME pattern already proven for the Hollisworks client — pass
+ * an ALLOW-LIST ARRAY instead of relying on the static env string, so the SDK
+ * derives the base from the REAL request Host and validates it. 2nd Act's client
+ * differs from the Hollisworks one in exactly one way: it serves SEVERAL real
+ * hosts, so the list has several entries instead of one. Order is irrelevant —
+ * `resolveAppBaseUrl` returns the REQUEST's origin once matched, never a list
+ * element — so there is no "first entry wins" trap.
+ *
+ * EXPLICIT LISTING, NEVER WILDCARDS — the same convention as Auth0's own Allowed
+ * Callback URLs. Adding a new tenant subdomain is therefore a two-step change:
+ * add its origin here (or via `TWOACT_EXTRA_APP_BASE_URLS`) AND add
+ * `https://<slug>.hollisworks.com/auth/callback` to 2nd Act's Auth0 tenant.
+ */
+
+/** 2nd Act's own root domain — the value APP_BASE_URL holds in production. */
+export const TWOACT_PRIMARY_BASE_URL = "https://2ndactcapital.com";
+
+/** The `www` form of that root domain. Confirmed live (resolves in DNS). */
+export const TWOACT_WWW_BASE_URL = "https://www.2ndactcapital.com";
+
+/**
+ * 2nd Act's Hollisworks-platform tenant subdomain. Not a guess: it is the host
+ * in the org's real `organizations.enroll_url`
+ * (`https://2ndactcapital.hollisworks.com/enroll`, slug `2ndactcapital`), i.e.
+ * the host every invited member actually lands on. THIS is the host the bug hit.
+ */
+export const TWOACT_TENANT_BASE_URL = "https://2ndactcapital.hollisworks.com";
+
+/**
+ * Hosts deliberately EXCLUDED, and why:
+ *   - admin.hollisworks.com — a different Auth0 tenant entirely; it never
+ *     reaches this client (`getAuthClientForHost`).
+ *   - hollisworks.com / www.hollisworks.com — the platform MARKETING apex. It
+ *     routes to 2nd Act's client by default but never initiates a login: the
+ *     marketing page links to `/firm-search?intent=login`, which sends the
+ *     visitor to their own firm's subdomain first. Listing it would mint a 2nd
+ *     Act session cookie on the platform apex — a genuine cross-tenant leak. An
+ *     `/auth/login` hit there now FAILS LOUD instead of silently redirecting the
+ *     visitor into 2nd Act's domain, which is what it does today by accident.
+ */
+
+/** Raised when 2nd Act's own appBaseUrl allow-list cannot be built safely. */
+export class TwoActAuthConfigError extends Error {
+  constructor(detail) {
+    super(
+      `2nd Act Auth0 appBaseUrl is misconfigured — ${detail}. Refusing to build a ` +
+        `client whose redirect_uri could point at the wrong host. Fix APP_BASE_URL / ` +
+        `TWOACT_EXTRA_APP_BASE_URLS (Vercel Production + Preview).`
+    );
+    this.name = "TwoActAuthConfigError";
+    this.detail = detail;
+  }
+}
+
+/** Split a comma-separated env value the same way the Auth0 SDK does. */
+function splitBaseUrlList(raw) {
+  if (!raw || !String(raw).trim()) return [];
+  return String(raw)
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+}
+
+/** True for the loopback hosts where plain http is legitimate (local dev only). */
+function isLoopbackOrigin(url) {
+  return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+}
+
+/**
+ * Build the appBaseUrl ALLOW-LIST for 2nd Act's Auth0 client.
+ *
+ * Contents, in order (order does not affect resolution — see above):
+ *   1. `APP_BASE_URL` (comma lists supported, exactly as the SDK parses it) —
+ *      keeps whatever is deployed today working byte-for-byte, including the
+ *      `http://localhost:3000` used by local dev.
+ *   2. The three real 2nd Act origins (root, www, tenant subdomain).
+ *   3. `TWOACT_EXTRA_APP_BASE_URLS` — comma list; the escape hatch for Vercel
+ *      preview deployments and future tenant subdomains, so adding one never
+ *      requires a code change.
+ *   4. Loopback origins, ONLY when NODE_ENV !== "production", so a dev without
+ *      APP_BASE_URL set still gets a working login. Vercel builds (including
+ *      previews) run with NODE_ENV=production, so these can never reach a
+ *      deployed environment.
+ *
+ * FAIL LOUD:
+ *   - a malformed entry throws rather than being silently dropped;
+ *   - a NON-loopback http entry throws. The SDK marks session/transaction
+ *     cookies secure only when EVERY entry is https (`client.js:95-104`), so one
+ *     stray http production origin would silently downgrade cookie security.
+ *
+ * Returns deduped ORIGINS (no path/query) so `createRouteUrl` appends
+ * `/auth/callback` cleanly — `https://2ndactcapital.com` + `/auth/callback`,
+ * byte-identical to what the static string produced.
+ */
+export function twoActAppBaseUrls(env = process.env) {
+  const candidates = [
+    ...splitBaseUrlList(env.APP_BASE_URL),
+    TWOACT_PRIMARY_BASE_URL,
+    TWOACT_WWW_BASE_URL,
+    TWOACT_TENANT_BASE_URL,
+    ...splitBaseUrlList(env.TWOACT_EXTRA_APP_BASE_URLS),
+  ];
+  if (env.NODE_ENV !== "production") {
+    candidates.push("http://localhost:3000", "http://127.0.0.1:3000");
+  }
+
+  const origins = [];
+  for (const value of candidates) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new TwoActAuthConfigError(
+        `"${value}" is not an absolute URL (every appBaseUrl entry must be)`
+      );
+    }
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackOrigin(url))) {
+      throw new TwoActAuthConfigError(
+        `"${value}" is not https (only http://localhost / http://127.0.0.1 may be ` +
+          `plain http; a non-loopback http entry silently disables secure cookies)`
+      );
+    }
+    if (!origins.includes(url.origin)) origins.push(url.origin);
+  }
+  if (!origins.length) {
+    // Unreachable given the constants above, but never hand the SDK an empty list.
+    throw new TwoActAuthConfigError("the allow-list resolved to zero origins");
+  }
+  return origins;
+}
+
 /**
  * Resolve which Auth0 tenant a given Host authenticates against, and the
  * EFFECTIVE credentials the client must be built with.
@@ -235,9 +389,11 @@ export function resolveAuthTenantForHost(host, env = process.env) {
     clientSecret: env.AUTH0_CLIENT_SECRET,
     secret: env.AUTH0_SECRET,
     audience: "https://api.2ndactcapital.com",
-    // Documentational only: 2nd Act's client (lib/auth0.js) is left UNTOUCHED and
-    // continues to rely on the SDK reading process.env.APP_BASE_URL directly, so
-    // its redirect_uri behavior is provably unchanged by this sprint.
-    appBaseUrl: env.APP_BASE_URL || null,
+    // 2nd Act's client now passes this ALLOW-LIST to the SDK (see
+    // `twoActAppBaseUrls`) instead of inheriting the static APP_BASE_URL string,
+    // so `redirect_uri` follows the REAL request Host. A request from
+    // 2ndactcapital.com still resolves to https://2ndactcapital.com — unchanged —
+    // while 2ndactcapital.hollisworks.com now correctly stays on its own host.
+    appBaseUrl: twoActAppBaseUrls(env),
   };
 }
