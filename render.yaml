@@ -1,4 +1,40 @@
+# =============================================================================
+# render.yaml — env-var MANIFEST for the Render-hosted services.
+#
+# This file is the declared inventory. It is NOT the source of the values:
+# every entry is `sync: false`, meaning Render holds the value and the
+# blueprint only names it. See docs/DEVELOPMENT_ENVIRONMENT.md for the
+# intended end state (Doppler as single source of truth) and for the local
+# development flow.
+#
+# INVARIANT — keep this manifest complete. A variable that production reads
+# but that is not declared here is invisible: it exists only as a hand-set
+# dashboard value nobody can audit from the repo. That gap is what caused the
+# AWS_* / VOYAGE_API_KEY omission below (found by the LiteLLM discovery
+# sprint, closed here). Regenerate the used-vs-declared diff with
+# `apps/api/scripts/verify_doppler.py`, which fails when the gap reopens.
+#
+# NOTE — implicit SDK credential chains. Some variables are never named in a
+# literal `os.environ.get("...")` call and so do not show up in a naive grep:
+#   * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are consumed by boto3's
+#     default credential chain (services/textract.py, services/storage.py).
+#   * VOYAGE_API_KEY is resolved through a name TUPLE in
+#     services/document_embedding.py (_VOYAGE_KEY_NAMES), not a literal.
+# They are production runtime requirements regardless. Declare them.
+# =============================================================================
 services:
+  # ---------------------------------------------------------------------------
+  # STALE AS OF 2026-08-25: the live frontend is served by VERCEL, not Render
+  # (verified: https://2ndactcapital.com returns `Server: Vercel`). This block
+  # is retained only as the Render fallback definition; the authoritative
+  # frontend env inventory is the Vercel project's, mirrored below so the two
+  # can be diffed.
+  #
+  # The Auth0 keys here were also stale: AUTH0_BASE_URL / AUTH0_ISSUER_BASE_URL
+  # are @auth0/nextjs-auth0 **v3** names. This app is on v4, which reads
+  # AUTH0_DOMAIN and APP_BASE_URL (apps/web/lib/auth0.js,
+  # apps/web/lib/authHostConfig.mjs). Corrected below.
+  # ---------------------------------------------------------------------------
   - type: web
     name: 2ndactcapital-web
     runtime: node
@@ -9,18 +45,35 @@ services:
       - key: NODE_ENV
         value: production
       # URL of the deployed API service below (no trailing slash).
+      # Inlined into the client bundle at BUILD time — changing it requires a
+      # rebuild, not just a restart.
       - key: NEXT_PUBLIC_API_URL
         sync: false
-      # Auth0 Regular Web Application credentials.
+      # Auth0 Regular Web Application credentials (@auth0/nextjs-auth0 v4).
       - key: AUTH0_SECRET
         sync: false
-      - key: AUTH0_BASE_URL
+      - key: AUTH0_DOMAIN
         sync: false
-      - key: AUTH0_ISSUER_BASE_URL
+      - key: APP_BASE_URL
         sync: false
       - key: AUTH0_CLIENT_ID
         sync: false
       - key: AUTH0_CLIENT_SECRET
+        sync: false
+      # SECOND Auth0 tenant — Hollisworks platform staff (admin.hollisworks.com).
+      # apps/web/lib/authHostConfig.mjs is deliberately FAIL-LOUD on these: it
+      # will not fall back to the 2nd Act tenant's values. Unset => every
+      # admin.hollisworks.com login breaks. Must match the API service's
+      # HOLLISWORKS_AUTH0_* below exactly.
+      - key: HOLLISWORKS_AUTH0_DOMAIN
+        sync: false
+      - key: HOLLISWORKS_AUTH0_CLIENT_ID
+        sync: false
+      - key: HOLLISWORKS_AUTH0_CLIENT_SECRET
+        sync: false
+      - key: HOLLISWORKS_AUTH0_SECRET
+        sync: false
+      - key: HOLLISWORKS_AUTH0_AUDIENCE
         sync: false
 
   - type: web
@@ -63,3 +116,58 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+
+      # -----------------------------------------------------------------------
+      # GAP CLOSED (2026-08-25). Everything below is read by production runtime
+      # code and was previously ABSENT from this manifest — set by hand in the
+      # Render dashboard only, and therefore un-auditable from the repo.
+      # -----------------------------------------------------------------------
+
+      # AWS — Textract OCR (services/textract.py, Chancery Phase 3/4).
+      # Consumed via boto3's default credential chain, so these names never
+      # appear in an os.environ.get() call for the credentials themselves;
+      # only the region is read explicitly. All three are required:
+      # textract_configured() returns False without them and every OCR
+      # extraction raises TextractUnavailable.
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      # textract.py reads AWS_DEFAULT_REGION first, then falls back to
+      # AWS_REGION. Declare the primary; the fallback needs no separate entry.
+      - key: AWS_DEFAULT_REGION
+        sync: false
+
+      # Voyage — embeddings for Chancery Phase 11b semantic INDEX/RETRIEVE
+      # (services/document_embedding.py). Resolved through the _VOYAGE_KEY_NAMES
+      # tuple, which is why a literal-string grep misses it. Without it,
+      # _maybe_embed_document raises and semantic search returns nothing.
+      - key: VOYAGE_API_KEY
+        sync: false
+
+      # SEC EDGAR requires a declared User-Agent on every request
+      # (services/edgar_fetch.py); SEC rate-limits or blocks anonymous traffic.
+      - key: EDGAR_USER_AGENT
+        sync: false
+
+      # -----------------------------------------------------------------------
+      # DELIBERATELY NOT DECLARED — do not "helpfully" add these.
+      #
+      # APP_BASE_URL / WEB_BASE_URL — services/invites.py reads them, but they
+      #   are intentionally UNSET in production. They are a single shared value
+      #   pointing at 2nd Act, so a Hollisworks invite handed the APP_BASE_URL
+      #   fallback would receive 2nd Act's domain — the same cross-tenant
+      #   inheritance shape as the three Auth0 bugs fixed earlier. Invite URLs
+      #   now derive per-org from organizations.enroll_url. Setting these
+      #   REINTRODUCES the leak.
+      #
+      # ALTRUIST_BASE_URL / ALTRUIST_CLIENT_ID / ALTRUIST_CLIENT_SECRET —
+      #   services/portfolio_altruist.py. The Altruist integration is BLOCKED
+      #   (no credentials have ever been issued) and has no mapping function.
+      #   Declare these only when real credentials exist.
+      #
+      # APP_SERVICE_DATABASE_URL — the non-bypass 'app_service' role DSN. Used
+      #   ONLY by apps/api/scripts/verify_*.py, never by runtime code, so the
+      #   Render service does not need it. It DOES belong in Doppler: a stale
+      #   local copy is precisely the drift this sprint was opened to fix.
+      # -----------------------------------------------------------------------

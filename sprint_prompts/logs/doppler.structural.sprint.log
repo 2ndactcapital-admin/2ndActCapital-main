@@ -1,0 +1,174 @@
+doppler.structural — sprint log
+Date: 2026-08-25
+Result: 3/6 assertions PASS, 3 BLOCKED. Non-zero exit. NOT merged to main.
+
+No secret VALUE is recorded anywhere in this log. Names only.
+
+================================================================================
+OUTCOME
+================================================================================
+Tasks 1, 1c-fix, 4 and the verification harness: DELIVERED.
+Tasks 2, 3 and two of Task 5's three legs: BLOCKED on credentials that do not
+exist in this environment. Not attempted-and-failed — unattemptable.
+
+================================================================================
+TASK 1 — DISCOVER (complete)
+================================================================================
+
+1a. API service (apps/api). render.yaml now declares 16:
+    ALLOWED_ORIGINS, ANTHROPIC_API_KEY, AUTH0_AUDIENCE, AUTH0_DOMAIN,
+    AWS_ACCESS_KEY_ID, AWS_DEFAULT_REGION, AWS_SECRET_ACCESS_KEY, DATABASE_URL,
+    EDGAR_USER_AGENT, HOLLISWORKS_AUTH0_AUDIENCE, HOLLISWORKS_AUTH0_DOMAIN,
+    R2_ACCESS_KEY_ID, R2_ACCOUNT_ID, R2_BUCKET_NAME, R2_SECRET_ACCESS_KEY,
+    VOYAGE_API_KEY.
+
+    Local apps/api/.env holds 7: APP_SERVICE_DATABASE_URL, AWS_ACCESS_KEY_ID,
+    AWS_DEFAULT_REGION, AWS_SECRET_ACCESS_KEY, DATABASE_URL, EDGAR_USER_AGENT,
+    VOYAGE_API_KEY.
+
+    Tooling-only, never deployed: APP_SERVICE_DATABASE_URL, SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY, AUTH0_MGMT_CLIENT_ID, AUTH0_MGMT_CLIENT_SECRET,
+    R2_SOURCE_BUCKET.
+
+    ANTHROPIC_API_KEY is NOT present locally (consistent with the earlier
+    finding that the key is absent from this machine).
+
+1b. Frontend. The live frontend is on VERCEL, not Render — verified by response
+    header `Server: Vercel` on https://2ndactcapital.com. render.yaml's web
+    block was doubly stale: wrong host, and v3 Auth0 SDK variable names
+    (AUTH0_BASE_URL / AUTH0_ISSUER_BASE_URL) against a v4 codebase that reads
+    AUTH0_DOMAIN / APP_BASE_URL. Corrected, and the five HOLLISWORKS_AUTH0_*
+    keys added — authHostConfig.mjs is fail-loud on them, so unset means every
+    admin.hollisworks.com login breaks.
+
+    NEXT_PUBLIC_API_URL is BUILD-time (inlined into the client bundle by
+    lib/api.js and lib/apiForward.js). A Doppler change to it requires a
+    REDEPLOY, not a restart. This materially changes Task 3's verification: a
+    working page proves the last build was correct, not that Doppler is its
+    source.
+
+1c. render.yaml declared-vs-used gap — CONFIRMED and CLOSED.
+    Missing from the manifest but read by production runtime code:
+      AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (boto3 default credential
+        chain — services/textract.py, services/storage.py)
+      AWS_DEFAULT_REGION  (explicit, falls back to AWS_REGION)
+      VOYAGE_API_KEY  (services/document_embedding.py)
+      EDGAR_USER_AGENT  (services/edgar_fetch.py)
+
+    Why the gap persisted: none of AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY or
+    VOYAGE_API_KEY appears in a literal os.environ.get("NAME") call. boto3 reads
+    the AWS pair through its own credential chain, and Voyage is resolved via a
+    name TUPLE (_VOYAGE_KEY_NAMES). A grep-based audit — including this
+    sprint's first pass — reports them as unused. The measured, not inferred,
+    check is what caught them.
+
+    Deliberately NOT added, and asserted absent by the verify script:
+      APP_BASE_URL / WEB_BASE_URL on the API service — services/invites.py reads
+        them but they are intentionally unset in production. They are a single
+        shared value pointing at 2nd Act, so a Hollisworks invite taking the
+        fallback receives 2nd Act's domain. That is the identical cross-tenant
+        inheritance shape as the three Auth0 bugs fixed earlier this session.
+        Declaring them would REINTRODUCE the leak, so [5] fails if they appear.
+      ALTRUIST_* — integration is BLOCKED, no credentials ever issued.
+
+1d. Doppler CLI: INSTALLABLE and INSTALLED — v3.76.5 to ~/.local/bin/doppler
+    from the GitHub release tarball. Runs correctly.
+    api.doppler.com reachable (HTTP 401 = up, unauthenticated).
+    DOPPLER_TOKEN: ABSENT. `doppler me` -> {"error":"you must provide a token"}.
+    No ~/.doppler, no ~/.config/doppler, no configured scope.
+    A token-scoped fetch IS testable without exposure —
+    `doppler secrets --only-names --json` returns names only — but there is no
+    token to test with.
+
+================================================================================
+TASKS 2, 3, 5 (Render/Vercel legs) — BLOCKED
+================================================================================
+Measured access state:
+    api.doppler.com  -> 401   reachable, no credential
+    api.render.com   -> 401   reachable, no RENDER_API_KEY
+    api.vercel.com   -> 403   reachable, no VERCEL_TOKEN, no .vercel link dir
+
+Wiring the Doppler->Render and Doppler->Vercel native integrations requires an
+interactive browser OAuth session against three accounts this environment holds
+no credential for. Task 3's "remove the old value from the dashboard" step is
+downstream of that and equally unreachable — and doing it first would convert a
+misconfigured integration into an outage.
+
+The procedure is written out in docs/DEVELOPMENT_ENVIRONMENT.md §5 so it can be
+executed directly once access exists, including the ordering constraint
+(verify, THEN delete) and the Vercel redeploy requirement from 1b.
+
+================================================================================
+TASK 4 — LOCAL DEV FIX (delivered)
+================================================================================
+docs/DEVELOPMENT_ENVIRONMENT.md — full local flow via `doppler run --`,
+inventory of every secret by name, the wiring procedure, an interim workaround,
+and an explicit blocked-state section.
+
+doppler.yaml at the repo root so `doppler setup` binds project+config without
+per-machine typing. The `project` slug is UNVERIFIED (cannot list projects
+without a credential) and is flagged as such in the file; a wrong slug fails
+loudly at `doppler setup`, which is the safe failure mode.
+
+--- THE ROOT CAUSE, MEASURED ---
+The recurring failure was reproduced directly:
+
+    apps/api/.env DATABASE_URL             : CONNECT OK  role=postgres
+    apps/api/.env APP_SERVICE_DATABASE_URL : CONNECT FAILED
+        InvalidPasswordError: password authentication failed for user
+        "app_service"
+
+The variable is SET but its password no longer authenticates. Every affected
+verify script guards on presence, not connectivity:
+
+    if APP_SERVICE_DATABASE_URL:
+        conn = await _connect(APP_SERVICE_DATABASE_URL)
+
+The guard passes; the connection fails; callers fall back to
+`SET LOCAL ROLE app_service`. So an RLS test intended to prove "a non-bypass
+role cannot read across orgs" instead proved "a postgres connection wearing a
+role hat cannot" — strictly weaker, reported green. Four consecutive sprints.
+
+This is the general lesson, and it recurs: a presence check is not a capability
+check. `if VAR:` proves a string is non-empty and nothing else.
+
+================================================================================
+VERIFICATION — apps/api/scripts/verify_doppler.py
+================================================================================
+  PASS     [1] Task 1 findings reported (1a/1b/1c/1d), names only
+  BLOCKED  [2] Render DB request via Doppler   (no RENDER_API_URL, no token)
+  BLOCKED  [3] Vercel frontend request via Doppler  (integration unverifiable)
+  BLOCKED  [4] local `doppler run --` connects  (no DOPPLER_TOKEN)
+  PASS     [5] render.yaml gap closed, no over-declaration regression
+  PASS     [6] no secret value in output
+  3/6 — exit 1
+
+Design notes:
+  * Secret safety is structural, not procedural. Every emitted line passes
+    through a scrubber that replaces registered values and regex-redacts DSN
+    passwords, so a careless future edit is caught at output time.
+  * [6] carries two negative controls, because a bare leak scan passes
+    vacuously: it fails if zero secrets were registered (nothing to find is not
+    the same as nothing found), and it feeds the scrubber a known value plus a
+    synthetic DSN to prove redaction actually works before trusting the scan.
+  * [4] proves same-credential by RUNNING A REAL QUERY inside `doppler run --`,
+    never by reading and comparing values — a comparison requires handling both
+    values, which is a leak waiting for a log line.
+  * [3] deliberately does NOT pass on a 200 alone. The live page renders and
+    serves tenant theme values today; that proves the current build works, not
+    that Doppler supplied NEXT_PUBLIC_API_URL. Passing on it would be exactly
+    the vacuous green this sprint exists to eliminate.
+  * [5] asserts absence as well as presence, so "fixing" the gap by declaring
+    every variable found in a grep is caught as a regression.
+
+================================================================================
+TO UNBLOCK
+================================================================================
+Provide DOPPLER_TOKEN (a development-scoped service token unblocks [4] alone),
+plus RENDER_API_KEY and a Vercel token — or perform the two dashboard
+integrations by hand per docs/DEVELOPMENT_ENVIRONMENT.md §5. Then re-run
+verify_doppler.py; the legs turn green independently as access arrives.
+
+Until then, APP_SERVICE_DATABASE_URL is set-but-broken, which is the worst of
+the three states. Either repair it or unset it — an unset variable produces a
+visible SKIP; a broken one produces an invisible false pass.

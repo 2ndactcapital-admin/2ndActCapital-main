@@ -1,0 +1,19 @@
+# Doppler repo scope — read by `doppler setup`, so a new machine binds to the
+# right project/config without anyone typing (or mistyping) it.
+#
+# See docs/DEVELOPMENT_ENVIRONMENT.md.
+#
+# `config: development` is deliberate. The three configs are development /
+# staging / production; `staging` is NOT wired to anything real and must not be
+# pointed at from here. `production` is injected by the Render and Vercel native
+# integrations, never fetched by a developer's shell.
+#
+# UNVERIFIED: the `project` slug below could not be confirmed — this environment
+# holds no Doppler credential, so `doppler projects` cannot be listed. If
+# `doppler setup` errors with "project not found", correct the slug here; that
+# failure is loud and harmless. Do not work around it by running
+# `doppler setup --project X` ad hoc, which reintroduces the per-machine drift
+# this file exists to remove.
+setup:
+  - project: 2ndactcapital
+    config: development
