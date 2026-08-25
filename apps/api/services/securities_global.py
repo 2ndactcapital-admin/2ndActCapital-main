@@ -807,6 +807,124 @@ async def add_relationship(
         )
 
 
+#: The columns :func:`update_security` will change. ``canonical_id`` and
+#: ``merged_into_id`` are deliberately absent — those belong to
+#: :func:`merge_securities`, which maintains an invariant across MANY rows, and
+#: a generic setter would let a caller break it one row at a time.
+SECURITY_EDITABLE_FIELDS = frozenset({
+    "name", "short_name", "security_type", "currency_code", "price_coverage",
+})
+
+
+async def update_security(
+    conn,
+    *,
+    global_security_id: str,
+    changes: dict[str, Any],
+    is_super_admin: bool = False,
+) -> dict[str, Any]:
+    """Correct a global security's own attributes. Super Admin only.
+
+    A1 shipped :func:`create_security` and :func:`set_price_coverage` and
+    nothing else — there has never been a way to fix a misspelled issuer name or
+    a wrong ``security_type`` on a row the whole platform reads. This is it.
+
+    ─────────────────────────────────────────────────────────────────────────
+    WHY THIS ARCHIVES ON THE SYSTEM AXIS AND KEEPS THE ID
+    ─────────────────────────────────────────────────────────────────────────
+    The obvious Rule 3 shape — close the row (``valid_to = now()``), insert a
+    successor — cannot be used here, for the reason this module's own docstring
+    already gives for ``canonical_id``: a new ``id`` orphans every foreign key
+    pointing at the old one. ``securities_global.id`` is referenced by
+    ``portfolio.assets.global_security_id``, by the identifier, price and
+    relationship satellites, and by ``securities_global_note_terms``. Minting a
+    new id to fix a typo would silently detach a tenant's asset from its
+    security master.
+
+    So the prior version is preserved as a NEW row stamped ``system_to = now()``
+    — it is history on the SYSTEM axis, invisible to every ``_current()``
+    predicate in this module — and the live row is updated in place with its id
+    intact. Nothing is lost and nothing is orphaned.
+
+    This is not an invention: ``routers.entities.update_entity`` has done
+    exactly this since long before Portfolio A1, for a table with 44 inbound
+    foreign keys. Two mechanisms for "correct a referenced master row" would
+    eventually disagree about which row is current.
+
+    Returns ``{"id", "changed": [...], "archived_version_id"}``.
+    """
+    _require_super_admin(is_super_admin, "update_security")
+    unknown = sorted(set(changes) - SECURITY_EDITABLE_FIELDS)
+    if unknown:
+        raise SecuritiesGlobalError(
+            f"not editable on a global security: {unknown}. Editable fields are "
+            f"{sorted(SECURITY_EDITABLE_FIELDS)}. `canonical_id` and "
+            f"`merged_into_id` are maintained by merge_securities(), which keeps "
+            f"an invariant across every row that canonicalizes here."
+        )
+    if not changes:
+        raise SecuritiesGlobalError("no changes supplied")
+    if "security_type" in changes:
+        _check_choice(changes["security_type"], SECURITY_TYPES, "security_type")
+    if "price_coverage" in changes:
+        _check_choice(changes["price_coverage"], PRICE_COVERAGES, "price_coverage")
+    if "name" in changes and not (changes["name"] or "").strip():
+        raise SecuritiesGlobalError("name is required and cannot be blanked")
+
+    async with _SuperAdminWrite(conn) as c:
+        exists = await c.fetchval(
+            f"SELECT 1 FROM {TABLE_SEC} s WHERE s.id = $1::uuid AND {_current('s')}",
+            str(global_security_id),
+        )
+        if not exists:
+            raise SecuritiesGlobalError(
+                f"security {global_security_id} is not a current row"
+            )
+
+        # Step 1 — archive the version that is about to stop being true, on the
+        # SYSTEM axis. `id` is NOT copied: the archive row gets its own, so the
+        # live row keeps the one every FK points at.
+        archived_id = await c.fetchval(
+            f"""
+            INSERT INTO {TABLE_SEC}
+                (name, short_name, security_type, currency_code, price_coverage,
+                 merged_into_id, canonical_id, valid_from, valid_to,
+                 system_from, system_to)
+            SELECT s.name, s.short_name, s.security_type, s.currency_code,
+                   s.price_coverage, s.merged_into_id, s.canonical_id,
+                   s.valid_from, s.valid_to, s.system_from, now()
+            FROM {TABLE_SEC} s
+            WHERE s.id = $1::uuid AND {_current('s')}
+            RETURNING id::text
+            """,
+            str(global_security_id),
+        )
+
+        # Step 2 — update the live row in place. Column names come from
+        # SECURITY_EDITABLE_FIELDS, which is a frozenset of literals in this
+        # module; nothing caller-supplied is ever interpolated into the SQL.
+        ordered = sorted(changes)
+        assignments = ", ".join(
+            f"{name} = ${i + 2}" for i, name in enumerate(ordered)
+        )
+        values = [
+            changes[name].strip()
+            if name in ("name", "short_name") and isinstance(changes[name], str)
+            else changes[name]
+            for name in ordered
+        ]
+        await c.execute(
+            f"UPDATE {TABLE_SEC} SET {assignments} WHERE id = $1::uuid",
+            str(global_security_id), *values,
+        )
+
+    return {
+        "id": str(global_security_id),
+        "changed": ordered,
+        "archived_version_id": archived_id,
+    }
+
+
 async def set_price_coverage(
     conn,
     *,
