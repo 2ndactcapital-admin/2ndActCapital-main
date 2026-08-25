@@ -1,0 +1,150 @@
+/mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/verify_portfolioux2.py:781: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient
+[FIND] ENVIRONMENT — APP_SERVICE_DATABASE_URL in apps/api/.env does not authenticate
+       InvalidPasswordError: password authentication failed for user "app_service". Falling back to SET LOCAL ROLE app_service, which is ASSERTED below to be a genuinely non-bypassing session rather than assumed to be one.
+
+BASELINE (must be restored exactly at teardown): document_record_links=0, documents=0, transactions=0, positions=0, valuations=0, assets=0, entities=24, users=14
+[FIND] TEARDOWN is by-fixture, never a truncate
+       These tables hold real rows. Fixtures are matched through the 'VERIFY-PORTFOLIOUX2' tag on asset / entity / document names and through their tagged asset for positions and transactions, with an exact before/after count as the backstop.
+
+── Task 1: DISCOVERY ──
+[PASS] [Y] 1a record_transaction exists in services/portfolio_assets.py — the write contract shipped in A2 and has been service-only ever since — portfolio_assets defines 21 functions
+[PASS] [Y] 1a before this sprint every caller of record_transaction was another SERVICE — no router, so nothing reached it over HTTP — pre-existing callers = ['services/portfolio_corporate_actions.py', 'services/portfolio_documents.py']
+[PASS] [Y] 1a portfolio_documents.record_transaction_from_document is an UNWIRED helper — it has no callers at all, so it is not a second HTTP path either — callers = none
+[PASS] [Y] 1a NO pre-existing router declared a /portfolio/transactions route — stray declarations = none
+[FIND] 1a REST endpoints for transactions did NOT exist — they were built by this sprint
+       services/portfolio_assets.record_transaction shipped in Portfolio A2 with no HTTP surface. Its pre-existing callers were TWO services and the verify scripts: services/portfolio_corporate_actions.py, and services/portfolio_documents.record_transaction_from_document — which is itself UNWIRED (zero callers anywhere), so it was never an HTTP path either. The single pre-existing HTTP exposure of a transaction anywhere was the READ-ONLY nested list in the Positions detail pane (services/portfolio_positions.transaction_history). NEW FILES: routers/portfolio_transactions.py + services/portfolio_transactions.py.
+[PASS] [Y] 1b services/portfolio_positions.py exists and was the model for services/portfolio_transactions.py — services/portfolio_positions.py → services/portfolio_transactions.py
+[PASS] [Y] 1b routers/portfolio_positions.py exists and was the model for routers/portfolio_transactions.py — routers/portfolio_positions.py → routers/portfolio_transactions.py
+[PASS] [Y] 1b the same permission constants, paging shape and decimal-string serialisation as UX 1 — not a second set of conventions — view_portfolio / manage_portfolio / 200 / 1000
+[PASS] [Y] 1b the float refusal is the same mode='before' validator UX 1 proved is load-bearing — written any later it is dead code, because Decimal is in the field union and lax mode accepts a float into it — mode='before' on every money field
+[PASS] [Y] 1b _carry_document_links is carried over — a correction mints a NEW record_id, so without it the first settle-date fix would orphan the statement the entry was read out of — present in services/portfolio_transactions.py
+[PASS] [Y] 1b the frontend reuses the SAME DataGrid and the SAME EntityPicker UX 1 used — no second grid, no second picker — DataGrid + EntityPicker imported
+[FIND] 1b UX 1's shipped code was read and mirrored exactly
+       routers/portfolio_positions.py (459 ln), services/portfolio_positions.py (941 ln), PositionsGrid.jsx (669 ln) and PositionDetailPane.jsx (733 ln). Everything reused: the vocabularies envelope with server-published editable-field lists, total-before-limit paging, exact-decimal-string money, the mode='before' float refusal, DataGrid cell renderers for inline edit, EntityPicker for the owner filter, the embedded DocumentsPanel keyed on a server-supplied record_type, and _carry_document_links.
+[PASS] [Y] 1c record_transaction is the ONLY place checking a type's market against the asset's, and it says so — the grid respects that rule rather than re-deriving it (every correction runs back through it) — record_transaction raises TransactionMarketError on a mismatch
+[PASS] [Y] 1c the deployed transaction_types vocabulary really does carry a market on every row, with a small 'both' escape hatch — so the check is a classification, not a rules engine — both=['adjustment', 'fee_expense', 'interest'] public=['buy', 'dividend', 'sell'] private=['call_investment', 'call_mgmt_fee', 'call_org_cost', 'call_partnership_expense', 'dist_gain', 'dist_income', 'dist_recallable', 'dist_roc', 'dist_stock', 'valuation']
+[PASS] [Y] 1c is_corporate_action_adjustment is set EXPLICITLY and is NOT derived from corporate_action_id — BOTH the writer (A2's record_transaction) and Phase F's module say so in as many words, and the two legitimately differ for a cash-in-lieu sale, which cites an action and IS a realized gain — both modules record the non-derivation
+[PASS] [Y] 1c the flag is half of Phase F's IDEMPOTENCY key — already_applied_transactions requires corporate_action_id AND the flag, so the grid must not let either be hand-edited — already_applied_transactions predicates on both
+[PASS] [Y] 1c neither corporate-action field is correctable, and neither is settable on create — the grid respects Phase F rather than exposing the key that stops a corporate action being applied twice — correctable = ['authority', 'currency_code', 'external_ref', 'fees', 'fx_rate_id', 'gross_amount', 'net_amount', 'price', 'quantity', 'settle_date', 'source_system', 'taxes', 'trade_date', 'transaction_type_code']
+[FIND] 1c both Phase E and Phase F rules confirmed against deployed data, and respected rather than re-derived
+       MARKET (Phase E, record_transaction:771-785): type market 'both' or NULL → always allowed; asset market 'both' (amortized_cost) → always allowed; otherwise must be equal. The asset's market is derived from valuation_method, NOT asset_type, which has no CHECK constraint. Deployed vocabulary: 3 of 16 types are market='both' (adjustment, fee_expense, interest). FLAG (Phase F): is_corporate_action_adjustment is stored explicitly, never derived from corporate_action_id IS NOT NULL — a cash-in-lieu sale cites an action and is still a realized gain. Together the two columns are the idempotency key for apply_corporate_action, so neither is correctable or settable through this API.
+[PASS] [Y] 1d there was NO edit path — not one UPDATE against portfolio.transactions existed anywhere in the application before this sprint. The ledger is append-only, so this sprint builds a CORRECTION, not an in-place edit — pre-existing UPDATE sites = none
+[PASS] [Y] 1d the only UPDATE this sprint adds is the bi-temporal close — it sets valid_to and nothing else, and never rewrites a figure — SET targets = ['valid_to']
+[PASS] [Y] 1d the correction goes back through A2's record_transaction — so the Phase-E market check and the retired-type refusal run on the CORRECTION, not only on the original insert — correct_transaction → record_transaction
+[PASS] [Y] 1d the REST surface has NO PATCH on a transaction — the correction is a POST to a /corrections sub-resource, because it MINTS a row rather than mutating one — POST /portfolio/transactions/{id}/corrections; no PATCH declared
+[FIND] 1d TRANSACTIONS ARE APPEND-ONLY — this sprint built a CORRECTION path, not an in-place edit
+       Zero UPDATE statements against portfolio.transactions existed anywhere in apps/api. The mechanism chosen is bi-temporal supersession (close valid_to, insert a successor through record_transaction) rather than an offsetting reversal, on a fact about the EXISTING readers: portfolio_positions.transaction_history, portfolio_commitments' SUM(amount * tt.affects_paid_in) roll-up and portfolio_corporate_actions.already_applied_transactions ALL already filter valid_to IS NULL AND system_to IS NULL, so closing a row removes it from all three correctly with no change to any of them. An offsetting reversal would leave both rows current, and the deployed transaction_types vocabulary has no negative counterpart for any of its sixteen codes (sell is not the reversal of buy — it carries performance_impact='gain'); it would also double count(*), which portfolio_commitments reads as `n`, and make already_applied_transactions see two markers for one applied action. The chain is recorded in related_transaction_id, which had ZERO writers and ZERO rows before this sprint (record_transaction accepted it; nothing ever passed one) and which carries a self-FK. CONSTRAINT REPORTED, not designed around: because the column now means exactly 'the row this row corrects', the REST surface deliberately does not expose it on create — a future ingest wanting it for fee-to-trade pairing needs its own column.
+[FIND] GAP — a correction has nowhere to record a REASON
+       portfolio.transactions has no note, no reason and no corrected_by column. document_field_corrections was made polymorphic by the corrections sprint and is the obvious home, but it is field-grained and guarded by document_field_corrections_document_pairing_chk, whose target_type vocabulary this sprint has no mandate to extend. The API therefore does not accept a reason at all — accepting one and dropping it would be worse than not accepting one. Who and when ARE captured, bi-temporally, on the successor row.
+[FIND] BONUS — Task 4's document link needed no new plumbing, again
+       services/portfolio_documents.py already defines RECORD_TYPE_TRANSACTION='portfolio_transaction' and GET /records/{type}/{id}/documents dispatches on it generically — the same generic-dispatch finding UX 1 recorded for positions, now confirmed to hold for a second record type. What DID need building is _carry_document_links for transactions: a correction mints a new record_id, so without it the first fix would orphan the evidence.
+[PASS] [Y] services/portfolio_transactions.py schema-qualifies every portfolio table (AST-checked: no bare FROM/INTO/UPDATE/JOIN in executable code) — unqualified: none
+[PASS] [Y] routers/portfolio_transactions.py schema-qualifies every portfolio table (AST-checked: no bare FROM/INTO/UPDATE/JOIN in executable code) — unqualified: none
+[PASS] [Y] 2 org_id is taken ONLY from get_org_id(request) — no executable line reads it from a body or a path segment, and neither request model declares such a field — get_org_id call sites=5, body reads=none
+
+── Fixtures ──
+   seeded: 3 assets, 3 positions, 7 transactions (2 corporate-action adjustments), 1 linked document
+
+── Tasks 2-5: the real endpoints, driven through the ASGI app ──
+[PASS] [Y] 2 the new REST endpoints are declared on the real app: list / create / detail / correct, plus the position picker — {"/api/v1/portfolio/transactions": ["get", "post"], "/api/v1/portfolio/transactions/{transaction_id}": ["get"], "/api/v1/portfolio/transaction-positions": ["get"], "/api/v1/portfolio/transactions/{transaction_id}/corrections": ["post"]}
+[PASS] [Y] 2 there is NO PATCH on a transaction — the ledger is append-only and the URL says so — detail route declares GET only
+[PASS] [Y] 3 the grid endpoint returns REAL rows — every fixture transaction in this org, and nothing else — got=6 expected=6 missing=[] extra=[]
+[PASS] [Y] 3 the endpoint body matches a DIRECT SQL read of the same predicate — a stub returning a plausible-looking list would fail this, not just a count check — api=6 sql=6 diff=[]
+[PASS] [Y] 3 rows carry the joined asset name, owner name and the server-resolved transaction-type LABEL — the grid hardcodes none of them, and shows the label, never the raw code — asset='VERIFY-PORTFOLIOUX2 Listed Equity' owner='VERIFY-PORTFOLIOUX2 Alpha Trust' label='Buy' basis='units'
+[PASS] [Y] 3 the type vocabulary ships WITH the page (Rule 1) so the type filter and the type column need no second round-trip and no hardcoded list — 16 types shipped
+[PASS] [Y] 3 figures cross the API as exact decimal STRINGS (never floats), and this fixture set proves LEXICAL ordering would be WRONG — so the grid's derived numeric sort keys are load-bearing — lexical=['-12.34', '12000.00', '900.00'] numeric=['-12.34', '900.00', '12000.00']
+[PASS] [Y] 5 is_corporate_action_adjustment=true NARROWS to exactly the adjustment rows — non-empty AND a strict subset, so a filter returning everything and a filter returning nothing both fail — adjustments=2 of 6; expected=['1e0458dd-86e4-4d3c-be5b-7148c453009c', '537c1b37-6a49-4ba0-b1ba-303aaba13ee4']
+[PASS] [Y] 5 is_corporate_action_adjustment=false NARROWS to exactly the ordinary trades — this is the realized-gain population and a DIFFERENT question from 'no filter', which is why it has to be expressible at all — trades=4 of 6; expected=['21b63679-140d-4780-ba43-7f7318b1c842', '3d4b16a0-e0f4-4da8-ad7c-8e672b1e8e79', 'b753364d-fa0c-4826-a055-648a19a14ba6', 'e8266129-e551-475c-8ae7-f5c6edcd3829']
+[PASS] [Y] 5 the two states PARTITION the unfiltered set: disjoint, and their union is exactly everything. A broken filter cannot satisfy both directions plus the partition — overlap=[] union=6 vs all=6
+[PASS] [Y] 5 both filtered sets match the same predicate run directly in SQL, element by element — adj diff=[] trade diff=[]
+[PASS] [Y] 5 the transaction_type_code filter NARROWS correctly — non-empty, a strict subset, equal to the same predicate in SQL, and every returned row really carries that code — code='buy' filtered=1 of 6; sql=1
+[PASS] [Y] 5 a SECOND type narrows to a DIFFERENT, disjoint set — one filter value that happened to work could be a coincidence — 'call_investment' → ['b753364d-fa0c-4826-a055-648a19a14ba6']
+[PASS] [Y] 3 the position_id filter narrows to that position's ledger and nothing else — got=4
+[PASS] [Y] 3 the owner filter (EntityPicker's value) narrows across positions — the join reaches through position → entity — got=['537c1b37-6a49-4ba0-b1ba-303aaba13ee4', 'b753364d-fa0c-4826-a055-648a19a14ba6']
+[PASS] [Y] 3 the trade-date range filter narrows and excludes the older entries — got=3 of 6
+[PASS] [Y] 3 the source_system filter narrows and matches SQL — filtered=3 sql=3
+[PASS] [Y] 4 the detail endpoint returns the entry, its position and its correction chain in ONE call — status=200 keys=['correction_history', 'document_record_type', 'position', 'transaction']
+[PASS] [Y] 4 the pane LINKS BACK to the owning position, and carries the CURRENT position id alongside the one the entry is attached to — the Positions grid hides closed rows, so linking a restated position's old id would land on nothing — position=c39b4869… current=c39b4869…
+[PASS] [Y] 4 figures reach the pane as exact decimal strings, unrounded — qty='1000.00' net='12000.00'
+[PASS] [Y] 4 the linked source document is reachable from the pane through the REAL existing document-linking endpoint, with the record_type supplied BY THE API rather than hardcoded — record_type='portfolio_transaction' docs=1
+[PASS] [Y] 3 an adjustment row is flagged in the API payload, so the grid can mark it — Phase F requires it never look like a trade — flag present on both the list row and the detail
+[PASS] [Y] 2 POST refuses a market-incompatible type with 422 AND writes nothing — the count is unchanged, so the refusal is the Phase-E rule and not a broken statement — status=422 count 6→6: {"detail":"transaction type 'call_investment' ('Capital Call: Investments') is a private-markets type, but the position'
+[PASS] [Y] 2 an org_id in the request body is REFUSED (422), not ignored — there is no field for a caller to send — extra='forbid' on TransactionCreate
+[PASS] [Y] 2 a figure sent as a JSON FLOAT is refused (422) rather than coerced — the refusal runs mode='before', ahead of Pydantic's own float→Decimal coercion, or it would be dead code — float body rejected
+[PASS] [Y] 2 corporate-action fields are NOT settable through the API — a hand-written row claiming an action would break the idempotency key that stops apply_corporate_action running twice — is_corporate_action_adjustment rejected by extra='forbid'
+[PASS] [Y] 2 POST records a real transaction and returns its full detail, with the exact figures it was given — status=201 net='135.00'
+[PASS] [Y] 5 a correction round-trips through the real endpoint and returns a DIFFERENT transaction id with 201 — it MINTS a row, it does not update one — status=201 e8266129… → f8cc4724…
+[PASS] [Y] 5 the successor points BACK at the row it corrects — the chain is explicit and referentially enforced by the self-FK, not reconstructed from timestamps — corrects=e8266129…
+[PASS] [Y] 5 the correction PERSISTS — a fresh list read shows the new figures on the successor and the original is gone from the current set — successor net='11950.00', original present=False
+[PASS] [Y] 5 the ORIGINAL row is still REACHABLE through the API — a direct GET on the old id returns it, flagged as superseded. A row that exists but that no endpoint returns is not reachable — GET on the original id returns it with its ORIGINAL net amount
+[PASS] [Y] 5 include_history=true surfaces the superseded original in the LIST too — it is history, not a deletion — original reachable with include_history
+[PASS] [Y] 5 the pane's correction chain shows BOTH versions, oldest first, with exactly one current — this is what makes the correction legible after the fact — chain=['e8266129', 'f8cc4724']
+[PASS] [Y] 5 the source document is STILL reachable after the correction — a correction mints a new record_id, so without an explicit link carry-over the first settle-date fix would orphan the evidence — docs on successor=1
+[PASS] [Y] 5 the ORIGINAL keeps its links too — the copy is a COPY, so the historical entry stays exactly as auditable as before — document reachable on BOTH the closed row and the successor
+[PASS] [Y] 2 a correction that re-types an entry into an incompatible market is REFUSED (422) — the Phase-E check runs on the CORRECTION, not only on the original insert — private-markets type on a public-markets asset
+[PASS] [Y] 2 a refused correction leaves the entry OPEN — a rejected correction must not delete a ledger entry from every current read — successor still current after the refusal
+[PASS] [Y] 2 a field outside the correctable set is refused (422) rather than silently ignored — including position_id and the two corporate-action columns — position_id / both corporate-action fields / related_transaction_id all refused
+[PASS] [Y] 2 an EMPTY correction is refused (400) — a no-op that minted a row would put a version in the chain that changed nothing — empty body refused
+[PASS] [Y] 5 correcting an ALREADY-SUPERSEDED entry is refused — branching the ledger off a closed row would leave two current successors for one entry — correction on the closed original refused
+[PASS] [Y] 2 the position picker returns this org's CURRENT positions with the valuation_method the market rule keys on — picker returned 2 positions
+[PASS] [Y] 5 cross-org (endpoint): org B's list CONTAINS its own transaction and NONE of org A's — asserted in both directions, so an endpoint returning nothing to everybody would FAIL — orgB sees 1 rows; leaked org-A rows=[]
+[PASS] [Y] 5 cross-org (endpoint): org B fetching an org-A transaction id gets 404 — not 403, which would confirm the id exists elsewhere — detail 404 across orgs
+[PASS] [Y] 5 cross-org (endpoint): org B cannot CORRECT an org-A transaction — the write path is scoped too, not just the reads — correction across orgs refused
+[PASS] [Y] 5 cross-org: org B cannot read the document linked to an org-A transaction — no documents leak across orgs
+
+── The rows agree with a direct read ──
+[PASS] [Y] 5 the correction produced exactly TWO rows with exactly ONE current — an entry was superseded, not overwritten and not duplicated — rows=2 current=1 closed=1
+[PASS] [Y] 5 the CLOSED row still carries its ORIGINAL net amount and quantity — the previous state was PRESERVED, which is the whole reason a correction is an append rather than an UPDATE — closed net=12000.00 qty=1000.00 settle=None
+[PASS] [Y] 5 the successor carries the corrected figures AND the backpointer, which the self-FK makes impossible to dangle — successor net=11950.00 related=e8266129…
+[PASS] [Y] 5 every field the correction did NOT name was carried forward verbatim — including both corporate-action columns, which are Phase F's idempotency key and must survive a correction untouched — not carried: []
+[PASS] [Y] 2 correct_transaction raises TransactionMarketError specifically — not just 'something raised', which any typo would also satisfy — TransactionMarketError: transaction type 'call_investment' ('Capital Call: Investments') is a private-markets type, but the position's
+[PASS] [Y] 2 the refused correction left the entry OPEN — the close and the successor are ONE transaction, so a refusal cannot leave a hole in the ledger where an entry used to be — valid_to=None
+[PASS] [Y] 2 the service itself refuses a corporate-action field, not just the Pydantic model — a service-level caller cannot route around the API boundary to break the idempotency key — PortfolioError: not correctable: ['is_corporate_action_adjustment']. Correctable fields are ['authority', 'currency_code', 'ex
+[PASS] [Y] 5 get_transaction returns None for a transaction in another org even on a BYPASSING connection — the org predicate is explicit in the SQL, not left to RLS alone — got=NoneType
+[PASS] [Y] 5 the control: the SAME call in the right org DOES return the row, so the check above narrowed rather than simply failing — same id, correct org → found
+[PASS] [Y] 5 an UNCORRECTED entry's chain is a single-element list, not an empty one — 'one version' and 'no history' are different answers — chain length=1
+
+── Cross-org isolation, under the real app_service role (via set_role) ──
+[PASS] [Y] 5 the RLS isolation check runs under a role that CANNOT bypass RLS (obtained via 'set_role') — otherwise every assertion below would pass while proving nothing — current_user='app_service' rolbypassrls=False path='set_role'
+[PASS] [Y] 5 RLS is demonstrably LIVE on portfolio.transactions: with the org GUC empty the session reads ZERO rows, where a bypassing session would read the entire table — rows visible with no org context = 0 (must be 0)
+[PASS] [Y] 5 cross-org (RLS, real non-bypassing app_service connection): org B's context sees its OWN transaction and none of org A's — both directions on the same call — orgB rows=1 leaked=[]
+[PASS] [Y] 5 the control: org A's OWN context DOES see org A's transactions, so the check above narrowed rather than simply failing — orgA sees 7 rows, missing=[]
+[PASS] [Y] 5 both adjustment-filter states still PARTITION correctly under the non-bypassing role — the filter and the policy compose — adj=2 trades=5 all=7
+
+── Frontend wiring ──
+[PASS] [Y] 3 TransactionsGrid.jsx exists — /mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/../../web/components/portfolio/TransactionsGrid.jsx
+[PASS] [Y] 3 TransactionDetailPane.jsx exists — /mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/../../web/components/portfolio/TransactionDetailPane.jsx
+[PASS] [Y] 3 app/portfolio/transactions/page.js exists — /mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/../../web/app/portfolio/transactions/page.js
+[PASS] [Y] 3 app/api/portfolio/transactions/route.js exists — /mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/../../web/app/api/portfolio/transactions/route.js
+[PASS] [Y] 3 app/api/portfolio/transactions/[transactionId]/route.js exists — /mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/../../web/app/api/portfolio/transactions/[transactionId]/route.js
+[PASS] [Y] 3 app/api/portfolio/transactions/[transactionId]/corrections/route.js exists — /mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/../../web/app/api/portfolio/transactions/[transactionId]/corrections/route.js
+[PASS] [Y] 3 the grid is driven by the SHARED DataGrid, not a new grid library — imports @/components/ui/DataGrid
+[PASS] [Y] 2 the frontend calls the REAL endpoints — the grid fetches /api/portfolio/transactions and POSTs to .../corrections — list fetch + correction POST present
+[PASS] [Y] 2 the pane loads and corrects through the same real endpoints — detail GET + correction POST present
+[PASS] [Y] 2 the grid contains NO mock/stub row data — every row it renders came from the API — none found
+[PASS] [Y] 3 all three Next.js API routes forward to FastAPI (Rule 5: the browser never calls FastAPI directly) and no executable line in any of them reads, sets or forwards an org_id — forwardToApi in all three; org_id absent from every executable line
+[PASS] [Y] 2 the detail route declares NO PATCH — an append-only ledger has no in-place edit, and the route file says so by omission — GET only on [transactionId]/route.js
+[PASS] [Y] 3 the page renders the grid inside AppShell behind a host-aware session check — getHostSession + AppShell + TransactionsGrid
+[PASS] [Y] 3 selecting a row opens the pane in place — the row click sets selection, it does not navigate — onRowClick → setSelectedId; no router.push in the grid
+[PASS] [Y] 3 inline editing is limited to what the SERVER publishes as safe — the component reads vocabularies.inline_correctable rather than keeping its own list that could drift — server list = ['external_ref', 'settle_date']
+[PASS] [Y] 3 the validated fields are NOT inline-editable — everything a correction can be REFUSED for goes through the pane, which has room to show why — inline=['external_ref', 'settle_date'] pane-only=['authority', 'currency_code', 'fees', 'fx_rate_id', 'gross_amount', 'net_amount', 'price', 'quantity', 'source_system', 'taxes', 'trade_date', 'transaction_type_code']
+[PASS] [Y] 3 a corporate-action adjustment is marked THREE ways so it cannot read as an ordinary trade (Phase F): a row-level gold wash, a dedicated Kind cell, and a pill beside the type label — row wash + KindCell + type pill
+[PASS] [Y] 3 the adjustment filter is a first-class TRI-STATE control, and the 'false' state survives the query builder — a truthiness test would drop 'trades only' and silently widen the query to everything — three options; the filter builder tests against "", not truthiness
+[PASS] [Y] 3 the Next.js route forwards the adjustment filter verbatim and does NOT coerce it — the same 'false' trap, one layer down — allow-listed and passed through by string comparison
+[PASS] [Y] 4 the pane embeds the REAL existing DocumentsPanel and takes the record_type from the API response rather than hardcoding the string — recordType={data.document_record_type}
+[PASS] [Y] 4 the pane LINKS THROUGH to the Positions screen, using the CURRENT position id rather than the possibly-closed row the entry is attached to — positionHref built from current_position_id
+[PASS] [Y] 4 the pane renders the correction chain and disables the form on a superseded entry — correcting history in place is the one thing an append-only ledger must never allow — Versions section + is_current gate on the Correct button
+[PASS] [Y] 3 the grid sorts money NUMERICALLY, not lexically — derived sort keys are built from the exact decimal strings — _net / _amount derived from num()
+[PASS] [Y] 5 the grid adopts the SUCCESSOR id after a correction — a client that kept the id it sent would be reading history — row id swapped from the correction response
+[PASS] [Y] 3 the DataGrid change is purely ADDITIVE — getRowStyle defaults to undefined, so the three existing consumers are untouched, and it can only affect styling — optional prop, undefined default, style-only
+[PASS] [Y] 3 the pre-existing DataGrid consumers were checked, not assumed — none of them passes getRowStyle, so none changes behaviour — consumers=['components/admin/NoteTermsQueueManager.jsx', 'components/admin/SurfaceCalibrator.jsx', 'components/crm/EntityTable.jsx', 'components/marketplace/DealsTable.jsx', 'components/portfolio/PositionsGrid.jsx', 'components/portfolio/TransactionsGrid.jsx', 'components/spv/SPVLedgerClient.jsx']
+
+── npm run build ──
+[PASS] [Y] npm run build exits 0 — exit=0, deps at ../../node_modules
+[PASS] [Y] TEARDOWN restores the EXACT before-count on every table touched — zero leftover rows — document_record_links=0, documents=0, transactions=0, positions=0, valuations=0, assets=0, entities=24, users=14
+
+========================================================================
+FINDINGS REPORTED: 8
+RESULT: 110/110 passed
+========================================================================

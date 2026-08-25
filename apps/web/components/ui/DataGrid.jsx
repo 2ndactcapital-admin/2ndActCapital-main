@@ -20,6 +20,14 @@
  *   gridId      — stable id reserved for saved layout preferences. Accepted
  *                 now so the prop API is frozen; persistence is a later
  *                 mini-sprint and is intentionally NOT implemented here.
+ *   getRowStyle — optional (row) => style object, applied to the <tr>. Purely
+ *                 additive and undefined by default, so existing callers are
+ *                 untouched. Added by Portfolio UX 2, which has a row KIND —
+ *                 a corporate-action adjustment — that Phase F requires must
+ *                 never look like an ordinary trade. A per-cell renderer can
+ *                 only mark the cell it owns; "this whole row is a different
+ *                 kind of thing" is a row-level fact and needs a row-level
+ *                 hook. Styling only: it cannot change behaviour or content.
  */
 
 import { useMemo, useState, useRef, useEffect } from "react";
@@ -173,6 +181,7 @@ export default function DataGrid({
   enableGlobalFilter = true,
   enablePagination = true,
   pageSize = 25,
+  getRowStyle,
 }) {
   // gridId is reserved for a future saved-layout feature. Referenced here so
   // the prop is part of the stable API; no persistence is wired up yet.
@@ -342,6 +351,7 @@ export default function DataGrid({
                     <tr
                       key={row.id}
                       onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                      style={getRowStyle ? getRowStyle(row.original) : undefined}
                       className={`border-t border-[var(--2a-border)] ${
                         onRowClick ? "cursor-pointer hover:bg-[var(--2a-bg)]" : ""
                       } ${selected ? "bg-[var(--2a-bg)]" : ""}`}
