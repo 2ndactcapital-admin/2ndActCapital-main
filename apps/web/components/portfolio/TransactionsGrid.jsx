@@ -37,6 +37,18 @@
  *    custodian reference, the only two fields nothing validates) and this
  *    component honours that list rather than keeping its own copy.
  *
+ * 4. **Permissions come from the server too (UX 4).** That same
+ *    `inline_correctable` list arrives EMPTY for a caller without
+ *    `manage_portfolio`, and `permissions.can_correct` says so directly.
+ *    Between them they are the only thing deciding whether a correction
+ *    control is rendered here. There is no local fallback list — a
+ *    `|| DEFAULTS` would put live settle-date and reference inputs back in
+ *    front of a view-only member the moment the envelope went missing.
+ *
+ *    Not the enforcement: `POST /portfolio/transactions/{id}/corrections`
+ *    re-checks and returns 403 naming the permission, and
+ *    `verify_portfolioux4` asserts both independently.
+ *
  * MONEY SORTS NUMERICALLY, NOT LEXICALLY
  * ─────────────────────────────────────────────────────────────────────────
  * Figures arrive as exact decimal STRINGS. Sorting those lexically puts "9"
@@ -279,11 +291,17 @@ export default function TransactionsGrid() {
   }, [load]);
 
   const vocabularies = meta?.vocabularies;
+  const permissions = meta?.permissions;
   const types = useMemo(() => meta?.transaction_types || [], [meta]);
+
+  // THE ONLY THING THAT DECIDES WHETHER A CORRECTION CONTROL EXISTS.
+  // Server-built, permission-aware, empty without manage_portfolio. No local
+  // fallback — see the header note.
   const inlineCorrectable = useMemo(
     () => new Set(vocabularies?.inline_correctable || []),
     [vocabularies],
   );
+  const canCorrect = !!permissions?.can_correct;
 
   // Rows the grid actually sorts on. The derived `_*` fields exist only so
   // TanStack sorts numerically on values that arrive as exact decimal strings.
@@ -648,6 +666,12 @@ export default function TransactionsGrid() {
               across the whole set
             </span>
           )}
+          {permissions && !canCorrect && (
+            <span className="ml-2 text-[var(--2a-text-muted)]">
+              · read-only — you hold {permissions.read_permission} but not{" "}
+              {permissions.write_permission}
+            </span>
+          )}
         </p>
       </div>
 
@@ -706,9 +730,13 @@ export default function TransactionsGrid() {
           className="col-span-2 overflow-hidden rounded-lg border bg-white"
           style={CARD}
         >
+          {/* No `vocabularies` prop: the pane fetches the detail endpoint,
+              which publishes its OWN permission-aware vocabularies. Threading
+              the grid's copy down would give the pane a second answer that
+              could disagree with the one it just fetched. `transactionTypes`
+              stays a prop — it is label data, not a permission. */}
           <TransactionDetailPane
             transactionId={selectedId}
-            vocabularies={vocabularies}
             transactionTypes={types}
             onClose={() => setSelectedId(null)}
             onCorrected={(detail) => {

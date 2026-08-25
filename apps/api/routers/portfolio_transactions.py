@@ -37,6 +37,31 @@ union and lax mode accepts a float into it happily.
 Reads require ``view_portfolio``; writes require ``manage_portfolio``. Both
 already exist in ``public.permissions``.
 
+WHAT UX 4 CHANGED, AND WHY IT WAS A REAL HOLE
+──────────────────────────────────────────────────────────────────────────────
+UX 2 shipped all five endpoints already gated — ``require_permission`` with the
+right constant on each, and a genuine 403 for a view-only caller attempting a
+create or a correction. That half was never broken.
+
+What was missing is the half that makes the refusal legible before it happens.
+The list endpoint published ``vocabularies.correctable`` and
+``.inline_correctable`` UNCONDITIONALLY and published no ``permissions`` block
+at all, so ``TransactionsGrid`` rendered inline correction controls and
+``TransactionDetailPane`` rendered a "Correct" button and a full form for a
+caller who could not write. Every one led to a 403 nobody could anticipate.
+
+The correction endpoint is the sharpest case and is called out on its own in
+``verify_portfolioux4``: a view-only user MUST be able to read the correction
+chain — that is history, and history is a read — and must never be able to add
+to it. Those are two different assertions and the second does not follow from
+the first.
+
+Now, as in ``routers.portfolio_securities`` since UX 3, the caller's real
+permissions are resolved server-side and shipped with the page, and the
+correctable lists are EMPTY without ``manage_portfolio``. The envelope is
+advisory to the client and binding on nobody: every write endpoint re-checks,
+and the verify script asserts the two independently.
+
 TWO FIELDS THE API DELIBERATELY DOES NOT ACCEPT
 ──────────────────────────────────────────────────────────────────────────────
 ``corporate_action_id`` and ``is_corporate_action_adjustment`` are not settable
@@ -86,9 +111,73 @@ from services.portfolio_transactions import (
     list_transactions,
     transaction_types,
 )
-from services.rbac import require_permission
+from services.rbac import has_permission, is_super_admin, load_principal, require_permission
 
 router = APIRouter(tags=["portfolio-transactions"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The gate, and what it publishes
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+async def _tenant_gate(request: Request, permission: str) -> tuple[str, str, Any]:
+    """Resolve ``(org_id, user_id, pool)`` and enforce a TENANT permission.
+
+    ``rbac.require_permission`` raises 403 with the permission NAME in the
+    detail. Super Admin passes — checked FIRST inside ``rbac.has_permission``,
+    ahead of any granular lookup, which is the codebase-wide escape-hatch
+    convention rather than a special case introduced here.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, permission)
+    return org_id, user_id, pool
+
+
+async def _permission_envelope(pool, user_id: str, org_id: str) -> dict[str, Any]:
+    """What this caller may do, resolved server-side and shipped with the page.
+
+    ``can_correct`` is published as its own key even though it is currently
+    identical to ``can_write``. Creating a ledger entry and correcting an
+    existing one are different acts on different rows — a firm that later wants
+    to let operations record entries but only a supervisor amend them changes
+    THIS function and nothing on the client, because the pane already reads the
+    two keys separately.
+    """
+    can_write = bool(await has_permission(pool, user_id, org_id, WRITE_PERMISSION))
+    async with pool.acquire() as conn:
+        principal = await load_principal(conn, user_id)
+    super_admin = is_super_admin(principal)
+    return {
+        "can_read": True,          # this envelope is only built after the gate
+        "can_write": can_write,
+        "can_correct": can_write,
+        "is_super_admin": bool(super_admin),
+        "read_permission": READ_PERMISSION,
+        "write_permission": WRITE_PERMISSION,
+    }
+
+
+def _vocabularies(perms: dict[str, Any], types: list[dict[str, Any]]) -> dict[str, Any]:
+    """The page's vocabularies, with the correctable lists cut to the caller.
+
+    ``correctable`` and ``inline_correctable`` are EMPTY without
+    ``manage_portfolio``. The rest — authority, source system, the type codes
+    and categories — are published to everyone, because they are what the FILTER
+    controls and the type LABELS are built from, and both of those are reads.
+    """
+    return {
+        "authority": sorted(AUTHORITIES),
+        "source_system": sorted(SOURCE_SYSTEMS),
+        "transaction_type_code": [t["code"] for t in types],
+        "transaction_type_category": sorted({t["category"] for t in types}),
+        "inline_correctable": (
+            sorted(INLINE_CORRECTABLE_FIELDS) if perms["can_correct"] else []
+        ),
+        "correctable": sorted(CORRECTABLE_FIELDS) if perms["can_correct"] else [],
+    }
 
 
 # ── Money at the API boundary ───────────────────────────────────────────────
@@ -281,10 +370,7 @@ async def get_transactions(
     loaded page for instant feedback, and ``total`` reports the difference so a
     truncated page never looks complete.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
 
     async with pool.acquire() as conn:
         try:
@@ -314,15 +400,10 @@ async def get_transactions(
         except PortfolioError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    perms = await _permission_envelope(pool, user_id, org_id)
     result["transaction_types"] = types
-    result["vocabularies"] = {
-        "authority": sorted(AUTHORITIES),
-        "source_system": sorted(SOURCE_SYSTEMS),
-        "transaction_type_code": [t["code"] for t in types],
-        "transaction_type_category": sorted({t["category"] for t in types}),
-        "inline_correctable": sorted(INLINE_CORRECTABLE_FIELDS),
-        "correctable": sorted(CORRECTABLE_FIELDS),
-    }
+    result["permissions"] = perms
+    result["vocabularies"] = _vocabularies(perms, types)
     return result
 
 
@@ -338,20 +419,25 @@ async def get_transaction_detail(request: Request, transaction_id: _uuid.UUID):
     deliberately does not distinguish them — telling a caller that a transaction
     id exists somewhere else is itself a cross-tenant leak.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
 
     async with pool.acquire() as conn:
         try:
             detail = await get_transaction(
                 conn, org_id=org_id, transaction_id=str(transaction_id)
             )
+            types = await transaction_types(conn)
         except PortfolioError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if detail is None:
         raise HTTPException(status_code=404, detail="transaction not found")
+
+    # The correction chain in this response is READ data and is returned to
+    # every caller who passed the read gate. What the envelope decides is
+    # whether the pane offers to ADD to it.
+    perms = await _permission_envelope(pool, user_id, org_id)
+    detail["permissions"] = perms
+    detail["vocabularies"] = _vocabularies(perms, types)
     return detail
 
 
@@ -369,10 +455,7 @@ async def get_positions_for_picker(
     resolution, which is that endpoint's expensive part and which a picker does
     not need.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
 
     async with pool.acquire() as conn:
         positions = await list_positions_for_picker(
@@ -380,7 +463,9 @@ async def get_positions_for_picker(
             owner_entity_id=str(owner_entity_id) if owner_entity_id else None,
             search=search, limit=limit,
         )
-    return {"count": len(positions), "positions": positions}
+
+    perms = await _permission_envelope(pool, user_id, org_id)
+    return {"count": len(positions), "positions": positions, "permissions": perms}
 
 
 # ── Writes ──────────────────────────────────────────────────────────────────
@@ -401,10 +486,7 @@ async def create_transaction_endpoint(request: Request, body: TransactionCreate)
     relationship between the type and the position's asset, which is what 422
     means.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
 
     async with pool.acquire() as conn:
         try:
@@ -433,6 +515,11 @@ async def create_transaction_endpoint(request: Request, body: TransactionCreate)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         detail = await get_transaction(conn, org_id=org_id, transaction_id=new_id)
+        types = await transaction_types(conn)
+
+    perms = await _permission_envelope(pool, user_id, org_id)
+    detail["permissions"] = perms
+    detail["vocabularies"] = _vocabularies(perms, types)
     return detail
 
 
@@ -453,10 +540,7 @@ async def correct_transaction_endpoint(
     client that kept using it would be reading history. The grid swaps the row
     id from this response.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
 
     changes = body.changes()
     if not changes:
@@ -484,7 +568,11 @@ async def correct_transaction_endpoint(
             raise HTTPException(status_code=status, detail=str(exc)) from exc
 
         detail = await get_transaction(conn, org_id=org_id, transaction_id=new_id)
+        types = await transaction_types(conn)
 
+    perms = await _permission_envelope(pool, user_id, org_id)
+    detail["permissions"] = perms
+    detail["vocabularies"] = _vocabularies(perms, types)
     detail["corrected_from"] = str(transaction_id)
     return detail
 

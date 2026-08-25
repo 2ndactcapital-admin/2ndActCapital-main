@@ -130,7 +130,6 @@ const MONEY_FIELDS = [
 
 export default function TransactionDetailPane({
   transactionId,
-  vocabularies,
   transactionTypes,
   onCorrected,
   onClose,
@@ -177,12 +176,22 @@ export default function TransactionDetailPane({
   const txn = data?.transaction;
   const position = data?.position;
 
+  // Read from THIS pane's own response, not threaded down from the grid. The
+  // pane fetches the detail endpoint itself, so a permission answer passed as a
+  // prop would be a second copy that could go stale while this one is fresh.
+  const permissions = data?.permissions;
+  const vocabularies = data?.vocabularies;
+
   // The server publishes which fields a correction may name. The form renders
-  // that list rather than keeping its own copy that could drift.
+  // that list rather than keeping its own copy that could drift — and the list
+  // is EMPTY for a caller without manage_portfolio, so the same mechanism that
+  // marks a field uncorrectable also stands the whole form down. No
+  // `|| DEFAULTS`.
   const correctable = useMemo(
     () => new Set(vocabularies?.correctable || []),
     [vocabularies],
   );
+  const canCorrect = !!permissions?.can_correct;
 
   const activeTypes = useMemo(
     () =>
@@ -420,32 +429,48 @@ export default function TransactionDetailPane({
       <Section
         title="Entry"
         right={
-          <div className="flex items-center gap-2">
-            {saved && <span className="text-[10px] text-[#2D6A4F]">Corrected</span>}
-            {dirty && (
+          // The Correct/Discard toolbar EXISTS only for a caller the server
+          // says may correct. Not disabled — absent. The correction CHAIN
+          // ("Versions", below) is unconditional: reading what was already
+          // corrected is a read, and a view-only member is entitled to it.
+          // Seeing the history and adding to it are separate rights.
+          canCorrect ? (
+            <div className="flex items-center gap-2">
+              {saved && (
+                <span className="text-[10px] text-[#2D6A4F]">Corrected</span>
+              )}
+              {dirty && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft({});
+                    setSaveError(null);
+                  }}
+                  className="text-[11px] text-[var(--2a-text-muted)] hover:underline"
+                >
+                  Discard
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  setDraft({});
-                  setSaveError(null);
-                }}
-                className="text-[11px] text-[var(--2a-text-muted)] hover:underline"
+                onClick={save}
+                disabled={!dirty || saving || !txn.is_current}
+                className="rounded px-3 py-1 text-[11px] font-medium text-white disabled:opacity-40"
+                style={{ backgroundColor: "var(--2a-navy)" }}
               >
-                Discard
+                {saving ? "Saving…" : "Correct"}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={save}
-              disabled={!dirty || saving || !txn.is_current}
-              className="rounded px-3 py-1 text-[11px] font-medium text-white disabled:opacity-40"
-              style={{ backgroundColor: "var(--2a-navy)" }}
-            >
-              {saving ? "Saving…" : "Correct"}
-            </button>
-          </div>
+            </div>
+          ) : null
         }
       >
+        {!canCorrect && (
+          <p className="mb-3 rounded bg-[var(--2a-bg-sidebar)] px-3 py-2 text-[11px] leading-snug text-[var(--2a-text-muted)]">
+            Read-only. Correcting an entry requires{" "}
+            {permissions?.write_permission}. The entry's figures are below and
+            its correction history is under Versions.
+          </p>
+        )}
         {saveError && (
           <div className="mb-3 rounded bg-[#FEF3F2] px-3 py-2 text-[11px] leading-snug text-[#9B2335]">
             {saveError}
@@ -459,6 +484,29 @@ export default function TransactionDetailPane({
           </p>
         )}
 
+        {/* A caller who cannot correct gets the same facts as flat text and no
+            form at all. Every input below is already `disabled` when its field
+            is absent from `correctable` — which, without manage_portfolio, is
+            all of them — but a grid of fifteen greyed inputs still advertises
+            an operation this user will never be allowed to perform, and one
+            future edit that forgets a `disabled=` turns it into a live control
+            over a 403. Rendering nothing has no such failure mode. */}
+        {!canCorrect ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <Field label="Type">
+                {activeTypes.find((t) => t.code === txn.transaction_type_code)
+                  ?.label || txn.transaction_type_code}
+              </Field>
+            </div>
+            <Field label="Trade date">{fmtDate(txn.trade_date)}</Field>
+            <Field label="Settle date">{fmtDate(txn.settle_date)}</Field>
+            <Field label="Currency">{txn.currency_code || "—"}</Field>
+            <Field label="Authority">{txn.authority}</Field>
+            <Field label="Source system">{txn.source_system}</Field>
+            <Field label="Custodian reference">{txn.external_ref || "—"}</Field>
+          </div>
+        ) : (
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <label className={LABEL} htmlFor="td-type">
@@ -602,6 +650,7 @@ export default function TransactionDetailPane({
             />
           </div>
         </div>
+        )}
 
         {/* What a correction may NOT change, shown rather than hidden. A user
             who cannot see these has no way to understand why the fields are

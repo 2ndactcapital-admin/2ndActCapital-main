@@ -23,6 +23,34 @@ handling downstream ever saw it.
 Reads require ``view_portfolio``; writes require ``manage_portfolio``. Both
 names already exist in ``public.permissions`` — A2 recorded them precisely so
 the first router would not invent new ones.
+
+WHAT UX 4 CHANGED, AND WHY IT WAS A REAL HOLE
+──────────────────────────────────────────────────────────────────────────────
+UX 1 shipped these five endpoints already gated: every one of them called
+``require_permission`` with the right constant, and a view-only caller was
+correctly refused a write with a 403. That part was never broken.
+
+What was missing is the half that makes the refusal legible BEFORE it happens.
+The list endpoint published ``vocabularies.editable`` and
+``vocabularies.inline_editable`` UNCONDITIONALLY — the full field list, to
+every caller, regardless of permission — and published no ``permissions`` block
+at all. ``PositionsGrid`` read those lists and rendered an editable taxonomy
+picker and a reconciled checkbox for a caller who could not write, and
+``PositionDetailPane`` rendered a Save button and a full form for the same
+caller. Every one of those controls led to a 403 the user had no way to
+anticipate.
+
+So this router now does what ``routers.portfolio_securities`` has done since
+UX 3: it resolves the caller's real permissions server-side and ships them with
+the page, and it EMPTIES the editable lists for a caller without
+``manage_portfolio``. The UI keeps no field list and no permission logic of its
+own, so there is nothing on the client that can drift away from this answer.
+
+The envelope is advisory to the client and binding on nobody. Every write
+endpoint still re-checks, and ``verify_portfolioux4`` asserts the two
+independently — a hidden control and a refused request are different claims,
+and a screen that only did the first would look correct right up until somebody
+used curl.
 """
 
 from __future__ import annotations
@@ -60,9 +88,74 @@ from services.portfolio_positions import (
     taxonomy_labels,
     update_position,
 )
-from services.rbac import require_permission
+from services.rbac import has_permission, is_super_admin, load_principal, require_permission
 
 router = APIRouter(tags=["portfolio-positions"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The gate, and what it publishes
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+async def _tenant_gate(request: Request, permission: str) -> tuple[str, str, Any]:
+    """Resolve ``(org_id, user_id, pool)`` and enforce a TENANT permission.
+
+    ``rbac.require_permission`` raises 403 with the permission NAME in the
+    detail, so a refused caller learns which grant they are missing rather than
+    just that they were refused.
+
+    Super Admin passes — checked FIRST inside ``rbac.has_permission``, ahead of
+    any granular lookup. That is the codebase-wide escape-hatch convention
+    (every RLS policy, ``restricted_access`` check and ``staff_visibility``
+    gate carries the same explicit bypass) and not a special case introduced
+    here. It is asserted on its own in ``verify_portfolioux4`` rather than
+    inferred from the write tests passing: "an admin could write" and "a super
+    admin bypassed the check" are different claims, and only the second one
+    survives someone revoking ``manage_portfolio`` from ``super_admin``.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, permission)
+    return org_id, user_id, pool
+
+
+async def _permission_envelope(pool, user_id: str, org_id: str) -> dict[str, Any]:
+    """What this caller may do, resolved server-side and shipped with the page.
+
+    THE UI RENDERS A WRITE CONTROL ONLY WHEN THIS SAYS SO. The grid and the
+    detail pane keep no permission logic and no field list of their own.
+    """
+    can_write = await has_permission(pool, user_id, org_id, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        principal = await load_principal(conn, user_id)
+    super_admin = is_super_admin(principal)
+    return {
+        "can_read": True,          # this envelope is only built after the gate
+        "can_write": bool(can_write),
+        "is_super_admin": bool(super_admin),
+        "read_permission": READ_PERMISSION,
+        "write_permission": WRITE_PERMISSION,
+    }
+
+
+def _vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
+    """The page's vocabularies, with the editable lists cut to the caller.
+
+    ``editable`` and ``inline_editable`` are EMPTY for a caller without
+    ``manage_portfolio``. The read-only vocabularies (``authority``,
+    ``source_system``, ``ownership_basis``, ``superseded``) are published to
+    everyone — they are what the FILTER controls offer, and filtering is a read.
+    """
+    return {
+        "authority": sorted(AUTHORITIES),
+        "source_system": sorted(SOURCE_SYSTEMS),
+        "ownership_basis": sorted(OWNERSHIP_BASES),
+        "superseded": sorted(SUPERSEDED_FILTERS),
+        "inline_editable": sorted(INLINE_EDITABLE_FIELDS) if perms["can_write"] else [],
+        "editable": sorted(EDITABLE_FIELDS) if perms["can_write"] else [],
+    }
 
 
 # ── Money at the API boundary ───────────────────────────────────────────────
@@ -257,10 +350,7 @@ async def get_positions(
     loadable, the client filter narrows what is visible, and ``total`` reports
     the difference so a truncated page never looks complete.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
 
     async with pool.acquire() as conn:
         try:
@@ -291,14 +381,9 @@ async def get_positions(
         except PortfolioError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    result["vocabularies"] = {
-        "authority": sorted(AUTHORITIES),
-        "source_system": sorted(SOURCE_SYSTEMS),
-        "ownership_basis": sorted(OWNERSHIP_BASES),
-        "superseded": sorted(SUPERSEDED_FILTERS),
-        "inline_editable": sorted(INLINE_EDITABLE_FIELDS),
-        "editable": sorted(EDITABLE_FIELDS),
-    }
+    perms = await _permission_envelope(pool, user_id, org_id)
+    result["permissions"] = perms
+    result["vocabularies"] = _vocabularies(perms)
     return result
 
 
@@ -319,10 +404,7 @@ async def get_position_detail(
     deliberately does not distinguish them — telling a caller that a position id
     exists somewhere else is itself a cross-tenant leak.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
 
     async with pool.acquire() as conn:
         try:
@@ -334,6 +416,13 @@ async def get_position_detail(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if detail is None:
         raise HTTPException(status_code=404, detail="position not found")
+
+    # The pane fetches this endpoint on its own and must not have to be told by
+    # its parent what the caller may do — a prop threaded down from the grid is
+    # one more place the answer could go stale.
+    perms = await _permission_envelope(pool, user_id, org_id)
+    detail["permissions"] = perms
+    detail["vocabularies"] = _vocabularies(perms)
     return detail
 
 
@@ -344,14 +433,17 @@ async def get_assets(
     limit: int = Query(default=50, ge=1, le=200),
 ):
     """Tenant assets, for the create-position asset picker."""
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
 
     async with pool.acquire() as conn:
         assets = await list_assets(conn, org_id=org_id, search=search, limit=limit)
-    return {"count": len(assets), "assets": assets}
+
+    # A view-only caller may legitimately READ the picker's contents — it is an
+    # asset list — but should never see a create form built on top of it. The
+    # envelope rides along so the caller of this endpoint does not have to
+    # cross-reference the positions list to find that out.
+    perms = await _permission_envelope(pool, user_id, org_id)
+    return {"count": len(assets), "assets": assets, "permissions": perms}
 
 
 # ── Writes ──────────────────────────────────────────────────────────────────
@@ -371,10 +463,7 @@ async def create_position_endpoint(request: Request, body: PositionCreate):
     well-formed and every field was individually valid — what failed was the
     relationship BETWEEN fields, which is what 422 means.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
 
     async with pool.acquire() as conn:
         try:
@@ -406,6 +495,10 @@ async def create_position_endpoint(request: Request, body: PositionCreate):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         detail = await get_position(conn, org_id=org_id, position_id=new_id)
+
+    perms = await _permission_envelope(pool, user_id, org_id)
+    detail["permissions"] = perms
+    detail["vocabularies"] = _vocabularies(perms)
     return detail
 
 
@@ -424,10 +517,7 @@ async def patch_position(
     that kept using it would be reading history. The grid swaps the row id from
     this response.
     """
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    user_id = get_user_id(request)
-    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
 
     changes = body.changes()
     if not changes:
@@ -451,6 +541,9 @@ async def patch_position(
 
         detail = await get_position(conn, org_id=org_id, position_id=new_id)
 
+    perms = await _permission_envelope(pool, user_id, org_id)
+    detail["permissions"] = perms
+    detail["vocabularies"] = _vocabularies(perms)
     detail["restated_from"] = str(position_id)
     return detail
 

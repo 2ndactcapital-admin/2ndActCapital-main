@@ -30,6 +30,20 @@
  * `.editable`) and this component honours them rather than keeping its own
  * copy that could drift.
  *
+ * PERMISSIONS (UX 4)
+ * ─────────────────────────────────────────────────────────────────────────
+ * Those two lists arrive EMPTY for a caller without `manage_portfolio`, and
+ * `permissions.can_write` says so directly. That is the only thing deciding
+ * whether a write control is rendered here. There is deliberately no local
+ * fallback list — a `|| DEFAULTS` on either read would silently restore an
+ * editable taxonomy picker and a live reconciled checkbox for a view-only user
+ * the first time the envelope went missing for an unrelated reason.
+ *
+ * It is not the enforcement. Every write endpoint re-checks server-side and
+ * `verify_portfolioux4` asserts the two independently, because a hidden control
+ * over an unprotected endpoint and a protected endpoint under a visible button
+ * are both real bugs and neither one is ruled out by testing the other.
+ *
  * TWO THINGS ABOUT SORTING THAT ARE EASY TO GET WRONG
  * ─────────────────────────────────────────────────────────────────────────
  * 1. Money arrives as exact decimal STRINGS. Sorting those lexically puts
@@ -243,10 +257,16 @@ export default function PositionsGrid() {
 
   const taxonomy = meta?.taxonomy || {};
   const vocabularies = meta?.vocabularies;
+  const permissions = meta?.permissions;
+
+  // THE ONLY THING THAT DECIDES WHETHER A WRITE CONTROL EXISTS. Server-built,
+  // permission-aware, and empty for a caller without manage_portfolio. No local
+  // fallback list — see the header note.
   const inlineEditable = useMemo(
     () => new Set(vocabularies?.inline_editable || []),
     [vocabularies],
   );
+  const canWrite = !!permissions?.can_write;
 
   // Rows the grid actually sorts on. The derived `_*` fields exist only so
   // TanStack sorts numerically on values that arrive as exact decimal strings.
@@ -591,6 +611,12 @@ export default function PositionsGrid() {
               across the whole set
             </span>
           )}
+          {permissions && !canWrite && (
+            <span className="ml-2 text-[var(--2a-text-muted)]">
+              · read-only — you hold {permissions.read_permission} but not{" "}
+              {permissions.write_permission}
+            </span>
+          )}
         </p>
       </div>
 
@@ -646,9 +672,13 @@ export default function PositionsGrid() {
           className="col-span-2 overflow-hidden rounded-lg border bg-white"
           style={CARD}
         >
+          {/* No `vocabularies` prop: the pane fetches the detail endpoint,
+              which publishes its OWN permission-aware vocabularies. Threading
+              the grid's copy down would give the pane a second answer that
+              could disagree with the one it just fetched. `taxonomy` stays a
+              prop — it is label data, not a permission. */}
           <PositionDetailPane
             positionId={selectedId}
-            vocabularies={vocabularies}
             taxonomy={taxonomy}
             onClose={() => setSelectedId(null)}
             onSaved={(detail) => {

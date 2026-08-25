@@ -145,7 +145,6 @@ const BASIS_MEASURE = {
 
 export default function PositionDetailPane({
   positionId,
-  vocabularies,
   taxonomy,
   onSaved,
   onClose,
@@ -190,6 +189,20 @@ export default function PositionDetailPane({
 
   const position = data?.position;
   const governing = data?.governing_valuation;
+
+  // Read from THIS pane's own response, not threaded down from the grid. The
+  // pane fetches the detail endpoint itself, so a permission answer passed as a
+  // prop would be a second copy that could go stale while this one is fresh.
+  const permissions = data?.permissions;
+  const vocabularies = data?.vocabularies;
+
+  // Empty for a caller without manage_portfolio, because the SERVER empties it.
+  // No `|| DEFAULTS` — that would restore the whole form for a view-only user.
+  const editable = useMemo(
+    () => new Set(vocabularies?.editable || []),
+    [vocabularies],
+  );
+  const canWrite = !!permissions?.can_write;
 
   const taxonomyOptions = useMemo(
     () =>
@@ -383,34 +396,46 @@ export default function PositionDetailPane({
       <Section
         title="Position"
         right={
-          <div className="flex items-center gap-2">
-            {saved && (
-              <span className="text-[10px] text-[#2D6A4F]">Restated</span>
-            )}
-            {dirty && (
+          // The Save/Discard toolbar EXISTS only for a caller the server says
+          // may write. Not disabled — absent. A disabled Save still tells a
+          // view-only member that editing is a thing this screen does and that
+          // they are one click from finding out it is not.
+          canWrite ? (
+            <div className="flex items-center gap-2">
+              {saved && (
+                <span className="text-[10px] text-[#2D6A4F]">Restated</span>
+              )}
+              {dirty && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft({});
+                    setSaveError(null);
+                  }}
+                  className="text-[11px] text-[var(--2a-text-muted)] hover:underline"
+                >
+                  Discard
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  setDraft({});
-                  setSaveError(null);
-                }}
-                className="text-[11px] text-[var(--2a-text-muted)] hover:underline"
+                onClick={save}
+                disabled={!dirty || saving || !position.is_current}
+                className="rounded px-3 py-1 text-[11px] font-medium text-white disabled:opacity-40"
+                style={{ backgroundColor: "var(--2a-navy)" }}
               >
-                Discard
+                {saving ? "Saving…" : "Save"}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={save}
-              disabled={!dirty || saving || !position.is_current}
-              className="rounded px-3 py-1 text-[11px] font-medium text-white disabled:opacity-40"
-              style={{ backgroundColor: "var(--2a-navy)" }}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
+            </div>
+          ) : null
         }
       >
+        {!canWrite && (
+          <p className="mb-3 rounded bg-[var(--2a-bg-sidebar)] px-3 py-2 text-[11px] leading-snug text-[var(--2a-text-muted)]">
+            Read-only. Restating a position requires{" "}
+            {permissions?.write_permission}.
+          </p>
+        )}
         {saveError && (
           <div className="mb-3 rounded bg-[#FEF3F2] px-3 py-2 text-[11px] leading-snug text-[#9B2335]">
             {saveError}
@@ -424,44 +449,65 @@ export default function PositionDetailPane({
         )}
 
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={LABEL} htmlFor="pd-basis">
-              Ownership basis
-            </label>
-            <select
-              id="pd-basis"
-              className={INPUT}
-              value={current("ownership_basis")}
-              onChange={(e) => setField("ownership_basis", e.target.value)}
-            >
-              {(vocabularies?.ownership_basis || ["units", "percent", "value"]).map(
-                (b) => (
+          {/* Every control below renders if and only if the SERVER named its
+              field in `vocabularies.editable`. That list is empty without
+              manage_portfolio, so a view-only caller gets the same figures as
+              flat read-only text and no input to type into. The vocabulary
+              options come from the same response — the hardcoded
+              ["units","percent","value"] fallback that used to sit on the basis
+              select is gone, because a client-side list is exactly the thing
+              that survives an empty envelope and puts a control back. */}
+          {editable.has("ownership_basis") ? (
+            <div>
+              <label className={LABEL} htmlFor="pd-basis">
+                Ownership basis
+              </label>
+              <select
+                id="pd-basis"
+                className={INPUT}
+                value={current("ownership_basis")}
+                onChange={(e) => setField("ownership_basis", e.target.value)}
+              >
+                {(vocabularies?.ownership_basis || []).map((b) => (
                   <option key={b} value={b}>
                     {b}
                   </option>
-                ),
-              )}
-            </select>
-          </div>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <Field label="Ownership basis">{position.ownership_basis}</Field>
+          )}
 
-          <div>
-            <label className={LABEL} htmlFor="pd-asof">
-              As of date
-            </label>
-            <input
-              id="pd-asof"
-              type="date"
-              className={INPUT}
-              value={current("as_of_date") || ""}
-              onChange={(e) => setField("as_of_date", e.target.value)}
-            />
-          </div>
+          {editable.has("as_of_date") ? (
+            <div>
+              <label className={LABEL} htmlFor="pd-asof">
+                As of date
+              </label>
+              <input
+                id="pd-asof"
+                type="date"
+                className={INPUT}
+                value={current("as_of_date") || ""}
+                onChange={(e) => setField("as_of_date", e.target.value)}
+              />
+            </div>
+          ) : (
+            <Field label="As of date">{fmtDate(position.as_of_date)}</Field>
+          )}
 
           {/* The authoritative measure for the CURRENT (possibly edited) basis. */}
           {(() => {
             const basis = current("ownership_basis");
             const active = BASIS_MEASURE[basis] || measure;
             if (!active) return null;
+            if (!editable.has(active.field)) {
+              return (
+                <Field label={`${active.label} · authoritative`}>
+                  {position[active.field] ?? "—"}
+                </Field>
+              );
+            }
             return (
               <div>
                 <label className={LABEL} htmlFor="pd-measure">
@@ -481,25 +527,34 @@ export default function PositionDetailPane({
             );
           })()}
 
-          <div>
-            <label className={LABEL} htmlFor="pd-cost">
-              Cost basis
-            </label>
-            <input
-              id="pd-cost"
-              type="text"
-              inputMode="decimal"
-              className={INPUT}
-              value={current("cost_basis") ?? ""}
-              onChange={(e) => setField("cost_basis", e.target.value)}
-            />
-          </div>
+          {editable.has("cost_basis") ? (
+            <div>
+              <label className={LABEL} htmlFor="pd-cost">
+                Cost basis
+              </label>
+              <input
+                id="pd-cost"
+                type="text"
+                inputMode="decimal"
+                className={INPUT}
+                value={current("cost_basis") ?? ""}
+                onChange={(e) => setField("cost_basis", e.target.value)}
+              />
+            </div>
+          ) : (
+            <Field label="Cost basis">{position.cost_basis ?? "—"}</Field>
+          )}
 
           {/* The two measures the basis does NOT authorise. Shown, disabled,
               with the reason — the contract requires them to be NULL, and a
               user who cannot see them has no way to understand why an edit
               that "only changed the basis" was refused. */}
-          {["quantity", "ownership_pct", "market_value"]
+          {/* Only shown to a caller who can actually attempt that edit — the
+              block exists to explain why an edit WOULD be refused, and it
+              carries a "Clear" button, which is a write control. A view-only
+              caller sees the same three measures below, as plain figures. */}
+          {canWrite &&
+            ["quantity", "ownership_pct", "market_value"]
             .filter((f) => f !== (BASIS_MEASURE[current("ownership_basis")]?.field))
             .map((f) => (
               <div key={f}>
@@ -528,60 +583,90 @@ export default function PositionDetailPane({
               </div>
             ))}
 
-          <div>
-            <label className={LABEL} htmlFor="pd-authority">
-              Authority
-            </label>
-            <select
-              id="pd-authority"
-              className={INPUT}
-              value={current("authority")}
-              onChange={(e) => setField("authority", e.target.value)}
-            >
-              {(vocabularies?.authority || []).map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
+          {/* The three measures, read-only, for a caller with no edit form. */}
+          {!canWrite &&
+            ["quantity", "ownership_pct", "market_value"]
+              .filter(
+                (f) => f !== BASIS_MEASURE[position.ownership_basis]?.field,
+              )
+              .map((f) => (
+                <Field key={f} label={f.replace(/_/g, " ")}>
+                  {position[f] ?? "—"}
+                </Field>
               ))}
-            </select>
-          </div>
 
-          <div>
-            <label className={LABEL} htmlFor="pd-source">
-              Source system
-            </label>
-            <select
-              id="pd-source"
-              className={INPUT}
-              value={current("source_system")}
-              onChange={(e) => setField("source_system", e.target.value)}
-            >
-              {(vocabularies?.source_system || []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
+          {editable.has("authority") ? (
+            <div>
+              <label className={LABEL} htmlFor="pd-authority">
+                Authority
+              </label>
+              <select
+                id="pd-authority"
+                className={INPUT}
+                value={current("authority")}
+                onChange={(e) => setField("authority", e.target.value)}
+              >
+                {(vocabularies?.authority || []).map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <Field label="Authority">{position.authority}</Field>
+          )}
 
-          <div className="col-span-2">
-            <label className={LABEL} htmlFor="pd-taxonomy">
-              Taxonomy
-            </label>
-            <select
-              id="pd-taxonomy"
-              className={INPUT}
-              value={current("taxonomy_key") ?? ""}
-              onChange={(e) => setField("taxonomy_key", e.target.value)}
-            >
-              <option value="">— unassigned —</option>
-              {taxonomyOptions.map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
+          {editable.has("source_system") ? (
+            <div>
+              <label className={LABEL} htmlFor="pd-source">
+                Source system
+              </label>
+              <select
+                id="pd-source"
+                className={INPUT}
+                value={current("source_system")}
+                onChange={(e) => setField("source_system", e.target.value)}
+              >
+                {(vocabularies?.source_system || []).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <Field label="Source system">{position.source_system}</Field>
+          )}
+
+          {editable.has("taxonomy_key") ? (
+            <div className="col-span-2">
+              <label className={LABEL} htmlFor="pd-taxonomy">
+                Taxonomy
+              </label>
+              <select
+                id="pd-taxonomy"
+                className={INPUT}
+                value={current("taxonomy_key") ?? ""}
+                onChange={(e) => setField("taxonomy_key", e.target.value)}
+              >
+                <option value="">— unassigned —</option>
+                {taxonomyOptions.map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="col-span-2">
+              <Field label="Taxonomy">
+                {position.taxonomy_label ||
+                  position.taxonomy_key ||
+                  "— unassigned —"}
+              </Field>
+            </div>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 border-t border-[var(--2a-border)] pt-3">
