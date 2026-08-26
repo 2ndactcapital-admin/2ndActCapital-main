@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 
 from services.action_registry import REGISTRY
+from services.bpmn_xml import is_complete_document, sanitize_model_bpmn
 from services.extraction import call_claude_text
 from services.workflow_steps_deriver import derive_steps, derive_and_store_steps
 
@@ -34,6 +35,36 @@ from services.workflow_steps_deriver import derive_steps, derive_and_store_steps
 from services.workflow_steps_deriver import EXT_NS
 
 _TASK_TYPE = "workflow_generation"
+
+# Output-token ceiling for one generation attempt.
+#
+# This was 2000, and 2000 is what broke live generation: a governed BPMN for even
+# a modest process runs a little over 2000 output tokens once the model appends
+# the <bpmndi:BPMNDiagram> layout section it emits by default.  The response was
+# cut off mid-tag, `_extract_xml` handed the fragment to lxml, and the member saw
+# a bare syntax error ("expected '>', line 84, column 13") pointing at the
+# truncation point rather than at any real defect in the document.  The retry
+# re-ran under the same ceiling and failed identically.  Sitting a hair over the
+# limit is why this looked input-dependent rather than systemic: a two-step
+# process fits, a six-step one does not.
+#
+# The ceiling is now well clear of a full document, and HARD RULE 7 below
+# suppresses the diagram section outright — it is pure layout, `derive_steps`
+# never reads it, and it was about a third of the output.
+_MAX_TOKENS = 8000
+
+# Marker for the one failure mode that needs its own retry strategy: asking a
+# truncated attempt to "correct" itself under the same ceiling just truncates
+# again.  It has to be told to produce a *shorter* document instead.
+#
+# ``_INCOMPLETE`` is the neutral, source-agnostic finding (it is also what a
+# hand-edited document gets from ``validate_workflow_bpmn``); ``_TRUNCATED``
+# adds the generation-specific cause, and is the string the retry keys on.
+_INCOMPLETE = (
+    "BPMN document is incomplete — it does not end with a closing "
+    "</bpmn:definitions> tag"
+)
+_TRUNCATED = _INCOMPLETE + " (the model's response hit the output-token limit)"
 
 
 class WorkflowGenerationError(Exception):
@@ -98,7 +129,15 @@ HARD RULES — violating any of these makes the output unusable:
 {profile_lines}
   5. Use only the real ids/keys above. If no listed action fits an automated
      step, model it as a userTask instead of inventing an action.
-  6. Give every element a stable, unique id attribute."""
+  6. Give every element a stable, unique id attribute.
+  7. Emit the process model ONLY. Do NOT emit a <bpmndi:BPMNDiagram> /
+     <bpmndi:BPMNPlane> / <dc:Bounds> / <di:waypoint> layout section — it is
+     ignored entirely, and it is what pushes the document past the output limit.
+     Keep names short. The document must be COMPLETE, ending with
+     </bpmn:definitions>; a document cut off mid-tag is worthless.
+  8. Escape XML special characters anywhere they appear inside an attribute
+     value — a name taken from the member's wording may contain &, <, >, " or ',
+     and each MUST be written as &amp; &lt; &gt; &quot; &apos; respectively."""
 
 
 def _user_prompt(description: str) -> str:
@@ -107,17 +146,37 @@ def _user_prompt(description: str) -> str:
 
 def _correction_prompt(errors: list[str]) -> str:
     bullets = "\n".join(f"  - {e}" for e in errors)
-    return (
+    prompt = (
         "Your previous BPMN was rejected by validation for these reasons:\n"
         f"{bullets}\n\n"
         "Regenerate the COMPLETE corrected BPMN XML. Use ONLY action keys and "
         "profile UUIDs from the lists you were given. Output raw XML only."
     )
+    if any(_TRUNCATED in e for e in errors):
+        prompt += (
+            " Your last attempt ran past the output limit, so produce a SHORTER "
+            "document this time: no <bpmndi:BPMNDiagram> layout section at all, "
+            "short element names, and only the steps the process genuinely needs. "
+            "It must end with </bpmn:definitions>."
+        )
+    return prompt
 
 
 # ── XML extraction + reference validation ────────────────────────────────────
 def _extract_xml(text: str) -> str | None:
-    """Pull the BPMN document out of a model response (tolerate stray fences)."""
+    """Pull the BPMN document out of a model response (tolerate stray fences).
+
+    The returned string is run through ``sanitize_model_bpmn`` first: the model
+    is handed the member's own wording and copies pieces of it into ``name="..."``
+    attributes, so this is the point at which user-supplied text actually becomes
+    XML — and therefore the point at which it has to be escaped.  The sanitiser
+    is a no-op on well-formed output.
+
+    Note that when the response is truncated the ``</definitions>`` regex cannot
+    match and this falls through to returning the raw fragment. That is why
+    callers must check ``is_complete_document`` rather than trusting the return
+    value to be a whole document.
+    """
     if not text:
         return None
     t = text.strip()
@@ -127,8 +186,10 @@ def _extract_xml(text: str) -> str | None:
             t = t.rstrip()[:-3]
     match = re.search(r"<(?:\w+:)?definitions\b.*</(?:\w+:)?definitions>", t, re.DOTALL)
     if match:
-        return match.group(0).strip()
-    return t.strip() or None
+        return sanitize_model_bpmn(match.group(0).strip())
+    # No closing tag: keep the fragment (a leading '<?xml' declaration and all)
+    # so the truncation check below can report it honestly.
+    return sanitize_model_bpmn(t.strip()) or None
 
 
 def _validate(xml: str | None, valid_action_keys: set[str], valid_profile_ids: set[str]) -> list[str]:
@@ -139,6 +200,11 @@ def _validate(xml: str | None, valid_action_keys: set[str], valid_profile_ids: s
     """
     if not xml:
         return ["model returned no BPMN XML"]
+    if not is_complete_document(xml):
+        # Report the incompleteness itself. Parsing a fragment only yields a
+        # syntax error pointing at wherever the text stopped, which reads like a
+        # defect in the document and sends the reader looking in the wrong place.
+        return [_INCOMPLETE]
     try:
         steps = derive_steps(xml)  # runs Phase-1 parse_bpmn + derives steps
     except Exception as exc:  # parse or structural failure
@@ -176,12 +242,14 @@ async def validate_workflow_bpmn(conn, org_id, xml: str | None) -> list[str]:
 
 async def _generate_once(system, messages, org_id, valid_action_keys, valid_profile_ids):
     text = await call_claude_text(
-        system, messages, max_tokens=2000, org_id=org_id, task_type=_TASK_TYPE
+        system, messages, max_tokens=_MAX_TOKENS, org_id=org_id, task_type=_TASK_TYPE
     )
     if text is None:
         return None, ["AI unavailable (no API key configured or model chain exhausted)"]
     xml = _extract_xml(text)
-    return xml, _validate(xml, valid_action_keys, valid_profile_ids)
+    errors = _validate(xml, valid_action_keys, valid_profile_ids)
+    # Name the real cause when the document simply ran out of tokens.
+    return xml, [_TRUNCATED if e == _INCOMPLETE else e for e in errors]
 
 
 def _derive_name(description: str) -> str:
@@ -221,8 +289,13 @@ async def generate_workflow(pool, *, org_id, description: str, created_by, name:
     xml, errors = await _generate_once(system, messages, org_id, valid_action_keys, valid_profile_ids)
     if errors:
         # One error-correction retry, echoing the model's attempt + the failures.
+        # A truncated attempt is echoed only in part: replaying thousands of
+        # tokens of cut-off XML crowds out the very budget the retry needs.
+        echo = xml or "(no output)"
+        if any(_TRUNCATED in e for e in errors):
+            echo = echo[:1000] + "\n… (attempt truncated here)"
         retry_messages = messages + [
-            {"role": "assistant", "content": xml or "(no output)"},
+            {"role": "assistant", "content": echo},
             {"role": "user", "content": _correction_prompt(errors)},
         ]
         xml, errors = await _generate_once(
