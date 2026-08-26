@@ -229,6 +229,16 @@ Two things follow:
 
 ### 2.4 The real deployed grants: **all three workflow permissions have zero grants**
 
+> **CLOSED 2026-08-26** by `workflowpermsfix.structural`
+> (`docs/workflowpermsfix_part1.sql`, verified by
+> `apps/api/scripts/verify_workflowpermsfix.py`, 46/46). The counts below are
+> the pre-fix state and are kept as the record of the gap. Two things this
+> section did not surface, and which the fix had to handle: there is no
+> `org_admin` row in `roles` at all (it is only a `users.role` text value), and
+> all three real `org_admin` users had `profile_id IS NULL` — so a
+> profile-axis grant alone would have left every one of them still 403'd.
+
+
 Verified by direct count across all three grant tables:
 
 | grant table | rows granting any `workflows` permission |
