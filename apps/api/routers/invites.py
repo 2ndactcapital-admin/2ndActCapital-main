@@ -9,10 +9,13 @@ first-checked bypass — see services.rbac.has_permission).
 request body — standing multi-tenant rule. Combined with the ``users`` RLS
 policy, this makes cross-org invite creation/listing/revocation impossible.
 
-Email delivery is NOT performed here: the SES credential gate failed this sprint
-(the Textract IAM user has no SES permission), so ``enrollment_url`` is returned
-to the admin for manual sharing. When SES is provisioned, Task 3 wires a send
-call at the marked point in ``create_invite_endpoint``.
+Email delivery IS performed here as of the SMTP/SES sprint: ``create_invite``
+attempts a real SES send and the outcome is returned to the admin verbatim in
+``email_delivery``. When sending is blocked (today: the credentials resolve to
+the Textract-only IAM user, which has no ``ses:SendEmail``), the response says
+so explicitly with ``manual_share_required=true`` and the actionable reason —
+``enrollment_url`` remains usable for manual sharing, but it is no longer
+returned as though delivery had happened.
 """
 
 from uuid import UUID
@@ -20,8 +23,10 @@ from uuid import UUID
 import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
+from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
+from services import email as email_service
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.invites import (
@@ -54,6 +59,28 @@ class InviteCreateRequest(BaseModel):
     profile_id: UUID | None = None
 
 
+class InviteDeliveryResponse(BaseModel):
+    """What happened to the invite EMAIL — reported, never inferred.
+
+    ``status`` is one of ``sent`` / ``blocked`` / ``skipped``. When it is not
+    ``sent``, ``manual_share_required`` is true and ``reason`` names the real,
+    actionable gap, so the admin UI can say "we could not email this — here is
+    the link, and here is why" instead of silently showing a link that looks
+    like a convenience copy of a mail that never went out.
+    """
+
+    status: str
+    sent: bool
+    manual_share_required: bool
+    message_id: str | None = None
+    reason: str | None = None
+    gap: str | None = None
+    # Redacted (``j…e@e…m``) on purpose — an API response is a log line
+    # somewhere, and a member's address does not belong in one.
+    recipient: str | None = None
+    subject: str | None = None
+
+
 class InviteResponse(BaseModel):
     id: UUID
     email: str
@@ -66,6 +93,9 @@ class InviteResponse(BaseModel):
     invited_by: UUID | None = None
     invited_at: str | None = None
     invite_expires_at: str | None = None
+    # Only ever populated on CREATE — listing existing invites re-reads rows
+    # that carry no delivery record, and inventing one there would be a guess.
+    email_delivery: InviteDeliveryResponse | None = None
 
 
 async def _require_manage_members(request: Request) -> tuple[str, str]:
@@ -133,6 +163,18 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
                 detail="A user with this email already exists",
             )
 
+        # Populated by services.invites on every path — never absent, never a
+        # bare success default. `.get` with an explicit blocked fallback so a
+        # future caller that forgets to set it fails VISIBLY rather than
+        # reporting a send that did not happen.
+        delivery = row.get("email_delivery") or {
+            "status": "blocked",
+            "sent": False,
+            "manual_share_required": True,
+            "reason": "No delivery record was produced for this invite.",
+            "gap": "unknown",
+        }
+
         await write_audit_log(
             conn,
             org_id=org_id,
@@ -145,14 +187,15 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
                 "profile_id": profile_id,
                 "invited_by": str(actor_id),
                 "invite_status": "pending",
+                # The audit trail records whether the invite was actually
+                # DELIVERED, not merely created. "We sent it" and "we made a
+                # link" are different claims and only one of them is auditable
+                # against SES's message id.
+                "email_status": delivery.get("status"),
+                "email_message_id": delivery.get("message_id"),
             },
             actor=actor_id,
         )
-
-    # --- SES hook (still BLOCKED — the Textract IAM user has no SES permission):
-    # once SES is provisioned, send the invite email here, e.g.
-    # await send_invite_email(email, row["enrollment_url"]). The link itself is
-    # now fully qualified, so it is shareable by hand in the meantime. ---
 
     return InviteResponse(
         id=row["id"],
@@ -168,6 +211,7 @@ async def create_invite_endpoint(request: Request, body: InviteCreateRequest):
         invited_by=row["invited_by"],
         invited_at=str(row["invited_at"]) if row["invited_at"] else None,
         invite_expires_at=str(row["invite_expires_at"]) if row["invite_expires_at"] else None,
+        email_delivery=InviteDeliveryResponse(**delivery),
     )
 
 
@@ -256,4 +300,48 @@ async def revoke_invite_endpoint(request: Request, invite_id: UUID):
         id=row["id"],
         email=row["email"],
         invite_status=row["invite_status"],
+    )
+
+
+class EmailGateResponse(BaseModel):
+    """Operator-facing report of whether invite email can be sent AT ALL.
+
+    Exists so the AWS-side action items this sprint is blocked on can be
+    re-checked from the running deployment the moment they are done, without a
+    redeploy or a code read. ``sandbox_known=false`` is a real answer, not a
+    missing one: this deployment's principal is denied ``ses:GetAccount``, so
+    the account's sandbox state genuinely cannot be determined from here, and
+    saying "not in sandbox" would be a guess.
+    """
+
+    ok: bool
+    attempted: bool
+    reason: str
+    gap: str
+    missing_vars: list[str] = []
+    error_code: str | None = None
+    production_access: bool | None = None
+    sandbox_known: bool = False
+
+
+@router.get("/admin/email/status", response_model=EmailGateResponse)
+async def email_gate_status(request: Request):
+    """Probe SES with ONE real authenticated call and report the honest state.
+
+    Behind ``manage_members`` — the same permission that mints the invites this
+    transport exists to deliver. Returns 200 with ``ok=false`` when sending is
+    blocked: a status endpoint that errors when the thing it reports on is
+    broken is a status endpoint that cannot report.
+    """
+    await _require_manage_members(request)
+    gate = await run_in_threadpool(email_service.probe)
+    return EmailGateResponse(
+        ok=gate.ok,
+        attempted=gate.attempted,
+        reason=gate.reason,
+        gap=gate.gap,
+        missing_vars=list(gate.missing_vars),
+        error_code=gate.error_code,
+        production_access=gate.production_access,
+        sandbox_known=gate.sandbox_known,
     )

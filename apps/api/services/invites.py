@@ -23,19 +23,29 @@ Design notes
   ``updated_at`` column, not a bi-temporal history table (``ensure_user`` and
   the admin role-assignment path both mutate it in place).
 
-Email delivery of the invite (Task 3) is intentionally NOT wired here: the SES
-credential gate failed this sprint (the Textract IAM user carries no SES
-permission), so the enrollment link is returned to the admin for manual sharing
-instead. See the sprint report / verify_multitenant2.py for the gate details.
+EMAIL DELIVERY (SMTP/SES sprint, 2026-08-26)
+────────────────────────────────────────────────────────────────────────────
+Delivery IS now wired: :func:`create_invite` renders the invite through
+``services.email.render_invite_email`` and attempts a real SES send, and every
+invite carries an explicit :class:`InviteDelivery` record saying what actually
+happened. The previous note here said delivery was "intentionally not wired"
+because the SES gate failed; that gate STILL fails (the credentials resolve to
+the Textract-only IAM user, which has no ``ses:SendEmail``), but the difference
+is that the failure is now surfaced, specific and actionable instead of being a
+comment. The enrollment link remains available for manual sharing — announced
+as a fallback, never as a silent substitute for delivery.
 """
 
 import secrets
+from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from services import email as email_service
 from services.org_settings import (
     DEFAULT_SETTINGS,
     INVITE_EXPIRY_DAYS_KEY,
     get_setting,
+    get_setting_with_origin,
 )
 
 # 32 random bytes → ~43 URL-safe chars. Comfortably beyond guessing range while
@@ -185,6 +195,165 @@ async def enrollment_url_for_org(conn, org_id: str, token: str) -> str:
     return build_enrollment_url(enroll_url, token, slug=slug)
 
 
+# ── Invite email delivery ──────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class InviteDelivery:
+    """What actually happened to the invite email. Always present on an invite.
+
+    This type is the whole point of the SES sprint. The old behaviour was to
+    return ``enrollment_url`` and say nothing about delivery, which reads
+    identically whether mail was sent, was never attempted, or was refused. An
+    admin cannot act on that. So every invite now carries one of three HONEST
+    states in :attr:`status`:
+
+    * ``"sent"``    — SES accepted the message and returned a real message id.
+    * ``"blocked"`` — a send was required and could not happen. :attr:`reason`
+      names the actual gap and the action that fixes it. The enrollment URL is
+      still returned, but :attr:`manual_share_required` is True, so the caller
+      and the admin both SEE that they must share it by hand.
+    * ``"skipped"`` — the caller explicitly asked for no email (verification
+      runs, bulk back-fills). Never used to paper over a failure.
+
+    There is no fourth "probably fine" state and no default that means success.
+    """
+
+    status: str
+    manual_share_required: bool
+    message_id: str | None = None
+    reason: str | None = None
+    gap: str | None = None
+    recipient_redacted: str | None = None
+    subject: str | None = None
+
+    @property
+    def sent(self) -> bool:
+        return self.status == "sent" and bool(self.message_id)
+
+    def as_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "sent": self.sent,
+            "manual_share_required": self.manual_share_required,
+            "message_id": self.message_id,
+            "reason": self.reason,
+            "gap": self.gap,
+            "recipient": self.recipient_redacted,
+            "subject": self.subject,
+        }
+
+
+async def resolve_org_display_name(conn, org_id: str) -> str:
+    """The name THIS org's outbound mail should be signed with.
+
+    Prefers the org's OWN ``brand.name`` setting, but only when it is genuinely
+    the org's — ``get_setting_with_origin`` is used instead of ``get_setting``
+    for exactly this reason. ``DEFAULT_SETTINGS['brand.name']`` is the literal
+    string ``"2nd Act Capital"``, so an org that has never configured branding
+    would otherwise have every invite it sends signed with ANOTHER TENANT'S
+    NAME. That is the same "silently inherit the other tenant's value" shape as
+    the Auth0 ``domain ?? AUTH0_DOMAIN`` and ``APP_BASE_URL`` bugs, and it is
+    worse in an email because the recipient sees it.
+
+    So: org's own brand.name if set, else ``organizations.name`` (per-org and
+    NOT NULL), and the platform default is never reachable here.
+    """
+    value, is_default = await get_setting_with_origin(conn, org_id, "brand.name")
+    if not is_default and isinstance(value, str) and value.strip():
+        return value.strip()
+
+    row = await conn.fetchrow("SELECT name FROM organizations WHERE id = $1", org_id)
+    if row is None or not (row["name"] or "").strip():
+        raise EnrollmentUrlError(
+            f"Organization {org_id!r} has no name — refusing to send an invite "
+            "that cannot say who it is from."
+        )
+    return row["name"].strip()
+
+
+def _blocked_delivery(exc: Exception, *, recipient: str, subject: str | None) -> InviteDelivery:
+    gap = getattr(exc, "gap", "unknown")
+    return InviteDelivery(
+        status="blocked",
+        manual_share_required=True,
+        reason=str(exc),
+        gap=gap,
+        recipient_redacted=email_service.redact_email(recipient),
+        subject=subject,
+    )
+
+
+async def send_invite_email(
+    conn,
+    *,
+    org_id: str,
+    email: str,
+    full_name: str | None,
+    enrollment_url: str,
+    expiry_days: int,
+    expires_at=None,
+) -> InviteDelivery:
+    """Render and send ONE org's invite email. Returns the honest delivery state.
+
+    Does NOT raise for a blocked send: the invite itself was created
+    successfully and must still be returned to the admin with its link. What it
+    does instead is refuse to be quiet — the returned :class:`InviteDelivery`
+    carries ``status="blocked"``, ``manual_share_required=True`` and the exact
+    reason, and a line is logged. Raising here would either lose the created
+    invite or force every caller to re-implement this same handling.
+
+    All content comes from THIS org: its own display name, its own enrollment
+    URL, its own ``invite.expiry_days``.
+    """
+    org_name = await resolve_org_display_name(conn, org_id)
+    rendered = email_service.render_invite_email(
+        org_name=org_name,
+        enrollment_url=enrollment_url,
+        expiry_days=expiry_days,
+        expires_at=expires_at,
+        full_name=full_name,
+    )
+
+    try:
+        # boto3 is synchronous; keep the event loop free.
+        from starlette.concurrency import run_in_threadpool
+
+        result = await run_in_threadpool(
+            lambda: email_service.send_email(
+                to_address=email,
+                subject=rendered.subject,
+                text_body=rendered.text,
+                html_body=rendered.html,
+            )
+        )
+    except email_service.EmailBlocked as exc:
+        print(
+            f"[invites] invite email BLOCKED for {email_service.redact_email(email)} "
+            f"(org {org_id}, gap={getattr(exc, 'gap', 'unknown')}): {exc}"
+        )
+        return _blocked_delivery(exc, recipient=email, subject=rendered.subject)
+    except Exception as exc:  # noqa: BLE001 — an unexpected fault is still a blocked send
+        print(
+            f"[invites] invite email FAILED unexpectedly for "
+            f"{email_service.redact_email(email)} (org {org_id}): "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return _blocked_delivery(exc, recipient=email, subject=rendered.subject)
+
+    print(
+        f"[invites] invite email SENT to {result.recipient_redacted} "
+        f"(org {org_id}) message_id={result.message_id}"
+    )
+    return InviteDelivery(
+        status="sent",
+        manual_share_required=False,
+        message_id=result.message_id,
+        recipient_redacted=result.recipient_redacted,
+        subject=result.subject,
+    )
+
+
 async def create_invite(
     conn,
     *,
@@ -195,6 +364,7 @@ async def create_invite(
     invited_by: str,
     profile_id: str | None = None,
     ttl_days: int | None = None,
+    send_email: bool = True,
 ):
     """Insert a pending invite ``users`` row and return it.
 
@@ -216,6 +386,13 @@ async def create_invite(
     grants (see the SOC Phase A note on ``users.profile_id``), and the caller is
     responsible for having validated the profile against its own org — this
     function is org-blind by design, like everything else here.
+
+    ``send_email`` controls whether a REAL SES send is attempted. It defaults to
+    True — the whole point of this path is that an invite is delivered — and the
+    outcome is always reported in ``result["email_delivery"]``, never inferred.
+    Callers that must not emit mail (verification runs, back-fills) pass False
+    and get an explicit ``"skipped"`` status, which is a different thing from a
+    failure and is recorded as such.
     """
     if ttl_days is None:
         ttl_days = await resolve_invite_ttl_days(conn, org_id)
@@ -244,6 +421,32 @@ async def create_invite(
     # its own domain (see the router's get_org_id, and Task 4's cross-org test).
     result = dict(row)
     result["enrollment_url"] = await enrollment_url_for_org(conn, org_id, token)
+
+    # Delivery. The invite row is already committed-and-correct at this point,
+    # so a blocked send must NOT undo it — an admin who cannot email the link
+    # can still share it, and destroying a valid invite because SES is
+    # unavailable would be a worse outcome than the gap itself. What must never
+    # happen is delivery failing quietly, which is what `email_delivery`
+    # prevents: it is populated on EVERY path, including the skipped one.
+    if send_email:
+        delivery = await send_invite_email(
+            conn,
+            org_id=org_id,
+            email=email,
+            full_name=full_name,
+            enrollment_url=result["enrollment_url"],
+            expiry_days=ttl_days,
+            expires_at=row["invite_expires_at"],
+        )
+    else:
+        delivery = InviteDelivery(
+            status="skipped",
+            manual_share_required=True,
+            reason="Caller requested no email; share the enrollment link manually.",
+            gap="not_requested",
+            recipient_redacted=email_service.redact_email(email),
+        )
+    result["email_delivery"] = delivery.as_dict()
     return result
 
 
