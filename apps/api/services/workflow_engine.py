@@ -16,9 +16,10 @@ Design decisions (confirmed, do not re-litigate):
   * We do NOT reimplement BPMN semantics — SpiffWorkflow does the stepping.
   * A ``bpmn:serviceTask`` maps to an action_registry_key on its
     ``workflow_steps`` row (NOT embedded in the BPMN), keeping the XML
-    vendor-neutral.  Phase 1 *resolves* the action against the Sprint-11
-    registry to prove the key is real; actually invoking action handlers is
-    a later phase.
+    vendor-neutral.  Phase 1 *resolved* the action against the Sprint-11
+    registry to prove the key is real, without running it.  That is still the
+    default; an action opts in to real invocation with
+    ``AssistantAction.workflow_invocable = True`` (see _execute_service_task).
   * User Task completion is the maker-checker "approve": the approver
     (``completed_by``) MUST differ from the ``proposed_by`` recorded when the
     task became active.  Enforced application-side here AND by the
@@ -153,7 +154,7 @@ def _ready_user_task(workflow: BpmnWorkflow, step_key: str | None = None):
     return None
 
 
-def _drive(workflow: BpmnWorkflow):
+async def _drive(workflow: BpmnWorkflow):
     """Advance the workflow, auto-executing Service Tasks, until it pauses at a
     User Task or completes.
 
@@ -172,36 +173,111 @@ def _drive(workflow: BpmnWorkflow):
             break
         for task in started:
             step_key = task.task_spec.bpmn_id
-            result = _execute_service_task(step_key)
+            result = await _execute_service_task(step_key)
             task.set_data(service_result=result)
             task.complete()
             executed.append(step_key)
     return executed
 
 
-def _execute_service_task(step_key: str) -> dict:
-    """Resolve (and, in a later phase, invoke) the action for a Service Task.
+async def _execute_service_task(step_key: str) -> dict:
+    """Resolve — and, for opt-in actions, actually INVOKE — a Service Task's action.
 
-    Phase 1: resolve ``action_registry_key`` against the Sprint-11 registry so
-    we prove the key is real and record it in the run-step audit trail.  We do
-    NOT run the underlying handler yet (that needs full request context and is
-    out of scope for the foundation).
+    Phase 1 only *resolved* ``action_registry_key`` against the Sprint-11 registry
+    to prove the key was real, and deliberately did not run the handler.  That is
+    still the default: flipping every Service Task to live invocation at once
+    would silently change what every existing workflow does.
+
+    An action opts in with ``AssistantAction.workflow_invocable = True``.  For
+    those, the handler really runs, and:
+
+      * its ``required_permission`` is re-checked against the member who started
+        the run (Super Admin bypasses, per the platform-wide convention) — a
+        workflow must never become a route around a permission gate;
+      * any exception propagates, so ``start_workflow_run`` HOLDs the run with
+        ``error_detail`` rather than recording a false success.  A failed
+        external call must be loud.
     """
     # step_row is looked up by the caller and passed via _SERVICE_STEP_MAP.
     step = _SERVICE_STEP_MAP.get(step_key, {})
     action_key = step.get("action_registry_key")
     resolved = REGISTRY.get(action_key) if action_key else None
-    return {
+    result = {
         "action_registry_key": action_key,
         "resolved": resolved is not None,
         "access_type": getattr(resolved, "access_type", None),
+        "invoked": False,
         "executed_at": _now().isoformat(),
     }
+    if resolved is None or not getattr(resolved, "workflow_invocable", False):
+        return result
+
+    pool = _SERVICE_CONTEXT.get("pool")
+    if pool is None:
+        raise WorkflowEngineError(
+            f"Service Task {step_key!r} invokes action {action_key!r} but the "
+            "engine was driven without a database pool in context"
+        )
+    actor_id = _SERVICE_CONTEXT.get("actor_id")
+    await _assert_action_permission(pool, resolved, actor_id, step_key)
+
+    handler_result = await resolved.handler(
+        pool=pool,
+        user_id=actor_id,
+        org_id=_SERVICE_CONTEXT.get("org_id"),
+    )
+    handler_result = handler_result or {}
+    result["invoked"] = True
+    result["ok"] = True
+    # Only the JSON-safe parts: `render` may carry component props that are not
+    # guaranteed serializable, and the run-step `result` column is jsonb.
+    result["handler_data"] = handler_result.get("data")
+    result["handler_text"] = handler_result.get("text")
+    result["completed_at"] = _now().isoformat()
+    return result
+
+
+async def _assert_action_permission(pool, action, actor_id, step_key: str) -> None:
+    """Raise unless ``actor_id`` may run ``action``'s handler.
+
+    Imported locally: services.rbac / services.profiles are request-layer modules
+    and importing them at module scope from the engine invites an import cycle.
+    """
+    permission_key = getattr(action, "required_permission", None)
+    if not permission_key:
+        return
+    from services.profiles import user_has_permission
+    from services.rbac import is_super_admin, load_principal
+
+    if actor_id is None:
+        raise WorkflowEngineError(
+            f"Service Task {step_key!r} invokes action {action.key!r}, which "
+            f"requires permission {permission_key!r}, but this run has no "
+            "started_by member to check it against"
+        )
+    async with pool.acquire() as conn:
+        principal = await load_principal(conn, actor_id)
+    if principal is not None and is_super_admin(principal):
+        return
+    if await user_has_permission(pool, actor_id, permission_key):
+        return
+    raise WorkflowEngineError(
+        f"Service Task {step_key!r} invokes action {action.key!r}, which requires "
+        f"permission {permission_key!r}. The member who started this run "
+        f"({actor_id}) does not hold it. A workflow does not widen a member's "
+        "permissions."
+    )
 
 
 # Per-run map from service step_key -> workflow_steps row (set by callers before
 # driving; kept module-local so _execute_service_task stays a pure hook).
 _SERVICE_STEP_MAP: dict[str, dict] = {}
+
+# Per-run invocation context (pool / org_id / actor_id) for workflow_invocable
+# actions.  Kept module-local for the same reason as _SERVICE_STEP_MAP: it keeps
+# _execute_service_task's signature at exactly ``(step_key)``, which existing
+# tests monkeypatch.
+_SERVICE_CONTEXT: dict[str, Any] = {}
 
 
 # ── DB helpers ──────────────────────────────────────────────────────────────
@@ -281,14 +357,18 @@ async def start_workflow_run(
         try:
             async with conn.transaction():
                 # Drive the engine: Service Tasks execute automatically.
-                global _SERVICE_STEP_MAP
+                global _SERVICE_STEP_MAP, _SERVICE_CONTEXT
                 _SERVICE_STEP_MAP = {
                     k: v for k, v in step_by_key.items() if v["step_type"] == "service"
                 }
+                _SERVICE_CONTEXT = {
+                    "pool": pool, "org_id": org_id, "actor_id": started_by,
+                }
                 try:
-                    executed = _drive(workflow)
+                    executed = await _drive(workflow)
                 finally:
                     _SERVICE_STEP_MAP = {}
+                    _SERVICE_CONTEXT = {}
 
                 # Mark executed Service Task steps completed.
                 for step_key in executed:
@@ -451,14 +531,20 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             # Continue past any downstream Service Tasks.
             steps = await _load_steps(conn, step["workflow_version_id"], org_id)
             step_by_key = {s["step_key"]: dict(s) for s in steps}
-            global _SERVICE_STEP_MAP
+            global _SERVICE_STEP_MAP, _SERVICE_CONTEXT
             _SERVICE_STEP_MAP = {
                 k: v for k, v in step_by_key.items() if v["step_type"] == "service"
             }
+            # A Service Task downstream of a User Task is still attributable to
+            # the member who STARTED the run, not to whoever approved the task.
+            _SERVICE_CONTEXT = {
+                "pool": pool, "org_id": org_id, "actor_id": step["started_by"],
+            }
             try:
-                executed = _drive(workflow)
+                executed = await _drive(workflow)
             finally:
                 _SERVICE_STEP_MAP = {}
+                _SERVICE_CONTEXT = {}
 
             async with conn.transaction():
                 # Complete this User Task step — the DB CHECK also guards

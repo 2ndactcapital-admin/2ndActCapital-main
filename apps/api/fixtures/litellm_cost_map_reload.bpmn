@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LiteLLM Model Cost Map Reload — a minimal, real, manually-triggerable workflow.
+
+  Governance metadata lives in <bpmn:extensionElements><twoa:governance/>, the
+  convention services/workflow_steps_deriver.py reads. The XML stays
+  vendor-neutral: the action binding is a registry KEY, not embedded code.
+
+  autonomyTier="3" is an EXPLICIT authoring override, not a default.
+  The deriver's default for a Service Task wrapping a WRITE-capable action is
+  Tier 2 (confirm-and-log) — deliberately, so no unreviewed autonomous write
+  ever lands on Tier 3 by accident. This step overrides to Tier 3 (execute
+  freely, fully autonomous — the least restrictive tier) because the action
+  genuinely meets that bar: it moves no money, sends no external communication
+  to any person, reads no member data and writes none, touches no row in this
+  database, and is idempotent — re-running it just reloads the same upstream
+  price table again. Its only effect is to make an infrastructure service stop
+  using a stale price table, and a stale price table is itself the risk.
+
+  There is no User Task in this process, so there is no approval gate to pass —
+  which is precisely what Tier 3 means and what verify_litellmreloadaction.py
+  proves against the real engine.
+
+  Trigger: MANUAL. There is no recurring-schedule mechanism in this platform
+  (workflow_triggers.schedule_cron is stored and displayed but nothing reads it
+  to fire a run). See docs/PROJECT_STATUS.md for that tracked gap.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:twoa="http://2ndactcapital.com/bpmn/ext"
+                  id="Defs_litellm_cost_map_reload"
+                  targetNamespace="http://2ndactcapital.com/bpmn">
+  <bpmn:process id="litellm_cost_map_reload"
+                name="LiteLLM Model Cost Map Reload"
+                isExecutable="true">
+    <bpmn:startEvent id="Start_1">
+      <bpmn:outgoing>flow_start_reload</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Reload_Cost_Map" name="Reload LiteLLM model cost map">
+      <bpmn:extensionElements>
+        <twoa:governance actionRegistryKey="litellm.reload_model_cost_map"
+                         autonomyTier="3"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow_start_reload</bpmn:incoming>
+      <bpmn:outgoing>flow_reload_end</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_1">
+      <bpmn:incoming>flow_reload_end</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flow_start_reload" sourceRef="Start_1" targetRef="Reload_Cost_Map"/>
+    <bpmn:sequenceFlow id="flow_reload_end" sourceRef="Reload_Cost_Map" targetRef="End_1"/>
+  </bpmn:process>
+</bpmn:definitions>

@@ -26,6 +26,14 @@ class AssistantAction:
     params_schema: dict = field(default_factory=dict)
     options: list[dict] = field(default_factory=list)  # choices for WRITE actions
     draft_handler: Callable | None = None  # optional; WRITE preview generator
+    # OPT-IN: may a BPMN Service Task actually INVOKE this handler during a
+    # workflow run?  Phase 1 of the Workflow Manager deliberately only *resolved*
+    # a Service Task's action key without running it.  Turning invocation on for
+    # every action at once would silently change the behaviour of every existing
+    # workflow, so it is opt-in per action.  The engine additionally re-checks
+    # ``required_permission`` against the member who started the run — a workflow
+    # must never become a permission bypass.
+    workflow_invocable: bool = False
 
 
 class ActionRegistry:

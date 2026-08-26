@@ -166,6 +166,19 @@ services:
       #   (no credentials have ever been issued) and has no mapping function.
       #   Declare these only when real credentials exist.
       #
+      # LITELLM_BASE_URL / LITELLM_MASTER_KEY —
+      #   services/assistant_actions/litellm_ops.py (the
+      #   litellm.reload_model_cost_map action). The LiteLLM proxy is NOT
+      #   DEPLOYED: Phase A of docs/LITELLM_INTEGRATION_DESIGN_V1.md §14 has not
+      #   shipped, there is no LiteLLM service in this blueprint, and Doppler
+      #   holds no LITELLM_* secret. Declare these only once the proxy really
+      #   exists — declaring a name whose value nobody can set is the same
+      #   "looks configured, isn't" trap this manifest exists to prevent. Until
+      #   then the action fails loud and names these two variables.
+      #   NOTE: LITELLM_SALT_KEY is deliberately absent — it is unrotatable
+      #   after first use and needs a real secrets-manager decision (design §10),
+      #   not a Render dashboard field.
+      #
       # APP_SERVICE_DATABASE_URL — the non-bypass 'app_service' role DSN. Used
       #   ONLY by apps/api/scripts/verify_*.py, never by runtime code, so the
       #   Render service does not need it. It DOES belong in Doppler: a stale
