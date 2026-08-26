@@ -244,6 +244,130 @@ def build_recurrence(expression: str, dtstart: datetime):
     return combined
 
 
+# ── the human-readable summary ──────────────────────────────────────────────
+# Built on parse_cron, NOT on a second pass over the raw string. A summary
+# produced by its own regex would be free to describe a schedule that the
+# evaluator reads differently — and the summary is the ONLY form most operators
+# will ever read, so a disagreement there means somebody signs off on a
+# recurrence that is not the one that runs. Anything the describer cannot phrase
+# confidently falls back to the raw cron expression rather than guessing.
+_ORDINAL_WEEKDAYS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+_MONTH_LABELS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _clock(hour: int, minute: int) -> str:
+    suffix = "AM" if hour < 12 else "PM"
+    display = hour % 12 or 12
+    return f"{display}:{minute:02d} {suffix}"
+
+
+def _ordinal(n: int) -> str:
+    if 11 <= n % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def _even_step(values: set[int], low: int, high: int) -> int | None:
+    """The step of an evenly-spaced field starting at ``low``, or ``None``.
+
+    ``*/15`` parses to {0,15,30,45}; recovering the 15 is what lets the summary
+    say "every 15 minutes" instead of listing four numbers.
+    """
+    ordered = sorted(values)
+    if len(ordered) < 2 or ordered[0] != low:
+        return None
+    step = ordered[1] - ordered[0]
+    if step < 1 or set(range(low, high + 1, step)) != values:
+        return None
+    return step
+
+
+def describe_schedule(expression: str, timezone_name: str | None = None) -> str:
+    """A one-line English rendering of ``expression``, e.g.
+    ``"Daily at 9:00 AM (America/New_York)"``.
+
+    Never raises: an expression this cannot parse or cannot phrase comes back as
+    the raw cron string, which is honest and still renderable.
+    """
+    zone = (timezone_name or "UTC").strip() or "UTC"
+    raw = (expression or "").strip()
+    suffix = f" ({zone})" if zone else ""
+    try:
+        fields = parse_cron(raw)
+    except ScheduleError:
+        return raw or "—"
+
+    # Bound by NAME, not by position: the cron field order (minute hour
+    # day-of-month month day-of-week) puts month between the two day fields, and
+    # unpacking positionally is how a describer ends up rendering months as
+    # weekdays.
+    minute = fields["minute"]
+    hour = fields["hour"]
+    dom = fields["day_of_month"]
+    month = fields["month"]
+    dow = fields["day_of_week"]
+
+    # ── the time-of-day phrase ──
+    if minute is None and hour is None:
+        when = "every minute"
+    elif minute is None:
+        when = f"every minute of {', '.join(f'{h:02d}:00' for h in sorted(hour))}"
+    elif hour is None:
+        step = _even_step(minute, 0, 59)
+        if step is not None:
+            when = f"every {step} minutes"
+        elif len(minute) == 1:
+            when = f"hourly at :{next(iter(minute)):02d}"
+        else:
+            return raw + suffix
+    elif len(minute) == 1 and len(hour) == 1:
+        when = f"at {_clock(next(iter(hour)), next(iter(minute)))}"
+    elif len(minute) == 1:
+        step = _even_step(hour, 0, 23)
+        m = next(iter(minute))
+        if step is not None:
+            when = f"every {step} hours at :{m:02d}"
+        else:
+            when = ("at " + ", ".join(_clock(h, m) for h in sorted(hour)))
+    else:
+        return raw + suffix
+
+    # ── the day phrase ──
+    if dom is None and dow is None:
+        day = "Daily"
+    elif dow is not None and dom is None:
+        normalized = sorted({0 if d == 7 else d for d in dow})
+        if normalized == [1, 2, 3, 4, 5]:
+            day = "Weekdays"
+        elif normalized == [0, 6]:
+            day = "Weekends"
+        elif len(normalized) == 7:
+            day = "Daily"
+        else:
+            day = "Every " + ", ".join(_ORDINAL_WEEKDAYS[d] for d in normalized)
+    elif dom is not None and dow is None:
+        day = "Monthly on the " + ", ".join(_ordinal(d) for d in sorted(dom))
+    else:
+        # cron ORs the two restricted day fields — say so rather than implying
+        # the intersection the reader would otherwise assume.
+        normalized = sorted({0 if d == 7 else d for d in dow})
+        day = ("Monthly on the " + ", ".join(_ordinal(d) for d in sorted(dom))
+               + " or every " + ", ".join(_ORDINAL_WEEKDAYS[d] for d in normalized))
+
+    # "Daily every 15 minutes" and "Daily hourly at :05" are both worse than
+    # dropping the redundant day word — a frequency phrase already implies every
+    # day. A RESTRICTED day still carries information ("Weekdays every 15
+    # minutes") and is kept.
+    if day == "Daily" and when.startswith(("every", "hourly")):
+        text = when
+    else:
+        text = f"{day} {when}"
+    if month is not None and len(month) < 12:
+        text += " in " + ", ".join(_MONTH_LABELS[m - 1] for m in sorted(month))
+    return text[0].upper() + text[1:] + suffix
+
+
 # ── the due decision ────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class ScheduleDecision:
@@ -365,3 +489,86 @@ def evaluate_trigger(
         True, occurrence_utc,
         f"occurrence {candidates[-1].isoformat()} local ({tz.key}) is due",
     )
+
+
+# ── the dry-run preview ─────────────────────────────────────────────────────
+# How far forward the preview will search before giving up. A cron expression
+# CAN match nothing for years — ``0 0 30 2 *`` (30 February) matches never — and
+# ``rrule`` iterates forever rather than raising. Without this bound a preview
+# request for such an expression would hang a worker instead of returning a
+# short list.
+_PREVIEW_HORIZON_DAYS = 366 * 5
+
+
+def next_occurrences(
+    *,
+    schedule_cron: str,
+    timezone_name: str | None,
+    after_utc: datetime,
+    count: int = 5,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    max_occurrences: int | None = None,
+    occurrence_count: int = 0,
+) -> list[datetime]:
+    """The next ``count`` occurrences strictly after ``after_utc``, in UTC.
+
+    THIS IS THE PREVIEW, AND IT SHARES THE RECURRENCE WITH THE FIRING LOOP.
+    It calls the same :func:`build_recurrence`, the same :func:`resolve_timezone`
+    and the same generate-naive-then-localize order that :func:`evaluate_trigger`
+    uses, and it applies the same ``start_date`` / ``end_date`` /
+    ``max_occurrences`` bounds. It is a DIFFERENT QUESTION asked of ONE engine —
+    "which occurrences are coming" rather than "is one due right now" — not a
+    second implementation of the recurrence.
+
+    That distinction is the whole point. A preview computed by a parallel
+    implementation would agree with the scheduler right up until the day one of
+    them was changed, and the disagreement would surface as a workflow that ran
+    at a time nobody was shown. ``verify_schedulerux`` proves the equivalence
+    directly: for every occurrence returned here it drives ``evaluate_trigger``
+    at that instant and asserts it reports DUE for exactly that occurrence.
+
+    ``after_utc`` is normalized to the start of its minute — cron granularity is
+    one minute, so a preview anchored mid-minute would otherwise skip an
+    occurrence falling in the same minute as the anchor.
+    """
+    if count <= 0:
+        return []
+    tz = resolve_timezone(timezone_name)
+    after_utc = _as_utc(after_utc).replace(second=0, microsecond=0)
+    start_date = _as_utc(start_date)
+    end_date = _as_utc(end_date)
+
+    # A trigger that has already spent its cap has no next occurrence, and
+    # saying so is more useful than listing five that will never run.
+    remaining = count
+    if max_occurrences is not None:
+        remaining = min(remaining, max(0, max_occurrences - (occurrence_count or 0)))
+    if remaining <= 0:
+        return []
+    if end_date is not None and end_date <= after_utc:
+        return []
+
+    floor_utc = after_utc
+    if start_date is not None and start_date > floor_utc:
+        floor_utc = start_date
+    floor_local = floor_utc.astimezone(tz).replace(tzinfo=None)
+    horizon_local = floor_local + timedelta(days=_PREVIEW_HORIZON_DAYS)
+
+    recurrence = build_recurrence(schedule_cron, floor_local)
+
+    found: list[datetime] = []
+    for local in recurrence:
+        if local > horizon_local:
+            break
+        occurrence_utc = local.replace(tzinfo=tz).astimezone(timezone.utc)
+        if occurrence_utc <= after_utc:
+            continue
+        if start_date is not None and occurrence_utc < start_date:
+            continue
+        if end_date is not None and occurrence_utc > end_date:
+            break
+        found.append(occurrence_utc)
+        if len(found) >= remaining:
+            break
+    return found

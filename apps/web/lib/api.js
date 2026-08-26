@@ -592,12 +592,25 @@ export const saveWorkflowVersion = (id, body) =>
 export const getWorkflowRuns = () => fetchAPI("/api/v1/admin/workflow-runs");
 export const getWorkflowRun = (runId) =>
   fetchAPI(`/api/v1/admin/workflow-runs/${runId}`);
+// The Triggers screen (schedulerux). Returns an ENVELOPE — {rows, permissions}
+// — not a bare list; `permissions.can_write` is what decides whether the screen
+// renders a create / edit / pause / delete control, and there is deliberately
+// no client-side default for it.
+//
+// READ is gated by view_workflow_runs OR configure_workflow_triggers; every
+// WRITE below needs configure_workflow_triggers. Both are enforced server-side.
 export const getWorkflowTriggers = () =>
   fetchAPI("/api/v1/admin/workflow-triggers");
-// Chancery Phase 7 — create a 'document_confirmed' event trigger (the only
-// write on the Scheduler surface). Gated by configure_workflow_triggers.
 export const createWorkflowTrigger = (body) =>
   fetchAPI("/api/v1/admin/workflow-triggers", { method: "POST", body });
+export const updateWorkflowTrigger = (id, body) =>
+  fetchAPI(`/api/v1/admin/workflow-triggers/${id}`, { method: "PATCH", body });
+export const deleteWorkflowTrigger = (id) =>
+  fetchAPI(`/api/v1/admin/workflow-triggers/${id}`, { method: "DELETE" });
+// Dry run: the next occurrences of a recurrence, computed by the SAME
+// services.workflow_schedule functions the firing loop uses. Nothing is stored.
+export const previewWorkflowSchedule = (body) =>
+  fetchAPI("/api/v1/admin/workflow-triggers/preview", { method: "POST", body });
 export const getWorkflowVersions = (id) =>
   fetchAPI(`/api/v1/admin/workflows/${id}/versions`);
 

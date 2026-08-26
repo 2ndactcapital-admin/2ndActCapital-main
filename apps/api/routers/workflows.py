@@ -55,7 +55,13 @@ from services.workflow_editor import (
     save_new_version,
 )
 from services.workflow_nl_generator import WorkflowGenerationError, generate_workflow
-from services.workflow_schedule import ScheduleError, parse_cron, resolve_timezone
+from services.workflow_schedule import (
+    ScheduleError,
+    describe_schedule,
+    next_occurrences,
+    parse_cron,
+    resolve_timezone,
+)
 
 router = APIRouter(tags=["admin", "workflows"])
 
@@ -116,6 +122,37 @@ class WorkflowDetail(BaseModel):
 class VersionSave(BaseModel):
     bpmn_xml: str
     change_summary: str | None = None
+
+
+def _validate_recurrence(
+    *, schedule_cron, timezone_name, start_date, end_date, max_occurrences
+) -> tuple[str, str]:
+    """The scheduled-trigger rules, in ONE place. Raises ``ValueError``.
+
+    Create, EDIT and PREVIEW all call this, so a schedule that create refuses is
+    a schedule edit refuses and preview refuses, with the identical message.
+    Before schedulerux these rules lived only inside ``TriggerCreate``'s model
+    validator, which meant a PATCH endpoint written the obvious way would have
+    been able to turn a valid stored trigger into an unrunnable one — the
+    firing loop's ``ScheduleError`` path would then log it once per tick,
+    forever, and nothing would ever run.
+
+    The checks are in the same ORDER create used, because verify_schedulercore
+    asserts on the specific message each bad payload comes back with.
+    Returns the normalized ``(schedule_cron, timezone)`` pair.
+    """
+    if not (schedule_cron or "").strip():
+        raise ValueError("schedule_cron is required when trigger_type='scheduled'")
+    try:
+        parse_cron(schedule_cron)
+        resolve_timezone(timezone_name)
+    except ScheduleError as exc:
+        raise ValueError(str(exc)) from None
+    if max_occurrences is not None and max_occurrences < 1:
+        raise ValueError("max_occurrences must be a positive integer")
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise ValueError("end_date must not precede start_date")
+    return schedule_cron.strip(), (timezone_name or "UTC").strip() or "UTC"
 
 
 class TriggerCreate(BaseModel):
@@ -207,33 +244,123 @@ class TriggerCreate(BaseModel):
             raise ValueError(
                 "event_type may not be set when trigger_type='scheduled'"
             )
-        if not (self.schedule_cron or "").strip():
-            raise ValueError(
-                "schedule_cron is required when trigger_type='scheduled'"
-            )
         # Validate the cron expression and the IANA zone HERE, at the boundary.
         # An unparseable schedule stored as an active trigger is invisible until
         # the tick logs an error hours later; a 422 at write time is where the
-        # author can still fix it.
-        try:
-            parse_cron(self.schedule_cron)
-            resolve_timezone(self.timezone)
-        except ScheduleError as exc:
-            raise ValueError(str(exc)) from None
-
-        if self.max_occurrences is not None and self.max_occurrences < 1:
-            raise ValueError("max_occurrences must be a positive integer")
-        if (self.start_date is not None and self.end_date is not None
-                and self.end_date < self.start_date):
-            raise ValueError("end_date must not precede start_date")
-        self.schedule_cron = self.schedule_cron.strip()
-        self.timezone = (self.timezone or "UTC").strip() or "UTC"
+        # author can still fix it. Shared with edit and preview — see
+        # _validate_recurrence.
+        self.schedule_cron, self.timezone = _validate_recurrence(
+            schedule_cron=self.schedule_cron,
+            timezone_name=self.timezone,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            max_occurrences=self.max_occurrences,
+        )
         return self
 
 
 # Retained name for any existing import; the model itself is now the extended
 # one above.
 EventTriggerCreate = TriggerCreate
+
+
+#: The schedule fields a PATCH may touch. Named once so the "you sent a
+#: schedule field to an event trigger" check and the merge below cannot drift.
+PATCHABLE_SCHEDULE_FIELDS = (
+    "schedule_cron", "timezone", "start_date", "end_date", "max_occurrences",
+)
+
+
+class TriggerPatch(BaseModel):
+    """Edit a trigger, or pause / resume it.
+
+    SPARSE BY CONSTRUCTION. Only fields the caller actually sent are changed —
+    ``model_fields_set`` decides, not "is the value None", because ``None`` is a
+    MEANINGFUL value here: ``{"end_date": null}`` clears an end date and
+    ``{"max_occurrences": null}`` removes a cap. Reading absence and explicit
+    null as the same thing would make an is_active-only pause silently wipe the
+    trigger's entire recurrence — exactly the state Task 4 requires pausing to
+    preserve.
+
+    ``workflow_definition_id`` and ``trigger_type`` are deliberately NOT
+    patchable. Which workflow a trigger starts and how it is triggered are its
+    identity; changing either is a delete plus a create, and doing it in place
+    would silently re-point a schedule whose occurrence_count and last_fired_at
+    describe a different workflow's history.
+
+    ``occurrence_count`` and ``last_fired_at`` are not patchable either — they
+    are the firing loop's own record. An endpoint that let a user rewrite
+    last_fired_at would hand them a way to re-fire an occurrence the idempotency
+    claim has already settled.
+    """
+
+    is_active: bool | None = None
+    schedule_cron: str | None = None
+    timezone: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    max_occurrences: int | None = None
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _aware_utc(cls, value: datetime | None) -> datetime | None:
+        """A naive bound is read as UTC — same reasoning as TriggerCreate."""
+        if value is None or value.tzinfo is not None:
+            return value
+        return value.replace(tzinfo=_UTC)
+
+
+#: Upper bound on a preview request. The screen asks for 5; the cap exists so a
+#: hand-rolled request cannot ask for 100000 occurrences of a per-minute cron.
+PREVIEW_MAX_COUNT = 25
+PREVIEW_DEFAULT_COUNT = 5
+
+
+class SchedulePreview(BaseModel):
+    """A dry-run recurrence, evaluated WITHOUT storing anything.
+
+    Same validation as create: a preview of a schedule the create endpoint would
+    refuse comes back 422 with the identical message, so the author fixes it
+    once rather than discovering the second refusal after pressing Save.
+    """
+
+    schedule_cron: str | None = None
+    timezone: str = "UTC"
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    max_occurrences: int | None = None
+    #: How many occurrences this trigger has ALREADY had. Sent when previewing
+    #: an existing trigger so a cap that is nearly spent previews honestly.
+    occurrence_count: int = 0
+    #: The instant to preview from. Defaults to now. Sent explicitly by the
+    #: verify script so the preview and the scheduler are compared at one fixed
+    #: instant rather than at two slightly different "nows".
+    after: datetime | None = None
+    count: int = PREVIEW_DEFAULT_COUNT
+
+    @field_validator("start_date", "end_date", "after")
+    @classmethod
+    def _aware_utc(cls, value: datetime | None) -> datetime | None:
+        if value is None or value.tzinfo is not None:
+            return value
+        return value.replace(tzinfo=_UTC)
+
+    @model_validator(mode="after")
+    def _coherent(self):
+        if self.count < 1 or self.count > PREVIEW_MAX_COUNT:
+            raise ValueError(
+                f"count must be between 1 and {PREVIEW_MAX_COUNT}"
+            )
+        if self.occurrence_count < 0:
+            raise ValueError("occurrence_count must not be negative")
+        self.schedule_cron, self.timezone = _validate_recurrence(
+            schedule_cron=self.schedule_cron,
+            timezone_name=self.timezone,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            max_occurrences=self.max_occurrences,
+        )
+        return self
 
 
 # --------------------------------------------------------------------------
@@ -275,6 +402,79 @@ async def _require_workflow_permission(
                 status_code=403, detail=f"Permission required: {permission_key}"
             )
     return actor_id, org_id, principal
+
+
+# --------------------------------------------------------------------------
+# The TRIGGER surface's read gate — WIDER than its write gate (schedulerux).
+#
+# Up to this sprint ``configure_workflow_triggers`` gated the trigger list AND
+# every write on it. That made "a view-only user" unrepresentable: a caller
+# without the key got a 403 from the list endpoint and saw nothing at all, so
+# there was no read surface left to hide write controls on.
+#
+# The catalog holds exactly three workflow keys — author_workflows,
+# view_workflow_runs, configure_workflow_triggers — so the read is widened to
+# the existing operational-read key rather than by inventing a fourth:
+#
+#     READ   view_workflow_runs  OR  configure_workflow_triggers
+#     WRITE  configure_workflow_triggers                (unchanged)
+#
+# Someone who may watch runs may see what is scheduled to start them; changing
+# what is scheduled still needs the configure key. Nobody LOSES access:
+# every caller who could read the list before holds the write key and so still
+# passes the read gate.
+# --------------------------------------------------------------------------
+TRIGGER_READ_PERMISSIONS = (PERM_CONFIGURE_TRIGGERS, PERM_VIEW_RUNS)
+
+
+async def _require_trigger_read(request: Request) -> tuple[str, str, dict, bool]:
+    """Gate the trigger READ surface, and resolve write capability in one pass.
+
+    Returns ``(actor_id, org_id, principal, can_write)``. ``can_write`` is
+    resolved HERE rather than by a second lookup in each handler so the envelope
+    the UI renders from and the gate the writes enforce read the same value from
+    the same query.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        actor_id = await ensure_user(conn, request)
+        principal = await load_principal(conn, actor_id)
+    if principal is None:
+        principal = {"id": actor_id, "org_id": org_id, "role": None}
+
+    if is_super_admin(principal):
+        return actor_id, org_id, principal, True
+
+    can_write = await user_has_permission(pool, actor_id, PERM_CONFIGURE_TRIGGERS)
+    if can_write:
+        return actor_id, org_id, principal, True
+    if await user_has_permission(pool, actor_id, PERM_VIEW_RUNS):
+        return actor_id, org_id, principal, False
+    raise HTTPException(
+        status_code=403,
+        detail=f"Permission required: {PERM_CONFIGURE_TRIGGERS}",
+    )
+
+
+def _trigger_permissions(principal: dict, can_write: bool) -> dict:
+    """What this caller may do on the trigger surface, shipped with the page.
+
+    THE UI RENDERS A CREATE / EDIT / PAUSE / DELETE CONTROL ONLY WHEN
+    ``can_write`` SAYS SO, and keeps no permission logic of its own — the same
+    contract the Portfolio UX screens use. It is not the enforcement: every
+    write endpoint re-checks server-side, and verify_schedulerux asserts the two
+    independently, because a hidden control over an open endpoint and a gated
+    endpoint under a visible button are both real bugs and neither is ruled out
+    by testing the other.
+    """
+    return {
+        "can_read": True,          # this envelope is only built after the gate
+        "can_write": bool(can_write),
+        "is_super_admin": bool(is_super_admin(principal)),
+        "read_permission": PERM_VIEW_RUNS,
+        "write_permission": PERM_CONFIGURE_TRIGGERS,
+    }
 
 
 def _jsonb(value):
@@ -566,31 +766,128 @@ async def get_workflow_run(request: Request, run_id: UUID):
     return {"run": run_out, "steps": steps}
 
 
+#: Rows the scheduler tick actually scans. Named once so the row decorator and
+#: the summary both key off the same value — 'scheduled', which is what the
+#: deployed data and services.workflow_scheduler both use.
+SCHEDULED = "scheduled"
+
+_TRIGGER_COLUMNS = """
+    t.id, t.org_id, t.workflow_definition_id, t.trigger_type,
+    t.schedule_cron, t.event_type, t.is_active, t.created_at, t.created_by,
+    t.timezone, t.start_date, t.end_date, t.max_occurrences,
+    t.occurrence_count, t.last_fired_at
+"""
+
+
+def _decorate_trigger(row: dict) -> dict:
+    """Add the derived, read-only fields the screen renders.
+
+    ``schedule_summary`` and ``next_occurrence`` are computed HERE, server-side,
+    from the same ``services.workflow_schedule`` functions the firing loop uses.
+    The client renders them; it does not build them. A cron-to-English renderer
+    living in the browser would be a second opinion about what a schedule means,
+    and the browser's opinion is the one the operator reads while the server's is
+    the one that runs.
+
+    A schedule the describer or the recurrence engine chokes on degrades to the
+    raw cron string plus ``schedule_error`` — visible and diagnosable, rather
+    than a 500 that takes the whole list down because one row is malformed.
+    """
+    out = dict(row)
+    if out.get("trigger_type") != SCHEDULED:
+        out["schedule_summary"] = (
+            f"On {out['event_type']}" if out.get("event_type") else "—"
+        )
+        out["next_occurrence"] = None
+        out["schedule_error"] = None
+        return out
+
+    out["schedule_summary"] = describe_schedule(
+        out.get("schedule_cron"), out.get("timezone")
+    )
+    out["schedule_error"] = None
+    out["next_occurrence"] = None
+    # A paused trigger has no next occurrence, and saying "next: 9:00 AM
+    # tomorrow" next to a Paused pill is the single most misleading thing this
+    # screen could print.
+    if not out.get("is_active"):
+        return out
+    try:
+        upcoming = next_occurrences(
+            schedule_cron=out.get("schedule_cron"),
+            timezone_name=out.get("timezone"),
+            after_utc=datetime.now(_UTC),
+            count=1,
+            start_date=out.get("start_date"),
+            end_date=out.get("end_date"),
+            max_occurrences=out.get("max_occurrences"),
+            occurrence_count=out.get("occurrence_count") or 0,
+        )
+    except ScheduleError as exc:
+        out["schedule_error"] = str(exc)
+        return out
+    out["next_occurrence"] = upcoming[0] if upcoming else None
+    return out
+
+
 @router.get("/admin/workflow-triggers")
 async def list_workflow_triggers(request: Request):
-    """Scheduler / Routine Viewer: triggers for the org (all-orgs for Super
-    Admin). READ/CONFIGURE only in this phase — nothing fires autonomously."""
-    _, org_id, principal = await _require_workflow_permission(
-        request, PERM_CONFIGURE_TRIGGERS
-    )
+    """The Triggers screen: every trigger for the org (all orgs for Super Admin).
+
+    Returns an ENVELOPE — ``{rows, permissions}`` — not a bare list. The
+    permissions block is what decides whether the screen renders a create / edit
+    / pause / delete control, resolved server-side and shipped with the page,
+    exactly as the Portfolio UX screens do. Before this sprint the endpoint
+    returned a bare list and the read gate was the write gate, so "a view-only
+    caller" did not exist to publish an envelope to.
+    """
+    _, org_id, principal, can_write = await _require_trigger_read(request)
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT t.id, t.org_id, t.trigger_type, t.schedule_cron, t.event_type,
-                   t.is_active, t.created_at,
-                   t.timezone, t.start_date, t.end_date, t.max_occurrences,
-                   t.occurrence_count, t.last_fired_at,
-                   d.id AS definition_id, d.name AS workflow_name
+            SELECT {_TRIGGER_COLUMNS},
+                   d.id AS definition_id, d.name AS workflow_name,
+                   u.full_name AS created_by_name, u.email AS created_by_email
             FROM workflow_triggers t
             JOIN workflow_definitions d ON d.id = t.workflow_definition_id
+            LEFT JOIN users u ON u.id = t.created_by
             {"" if all_orgs else "WHERE t.org_id = $1"}
-            ORDER BY d.name, t.trigger_type
+            ORDER BY d.name, t.trigger_type, t.created_at
             """,
             *([] if all_orgs else [org_id]),
         )
-    return [dict(r) for r in rows]
+    return {
+        "rows": [_decorate_trigger(dict(r)) for r in rows],
+        "permissions": _trigger_permissions(principal, can_write),
+    }
+
+
+async def _load_trigger_for_write(request: Request, trigger_id: UUID):
+    """Resolve a trigger the caller is allowed to CHANGE, or raise.
+
+    403 when the caller may read the surface but not write it (the message names
+    the missing key); 404 when the trigger does not exist OR belongs to another
+    org — a 403 there would confirm the existence of another tenant's row.
+    """
+    actor_id, org_id, principal, can_write = await _require_trigger_read(request)
+    if not can_write:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission required: {PERM_CONFIGURE_TRIGGERS}",
+        )
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT {_TRIGGER_COLUMNS} FROM workflow_triggers t WHERE t.id = $1",
+            trigger_id,
+        )
+    if row is None or (
+        not is_super_admin(principal) and str(row["org_id"]) != str(org_id)
+    ):
+        raise HTTPException(status_code=404, detail="Trigger not found")
+    return dict(row), principal, pool, actor_id
 
 
 # Chancery Phase 7 — the ONLY write on the Scheduler surface was, originally,
@@ -668,6 +965,196 @@ async def create_workflow_trigger(request: Request, body: TriggerCreate):
             "last_fired_at": row["last_fired_at"],
         })
     return out
+
+
+# --------------------------------------------------------------------------
+# The dry-run preview.
+#
+# Declared BEFORE the /{trigger_id} routes so '/preview' can never be read as a
+# trigger id. It is a POST rather than a GET because the thing being previewed
+# is a whole recurrence definition — cron, zone, two bounds and a cap — and
+# smearing that across a query string invites exactly the encoding bugs the
+# 422s exist to prevent. It writes nothing.
+# --------------------------------------------------------------------------
+@router.post("/admin/workflow-triggers/preview")
+async def preview_workflow_schedule(request: Request, body: SchedulePreview):
+    """The next N real occurrences of a recurrence, BEFORE anything is saved.
+
+    Computed by ``services.workflow_schedule.next_occurrences`` — the same
+    module, the same ``build_recurrence``, the same timezone handling that
+    ``evaluate_trigger`` uses inside the firing loop. The recurrence is NOT
+    recomputed here; this endpoint validates, calls, and formats.
+
+    That is the whole requirement. A preview with its own copy of the RRULE
+    translation would agree with the scheduler today and diverge the first time
+    either changed, and the divergence would show up as a workflow running at a
+    time the author was never shown. verify_schedulerux proves the equivalence
+    by driving ``evaluate_trigger`` at each previewed instant.
+
+    Gated on ``configure_workflow_triggers``: previewing is part of authoring a
+    schedule, and a view-only caller has nothing to preview.
+    """
+    _, _, _ = await _require_workflow_permission(request, PERM_CONFIGURE_TRIGGERS)
+    after = body.after or datetime.now(_UTC)
+    try:
+        occurrences = next_occurrences(
+            schedule_cron=body.schedule_cron,
+            timezone_name=body.timezone,
+            after_utc=after,
+            count=body.count,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            max_occurrences=body.max_occurrences,
+            occurrence_count=body.occurrence_count,
+        )
+    except ScheduleError as exc:
+        # Defence in depth: the body model already refused an unparseable cron
+        # or zone. Anything that still reaches here is a 422, not a 500.
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    zone = resolve_timezone(body.timezone)
+    return {
+        "schedule_cron": body.schedule_cron,
+        "timezone": body.timezone,
+        "summary": describe_schedule(body.schedule_cron, body.timezone),
+        "after": after,
+        "requested": body.count,
+        "occurrences": [
+            {
+                "utc": occurrence,
+                "local": occurrence.astimezone(zone).isoformat(),
+            }
+            for occurrence in occurrences
+        ],
+        # Fewer than requested means a bound really stops it — an end_date or a
+        # max_occurrences cap. Said explicitly so the screen can show "this is
+        # the last one" instead of a short list the reader has to interpret.
+        "exhausted": len(occurrences) < body.count,
+    }
+
+
+@router.patch("/admin/workflow-triggers/{trigger_id}")
+async def update_workflow_trigger(
+    request: Request, trigger_id: UUID, body: TriggerPatch
+):
+    """Edit a trigger's recurrence, or pause / resume it.
+
+    PAUSE IS THIS ENDPOINT WITH ``{"is_active": false}`` AND NOTHING ELSE. The
+    UPDATE below writes every column from a MERGE of the stored row with only
+    the fields the caller actually sent, so a pause cannot clear the cron
+    expression, the zone, the bounds, the cap, ``occurrence_count`` or
+    ``last_fired_at``. Resuming is the same call with ``true`` and the trigger
+    picks up exactly where it was — which is the entire difference between
+    pausing and deleting, and the reason both exist.
+
+    Editing RE-VALIDATES the merged recurrence with the same
+    ``_validate_recurrence`` create uses, against the merged values rather than
+    the submitted ones: sending only ``{"end_date": ...}`` still has to be
+    checked against the STORED ``start_date``, or an edit could order the bounds
+    backwards one field at a time and store a trigger create would have refused.
+    """
+    row, principal, pool, _ = await _load_trigger_for_write(request, trigger_id)
+    sent = body.model_fields_set
+
+    if "is_active" in sent and body.is_active is None:
+        raise HTTPException(
+            status_code=422,
+            detail="is_active may not be null — send true or false",
+        )
+
+    if row["trigger_type"] != SCHEDULED:
+        offered = sorted(f for f in PATCHABLE_SCHEDULE_FIELDS if f in sent)
+        if offered:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{', '.join(offered)} may only be set when "
+                       "trigger_type='scheduled'",
+            )
+
+    merged = {
+        field: (getattr(body, field) if field in sent else row[field])
+        for field in PATCHABLE_SCHEDULE_FIELDS
+    }
+    is_active = body.is_active if "is_active" in sent else row["is_active"]
+
+    if row["trigger_type"] == SCHEDULED:
+        try:
+            merged["schedule_cron"], merged["timezone"] = _validate_recurrence(
+                schedule_cron=merged["schedule_cron"],
+                timezone_name=merged["timezone"],
+                start_date=merged["start_date"],
+                end_date=merged["end_date"],
+                max_occurrences=merged["max_occurrences"],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        # A cap already reached cannot be re-armed by lowering it; refuse rather
+        # than store a trigger that is permanently, invisibly spent.
+        cap = merged["max_occurrences"]
+        if (cap is not None and is_active
+                and (row["occurrence_count"] or 0) >= cap):
+            raise HTTPException(
+                status_code=422,
+                detail=f"max_occurrences ({cap}) is not above the "
+                       f"{row['occurrence_count']} occurrence(s) this trigger "
+                       "has already fired; it would never fire again",
+            )
+
+    async with pool.acquire() as conn:
+        updated = await conn.fetchrow(
+            f"""
+            UPDATE workflow_triggers t
+               SET is_active = $2,
+                   schedule_cron = $3,
+                   timezone = $4,
+                   start_date = $5,
+                   end_date = $6,
+                   max_occurrences = $7
+             WHERE t.id = $1
+            RETURNING {_TRIGGER_COLUMNS}
+            """,
+            trigger_id, is_active, merged["schedule_cron"], merged["timezone"],
+            merged["start_date"], merged["end_date"], merged["max_occurrences"],
+        )
+        names = await conn.fetchrow(
+            """SELECT d.id AS definition_id, d.name AS workflow_name,
+                      u.full_name AS created_by_name, u.email AS created_by_email
+               FROM workflow_definitions d
+               LEFT JOIN users u ON u.id = $2
+               WHERE d.id = $1""",
+            updated["workflow_definition_id"], updated["created_by"],
+        )
+    return _decorate_trigger({**dict(updated), **dict(names or {})})
+
+
+@router.delete("/admin/workflow-triggers/{trigger_id}")
+async def delete_workflow_trigger(request: Request, trigger_id: UUID):
+    """Delete a trigger. Irreversible, and deliberately not a soft delete.
+
+    ``is_active = false`` ALREADY MEANS "stop firing but keep everything" — that
+    is what pause is. A second, hidden not-really-deleted state would give the
+    screen two ways to show a trigger that does not fire and the scheduler two
+    ways to skip one, and an operator asking "why did this not run" would have
+    to distinguish them. Delete removes the row; the tick's scan cannot see it
+    afterwards because there is nothing to see.
+
+    The workflow definition, its versions and every run the trigger ever started
+    are untouched — a trigger is a schedule, not the history of what it did.
+    """
+    row, _, pool, _ = await _load_trigger_for_write(request, trigger_id)
+    async with pool.acquire() as conn:
+        deleted = await conn.fetchval(
+            "DELETE FROM workflow_triggers WHERE id = $1 RETURNING id",
+            trigger_id,
+        )
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Trigger not found")
+    return {
+        "deleted": True,
+        "id": str(deleted),
+        "trigger_type": row["trigger_type"],
+        "occurrence_count": row["occurrence_count"],
+    }
 
 
 @router.get("/admin/workflows/{definition_id}/versions")

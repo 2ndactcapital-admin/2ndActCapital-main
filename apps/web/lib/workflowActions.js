@@ -8,9 +8,7 @@
 
 import {
   createWorkflow,
-  createWorkflowTrigger,
   getWorkflows,
-  getWorkflowTriggers,
   saveWorkflowVersion,
 } from "@/lib/api";
 
@@ -27,23 +25,16 @@ export async function createWorkflowAction(name, description) {
   }
 }
 
-export async function createEventTriggerAction(workflowDefinitionId) {
-  // Chancery Phase 7 — configure a 'document_confirmed' event trigger. Returns
-  // the refreshed trigger list so the viewer updates in place. This only
-  // configures WHICH runs auto-start; every started run still honours each
-  // step's autonomy tier (Tier-1 still pauses for approval).
-  try {
-    const trigger = await createWorkflowTrigger({
-      workflow_definition_id: workflowDefinitionId,
-      event_type: "document_confirmed",
-      is_active: true,
-    });
-    const triggers = await getWorkflowTriggers();
-    return { ok: true, trigger, triggers };
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-}
+// `createEventTriggerAction` was removed by schedulerux. It existed only for the
+// old Triggers table's one write — a create form hardcoded to
+// 'document_confirmed' — and its sole caller is gone. It also returned the
+// refreshed trigger list, which is now an envelope ({rows, permissions}) rather
+// than an array, so leaving it in place would have left a dead export that
+// returns the wrong shape to whoever picked it up next.
+//
+// Trigger writes now go through the Next.js API routes under
+// /api/admin/workflow-triggers (CLAUDE.md Rule 5), which the client component
+// calls directly so a 422 from the API reaches the form intact.
 
 export async function saveWorkflowVersionAction(definitionId, bpmnXml, changeSummary) {
   try {
