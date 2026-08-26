@@ -1,0 +1,173 @@
+/mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/verify_schedulercore.py:949: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient
+[doppler] hydrated 35 secrets
+[doppler] DATABASE_URL password was stale; substituted DB_PASSWORD
+
+==========================================================================
+TASK 1 — DISCOVERY (measured now, not quoted from the prompt)
+==========================================================================
+
+  1a. workflow_triggers — EXACT current columns (15 total):
+        id                       uuid                         null=NO  default=uuid_generate_v4()
+        workflow_definition_id   uuid                         null=NO  default=-
+        org_id                   uuid                         null=NO  default=-
+        trigger_type             text                         null=NO  default='manual'::text
+        schedule_cron            text                         null=YES default=-
+        event_type               text                         null=YES default=-
+        is_active                boolean                      null=NO  default=true
+        created_by               uuid                         null=YES default=-
+        created_at               timestamp with time zone     null=NO  default=now()
+        timezone                 text                         null=NO  default='UTC'::text
+        start_date               timestamp with time zone     null=YES default=-
+        end_date                 timestamp with time zone     null=YES default=-
+        max_occurrences          integer                      null=YES default=-
+        occurrence_count         integer                      null=NO  default=0
+        last_fired_at            timestamp with time zone     null=YES default=-
+[PASS] [Y] TASK 1a: workflow_triggers' pre-sprint 9 columns are all still present and this sprint's 6 are added — 15 in total  — 15 columns
+
+      NOTE — the prompt says trigger_type='schedule'. The deployed data and
+      the UI both say 'scheduled':
+        DB: trigger_type='event' -> 1 row(s)
+        DB: trigger_type='scheduled' -> 1 row(s)
+        UI: WorkflowTriggerScheduler.jsx contains 'scheduled' = True, 'schedule"' = False
+[PASS] [Y] TASK 1a: 'scheduled' (not 'schedule') is the real value — the sprint uses the deployed vocabulary, so the existing row and the trigger-list UI keep working
+
+  1b. start_workflow_run(pool, workflow_version_id, org_id, context: 'dict | None', started_by) -> 'dict'
+        at apps/api/services/workflow_engine.py:365
+        Takes a POOL, not a connection, and opens its own transactions — which is
+        why the claim commits BEFORE the fire rather than sharing its transaction.
+[PASS] [Y] TASK 1b: start_workflow_run's real signature is (pool, workflow_version_id, org_id, context, started_by)  — ['pool', 'workflow_version_id', 'org_id', 'context', 'started_by']
+
+  1c. python-dateutil 2.9.0.post0 — dateutil.rrule imports.
+[PASS] [Y] TASK 1c: a real maintained RRULE library (python-dateutil) is available AND is now a DECLARED dependency — it was previously present only transitively, via pandas  — version 2.9.0.post0, declared in requirements.txt=True
+
+  1d. POST /admin/workflow-triggers body model: TriggerCreate('end_date', 'event_type', 'is_active', 'max_occurrences', 'schedule_cron', 'start_date', 'timezone', 'trigger_type', 'workflow_definition_id')
+        Pre-sprint it was EventTriggerCreate(workflow_definition_id, event_type,
+        is_active) — three fields, with NO path to create a scheduled trigger.
+[PASS] [Y] TASK 1d: the body model now accepts trigger_type + schedule_cron + the five recurrence fields, and still defaults to the previous event behaviour  — default trigger_type='event'
+
+  Task 4 premise, restated from the sprint's own confirmed facts:
+        Render's `type: cron` single-run guarantee covers the CRON SERVICE ITSELF —
+        Render delays the next run while one is active. This sprint therefore builds
+        NO tick-level lock. It does check overlap at the WORKFLOW level, which is a
+        different question and is proven below.
+
+==========================================================================
+DECISION LAYER — real recurrence math at injected instants
+==========================================================================
+[PASS] [Y] cron's OR semantics for day-of-month vs day-of-week are preserved: '0 0 13 * 5' in April 2026 = every Friday OR the 13th, not 'Friday the 13th'  — days fired: [3, 10, 13, 17, 24]
+        America/New_York -> DUE occurrence=2026-08-26T13:00:00+00:00 — occurrence 2026-08-26T09:00:00 local (America/New_York) is due
+        Asia/Tokyo       -> skip occurrence=- — no occurrence between 2026-08-26T21:00:00 and 2026-08-26T22:00:00 local (Asia/Tokyo)
+        UTC              -> skip occurrence=- — no occurrence between 2026-08-26T12:00:00 and 2026-08-26T13:00:00 local (UTC)
+[PASS] [Y] TIMEZONE BOUNDARY: one instant, one identical cron, three zones — due in America/New_York (09:00 local), NOT due in Asia/Tokyo (22:00) or UTC (13:00)  — NY=True Tokyo=False UTC=False
+[PASS] [Y] the claimed occurrence is the OCCURRENCE instant, not the tick time — 09:00 EDT = 13:00Z  — 2026-08-26 13:00:00+00:00
+[PASS] [Y] DST: a 09:00 America/New_York schedule fires at 14:00Z in EST and 13:00Z in EDT — it stays at 09:00 LOCAL rather than drifting  — EST->2026-03-06 14:00:00+00:00  EDT->2026-03-10 13:00:00+00:00
+[PASS] [Y] the same occurrence evaluated again with last_fired_at set is NOT due  — no unfired occurrence in the lookback window
+[PASS] [Y] max_occurrences stops firing at the cap and not before (2/3 due, 3/3 not)  — 2/3 -> True; 3/3 -> max_occurrences reached (3/3)
+[PASS] [Y] end_date stops firing  — past end_date 2026-08-20T00:00:00+00:00
+[PASS] [Y] start_date suppresses firing before the window opens  — before start_date 2026-09-01T00:00:00+00:00
+[PASS] [Y] an occurrence older than the lookback window is STALE and does not fire — a 09:00 report is not run at 14:00 because the service was down  — no occurrence between 2026-08-26T13:00:00 and 2026-08-26T14:00:00 local (UTC)
+[PASS] [Y] an unknown IANA zone RAISES rather than defaulting to UTC — a typo must not silently move somebody's 09:00 report  — unknown IANA timezone 'Mars/Olympus'
+[PASS] [Y] a malformed cron expression RAISES with a specific message  — schedule_cron must have 5 fields (minute hour day-of-month month day-of-week); got 4: '0 9 * *'
+
+── Fixtures ──
+[PASS] [Y] pre-existing NON-fixture scheduled triggers are deactivated for the duration and restored in teardown — the tick scans all orgs, so this script must not fire somebody else's schedule  — 1 foreign trigger(s) parked
+[PASS] [Y] the org_admin fixture holds the REAL seeded 'Org Admin' profile — the one workflowpermsfix granted the workflow keys to  — profile_id=2c69ec75-170f-42de-9367-86a9cdd372c3
+
+==========================================================================
+FIRING LAYER — the real start_workflow_run, the real database
+==========================================================================
+
+  Fixture cron '17 16 * * *' — that is the CURRENT minute in America/New_York.
+  The same expression in Asia/Tokyo is 05:17 local, so it is not due there.
+
+  ── TICK 1 ──
+        │ [scheduler] tick at 2026-08-26T20:17:00+00:00 (lookback 60m, 15 actions registered)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-0000000009e1 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Due' — run bd1aa0a7-b7fc-4f56-beef-0977e332c5d1 status=completed for occurrence 2026-08-26T20:17:00+00:00 (fire #1)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e2 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Timezone' — no occurrence between 2026-08-27T04:17:00 and 2026-08-27T05:17:00 local (Asia/Tokyo)
+        │ [scheduler] SKIP-OVERLAP trigger=99000000-0000-0000-0000-0000000009e3 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Overlap' — occurrence 2026-08-26T20:17:00+00:00 suppressed: run c2e44d3b-b85b-416b-9be5-41d4657980b0 is still running (started 2026-08-26T20:07:15.260158+00:00)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e4 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Caps' — past end_date 2026-08-25T20:17:00+00:00
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e5 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Caps' — max_occurrences reached (2/2)
+        │ [scheduler] ERROR  trigger=99000000-0000-0000-0000-0000000009e6 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Hold' — occurrence 2026-08-26T20:17:00+00:00 claimed but the run failed to start: WorkflowEngineError: Service Task 'v_service' invokes action 'litellm.reload_model_cost_map', which requires permission 'author_workflows'. The member who started this run (99000000-0000-0000-0000-0000000009b2) does not hold it. A workflow does not widen a member's permissions.
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-0000000009e7 org=bb347258-8f28-4f49-8cc9-e29ccad82884 workflow='SCHEDCORE OtherOrg' — run 186f80f4-69ad-43f2-bc8e-c48aff4d9ba0 status=completed for occurrence 2026-08-26T20:17:00+00:00 (fire #1)
+        │ [scheduler] tick complete — examined=7 fired=2 skipped=4 errors=1
+[PASS] [Y] the tick registers the action REGISTRY itself — the cron process never runs FastAPI's startup hook, and an empty registry does not fail loudly: every Service Task would resolve to None and be marked 'completed' having invoked nothing  — 15 actions; litellm.reload_model_cost_map resolved=True
+[PASS] [Y] and the action the HOLD fixture invokes really is workflow_invocable with a required_permission — so the failure below is a real permission refusal, not a missing registration  — workflow_invocable=True required_permission=author_workflows
+[PASS] [Y] the tick examined every fixture trigger (it scans ALL orgs — a platform process, not a tenant one)  — examined=7, examined=7 fired=2 skipped=4 errors=1
+[PASS] [Y] TASK 5: a trigger genuinely due IN ITS OWN TIMEZONE fired a REAL workflow_runs row via the REAL start_workflow_run  — run bd1aa0a7-b7fc-4f56-beef-0977e332c5d1 status=completed
+[PASS] [Y] the fired run records WHY it started — trigger id, trigger type and the occurrence instant are in its context  — {"trigger_id": "99000000-0000-0000-0000-0000000009e1", "trigger_type": "scheduled", "scheduled_occurrence": "2026-08-26T20:17:00+00:00"}
+[PASS] [Y] started_by is the trigger's creator — a real user, so the held alert has somebody to name
+[PASS] [Y] TASK 5: the timezone twin — IDENTICAL cron, Asia/Tokyo instead of America/New_York — did NOT fire at the same instant  — no occurrence between 2026-08-27T04:17:00 and 2026-08-27T05:17:00 local (Asia/Tokyo)
+[PASS] [Y] and it created no run at all — proven by row count, not by the tick's own report  — runs for the Tokyo trigger = 0
+[PASS] [Y] TASK 4: a trigger whose PREVIOUS WORKFLOW run is still in-progress is skipped — proven against a real non-terminal workflow_runs row  — overlap: run c2e44d3b-b85b-416b-9be5-41d4657980b0 is running
+[PASS] [Y] TASK 4: that skip is LOGGED VISIBLY — the emitted line is captured, is tagged SKIP-OVERLAP, and NAMES the blocking run  — [scheduler] SKIP-OVERLAP trigger=99000000-0000-0000-0000-0000000009e3 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Overlap' — occurrence 2026-08-26T20:17:00+00:00 suppressed: run c2e44d3b-b85b-416b-9be5-41d4657980b0 is still running (started 2026-08-26T20:07:15.260158+00:00)
+[PASS] [Y] TASK 4: the overlapped trigger started NO second run — still exactly the one that was already in flight  — runs = 1
+[PASS] [Y] TASK 4: an overlap skip does NOT consume the occurrence — last_fired_at and occurrence_count are untouched, so the schedule resumes once the run clears  — last_fired_at=None count=0
+[PASS] [Y] TASK 5: a trigger past its end_date does not fire — and it is genuinely due by its cron, so the suppression is the end_date and not a schedule that simply did not match  — same cron evaluated bare -> due=True; reason=past end_date 2026-08-25T20:17:00+00:00
+[PASS] [Y] TASK 5: a trigger at its max_occurrences does not fire  — max_occurrences reached (2/2)
+[PASS] [Y] TASK 5: neither spent trigger created a run  — runs = 0
+[PASS] [Y] TASK 5: CROSS-ORG ISOLATION — the Hollisworks trigger fired its OWN org's run; org_id follows the trigger, never the scanning connection  — run org_id=bb347258-8f28-4f49-8cc9-e29ccad82884 (expected bb347258-8f28-4f49-8cc9-e29ccad82884)
+[PASS] [Y] TASK 5: no run of a 2nd Act definition landed in another org, and no run of the Hollisworks definition landed in 2nd Act  — leaks: 0 / 0
+[PASS] [Y] REGRESSION: the pool this fired through is the REAL RLS pool (the one whose outer transaction used to erase held runs), not a raw asyncpg pool — the bug is only reachable through this one  — _RLSPool
+[PASS] [Y] TASK 5: the failing scheduler-fired run really HELD — the engine recorded status='held' with an error_detail, exactly as it does for a manual run  — status=held: WorkflowEngineError: Service Task 'v_service' invokes action 'litellm.reload_model_cost_map', which requires p
+[PASS] [Y] the tick reported that failure rather than swallowing it  — {'trigger_id': UUID('99000000-0000-0000-0000-0000000009e6'), 'error': "WorkflowEngineError: Service Task 'v_service' inv
+[PASS] [Y] TASK 5: the held scheduler-fired run produced the SAME alert SHAPE as any other held run — source/related_type/title/priority/action_key/category all match services/workflow_todos.py's own constants  — 5 todo(s)
+[PASS] [Y] TASK 5: and the SAME recipients — the run's starter plus every org_admin in that org, which is what create_held_run_alerts does  — 5 recipient(s); starter present=True; all 4 org_admins present=True
+[PASS] [Y] the hold alert did not reach another org  — 0 foreign-org todo(s)
+
+  ── TICK 2 (immediately, same instant) ──
+        │ [scheduler] tick at 2026-08-26T20:17:00+00:00 (lookback 60m, 15 actions registered)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e1 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Due' — no unfired occurrence in the lookback window
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e2 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Timezone' — no occurrence between 2026-08-27T04:17:00 and 2026-08-27T05:17:00 local (Asia/Tokyo)
+        │ [scheduler] SKIP-OVERLAP trigger=99000000-0000-0000-0000-0000000009e3 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Overlap' — occurrence 2026-08-26T20:17:00+00:00 suppressed: run c2e44d3b-b85b-416b-9be5-41d4657980b0 is still running (started 2026-08-26T20:07:15.260158+00:00)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e4 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Caps' — past end_date 2026-08-25T20:17:00+00:00
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e5 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Caps' — max_occurrences reached (2/2)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e6 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Hold' — no unfired occurrence in the lookback window
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e7 org=bb347258-8f28-4f49-8cc9-e29ccad82884 workflow='SCHEDCORE OtherOrg' — no unfired occurrence in the lookback window
+        │ [scheduler] tick complete — examined=7 fired=0 skipped=7 errors=0
+[PASS] [Y] TASK 5: running the check-and-fire logic TWICE in immediate succession against the same due trigger fired EXACTLY ONCE  — runs after two ticks = 1; tick 2 -> skipped: no unfired occurrence in the lookback window
+[PASS] [Y] the counter advanced exactly once and last_fired_at holds the OCCURRENCE instant (not the tick time)  — count=1 last_fired_at=2026-08-26 20:17:00+00:00
+[PASS] [Y] the atomic claim is what enforces this: re-claiming the SAME occurrence matches ZERO rows and returns None  — second claim returned None
+[PASS] [Y] and it is not simply always-refusing — a LATER occurrence still claims cleanly  — claim returned 2
+[PASS] [Y] the claim re-checks max_occurrences itself, closing the check-then-act gap: a capped trigger cannot be claimed even by calling the claim directly  — claim returned None
+[PASS] [Y] TASK 4: the tick takes no global lock of its own — Render's type: cron single-run guarantee already covers the SERVICE, and the module builds no duplicate of it  — no lock primitive in services/workflow_scheduler.py
+
+==========================================================================
+API LAYER — the extended body model, through the REAL ASGI app
+==========================================================================
+[PASS] [Y] TASK 5: a NON-super-admin ORG_ADMIN created a real schedule-type trigger through the extended API — which is what confirms workflowpermsfix landed; before it, this was a 403  — HTTP 201 {'id': '13324c92-86e8-4a7d-9b7e-810ce9e6c022', 'workflow_definition_id': '99000000-0000-0000-0000-0000000009c7', 'org_id': '00000000-0000-0000-0000-000000000001', 'trigger_type': '
+[PASS] [Y] the response echoes the real stored recurrence, including the counters the scheduler will use  — {'id': '13324c92-86e8-4a7d-9b7e-810ce9e6c022', 'workflow_definition_id': '99000000-0000-0000-0000-0000000009c7', 'org_id': '00000000-0000-0000-0000-000000000001', 'trigger_type': 'scheduled', 'event_t
+[PASS] [Y] the new schedule path is gated by the SAME configure_workflow_triggers permission — a member is refused with a 403 that NAMES the key, not a bare 403  — HTTP 403 Permission required: configure_workflow_triggers
+[PASS] [Y] BACKWARD COMPATIBLE: the pre-sprint three-field event body — which sends no trigger_type at all — still creates an event trigger  — HTTP 201 {'id': '833fc2f2-2675-49c9-9164-1addb74ce2dc', 'workflow_definition_id': '99000000-0000-0000-0000-0000000009c7', 'org_id': '00000000-0000-0000-0000-00
+
+  Boundary validation — every bad schedule refused at write time:
+[PASS]     [Y] 422 for a scheduled trigger with no schedule_cron  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, schedule_cron is required when trigger_type='scheduled'","inpu
+[PASS]     [Y] 422 for an unparseable cron expression  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, schedule_cron must have 5 fields (minute hour day-of-month mon
+[PASS]     [Y] 422 for an out-of-range cron field  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, cron field 'hour' value 99 is outside 0-23","input":{"workflow
+[PASS]     [Y] 422 for an unknown IANA timezone  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, unknown IANA timezone 'Mars/Olympus'","input":{"workflow_defin
+[PASS]     [Y] 422 for max_occurrences = 0  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, max_occurrences must be a positive integer","input":{"workflow
+[PASS]     [Y] 422 for end_date before start_date  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, end_date must not precede start_date","input":{"workflow_defin
+[PASS]     [Y] 422 for schedule fields on an EVENT trigger (silently storing them is how schedule_cron became dead code)  — HTTP 422 {"detail":[{"type":"value_error","loc":["body"],"msg":"Value error, schedule_cron may only be set when trigger_type='scheduled'","
+[PASS]     [Y] 422 for an unknown trigger_type  — HTTP 422 {"detail":[{"type":"value_error","loc":["body","trigger_type"],"msg":"Value error, trigger_type must be 'event' or 'scheduled' (go
+[PASS] [Y] TASK 2: an unrunnable schedule can never be STORED active — the cron expression and the IANA zone are validated at the API boundary, where the author can still fix them
+
+  ── TICK 3: the API-created trigger ──
+        │ [scheduler] tick at 2026-08-26T20:17:00+00:00 (lookback 60m, 15 actions registered)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e1 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Due' — no unfired occurrence in the lookback window
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e2 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Timezone' — no occurrence between 2026-08-27T04:17:00 and 2026-08-27T05:17:00 local (Asia/Tokyo)
+        │ [scheduler] SKIP-OVERLAP trigger=99000000-0000-0000-0000-0000000009e3 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Overlap' — occurrence 2026-08-26T20:17:00+00:00 suppressed: run c2e44d3b-b85b-416b-9be5-41d4657980b0 is still running (started 2026-08-26T20:07:15.260158+00:00)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e4 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Caps' — past end_date 2026-08-25T20:17:00+00:00
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e5 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Caps' — max_occurrences reached (2/2)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e6 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE Hold' — no unfired occurrence in the lookback window
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-0000000009e7 org=bb347258-8f28-4f49-8cc9-e29ccad82884 workflow='SCHEDCORE OtherOrg' — no unfired occurrence in the lookback window
+        │ [scheduler] FIRED  trigger=13324c92-86e8-4a7d-9b7e-810ce9e6c022 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDCORE ApiCreated' — run 5b22a46a-7857-45db-abc7-f110d1fee341 status=completed for occurrence 2026-08-26T20:17:00+00:00 (fire #1)
+        │ [scheduler] tick complete — examined=8 fired=1 skipped=7 errors=0
+[PASS] [Y] TASK 5: the trigger the org_admin created through the API is a REAL one — the scheduler picked it up and fired it, closing the loop from CRUD to execution  — fired 1; examined=8 fired=1 skipped=7 errors=0
+[PASS] [Y] and its occurrence_count advanced against the max_occurrences=5 the org_admin set  — occurrence_count=1
+[PASS] [Y] TEARDOWN: every parked foreign trigger is active again, and none of them fired  — 1/1 restored
+[PASS] [Y] TEARDOWN: zero leftover fixture rows across users, definitions, versions, steps, triggers, runs and todos  — leftover rows = 0
+[PASS] [Y] TEARDOWN removed only fixtures — the pre-existing scheduled trigger row survives  — scheduled triggers remaining = 1
+
+==========================================================================
+65 passed, 0 failed — ALL GREEN
+==========================================================================

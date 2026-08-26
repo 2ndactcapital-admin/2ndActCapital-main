@@ -1457,6 +1457,12 @@
 --   is_active                                boolean NOT NULL DEFAULT true
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   timezone                                 text NOT NULL DEFAULT 'UTC'::text
+--   start_date                               timestamp with time zone
+--   end_date                                 timestamp with time zone
+--   max_occurrences                          integer
+--   occurrence_count                         integer NOT NULL DEFAULT 0
+--   last_fired_at                            timestamp with time zone
 --   PRIMARY KEY workflow_triggers_pkey: (id)
 
 -- ===== workflow_versions =====

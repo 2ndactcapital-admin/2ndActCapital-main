@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-26 (SMTP / email-sending service sprint)
+Last updated: 2026-08-26 (workflow scheduler — core engine)
 
 ## About this file
 
@@ -18,6 +18,107 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0. Workflow scheduler — core engine BUILT (2026-08-26)
+
+**Status: built and verified, 65/65.** `apps/api/scripts/verify_schedulercore.py`.
+Not blocked on anything. Recorded here because it closes two items this file's
+predecessors kept referring to, and because it opened one new deployment action.
+
+### What now exists
+
+- **`workflow_triggers.schedule_cron` is no longer dead code.** Before this
+  sprint a repo-wide grep found exactly two readers — a `SELECT` in
+  `routers/workflows.py` and a display cell in `WorkflowTriggerScheduler.jsx`.
+  **Nothing fired anything on a schedule.** The one `scheduled` row in the
+  database had been inserted by a verify script, because there was no API path
+  to create one.
+- `docs/schedulercore_part1.sql` adds six columns to `workflow_triggers`:
+  `timezone` (IANA, `NOT NULL DEFAULT 'UTC'`), `start_date`, `end_date`,
+  `max_occurrences`, `occurrence_count`, `last_fired_at`.
+- `services/workflow_schedule.py` — pure recurrence evaluation. Translates the
+  stored cron expression into a real `dateutil.rrule` (preserving cron's
+  day-of-month **OR** day-of-week semantics, which rrule ANDs) and resolves it
+  in the trigger's **own** timezone.
+- `services/workflow_scheduler.py` — the firing loop. Scans all orgs, evaluates,
+  checks workflow-level overlap, claims the occurrence atomically, and fires
+  through the **real** `workflow_engine.start_workflow_run`.
+- `apps/api/workflow_scheduler_tick.py` — the minimal process entrypoint.
+- `POST /admin/workflow-triggers` now accepts `trigger_type='scheduled'` plus
+  the recurrence fields, with the cron expression and IANA zone validated at the
+  boundary. The pre-existing three-field event body is unchanged and still works.
+
+**Per-org timezone lives in our code, not in Render.** Render cron schedules are
+UTC-only and cannot be made timezone-aware. The service ticks every 5 minutes in
+UTC and each trigger's local schedule is resolved in Python. The 5-minute cadence
+and the evaluator's 60-minute lookback window are a matched pair — change one and
+re-check the other.
+
+### `render.yaml`'s LiteLLM section — CORRECTED
+
+The blueprint asserted that "the LiteLLM proxy is NOT DEPLOYED … there is no
+LiteLLM service in this blueprint, and Doppler holds no `LITELLM_*` secret."
+**Both halves were out of date.** `hollisworks-litellm.onrender.com` answers HTTP
+200 on `/health/liveliness`, and Doppler holds four `LITELLM_*` secrets against a
+migrated 77-table `litellm` schema. `LITELLM_BASE_URL` and `LITELLM_MASTER_KEY`
+are now declared on the API service. **`LITELLM_BASE_URL` is still absent from
+Doppler**, which is why `litellm.reload_model_cost_map` still raises
+`LiteLLMConfigError` even though the proxy is up — see item 2.
+
+### ACTION REQUIRED — deploy the cron service
+
+`render.yaml` now declares a third service, `2ndactcapital-workflow-scheduler`
+(`type: cron`, `plan: starter`, `schedule: "*/5 * * * *"`). **Until the blueprint
+is applied in Render, nothing fires in production** — the engine is built and
+proven, but no process is running it. A Render cron job has no free plan and a
+**$1/month minimum**, billed by the second of active runtime.
+
+Also unresolved and recorded rather than papered over: the `hollisworks-litellm`
+service is live but is **not** declared as a block in `render.yaml`. It was
+created outside the blueprint, so adopting it is a migration, not an edit. That
+is a real remaining gap in this manifest's coverage.
+
+### Two bugs this sprint found and fixed
+
+**1. A held run vanished entirely when started through the real pool.**
+`workflow_engine.start_workflow_run` documents that the run row is persisted "in
+their own committed transaction … rather than vanishing on rollback". It was not.
+`services.database._RLSPool.acquire()` opens an **outer** transaction (that is
+how the RLS `SET LOCAL` GUCs are scoped), so asyncpg nested the engine's
+`conn.transaction()` as a **savepoint**. When `start_workflow_run` re-raised
+after holding, the exception escaped `pool.acquire()`, the outer transaction
+rolled back, and the `workflow_runs` row, its `error_detail` and every
+`create_held_run_alerts` todo were erased together — a failed run left **no trace
+at all**.
+
+Every prior verify script built a **raw** `asyncpg.create_pool`, where the inner
+commit is real; that is precisely why this never surfaced. The deployed
+event-trigger path (`chancery_workflow_bridge`) passes the actual RLS pool and
+has always been exposed to it. Fixed by `_independent_acquire()`: the up-front
+persist and the hold/alert now run on a connection that is not enlisted in any
+caller's transaction, with the RLS context re-applied.
+
+**2. The scheduler process had an empty action registry.**
+`services.assistant_actions.register_all()` was called from exactly one place —
+`main.py`'s FastAPI `startup` hook. The cron process never starts FastAPI. An
+empty registry does **not** fail loudly: `_execute_service_task` resolves every
+action to `None` and the engine marks the step **completed**. Every scheduled
+workflow would have reported success having invoked nothing. `run_scheduler_tick`
+now registers the actions itself, once per tick.
+
+### Deliberately out of scope
+
+Cost/duration correlation to a run. Zero workflow run steps have ever invoked
+AI, `ai_decision_log` carries no run identifier, and there is nothing to
+correlate yet.
+
+### Next
+
+**Sprint 3 — scheduler CRUD UX.** The API and the engine are both real now;
+`WorkflowTriggerScheduler.jsx` is still read-only and does not yet expose the
+recurrence fields. `GET /admin/workflow-triggers` already returns them.
 
 ---
 

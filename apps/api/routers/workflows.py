@@ -35,10 +35,13 @@ and every query is scoped to it; it is NEVER read from a request body.
 """
 
 import json
+from datetime import datetime, timezone as _tz
 from uuid import UUID
 
+_UTC = _tz.utc
+
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
 from routers.entities import get_org_id
 from services.action_registry import REGISTRY
@@ -52,6 +55,7 @@ from services.workflow_editor import (
     save_new_version,
 )
 from services.workflow_nl_generator import WorkflowGenerationError, generate_workflow
+from services.workflow_schedule import ScheduleError, parse_cron, resolve_timezone
 
 router = APIRouter(tags=["admin", "workflows"])
 
@@ -114,14 +118,122 @@ class VersionSave(BaseModel):
     change_summary: str | None = None
 
 
-class EventTriggerCreate(BaseModel):
-    """Create a ``document_confirmed`` event trigger pointing at a workflow
-    definition (Chancery Phase 7). Narrowly scoped: only the one wired event
-    type is accepted; ``org_id`` / ``created_by`` come from the authenticated
-    context, never the body."""
+class TriggerCreate(BaseModel):
+    """Create a trigger for a workflow definition.
+
+    ORIGINALLY (Chancery Phase 7) this model accepted only three fields —
+    ``workflow_definition_id``, ``event_type`` and ``is_active`` — so there was
+    NO API path to create a schedule-type trigger at all. The one scheduled row
+    in the deployed database had been inserted by a verify script. The scheduler
+    sprint extends it, because otherwise the firing loop has nothing to fire and
+    the CRUD UX sprint has no endpoint to call.
+
+    ``trigger_type`` defaults to ``'event'``, so every existing caller — which
+    sends no ``trigger_type`` at all — keeps its exact previous behaviour.
+
+    The schedule fields are accepted ONLY when ``trigger_type='scheduled'``, and
+    are rejected outright otherwise rather than silently ignored: a caller who
+    posts a cron expression against an event trigger has a bug, and storing the
+    value where nothing reads it is how ``schedule_cron`` became dead code in
+    the first place.
+
+    ``org_id`` / ``created_by`` always come from the authenticated context,
+    never the body.
+    """
+
     workflow_definition_id: UUID
-    event_type: str = "document_confirmed"
+    trigger_type: str = "event"
+    event_type: str | None = None
     is_active: bool = True
+
+    # Schedule-only fields.
+    schedule_cron: str | None = None
+    timezone: str = "UTC"
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    max_occurrences: int | None = None
+
+    @field_validator("trigger_type")
+    @classmethod
+    def _known_trigger_type(cls, value: str) -> str:
+        value = (value or "").strip().lower()
+        # 'scheduled', not 'schedule' — that is the value the deployed rows and
+        # the trigger-list UI (WorkflowTriggerScheduler.jsx) both already use.
+        if value not in ("event", "scheduled"):
+            raise ValueError(
+                "trigger_type must be 'event' or 'scheduled' "
+                f"(got {value!r}); 'manual' triggers are not created through "
+                "this endpoint"
+            )
+        return value
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _aware_utc(cls, value: datetime | None) -> datetime | None:
+        """A naive bound is read as UTC, explicitly.
+
+        Left naive, asyncpg would hand it to a ``timestamptz`` column and
+        Postgres would interpret it in the SERVER's timezone — so the same
+        request would mean a different instant depending on where the database
+        happens to be configured. The trigger's own IANA zone governs the
+        recurrence; these two bounds are absolute instants and are stored as
+        such."""
+        if value is None or value.tzinfo is not None:
+            return value
+        return value.replace(tzinfo=_UTC)
+
+    @model_validator(mode="after")
+    def _coherent(self):
+        schedule_only = {
+            "schedule_cron": self.schedule_cron,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "max_occurrences": self.max_occurrences,
+        }
+
+        if self.trigger_type == "event":
+            supplied = [k for k, v in schedule_only.items() if v is not None]
+            if supplied:
+                raise ValueError(
+                    f"{', '.join(sorted(supplied))} may only be set when "
+                    "trigger_type='scheduled'"
+                )
+            if self.event_type is None:
+                self.event_type = EVENT_DOCUMENT_CONFIRMED
+            return self
+
+        # trigger_type == 'scheduled'
+        if self.event_type is not None:
+            raise ValueError(
+                "event_type may not be set when trigger_type='scheduled'"
+            )
+        if not (self.schedule_cron or "").strip():
+            raise ValueError(
+                "schedule_cron is required when trigger_type='scheduled'"
+            )
+        # Validate the cron expression and the IANA zone HERE, at the boundary.
+        # An unparseable schedule stored as an active trigger is invisible until
+        # the tick logs an error hours later; a 422 at write time is where the
+        # author can still fix it.
+        try:
+            parse_cron(self.schedule_cron)
+            resolve_timezone(self.timezone)
+        except ScheduleError as exc:
+            raise ValueError(str(exc)) from None
+
+        if self.max_occurrences is not None and self.max_occurrences < 1:
+            raise ValueError("max_occurrences must be a positive integer")
+        if (self.start_date is not None and self.end_date is not None
+                and self.end_date < self.start_date):
+            raise ValueError("end_date must not precede start_date")
+        self.schedule_cron = self.schedule_cron.strip()
+        self.timezone = (self.timezone or "UTC").strip() or "UTC"
+        return self
+
+
+# Retained name for any existing import; the model itself is now the extended
+# one above.
+EventTriggerCreate = TriggerCreate
 
 
 # --------------------------------------------------------------------------
@@ -468,6 +580,8 @@ async def list_workflow_triggers(request: Request):
             f"""
             SELECT t.id, t.org_id, t.trigger_type, t.schedule_cron, t.event_type,
                    t.is_active, t.created_at,
+                   t.timezone, t.start_date, t.end_date, t.max_occurrences,
+                   t.occurrence_count, t.last_fired_at,
                    d.id AS definition_id, d.name AS workflow_name
             FROM workflow_triggers t
             JOIN workflow_definitions d ON d.id = t.workflow_definition_id
@@ -479,21 +593,28 @@ async def list_workflow_triggers(request: Request):
     return [dict(r) for r in rows]
 
 
-# Chancery Phase 7 — the ONLY write on the Scheduler surface: create an event
-# trigger (event_type='document_confirmed') pointing at a chosen definition.
-# Gated by the SAME configure_workflow_triggers permission as the viewer.
-# This CONFIGURES which runs auto-start; it does not weaken any per-step tier.
+# Chancery Phase 7 — the ONLY write on the Scheduler surface was, originally,
+# an event trigger (event_type='document_confirmed'). The scheduler sprint adds
+# the schedule-type path alongside it. Both are gated by the SAME
+# configure_workflow_triggers permission as the viewer. This CONFIGURES which
+# runs auto-start; it does not weaken any per-step tier.
 EVENT_DOCUMENT_CONFIRMED = "document_confirmed"
 
 
 @router.post("/admin/workflow-triggers", status_code=201)
-async def create_workflow_trigger(request: Request, body: EventTriggerCreate):
-    """Create a ``document_confirmed`` event trigger for a definition in the
-    caller's org. Only the one wired event type is accepted this phase."""
+async def create_workflow_trigger(request: Request, body: TriggerCreate):
+    """Create an event or a scheduled trigger for a definition in the caller's org.
+
+    ``trigger_type='event'`` (the default, and what every pre-existing caller
+    sends) still accepts only the one wired event type. ``trigger_type=
+    'scheduled'`` creates a row the cron tick will actually fire — the cron
+    expression and IANA zone were already validated by the body model, so an
+    unrunnable schedule cannot be stored active.
+    """
     actor_id, org_id, principal = await _require_workflow_permission(
         request, PERM_CONFIGURE_TRIGGERS
     )
-    if body.event_type != EVENT_DOCUMENT_CONFIRMED:
+    if body.trigger_type == "event" and body.event_type != EVENT_DOCUMENT_CONFIRMED:
         raise HTTPException(
             status_code=422,
             detail=f"Only the '{EVENT_DOCUMENT_CONFIRMED}' event type is "
@@ -514,25 +635,39 @@ async def create_workflow_trigger(request: Request, body: EventTriggerCreate):
             and str(definition["org_id"]) != str(org_id)
         ):
             raise HTTPException(status_code=404, detail="Workflow not found")
-        trigger_id = await conn.fetchval(
+        row = await conn.fetchrow(
             """
             INSERT INTO workflow_triggers
                 (workflow_definition_id, org_id, trigger_type, event_type,
+                 schedule_cron, timezone, start_date, end_date, max_occurrences,
                  is_active, created_by)
-            VALUES ($1, $2, 'event', $3, $4, $5)
-            RETURNING id
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING id, occurrence_count, last_fired_at
             """,
-            body.workflow_definition_id, definition["org_id"],
-            body.event_type, body.is_active, actor_id,
+            body.workflow_definition_id, definition["org_id"], body.trigger_type,
+            body.event_type, body.schedule_cron, body.timezone,
+            body.start_date, body.end_date, body.max_occurrences,
+            body.is_active, actor_id,
         )
-    return {
-        "id": str(trigger_id),
+    out = {
+        "id": str(row["id"]),
         "workflow_definition_id": str(body.workflow_definition_id),
         "org_id": str(definition["org_id"]),
-        "trigger_type": "event",
+        "trigger_type": body.trigger_type,
         "event_type": body.event_type,
         "is_active": body.is_active,
     }
+    if body.trigger_type == "scheduled":
+        out.update({
+            "schedule_cron": body.schedule_cron,
+            "timezone": body.timezone,
+            "start_date": body.start_date,
+            "end_date": body.end_date,
+            "max_occurrences": body.max_occurrences,
+            "occurrence_count": row["occurrence_count"],
+            "last_fired_at": row["last_fired_at"],
+        })
+    return out
 
 
 @router.get("/admin/workflows/{definition_id}/versions")

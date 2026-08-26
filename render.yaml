@@ -166,21 +166,122 @@ services:
       #   (no credentials have ever been issued) and has no mapping function.
       #   Declare these only when real credentials exist.
       #
-      # LITELLM_BASE_URL / LITELLM_MASTER_KEY —
-      #   services/assistant_actions/litellm_ops.py (the
-      #   litellm.reload_model_cost_map action). The LiteLLM proxy is NOT
-      #   DEPLOYED: Phase A of docs/LITELLM_INTEGRATION_DESIGN_V1.md §14 has not
-      #   shipped, there is no LiteLLM service in this blueprint, and Doppler
-      #   holds no LITELLM_* secret. Declare these only once the proxy really
-      #   exists — declaring a name whose value nobody can set is the same
-      #   "looks configured, isn't" trap this manifest exists to prevent. Until
-      #   then the action fails loud and names these two variables.
-      #   NOTE: LITELLM_SALT_KEY is deliberately absent — it is unrotatable
-      #   after first use and needs a real secrets-manager decision (design §10),
-      #   not a Render dashboard field.
-      #
       # APP_SERVICE_DATABASE_URL — the non-bypass 'app_service' role DSN. Used
       #   ONLY by apps/api/scripts/verify_*.py, never by runtime code, so the
       #   Render service does not need it. It DOES belong in Doppler: a stale
       #   local copy is precisely the drift this sprint was opened to fix.
       # -----------------------------------------------------------------------
+
+      # -----------------------------------------------------------------------
+      # LiteLLM — CORRECTED 2026-08-26 (schedulercore.structural).
+      #
+      # This block previously sat under "DELIBERATELY NOT DECLARED" and asserted
+      # that "the LiteLLM proxy is NOT DEPLOYED … there is no LiteLLM service in
+      # this blueprint, and Doppler holds no LITELLM_* secret." BOTH HALVES WERE
+      # OUT OF DATE, and schedulerdiscovery.lowrisk measured it (§4.3, §4.4):
+      #
+      #   * `hollisworks-litellm.onrender.com` answers HTTP 200 on LiteLLM's own
+      #     /health/liveliness. It is live. (A Render hostname with no service
+      #     behind it returns `x-render-routing: no-server`; this one does not.)
+      #   * Doppler hollisworks/prd now holds four LITELLM_* secrets:
+      #     LITELLM_DATABASE_URL, LITELLM_DB_PASSWORD, LITELLM_MASTER_KEY,
+      #     LITELLM_SALT_KEY. The deployed Postgres has a migrated `litellm`
+      #     schema (77 tables).
+      #
+      # So the manifest's own invariant now applies: LITELLM_MASTER_KEY is read
+      # by production runtime code (services/assistant_actions/litellm_ops.py,
+      # LITELLM_ENV_VARS) and a real value exists for it. Declare it.
+      #
+      # LITELLM_BASE_URL is declared too. It is the ONE variable still genuinely
+      # missing from Doppler, and it is why `litellm.reload_model_cost_map`
+      # STILL raises LiteLLMConfigError even though the proxy is up. Declaring
+      # it is not the "looks configured, isn't" trap the old note warned about:
+      # the service it points at demonstrably exists, so the value is settable
+      # today (https://hollisworks-litellm.onrender.com).
+      #
+      # The `hollisworks-litellm` service itself is deliberately NOT declared as
+      # a block in this blueprint: it was created outside it, it is on a
+      # different repo/image, and adopting a running service into a blueprint is
+      # a migration, not an edit. That is a real remaining gap in this
+      # manifest's coverage and is recorded here rather than papered over.
+      - key: LITELLM_BASE_URL
+        sync: false
+      - key: LITELLM_MASTER_KEY
+        sync: false
+      # LITELLM_SALT_KEY stays undeclared HERE on purpose — it is unrotatable
+      # after first use (design §10) and belongs to the LiteLLM service, not to
+      # this API service, which never reads it.
+
+  # ---------------------------------------------------------------------------
+  # WORKFLOW SCHEDULER — the cron service that fires scheduled workflow triggers
+  # (schedulercore.structural).
+  #
+  # `type: cron` is a genuine, distinct Render service type, not a web-service
+  # variant, and it is the correct mechanism here — NOT an in-process scheduler
+  # thread inside the API. Verified properties that shape this block:
+  #
+  #   * SINGLE-RUN GUARANTEE. Render keeps at most one run of this service
+  #     active and DELAYS the next scheduled run while one is still going. The
+  #     tick therefore needs no "am I already running" lock of its own; building
+  #     one would duplicate a platform guarantee. It does still check overlap at
+  #     the WORKFLOW level (a trigger whose previous run is unfinished is
+  #     skipped) — a different question, see services/workflow_scheduler.py.
+  #   * UTC ONLY. Render cron schedules cannot be made timezone-aware. Per-org
+  #     local time is resolved inside services/workflow_schedule.py, which is
+  #     the whole reason workflow_triggers carries its own `timezone` column.
+  #   * 12-HOUR HARD TIMEOUT. Not a constraint here: a tick is a bounded scan.
+  #   * NO FREE PLAN, $1/month minimum, billed by the second of active runtime.
+  #     `plan: starter` is the minimum Render permits for a cron job.
+  #   * NO PERSISTENT DISK. The tick keeps no state on disk; all state is the
+  #     workflow_triggers row (last_fired_at / occurrence_count).
+  #
+  # The 5-minute cadence is matched to the 60-minute lookback window in
+  # services/workflow_schedule.py: the lookback must comfortably exceed the tick
+  # interval or an occurrence landing between two ticks would be missed. Change
+  # one and re-check the other.
+  #
+  # Env vars are the API service's minus everything a tick cannot use. It opens
+  # database connections and starts workflow runs; it serves no HTTP request, so
+  # it needs no Auth0, no CORS origins and no R2. ANTHROPIC_API_KEY IS included:
+  # a fired workflow's Service Tasks run the real engine, and an action that
+  # calls the central AI helpers would otherwise fail only when scheduled.
+  # ---------------------------------------------------------------------------
+  - type: cron
+    name: 2ndactcapital-workflow-scheduler
+    runtime: python
+    plan: starter
+    rootDir: apps/api
+    schedule: "*/5 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python workflow_scheduler_tick.py
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Textract / Voyage / EDGAR are reachable from a Service Task the same way
+      # they are from a request, so a scheduled run must not lose them.
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: EDGAR_USER_AGENT
+        sync: false
+      # The one workflow_invocable action today is litellm.reload_model_cost_map,
+      # which is exactly the kind of thing a schedule exists to run.
+      - key: LITELLM_BASE_URL
+        sync: false
+      - key: LITELLM_MASTER_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false

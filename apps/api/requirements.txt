@@ -10,6 +10,12 @@ httpx
 anthropic
 deepeval
 SpiffWorkflow==3.1.2
+# Recurrence evaluation for scheduled workflow triggers
+# (services/workflow_schedule.py). Previously present only TRANSITIVELY, as a
+# pandas dependency — so the workflow scheduler's correctness rested on a
+# package nothing declared, which a pandas bump could have removed. It is a
+# direct dependency now; declare it as one.
+python-dateutil>=2.9
 pdfplumber==0.11.10
 # Chancery Phase 4 — multi-format ingestion (DOCX/XLSX/PPTX/email).
 # Import-tested against Python 3.14 (in-memory round-trip) during the sprint.

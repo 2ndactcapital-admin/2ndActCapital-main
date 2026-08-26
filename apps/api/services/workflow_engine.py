@@ -307,6 +307,60 @@ async def _load_steps(conn, workflow_version_id, org_id) -> list[asyncpg.Record]
     )
 
 
+def _independent_acquire(pool):
+    """Acquire a connection that is NOT enlisted in any caller's transaction.
+
+    *** THIS EXISTS BECAUSE OF A REAL, MEASURED BUG. ***
+
+    ``start_workflow_run`` documents — correctly — that the run row must be
+    persisted "in their own committed transaction, BEFORE driving the engine",
+    so a later failure is recordable as 'held' "rather than vanishing on
+    rollback". That intent was defeated by the application's own pool.
+
+    ``services.database._RLSPool.acquire()`` opens an OUTER transaction before
+    yielding the connection (that is how the RLS ``SET LOCAL`` GUCs are made
+    transaction-scoped). asyncpg nests any ``conn.transaction()`` opened inside
+    it as a SAVEPOINT — so the engine's "own committed transaction" is a
+    savepoint release, not a commit. When ``start_workflow_run`` re-raises after
+    holding, the exception escapes ``pool.acquire()``, the OUTER transaction
+    rolls back, and the workflow_runs row, its error_detail, and every
+    ``create_held_run_alerts`` todo all vanish together. The failure leaves no
+    trace whatsoever.
+
+    Measured, not inferred: with a raw ``asyncpg.create_pool`` an inner
+    "committed" write survives an exception escaping ``acquire()``; with the
+    ``_RLSPool`` the same write is gone. Every existing verify script built a
+    RAW pool, which is exactly why this never showed up — the deployed
+    event-trigger path (``chancery_workflow_bridge``) passes the real RLS pool
+    and has always been exposed to it.
+
+    Taking the connection from the underlying pool sidesteps the wrapper's
+    transaction; the RLS GUCs are re-applied by the caller inside its own
+    transaction so the write still runs with the correct org context.
+
+    CONSTRAINT: this holds a SECOND pooled connection while the caller still
+    holds its first, so ``start_workflow_run`` needs a pool of at least 2. The
+    application pool is ``max_size=10``; the explicit ``timeout`` makes an
+    exhausted pool fail loudly in seconds instead of hanging forever, which is
+    the failure mode that would otherwise look like a stuck workflow.
+    """
+    inner = getattr(pool, "_pool", None)
+    return (inner if inner is not None else pool).acquire(timeout=30)
+
+
+async def _apply_rls(conn) -> None:
+    """Re-apply the RLS context on an independently-acquired connection.
+
+    ``_RLSPool`` normally does this at acquire time; a connection taken from the
+    underlying pool has no context, which under a non-bypass role would
+    default-deny the write. Imported locally — ``services.database`` is a
+    request-layer module and importing it at engine module scope invites a
+    cycle."""
+    from services.database import _apply_rls_settings
+
+    await _apply_rls_settings(conn)
+
+
 # ── Public API ──────────────────────────────────────────────────────────────
 async def start_workflow_run(
     pool, workflow_version_id, org_id, context: dict | None, started_by
@@ -327,32 +381,39 @@ async def start_workflow_run(
         if context:
             workflow.set_data(**context)
 
-        # Persist the run + its pending steps up-front, in their own committed
-        # transaction, BEFORE driving the engine. A later failure must be
-        # recordable as 'held' (Wave-4-style HOLD + ALERT) rather than vanishing
-        # on rollback or leaving the run silently stuck in 'running'.
-        async with conn.transaction():
-            run_id = await conn.fetchval(
-                """
-                INSERT INTO workflow_runs
-                    (workflow_version_id, org_id, status, context, started_by, started_at)
-                VALUES ($1, $2, 'running', $3::jsonb, $4, now())
-                RETURNING id
-                """,
-                workflow_version_id, org_id, json.dumps(context), started_by,
-            )
-            run_step_ids: dict[str, Any] = {}
-            for s in steps:
-                rsid = await conn.fetchval(
+        # Persist the run + its pending steps up-front, in their own GENUINELY
+        # committed transaction, BEFORE driving the engine. A later failure must
+        # be recordable as 'held' (Wave-4-style HOLD + ALERT) rather than
+        # vanishing on rollback or leaving the run silently stuck in 'running'.
+        #
+        # This runs on an INDEPENDENT connection, not on `conn`. See
+        # _independent_acquire: `conn` may already be inside a caller-owned
+        # transaction (the real RLS pool always is), which would demote this
+        # block to a savepoint and let the later re-raise erase the whole run.
+        async with _independent_acquire(pool) as persist_conn:
+            async with persist_conn.transaction():
+                await _apply_rls(persist_conn)
+                run_id = await persist_conn.fetchval(
                     """
-                    INSERT INTO workflow_run_steps
-                        (workflow_run_id, workflow_step_id, org_id, status)
-                    VALUES ($1, $2, $3, 'pending')
+                    INSERT INTO workflow_runs
+                        (workflow_version_id, org_id, status, context, started_by, started_at)
+                    VALUES ($1, $2, 'running', $3::jsonb, $4, now())
                     RETURNING id
                     """,
-                    run_id, s["id"], org_id,
+                    workflow_version_id, org_id, json.dumps(context), started_by,
                 )
-                run_step_ids[s["step_key"]] = rsid
+                run_step_ids: dict[str, Any] = {}
+                for s in steps:
+                    rsid = await persist_conn.fetchval(
+                        """
+                        INSERT INTO workflow_run_steps
+                            (workflow_run_id, workflow_step_id, org_id, status)
+                        VALUES ($1, $2, $3, 'pending')
+                        RETURNING id
+                        """,
+                        run_id, s["id"], org_id,
+                    )
+                    run_step_ids[s["step_key"]] = rsid
 
         try:
             async with conn.transaction():
@@ -433,9 +494,18 @@ async def start_workflow_run(
                     status = "completed"
         except Exception as exc:
             # Wave-4-style failure: HOLD and ALERT, never silently retry — even
-            # for a manually-triggered run. Recorded in its own transaction
-            # because the execution transaction above has rolled back.
-            await _hold_run(conn, run_id, org_id, started_by, exc)
+            # for a manually-triggered run. Recorded on an INDEPENDENT
+            # connection, not on `conn`: the execution transaction above has
+            # rolled back, and `conn` itself may be inside a caller-owned
+            # transaction that the re-raise below is about to roll back too,
+            # which would erase the hold and its alerts along with it.
+            async with _independent_acquire(pool) as hold_conn:
+                # The RLS GUCs are SET LOCAL, so they must be applied INSIDE a
+                # transaction or they are discarded by the implicit
+                # single-statement commit before the write ever runs.
+                async with hold_conn.transaction():
+                    await _apply_rls(hold_conn)
+                    await _hold_run(hold_conn, run_id, org_id, started_by, exc)
             raise
 
         return {
