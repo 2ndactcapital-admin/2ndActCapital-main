@@ -1,0 +1,112 @@
+
+=== TASK 1a — the chokepoint, re-confirmed against the real file ===
+  [PASS] Anthropic SDK imported in exactly ONE place in extraction.py (found 1)
+  [PASS] no other service/router imports the Anthropic SDK (found none)
+  [PASS] public helper call_claude_json still exists
+  [PASS] public helper call_claude_text still exists
+  [PASS] public helper call_claude_with_tools still exists
+  [PASS] all three helpers still funnel through the single _execute_chain
+  [PASS] ai.model.fallback_chain reads live as an ordered list: ['claude-haiku-4-5-20251001']
+  [PASS] the live chain key is ai.model.fallback_chain (NOT the dead ai.model.provider / ai.model.fallback)
+    live primary for the default org: claude-haiku-4-5-20251001
+
+=== TASK 1b — LiteLLM's REAL endpoint shape, measured live ===
+  [PASS] proxy is live: GET /health/liveliness -> 200
+  [PASS] BOTH /v1/chat/completions and /chat/completions are mounted and equivalent (each -> 400/400); the proxy answers, it does not 404
+  [PASS] an Anthropic-SHAPED POST /v1/messages is really parsed and routed by LiteLLM (it answers 'anthropic_messages: ...') — this is the route Phase B uses, so the SDK's response objects stay genuine
+  [PASS] GET /v1/models answers 200
+  [BLOCKED] B1: LiteLLM has ZERO model deployments configured
+            GET /v1/models -> {"data":[],...} and GET /model/info -> 500 'LLM Model List not loaded in'. No model name can be routed, so no successful text call is possible through the proxy.
+  [PASS] model deployment list read from the live proxy: []
+  [BLOCKED] B2: Doppler's LITELLM_MASTER_KEY is NOT the proxy master key
+            POST /model/new -> 403 'Your role=internal_user ... only if you are a PROXY_ADMIN'. It is a virtual/internal-user key. This sprint therefore cannot fix B1, and it also means litellm.reload_model_cost_map will STILL fail after this sprint's LITELLM_BASE_URL fix — contrary to render.yaml's note.
+  [PASS] POST /model/new answered 403 (recorded, not assumed)
+  [PASS] no model deployment was created by this verify run (nothing to clean up on the live proxy)
+
+=== TASK 1c / TASK 2 — Doppler config, and the gap this sprint closed ===
+  [PASS] LITELLM_BASE_URL is PRESENT in Doppler prd (it was ABSENT before this sprint — Task 2 gap genuinely closed)
+  [PASS] LITELLM_MASTER_KEY is PRESENT in Doppler prd
+  [PASS] LITELLM_BASE_URL points at a real https Render URL
+  [BLOCKED] B3: ANTHROPIC_API_KEY exists nowhere
+            absent from Doppler prd, ~/.bashrc and apps/api/.env. Both LiteLLM's upstream and the direct-Anthropic rollback path lack a provider credential.
+
+=== TASK 1d — ai_decision_log's shape is untouched ===
+  [PASS] ai_decision_log still has exactly its 12 pre-sprint columns in order (live: 12)
+  [PASS] _write_ai_decision still inserts the same 10 columns (id/created_at defaulted): ['org_id', 'task_type', 'model_requested', 'model_used', 'fallback_used', 'fallback_reason', 'cost_usd', 'latency_ms', 'success', 'error_detail']
+  [PASS] a PRE-EXISTING ai_decision_log row exists to compare against
+
+=== TASKS 3 & 4 — transport selection ===
+  [PASS] DEFAULT (switch unset, LiteLLM configured) -> transport=litellm
+  [PASS] the Anthropic SDK client is really pointed at the LiteLLM base URL
+  [PASS] the real request endpoint is LiteLLM's Anthropic route: https://hollisworks-litellm.onrender.com/v1/messages
+  [PASS] on the default path the client does NOT point at Anthropic
+  [PASS] ROLLBACK (LITELLM_ROUTING_DISABLED=1) -> transport=anthropic, with a loud reason
+  [PASS] with rollback engaged the client points STRAIGHT at api.anthropic.com — LiteLLM is not in the path at all
+  [PASS] the LiteLLM base URL appears nowhere in the rollback client
+  [PASS] UNCONFIGURED LiteLLM degrades to direct Anthropic and says so LOUDLY (a deploy before the env var lands does not brick AI)
+
+=== TASK 5 — a REAL call, through the REAL chain, to the LIVE proxy ===
+[ai_router] model 'verify-litellmphaseb-nonexistent-model' failed for task 'verify_litellmphaseb' via litellm: BadRequestError: Error code: 400 - {'error': {'message': "400: {'error': 'anthropic_messages: Invalid model name passed in model=verify-litellmphaseb-nonexistent-model. Call `/v1/models` to view available models for your key.'}", 'type': 'None', 'param': 'None', 'code': '400'}}
+[ai_router] model 'claude-haiku-4-5-20251001' failed for task 'verify_litellmphaseb' via litellm: BadRequestError: Error code: 400 - {'error': {'message': "400: {'error': 'anthropic_messages: Invalid model name passed in model=claude-haiku-4-5-20251001. Call `/v1/models` to view available models for your key.'}", 'type': 'None', 'param': 'None', 'code': '400'}}
+  [PASS] the real chain executor ran end-to-end and raised AIChainExhausted
+  [PASS] the failure text came FROM LITELLM ITSELF ('Invalid model name passed in model=') — proof the request really reached the live proxy and was not sent to Anthropic
+  [PASS] the fallback chain genuinely WALKED, via LiteLLM: ['verify-litellmphaseb-nonexistent-model', 'claude-haiku-4-5-20251001']
+  [PASS] the forced-failure primary was tried FIRST and the NEXT model in the chain was then tried: ['verify-litellmphaseb-nonexistent-model', 'claude-haiku-4-5-20251001']
+  [PASS] every attempt in the walk is recorded as going via litellm
+  [BLOCKED] A successful extraction result through LiteLLM
+            blocked by B1+B2+B3. The transport is proven to reach LiteLLM (above); what cannot be proven is a 200 with real generated text, because the proxy has no model deployment to route to and no Anthropic credential exists. Needs: PROXY_ADMIN key -> add a model deployment -> a provider key.
+  [PASS] exactly ONE ai_decision_log row was written by that call (got 1)
+  [PASS] the new row's columns are IDENTICAL to a pre-sprint row's, column-by-column
+  [PASS] every populated column has the same Python type as the pre-sprint row (mismatches: [])
+  [PASS] the row's semantics are unchanged: requested/used, fallback_used, success=false, error_detail all populated as before Phase B
+  [PASS] org_id and created_at are populated by the same defaults
+    waiting up to 45s for LiteLLM to flush its own spend log...
+  [PASS] litellm.LiteLLM_SpendLogs recorded THIS call — 2 row(s) since the call began: ['verify-litellmphaseb-nonexistent-model', 'claude-haiku-4-5-20251001']
+  [PASS] LiteLLM's OWN log names the EXACT models our chain walked (['verify-litellmphaseb-nonexistent-model', 'claude-haiku-4-5-20251001']) — the same call is visible in both logs, which is the dual-write the design doc §4 asked for
+  [PASS] LiteLLM logged them in the SAME ORDER the chain tried them: ['verify-litellmphaseb-nonexistent-model', 'claude-haiku-4-5-20251001']
+  [PASS] ai_decision_log.model_requested (verify-litellmphaseb-nonexistent-model) == the first model in LiteLLM's own log (verify-litellmphaseb-nonexistent-model) — the two records are the same event
+  [PASS] LiteLLM records these as status=failure, matching our ai_decision_log success=false — the two logs AGREE on the outcome
+  [PASS] spend=0 on every row: nothing was billed by this verify run
+  [PASS] EVERY row the proxy has ever written is status=failure (['failure']) — independent confirmation of B1: this proxy has never successfully routed a single call
+
+--- rollback engaged: LiteLLM must not be contacted at all ---
+  [PASS] with rollback engaged and no ANTHROPIC_API_KEY, the call returns None on the pre-existing no-key contract and says why
+  [PASS] the rollback reason is printed loudly, so a rolled-back deployment can never be mistaken for a routing one
+    waiting the full 45s flush window to prove ABSENCE, not just earliness...
+  [PASS] ZERO rows in LiteLLM's own spend log for the rollback call, after waiting the full flush window — LiteLLM was genuinely never contacted (found: [])
+  [PASS] the spend log's total count is unchanged across the rollback call (26 -> 26)
+  [PASS] no LiteLLM-generated text appears anywhere in the rollback call's output — independent confirmation the proxy was not in the path
+  [PASS] the no-credential rollback path writes no log row, exactly as the pre-sprint no-key path did
+  [BLOCKED] The rollback path SUCCEEDING via direct Anthropic
+            blocked by B3 (no ANTHROPIC_API_KEY anywhere). Proven instead: the client really points at api.anthropic.com and LiteLLM is provably never contacted. The remaining unproven step is the upstream 200.
+
+--- a deliberately wrong LITELLM_MASTER_KEY ---
+  [PASS] a genuine anthropic.AuthenticationError (HTTP 401) is recognised as an auth failure
+  [PASS] an ordinary error is NOT misread as an auth failure
+  [PASS] a rejected master key raises AILiteLLMAuthError — it does NOT silently return None
+  [PASS] the message names the exact variable at fault
+  [PASS] the message states the ACTIONABLE remedy (roll back while you fix it)
+  [PASS] the message names the endpoint that rejected us
+  [PASS] the message carries the real HTTP status
+  [PASS] the chain is NOT walked on an auth failure — every model shares the one key, so replaying it per model would bury the real cause
+  [PASS] the auth failure is still RECORDED in ai_decision_log before raising
+  [PASS] AILiteLLMAuthError propagates through call_claude_json — it is NOT flattened to None by that function's bare `except Exception` (the trap this sprint had to dodge)
+  [PASS] AILiteLLMAuthError also propagates through call_claude_text
+  [PASS] AILiteLLMAuthError also propagates through call_claude_with_tools
+
+=== TEARDOWN ===
+  [PASS] zero leftover ai_decision_log rows (found 0)
+  [PASS] this verify run billed $0.00 on the live proxy (rows added: 5, all failures)
+  [PASS] the live proxy's model deployment list is still empty — this run created no model on the shared service
+  [PASS] the rollback switch is left DISENGAGED in the environment
+
+========================================================================
+RESULT: 68/68 PASS
+
+5 BLOCKED — real external blockers, console action required:
+  * B1: LiteLLM has ZERO model deployments configured — GET /v1/models -> {"data":[],...} and GET /model/info -> 500 'LLM Model List not loaded in'. No model name can be routed, so no successful text call is possible through the proxy.
+  * B2: Doppler's LITELLM_MASTER_KEY is NOT the proxy master key — POST /model/new -> 403 'Your role=internal_user ... only if you are a PROXY_ADMIN'. It is a virtual/internal-user key. This sprint therefore cannot fix B1, and it also means litellm.reload_model_cost_map will STILL fail after this sprint's LITELLM_BASE_URL fix — contrary to render.yaml's note.
+  * B3: ANTHROPIC_API_KEY exists nowhere — absent from Doppler prd, ~/.bashrc and apps/api/.env. Both LiteLLM's upstream and the direct-Anthropic rollback path lack a provider credential.
+  * A successful extraction result through LiteLLM — blocked by B1+B2+B3. The transport is proven to reach LiteLLM (above); what cannot be proven is a 200 with real generated text, because the proxy has no model deployment to route to and no Anthropic credential exists. Needs: PROXY_ADMIN key -> add a model deployment -> a provider key.
+  * The rollback path SUCCEEDING via direct Anthropic — blocked by B3 (no ANTHROPIC_API_KEY anywhere). Proven instead: the client really points at api.anthropic.com and LiteLLM is provably never contacted. The remaining unproven step is the upstream 200.
+========================================================================

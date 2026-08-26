@@ -18,6 +18,17 @@ helpers below). It now owns:
   * a decision log (ai_decision_log) written for every call — model requested
     vs used, whether a fallback fired and why, cost, latency, success/error.
     Logging is NON-BLOCKING: a log-write failure can never break the AI call.
+
+LiteLLM Phase B (litellmphaseb.structural) — the actual HTTP call now goes to
+the self-hosted LiteLLM proxy instead of straight to Anthropic. This is a
+transport swap at ONE point (``_build_ai_client``): the chain walk, cost model,
+ai_decision_log shape and error handling are unchanged, and ai_decision_log
+gained no columns. Two logs now describe every call, on purpose (design §4):
+ai_decision_log says what TaskRouter DECIDED, LiteLLM's own LiteLLM_SpendLogs
+says what actually EXECUTED and cost what.
+
+``LITELLM_ROUTING_DISABLED=1`` is the ops rollback switch — see
+LITELLM_DISABLE_VAR below.
 """
 
 import json
@@ -60,6 +71,148 @@ class AIChainExhausted(Exception):
     (many call sites already branch on a None result) — but by that point the
     failure has been printed AND written to ai_decision_log (success=false).
     """
+
+
+class AILiteLLMAuthError(RuntimeError):
+    """LiteLLM rejected ``LITELLM_MASTER_KEY``.
+
+    DELIBERATELY NOT a subclass of AIChainExhausted, and deliberately NOT
+    converted to ``None`` by the public call_claude_* wrappers: a bad master key
+    is an operator misconfiguration affecting every AI call in the platform at
+    once, and every model in the chain shares that one key, so walking the chain
+    cannot rescue it. Degrading it to the ordinary "returned None" path would
+    make a total AI outage look exactly like a single unparseable response.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Transport selection (Phase B — LiteLLM routing)
+# ---------------------------------------------------------------------------
+# Phase B routes this module's calls through the self-hosted LiteLLM proxy
+# instead of straight at Anthropic. This is a TRANSPORT swap only: the fallback
+# chain, retry walk, cost model, ai_decision_log shape and error handling below
+# are untouched.
+#
+# HOW: the Anthropic SDK is pointed at LiteLLM's base URL rather than replaced.
+# LiteLLM serves a real Anthropic-shaped ``POST /v1/messages`` route (confirmed
+# live against hollisworks-litellm.onrender.com, which parsed and model-validated
+# an Anthropic-format body). Keeping the SDK means the response objects handed to
+# every ``extract()`` closure and to ``_compute_cost`` stay genuine Anthropic
+# types — so ``message.content[0].text``, ``message.stop_reason``,
+# ``block.model_dump()`` and ``usage.input_tokens`` all keep working unchanged.
+# The alternative (raw httpx against /v1/chat/completions, which is also live)
+# would require hand-writing an OpenAI->Anthropic response adapter, including
+# tool_calls -> tool_use blocks, on the single most load-bearing path in the
+# platform. That is a rewrite, not a transport swap.
+LITELLM_BASE_URL_VAR = "LITELLM_BASE_URL"
+LITELLM_MASTER_KEY_VAR = "LITELLM_MASTER_KEY"
+
+# TASK 4 — the ops-level rollback switch. Set this to any of _TRUTHY and every
+# call in this module goes straight back to Anthropic, never contacting LiteLLM.
+#
+# An ENVIRONMENT VARIABLE, not an org_settings key, and that is a deliberate
+# choice grounded in what this codebase already does: external-service wiring
+# follows the plain-env-var convention (services/portfolio_altruist.py, and
+# LITELLM_ENV_VARS in services/assistant_actions/litellm_ops.py), while
+# org_settings holds per-org POLICY. This switch is neither per-org nor policy —
+# it is a blunt, platform-wide deployment escape hatch that must keep working
+# when the database itself is the thing that is unhappy. An org_settings key
+# would need a working DB read to tell us the DB-independent fallback is on.
+#
+# This is NOT design-doc §7.5's ``force_anthropic`` (a future, per-org,
+# UI-driven, Hollis-admin-facing capability). Different audience, different
+# lifetime, different mechanism.
+LITELLM_DISABLE_VAR = "LITELLM_ROUTING_DISABLED"
+
+TRANSPORT_LITELLM = "litellm"
+TRANSPORT_ANTHROPIC = "anthropic"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def litellm_routing_disabled() -> bool:
+    """True when the Task-4 ops rollback switch is engaged."""
+    return (os.environ.get(LITELLM_DISABLE_VAR) or "").strip().lower() in _TRUTHY
+
+
+def resolve_transport() -> tuple[str, str]:
+    """Pick the transport for this call. Returns ``(transport, reason)``.
+
+    ``reason`` is empty on the intended Phase-B path (LiteLLM, configured) and
+    is a human-readable explanation on every other path, so a deployment that is
+    NOT routing through LiteLLM says so out loud on every call rather than
+    looking identical to one that is.
+
+    The two non-LiteLLM outcomes are kept distinct on purpose, mirroring
+    litellm_ops.py's own LiteLLMConfigError-vs-LiteLLMReloadError split:
+
+      * rollback engaged      — an operator asked for direct Anthropic;
+      * LiteLLM not configured — no base URL / master key exists to call.
+
+    Note what is deliberately absent: there is no "LiteLLM is configured but
+    the call failed -> quietly retry against Anthropic" path. A configured-but-
+    broken proxy fails loudly through the normal chain machinery. Silently
+    healing that would mean the platform could stop routing through LiteLLM
+    entirely and nobody would ever find out.
+    """
+    if litellm_routing_disabled():
+        return TRANSPORT_ANTHROPIC, (
+            f"{LITELLM_DISABLE_VAR} is set — ops rollback engaged, calling "
+            f"Anthropic directly and never contacting LiteLLM"
+        )
+    missing = [v for v in (LITELLM_BASE_URL_VAR, LITELLM_MASTER_KEY_VAR)
+               if not os.environ.get(v)]
+    if missing:
+        return TRANSPORT_ANTHROPIC, (
+            f"LiteLLM is not configured for this deployment (missing "
+            f"{', '.join(missing)}) — falling back to direct Anthropic. This is "
+            f"a DEGRADED state, not the intended Phase-B path: set "
+            f"{' and '.join((LITELLM_BASE_URL_VAR, LITELLM_MASTER_KEY_VAR))} to "
+            f"route through the proxy."
+        )
+    return TRANSPORT_LITELLM, ""
+
+
+def _build_ai_client() -> tuple[object | None, str, str, str]:
+    """``(client, transport, reason, endpoint)``; client is None with no credential.
+
+    A ``None`` client preserves this module's long-standing no-API-key contract:
+    ``_execute_chain`` returns None and callers that already branch on a None
+    result behave exactly as they did before Phase B.
+    """
+    transport, reason = resolve_transport()
+
+    import anthropic as _anthropic
+
+    if transport == TRANSPORT_LITELLM:
+        base_url = os.environ[LITELLM_BASE_URL_VAR].rstrip("/")
+        master_key = os.environ[LITELLM_MASTER_KEY_VAR]
+        client = _anthropic.AsyncAnthropic(
+            api_key=master_key,
+            base_url=base_url,
+            # The SDK authenticates with `x-api-key`; LiteLLM accepts that on its
+            # Anthropic route but treats `Authorization: Bearer` as its primary
+            # scheme. Sending both means auth does not hinge on which one this
+            # proxy build happens to prefer.
+            default_headers={"Authorization": f"Bearer {master_key}"},
+        )
+        return client, transport, reason, f"{base_url}/v1/messages"
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None, transport, reason, "https://api.anthropic.com/v1/messages"
+    return (_anthropic.AsyncAnthropic(api_key=api_key), transport, reason,
+            "https://api.anthropic.com/v1/messages")
+
+
+def _is_auth_failure(exc: Exception) -> bool:
+    """Did this exception come back as an HTTP 401/403?
+
+    Reads ``status_code`` off the exception rather than importing
+    ``anthropic.AuthenticationError``, so it stays correct if the SDK reshuffles
+    its exception hierarchy.
+    """
+    return getattr(exc, "status_code", None) in (401, 403)
 
 
 async def resolve_model(org_id=None, *, key: str = DEFAULT_MODEL_KEY) -> str:
@@ -224,13 +377,18 @@ async def _execute_chain(
     configured (preserving the pre-existing no-key contract); raises
     AIChainExhausted when every model in the chain fails.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
+    # Phase B: the ONLY change here is where `client` points. Everything below
+    # this block — the chain walk, timing, cost, logging, exhaustion — is the
+    # pre-Phase-B code, unmodified.
+    client, transport, transport_reason, endpoint = _build_ai_client()
+    if client is None:
+        print(
+            f"[ai_router] no usable credential for transport '{transport}' "
+            f"(task '{task_type}'): {transport_reason}"
+        )
         return None
-
-    import anthropic as _anthropic
-
-    client = _anthropic.AsyncAnthropic(api_key=api_key)
+    if transport_reason:
+        print(f"[ai_router] transport={transport}: {transport_reason}")
 
     primary = model_override or await resolve_model(org_id, key=model_key)
     chain = await resolve_fallback_chain(org_id, primary_key=model_key)
@@ -243,9 +401,35 @@ async def _execute_chain(
             message = await make_call(client, model_id)
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
+            if transport == TRANSPORT_LITELLM and _is_auth_failure(exc):
+                # Every model in the chain authenticates with the SAME master
+                # key, so continuing the walk would just replay the identical
+                # 401 once per model and then report the generic "all models
+                # failed" — burying an operator misconfiguration under a
+                # symptom. Stop here and say exactly what is wrong and how to
+                # fix it. Logged first, so the failure is on the record even
+                # though this path raises instead of returning None.
+                detail = (
+                    f"LiteLLM rejected {LITELLM_MASTER_KEY_VAR} with HTTP "
+                    f"{getattr(exc, 'status_code', '?')} at {endpoint}. No model "
+                    f"in the chain was tried beyond the first — they all use "
+                    f"this one key. Fix {LITELLM_MASTER_KEY_VAR} in Doppler "
+                    f"(and Render), or set {LITELLM_DISABLE_VAR}=1 to roll back "
+                    f"to direct Anthropic while you do. Underlying error: "
+                    f"{last_error}"
+                )
+                print(f"[ai_router] {detail}")
+                await _safe_log(
+                    org_id=org_id, task_type=task_type, model_requested=primary,
+                    model_used=model_id, fallback_used=False,
+                    fallback_reason=None, cost_usd=None,
+                    latency_ms=max(1, int((time.monotonic() - t0) * 1000)),
+                    success=False, error_detail=detail,
+                )
+                raise AILiteLLMAuthError(detail) from exc
             print(
                 f"[ai_router] model '{model_id}' failed for task "
-                f"'{task_type}': {last_error}"
+                f"'{task_type}' via {transport}: {last_error}"
             )
             continue
 
@@ -333,6 +517,11 @@ async def call_claude_json(
     except AIChainExhausted as exc:
         print(f"call_claude_json exhausted: {exc}")
         return None
+    except AILiteLLMAuthError:
+        # MUST come before the bare `except Exception` below, which would
+        # otherwise flatten a platform-wide auth misconfiguration into the same
+        # silent None as a single malformed JSON response.
+        raise
     except Exception as exc:  # unparseable response — preserve None contract
         print(f"call_claude_json failed: {exc}")
         return None

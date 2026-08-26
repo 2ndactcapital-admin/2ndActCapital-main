@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-26 (workflow scheduler — core engine)
+Last updated: 2026-08-26 (LiteLLM Phase B — text calls routed through LiteLLM)
 
 ## About this file
 
@@ -18,6 +18,109 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00. LiteLLM Phase B — routing BUILT, three real blockers to a first success (2026-08-26)
+
+**Status: built and verified, 68/68, with 5 BLOCKED.**
+`apps/api/scripts/verify_litellmphaseb.py`. The routing change is complete and
+the transport is proven against the live proxy. What is blocked is a *successful*
+generation, and it is blocked on three things outside the codebase.
+
+### What now exists
+
+- `services/extraction.py` — the platform's single AI chokepoint — now sends its
+  HTTP calls to the self-hosted LiteLLM proxy instead of straight to Anthropic.
+  It is a **transport swap at one function** (`_build_ai_client`): the fallback
+  chain, retry walk, cost model, `ai_decision_log` writes and error handling are
+  untouched, and `ai_decision_log` gained no columns.
+- **How, and why this way:** the Anthropic SDK is *pointed at* LiteLLM's base URL
+  rather than replaced. LiteLLM serves a real Anthropic-shaped
+  `POST /v1/messages` (confirmed live). Keeping the SDK means the response
+  objects reaching every `extract()` closure and `_compute_cost` stay genuine
+  Anthropic types, so `message.content[0].text`, `stop_reason`,
+  `block.model_dump()` and `usage.input_tokens` all keep working unchanged. The
+  OpenAI-shaped `/v1/chat/completions` route is *also* live and was measured, but
+  using it would have required hand-writing an OpenAI→Anthropic response adapter
+  (including `tool_calls`→`tool_use`) on the most load-bearing path in the
+  platform. That is a rewrite, not a transport swap.
+- **`LITELLM_ROUTING_DISABLED=1` — a real, tested rollback path.** Set it and
+  every AI call goes straight back to Anthropic, never contacting LiteLLM.
+  Verified both ways: the client's real `base_url` becomes `api.anthropic.com`,
+  and **zero rows appear in LiteLLM's own spend log** after waiting the full
+  flush window. It is an **environment variable, not an org_settings key**, on
+  purpose — it must keep working when the database is the unhappy thing, and an
+  `org_settings` read would need a working DB to report that the DB-independent
+  fallback is on. This is **not** design §7.5's future per-org `force_anthropic`.
+- **A wrong master key now fails loud.** `AILiteLLMAuthError` names the variable,
+  the endpoint, the HTTP status and the remedy, is still recorded in
+  `ai_decision_log`, and does **not** walk the chain (every model shares the one
+  key). It deliberately propagates through all three `call_claude_*` wrappers
+  instead of being flattened into their usual `None`.
+
+### GAP CLOSED — `LITELLM_BASE_URL` now exists in Doppler
+
+The item below (and `render.yaml`'s note) recorded `LITELLM_BASE_URL` as the one
+`LITELLM_*` variable genuinely missing from Doppler. **It was still missing, and
+this sprint added it** to `hollisworks/prd`, pointing at the live
+`https://hollisworks-litellm.onrender.com`. Verified by re-reading it back.
+
+### ACTION REQUIRED — three blockers to a first successful call
+
+None of these are code. All three need console access.
+
+1. **The proxy has ZERO model deployments.** `GET /v1/models` returns
+   `{"data":[]}`; `GET /model/info` returns HTTP 500 *"LLM Model List not loaded
+   in"*. LiteLLM cannot route any model name. Corroborated independently: **every
+   row LiteLLM has ever written to its own spend log is `status=failure`** — the
+   proxy has never successfully served a single call.
+2. **Doppler's `LITELLM_MASTER_KEY` is NOT the proxy's master key.** LiteLLM
+   reports `role=internal_user` and refuses `POST /model/new` with HTTP 403
+   *"only if you are a PROXY_ADMIN"*. It is a virtual/internal-user key. So this
+   sprint could not fix blocker 1 either. **This also corrects the note below:**
+   adding `LITELLM_BASE_URL` does *not* by itself unblock
+   `litellm.reload_model_cost_map` — that admin endpoint needs PROXY_ADMIN, so it
+   will still fail, now with a 403 rather than a `LiteLLMConfigError`.
+3. **`ANTHROPIC_API_KEY` exists nowhere** — not in Doppler `prd` (all 35 secret
+   names enumerated), not in `~/.bashrc`, not in `apps/api/.env`. Neither
+   LiteLLM's upstream nor the direct-Anthropic rollback path has a provider
+   credential. AWS Bedrock is not an alternative: the existing `AWS_*` creds are
+   the Textract-only IAM user and `bedrock:ListFoundationModels` returns
+   `AccessDeniedException`.
+
+**Order to unblock:** obtain the real PROXY_ADMIN master key (2) → store a
+provider key (3) → register a model deployment (1) → re-run
+`verify_litellmphaseb.py`, which will convert the 5 BLOCKED items to PASS.
+
+### What IS proven, against the live proxy
+
+- Requests genuinely reach LiteLLM. The error text returned — *"Invalid model
+  name passed in model=…"* — is generated by LiteLLM itself; neither our code nor
+  `api.anthropic.com` emits that string.
+- The fallback chain still walks every model, in order, via LiteLLM, proven with
+  a real forced-failure primary.
+- **Dual visibility is real.** The same call appears in *both* `ai_decision_log`
+  and `litellm."LiteLLM_SpendLogs"`, naming the same models in the same order and
+  agreeing on the outcome. **Measured, and it matters: LiteLLM flushes that table
+  asynchronously, seconds after answering.** A before/after count taken around
+  the call sees nothing — an earlier draft of the verify script reported a false
+  negative for exactly this reason. Any assertion about that log, presence *or*
+  absence, must poll across the flush window.
+- `ai_decision_log`'s shape is unchanged, compared column-by-column and
+  type-by-type against a real pre-sprint row.
+
+### Deploy note
+
+`LITELLM_ROUTING_DISABLED` is **not** declared in `render.yaml` — it is an
+break-glass switch, and a declared-but-unset variable invites someone to set it
+permanently. Set it directly in the Render dashboard if the proxy misbehaves.
+Until blockers 1–3 clear, production is on the **degraded** path: LiteLLM is
+configured, so calls route to it, and they will fail. **If Phase B is deployed
+before those blockers clear, set `LITELLM_ROUTING_DISABLED=1` in Render at the
+same time** — but note blocker 3 means direct Anthropic has no key either, so AI
+features are non-functional in production regardless, exactly as they were
+before this sprint.
 
 ---
 
@@ -66,6 +169,13 @@ migrated 77-table `litellm` schema. `LITELLM_BASE_URL` and `LITELLM_MASTER_KEY`
 are now declared on the API service. **`LITELLM_BASE_URL` is still absent from
 Doppler**, which is why `litellm.reload_model_cost_map` still raises
 `LiteLLMConfigError` even though the proxy is up — see item 2.
+
+> **SUPERSEDED by item 00 (LiteLLM Phase B, same day).** `LITELLM_BASE_URL` has
+> now been added to Doppler `prd`. And the inference in the last sentence was
+> wrong: adding it does **not** unblock `litellm.reload_model_cost_map`. The
+> stored `LITELLM_MASTER_KEY` is an `internal_user` virtual key, not the proxy's
+> PROXY_ADMIN master key, so that admin endpoint still fails — now with HTTP 403
+> instead of `LiteLLMConfigError`.
 
 ### ACTION REQUIRED — deploy the cron service
 

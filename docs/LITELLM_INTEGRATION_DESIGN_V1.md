@@ -165,8 +165,8 @@ Confirmed: zero existing call sites. This section is unconstrained by legacy int
 
 | Phase | Scope |
 |---|---|
-| **A** | LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed. Security posture from §10 established first — pinned version, master/salt key handling decided — before any real traffic. |
-| **B** | The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM. |
+| **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE, but only partly.** The proxy is live and the `litellm` schema is migrated (77 tables). **It has ZERO model deployments and has never successfully routed a call** — every row in its own spend log is `status=failure`. The `render.yaml` service-adoption gap is still open. |
+| **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **COMPLETE (2026-08-26), 68/68, 5 BLOCKED** — `verify_litellmphaseb.py`. See §14.1. |
 | **C** | Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism. |
 | **D** | Model pick-list screen (org-scoped, filterable, LiteLLM metadata-driven). |
 | **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
@@ -175,3 +175,92 @@ Confirmed: zero existing call sites. This section is unconstrained by legacy int
 | **H** | The recommendation tool (§9). |
 | **I** | Voice, as its own build (§12). |
 | **Later** | Guardrails proper (§8, §11) — content filtering, prompt-injection defense, DeepEval floors. |
+
+---
+
+## 14.1 · Phase B — what actually shipped (2026-08-26)
+
+`apps/api/scripts/verify_litellmphaseb.py` — **68/68 PASS, 5 BLOCKED.**
+
+### The routing change
+
+`services/extraction.py` routes through the live proxy. One function
+(`_build_ai_client`) decides the transport; the chain walk, cost model,
+`ai_decision_log` writes and error handling are untouched, and `ai_decision_log`
+gained **no columns**.
+
+**Endpoint, measured against the live instance rather than assumed.** All three
+are mounted and answer:
+
+| Route | Status |
+|---|---|
+| `POST /v1/chat/completions` | live (OpenAI shape) |
+| `POST /chat/completions` | live, equivalent to the above |
+| `POST /v1/messages` | live, **Anthropic shape** — the one Phase B uses |
+
+**Decision: point the Anthropic SDK at LiteLLM rather than replace it.**
+`AsyncAnthropic(api_key=<master key>, base_url=<LITELLM_BASE_URL>)` posts to
+LiteLLM's `/v1/messages`, so responses stay genuine Anthropic objects and every
+`extract()` closure, `_compute_cost`, and the tool-use `block.model_dump()` path
+keep working with **zero** changes. §5 above said "OpenAI-compatible endpoint",
+written before deployment; using it would mean hand-writing an OpenAI→Anthropic
+response adapter (including `tool_calls`→`tool_use`) on the single most
+load-bearing path in the platform. That is a rewrite, and §5's phrasing was
+shorthand for "through the proxy", not a requirement to reshape every response.
+Both auth schemes are sent (`x-api-key` via the SDK plus an explicit
+`Authorization: Bearer`), so auth does not hinge on which one a proxy build
+prefers.
+
+### The rollback path — real, tested
+
+`LITELLM_ROUTING_DISABLED=1` reverts every call to direct Anthropic, never
+contacting LiteLLM. Proven both by the client's real `base_url` and by **zero
+rows in LiteLLM's own spend log** after waiting the full flush window.
+
+An **environment variable, not an `org_settings` key** — deliberate. It follows
+the established external-service convention (`portfolio_altruist.py`,
+`LITELLM_ENV_VARS` in `litellm_ops.py`), it is platform-wide rather than
+per-org, and it must keep working when the database is the unhappy thing; an
+`org_settings` read would need a working DB to report that the DB-independent
+fallback is on. **This is not §7.5's `force_anthropic`** — that remains a future,
+per-org, UI-driven, Hollis-admin-facing capability. Different audience, lifetime
+and mechanism.
+
+Deliberately absent: any "LiteLLM is configured but the call failed → quietly
+retry against Anthropic" path. An *unconfigured* proxy degrades to direct
+Anthropic with a loud printed reason (so deploying before the env var lands does
+not brick AI); a *configured but broken* proxy fails loudly. Silently healing the
+latter would let the platform stop routing through LiteLLM with nobody noticing.
+
+### §13's open question 1, now answered by evidence
+
+*"Retire `ai_decision_log` in favour of LiteLLM's spend log, or keep both?"* —
+**keep both.** Phase B measured them side by side and they are genuinely
+different records: `ai_decision_log` captured the policy decision (requested vs
+used, `fallback_used`, the reason) while `LiteLLM_SpendLogs` captured each
+execution attempt. The same call is correlatable across the two by model name and
+ordering.
+
+**A real operational property, measured:** LiteLLM writes `LiteLLM_SpendLogs`
+**asynchronously**, seconds after answering the request. A before/after count
+taken around a call sees no change — an earlier draft of the verify script
+reported a false negative for exactly this reason. **Any assertion or reporting
+query against that table — presence or absence — must tolerate the flush lag.**
+This matters directly for Phase G's billing surfaces.
+
+### Blocked, and on what
+
+Phase A is live but **not usable for traffic**. Three external blockers, none of
+them code, all needing console access — full detail in
+`docs/PROJECT_STATUS.md` item 00:
+
+1. The proxy has **zero model deployments** (`/v1/models` → `{"data":[]}`).
+2. Doppler's `LITELLM_MASTER_KEY` is an **`internal_user` virtual key, not
+   PROXY_ADMIN** — so this sprint could not register one either. This also means
+   `litellm.reload_model_cost_map` remains blocked despite the `LITELLM_BASE_URL`
+   fix, contrary to `render.yaml`'s note.
+3. **`ANTHROPIC_API_KEY` exists nowhere.** Bedrock is not an alternative — the
+   existing `AWS_*` creds are Textract-only and Bedrock returns `AccessDenied`.
+
+**Gap closed by this sprint:** `LITELLM_BASE_URL` was still absent from Doppler
+`prd` and is now set to the live Render URL, verified by read-back.
