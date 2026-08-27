@@ -2,6 +2,95 @@
 -- DO NOT EDIT BY HAND.
 -- Regenerate: cd apps/api && DATABASE_URL='...' python scripts/refresh_schema.py
 
+-- ===== account_balances_daily =====
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   as_of_date                               date NOT NULL
+--   total_market_value                       numeric NOT NULL
+--   cash_value                               numeric NOT NULL DEFAULT 0
+--   margin_balance                           numeric NOT NULL DEFAULT 0
+--   accrued_income                           numeric NOT NULL DEFAULT 0
+--   source_system                            text NOT NULL
+--   source_confidence                        text NOT NULL DEFAULT 'CONFIRMED'::text
+--   is_billing_source                        boolean NOT NULL DEFAULT false
+--   is_final                                 boolean NOT NULL DEFAULT false
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY account_balances_daily_pkey: (org_id, account_id, as_of_date, source_system)
+
+-- ===== account_flows =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   flow_date                                date NOT NULL
+--   amount                                   numeric NOT NULL
+--   flow_type                                text NOT NULL
+--   is_billable_flow                         boolean NOT NULL DEFAULT true
+--   counterparty_account_id                  uuid
+--   source_system                            text NOT NULL
+--   import_batch_id                          uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_flows_pkey: (id)
+
+-- ===== account_import_batches =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   custodian_code                           text NOT NULL
+--   source_filename                          text
+--   imported_by                              uuid
+--   row_count                                integer NOT NULL DEFAULT 0
+--   matched_count                            integer NOT NULL DEFAULT 0
+--   unmatched_count                          integer NOT NULL DEFAULT 0
+--   status                                   text NOT NULL DEFAULT 'DRY_RUN'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY account_import_batches_pkey: (id)
+
+-- ===== account_owners =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   ownership_pct                            numeric NOT NULL
+--   role                                     text NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_owners_pkey: (id)
+
+-- ===== accounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_number_masked                    text NOT NULL
+--   account_number_hash                      text NOT NULL
+--   custodian_code                           text NOT NULL
+--   custodian_account_id                     text
+--   registration_type                        text NOT NULL
+--   tax_status                               text NOT NULL
+--   primary_entity_id                        uuid NOT NULL
+--   household_id                             uuid
+--   advisor_of_record_id                     uuid
+--   service_model                            text
+--   is_billable                              boolean NOT NULL DEFAULT true
+--   is_discretionary                         boolean NOT NULL DEFAULT true
+--   is_held_away                             boolean NOT NULL DEFAULT false
+--   opened_on                                date
+--   closed_on                                date
+--   base_currency                            text NOT NULL DEFAULT 'USD'::text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY accounts_pkey: (id)
+
 -- ===== ai_decision_log =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
