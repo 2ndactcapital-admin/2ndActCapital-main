@@ -12,17 +12,23 @@ no stubs, no mocked scheduler, no hand-written todo rows where a real one
 would do):
 
   [Task 1a] There is NO warning of any kind for a schedule that keeps SKIPPING.
-            Measured from the pre-sprint source as git actually holds it: a
-            skip lands in a returned dataclass and a log line, and the only
-            process that calls the tick prints that log and exits. Reported as
-            a real gap — and deliberately NOT built, with the reason stated.
+            Still true of the code as it stands, and measured that narrowly:
+            the scheduler is PARSED and only the branches that record a skip
+            are searched for a durable write, the tick's only caller is checked
+            for persistence, and the database is asked whether any column could
+            hold a consecutive-skip count. A skip lands in a returned dataclass
+            and a log line and nowhere else. Reported as a real gap — and
+            deliberately NOT built, with the reason stated.
   [Task 1b] The two orphaned ``workflow_run_held`` todos are NOT "silently
             inert" in the way the prompt supposed, and not harmless either.
             Proven both directions against the live rows: they DO come back
             from the dashboard's own query, and they CANNOT be reached from
             the run console, because the run they name does not exist.
-  [Task 1c] Nothing anywhere warns that a schedule is about to stop. Proven by
-            searching the pre-sprint tree for any such marker. Confirmed gap.
+  [Task 1c] Nothing anywhere warned that a schedule is about to stop. Proven by
+            searching the pre-sprint tree for any such marker — the tree LOCATED
+            by pre_sprint_ref(), not HEAD, because Task 3 built precisely this
+            warning and HEAD would hand back the sprint's own answer as evidence
+            the gap never existed. Confirmed gap.
   [Task 2]  The REAL live orphans are resolved by a REAL tick, and a NEW orphan
             manufactured the way the real ones were made — a held run's alert,
             then the run deleted — is cleaned up by the next tick. A held-run
@@ -40,6 +46,7 @@ would do):
 
 Run:  apps/api/venv/bin/python apps/api/scripts/verify_schedulernotify.py
 """
+import ast
 import asyncio
 import pathlib
 import subprocess
@@ -146,17 +153,94 @@ class Capture:
         return "\n".join(self.lines)
 
 
-def git_show(rel_path: str) -> str:
-    """The file as HEAD holds it — i.e. BEFORE this sprint's edits.
-
-    Task 1 asks what was missing. Reading the working tree would answer that
-    question with this sprint's own additions in it.
-    """
+def git_text(args: list[str]) -> str:
+    """``git <args>`` in this repo, stdout only, empty string on any failure."""
     out = subprocess.run(
-        ["git", "-C", str(REPO), "show", f"HEAD:{rel_path}"],
-        capture_output=True, text=True, timeout=60,
+        ["git", "-C", str(REPO), *args], capture_output=True, text=True, timeout=60,
     )
     return out.stdout if out.returncode == 0 else ""
+
+
+def git_show(rel_path: str, ref: str = "HEAD") -> str:
+    """The file as ``ref`` holds it; empty string if it did not exist there."""
+    return git_text(["show", f"{ref}:{rel_path}"])
+
+
+# A name this sprint INTRODUCED. The commit that first added it is therefore
+# this sprint's commit, and its parent is the tree Task 1 is asking about.
+_SPRINT_MARKER = "dismiss_orphaned_run_alerts"
+_SPRINT_MARKER_PATH = "apps/api/services/workflow_todos.py"
+
+
+def pre_sprint_ref() -> str:
+    """The tree as it stood BEFORE this sprint's own additions.
+
+    Task 1 asks what was MISSING, so it needs a reference point that this
+    sprint's answers are not already part of. The first version of this script
+    used ``HEAD``, which was right exactly once — while the sprint was still
+    uncommitted. The moment it landed, HEAD became the tree WITH the orphan
+    sweep and the expiring-schedule warning in it, and three discovery checks
+    began reading this sprint's own work back as proof that the gap never
+    existed: 1a saw the sweep's ``import workflow_todos``, 1b saw the sweep
+    itself, 1c saw the expiring alert.
+
+    So the reference point is LOCATED, not assumed and not hard-coded to a sha:
+    ``git log -S`` names the commit that first introduced the sweep, and its
+    parent is the pre-sprint tree. Before that commit exists the marker is not
+    in history at all and HEAD is once again the correct answer, so this reads
+    the same tree whether the sprint is committed or not.
+    """
+    shas = git_text(["log", "--format=%H", "-S", _SPRINT_MARKER,
+                     "--", _SPRINT_MARKER_PATH]).split()
+    return f"{shas[-1]}^" if shas else "HEAD"
+
+
+def skip_branch_writers(rel_path: str) -> tuple[list[str], list[str]]:
+    """(durable writes inside a SKIP branch, every todo writer in the file).
+
+    The narrow question 1a asks is whether a SKIP ever becomes durable. "Does
+    workflow_scheduler.py call a todo writer at all" is a different question,
+    and since Tasks 2 and 3 it answers *yes* for two reasons that have nothing
+    to do with skipping — which is exactly how the first version of this check
+    went wrong. So the file is parsed instead of grepped: every branch that
+    appends to ``TickResult.skipped`` is found, and only that branch is searched
+    for a call that would outlive the tick.
+
+    The second list is printed, not asserted on, so a reader can see WHY the
+    file writes todos and judge for themselves that neither reason is a skip.
+    """
+    tree = ast.parse((REPO / rel_path).read_text())
+
+    def records_a_skip(node) -> bool:
+        return any(
+            isinstance(n, ast.Attribute) and n.attr == "skipped"
+            and isinstance(n.value, ast.Name) and n.value.id == "result"
+            for n in ast.walk(node)
+        )
+
+    def durable_calls(node) -> list[str]:
+        out = []
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)):
+                continue
+            owner = getattr(n.func.value, "id", "")
+            if owner == "workflow_todos" or n.func.attr in (
+                "execute", "executemany", "fetch", "fetchrow", "fetchval",
+            ):
+                out.append(f"{owner}.{n.func.attr}" if owner else n.func.attr)
+        return out
+
+    in_skip_branch = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and records_a_skip(node):
+            in_skip_branch += durable_calls(node)
+
+    todo_writers = sorted({
+        f"workflow_todos.{n.func.attr}" for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and getattr(n.func.value, "id", "") == "workflow_todos"
+    })
+    return sorted(set(in_skip_branch)), todo_writers
 
 
 def trivial_bpmn(proc_id) -> str:
@@ -331,38 +415,65 @@ async def teardown(conn):
 async def task1_report(conn):
     from services import workflow_todos
 
-    print("\n" + "=" * 74)
-    print("TASK 1 — DISCOVERY (measured live and from HEAD, not quoted)")
-    print("=" * 74)
+    pre_ref = pre_sprint_ref()
+    pre_sha = git_text(["rev-parse", "--short", pre_ref]).strip() or pre_ref
 
-    pre_sched = git_show("apps/api/services/workflow_scheduler.py")
-    pre_todos = git_show("apps/api/services/workflow_todos.py")
-    pre_tick = git_show("apps/api/workflow_scheduler_tick.py")
+    print("\n" + "=" * 74)
+    print("TASK 1 — DISCOVERY (measured live, not quoted)")
+    print("=" * 74)
+    print(f"\n  The tree Task 1 measures against, for the questions that are "
+          f"about\n  what was MISSING: {pre_ref} ({pre_sha}) — the commit "
+          f"BEFORE this sprint's own\n  sweep and expiring-schedule warning "
+          f"were added. See pre_sprint_ref().")
+
+    pre_todos = git_show("apps/api/services/workflow_todos.py", pre_ref)
 
     # ── 1a — a WARNING for a schedule that keeps SKIPPING ───────────────────
+    # Asked of the code AS IT STANDS TODAY, on purpose: this gap was not closed
+    # this sprint, so the finding is present-tense and needs no historical tree.
     print("\n  1a. Is there ANY alert for a scheduled trigger that keeps skipping?")
-    print("      Where a skip goes, in the code as HEAD holds it:")
+    print("      Where a skip goes, in the code as it stands right now:")
     print("        * evaluate_trigger returns ScheduleDecision(due=False, reason=…)")
     print("        * the tick logs it and appends to TickResult.skipped")
     print("        * the OVERLAP skip is logged loudly as 'SKIP-OVERLAP'")
     print("        * workflow_scheduler_tick.py prints the summary and exits")
-    # Measured as a CALL, not as a mention: the pre-sprint scheduler names
-    # workflow_todos.create_held_run_alerts in its docstring — describing what
-    # the ENGINE does to a held run — while never importing or invoking it.
-    writes_todo = ("await workflow_todos." in pre_sched
-                   or "import workflow_todos" in pre_sched
-                   or "workflow_engine, workflow_todos" in pre_sched)
-    persists = any(w in pre_tick for w in ("INSERT", "member_todos", "notification"))
-    print(f"        pre-sprint workflow_scheduler.py CALLS a todo/notification "
-          f"writer   : {writes_todo}")
-    print(f"        pre-sprint workflow_scheduler_tick.py persists the tick "
-          f"result anywhere   : {persists}")
+    # NARROW BY CONSTRUCTION. Not "does this file write todos" — it does, twice,
+    # and neither is about a skip. The three things that would have to be true
+    # for a consecutive-skip alert to exist are asked one at a time:
+    #   (1) a skip branch writing something that outlives the tick,
+    #   (2) the only process that calls the tick persisting the result,
+    #   (3) a column anywhere that could hold a consecutive-skip count.
+    in_skip_branch, todo_writers = skip_branch_writers(
+        "apps/api/services/workflow_scheduler.py")
+    tick_src = (REPO / "apps/api/workflow_scheduler_tick.py").read_text()
+    persists = any(w in tick_src for w in ("INSERT", "member_todos", "notification"))
+    skip_columns = [f"{r['table_name']}.{r['column_name']}" for r in await conn.fetch(
+        """SELECT table_name, column_name FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND (column_name ILIKE '%skip%' OR column_name ILIKE '%consecutive%')
+           ORDER BY table_name, column_name""")]
+    todos_src = (REPO / "apps/api/services/workflow_todos.py").read_text()
+    skip_sources = [ln.split("=")[0].strip() for ln in todos_src.splitlines()
+                    if ln.startswith("TODO_SOURCE") and "skip" in ln.lower()]
+    print(f"        durable writes inside a branch that records a SKIP        "
+          f": {in_skip_branch or 'none'}")
+    print(f"        (for contrast, every todo writer the scheduler calls at all"
+          f": {todo_writers} — the Task 2 sweep and the Task 3 expiry notice, "
+          f"neither reached from a skip)")
+    print(f"        workflow_scheduler_tick.py persists the tick result anywhere"
+          f"  : {persists}")
+    print(f"        member_todos source markers about skipping                "
+          f": {skip_sources or 'none'}")
+    print(f"        columns in the database that could hold a skip count      "
+          f": {skip_columns or 'none'}")
     check("[Y] TASK 1a — FINDING, reported honestly: NO warning-level alert "
           "exists for a schedule that is consistently SKIPPING. A skip is "
           "visible ONLY in the cron process's stdout and in a dataclass that "
           "nothing stores. This IS a real gap",
-          not writes_todo and not persists,
-          "skips reach a log line and an in-memory TickResult; nothing durable")
+          not in_skip_branch and not persists and not skip_sources
+          and not skip_columns,
+          "skips reach a log line and an in-memory TickResult; nothing durable, "
+          "and no column exists that a skip count could go in")
     print("\n      NOT BUILT THIS SPRINT, and the reason is not 'no time':")
     print("      'consistently skipping' is a statement about a RUN of ticks, and")
     print("      nothing persists tick outcomes — there is no column or table")
@@ -456,12 +567,25 @@ async def task1_report(conn):
           f"{reachable} of {len(orphans)} orphaned runs still exist; "
           f"router 404s on a missing run = {router_404}")
 
-    had_cleanup = "NOT EXISTS" in pre_todos and "dismiss" in pre_todos.lower()
+    # ORPHAN HANDLING SPECIFICALLY, and read at the pre-sprint ref. The sweep
+    # this sprint wrote lives in this very file, so asking HEAD "does
+    # workflow_todos.py close orphaned alerts" answers with this sprint's own
+    # work. Three parts, all of which a sweep must have: it must name
+    # workflow_runs, it must key on that row's ABSENCE, and it must close the
+    # todo rather than merely read it.
+    names_runs = "workflow_runs" in pre_todos
+    anti_join = "NOT EXISTS" in pre_todos
+    closes = "dismiss" in pre_todos.lower()
+    had_cleanup = names_runs and anti_join and closes
+    print(f"\n      workflow_todos.py at {pre_sha} — the three things an orphan "
+          f"sweep needs:")
+    print(f"        names workflow_runs: {names_runs}   keys on its absence "
+          f"(NOT EXISTS): {anti_join}   closes the todo: {closes}")
     check("[Y] TASK 1b — and NOTHING closed them: the pre-sprint "
           "workflow_todos.py has no orphan handling at all, so a stranded "
           "alert stays open forever unless its recipient dismisses it by hand",
           not had_cleanup,
-          "pre-sprint workflow_todos.py has no sweep")
+          f"workflow_todos.py at {pre_sha} has no sweep")
 
     # The real, recurring cause — named, not guessed.
     deleters = []
@@ -488,18 +612,19 @@ async def task1_report(conn):
           f"teardowns")
 
     # ── 1c — the end-of-life warning ───────────────────────────────────────
-    # Product code only. apps/api/scripts holds an unrelated verify script that
-    # says "expiring" about an access token, and counting it would turn a real
-    # measurement into a word match.
-    tree = subprocess.run(
-        ["git", "-C", str(REPO), "grep", "-il",
-         "expiring\\|occurrences remaining\\|will stop running", "HEAD", "--",
-         "apps/api/services", "apps/api/routers", "apps/web/app",
-         "apps/web/components"],
-        capture_output=True, text=True, timeout=60).stdout.split()
-    print(f"\n  1c. Anything anywhere warning a schedule is about to stop? "
-          f"HEAD matches: {tree or 'none'}")
-    print("      What HEAD does with the bounds instead:")
+    # Product code only, at the PRE-SPRINT ref. Two scopings, both load-bearing:
+    #   * the ref, because Task 3 built exactly this warning — searching HEAD
+    #     finds the sprint's own answer and calls the gap imaginary;
+    #   * the paths, because apps/api/scripts holds an unrelated verify script
+    #     that says "expiring" about an access token, and counting it would
+    #     turn a real measurement into a word match.
+    tree = git_text(
+        ["grep", "-il", "expiring\\|occurrences remaining\\|will stop running",
+         pre_ref, "--", "apps/api/services", "apps/api/routers", "apps/web/app",
+         "apps/web/components"]).split()
+    print(f"\n  1c. Anything warning a schedule is about to stop, before this "
+          f"sprint?\n      matches at {pre_sha}: {tree or 'none'}")
+    print("      What that tree does with the bounds instead:")
     print("        evaluate_trigger returns 'max_occurrences reached (3/3)' and")
     print("        'past end_date …' — reasons for NOT firing, produced only")
     print("        once the schedule has ALREADY stopped, and delivered to a log.")
@@ -508,7 +633,7 @@ async def task1_report(conn):
           "did not arrive. The only mention of the bounds is a skip reason "
           "emitted after the last run has already happened",
           not tree,
-          "no pre-sprint code mentions an expiring or ending schedule")
+          f"no code at {pre_sha} mentions an expiring or ending schedule")
 
     return {
         "open": [o["id"] for o in open_orphans],

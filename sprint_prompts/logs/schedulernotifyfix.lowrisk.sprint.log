@@ -1,0 +1,134 @@
+==========================================================================
+verify_schedulernotify.py — scheduler notifications
+==========================================================================
+[doppler] hydrated 37 secrets
+[doppler] DATABASE_URL password was stale; substituted DB_PASSWORD
+
+[setup] parked 1 foreign scheduled trigger(s) for the duration
+
+==========================================================================
+TASK 1 — DISCOVERY (measured live, not quoted)
+==========================================================================
+
+  The tree Task 1 measures against, for the questions that are about
+  what was MISSING: f6b009bdd699416c60b80697e07ae526ad98389b^ (b219cdf) — the commit BEFORE this sprint's own
+  sweep and expiring-schedule warning were added. See pre_sprint_ref().
+
+  1a. Is there ANY alert for a scheduled trigger that keeps skipping?
+      Where a skip goes, in the code as it stands right now:
+        * evaluate_trigger returns ScheduleDecision(due=False, reason=…)
+        * the tick logs it and appends to TickResult.skipped
+        * the OVERLAP skip is logged loudly as 'SKIP-OVERLAP'
+        * workflow_scheduler_tick.py prints the summary and exits
+        durable writes inside a branch that records a SKIP        : none
+        (for contrast, every todo writer the scheduler calls at all: ['workflow_todos.create_trigger_expiring_alerts', 'workflow_todos.dismiss_orphaned_run_alerts'] — the Task 2 sweep and the Task 3 expiry notice, neither reached from a skip)
+        workflow_scheduler_tick.py persists the tick result anywhere  : False
+        member_todos source markers about skipping                : none
+        columns in the database that could hold a skip count      : none
+[PASS] [Y] TASK 1a — FINDING, reported honestly: NO warning-level alert exists for a schedule that is consistently SKIPPING. A skip is visible ONLY in the cron process's stdout and in a dataclass that nothing stores. This IS a real gap  — skips reach a log line and an in-memory TickResult; nothing durable, and no column exists that a skip count could go in
+
+      NOT BUILT THIS SPRINT, and the reason is not 'no time':
+      'consistently skipping' is a statement about a RUN of ticks, and
+      nothing persists tick outcomes — there is no column or table
+      holding a consecutive-skip count, and adding one is a schema
+      change this sprint has no Part 1 SQL for. Task 3 asked for the
+      end-of-life warning specifically; inventing a second alert on a
+      state the database cannot yet express would be the manufactured
+      work the prompt told us not to do. Recorded as an open gap.
+
+  1b. Held-run alert todos whose run is GONE, live right now: 2  (0 still open, 2 already closed by this sprint's sweep)
+        todo d92daf92… status=dismissed → run ec0c41e7… (gone)  recipient=jpl99172@gmail.com role=org_admin  created 2026-08-26T13:24:13.584581+00:00
+        todo baa0bcb3… status=dismissed → run 3295800f… (gone)  recipient=jpl99172@gmail.com role=org_admin  created 2026-08-26T13:24:17.412956+00:00
+[PASS] [Y] TASK 1b — the orphans belong to REAL org admins, not to leftover fixture users: create_held_run_alerts fans out to every users.role='org_admin' in the org, so a teardown scoped to its own fixture user ids strands the real admins' copies  — 2 orphan(s), 0 of them on fixture users
+
+      Reaching their recipient's dashboard right now (routers/dashboard.py list_todos' filter: user + org + status='open'): 0/2
+[PASS] [Y] TASK 1b — SAME FINDING, seen from the other side: these orphans WERE reaching a real admin's dashboard (they are status='open' rows, which is the only thing list_todos and the brief block filter on) and this sprint's sweep has since closed every one, so none reaches it now  — 0 still on a dashboard; 2 of 2 closed by the sweep, each carrying its reason
+[PASS] [Y] TASK 1b — but they are UNRESOLVABLE IN CONTEXT: the alert's action_key points at the run console, GET /admin/workflow-runs/{id} 404s when the run is missing, so the pane that would explain the alert can never render. Half-visible, wholly unactionable  — 0 of 2 orphaned runs still exist; router 404s on a missing run = True
+
+      workflow_todos.py at b219cdf — the three things an orphan sweep needs:
+        names workflow_runs: False   keys on its absence (NOT EXISTS): False   closes the todo: True
+[PASS] [Y] TASK 1b — and NOTHING closed them: the pre-sprint workflow_todos.py has no orphan handling at all, so a stranded alert stays open forever unless its recipient dismisses it by hand  — workflow_todos.py at b219cdf has no sweep
+
+      THE REAL CAUSE, before choosing a fix:
+        production code paths that DELETE a workflow_runs row : 0 []
+        verify teardowns that delete runs and NEVER touch member_todos: ['verify_chancery7.py', 'verify_workflowmgr1.py', 'verify_workflowpermsfix.py']
+[PASS] [Y] TASK 1b — the cause is real and recurring, and it is NOT a production deleter: no router or service deletes a workflow_runs row at all. Every deleter in the repo is a test teardown, and several clean up no todos whatsoever — so a one-time data migration would be stale again the next time one of them runs  — 0 production deleters, 3 unguarded teardowns
+
+  1c. Anything warning a schedule is about to stop, before this sprint?
+      matches at b219cdf: none
+      What that tree does with the bounds instead:
+        evaluate_trigger returns 'max_occurrences reached (3/3)' and
+        'past end_date …' — reasons for NOT firing, produced only
+        once the schedule has ALREADY stopped, and delivered to a log.
+[PASS] [Y] TASK 1c — FINDING: there is NO forward-looking warning. A bounded schedule simply goes quiet; the first sign is a report that did not arrive. The only mention of the bounds is a skip reason emitted after the last run has already happened  — no code at b219cdf mentions an expiring or ending schedule
+
+==========================================================================
+TASK 2 — the orphaned-alert sweep
+==========================================================================
+[PASS] [Y] the fixture alerts were written by the REAL create_held_run_alerts, and reached the org's real admins too — which is what makes the orphan scenario the real one  — org1 orphan=5 recipients, org2 orphan=2, living=5
+[PASS] [Y] deleting the runs really does strand their alerts — the todos survive the run's deletion, open and pointing at nothing (member_todos.related_id is polymorphic and carries no FK)  — 7 stranded alert todo(s)
+[PASS] [Y] TASK 2: the org-scoped sweep dismissed org 2's orphaned alerts, and dismissed EXACTLY those — the returned count matches the rows that actually changed  — swept=2, statuses=['dismissed', 'dismissed']
+[PASS] [Y] CROSS-ORG: and left org 1's orphan strictly alone — same condition, different tenant, untouched  — org1 statuses=['open', 'open', 'open', 'open', 'open']
+[PASS] [Y] CROSS-ORG: and the REAL orphans, org 1's, are untouched by an org 2 sweep — they were already closed by an earlier real tick of this same code and stay closed  — 2 of 2 still dismissed
+[PASS] [Y] and the alert whose run STILL EXISTS is untouched — the sweep keys on the run's absence, not on the source marker  — living-run alert statuses=['open', 'open', 'open', 'open', 'open']
+[PASS] [Y] a dismissed orphan says WHY it was dismissed, and is dismissed rather than deleted — the record that a run really held stays auditable, it just stops demanding action  —  scenario, org 2 [Auto-dismissed: the workflow run this alert points to no longer exists.]
+
+==========================================================================
+TASK 3 — the expiring-schedule warning, and TASK 2's live proof
+==========================================================================
+
+  Fixture cron '29 5 * * *' (UTC) is due at the injected instant 2026-08-27T05:29:00+00:00,
+  and again 24h later at 2026-08-28T05:29:00+00:00. Both ticks below are REAL:
+  the same run_scheduler_tick apps/api/workflow_scheduler_tick.py calls.
+
+  ── TICK 1 (real) ──
+        │ [scheduler] tick at 2026-08-27T05:29:00+00:00 (lookback 60m, 15 actions registered)
+        │ [scheduler] SWEEP  dismissed 5 held-run alert todo(s) whose run no longer exists
+        │ [scheduler] EXPIRING trigger=99000000-0000-0000-0000-00000000b1e1 org=00000000-0000-0000-0000-000000000001 — Schedule ending — one run left; alerted 5 recipient(s)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e1 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY Cap' — run 2bc63fb4-39d2-4a9f-b5b1-a41a94e6d9da status=completed for occurrence 2026-08-27T05:29:00+00:00 (fire #2)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e2 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY Many' — run 78ed7df9-2d8a-49a9-a384-5a83f46f452e status=completed for occurrence 2026-08-27T05:29:00+00:00 (fire #1)
+        │ [scheduler] EXPIRING trigger=99000000-0000-0000-0000-00000000b1e3 org=00000000-0000-0000-0000-000000000001 — Schedule ending — one run left; alerted 5 recipient(s)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e3 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY EndDate' — run f139e573-dc14-4535-a023-e383bb16b1c2 status=completed for occurrence 2026-08-27T05:29:00+00:00 (fire #1)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e4 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY Unbounded' — run b36ff79f-bc42-4db9-b77e-3240f50fa5a8 status=completed for occurrence 2026-08-27T05:29:00+00:00 (fire #1)
+        │ [scheduler] EXPIRING trigger=99000000-0000-0000-0000-00000000b1e5 org=bb347258-8f28-4f49-8cc9-e29ccad82884 — Schedule ended — no further runs; alerted 2 recipient(s)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e5 org=bb347258-8f28-4f49-8cc9-e29ccad82884 workflow='SCHEDNOTIFY OtherOrg' — run 25399757-8603-4277-9907-6137e6036b02 status=completed for occurrence 2026-08-27T05:29:00+00:00 (fire #2)
+        │ [scheduler] tick complete — examined=5 fired=5 skipped=0 errors=0 expiring=3 orphaned_alerts_dismissed=5
+[PASS] [Y] tick 1 fired all five fixture triggers for real  — examined=5 fired=5 skipped=0 errors=0 expiring=3 orphaned_alerts_dismissed=5
+[PASS] [Y] TASK 2 — THE REAL ORPHANS ARE RESOLVED: the 2 orphaned held-run alert(s) that were live in the deployed database before this sprint are now 'dismissed' with the sweep's own reason recorded on them — closed by an earlier real tick of this same code, against the real database  — ['dismissed', 'dismissed']
+[PASS] [Y] TASK 2 — and the NEW orphan, made the way the real ones were (a real held run's alert, then the run deleted), is cleaned up by the same tick — it sat in the org the earlier org-scoped sweep had correctly refused to touch  — org1 fixture orphan now ['dismissed', 'dismissed', 'dismissed', 'dismissed', 'dismissed']
+[PASS] [Y] TASK 2 — the platform sweep still leaves the alert whose run exists open, so 'dismiss orphans' never became 'dismiss held-run alerts'  — living-run alert ['open', 'open', 'open', 'open', 'open']
+[PASS] [Y] TASK 2 — and the sweep is VISIBLE and EXACT: the tick logs what it closed and reports precisely the rows it changed — every open orphan this tick could see and nothing else. Rows an earlier tick already closed are not re-counted, so the sweep is idempotent  — orphaned_alerts_dismissed=5, expected 5
+[PASS] [Y] TASK 3: a trigger ONE occurrence from its cap raised the warning on its second-to-last REAL tick — cap 3, occurrence_count now 2, so the next fire is the last one  — occurrence_count=2, 5 alert(s): Schedule ending — one run left
+[PASS] [Y] TASK 3: and a trigger with FOUR occurrences left, fired by the SAME tick, raised nothing — the warning is about the cap being near, not about the cap existing  — occurrence_count=1, alerts=0
+[PASS] [Y] TASK 3: the end_date bound warns the same way — one occurrence left before the end date, one warning, and the notice names the date rather than saying only 'it will stop'  — “SCHEDNOTIFY EndDate” (Daily at 5:29 AM (UTC)) has one scheduled run remaining, at 2026-08-28T05:29:00+00:00. After that it stops, because its end dat
+[PASS] [Y] TASK 3: an UNBOUNDED trigger never warns — no cap, no end date, nothing to be near the end of. (This is the shape of the real scheduled trigger already deployed, which must stay quiet)  — alerts=0
+[PASS] [Y] TASK 3: the cap warning explains WHICH bound ends it, in the operator's own numbers  — “SCHEDNOTIFY Cap” (Daily at 5:29 AM (UTC)) has one scheduled run remaining, at 2026-08-28T05:29:00+00:00. After that it stops, because its limit of 3 runs is reached.
+[PASS] [Y] TASK 3: the warning is a member_todos row on the SAME mechanism as the held-run alert — a distinct source marker, related to the TRIGGER, category 'workflow', open, actionable from the trigger console. Not a second notification system  — source=workflow_trigger_expiring related_type=workflow_trigger action_key=/admin/workflows/triggers
+[PASS] [Y] TASK 3: recipients are the trigger's author PLUS every org_admin of that org — the same rule create_held_run_alerts uses, reused rather than re-invented  — 5 recipient(s), org admins matched=True, author included=True
+[PASS] [Y] CROSS-ORG: org 2's expiring trigger alerted org 2 ONLY — every row carries org 2's org_id and every recipient is an org 2 user  — 2 alert(s), orgs=['bb347258'], leaked to org1 admins=False
+[PASS] [Y] CROSS-ORG, the other direction: org 1's expiring trigger did NOT reach org 2 — an org_admin is an admin OF AN ORG, not of the platform  — org2 users receiving org1's alert = 0
+[PASS] [Y] CROSS-ORG: and org 2's trigger, whose cap this tick EXHAUSTED, says so — the final-run notice, not the one-left notice  — Schedule ended — no further runs
+
+  ── TICK 2 (real, +24h) ──
+        │ [scheduler] tick at 2026-08-28T05:29:00+00:00 (lookback 60m, 15 actions registered)
+        │ [scheduler] EXPIRING trigger=99000000-0000-0000-0000-00000000b1e1 org=00000000-0000-0000-0000-000000000001 — Schedule ended — no further runs; alerted 5 recipient(s)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e1 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY Cap' — run f1cd377b-d186-4c03-868f-51a86f9dacfa status=completed for occurrence 2026-08-28T05:29:00+00:00 (fire #3)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e2 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY Many' — run 2da42e15-8307-4904-b73c-821e5baeb0b8 status=completed for occurrence 2026-08-28T05:29:00+00:00 (fire #2)
+        │ [scheduler] EXPIRING trigger=99000000-0000-0000-0000-00000000b1e3 org=00000000-0000-0000-0000-000000000001 — Schedule ended — no further runs; alerted 5 recipient(s)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e3 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY EndDate' — run d078ce6e-4212-4208-95ab-0ada2e152b0a status=completed for occurrence 2026-08-28T05:29:00+00:00 (fire #2)
+        │ [scheduler] FIRED  trigger=99000000-0000-0000-0000-00000000b1e4 org=00000000-0000-0000-0000-000000000001 workflow='SCHEDNOTIFY Unbounded' — run 86762dc7-ce6d-43db-bb1d-5367ccfafeff status=completed for occurrence 2026-08-28T05:29:00+00:00 (fire #2)
+        │ [scheduler] skip   trigger=99000000-0000-0000-0000-00000000b1e5 org=bb347258-8f28-4f49-8cc9-e29ccad82884 workflow='SCHEDNOTIFY OtherOrg' — max_occurrences reached (2/2)
+        │ [scheduler] tick complete — examined=5 fired=4 skipped=1 errors=0 expiring=2 orphaned_alerts_dismissed=0
+[PASS] [Y] TASK 3: on the LAST tick the notice becomes 'ended' — same trigger, one occurrence later, cap now spent  — occurrence_count=3, title=Schedule ended — no further runs
+[PASS] [Y] TASK 3: and it UPDATED the same todo rows rather than stacking a second alert on every recipient — the upsert keys on (user, org, source, related_type, related_id), so an operator gets one live notice per schedule, not one per tick  — 5 → 5 alert(s), ids identical=True
+[PASS] [Y] TASK 3: the four-remaining trigger fired a second real time and is STILL silent — three left is still not near the end  — alerts=0 after a second fire
+[PASS] [Y] TASK 3: tick 2's expiring alerts are reported on the result and in the log, like every other outcome the tick produces  — examined=5 fired=4 skipped=1 errors=0 expiring=2 orphaned_alerts_dismissed=0
+[PASS] [Y] TASK 3: the warning really lands where an operator will see it — it satisfies routers/dashboard.py list_todos' filter and brief_blocks' 'needs attention' filter for a real org_admin, with no new endpoint and no new surface  — 2 open alert(s) for the org admin
+[PASS] [Y] TEARDOWN: the real pre-existing orphans are still THERE and still 'dismissed' — the fix closed them, it did not delete somebody's history, and this script did not undo its own repair on the way out  — 2 row(s), statuses=['dismissed', 'dismissed']
+[PASS] [Y] TEARDOWN: every parked foreign trigger is active again  — 1/1
+[PASS] [Y] TEARDOWN: zero leftover rows — including every alert todo raised on a REAL org admin by a fixture trigger, deleted by LINKAGE and not merely by fixture user id  — leftover rows = 0
+[PASS] [Y] TEARDOWN: and this script left NO new open orphan behind — the class of bug it fixes is not one it commits  — open orphans remaining = 0
+
+==========================================================================
+38 passed, 0 failed — ALL GREEN
+==========================================================================
