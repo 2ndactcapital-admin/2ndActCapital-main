@@ -22,6 +22,7 @@ from routers.admin import router as admin_router
 from routers.allocation_lens import router as allocation_lens_router
 from routers.ledger import router as ledger_router
 from routers.assistant import router as assistant_router
+from routers.custody_import import router as custody_import_router
 from routers.dashboard import router as dashboard_router
 from routers.debug import router as debug_router
 from routers.entities import router as entities_router, get_org_id
@@ -526,6 +527,7 @@ app.include_router(vdr_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketing_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
+app.include_router(custody_import_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(portfolio_ingest_router, prefix="/api/v1")
 app.include_router(portfolio_positions_router, prefix="/api/v1")

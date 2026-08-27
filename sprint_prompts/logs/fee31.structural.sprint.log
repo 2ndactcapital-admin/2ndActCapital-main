@@ -1,0 +1,236 @@
+FEE MODULE — SPRINT fee31 (account layer)
+=========================================
+Result: 10/10 PASS, 0 FAIL, 0 BLOCKED  (apps/api/scripts/verify_fee31.py)
+Web:    next build ✓ compiled, 91/91 pages, all 6 custody routes emitted
+Schema: docs/schema_snapshot.sql regenerated after DDL
+
+
+TASK 1 — DISCOVERY (what is actually deployed)
+----------------------------------------------
+Scripts: apps/api/scripts/discover_fee31.py, discover_fee31b.py
+
+All five Part 1 tables exist. RLS enabled on all five, FORCE off, exactly ONE
+policy each — `<table>_org_isolation`, PERMISSIVE, cmd=ALL, role public:
+
+    org_id = (NULLIF(current_setting('app.current_org_id', true), ''))::uuid
+    OR current_setting('app.is_super_admin', true) = 'true'
+
+app_service holds SELECT/INSERT/UPDATE/DELETE on all five. Verified live: as
+app_service with NO org GUC set, `SELECT count(*) FROM accounts` returns 0.
+
+Shapes that drove design decisions:
+
+  accounts (25 cols) — bi-temporal on BOTH axes (valid_from/to + system_from/to).
+    Identity is the PARTIAL unique index
+      accounts_active_identity_uq (org_id, custodian_code, account_number_hash)
+      WHERE system_to IS NULL
+    primary_entity_id is NOT NULL with an FK to entities.
+    household_id is NULLABLE.
+    Referenced by THREE FKs (account_owners, account_balances_daily,
+    account_flows) → an edit must keep its id.
+
+  account_balances_daily (12 cols) — PK IS the natural key
+    (org_id, account_id, as_of_date, source_system). No surrogate id, no
+    temporal columns. Idempotency comes free from the PK.
+
+  account_flows (15 cols) — surrogate id PK and NO unique constraint of any
+    kind. This was the real gap; see "Schema addendum" below.
+
+  account_import_batches (10 cols) — id, org_id, custodian_code,
+    source_filename, imported_by, row_count, matched_count, unmatched_count,
+    status ('DRY_RUN' default), created_at. NO column for the exception ROWS.
+
+Answers to the two questions the prompt asked explicitly:
+
+  entity_holdings — ZERO rows. Not "none for the seed org": zero across every
+    org, so there is no date range. The prompt's "read-only reference during
+    backfill" has nothing to reference. No backfill was attempted.
+
+  households — ZERO rows in every org. There are no households.id values for
+    new accounts to link to. accounts.household_id is nullable, which is what
+    makes that survivable; the importer treats an unresolved household as an
+    account without a household, NOT as an exception. Requiring one would have
+    failed every import ever run.
+
+  entities (seed org) — 24 rows: individual 13, llc 7, trust 2, foundation 1,
+    corporation 1. These are what accounts can actually attach to.
+
+  org_settings — jsonb setting_value, UNIQUE (org_id, setting_key),
+    is_public DEFAULT **true**. No custody.* / fee.* / *salt* keys existed.
+
+  organizations — 2: 2nd Act Capital (seed) and Hollisworks.
+
+
+SCHEMA ADDENDUM (additive only — Part 1 untouched)
+--------------------------------------------------
+apps/api/migrations/fee31_account_import_exceptions.sql — APPLIED.
+
+  1. account_import_exceptions (new table) + RLS policy in the identical shape
+     as the five Part 1 tables + GRANT to app_service.
+     The sprint requires unmatched rows to "land in a visible exception list on
+     the batch". account_import_batches has unmatched_count, an integer. A count
+     cannot be reviewed, re-driven or corrected — it only says something was
+     lost. raw_row is jsonb and is written ALREADY MASKED.
+
+  2. account_flows.source_row_hash (new nullable column) + partial unique index
+     (org_id, account_id, source_system, source_row_hash)
+     WHERE system_to IS NULL AND source_row_hash IS NOT NULL.
+     The obvious alternative — a unique index over (account, date, amount,
+     type) — is WRONG: two genuinely distinct $500 deposits on the same day are
+     real and would be silently collapsed. The fingerprint folds in the
+     occurrence index of the flow within its own (account, date, amount, type)
+     group, so two identical deposits get 0 and 1 and both survive, while the
+     same file twice reproduces 0 and 1 and dedupes. Check 2 asserts 4 flows
+     from a file containing exactly that duplicate pair.
+
+
+TASK 2 — ADAPTER INTERFACE + CSV ADAPTER
+-----------------------------------------
+  services/custody/base.py        records, AccountNumber, parsers, the ABC
+  services/custody/registry.py    org_settings-keyed profiles + adapter registry
+  services/custody/csv_adapter.py the mapping-driven CSV implementation
+  services/custody/importer.py    resolve → diff → transactional commit
+  services/custody/__init__.py    registration by import side effect
+
+Interface: fetch_accounts() / fetch_balances(as_of) / fetch_flows(from, to),
+each returning ParseOutcome(records, errors) — records AND errors together,
+always, so dropping a row is never the path of least resistance.
+
+Account numbers never travel as str. AccountNumber's __repr__/__str__/
+__format__/to_json ALL return the mask; the raw value needs an explicit
+.reveal(), called in exactly two places (the masker and the hasher). A dataclass
+repr in a traceback or an f-string in an error message therefore cannot leak,
+by construction rather than by discipline.
+
+Hash is HMAC-SHA256(salt, normalised_number), not sha256(number + salt):
+plain concatenation is ambiguous — number "12"+salt "34" and number "1"+salt
+"234" give the same input — so two different accounts could collide onto one
+hash and one would vanish behind the unique index.
+
+TWO-LAYER REGISTRY, so a second custodian needs no code:
+  custodian_code → PROFILE (data, in org_settings 'custody.profiles')
+  profile.adapter → ADAPTER CLASS (code, via register_adapter)
+An org adds a custodian by editing a settings row. A genuinely new mechanism
+registers a class. Neither touches registry.py or csv_adapter.py. Check 7 proves
+this by registering a second adapter at runtime and resolving it purely through
+settings. Two distinct typed errors, because they have different fixes:
+UnknownCustodianError (settings, → 404) vs UnknownAdapterError (deployment,
+→ 500). Flattening both to 400 would send an operator to fix a correct profile.
+
+Decimal everywhere; parse_decimal never routes through float. Values quantise to
+numeric(20,4) at parse time so the rounding is ours and visible, not Postgres's
+and silent. Check 2 asserts an exact Decimal('1000000.0000') read back.
+
+
+TASK 3 — IMPORT UI
+------------------
+  POST /api/v1/custody/import/inspect   headers + MASKED sample rows
+  POST /api/v1/custody/import/dry-run   the diff; writes nothing
+  POST /api/v1/custody/import/commit    the same plan, ONE transaction
+  GET  /api/v1/custody/profiles | /custody/batches | /custody/batches/{id}
+
+apps/web/app/admin/custody-import/page.js + components/admin/
+CustodyImportWizard.jsx + 5 Next API routes + lib/apiForwardMultipart.js
+(apiForward JSON-stringifies the body, which destroys a multipart boundary).
+
+dry_run and commit share build_plan(), so the diff an operator approves is
+computed by the identical code path that then writes. The plan is REBUILT at
+commit rather than posted back by the browser — a client-supplied plan would be
+a set of database writes chosen by the caller, including which entity each
+account attaches to.
+
+The file is re-posted at each step rather than staged server-side: a file of
+unmasked account numbers sitting at rest on the web tier for as long as an
+operator takes to review a diff is exactly what this module exists to avoid.
+
+Write gate: manage_billing (held by admin + super_admin — a real, non-inert
+grant). Read gate: view_portfolio. No new permission was invented; one with zero
+grants would have been inert and still looked green.
+
+
+TWO BUGS FOUND AND FIXED BY THE VERIFY SCRIPT
+----------------------------------------------
+1. 28 spurious "unparseable_flow" exceptions on a good 30-day file. A wide
+   custodial export carries blank flow columns on the 27 days with no flow —
+   that is a day without a flow, not a malformed flow. Fixed with a per-kind
+   absence test that EXCLUDES account_number: it is required by all three kinds
+   and populated on every line, so including it made the test never fire.
+
+2. The default profile maps more columns than any one custodian emits (that is
+   what makes it a useful starting point), and strict validation made it
+   unusable against every real file. Mapping is now strict ONLY for record kinds
+   the caller mapped by hand — those came from a dropdown of this file's real
+   headers, so a missing column there is a genuine mistake.
+
+
+SECURITY FIX OUTSIDE THE PROMPT'S SCOPE (services/org_settings.py)
+------------------------------------------------------------------
+The per-org hash salt lives in org_settings, as the prompt specified. Storing it
+there with is_public=false keeps it out of the unauthenticated /theme/public
+endpoint — necessary and NOT sufficient. routers/org_settings.py documents its
+read as "open to any authenticated user of the org", so EVERY MEMBER could have
+read the salt via GET /orgs/{org_id}/settings. The salt is the only thing making
+accounts.account_number_hash non-reversible for values as short as an account
+number.
+
+Added SECRET_SETTING_KEYS, filtered out of get_all_settings and
+get_settings_detail. get_setting (by key) is deliberately NOT filtered — a
+caller naming the key is asking for it, and the custody registry is the only one
+that does. Check 10 mints a real salt and then searches every settings surface
+for the actual value. verify_sprint24 re-run: 9/10, the one failure being the
+pre-existing brand-literal sweep (435 hits, all in comments in files this sprint
+did not create; zero hits in any fee31 file).
+
+
+NAMING DEVIATION
+----------------
+The prompt asked for scripts/verify_sprint31.py. That filename is ALREADY TAKEN
+by the SSVI volatility-surface sprint (commit 1e23658, 634 lines, twelve
+unrelated checks) — the fee module's "31" and the platform's "Sprint 31" are
+different numbering schemes that collide. Overwriting it would have deleted a
+green verify script for shipped work. Written as verify_fee31.py instead,
+matching verify_workflowmgr1.py / verify_chancery1.py.
+
+
+HARNESS FIX (unblocks future sprints)
+--------------------------------------
+DOPPLER_TOKEN was absent from the environment this session, so
+_doppler_env.hydrate_from_doppler() returned "DOPPLER_TOKEN is not set" and
+every credential path looked exhausted. Extended it to fall back to the Doppler
+CLI's on-disk token (~/.doppler/.doppler.yaml). That token is a CLI token
+(dp.ct.…), which is account-scoped rather than config-bound, so the download URL
+must name project+config explicitly (hollisworks/prd) or it fails. Also added
+scripts/_db_connect.py, which PROBES each candidate DSN with a real connection
+before use — presence of a URL has never proved connectivity here, and the
+password in Doppler's own DATABASE_URL is stale while its separate DB_PASSWORD
+is current.
+
+
+THE VERIFY SCRIPT'S OWN BUG, WORTH RECORDING
+---------------------------------------------
+The first run failed with "new row violates row-level security policy for
+org_settings", which read like a sprint bug and was not. set_config(..., true)
+IS SET LOCAL: under asyncpg's default autocommit each statement is its own
+transaction, so setting the GUC and then querying sets it and discards it before
+the query runs. The harness now mirrors services/database.py exactly — one
+org-scoped transaction, COMMITTED on clean exit, never rolled back (a prior
+sprint lost every held run to writes made inside a savepoint that was rolled
+back at the end).
+
+
+RESULTS
+-------
+[1]  PASS  6 tables, RLS on, one NULLIF-guarded ALL policy each
+[2]  PASS  2 accounts, 31 balances over 30 days, 4 flows; batch counts reconcile
+[3]  PASS  re-import: balances 31 and flows 4 unchanged; no error; no restatement
+[4]  PASS  2 exceptions on the batch; batch still COMMITTED; good rows survived
+[5]  PASS  as app_service (NON-superuser): org A sees its rows, org B sees 0
+[6]  PASS  6 tables searched all-orgs for 3 literals; masked form present; logs clean
+[7]  PASS  registry resolves by code; both typed errors; a 2nd adapter resolves
+[8]  PASS  6 custody routes on the app object (239 resolved via the lazy walker)
+[9]  PASS  page + wizard + 5 Next routes; every posted path resolves; no hex
+[10] PASS  salt absent from every settings read path, by key AND by value
+
+STATUS: HELD for manual review (structural). Not merged.
+Out of scope and untouched: fee_schedules, billing_groups,
+account_positions_daily (Sprint 32), any Altruist-API path.

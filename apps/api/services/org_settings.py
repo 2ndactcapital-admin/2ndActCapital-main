@@ -47,6 +47,29 @@ POSITIVE_INT_DAY_KEYS = (
 # turns it into a permanent one.
 MAX_SETTING_DAYS = 3650
 
+# ── Secrets that live in this table but must never leave it ───────────────
+# org_settings is a general-purpose per-org config store, and the fee module's
+# account-number hash salt (Sprint fee31) has to live somewhere per-org. It
+# landed here — but it is NOT configuration, it is a credential.
+#
+# THE HOLE THIS CLOSES. `is_public = false` keeps the salt out of
+# get_public_settings, which is what /theme/public serves unauthenticated. That
+# is necessary and NOT sufficient: this router's own read is documented as
+# "open to any authenticated user of the org (the app cannot render its theme
+# otherwise)". So every ordinary member could GET /orgs/{org_id}/settings and
+# read the salt — and the salt is the only thing standing between a leaked
+# `accounts.account_number_hash` column and brute-forcing the account numbers
+# back out, since an account number is short enough to enumerate unsalted.
+#
+# Filtered on the READ side rather than by moving the value to another table:
+# the read paths are the two functions below and both are covered here, whereas
+# a second storage location would be a second set of RLS policies and grants to
+# get right. Consumers that legitimately need a secret read it by key through
+# get_setting, which is deliberately NOT filtered — a caller naming the key
+# explicitly is asking for it, and services/custody/registry.py is the only one
+# that does.
+SECRET_SETTING_KEYS = frozenset({"custody.account_hash_salt"})
+
 # ── Defaults ──────────────────────────────────────────────────────────────
 # Mirrors the values seeded for 2nd Act Capital. Any org that has not set a
 # given key resolves to the value here. Categories must match the `category`
@@ -323,6 +346,12 @@ async def get_all_settings(conn, org_id) -> dict:
 
     This is the bulk fetch that hydrates the frontend theme provider on page
     load — one round trip for the whole brand.
+
+    SECRET_SETTING_KEYS are omitted. This value reaches the browser of any
+    authenticated member, so a credential stored in this table would be
+    published to every user of the org by a function whose job is to fetch
+    colours. A caller that genuinely needs a secret asks for it by key through
+    ``get_setting``.
     """
     rows = await conn.fetch(
         "SELECT setting_key, setting_value FROM org_settings WHERE org_id = $1",
@@ -330,6 +359,8 @@ async def get_all_settings(conn, org_id) -> dict:
     )
     resolved = dict(DEFAULT_SETTINGS)
     for row in rows:
+        if row["setting_key"] in SECRET_SETTING_KEYS:
+            continue
         resolved[row["setting_key"]] = _decode(row["setting_value"])
     return resolved
 
@@ -371,13 +402,23 @@ async def get_settings_detail(conn, org_id) -> list[dict]:
 
     Each entry carries its category and whether the value is the org's own or
     inherited from DEFAULT_SETTINGS, so the UI can show "not yet configured".
+
+    SECRET_SETTING_KEYS are omitted entirely rather than shown with the value
+    blanked. A settings editor that rendered the salt as an editable field would
+    invite an admin to "fix" a random hex string that must never change — every
+    account number in the org rehashes if it does, silently detaching every
+    existing account from its own next import.
     """
     rows = await conn.fetch(
         "SELECT setting_key, setting_value, category, is_public, updated_at "
         "FROM org_settings WHERE org_id = $1",
         org_id,
     )
-    stored = {r["setting_key"]: r for r in rows}
+    stored = {
+        r["setting_key"]: r
+        for r in rows
+        if r["setting_key"] not in SECRET_SETTING_KEYS
+    }
 
     detail = []
     for key in sorted(set(DEFAULT_SETTINGS) | set(stored)):

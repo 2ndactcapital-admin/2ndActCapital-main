@@ -33,6 +33,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   source_row_hash                          text
 --   PRIMARY KEY account_flows_pkey: (id)
 
 -- ===== account_import_batches =====
@@ -47,6 +48,18 @@
 --   status                                   text NOT NULL DEFAULT 'DRY_RUN'::text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY account_import_batches_pkey: (id)
+
+-- ===== account_import_exceptions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   batch_id                                 uuid NOT NULL
+--   source_row                               integer NOT NULL
+--   record_kind                              text NOT NULL
+--   reason_code                              text NOT NULL
+--   reason                                   text NOT NULL
+--   raw_row                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY account_import_exceptions_pkey: (id)
 
 -- ===== account_owners =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

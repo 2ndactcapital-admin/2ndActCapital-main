@@ -15,12 +15,55 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DOPPLER_DOWNLOAD_URL = (
     "https://api.doppler.com/v3/configs/config/secrets/download?format=json"
 )
+
+# The Doppler CLI persists a token here even when DOPPLER_TOKEN is absent from
+# the environment. It is a CLI token (``dp.ct.…``), which is account-scoped
+# rather than bound to one config — so the download URL must name the project
+# and config explicitly or the request 404s.
+DOPPLER_CLI_CONFIG = pathlib.Path.home() / ".doppler" / ".doppler.yaml"
+DOPPLER_CLI_SCOPE = "/mnt/c/Users/Joe/2ndActCapital/apps/api"
+
+
+def _token_from_cli_config() -> tuple[str, str | None, str | None]:
+    """Read (token, project, config) out of the Doppler CLI's on-disk YAML.
+
+    Hand-parsed: the two-space-indented ``scoped:`` map is simple enough that
+    pulling in a YAML dependency for it would be the larger cost. Returns empty
+    strings rather than raising when the file is missing or shaped differently.
+    """
+    try:
+        text = DOPPLER_CLI_CONFIG.read_text()
+    except OSError:
+        return "", None, None
+
+    token = ""
+    project = config = None
+    current_scope = None
+    for line in text.splitlines():
+        scope = re.match(r"^\s{4}(\S.*?):\s*$", line)
+        if scope:
+            current_scope = scope.group(1)
+            continue
+        field = re.match(r"^\s{8}([\w.\-]+):\s*(\S+)\s*$", line)
+        if not field or current_scope is None:
+            continue
+        key, value = field.group(1), field.group(2)
+        if key == "token" and not token:
+            token = value
+        elif current_scope == DOPPLER_CLI_SCOPE and key == "enclave.project":
+            project = value
+        elif current_scope == DOPPLER_CLI_SCOPE and key == "enclave.config":
+            config = value
+    return token, project, config
 
 
 def hydrate_from_doppler(*, overwrite: bool = True, timeout: float = 20.0) -> tuple[list[str], str | None]:
@@ -30,12 +73,17 @@ def hydrate_from_doppler(*, overwrite: bool = True, timeout: float = 20.0) -> tu
     purpose: the whole point is that the ambient value may be the stale one, so
     "don't clobber what's already set" would preserve exactly the bug.
     """
+    url = DOPPLER_DOWNLOAD_URL
     token = (os.environ.get("DOPPLER_TOKEN") or "").strip()
     if not token:
-        return [], "DOPPLER_TOKEN is not set"
+        token, project, config = _token_from_cli_config()
+        if not token:
+            return [], "DOPPLER_TOKEN is not set and no CLI token is on disk"
+        if project and config:
+            url += "&" + urllib.parse.urlencode({"project": project, "config": config})
 
     request = urllib.request.Request(
-        DOPPLER_DOWNLOAD_URL,
+        url,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
     try:
