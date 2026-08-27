@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-26 (LiteLLM Phase B — text calls routed through LiteLLM)
+Last updated: 2026-08-26 (Workflow scheduler Sprint 4 — Run History)
 
 ## About this file
 
@@ -222,13 +222,39 @@ now registers the actions itself, once per tick.
 
 Cost/duration correlation to a run. Zero workflow run steps have ever invoked
 AI, `ai_decision_log` carries no run identifier, and there is nothing to
-correlate yet.
+correlate yet. **Still true after Sprint 4** — the Run History screen ships with
+no cost column for exactly this reason.
+
+### Sprint 3 (CRUD UX) and Sprint 4 (Run History) are since complete
+
+- **Sprint 3 — scheduler CRUD UX**, 91/91 (`ec6ef24`). Not blocked.
+- **Sprint 4 — Run History**, 82/82 (`schedulerhistory.structural`). Not blocked.
+  Server-side status and time-period filters, a step timeline, scheduled-vs-manual
+  origin read from the run's stored context, and a held run's real `error_detail`
+  plus the exact `member_todos` alert set.
+
+**One correction this file's readers should carry forward:** *per-run duration*
+appeared in the Sprint 4 plan as though it were sound data. It is not. Postgres
+`now()` is the transaction timestamp; the engine inserts the run row on an
+independent connection and completes it on the caller's, whose transaction opened
+first — so a run that finishes inside its own `start_workflow_run` call has
+`completed_at` **before** `started_at`. Measured at **-0.36s** on a real run
+during verification. Both the API and the screen now report "not measured" for any
+non-positive interval instead of a number. Anything downstream that plans to
+aggregate run durations needs to know this before it starts averaging.
 
 ### Next
 
-**Sprint 3 — scheduler CRUD UX.** The API and the engine are both real now;
-`WorkflowTriggerScheduler.jsx` is still read-only and does not yet expose the
-recurrence fields. `GET /admin/workflow-triggers` already returns them.
+**Sprint 5 — notifications.** Largely satisfied already: `create_held_run_alerts`
+really fires, really reaches the starter plus every `org_admin`, and Sprint 4
+verified the exact recipient set against `member_todos`. The genuinely missing
+pieces are enumerated in `docs/OUTSTANDING_TODO_LIST.md` §2 — the largest being
+that a **User Task with no `assigned_role_profile_id` notifies nobody, silently**,
+and that the only out-of-band channel (email) is blocked on §1 of this file.
+
+**Still the binding blocker for this whole subsystem: the Render cron service has
+not been applied.** Everything above is proven in verification and fires nowhere
+in production until the blueprint is applied.
 
 ---
 

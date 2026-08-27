@@ -3,22 +3,35 @@ import { redirect } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getWorkflowRuns } from "@/lib/api";
-import { formatDateTime, statusPillClass, personLabel } from "@/lib/workflowFormat";
+import WorkflowRunHistory from "@/components/admin/WorkflowRunHistory";
 
-// Workflow Manager — Phase 4 Run Console. Lists the org's workflow runs (all
-// orgs for a Super Admin) with status, who started them, and when. Each row
-// links into the per-run step detail. Read-only; Org Admin (own org) or Super
-// Admin, enforced server-side by the FastAPI gate.
-export default async function WorkflowRunsPage() {
+// Workflow Manager — Run History. What actually RAN, as opposed to the Triggers
+// screen's what is scheduled to run.
+//
+// Since the scheduler sprint most rows here are started by a schedule rather
+// than a person, so "Started by" resolves the originating TRIGGER for those —
+// read from the run's own stored context, which is where the tick stamps it.
+//
+// Gated server-side on view_workflow_runs. Org Admin sees their own org; Super
+// Admin sees across all orgs. Read-only: there is no write endpoint on a run.
+export default async function WorkflowRunsPage({ searchParams }) {
   const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/workflows/runs");
   }
+  // A run id in the query seeds the selected row, so the per-run deep link
+  // (/admin/workflows/runs/{id}, and any member_todo pointing at a run) opens
+  // ONE screen with that run's pane already open, rather than a second
+  // renderer of the same information.
+  const { run: runParam } = (await searchParams) || {};
 
-  let runs = [];
+  let envelope = null;
   let error = null;
   try {
-    runs = await getWorkflowRuns();
+    // The first paint is seeded with the default window — all statuses, all
+    // time — and the screen re-reads through /api/admin/workflow-runs whenever
+    // a filter changes. The SERVER applies every filter; see the component.
+    envelope = await getWorkflowRuns({ period: "all" });
   } catch (e) {
     error = e.status === 403 ? "forbidden" : e.message;
   }
@@ -27,13 +40,17 @@ export default async function WorkflowRunsPage() {
     <AppShell user={session.user}>
       <div className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-3xl font-semibold text-navy">Run Console</h1>
+          <h1 className="text-3xl font-semibold text-navy">Run History</h1>
           <p className="mt-1 text-sm text-text-muted">
-            Workflow runs and their step-by-step audit trail
+            Every workflow run and its step-by-step audit trail — what a
+            schedule started, what a member started, and what held
           </p>
         </div>
-        <Link href="/admin/workflows" className="text-sm text-gold hover:underline">
-          ← Workflows
+        <Link
+          href="/admin/workflows/triggers"
+          className="text-sm text-gold hover:underline"
+        >
+          Triggers →
         </Link>
       </div>
 
@@ -45,49 +62,13 @@ export default async function WorkflowRunsPage() {
         <div className="mt-6 rounded-lg border border-border bg-bg-card p-10 text-center text-sm text-gold">
           Could not load runs: {error}
         </div>
-      ) : runs.length === 0 ? (
-        <div className="mt-6 rounded-lg border border-border bg-bg-card p-10 text-center text-sm text-text-muted">
-          No workflow runs yet.
-        </div>
       ) : (
-        <div className="mt-6 overflow-hidden rounded-lg border border-border bg-bg-card">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-border text-xs uppercase tracking-wide text-text-muted">
-              <tr>
-                <th className="px-4 py-3 font-semibold">Workflow</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-                <th className="px-4 py-3 font-semibold">Started by</th>
-                <th className="px-4 py-3 font-semibold">Started</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr key={r.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/admin/workflows/runs/${r.id}`}
-                      className="font-medium text-navy hover:underline"
-                    >
-                      {r.workflow_name}
-                    </Link>
-                    <span className="ml-2 text-xs text-text-muted">
-                      v{r.version_number}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={statusPillClass(r.status)}>{r.status}</span>
-                  </td>
-                  <td className="px-4 py-3 text-text-secondary">
-                    {personLabel(r.started_by_name, r.started_by_email)}
-                  </td>
-                  <td className="px-4 py-3 text-text-muted">
-                    {formatDateTime(r.started_at)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <WorkflowRunHistory
+          initialRows={envelope?.rows || []}
+          initialPermissions={envelope?.permissions || null}
+          initialFilters={envelope?.filters || null}
+          initialSelectedId={runParam || null}
+        />
       )}
     </AppShell>
   );

@@ -29,16 +29,49 @@ Full design: `docs/LITELLM_INTEGRATION_DESIGN_V1.md`. Discovery: `docs/LITELLM_D
 
 ## 2 · Workflow Scheduler & Automation Engine
 
-Full design: `docs/WORKFLOW_SCHEDULER_DESIGN_V1.md`. Discovery: `docs/WORKFLOW_SCHEDULER_DISCOVERY_FINDINGS.md`.
+Discovery: `docs/WORKFLOW_SCHEDULER_DISCOVERY_FINDINGS.md`. **`docs/WORKFLOW_SCHEDULER_DESIGN_V1.md` does not exist** — it has been referenced from this line since the plan was written and was never created. This phasing table is the real one; there is no second copy to keep in sync.
 
 - ✅ **Sprint 1 — Discovery.** Complete.
 - ✅ **Sprint A — Permissions fix.** Complete, merged — `author_workflows`/`view_workflow_runs`/`configure_workflow_triggers` now correctly grantable; real "Org Admin" profile seeded and assigned.
-- 🔄 **Sprint 2 — Core Engine.** Sprint running now (`schedulercore.structural`) — RRULE-based recurrence, Render Cron Job service, per-org timezone handling, idempotent firing, overlap protection.
-- ⬜ **Sprint 3** — CRUD UX (add/edit/delete/pause schedules, dry-run preview).
-- ⬜ **Sprint 4** — Run history + logging (run list, per-run cost/duration/status, filterable).
-- ⬜ **Sprint 5** — Notifications (wire failure alerts through the real, existing `member_todos`/`_hold_run` mechanism — confirmed real precedent, not a new system).
+- ✅ **Sprint 2 — Core Engine.** Complete, 65/65 (`9bf4249`) — RRULE-based recurrence, Render Cron Job service, per-org timezone handling, idempotent firing, overlap protection.
+- ✅ **Sprint 3 — CRUD UX.** Complete, 91/91 (`ec6ef24`) — add/edit/delete/pause schedules, dry-run preview, DataGrid + detail pane + permission envelope.
+- ✅ **Sprint 4 — Run history + logging.** Complete, 82/82 (`schedulerhistory.structural`). Run History screen: DataGrid list filterable **server-side** by status and time period, right-pane detail with the full step timeline, scheduled-vs-manual origin resolved from the run's own stored context, and — for a held run — the engine's real `error_detail` plus the exact alerted-user set read back from `member_todos`.
+  - **Per-run cost is NOT built, deliberately.** `ai_decision_log` carries no run identifier and zero workflow run steps have ever invoked AI. There is nothing to correlate; plumbing for it would be speculative.
+  - **Per-step duration is reported only for User Tasks**, and the same honesty rule turned out to apply at the **run** level too — see the finding below.
+- ⬜ **Sprint 5** — Notifications. **Mostly already satisfied**; see the gap list below for what is genuinely left.
 - ⬜ **Sprint 6** — Natural-language authoring (chat-based schedule creation, including the clarifying-question loop — the one genuinely new interaction pattern in this whole effort).
 - ⬜ **Later** — Chaining / entity-scoped sub-schedules (the RMD-at-65 example).
+
+**Sprint 4 finding — duration is not measurable for a synchronous run, at either level.**
+Postgres `now()` is the *transaction* timestamp. The engine inserts the run row on an
+independent connection and completes it on the caller's, whose transaction (through the
+RLS pool wrapper) opened **first** — so a run that finishes inside its own
+`start_workflow_run` call has `completed_at` **strictly before** `started_at`. Measured at
+**-0.36s** on a real manual run. The prompt's premise (and this file's earlier "per-run
+duration" line) assumed the run-level interval was sound and only the step-level one was
+an artifact; it is not. The API now reports `duration_measured: false` for any non-positive
+interval at both levels and the screen prints "not measured" with the reason on hover,
+rather than a number. A strictly positive interval — a run that paused at a User Task and
+was completed later — is real and is shown.
+
+**Sprint 5 — what `member_todos` already does, and what is genuinely still missing.**
+Already real and verified end-to-end this sprint: a held run alerts its starter **and** every
+`org_admin` in the org (`create_held_run_alerts`, 5 real recipients in the verification run),
+those alerts land in the dashboard todo feed, and the Run History pane reads the exact
+recipient set back rather than re-deriving it. What is left is small and specific:
+- ⬜ **A User Task with no `assigned_role_profile_id` notifies nobody, silently.**
+  `sync_user_task_todos` returns `[]` and the run pauses waiting for a human no one told.
+  This is the largest real gap in the notification path.
+- ⬜ **Alert todos deep-link to the run LIST, not the run.** `workflow_todos._RUN_CONSOLE_PATH`
+  is `/admin/workflows/runs`. Sprint 4 added `?run={id}`, so the alert can now point at the
+  actual run — a one-line change that was not possible before this sprint.
+- ⬜ **Alert todos outlive their run.** Two orphaned `workflow_run_held` todos are live right
+  now, pointing at runs that no longer exist. No cleanup on run deletion.
+- ⬜ **No out-of-band channel.** `member_todos` is in-app only; email is blocked on §3 below.
+- ⬜ **`notification_bus` is not used by the workflow subsystem at all** (grepped: zero
+  references in `services/workflow_*.py` or `routers/workflows.py`). Worth a deliberate
+  decision — adopt it or record that `member_todos` is the chosen surface — rather than
+  leaving two notification systems and one silent non-choice.
 
 **Real findings still needing attention (not yet own sprints):**
 - ⬜ `render.yaml` was confirmed stale (still claims LiteLLM isn't deployed) — Sprint 2 is scoped to fix this in the same edit that adds the cron service declaration; confirm it actually happened.

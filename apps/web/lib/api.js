@@ -586,10 +586,30 @@ export const createWorkflow = (body) =>
 export const saveWorkflowVersion = (id, body) =>
   fetchAPI(`/api/v1/admin/workflows/${id}/versions`, { method: "POST", body });
 
-// --- Workflow Manager (Phase 4) — read-only consoles ---
-// Run Console, Scheduler/Routine Viewer, Version History. Org Admin sees their
+// --- Workflow Manager — read-only consoles ---
+// Run History, Scheduler/Routine Viewer, Version History. Org Admin sees their
 // own org; Super Admin sees across all orgs (enforced server-side).
-export const getWorkflowRuns = () => fetchAPI("/api/v1/admin/workflow-runs");
+//
+// Run History returns an ENVELOPE — {rows, permissions, filters} — not a bare
+// list. `filters` echoes back what the server actually applied, including the
+// instant it resolved a named period to, so the screen can label the window it
+// is showing without computing a second boundary of its own.
+//
+// The status and period filters are QUERY PARAMETERS, applied in SQL. They are
+// not grid filters: "runs in the last 7 days" is a claim about the whole table,
+// and filtering a 200-row page in the browser would quietly answer a different
+// question.
+export const getWorkflowRuns = ({ status, period, since, until } = {}) => {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  if (period) query.set("period", period);
+  if (since) query.set("since", since);
+  if (until) query.set("until", until);
+  const suffix = query.toString();
+  return fetchAPI(
+    `/api/v1/admin/workflow-runs${suffix ? `?${suffix}` : ""}`,
+  );
+};
 export const getWorkflowRun = (runId) =>
   fetchAPI(`/api/v1/admin/workflow-runs/${runId}`);
 // The Triggers screen (schedulerux). Returns an ENVELOPE — {rows, permissions}

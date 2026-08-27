@@ -1,0 +1,145 @@
+/mnt/c/Users/Joe/2ndActCapital/apps/api/scripts/verify_schedulerhistory.py:611: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient
+[doppler] hydrated 37 secrets
+[doppler] DATABASE_URL password was stale; substituted DB_PASSWORD
+
+==========================================================================
+TASK 1 — DISCOVERY (measured now, not quoted from the prompt)
+==========================================================================
+
+  1a. GET /admin/workflow-runs and /{run_id}, as HEAD holds them
+        list joined workflow_definitions for a name : True
+        list returned a BARE LIST                   : True
+        list returned r.context (origin)            : False
+        detail returned workflow_run_steps          : True
+        detail resolved the originating trigger     : False
+        detail returned the held-run alert set      : False
+[PASS] [Y] TASK 1a: BOTH endpoints already existed, both already joined workflow_definitions for a human-readable name, and the DETAIL endpoint already returned the full ordered workflow_run_steps history — so the step timeline was never the missing half  — name join + step history both pre-existing
+[PASS] [Y] TASK 1a: what was MISSING is the origin — the LIST did not return r.context at all, so nothing downstream could tell a scheduled run from a manual one, and NEITHER endpoint resolved the originating trigger or the held-run alert set  — context absent from the list; no trigger and no alert join anywhere
+[PASS] [Y] TASK 1a: the list returned a BARE LIST with no permission envelope, and now returns {rows, permissions, filters}  — bare list -> envelope
+
+  1b. workflow_runs.status
+        CHECK constraints on status : NONE
+        column DEFAULT              : 'running'::text
+        written by the engine       : ['completed', 'held', 'running']
+        present in deployed data    : ['completed', 'held']
+        the API's declared list     : ['running', 'completed', 'held']
+[PASS] [Y] TASK 1b: there is NO CHECK constraint on workflow_runs.status — the vocabulary is a CODE convention, so a filter list built by asking the database what is legal would come back empty and one built from DISTINCT would silently drop whichever state has no rows right now  — status CHECK constraints: none
+[PASS] [Y] TASK 1b: the complete real set is exactly (running, completed, held) — 'running' from the column DEFAULT and the engine's resume path, 'completed' and 'held' written by the engine — and that is what the API declares  — engine writes ['completed', 'held', 'running'], default 'running'::text
+[PASS] [Y] TASK 1b: and the deployed data is a STRICT SUBSET of that list — which is why the list is named in code rather than read off the table  — deployed=['completed', 'held'] declared=['running', 'completed', 'held']
+
+  1c. run-related UI that already existed
+        app/admin/workflows/runs/page.js         : 94 lines
+        app/admin/workflows/runs/[runId]/page.js : 142 lines
+        either used the shared DataGrid          : False
+        either showed a run's ORIGIN             : False
+[PASS] [Y] TASK 1c: run-related UI DID already exist — a Run Console list and a separate per-run detail page — so this sprint extends those two paths rather than adding a second screen  — both pages pre-existed and were rewritten in place
+[PASS] [Y] TASK 1c: neither used the shared DataGrid, neither filtered, and neither could show a scheduled origin — the old 'Started by' column read personLabel(started_by_name, started_by_email), which is an em-dash for EVERY scheduler-fired run  — hand-rolled tables, no origin, no filters
+[PASS] [Y] TASK 1c: and there is still exactly ONE run-detail renderer — the per-run route now hands off to the single screen instead of rendering a second copy of a run's timeline  — the [runId] route redirects into the one screen
+
+  1d. a held run's error_detail and its member_todos alert
+        _hold_run writes error_detail = f"{type(exc).__name__}: {exc}"
+        alert source marker  : workflow_run_held
+        alert related_type   : workflow_run   (related_id = the run)
+        recipients           : started_by ∪ every users.role='org_admin' in the org
+        live held run 7610af31… : 'RuntimeError: simulated action failure during run execution' → 4 alert todo(s)
+[PASS] [Y] TASK 1d: _hold_run writes error_detail as '{ExceptionClass}: {message}' and then calls create_held_run_alerts — one code path, so the pane surfaces the same string the engine stored rather than re-deriving one  — {type(exc).__name__}: {exc}
+[PASS] [Y] TASK 1d: the alert is a member_todos row keyed on (source='workflow_run_held', related_type='workflow_run', related_id=run_id) — and the detail endpoint reads back on EXACTLY that key, importing the writer's own constant so the two cannot drift  — the reader imports the writer's constant
+[PASS] [Y] TASK 1d: and the read MUST key on related_id, not on the source marker alone — the live table already holds alert todos pointing at runs that no longer exist, so a query that only filtered on source would attribute somebody else's orphan to whichever run was open  — 2 orphaned workflow_run_held todo(s) live right now
+
+── Fixtures ──
+[PASS] [Y] pre-existing NON-fixture scheduled triggers are parked for the duration and restored in teardown — the tick scans all orgs, so this script must not fire somebody else's schedule  — 1 foreign trigger(s) parked
+[PASS] [Y] the viewer's profile grants EXACTLY [view_workflow_runs] — if it carried a second workflow key, every refusal below would be vacuous  — ['view_workflow_runs']
+[PASS] [Y] TASK 3: a REAL scheduler tick fired the fixture trigger — the run this script goes on to read is one the scheduler started, through the same run_scheduler_tick the Render cron calls, not a row this script wrote  — examined=1 fired=1 skipped=0 errors=0
+[PASS] [Y] TASK 3: a manual run was started through the REAL workflow_engine.start_workflow_run with a real user as started_by — the same function the Run Console's own start path calls  — run e2c27114… status=completed
+        (the HOLD fixture raised as designed: WorkflowEngineError)
+[PASS] [Y] TASK 3: the HOLD fixture really held — a Service Task invoking an action its starter may not invoke, so the engine took its own HOLD-and-ALERT path rather than this script writing status='held' by hand  — run aa9b7321…
+[PASS] [Y] the User Task fixture paused and its run is 'running' — the one status the deployed data had no example of, so the status filter is proven against a real row in every state  — run 7af40db1… status=running
+[PASS] [Y] a real engine-created run was re-dated 200 days back so the period filter has something genuine to exclude  — started_at = 2026-02-08T02:55:57.131404+00:00
+
+==========================================================================
+TASKS 2/3 — one call, real rows, through the REAL ASGI app
+==========================================================================
+[PASS] [Y] TASK 4: the screen's list endpoint returns a real 200 with an envelope — {rows, permissions, filters}, not the bare list it returned before  — HTTP 200 keys=['filters', 'permissions', 'rows']
+[PASS] [Y] and every fixture run this script really created is in it — the screen is reading live rows, and there is no fabricated row for it to read instead  — 7 rows; missing=[]
+[PASS] [Y] TASK 3: the run a REAL scheduler tick started reports a SCHEDULED origin carrying the originating trigger's id — read from the run's own stored context, which is where the tick stamps it  — kind=scheduled trigger_id=99000000-0000-0000-0000-00000000a0b1
+[PASS] [Y] TASK 2: and its recurrence summary is the one the SERVER's own describe_schedule produces for that trigger — asserted against that function's output, not against a literal, so the Run History screen and the Triggers screen cannot come to two opinions about one schedule  — 'Daily at 10:55 PM (America/New_York)' vs 'Daily at 10:55 PM (America/New_York)'
+[PASS] [Y] TASK 3: the column the screen prints reads 'Scheduled: Daily at 10:55 PM (America/New_York)' — and NOT the em-dash the pre-sprint column produced, which is what it produced for every scheduler-fired run because started_by really is NULL on one  — label='Scheduled: Daily at 10:55 PM (America/New_York)' started_by=None
+[PASS] [Y] TASK 3: the run a real person started through the REAL engine reports a MANUAL origin and names that person — proven against a real manual run, not assumed to differ because the code branches  — kind=manual label='schedhist_admin'
+[PASS] [Y] and the two runs are distinguished by their CONTEXT, not by whether started_by happens to be null — the scheduled run's context carries the tick's stamp and the manual one's does not  — sched ctx={'trigger_id': '99000000-0000-0000-0000-00000000a0b1', 'trigger_type': 'scheduled', 'scheduled_occurrence': '2026-08-27T02:55:00+00:00'} manual ctx={}
+[PASS] [Y] TASK 2: one call returns the run, its definition's name, its ordered step history AND its alert set — the screen makes no second request to assemble the pane  — HTTP 200 keys=['alerts', 'permissions', 'run', 'steps']
+[PASS] [Y] TASK 3: the held run's detail carries the engine's REAL error_detail — the '{ExceptionClass}: {message}' string _hold_run wrote, surfaced verbatim  — status=held error="WorkflowEngineError: Service Task 'v_service' invokes action 'litellm.reload_model_cost_map', which requires permission 'author_workflows'. The member who started this run (99000000-0000-0000-0000-00000000a0a4) does not hold it. A workflow does not widen a member's permissions."
+[PASS] [Y] TASK 3: the API reports NO duration for a Service Task step — duration_measured=false and duration_seconds=null, rather than the zero its two timestamps would produce  — measured=False seconds=None
+[PASS] [Y] TASK 3: and it DOES mark a User Task step measured — its started_at is stamped when the task goes active and its completed_at when a human finishes it, so that interval is real human wait time and is the one duration worth showing  — step_type=user measured=True
+[PASS] [Y] TASK 3: the API reports NO duration for a run that finished inside its own start call — because that interval is NEGATIVE, not small: now() is the transaction timestamp, the run row is inserted on an independent connection, and the transaction that stamps completed_at opened before it. The honest-duration rule is a run-level rule too, not only a step-level one  — measured=False seconds=None
+[PASS] [Y] TASK 3: the alerted-user set the detail endpoint returned is EXACTLY the set member_todos holds for that run — compared set to set against the table, not eyeballed  — api=5 db=5 identical=True
+[PASS] [Y] and that set is WIDER than the run's starter alone — it includes every org_admin create_held_run_alerts really notified, so a pane that just printed started_by would fail here rather than look right by coincidence  — 5 recipient(s), starter included
+[PASS] [Y] and the error_detail the endpoint returned is byte-for-byte the string the engine wrote to the row  — WorkflowEngineError: Service Task 'v_service' invokes action 'litellm.…
+
+==========================================================================
+TASK 4 — status and time-period filters, proven BOTH directions
+==========================================================================
+[PASS] [Y] TASK 4: status=held INCLUDES the real held run…  — 2 row(s)
+[PASS] [Y] …and EXCLUDES the completed and running fixture runs that exist and do not match — an inclusion test alone cannot tell a filter from a no-op  — manual/scheduled/running all absent
+[PASS] [Y] and every row it DID return really is held — the filter is applied in SQL, so this is a claim about the table and not about the page  — statuses=['held']
+[PASS] [Y] TASK 4: status=completed is the mirror image — it includes the completed runs and excludes the held one  — 4 row(s)
+[PASS] [Y] TASK 4: status=running returns the run paused at its User Task and NOTHING else this script created — 'running' is the state the deployed data had no example of, which is exactly why the status list is named in code rather than read off the table  — 1 row(s)
+[PASS] [Y] an unknown status is a real 422 naming the known set, not a silently empty list — an empty result reads as 'no runs matched' and would hide a typo forever  — HTTP 422 unknown run status nonsense — known statuses are running, completed, held
+[PASS] [Y] TASK 4: period=all INCLUDES the back-dated run (200 days old) alongside today's runs  — 7 row(s)
+[PASS] [Y] and period=all applies no lower bound at all — the echoed filters say so, so the screen is not quietly showing a window it labelled 'all time'  — since=None
+[PASS] [Y] TASK 4: period=30d EXCLUDES that same back-dated run…  — 6 row(s)
+[PASS] [Y] …while still INCLUDING today's runs — the window narrows, it does not empty  — manual/scheduled/held all present
+[PASS] [Y] and the boundary it applied is echoed back as a real instant, resolved SERVER-side from the period NAME — the browser sends '30d' and never a timestamp, so the window the screen labels and the window the query used are one value  — since=2026-07-28T02:56:16.086196+00:00
+[PASS] [Y] TASK 4: an explicit since/until window isolates the back-dated run and excludes every run started today — the two filters narrow from both ends, not only from the past  — 1 row(s)
+[PASS] [Y] and the SAME window sent with its '+' offsets unencoded — the shape a hand-built URL produces, where '+' decodes to a space — gives the identical answer rather than a 422, because a space in that position is unambiguous and repairing it beats refusing it  — 1 row(s), identical=True
+[PASS] [Y] but a bound that is genuinely unparseable is still a 422 naming the field — treating it as 'no bound' would WIDEN the window the caller asked to narrow, which is the worst way to fail this  — HTTP 422 since must be an ISO-8601 datetime
+[PASS] [Y] TASK 4: the two compose — completed AND within 30 days keeps today's completed runs and drops both the held run (wrong status) and the back-dated one (wrong window)  — 3 row(s)
+[PASS] [Y] an unknown period is a 422 naming the known windows  — HTTP 422 period must be one of 24h, 7d, 30d, 90d, all
+
+==========================================================================
+TASK 4 — who may read this screen
+==========================================================================
+[PASS] [Y] TASK 4: the VIEW-ONLY caller — holding view_workflow_runs and nothing else — reads the screen: a real 200 with real rows  — HTTP 200 7 row(s)
+[PASS] [Y] and the envelope it receives says can_read with can_write=false and names the key that let it in — Run History is read-only end to end, so can_write is a constant rather than an unresolved capability  — {'can_read': True, 'can_write': False, 'is_super_admin': False, 'read_permission': 'view_workflow_runs', 'write_permission': None, 'statuses': ['running', 'completed', 'held'], 'periods': ['24h', '7d', '30d', '90d', 'all']}
+[PASS] [Y] and the envelope ships the status and period vocabularies the filter bar renders, so the screen's options come from the server that enforces them  — statuses=['running', 'completed', 'held'] periods=['24h', '7d', '30d', '90d', 'all']
+[PASS] [Y] TASK 4: the view-only caller can also drill into a run — the detail pane is part of the same read surface, not a second gate  — HTTP 200
+[PASS]     [Y] a member holding NEITHER workflow key is refused the list — 403 naming the missing key  — HTTP 403 Permission required: view_workflow_runs
+[PASS]     [Y] a member holding NEITHER workflow key is refused a run detail — 403 naming the missing key  — HTTP 403 Permission required: view_workflow_runs
+[PASS] [Y] TASK 3: the zero-duration artifact is real and is in the engine, not a claim from the prompt — a Service Task's step row is completed by ONE statement that sets started_at = now() and completed_at = now() together, so their difference can only ever be zero  — SET status='completed', started_at=now(), completed_at=now()
+[PASS] [Y] and the User Task's row does NOT go through that statement — it is activated with started_at and no completed_at, so its interval is a real wait rather than an artifact  — user step started_at=True completed_at=None
+[PASS] [Y] the held Service Task step exists and is the row the pane labels 'not measured'  — step_type=service
+[PASS] [Y] TASK 3: and the run-level artifact is real in the ROW, not just in the API's answer — a real, completed, engine-started run has completed_at STRICTLY BEFORE started_at, which is only possible because now() is the transaction timestamp and the completing transaction opened before the inserting one  — completed_at - started_at = -0.362s
+[PASS] [Y] so a Duration column that simply subtracted the two would have printed a NEGATIVE run duration on this row — the screen prints 'not measured' instead, and the tooltip says why  — the grid branches on duration_measured, with the reason on hover
+
+==========================================================================
+TASK 4 — what the components render, and where their data comes from
+==========================================================================
+[PASS] [Y] the envelope driving these checks is the REAL one the view-only fixture received over HTTP, not a hand-written stand-in  — 7 real rows
+[PASS]     [Y] the grid declares no MOCK_/SAMPLE_/FAKE_ constant and no array-of-objects row literal — there is nothing in it a run could come from except the API  — none
+[PASS]     [Y] the pane declares no MOCK_/SAMPLE_/FAKE_ constant and no array-of-objects row literal — there is nothing in it a run could come from except the API  — none
+[PASS]     [Y] the page declares no MOCK_/SAMPLE_/FAKE_ constant and no array-of-objects row literal — there is nothing in it a run could come from except the API  — none
+[PASS] [Y] TASK 4: the screen's rows come from the live API only — seeded by the server component's getWorkflowRuns() and re-read from /api/admin/workflow-runs, with `initialRows = []` and no literal default row anywhere  — initialRows defaults to [], not to sample data
+[PASS] [Y] and the detail pane fetches the run it is showing from the real per-run route rather than being handed a fabricated detail object  — GET /api/admin/workflow-runs/{runId}
+[PASS] [Y] TASK 3: the 'Scheduled: …' label is the SERVER's started_by_label, rendered as-is — the string never appears as a literal in the browser, so there is no second opinion about what started a run  — expected server label for the fixture: 'Scheduled: Daily at 10:55 PM (America/New_York)'
+[PASS] [Y] and the origin the accent keys on is origin.kind from the stored context — the screen never infers 'scheduled' from a null started_by, which is the inference that made the OLD column print an em-dash for every scheduler-fired run  — origin.kind, not a null check
+[PASS] [Y] the recurrence sentence is the server's schedule_summary — no cron parsing or cron-to-English rendering in the browser  — no client-side cron rendering
+[PASS] [Y] TASK 3: the pane prints NOT_MEASURED for a step the API did not measure, and formats a number ONLY when duration_measured is true — so a Service Task's zero interval never reaches the screen dressed as a measurement  — s.duration_measured ? formatDuration(…) : NOT_MEASURED
+[PASS] [Y] and formatDuration answers an em-dash — never '0s' — when the API sent no duration at all  — null → em-dash
+[PASS] [Y] TASK 4: changing a filter RE-READS from the API rather than filtering the rows already in the browser — the list is capped server-side, so a browser-side 'last 24 hours' would silently mean 'among the most recent 200 runs of any status'  — both filter handlers call reload()
+[PASS] [Y] and the period the screen posts is the server's NAME, never a timestamp the browser computed  — posts '30d', not an instant
+[PASS] [Y] TASK 4: the screen is DataGrid-driven — the same shared grid the Triggers and Portfolio UX screens use, with the held-row treatment going through its existing getRowStyle row hook  — DataGrid + getRowStyle
+[PASS] [Y] a held run is visually distinct in the LIST, not only in its pill — a gold wash on the whole row, because 'this run needs attention' is a row fact  — getRowStyle washes a held row
+[PASS] [Y] there is no truthy fallback on the permission envelope — a lost envelope seeds {can_read: false, can_write: false} and fails CLOSED  — truthy fallbacks: none
+[PASS] [Y] TASK 3: the pane renders the alerts the API read back from member_todos — it does not compute a recipient list of its own, so it shows who WAS notified rather than who the rule would notify today  — alerts come from the detail payload
+
+==========================================================================
+TASK 4 — npm run build
+==========================================================================
+[PASS] [Y] TASK 4: `npm run build` exits 0  — exit=0
+[PASS] [Y] TEARDOWN: every parked foreign trigger is active again  — 1/1 restored
+[PASS] [Y] TEARDOWN: zero leftover fixture rows across users, profiles, profile grants, definitions, versions, steps, triggers, runs, run steps and todos — INCLUDING the alert todos that landed on real org admins rather than on fixtures  — leftover rows = 0
+[PASS] [Y] TEARDOWN removed only fixtures — the pre-existing run rows survive  — runs remaining = 3
+
+==========================================================================
+82 passed, 0 failed — PASS
+==========================================================================

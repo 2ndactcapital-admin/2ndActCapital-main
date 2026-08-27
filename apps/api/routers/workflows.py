@@ -35,7 +35,8 @@ and every query is scoped to it; it is NEVER read from a request body.
 """
 
 import json
-from datetime import datetime, timezone as _tz
+import re
+from datetime import datetime, timedelta, timezone as _tz
 from uuid import UUID
 
 _UTC = _tz.utc
@@ -49,6 +50,10 @@ from services.database import get_pool
 from services.profiles import user_has_permission
 from services.rbac import is_super_admin, load_principal
 from services.users import ensure_user
+# The held-run alert pane reads member_todos on the SAME key the writer upserts
+# on. Importing the writer's own constant is what keeps the two from drifting:
+# if the source marker is ever renamed, this read moves with it.
+from services import workflow_todos
 from services.workflow_editor import (
     WorkflowEditError,
     WorkflowValidationError,
@@ -693,51 +698,367 @@ async def save_workflow_version(request: Request, definition_id: UUID, body: Ver
 # Super Admin sees across ALL orgs. org_id is always resolved from the
 # authenticated context, never from the request body.
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Run History (schedulerhistory) — the derived facts the Run History screen
+# renders, all resolved SERVER-SIDE from real columns.
+#
+# THE RUN STATUS VOCABULARY IS A CODE CONVENTION, NOT A DB CONSTRAINT.
+# There is no CHECK constraint on ``workflow_runs.status`` — introspected live.
+# The complete set the engine ever writes is below, taken from
+# services/workflow_engine.py: the column DEFAULT and the resume path write
+# 'running', the completion path writes 'completed', and ``_hold_run`` writes
+# 'held'. A filter list built by asking the database what statuses are legal
+# would come back empty, and one built from DISTINCT would silently lose
+# whichever state happens to have no rows right now — so it is named here.
+RUN_STATUSES = ("running", "completed", "held")
+
+#: DURATION IS NOT MEASURED HERE UNLESS IT REALLY WAS. This applies at BOTH
+#: levels, and the run level is the one that is easy to get wrong.
+#:
+#: Postgres ``now()`` is the TRANSACTION timestamp, not the statement's. The
+#: engine inserts the run row on an INDEPENDENT connection (so a later failure
+#: is still recordable), then marks it completed on the caller's connection —
+#: whose transaction, through the RLS pool wrapper, opened BEFORE that insert.
+#: So for a run that completes inside its own ``start_workflow_run`` call,
+#: ``completed_at`` carries a timestamp from a transaction that began before the
+#: run existed, and ``completed_at - started_at`` comes out NEGATIVE. Measured
+#: live during verification: -0.36s on a real manual run.
+#:
+#: A non-positive interval is therefore proof that the two timestamps came from
+#: overlapping transactions and cannot be an elapsed time. A strictly positive
+#: one means completion happened in a genuinely later transaction — a run that
+#: paused at a User Task and was finished afterwards — and is real (if anything,
+#: an understatement, since ``completed_at`` is stamped at that transaction's
+#: start). So: positive is reported, anything else is reported as not measured.
+#:
+#: How long a STEP took is real only for a User Task. A Service Task's row is
+#: written by ONE post-hoc UPDATE that sets ``started_at = now(), completed_at
+#: = now()`` together (workflow_engine.py, the service-execution branch), so its
+#: interval is always exactly zero — an artifact of how it is recorded, not a
+#: measurement of anything. A User Task's ``started_at`` is stamped when the
+#: task goes active and its ``completed_at`` when a human completes it, so that
+#: interval is genuine human wait time. The screen must not print "0s" for a
+#: Service Task as though that were a measurement, so the API says which it is
+#: rather than leaving the client to guess from step_type.
+DURATION_MEASURED_STEP_TYPES = ("user",)
+
+#: Server-resolved time windows for the Run History period filter. Resolved
+#: HERE so the boundary the screen filters on and the boundary the query
+#: applies are the same value — the browser sends a name, not a timestamp.
+RUN_PERIODS = {
+    "24h": timedelta(hours=24),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
+    "all": None,
+}
+
+
+def _run_permissions(principal: dict) -> dict:
+    """What this caller may do on the Run History surface, shipped with the page.
+
+    Run History is READ-ONLY end to end — there is no write endpoint on a run,
+    so ``can_write`` is a constant false rather than a resolved capability. It
+    is published anyway because the screen renders from the same envelope shape
+    every other UX screen in this project renders from, and a screen that had to
+    special-case "this one has no envelope" is how a missing envelope starts
+    reading as permission.
+    """
+    return {
+        "can_read": True,          # this envelope is only built after the gate
+        "can_write": False,
+        "is_super_admin": bool(is_super_admin(principal)),
+        "read_permission": PERM_VIEW_RUNS,
+        "write_permission": None,
+        "statuses": list(RUN_STATUSES),
+        "periods": list(RUN_PERIODS),
+    }
+
+
+def _parse_when(raw: str | None, field: str) -> datetime | None:
+    """Parse an ISO-8601 instant from the query string, or refuse it by name.
+
+    THE SPACE-FOR-PLUS REPAIR IS NOT LENIENCY FOR ITS OWN SAKE. '+' is the
+    form-encoded space, so an offset-bearing timestamp pasted into a URL
+    unencoded — '…T02:45:48+00:00' — arrives here as '…T02:45:48 00:00' and
+    fails to parse. It cost a verification run to find. A space in that exact
+    position is unambiguous (a real ISO instant never contains one after the
+    seconds), so it is repaired rather than refused; anything else still gets a
+    422 naming the field, because silently treating an unparseable bound as
+    "no bound" would widen the window the caller asked to narrow.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        repaired = re.sub(r"(\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?) (\d{2}:\d{2})$",
+                          r"\1+\2", text)
+        try:
+            parsed = datetime.fromisoformat(repaired)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field} must be an ISO-8601 datetime",
+            ) from None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_UTC)
+
+
+def _resolve_window(period: str | None, since: str | None, until: str | None):
+    """Turn the screen's filter controls into a concrete (since, until) pair.
+
+    ``period`` is a NAME the server resolves against the clock; ``since`` /
+    ``until`` are explicit instants. An explicit bound always wins over the
+    preset it overlaps, so a caller can be precise without having to avoid the
+    convenience form.
+    """
+    since_at = _parse_when(since, "since")
+    until_at = _parse_when(until, "until")
+    if period:
+        key = str(period).strip()
+        if key not in RUN_PERIODS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"period must be one of {', '.join(RUN_PERIODS)}",
+            )
+        span = RUN_PERIODS[key]
+        if span is not None and since_at is None:
+            since_at = datetime.now(_UTC) - span
+    return since_at, until_at
+
+
+def _run_origin(context) -> dict:
+    """What STARTED this run, read from the run's own context.
+
+    A scheduler-fired run carries the tick's own stamp —
+    ``{"trigger_id", "trigger_type": "scheduled", "scheduled_occurrence"}``,
+    written by services/workflow_scheduler._fire. Anything else is a manual
+    start. The distinction is read from the stored context, never inferred from
+    "started_by is NULL": a scheduled run records no human starter today, but
+    that is a property of the current tick, not a definition of scheduling, and
+    a screen that keyed on it would relabel every run the day that changed.
+    """
+    data = _jsonb(context)
+    if not isinstance(data, dict):
+        data = {}
+    trigger_id = data.get("trigger_id")
+    scheduled = data.get("trigger_type") == SCHEDULED and trigger_id is not None
+    return {
+        "kind": SCHEDULED if scheduled else "manual",
+        "trigger_id": str(trigger_id) if scheduled else None,
+        "scheduled_occurrence": data.get("scheduled_occurrence") if scheduled else None,
+    }
+
+
+def _origin_label(origin: dict, name: str | None, email: str | None) -> str:
+    """The one string the "Started by" column prints.
+
+    NOTE ON "Scheduled: {trigger name}". ``workflow_triggers`` HAS NO NAME
+    COLUMN — introspected live, the table is (workflow_definition_id,
+    trigger_type, schedule_cron, event_type, timezone, bounds, counters) and
+    nothing else. So a trigger's only human identity is its recurrence, and the
+    honest label is the recurrence summary the Triggers screen already shows for
+    that same row. Inventing a name here would print something no other screen
+    could show and no operator could search for.
+    """
+    if origin.get("kind") != SCHEDULED:
+        return name or email or "—"
+    summary = origin.get("schedule_summary")
+    if summary:
+        return f"Scheduled: {summary}"
+    return "Scheduled (trigger since removed)"
+
+
+async def _decorate_origins(conn, rows: list[dict]) -> None:
+    """Resolve every scheduled row's trigger in ONE query and attach its
+    recurrence summary, built by the same ``describe_schedule`` the Triggers
+    screen and the firing loop use."""
+    trigger_ids = {
+        r["origin"]["trigger_id"]
+        for r in rows
+        if r["origin"]["trigger_id"] is not None
+    }
+    found = {}
+    if trigger_ids:
+        for t in await conn.fetch(
+            """
+            SELECT id, trigger_type, schedule_cron, timezone, is_active
+            FROM workflow_triggers WHERE id = ANY($1::uuid[])
+            """,
+            [UUID(t) for t in trigger_ids],
+        ):
+            found[str(t["id"])] = dict(t)
+    for row in rows:
+        origin = row["origin"]
+        trigger = found.get(origin.get("trigger_id") or "")
+        if trigger is not None:
+            origin["trigger_exists"] = True
+            origin["schedule_cron"] = trigger["schedule_cron"]
+            origin["timezone"] = trigger["timezone"]
+            origin["trigger_is_active"] = trigger["is_active"]
+            origin["schedule_summary"] = describe_schedule(
+                trigger["schedule_cron"], trigger["timezone"]
+            )
+        elif origin.get("trigger_id") is not None:
+            # The run really was scheduled; the trigger has since been deleted.
+            # Saying so beats both "manual" and a blank.
+            origin["trigger_exists"] = False
+            origin["schedule_cron"] = None
+            origin["timezone"] = None
+            origin["trigger_is_active"] = None
+            origin["schedule_summary"] = None
+        else:
+            origin["trigger_exists"] = None
+            origin["schedule_cron"] = None
+            origin["timezone"] = None
+            origin["trigger_is_active"] = None
+            origin["schedule_summary"] = None
+        row["started_by_label"] = _origin_label(
+            origin, row.get("started_by_name"), row.get("started_by_email")
+        )
+
+
+def _elapsed_seconds(started_at, completed_at) -> float | None:
+    """A real elapsed time, or None.
+
+    None covers three cases and the screen renders all three the same way,
+    because they mean the same thing: nothing was measured. Still running;
+    never completed; or — see the note above ``DURATION_MEASURED_STEP_TYPES`` —
+    the two timestamps came from overlapping transactions, which shows up as a
+    zero or negative interval and is an artifact of ``now()`` being the
+    transaction timestamp rather than any fact about how long the work took.
+    """
+    if started_at is None or completed_at is None:
+        return None
+    seconds = (completed_at - started_at).total_seconds()
+    return seconds if seconds > 0 else None
+
+
+_RUN_COLUMNS = """
+    r.id, r.org_id, r.status, r.started_by, r.started_at, r.completed_at,
+    r.error_detail, r.context,
+    d.id AS definition_id, d.name AS workflow_name,
+    v.version_number,
+    u.full_name AS started_by_name, u.email AS started_by_email
+"""
+
+_RUN_JOINS = """
+    FROM workflow_runs r
+    JOIN workflow_versions v ON v.id = r.workflow_version_id
+    JOIN workflow_definitions d ON d.id = v.workflow_definition_id
+    LEFT JOIN users u ON u.id = r.started_by
+"""
+
+
 @router.get("/admin/workflow-runs")
-async def list_workflow_runs(request: Request):
-    """Run Console list: the org's workflow runs (all-orgs for Super Admin)."""
+async def list_workflow_runs(
+    request: Request,
+    status: str | None = None,
+    period: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 200,
+):
+    """Run History list: the org's workflow runs (all orgs for a Super Admin).
+
+    Returns an ENVELOPE — ``{rows, permissions, filters}`` — not the bare list
+    it used to. Every row carries what the screen prints and nothing it has to
+    derive: the workflow's name, its version, a real duration, and an
+    ``origin`` block saying whether a schedule or a person started it.
+
+    FILTERING HAPPENS HERE, IN SQL. The grid can filter what it has been sent,
+    but "runs in the last 7 days" is a claim about the whole table and a client
+    filter over a 200-row page would quietly answer a different question.
+    """
     _, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
     all_orgs = is_super_admin(principal)
+
+    statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
+    unknown = [s for s in statuses if s not in RUN_STATUSES]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown run status {', '.join(unknown)} — "
+                   f"known statuses are {', '.join(RUN_STATUSES)}",
+        )
+    since_at, until_at = _resolve_window(period, since, until)
+    limit = max(1, min(int(limit), 1000))
+
+    where, args = [], []
+    if not all_orgs:
+        args.append(org_id)
+        where.append(f"r.org_id = ${len(args)}")
+    if statuses:
+        args.append(statuses)
+        where.append(f"r.status = ANY(${len(args)}::text[])")
+    if since_at is not None:
+        args.append(since_at)
+        where.append(f"r.started_at >= ${len(args)}")
+    if until_at is not None:
+        args.append(until_at)
+        where.append(f"r.started_at <= ${len(args)}")
+    args.append(limit)
+
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"""
-            SELECT r.id, r.org_id, r.status, r.started_by, r.started_at,
-                   r.completed_at, r.error_detail,
-                   d.id AS definition_id, d.name AS workflow_name,
-                   v.version_number,
-                   u.full_name AS started_by_name, u.email AS started_by_email
-            FROM workflow_runs r
-            JOIN workflow_versions v ON v.id = r.workflow_version_id
-            JOIN workflow_definitions d ON d.id = v.workflow_definition_id
-            LEFT JOIN users u ON u.id = r.started_by
-            {"" if all_orgs else "WHERE r.org_id = $1"}
-            ORDER BY r.started_at DESC
-            LIMIT 200
-            """,
-            *([] if all_orgs else [org_id]),
-        )
-    return [dict(r) for r in rows]
+        rows = [
+            dict(r)
+            for r in await conn.fetch(
+                f"""
+                SELECT {_RUN_COLUMNS}
+                {_RUN_JOINS}
+                {"WHERE " + " AND ".join(where) if where else ""}
+                ORDER BY r.started_at DESC
+                LIMIT ${len(args)}
+                """,
+                *args,
+            )
+        ]
+        for row in rows:
+            row["context"] = _jsonb(row.get("context"))
+            row["origin"] = _run_origin(row["context"])
+            row["duration_seconds"] = _elapsed_seconds(
+                row["started_at"], row["completed_at"]
+            )
+            row["duration_measured"] = row["duration_seconds"] is not None
+        await _decorate_origins(conn, rows)
+
+    return {
+        "rows": rows,
+        "permissions": _run_permissions(principal),
+        "filters": {
+            "status": statuses,
+            "period": period,
+            "since": since_at.isoformat() if since_at else None,
+            "until": until_at.isoformat() if until_at else None,
+            "limit": limit,
+        },
+    }
 
 
 @router.get("/admin/workflow-runs/{run_id}")
 async def get_workflow_run(request: Request, run_id: UUID):
-    """Drill into one run: its status plus each run-step's status/result/error."""
+    """Drill into one run: its origin, its step-by-step history, and — when it
+    is held — the error and the people who were actually alerted about it.
+
+    ``alerts`` is READ BACK from ``member_todos`` on exactly the key
+    ``workflow_todos.create_held_run_alerts`` upserts on
+    (``source='workflow_run_held'``, ``related_type='workflow_run'``,
+    ``related_id=run_id``). It is deliberately not a re-derivation of "the
+    starter plus every org_admin": the point of the pane is to show who WAS
+    notified, and re-running the recipient rule would show who WOULD be
+    notified if it held right now — the same answer only while nobody has
+    joined, left or changed role since.
+    """
     _, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
     async with pool.acquire() as conn:
         run = await conn.fetchrow(
             f"""
-            SELECT r.id, r.org_id, r.status, r.started_by, r.started_at,
-                   r.completed_at, r.error_detail, r.context,
-                   d.id AS definition_id, d.name AS workflow_name,
-                   v.version_number,
-                   u.full_name AS started_by_name, u.email AS started_by_email
-            FROM workflow_runs r
-            JOIN workflow_versions v ON v.id = r.workflow_version_id
-            JOIN workflow_definitions d ON d.id = v.workflow_definition_id
-            LEFT JOIN users u ON u.id = r.started_by
+            SELECT {_RUN_COLUMNS}
+            {_RUN_JOINS}
             WHERE r.id = $1{"" if all_orgs else " AND r.org_id = $2"}
             """,
             *([run_id] if all_orgs else [run_id, org_id]),
@@ -756,14 +1077,48 @@ async def get_workflow_run(request: Request, run_id: UUID):
             """,
             run_id,
         )
-    run_out = dict(run)
-    run_out["context"] = _jsonb(run_out.get("context"))
+        alert_rows = await conn.fetch(
+            """
+            SELECT t.id, t.user_id, t.status, t.title, t.detail, t.priority,
+                   t.created_at, t.updated_at,
+                   u.full_name AS user_name, u.email AS user_email
+            FROM member_todos t
+            LEFT JOIN users u ON u.id = t.user_id
+            WHERE t.source = $1 AND t.related_type = 'workflow_run'
+              AND t.related_id = $2
+            ORDER BY u.full_name NULLS LAST, u.email NULLS LAST
+            """,
+            workflow_todos.TODO_SOURCE_RUN_HELD, run_id,
+        )
+
+        run_out = dict(run)
+        run_out["context"] = _jsonb(run_out.get("context"))
+        run_out["origin"] = _run_origin(run_out["context"])
+        run_out["duration_seconds"] = _elapsed_seconds(
+            run_out["started_at"], run_out["completed_at"]
+        )
+        run_out["duration_measured"] = run_out["duration_seconds"] is not None
+        await _decorate_origins(conn, [run_out])
+
     steps = []
     for r in step_rows:
         d = dict(r)
         d["result"] = _jsonb(d.get("result"))
+        # See DURATION_MEASURED_STEP_TYPES: a Service Task's two timestamps are
+        # written by one statement, so its interval is an artifact. Say so.
+        measured = d["step_type"] in DURATION_MEASURED_STEP_TYPES
+        d["duration_measured"] = measured
+        d["duration_seconds"] = (
+            _elapsed_seconds(d["started_at"], d["completed_at"]) if measured else None
+        )
         steps.append(d)
-    return {"run": run_out, "steps": steps}
+
+    return {
+        "run": run_out,
+        "steps": steps,
+        "alerts": [dict(a) for a in alert_rows],
+        "permissions": _run_permissions(principal),
+    }
 
 
 #: Rows the scheduler tick actually scans. Named once so the row decorator and
