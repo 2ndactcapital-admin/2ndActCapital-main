@@ -1157,6 +1157,20 @@
 --   PRIMARY KEY permissions_pkey: (id)
 --   UNIQUE permissions_resource_action_key: (resource, action)
 
+-- ===== portfolio_precedence_household_overrides =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   source_order                             jsonb NOT NULL
+--   reason                                   text NOT NULL
+--   approved_by                              uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY portfolio_precedence_household_overrides_pkey: (id)
+
 -- ===== posting_template_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   template_id                              uuid NOT NULL
@@ -2734,6 +2748,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   account_id                               uuid
 --   PRIMARY KEY positions_pkey: (id)
 
 -- ===== portfolio.reference_filings =====
