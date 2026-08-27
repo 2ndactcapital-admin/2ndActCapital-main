@@ -1171,6 +1171,21 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY portfolio_precedence_household_overrides_pkey: (id)
 
+-- ===== position_account_exceptions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   position_id                              uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   owner_entity_id                          uuid NOT NULL
+--   reason_code                              text NOT NULL
+--   reason                                   text NOT NULL
+--   source_system                            text
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   reviewed_at                              timestamp with time zone
+--   reviewed_by                              uuid
+--   PRIMARY KEY position_account_exceptions_pkey: (id)
+
 -- ===== posting_template_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   template_id                              uuid NOT NULL

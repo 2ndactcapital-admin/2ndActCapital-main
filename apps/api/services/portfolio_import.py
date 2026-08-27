@@ -477,6 +477,7 @@ async def import_positions_file(
     resolve_precedence_after: bool = True,
     document_id: str | None = None,
     linked_by: str | None = None,
+    account_id: str | None = None,
 ) -> ImportResult:
     """Import a reporting-tool holdings export into assets + positions.
 
@@ -495,6 +496,20 @@ async def import_positions_file(
     ``as_of_date`` overrides the file's date column, and is REQUIRED when the
     file has no usable date. A defaulted "today" would date a Q2 export to
     whenever it happened to be uploaded.
+
+    ``account_id`` (fee32) is OPTIONAL and applies to the WHOLE file — one
+    export, one custodial account. It is supplied by the caller for the same
+    reason ``owner_entity_id`` is: the file's account column is a name, and
+    resolving a name onto an account id implicitly would attach holdings to
+    whichever account happened to match a string. Omitted (the default) every
+    position is written with a NULL ``account_id``, which is exactly right for
+    a directly-held or SPV export and is what every existing caller gets.
+
+    When it IS supplied, each written position is checked against that
+    account's active owners. A mismatch does NOT fail the row: the position is
+    written and a reviewable exception is recorded (see
+    ``portfolio_account_link``). An account belonging to another org IS
+    refused, once, before any row is written — see the pre-flight check below.
 
     When ``resolve_precedence_after`` is set (the default), every holding key
     this import touched is resolved through
@@ -520,6 +535,22 @@ async def import_positions_file(
     if as_of_date is not None and not isinstance(as_of_date, date):
         raise ImportError_(
             f"as_of_date must be a datetime.date — got {type(as_of_date).__name__}"
+        )
+
+    if account_id:
+        # Pre-flight, ONCE, before a single row is parsed. `create_position`
+        # would refuse a foreign-org account on every row anyway, but that turns
+        # one tenant-boundary refusal into four hundred identical row errors and
+        # an import that reports partial success. The same check up front fails
+        # the whole call, which is what a cross-tenant account id deserves.
+        # A mismatch that is merely an owner mismatch does NOT stop here — that
+        # one is per-row, written, and recorded.
+        from services.portfolio_account_link import check_account_link
+
+        await check_account_link(
+            conn, org_id,
+            account_id=str(account_id),
+            owner_entity_id=str(owner_entity_id),
         )
 
     rows = parse_tabular(file_bytes, filename)
@@ -576,6 +607,7 @@ async def import_positions_file(
                 source_system=source_system,
                 result=result,
                 touched=touched,
+                account_id=str(account_id) if account_id else None,
             )
         except (PortfolioError, ValueError) as exc:
             result.errors.append(RowError(line=line, reason=str(exc), raw=raw))
@@ -642,6 +674,7 @@ async def _import_row(
     source_system: str,
     result: ImportResult,
     touched: set[tuple[str, date]],
+    account_id: str | None = None,
 ) -> str | None:
     """Import one row. Returns the new position id, or ``None`` if it was a
     duplicate. Raises ``ValueError``/``PortfolioError`` for a malformed row —
@@ -756,6 +789,7 @@ async def _import_row(
         ownership_pct=pct_arg,
         market_value=mv_arg,
         cost_basis=cost_basis,
+        account_id=account_id,
     )
     await upsert_external_reference(
         conn,

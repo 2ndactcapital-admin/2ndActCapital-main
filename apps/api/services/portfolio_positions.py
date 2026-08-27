@@ -89,6 +89,7 @@ from services.portfolio_rollup import position_current_value
 TABLE_CONFIG = "public.config"
 TABLE_TXN_TYPES = "public.transaction_types"
 TABLE_DOC_RECORD_LINKS = "public.document_record_links"
+TABLE_ACCOUNTS = "public.accounts"
 
 READ_PERMISSION = "view_portfolio"
 WRITE_PERMISSION = "manage_portfolio"
@@ -116,10 +117,18 @@ SUPERSEDED_FILTERS = frozenset({"all", "winners", "losers"})
 #: a different asset or owner is not a correction of that position, it is a
 #: different position — and a restatement chain that changed subject halfway
 #: would make the history unreadable.
+#: `account_id` (fee32) IS editable, unlike `asset_id` / `owner_entity_id`.
+#: Re-pointing a position at a different custodial account is a correction of
+#: the same holding — the owner and the asset are unchanged, only the statement
+#: it was reported on. An explicit `null` unlinks it, which is what a position
+#: reclassified as directly-held needs. Editing it re-runs the account-owner
+#: check in `create_position`, so a correction that introduces a mismatch
+#: raises its own exception rather than inheriting the old row's clean record.
 EDITABLE_FIELDS = frozenset({
     "as_of_date", "ownership_basis", "quantity", "ownership_pct", "cost_basis",
     "market_value", "market_value_native", "accrued_income", "authority",
     "source_system", "taxonomy_key", "is_reconciled", "superseded_by_source",
+    "account_id",
 })
 
 #: The subset an INLINE grid cell may edit. Everything here is safe to change
@@ -195,6 +204,9 @@ _LIST_COLUMNS = f"""
     p.superseded_by_source             AS superseded_by_source,
     p.valid_from                       AS valid_from,
     p.valid_to                         AS valid_to,
+    p.account_id::text                 AS account_id,
+    acct.account_number_masked         AS account_number_masked,
+    acct.household_id::text            AS account_household_id,
     a.name                             AS asset_name,
     a.short_name                       AS asset_short_name,
     a.asset_type                       AS asset_type,
@@ -213,6 +225,9 @@ _LIST_FROM = f"""
     JOIN {TABLE_ENTITIES} e
       ON e.id = p.owner_entity_id AND e.org_id = p.org_id
      AND {_current('e')}
+    LEFT JOIN {TABLE_ACCOUNTS} acct
+      ON acct.id = p.account_id AND acct.org_id = p.org_id
+     AND {_current('acct')}
 """
 
 
@@ -414,6 +429,14 @@ def _row_to_json(r, labels: dict[str, str]) -> dict[str, Any]:
         "market_value_native": _s(r["market_value_native"]),
         "accrued_income": _s(r["accrued_income"]),
         "fx_rate_id": r["fx_rate_id"],
+        # fee32. NULL is the normal, correct state for a directly-held asset or
+        # an SPV interest — a blank account column is not a missing value.
+        # `account_number_masked` is the only account identifier ever published:
+        # public.accounts stores no unmasked number, and this read must not be
+        # where one appears.
+        "account_id": r["account_id"],
+        "account_number_masked": r["account_number_masked"],
+        "account_household_id": r["account_household_id"],
         "authority": r["authority"],
         "source_system": r["source_system"],
         "taxonomy_key": key,
@@ -777,7 +800,8 @@ async def update_position(
                    p.cost_basis, p.market_value, p.market_value_native,
                    p.fx_rate_id::text      AS fx_rate_id,
                    p.accrued_income, p.authority, p.source_system,
-                   p.taxonomy_key, p.is_reconciled, p.superseded_by_source
+                   p.taxonomy_key, p.is_reconciled, p.superseded_by_source,
+                   p.account_id::text      AS account_id
             FROM {TABLE_POSITIONS} p
             WHERE p.id = $1::uuid AND p.org_id = $2::uuid AND {_current('p')}
             """,
@@ -818,6 +842,12 @@ async def update_position(
             taxonomy_key=merged["taxonomy_key"],
             is_reconciled=bool(merged["is_reconciled"]),
             superseded_by_source=merged["superseded_by_source"],
+            # Carried, not defaulted. `create_position` writes every column
+            # from its arguments, so omitting this would silently NULL the
+            # account link on the FIRST edit of any linked position — the
+            # holding would keep its numbers and quietly stop being attached to
+            # the statement it came from.
+            account_id=merged["account_id"],
         )
 
         await _carry_document_links(c, org_id, position_id, new_id)

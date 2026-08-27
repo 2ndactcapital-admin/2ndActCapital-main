@@ -33,10 +33,20 @@ from services.portfolio_import import (
     ImportError_,
     import_positions_file,
 )
+from services.portfolio_account_link import (
+    AccountLinkError,
+    list_account_link_exceptions,
+    review_account_link_exception,
+)
 from services.portfolio_precedence import (
     PRECEDENCE_SETTING_KEY,
+    HouseholdOverrideError,
+    PrecedenceConfigError,
+    clear_household_source_order,
+    get_household_override,
     get_source_order,
     resolve_holding,
+    set_household_source_order,
 )
 from services.portfolio_rollup import (
     ROLLUP_PERMISSION,
@@ -53,6 +63,7 @@ async def import_positions(
     request: Request,
     owner_entity_id: _uuid.UUID = Form(...),
     as_of_date: date | None = Form(default=None),
+    account_id: _uuid.UUID | None = Form(default=None),
     file: UploadFile = File(...),
 ):
     """Import a reporting-tool holdings export (CSV or XLSX).
@@ -62,6 +73,15 @@ async def import_positions(
     returned in ``errors`` — a single malformed line does not fail the import,
     and the response is a 201 describing what happened rather than a 400 that
     throws away four hundred good rows.
+
+    ``account_id`` (fee32) is OPTIONAL and links every position this file writes
+    to one custodial account. Omitted — the default, and what every caller
+    before this sprint sends — the positions carry a NULL account, which is the
+    correct state for a directly-held or SPV export. Supplied but belonging to
+    another org: 400, before a single row is written. Supplied but naming an
+    account the owner entity does not own: the import PROCEEDS and each position
+    raises a reviewable exception readable at
+    ``GET /portfolio/position-account-exceptions``.
     """
     org_id = get_org_id(request)
     pool = await get_pool()
@@ -78,7 +98,14 @@ async def import_positions(
                 filename=file.filename,
                 owner_entity_id=str(owner_entity_id),
                 as_of_date=as_of_date,
+                account_id=str(account_id) if account_id else None,
             )
+        except AccountLinkError as exc:
+            # A cross-tenant / closed account, caught before any row was
+            # written. 400 rather than 403: the caller named an account that is
+            # not theirs to name, and the detail says which check refused it
+            # without disclosing anything about the other tenant's account.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ImportError_ as exc:
             # The FILE was unusable — distinct from a bad row, and the only
             # case that is a 400.
@@ -164,7 +191,169 @@ async def resolve_precedence_endpoint(
         "order_is_default": outcome.order_is_default,
         "rows_marked": outcome.rows_marked,
         "rows_cleared": outcome.rows_cleared,
+        # fee32. WHICH of the three levels governed, not just what the order
+        # was. "Addepar won" and "Addepar won because this household overrides
+        # the firm's order" are different answers, and only the second one
+        # tells an operator where to go to change it.
+        "order_origin": outcome.order_origin,
+        "household_id": outcome.household_id,
+        "household_reason": outcome.household_reason,
     }
+
+
+# ── fee32: household precedence overrides ───────────────────────────────────
+
+
+@router.get("/portfolio/precedence/households/{household_id}")
+async def read_household_precedence(request: Request, household_id: _uuid.UUID):
+    """One household's active precedence override, or ``null``.
+
+    ``null`` means the household resolves through the org's own order — which is
+    reported alongside, so a screen can show what it WOULD fall back to without
+    a second call. That difference is the whole decision an operator is making.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+
+    async with pool.acquire() as conn:
+        override = await get_household_override(conn, org_id, str(household_id))
+        org_order = await get_source_order(conn, org_id)
+    return {
+        "household_id": str(household_id),
+        "override": override,
+        "org_order": list(org_order.order),
+        "org_order_is_default": org_order.is_default,
+        "setting_key": PRECEDENCE_SETTING_KEY,
+    }
+
+
+@router.put("/portfolio/precedence/households/{household_id}")
+async def write_household_precedence(
+    request: Request,
+    household_id: _uuid.UUID,
+    source_order: list[str] = Form(...),
+    reason: str = Form(...),
+):
+    """Create or replace a household's precedence override.
+
+    ``approved_by`` is NOT accepted from the body — it is the caller's own
+    verified user id. An approver a request could name is not an approver.
+
+    The previous override, if any, is closed on the system axis and kept: a
+    changed override is a new policy decision with its own approver, not a
+    correction of the old one, and a reconciliation screen needs the old row to
+    explain last quarter's winner.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+
+    async with pool.acquire() as conn:
+        try:
+            override_id = await set_household_source_order(
+                conn, org_id,
+                household_id=str(household_id),
+                source_order=source_order,
+                reason=reason,
+                approved_by=user_id,
+            )
+        except (HouseholdOverrideError, PrecedenceConfigError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        override = await get_household_override(conn, org_id, str(household_id))
+    return {"override_id": override_id, "override": override}
+
+
+@router.delete("/portfolio/precedence/households/{household_id}")
+async def delete_household_precedence(request: Request, household_id: _uuid.UUID):
+    """Retire a household's override. 404 if it had none.
+
+    After this the household resolves exactly as a household that never had one
+    — through the org setting, then the platform default.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+
+    async with pool.acquire() as conn:
+        cleared = await clear_household_source_order(
+            conn, org_id, household_id=str(household_id)
+        )
+    if not cleared:
+        raise HTTPException(
+            status_code=404,
+            detail=f"household {household_id} has no active precedence override",
+        )
+    return {"household_id": str(household_id), "cleared": True}
+
+
+# ── fee32: the position/account linkage review list ─────────────────────────
+
+
+@router.get("/portfolio/position-account-exceptions")
+async def read_position_account_exceptions(
+    request: Request,
+    include_reviewed: bool = Query(
+        default=False,
+        description="Include exceptions a reviewer has already closed.",
+    ),
+    position_id: _uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Positions written with an ``account_id`` their owner does not own.
+
+    These rows are the point of the linkage check: the position WAS written, so
+    nothing was lost, and it is listed here so the mismatch is reviewable rather
+    than silently accepted. An empty list is the healthy state, not a missing
+    feature.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+
+    async with pool.acquire() as conn:
+        return await list_account_link_exceptions(
+            conn, org_id,
+            include_reviewed=include_reviewed,
+            position_id=str(position_id) if position_id else None,
+            limit=limit,
+            offset=offset,
+        )
+
+
+@router.post("/portfolio/position-account-exceptions/{exception_id}/review")
+async def review_position_account_exception(
+    request: Request, exception_id: _uuid.UUID
+):
+    """Close one linkage exception. 404 if it was already closed or not this org's.
+
+    Closing records that a human looked; it corrects nothing. The fix is an edit
+    to the position's ``account_id`` or to the account's owners, and either of
+    those re-raising the mismatch is a NEW finding the partial unique index
+    deliberately allows to be recorded again.
+    """
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    user_id = get_user_id(request)
+    await require_permission(pool, user_id, org_id, WRITE_PERMISSION)
+
+    async with pool.acquire() as conn:
+        closed = await review_account_link_exception(
+            conn, org_id, exception_id=str(exception_id), reviewed_by=user_id
+        )
+    if not closed:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"exception {exception_id} is not an open exception in this org"
+            ),
+        )
+    return {"exception_id": str(exception_id), "reviewed": True}
 
 
 @router.get("/portfolio/altruist/status")

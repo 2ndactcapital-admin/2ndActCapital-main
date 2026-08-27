@@ -227,6 +227,10 @@ class PositionCreate(BaseModel):
     taxonomy_key: str | None = None
     is_reconciled: bool = False
     superseded_by_source: str | None = None
+    #: fee32. Optional, and omitted is the normal case — a directly-held asset
+    #: or an SPV interest has no custodial account. When supplied, an account
+    #: from another org is refused (400) rather than warned about.
+    account_id: _uuid.UUID | None = None
 
     _no_floats = field_validator(*MONEY_FIELDS, mode="before")(_reject_float)
 
@@ -277,6 +281,10 @@ class PositionPatch(BaseModel):
     taxonomy_key: str | None = None
     is_reconciled: bool | None = None
     superseded_by_source: str | None = None
+    #: fee32. An explicit ``null`` UNLINKS the position from its account — the
+    #: correction a holding reclassified as directly-held needs. Absent leaves
+    #: the existing link alone; ``model_fields_set`` is what tells them apart.
+    account_id: _uuid.UUID | None = None
 
     _no_floats = field_validator(*MONEY_FIELDS, mode="before")(_reject_float)
 
@@ -488,6 +496,7 @@ async def create_position_endpoint(request: Request, body: PositionCreate):
                 taxonomy_key=body.taxonomy_key,
                 is_reconciled=body.is_reconciled,
                 superseded_by_source=body.superseded_by_source,
+                account_id=str(body.account_id) if body.account_id else None,
             )
         except OwnershipBasisError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

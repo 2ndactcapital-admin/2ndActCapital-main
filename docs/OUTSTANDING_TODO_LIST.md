@@ -130,6 +130,19 @@ From `smtpservice.structural` (9/9 code assertions passed, correctly `BLOCKED` o
 
 ---
 
+## 9b · Fee module — backend built (fee31, fee32), two screens still missing
+
+The account layer (fee31) and its connection to the Portfolio Reporting Layer
+(fee32) are built, verified and merged/held. Both sprints shipped real,
+permission-gated endpoints with no frontend:
+
+- ⬜ **Position ↔ account linkage exception review screen.** `GET /portfolio/position-account-exceptions` and `POST .../{id}/review` exist and are proven; nothing renders them. A position written with an `account_id` whose owner is not one of that account's active owners is deliberately WRITTEN and flagged rather than refused — so until this screen exists, those flags accumulate unread.
+- ⬜ **Household precedence override editor.** `GET`/`PUT`/`DELETE /portfolio/precedence/households/{household_id}` exist and are proven. Today an override can only be set through the API or by a script.
+- ⬜ **Joint-custody positions split into multiple owner rows on import** — known, confirmed gap carried over from the Portfolio Reporting Layer thread. Explicitly out of scope for fee32; still open.
+- ⬜ **`verify_portfolioux4.py` check 1c is self-contaminated and now reports 70/71.** Its "pre-sprint state" is read with `git show HEAD:` and asserts the routers had no permissions envelope — which stopped being true the moment ux4's own commit (`1c64199`) added one. Verified during fee32: the predicate passes at `1c64199^` and fails at `HEAD`, and fee32 changes none of that machinery. Fix is to anchor the ref with `git log -S <marker> … ^` (the pattern `verify_fee32.py` check 5 uses) rather than `HEAD`. Left alone deliberately — ux4 is still HELD and editing its evidence mid-review would be worse than the stale number.
+
+---
+
 ## 10 · Major, multi-sprint efforts — not started
 
 - ⬜ **Billing and profit module** — comparable scope to the LiteLLM/Scheduler efforts; not yet scoped with a discovery sprint.

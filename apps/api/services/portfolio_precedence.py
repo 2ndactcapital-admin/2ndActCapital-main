@@ -17,6 +17,22 @@ THREE THINGS THIS MODULE IS DELIBERATE ABOUT
    stated one and is what an unconfigured org gets — which is every org today,
    so the default is not a fallback nobody exercises, it is the live path.
 
+   **fee32 adds ONE more specific level ahead of it**, and nothing else: an
+   active row in ``public.portfolio_precedence_household_overrides`` for the
+   household the holding belongs to. Resolution order is now household override
+   → org setting → ``DEFAULT_SETTINGS``, and the second and third are untouched.
+   A household with no override row resolves through exactly the code path it
+   resolved through before — the override lookup returns ``None`` and
+   :func:`get_source_order` runs unchanged. That is the property the sprint is
+   held to, so it is stated here rather than left to be inferred.
+
+   Why a household and not an account or an entity: one family reports through
+   one set of feeds. "We trust Addepar for the Hollis household because their
+   custodian's feed is six weeks behind" is a real statement an operator makes,
+   and it is true of every account and every entity under that household at
+   once. Per-account overrides would multiply the same decision by the number
+   of accounts and let them drift apart silently.
+
 2. **Losers are annotated, never deleted.** ``superseded_by_source`` is set on
    the losing row and the row stays exactly where it was, current and
    queryable. The design wants those rows for reconciliation: "Addepar says
@@ -53,7 +69,8 @@ be unauditable by construction.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -72,6 +89,24 @@ from services.portfolio_assets import (
 #: The org_settings key. Namespaced `portfolio.` so `category_for` files it
 #: under a `portfolio` category rather than the catch-all `general`.
 PRECEDENCE_SETTING_KEY = "portfolio.precedence.source_order"
+
+#: fee32's household override table. NOTE THE SCHEMA: the table is named
+#: ``portfolio_precedence_household_overrides`` but it lives in ``public``, not
+#: in the ``portfolio`` schema. Introspected from the deployed database, not
+#: inferred from the name — ``portfolio`` is not on any application role's
+#: search_path, so qualifying this as ``portfolio.`` would fail at runtime and
+#: the name is exactly the kind of thing that invites the wrong guess.
+TABLE_HOUSEHOLD_OVERRIDES = "public.portfolio_precedence_household_overrides"
+
+TABLE_ACCOUNTS = "public.accounts"
+TABLE_ENTITIES = "public.entities"
+
+#: Where an order came from. Reported rather than inferred, for the same reason
+#: ``SourceOrder.is_default`` is: a reconciliation screen that cannot say WHY a
+#: source won is not a reconciliation screen.
+ORIGIN_HOUSEHOLD = "household_override"
+ORIGIN_ORG_SETTING = "org_setting"
+ORIGIN_DEFAULT = "platform_default"
 
 #: Design V6 §1.1's stated order, most-trusted first — read from
 #: ``DEFAULT_SETTINGS`` rather than re-declared. org_settings' own docstring
@@ -172,6 +207,17 @@ class SourceOrder:
     order: tuple[str, ...]
     is_default: bool
     invalid_reason: str | None = None
+    #: fee32. One of ``ORIGIN_*``. Defaulted so every existing construction site
+    #: and every existing reader keeps working unchanged — a caller that only
+    #: knows about ``is_default`` still gets the same two-valued answer it did
+    #: before, and ``origin`` is strictly extra information.
+    origin: str = ORIGIN_DEFAULT
+    #: The household whose override supplied this order, when ``origin`` is
+    #: ``ORIGIN_HOUSEHOLD``. ``None`` otherwise.
+    household_id: str | None = None
+    #: Why no household override applied, when one might have been expected.
+    #: ``None`` when an override DID apply or when the question never arose.
+    household_reason: str | None = None
 
     def rank(self, source_system: str) -> int:
         return _rank(self.order, source_system)
@@ -205,13 +251,321 @@ async def get_source_order(conn, org_id: str) -> SourceOrder:
         conn, org_id, PRECEDENCE_SETTING_KEY
     )
     if is_default or raw is None:
-        return SourceOrder(DEFAULT_SOURCE_ORDER, is_default=True)
+        return SourceOrder(
+            DEFAULT_SOURCE_ORDER, is_default=True, origin=ORIGIN_DEFAULT
+        )
     try:
-        return SourceOrder(validate_source_order(raw), is_default=False)
+        return SourceOrder(
+            validate_source_order(raw), is_default=False, origin=ORIGIN_ORG_SETTING
+        )
     except PrecedenceConfigError as exc:
         return SourceOrder(
-            DEFAULT_SOURCE_ORDER, is_default=True, invalid_reason=str(exc)
+            DEFAULT_SOURCE_ORDER, is_default=True, invalid_reason=str(exc),
+            origin=ORIGIN_DEFAULT,
         )
+
+
+# ── The household override — fee32 ──────────────────────────────────────────
+
+
+class HouseholdOverrideError(PortfolioError):
+    """A household override write was refused for a reason the caller can fix."""
+
+
+async def get_household_override(
+    conn, org_id: str, household_id: str
+) -> dict[str, Any] | None:
+    """The household's ACTIVE override row, or ``None``. Read-only.
+
+    "Active" is ``system_to IS NULL AND valid_to IS NULL`` — both axes, matching
+    the partial unique index the table actually carries
+    (``… WHERE system_to IS NULL``) plus the valid axis the table's own
+    ``valid_from``/``valid_to`` columns exist for. A row closed on either axis
+    is history and must not resolve anything.
+    """
+    org_id = _require_org(org_id)
+    async with _OrgWrite(conn, org_id) as c:
+        row = await c.fetchrow(
+            f"""
+            SELECT h.id::text AS id, h.household_id::text AS household_id,
+                   h.source_order, h.reason,
+                   h.approved_by::text AS approved_by,
+                   h.created_at, h.valid_from
+            FROM {TABLE_HOUSEHOLD_OVERRIDES} h
+            WHERE h.org_id = $1::uuid AND h.household_id = $2::uuid
+              AND h.system_to IS NULL AND h.valid_to IS NULL
+            """,
+            org_id, str(household_id),
+        )
+    if row is None:
+        return None
+    raw = row["source_order"]
+    return {
+        **dict(row),
+        "source_order": json.loads(raw) if isinstance(raw, str) else raw,
+        "created_at": row["created_at"].isoformat(),
+        "valid_from": row["valid_from"].isoformat(),
+    }
+
+
+async def get_household_source_order(
+    conn, org_id: str, household_id: str | None
+) -> SourceOrder | None:
+    """The household's override as a :class:`SourceOrder`, or ``None``.
+
+    ``None`` means "this household has not overridden anything" and is the
+    signal to fall through to the org setting — NOT an error and NOT the
+    default order. Returning ``DEFAULT_SOURCE_ORDER`` here instead would silently
+    stop the org's own configured order from ever applying, which is the exact
+    failure mode this sprint must not introduce.
+
+    A stored override that no longer validates falls through to the org level
+    the same way an invalid org setting falls through to the default, and for
+    the same reason: resolution is on the ingestion path, and failing an import
+    because a settings row went stale turns a configuration problem into a data
+    problem. The ``invalid_reason`` rides along so a caller can surface it.
+    """
+    if not household_id:
+        return None
+    override = await get_household_override(conn, org_id, str(household_id))
+    if override is None:
+        return None
+    try:
+        return SourceOrder(
+            validate_source_order(override["source_order"]),
+            is_default=False,
+            origin=ORIGIN_HOUSEHOLD,
+            household_id=str(household_id),
+        )
+    except PrecedenceConfigError as exc:
+        # Deliberately NOT a SourceOrder: an unusable override must fall
+        # through to the org level, and returning one here would apply a
+        # half-broken order. The reason is carried to the caller by
+        # `_resolve_source_order`, which re-reads it.
+        return SourceOrder(
+            (), is_default=False, origin=ORIGIN_HOUSEHOLD,
+            household_id=str(household_id), invalid_reason=str(exc),
+        )
+
+
+async def household_for_position(
+    conn, org_id: str, *, account_id: str | None, owner_entity_id: str
+) -> str | None:
+    """Which household a position belongs to. ``None`` when it belongs to none.
+
+    The RFC settles the precedence between the two available routes:
+
+    * ``account_id`` → ``accounts.household_id``, when the position carries an
+      account. The account is the more specific fact: a position reported on a
+      statement belongs to whatever household that statement's account is
+      filed under, even if the owning entity's own ``primary_household_id``
+      says something else (a trust whose primary household is the grantor's
+      while the account sits under the beneficiary's).
+    * otherwise ``owner_entity_id`` → ``entities.primary_household_id``.
+
+    Note that an account whose ``household_id`` is NULL does NOT fall back to
+    the entity route. The account is present and it says "no household" — that
+    is an answer, not an absence, and falling through would let a position's
+    household depend on a column the operator deliberately left empty.
+    """
+    org_id = _require_org(org_id)
+    async with _OrgWrite(conn, org_id) as c:
+        if account_id:
+            return await c.fetchval(
+                f"""
+                SELECT a.household_id::text FROM {TABLE_ACCOUNTS} a
+                WHERE a.id = $1::uuid AND a.org_id = $2::uuid
+                  AND {_current('a')}
+                """,
+                str(account_id), org_id,
+            )
+        return await c.fetchval(
+            f"""
+            SELECT e.primary_household_id::text FROM {TABLE_ENTITIES} e
+            WHERE e.id = $1::uuid AND e.org_id = $2::uuid AND {_current('e')}
+            """,
+            str(owner_entity_id), org_id,
+        )
+
+
+async def _household_for_candidates(
+    conn, org_id: str, rows: Sequence[Mapping[str, Any]]
+) -> tuple[str | None, str | None]:
+    """The ONE household these candidates share, and why there isn't one.
+
+    Returns ``(household_id, reason)``. Exactly one of them is ever non-None.
+
+    Every candidate shares an ``owner_entity_id`` — :func:`resolve_precedence`
+    has already refused the set otherwise — but they need NOT share an
+    ``account_id``: the normal shape is one row from a custodial feed carrying
+    an account and one manual row carrying none. Each candidate is mapped to a
+    household independently and the distinct answers are compared:
+
+    * exactly one distinct household → that household's override applies;
+    * none → no household, org level, no reason to report;
+    * more than one → **no override is applied** and the reason says so.
+
+    Refusing to guess in the ambiguous case is the point. Picking "the first
+    one" would make which household's policy governs a holding depend on row
+    insertion order, and the resulting winner would flip on re-resolution
+    without any setting having changed.
+    """
+    households: dict[str, None] = {}
+    for row in rows:
+        household = await household_for_position(
+            conn, org_id,
+            account_id=row.get("account_id"),
+            owner_entity_id=row["owner_entity_id"],
+        )
+        if household:
+            households[household] = None
+
+    if not households:
+        return None, None
+    if len(households) == 1:
+        return next(iter(households)), None
+    return None, (
+        f"the candidate positions map to {len(households)} different "
+        f"households ({sorted(households)}), so no household override was "
+        f"applied — resolution fell through to the org level. Which household "
+        f"governs a holding must not depend on which row was written first."
+    )
+
+
+async def _resolve_source_order(
+    conn, org_id: str, rows: Sequence[Mapping[str, Any]]
+) -> SourceOrder:
+    """The order that governs THIS set of candidates. Household → org → default.
+
+    The ONLY new decision fee32 makes. When it returns without a household
+    override — because there is no household, or no override row for it, or the
+    override is unusable, or the candidates span several households — it returns
+    exactly what ``get_source_order(conn, org_id)`` returned before this sprint
+    existed, and the rest of resolution is byte-identical.
+    """
+    household_id, ambiguity = await _household_for_candidates(conn, org_id, rows)
+
+    household_order = await get_household_source_order(conn, org_id, household_id)
+    if household_order is not None and household_order.order:
+        return household_order
+
+    org_order = await get_source_order(conn, org_id)
+    reason = ambiguity
+    if household_order is not None and household_order.invalid_reason:
+        reason = (
+            f"household {household_id} has an override that is not usable and "
+            f"was ignored: {household_order.invalid_reason}"
+        )
+    return replace(org_order, household_id=household_id, household_reason=reason)
+
+
+# ── Managing an override ────────────────────────────────────────────────────
+
+
+async def set_household_source_order(
+    conn,
+    org_id: str,
+    *,
+    household_id: str,
+    source_order: Any,
+    reason: str,
+    approved_by: str,
+) -> str:
+    """Create or replace a household's override. Returns the ACTIVE row's id.
+
+    Bi-temporal on the SYSTEM axis, matching the deployed partial unique index
+    (``(org_id, household_id) WHERE system_to IS NULL``): the existing active
+    row is closed with ``system_to`` and a new row inserted. Nothing points at
+    this table's ``id`` by foreign key, so the valid axis would have worked too
+    — the system axis is chosen because a changed override is a NEW POLICY
+    DECISION with its own approver and reason, not a correction of what the
+    previous decision was. The superseded row keeps its own reason and
+    ``approved_by`` intact, which is the whole audit value of the table.
+
+    ``reason`` and ``approved_by`` are NOT NULL in the deployed schema and are
+    required here rather than defaulted. An override that overrules the firm's
+    own configured precedence for one family, with no recorded reason and no
+    named approver, is the thing an auditor asks about.
+
+    The order is validated BEFORE anything is written — the same
+    :func:`validate_source_order` the org-level setting uses, so a household
+    cannot save an order the org level would have refused.
+    """
+    org_id = _require_org(org_id)
+    if not str(reason or "").strip():
+        raise HouseholdOverrideError(
+            "reason is required — an override with no recorded reason cannot be "
+            "reviewed, only discovered"
+        )
+    if not approved_by:
+        raise HouseholdOverrideError(
+            "approved_by is required — an override approved by nobody is not a "
+            "policy decision"
+        )
+    order = validate_source_order(source_order)
+
+    async with _OrgWrite(conn, org_id) as c:
+        household_exists = await c.fetchval(
+            "SELECT 1 FROM public.households "
+            "WHERE id = $1::uuid AND org_id = $2::uuid",
+            str(household_id), org_id,
+        )
+        if not household_exists:
+            raise HouseholdOverrideError(
+                f"household {household_id} is not a household in org {org_id}. "
+                f"The foreign key on this table references households(id) with "
+                f"no org predicate, so this check is what keeps an override "
+                f"from being filed against another tenant's household."
+            )
+        await c.execute(
+            f"""
+            UPDATE {TABLE_HOUSEHOLD_OVERRIDES} h
+            SET system_to = now()
+            WHERE h.org_id = $1::uuid AND h.household_id = $2::uuid
+              AND h.system_to IS NULL
+            """,
+            org_id, str(household_id),
+        )
+        return await c.fetchval(
+            f"""
+            INSERT INTO {TABLE_HOUSEHOLD_OVERRIDES}
+                (org_id, household_id, source_order, reason, approved_by)
+            VALUES ($1::uuid, $2::uuid, $3::jsonb, $4, $5::uuid)
+            RETURNING id::text
+            """,
+            org_id, str(household_id), json.dumps(list(order)),
+            str(reason).strip(), str(approved_by),
+        )
+
+
+async def clear_household_source_order(
+    conn, org_id: str, *, household_id: str
+) -> bool:
+    """Retire a household's override. ``False`` if it had none.
+
+    Closes the active row on the system axis rather than deleting it: the
+    decision was made, and a policy that vanishes leaves a reconciliation
+    screen unable to explain why last quarter's winner was what it was.
+
+    After this the household resolves through the org setting again —
+    identically to a household that never had an override, which is what makes
+    "added, changed, removed" a real three-state test rather than two.
+    """
+    org_id = _require_org(org_id)
+    async with _OrgWrite(conn, org_id) as c:
+        closed = await c.fetchval(
+            f"""
+            WITH upd AS (
+                UPDATE {TABLE_HOUSEHOLD_OVERRIDES} h
+                SET system_to = now()
+                WHERE h.org_id = $1::uuid AND h.household_id = $2::uuid
+                  AND h.system_to IS NULL
+                RETURNING 1
+            ) SELECT count(*) FROM upd
+            """,
+            org_id, str(household_id),
+        )
+    return bool(closed)
 
 
 # ── Resolution ──────────────────────────────────────────────────────────────
@@ -242,6 +596,13 @@ class PrecedenceOutcome:
     order_invalid_reason: str | None = None
     rows_marked: int = 0
     rows_cleared: int = 0
+    #: fee32. Where the winning order came from (one of ``ORIGIN_*``), the
+    #: household it was derived for, and — when a household override could have
+    #: applied but did not — why. All three default so every existing
+    #: construction site and reader is unaffected.
+    order_origin: str = ORIGIN_DEFAULT
+    household_id: str | None = None
+    household_reason: str | None = None
 
     @property
     def loser_position_ids(self) -> tuple[str, ...]:
@@ -256,7 +617,12 @@ class PrecedenceOutcome:
 _CANDIDATE_COLS = (
     "id::text AS id, owner_entity_id::text AS owner_entity_id, "
     "asset_id::text AS asset_id, as_of_date, source_system, "
-    "superseded_by_source, system_from"
+    "superseded_by_source, system_from, "
+    # fee32. Read here rather than passed in for the same reason every other
+    # field is: a caller that handed in the account would be trusting the
+    # pipeline to have remembered what it wrote, and precedence exists because
+    # pipelines disagree.
+    "account_id::text AS account_id"
 )
 
 
@@ -296,6 +662,16 @@ async def resolve_precedence(
     With ``apply=False`` it computes the outcome and writes nothing — the read
     a reconciliation screen wants.
 
+    **fee32** — the order these candidates are ranked by is now resolved by
+    :func:`_resolve_source_order`: a household override first, then the org
+    setting, then the platform default. The household is derived from the
+    candidates themselves (each row's ``account_id`` → ``accounts.household_id``
+    when it has one, else its ``owner_entity_id`` →
+    ``entities.primary_household_id``) and the outcome reports which of the
+    three actually governed, via ``order_origin`` / ``household_id``. A holding
+    whose household has no override is ranked by the identical order it was
+    ranked by before, through the identical call.
+
     Writes, when applying:
 
     * every loser's ``superseded_by_source`` ← the winner's ``source_system``
@@ -316,9 +692,6 @@ async def resolve_precedence(
     # De-dupe, order-preserving. The same id twice is a caller bug, not a tie.
     seen: set[str] = set()
     unique_ids = [i for i in ids if not (i in seen or seen.add(i))]
-
-    source_order = await get_source_order(conn, org_id)
-    order = source_order.order
 
     async with _OrgWrite(conn, org_id) as c:
         rows = await c.fetch(
@@ -351,6 +724,15 @@ async def resolve_precedence(
                 f"describes a different asset."
             )
         owner_entity_id, asset_id, as_of_date = next(iter(keys))
+
+        # fee32: moved to AFTER the fetch. The order is no longer a property of
+        # the org alone — it can be a property of the household these specific
+        # candidates belong to, and the household is derived from the rows. For
+        # a holding with no household, or a household with no override, this
+        # returns exactly what `get_source_order(conn, org_id)` returned when it
+        # was called before the fetch, and everything below is unchanged.
+        source_order = await _resolve_source_order(c, org_id, rows)
+        order = source_order.order
 
         # `rows` arrives newest-first (system_from DESC, id DESC) and Python's
         # sort is stable, so ranking by trust alone preserves recency as the
@@ -416,6 +798,9 @@ async def resolve_precedence(
         order_invalid_reason=source_order.invalid_reason,
         rows_marked=rows_marked,
         rows_cleared=rows_cleared,
+        order_origin=source_order.origin,
+        household_id=source_order.household_id,
+        household_reason=source_order.household_reason,
     )
 
 

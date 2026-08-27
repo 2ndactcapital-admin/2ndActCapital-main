@@ -1,0 +1,304 @@
+FEE MODULE — SPRINT fee32 (position linkage + household precedence)
+====================================================================
+Result: 11/11 PASS, 0 FAIL, 0 BLOCKED  (apps/api/scripts/verify_fee32.py)
+Regression: verify_portfoliob 50/50 + 2 BLOCKED, verify_portfolioux1 72/72
+            (both their recorded baselines, unchanged)
+Schema: docs/schema_snapshot.sql regenerated after DDL
+Status: HELD for manual review (.structural — schema + tenant-boundary changes)
+
+
+TASK 1 — DISCOVERY (live code and live schema, not the prompt's description)
+----------------------------------------------------------------------------
+Script: apps/api/scripts/discover_fee32.py
+
+Part 1 SQL confirmed deployed, nothing re-created:
+
+  portfolio.positions.account_id  uuid NULL
+    FK positions_account_id_fkey → public.accounts(id)
+    partial index positions_account_idx (account_id)
+      WHERE account_id IS NOT NULL AND system_to IS NULL
+
+  public.portfolio_precedence_household_overrides
+    (id, org_id, household_id, source_order jsonb, reason, approved_by,
+     created_at, valid_from, valid_to, system_from, system_to)
+    FKs → households(id), organizations(id)
+    partial unique (org_id, household_id) WHERE system_to IS NULL
+    RLS enabled, standard NULLIF + super-admin policy
+    app_service: SELECT/INSERT/UPDATE/DELETE
+
+SIX CONFLICTS WITH THE PROMPT. Live won in every case.
+
+ 1. resolve_precedence's real signature is
+      resolve_precedence(conn, org_id, position_candidates, *, apply=True)
+    `apply` is keyword-only; the third argument is an iterable of ids OR
+    records, not "ids".
+
+ 2. THE IMPORT PATH DOES NOT CALL resolve_precedence.
+    portfolio_import.py:596 is `if resolve_precedence_after and touched:` and
+    calls resolve_holding(), which gathers the candidates itself and then
+    delegates. routers/portfolio_ingest.py:123 does the same. The prompt named
+    the wrong callee; the line number was right. Consequence for the design:
+    the household cannot come from a caller argument, it has to be derived from
+    the rows resolve_precedence fetches for itself.
+
+ 3. portfolio_precedence_household_overrides LIVES IN `public`, NOT in the
+    `portfolio` schema, despite the `portfolio_` name prefix. Qualifying it as
+    `portfolio.` would fail at runtime. Recorded in the code as a comment on
+    TABLE_HOUSEHOLD_OVERRIDES because the name actively invites the wrong guess.
+
+ 4. create_position() (services/portfolio_assets.py:542) is the SINGLE
+    chokepoint for every position write — importer, API and manual edit all go
+    through it — and it did not accept or write account_id at all. Part 1's
+    column was unreachable from application code.
+
+ 5. [FIND] A LIVE BUG CREATED BY PART 1, not mentioned in the prompt.
+    update_position() restates a position by closing the current row and
+    re-inserting a successor through create_position() from an EXPLICIT column
+    list. That list had no account_id. So the FIRST edit of any account-linked
+    position would silently NULL its account link — the holding would keep its
+    numbers and quietly detach from the statement it came from, with nothing
+    raising. Fixed under Task 2; check 3 reproduces the drop and proves the fix.
+
+ 6. positions_account_id_fkey REFERENCES accounts(id) WITH NO ORG PREDICATE.
+    Another tenant's account id satisfies the FK. That is a hard refusal, not a
+    reviewable warning — see Task 2.
+
+Other measured facts: accounts.household_id nullable; entities.primary_household_id
+exists and is nullable; account_owners is bi-temporal with no unique constraint;
+households has no temporal columns; app_service rolbypassrls=False (postgres
+bypasses); every table this sprint touches was empty on dev; and NO org has a
+portfolio.precedence.* org_settings row — every org is on DEFAULT_SETTINGS.
+
+
+TASK 2 — POSITION ↔ ACCOUNT LINKAGE, VALIDATED IN APPLICATION CODE
+-------------------------------------------------------------------
+New: apps/api/services/portfolio_account_link.py
+     apps/api/migrations/fee32_position_account_exceptions.sql
+
+THREE outcomes, deliberately not two:
+
+  1. Account is not this org's        → REFUSED (AccountLinkError), before the
+                                        row exists. The FK is org-blind, so this
+                                        check is the only tenant boundary. If it
+                                        were a warning, the exception list would
+                                        be the audit trail of a cross-tenant
+                                        reference that had already succeeded.
+  2. Account is ours, owner is not
+     one of its active owners         → WRITTEN + reviewable exception recorded.
+  3. Owner is an active owner         → nothing but the position.
+
+No DB trigger, no CHECK constraint — per the RFC, and matching how
+ownership_basis is already validated on this table.
+
+WHY A NEW EXCEPTION TABLE RATHER THAN fee31's account_import_exceptions.
+Reusing it was the first choice and does not fit, structurally:
+  · batch_id is NOT NULL and FKs to account_import_batches. Two of the three
+    position write paths have no custody batch to point at, and inventing one
+    would put a fake row in the batch list an operator would try to re-drive.
+  · record_kind CHECK admits only ('account','balance','flow').
+  · source_row is NOT NULL and means "line N of the uploaded file". A manual
+    single-position edit has no line number, and 0 would be a lie, not an
+    absence.
+Making it fit meant dropping a NOT NULL, widening a CHECK, and keeping a column
+meaningless for two of three paths. public.position_account_exceptions carries
+the SAME review shape (reason_code + human reason + jsonb detail + an
+open/reviewed axis) so a future combined screen can union the two.
+
+Two reason codes, kept distinct on purpose:
+  owner_not_account_owner  — owners exist, none is this entity → mis-mapped import
+  account_has_no_owners    — no active owners at all → incomplete account record
+Different findings, different fixes, different people. Folding them into one
+code hides the second inside the first.
+
+Idempotency: partial unique on (org_id, position_id, account_id, reason_code)
+WHERE reviewed_at IS NULL. Re-validating the same position does not duplicate;
+a mismatch RE-RAISED after a reviewer closed the previous one is new information
+and is recorded again. An index over all rows would swallow that silently.
+
+The detail blob records the account's active owners AT THE TIME OF THE WRITE —
+"who does own this account" is the first question a reviewer asks, and
+re-deriving it later reads ownership as it is then, not as it was. Only
+account_number_masked is ever stored; public.accounts holds no unmasked number
+and this column does not become where one reappears.
+
+Write paths wired: create_position (the chokepoint), update_position (carries
+account_id forward — bug 5 above), POST/PATCH /portfolio/positions, and
+import_positions_file(account_id=...), which pre-flights the cross-tenant check
+ONCE before parsing rather than turning one tenant refusal into 400 identical
+row errors and an import that reports partial success.
+
+Reads: account_id / account_number_masked / account_household_id added to the
+positions grid and detail payloads; GET /portfolio/position-account-exceptions
+and POST .../{id}/review for the review list.
+
+
+TASK 3 — HOUSEHOLD-LEVEL PRECEDENCE OVERRIDE
+---------------------------------------------
+Extended (not wrapped, not replaced) services/portfolio_precedence.py.
+
+Resolution order is now:
+  1. active row in portfolio_precedence_household_overrides for the household
+  2. org_settings['portfolio.precedence.source_order']   ← unchanged
+  3. DEFAULT_SETTINGS fallback                            ← unchanged
+
+The only structural change to the existing function: get_source_order() used to
+be called BEFORE the candidate fetch. It now runs after, as
+_resolve_source_order(), because the order is no longer a property of the org
+alone — it can be a property of the household these specific candidates belong
+to, and the household is derived from the rows. Everything after that line is
+byte-identical.
+
+Household derivation, per the RFC: account_id → accounts.household_id when the
+position carries an account; else owner_entity_id → entities.primary_household_id.
+An account whose household_id is NULL does NOT fall back to the entity route —
+the account is present and says "no household", which is an answer, not an
+absence.
+
+AMBIGUITY IS REFUSED, NOT GUESSED. Candidates share a holding key but need not
+share an account_id (the normal shape is one custodial row with an account and
+one manual row without). Each candidate maps to a household independently:
+exactly one distinct → that override applies; none → org level; MORE THAN ONE →
+no override, org level, and the reason is reported on the outcome. Picking "the
+first one" would make which family's policy governs a holding depend on row
+insertion order, and the winner would flip on re-resolution with no setting
+having changed. Proved by check A.
+
+An unusable stored override falls through to the org level, exactly as an
+invalid org setting falls through to the default, and for the same reason:
+resolution is on the ingestion path and failing an import because a settings row
+went stale turns a configuration problem into a data problem.
+
+superseded_by_source behaviour is untouched — same non-destructive single-column
+UPDATE, same clear-the-winner half.
+
+Management: set_household_source_order / clear_household_source_order, bi-temporal
+on the SYSTEM axis to match the deployed partial unique index. Nothing FKs to
+this table's id, so the valid axis would have worked; the system axis is chosen
+because a changed override is a NEW POLICY DECISION with its own approver and
+reason, not a correction of what the previous decision was — the superseded row
+keeps its own reason and approved_by, which is the audit value of the table.
+reason and approved_by are required, never defaulted. approved_by is the
+caller's own verified user id and is NOT accepted from the request body: an
+approver a request could name is not an approver.
+
+Endpoints: GET/PUT/DELETE /portfolio/precedence/households/{household_id}.
+POST /portfolio/precedence/resolve now also reports order_origin, household_id
+and household_reason — "Addepar won" and "Addepar won because this household
+overrides the firm's order" are different answers and only the second tells an
+operator where to go to change it.
+
+
+VERIFICATION — 11/11 PASS
+--------------------------
+apps/api/scripts/verify_fee32.py. Two disposable orgs, created and torn down per
+run; nothing writes to a real org.
+
+ [1]  PASS  account_id exists, uuid, NULLABLE, FK → accounts(id); a directly-held
+            position (entity_direct, no account) inserts with account_id=NULL and
+            resolves precedence cleanly. The owner's primary_household_id DOES
+            point at the override household, so this also exercises the entity
+            route with no account present.
+ [2]  PASS  Mismatched account_id: position WRITTEN (open on both temporal axes,
+            account_id persisted) + exactly one owner_not_account_owner exception
+            recording the real owners. The ownerless account raises
+            account_has_no_owners instead, so the two findings stay distinct.
+            Comes back from the API's own read path, not just the table.
+            Re-validation is idempotent.
+ [2b] PASS  EXTRA — a cross-tenant account_id is REFUSED (AccountLinkError) and
+            org A's position count is unchanged. Not in the sprint's list; it is
+            the one case where "written and flagged" would be wrong.
+ [3]  PASS  A genuine owner produces no exception — AND the restated successor of
+            an edit still carries account_id (reproduces bug 5, proves the fix).
+ [4]  PASS  Household override beats the org order on the SAME three rows and the
+            same holding key. Proved in both directions: org order
+            [addepar, altruist, manual] → addepar; household override
+            [altruist, addepar, manual] → altruist, origin=household_override.
+            The check also asserts the two orders pick DIFFERENT winners, so the
+            fixture cannot pass vacuously.
+ [5]  PASS  A no-override household resolves identically to the PRE-SPRINT code —
+            compared against the real previous revision of
+            services/portfolio_precedence.py, extracted from git and imported as
+            a separate module, run over the SAME rows with apply=False on both
+            sides. The revision is located with `git log -S <marker>` on a string
+            this sprint introduced, then stepped back one commit, so the check
+            keeps working AFTER this sprint commits (a HEAD-based comparison
+            would compare the sprint to itself — the contamination recorded on a
+            previous sprint). The check ALSO runs the same comparison on the
+            OVERRIDE household and requires it to DIVERGE; without that, the
+            match above would pass just as well against a household layer that
+            never fires.
+ [6]  PASS  superseded_by_source across FOUR states, not one:
+              override v1 (altruist first) → altruist  (addepar=altruist, altruist=NULL, manual=altruist)
+              override v2 (manual first)   → manual    (addepar=manual, altruist=manual, manual=NULL)
+              override removed             → addepar   (addepar=NULL, altruist=addepar, manual=addepar)
+            Each transition asserts the winner is CLEARED and every loser marked.
+            Read back from the column, not from the returned outcome. The v1 row
+            is also asserted to survive the change with its own reason intact.
+ [7]  PASS  Cross-org isolation under app_service (rolbypassrls=False asserted
+            FIRST, on its own — otherwise every denial below is vacuous). Org B
+            has a REAL planted override row. Under org A's GUC: 0 of org B's
+            visible, 2 of org A's OWN visible (so the read is isolated, not
+            merely broken), unqualified SELECT returns exactly those 2, and a
+            cross-org INSERT is refused by WITH CHECK.
+            position_account_exceptions isolates identically.
+ [R]  PASS  EXTRA — an exception can be reviewed; close is idempotent; the closed
+            row leaves the OPEN list but stays in the full list; the same
+            mismatch re-raised afterwards opens a SECOND row (the partial index
+            is on open rows only, deliberately).
+ [A]  PASS  EXTRA — candidates spanning two households apply NO override, fall
+            through to the org level, and report why.
+ [8]  PASS  Teardown restored the exact pre-test count on all 11 touched tables.
+            By fixture org id, never a TRUNCATE.
+
+Regression: verify_portfoliob 50/50 + 2 BLOCKED (Altruist credentials) and
+verify_portfolioux1 72/72 — both their recorded baselines, unchanged. UX1 covers
+the positions grid, which this sprint added three columns to (account_id,
+account_number_masked, account_household_id) and one editable field to.
+
+verify_portfolioux4 reports 70/71, and the one failure is NOT a fee32
+regression — it is that script reading its own output. Measured, not assumed:
+
+  check_task1c() does `git show HEAD:<router>` and asserts the routers had NO
+  permissions envelope and published the editable lists unconditionally. That
+  was the PRE-SPRINT state. Evaluating the check's exact predicate at two refs:
+
+    HEAD                     no_envelope=False unconditional=False → FAIL
+    1c64199 (ux4's commit)^  no_envelope=True  unconditional=True  → PASS
+
+  1c64199 is verify_portfolioux4's own sprint commit — the one that ADDED the
+  envelope. The moment it landed, HEAD stopped being the pre-sprint state and
+  the check began asserting the absence of a fix that is now present.
+
+  And the decisive control: fee32's working tree changes ZERO lines matching
+  permissions / EDITABLE_FIELDS / CORRECTABLE_FIELDS / vocabularies in either of
+  those two routers. (fee32 adds `account_id` to PositionCreate/PositionPatch
+  and three read-only columns; it does not touch the envelope.)
+
+  This is the SAME failure shape already recorded on this project ("a pre-sprint
+  check that reads HEAD is valid only until the sprint commits; locate the ref
+  with `git log -S <marker>` + `^`"). NOT fixed here — verify_portfolioux4.py
+  belongs to another sprint that is itself still HELD, and quietly editing its
+  evidence during someone else's review is worse than reporting it. Logged as a
+  follow-up instead. verify_fee32's own check 5 uses the `git log -S` + `^`
+  anchor precisely so it does not acquire this bug.
+
+[FIND] Running two verify scripts CONCURRENTLY makes both unreliable. A first
+attempt ran ux1 and ux4 at the same time and ux1 reported 71/72 with a teardown
+drift of exactly ux4's fixtures ({transactions: 0→2, positions: 0→2, assets:
+0→2, entities: 24→26, users: 21→25}). These scripts assert on GLOBAL table
+counts, not on their own fixture tags, so a second script's rows read as the
+first script's leak. Re-run sequentially: 72/72. Worth knowing before anyone
+tries to parallelise the suite.
+
+
+OUT OF SCOPE, CONFIRMED
+------------------------
+Joint-custody positions split into multiple owner rows on import — known,
+confirmed gap per the Portfolio Reporting Layer thread. Not addressed here.
+
+No backfill of account_id was performed and none is intended. Directly-held
+assets and SPV interests (portfolio.assets.internal_spv_id) stay NULL by design.
+
+No frontend was built for the two new read surfaces (the linkage exception
+review list, and the household override editor). Both are served by real,
+permission-gated endpoints; neither has a screen yet.

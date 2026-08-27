@@ -559,6 +559,7 @@ async def create_position(
     taxonomy_key: str | None = None,
     is_reconciled: bool = False,
     superseded_by_source: str | None = None,
+    account_id: str | None = None,
 ) -> str:
     """Create a position — the edge between an owner entity and an asset.
 
@@ -568,6 +569,16 @@ async def create_position(
     one, or checks for one. (They ARE hidden from CRM-facing entity lists; see
     ``schemas.entities.OPERATIONAL_ENTITY_TYPES``. Hidden from the CRM is not
     the same as unusable as an owner, and this is the function that proves it.)
+
+    ``account_id`` (fee32) is the OPTIONAL link to a custodial account in
+    ``public.accounts``. It stays NULL for a directly-held asset or an SPV
+    interest, and nothing here defaults or backfills it. When it IS supplied it
+    is checked against the account's active ``account_owners`` by
+    ``portfolio_account_link.validate_position_account`` — an account belonging
+    to another org is REFUSED (the FK is org-blind, so this check is the only
+    tenant boundary), while an owner mismatch inside this org is written and
+    recorded as a reviewable exception rather than raised. See that module for
+    why the two outcomes differ.
 
     ``ownership_basis`` defaults to the ASSET's declared basis when omitted, so
     the common case cannot drift, but an explicit value is accepted: one source
@@ -626,17 +637,34 @@ async def create_position(
                  ownership_basis, quantity, ownership_pct, cost_basis,
                  market_value, market_value_native, fx_rate_id, accrued_income,
                  authority, source_system, taxonomy_key, is_reconciled,
-                 superseded_by_source)
+                 superseded_by_source, account_id)
             VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
                     $6, $7, $8, $9, $10, $11, $12::uuid, $13,
-                    $14, $15, $16, $17, $18)
+                    $14, $15, $16, $17, $18, $19::uuid)
             """,
             new_id, org_id, str(owner_entity_id), str(asset_id), as_of_date,
             basis, qty, pct, cost, mv, mv_native,
             str(fx_rate_id) if fx_rate_id else None, accrued,
             authority, source_system, taxonomy_key, bool(is_reconciled),
-            superseded_by_source,
+            superseded_by_source, str(account_id) if account_id else None,
         )
+
+        if account_id:
+            # AFTER the insert and inside the same transaction, so the
+            # exception can name a real position_id and a rolled-back position
+            # cannot leave an orphan exception behind. Imported here rather
+            # than at module scope: portfolio_account_link imports _OrgWrite,
+            # _current and PortfolioError from THIS module, and a top-level
+            # import would be a cycle.
+            from services.portfolio_account_link import validate_position_account
+
+            await validate_position_account(
+                c, org_id,
+                position_id=new_id,
+                account_id=str(account_id),
+                owner_entity_id=str(owner_entity_id),
+                source_system=source_system,
+            )
     return new_id
 
 
