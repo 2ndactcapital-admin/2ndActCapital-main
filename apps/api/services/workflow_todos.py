@@ -31,9 +31,11 @@ from __future__ import annotations
 # idempotently (there is no natural unique key on member_todos to rely on).
 TODO_SOURCE_USER_TASK = "workflow_user_task"
 TODO_SOURCE_RUN_HELD = "workflow_run_held"
+TODO_SOURCE_TRIGGER_EXPIRING = "workflow_trigger_expiring"
 
 TODO_CATEGORY = "workflow"
 _RUN_CONSOLE_PATH = "/admin/workflows/runs"
+_TRIGGER_CONSOLE_PATH = "/admin/workflows/triggers"
 
 
 async def _upsert_todo(
@@ -171,3 +173,109 @@ async def create_held_run_alerts(
             )
         )
     return ids
+
+
+async def create_trigger_expiring_alerts(
+    conn, *, org_id, trigger_id, created_by, title: str, detail: str
+) -> list:
+    """Tell the people who own a schedule that it is about to stop running.
+
+    SAME MECHANISM, DIFFERENT SUBJECT. This is deliberately not a second
+    notification system and not a second recipient rule: it reuses
+    :func:`_upsert_todo` and mirrors :func:`create_held_run_alerts` exactly —
+    the person who configured the thing (here the trigger's ``created_by``,
+    there the run's ``started_by``) plus every Org Admin of that org, because a
+    schedule silently winding down is an operational fact, not just the
+    author's business.
+
+    Keyed on (``source='workflow_trigger_expiring'``,
+    ``related_type='workflow_trigger'``, ``related_id=trigger_id``), so the
+    "one run left" notice and the "that was the last run" notice that follows
+    it UPDATE one row per recipient rather than stacking two.
+
+    ``priority=4`` is chosen against the reader, not in the abstract:
+    ``routers/dashboard.py`` sorts ``priority DESC``, so 4 sits immediately
+    below the held-run alert's 5. A schedule that is ending is worth knowing
+    about; a run that has already broken is worth knowing about first.
+    """
+    recipients = set()
+    if created_by is not None:
+        recipients.add(created_by)
+    admins = await conn.fetch(
+        "SELECT id FROM users WHERE org_id = $1 AND role = 'org_admin'",
+        org_id,
+    )
+    for a in admins:
+        recipients.add(a["id"])
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn,
+                org_id=org_id,
+                user_id=uid,
+                source=TODO_SOURCE_TRIGGER_EXPIRING,
+                related_type="workflow_trigger",
+                related_id=trigger_id,
+                title=title,
+                detail=detail[:2000],
+                priority=4,
+                action_key=_TRIGGER_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+async def dismiss_orphaned_run_alerts(conn, *, org_id=None) -> int:
+    """Close held-run alerts whose run no longer exists. Returns how many.
+
+    WHY THIS EXISTS, stated from what was actually measured rather than from a
+    hypothetical. Two such rows were live in the deployed database when this
+    was written, both pointing at runs deleted by a verify script's teardown,
+    both belonging to a REAL org_admin rather than to a fixture user —
+    ``create_held_run_alerts`` fans out to every ``users.role='org_admin'`` in
+    the org, so a teardown that deletes its todos by fixture user id strands
+    the real admins' copies. ``verify_workflowmgr1.py``,
+    ``verify_chancery7.py`` and ``verify_workflowpermsfix.py`` all delete
+    ``workflow_runs`` with no ``member_todos`` cleanup at all, so this is a
+    recurring producer, not a one-off.
+
+    NO PRODUCTION CODE PATH DELETES A ``workflow_runs`` ROW — checked across
+    every router and service; every deleter in the repo is a test teardown. So
+    "fix whatever is deleting runs" has nothing in the application to fix, and
+    a one-time data migration would be stale the next time a verify script
+    runs. A sweep is the honest shape.
+
+    ``dismissed``, not ``DELETE``. The alert is a real record that a real run
+    really held; what is no longer true is that anyone can act on it. Dismissed
+    rows drop out of ``list_todos`` and the dashboard brief (both filter
+    ``status='open'``) while remaining auditable.
+
+    ``org_id=None`` sweeps every org — that is the scheduler's platform scope,
+    the same scope its trigger scan already runs at, and it is why this takes
+    the tick's plain connection rather than an org-scoped pool connection.
+    Passing an ``org_id`` narrows it to one tenant.
+    """
+    note = " [Auto-dismissed: the workflow run this alert points to no longer exists.]"
+    return int(
+        (
+            await conn.execute(
+                """
+                UPDATE member_todos t
+                SET status = 'dismissed',
+                    detail = left(coalesce(t.detail, '') || $2, 2000),
+                    updated_at = now()
+                WHERE t.source = $1
+                  AND t.related_type = 'workflow_run'
+                  AND t.related_id IS NOT NULL
+                  AND t.status = 'open'
+                  AND ($3::uuid IS NULL OR t.org_id = $3)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM workflow_runs r WHERE r.id = t.related_id
+                  )
+                """,
+                TODO_SOURCE_RUN_HELD, note, org_id,
+            )
+        ).split()[-1]
+    )

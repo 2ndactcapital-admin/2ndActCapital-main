@@ -56,19 +56,38 @@ exists — one missed run, logged. The alternative (fire, then claim) risks
 firing the same occurrence repeatedly, which is strictly worse: a duplicated
 side effect cannot be un-done, a missed one is visible in the tick log and
 fires again on the next occurrence.
+
+────────────────────────────────────────────────────────────────────────────
+THE TWO THINGS THIS TICK NOTIFIES ABOUT, AND THE ONE IT DOES NOT
+────────────────────────────────────────────────────────────────────────────
+Alerting a FAILURE is not this module's job and never was: a scheduler-fired
+run that breaks is held and alerted by ``workflow_engine._hold_run`` →
+``workflow_todos.create_held_run_alerts``, because it is an ordinary run. What
+that mechanism cannot see, by construction, is a schedule that is working
+perfectly and is about to stop — no run fails, so no alert is raised, and the
+workflow simply goes quiet. Two additions close that, both through the SAME
+``member_todos`` surface rather than a second notification system:
+
+  * :func:`_check_trigger_expiry` — when a fire leaves a trigger with one
+    occurrence to go, or was its last, the trigger's author and every Org Admin
+    are told, with the bound that ends it named;
+  * :func:`workflow_todos.dismiss_orphaned_run_alerts` — one sweep per tick,
+    closing held-run alerts whose run has since been deleted.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from services import workflow_engine
+from services import workflow_engine, workflow_todos
 from services.action_registry import REGISTRY
 from services.database import reset_rls_context, set_rls_context
 from services.workflow_schedule import (
     DEFAULT_LOOKBACK_MINUTES,
     ScheduleError,
+    describe_schedule,
     evaluate_trigger,
+    next_occurrences,
 )
 
 SCHEDULED_TRIGGER_TYPE = "scheduled"
@@ -76,6 +95,12 @@ SCHEDULED_TRIGGER_TYPE = "scheduled"
 # A run in one of these states is finished and does not block the next fire.
 # Anything else — 'running', 'held' — does. See the module docstring.
 TERMINAL_RUN_STATUSES = ("completed", "failed", "cancelled")
+
+# How many remaining occurrences still count as "about to stop". 1 means the
+# warning is raised on the fire that leaves exactly one run to go — the
+# second-to-last tick — which is the latest instant at which telling somebody
+# is still telling them something they can act on.
+EXPIRY_WARNING_OCCURRENCES = 1
 
 
 @dataclass
@@ -86,11 +111,15 @@ class TickResult:
     fired: list[dict] = field(default_factory=list)
     skipped: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
+    expiring: list[dict] = field(default_factory=list)
+    orphaned_alerts_dismissed: int = 0
 
     def summary(self) -> str:
         return (
             f"examined={self.examined} fired={len(self.fired)} "
-            f"skipped={len(self.skipped)} errors={len(self.errors)}"
+            f"skipped={len(self.skipped)} errors={len(self.errors)} "
+            f"expiring={len(self.expiring)} "
+            f"orphaned_alerts_dismissed={self.orphaned_alerts_dismissed}"
         )
 
 
@@ -216,6 +245,110 @@ async def _fire(pool, *, trigger, occurrence_utc):
         reset_rls_context(tokens)
 
 
+def _expiry_notice(trigger, *, occurrence_count, upcoming) -> tuple[str, str] | None:
+    """The (title, detail) to alert with, or None when the schedule is fine.
+
+    ``upcoming`` is what :func:`workflow_schedule.next_occurrences` returned for
+    the occurrences AFTER the one just claimed, asked for
+    ``EXPIRY_WARNING_OCCURRENCES + 1``. That single call is the whole decision,
+    and asking it this way is the point: ``next_occurrences`` ALREADY applies
+    ``max_occurrences`` (as ``max - occurrence_count``) and ``end_date``, so
+    "is this schedule nearly out of runs" is answered by the same recurrence
+    code that answers "is it due" — not by a second copy of the arithmetic that
+    would be free to disagree the day one of them changed.
+
+      * two came back  → at least two runs left, nothing to say
+      * one came back  → the next occurrence is the last one
+      * none came back → the occurrence just claimed WAS the last one
+
+    Which bound bit is reported explicitly. "It stops after this" is not
+    actionable; "it stops because you capped it at 5 runs" is.
+    """
+    if len(upcoming) > EXPIRY_WARNING_OCCURRENCES:
+        return None
+
+    name = trigger["workflow_name"]
+    summary = describe_schedule(trigger["schedule_cron"], trigger["timezone"])
+
+    cap = trigger["max_occurrences"]
+    end_date = trigger["end_date"]
+    if cap is not None and (cap - occurrence_count) <= EXPIRY_WARNING_OCCURRENCES:
+        because = f"its limit of {cap} run{'' if cap == 1 else 's'} is reached"
+    elif end_date is not None:
+        because = f"its end date, {end_date.isoformat()}, is reached"
+    else:
+        # Neither bound explains it: the recurrence itself has run out (a cron
+        # naming a date that does not come round again). Say that rather than
+        # attribute it to a limit nobody set.
+        because = "its recurrence has no further occurrences"
+
+    if not upcoming:
+        return (
+            "Schedule ended — no further runs",
+            f"“{name}” ({summary}) has just run for the last time: {because}. "
+            f"It will not run again until the trigger is extended or replaced.",
+        )
+    return (
+        "Schedule ending — one run left",
+        f"“{name}” ({summary}) has one scheduled run remaining, at "
+        f"{upcoming[0].isoformat()}. After that it stops, because {because}.",
+    )
+
+
+async def _check_trigger_expiry(conn, *, trigger, occurrence_utc, occurrence_count, log):
+    """Raise the expiring-schedule alert if this fire brought the end in sight.
+
+    Called right after the claim commits, because the CLAIM is what spends an
+    occurrence — whether the run it releases goes on to start, complete or hold
+    does not change how many runs the schedule has left.
+
+    Deliberately fire-coupled rather than evaluated for every trigger on every
+    tick. A trigger that is never due costs nothing here, and the recurrence
+    walk this needs is a MINUTELY rrule bounded only by a five-year horizon —
+    running that across every trigger every five minutes to re-learn "still
+    nothing to say" would be real CPU spent on a non-answer. The honest limit:
+    a schedule whose ``end_date`` is edited to a past value AFTER its final fire
+    never produces a notice, because no further fire ever happens to notice it.
+
+    Never raises. An alert is a courtesy; a tick is a commitment. A failure to
+    warn must not take down the firing loop, so it is logged and swallowed.
+    """
+    if trigger["max_occurrences"] is None and trigger["end_date"] is None:
+        return None  # unbounded: there is no end to warn about
+    try:
+        upcoming = next_occurrences(
+            schedule_cron=trigger["schedule_cron"],
+            timezone_name=trigger["timezone"],
+            after_utc=occurrence_utc,
+            count=EXPIRY_WARNING_OCCURRENCES + 1,
+            start_date=trigger["start_date"],
+            end_date=trigger["end_date"],
+            max_occurrences=trigger["max_occurrences"],
+            occurrence_count=occurrence_count,
+        )
+        notice = _expiry_notice(
+            trigger, occurrence_count=occurrence_count, upcoming=upcoming
+        )
+        if notice is None:
+            return None
+        title, detail = notice
+        ids = await workflow_todos.create_trigger_expiring_alerts(
+            conn,
+            org_id=trigger["org_id"],
+            trigger_id=trigger["id"],
+            created_by=trigger["created_by"],
+            title=title,
+            detail=detail,
+        )
+        log(f"[scheduler] EXPIRING trigger={trigger['id']} org={trigger['org_id']} "
+            f"— {title}; alerted {len(ids)} recipient(s)")
+        return ids
+    except Exception as exc:  # noqa: BLE001
+        log(f"[scheduler] WARN   trigger={trigger['id']} — could not evaluate the "
+            f"expiring-schedule alert: {type(exc).__name__}: {exc}")
+        return None
+
+
 async def run_scheduler_tick(
     conn,
     pool,
@@ -239,6 +372,20 @@ async def run_scheduler_tick(
     n_actions = ensure_actions_registered()
     log(f"[scheduler] tick at {now_utc.isoformat()} "
         f"(lookback {lookback_minutes}m, {n_actions} actions registered)")
+
+    # The janitor pass, before the firing loop. See
+    # workflow_todos.dismiss_orphaned_run_alerts for why it lives here: it needs
+    # platform scope and a process that runs on its own, and this tick is the
+    # only one that exists. It is one anti-join and it never blocks a fire.
+    try:
+        n_orphans = await workflow_todos.dismiss_orphaned_run_alerts(conn)
+        result.orphaned_alerts_dismissed = n_orphans
+        if n_orphans:
+            log(f"[scheduler] SWEEP  dismissed {n_orphans} held-run alert todo(s) "
+                f"whose run no longer exists")
+    except Exception as exc:  # noqa: BLE001
+        log(f"[scheduler] WARN   orphaned-alert sweep failed: "
+            f"{type(exc).__name__}: {exc}")
 
     rows = await load_due_candidates(conn)
     result.examined = len(rows)
@@ -315,6 +462,22 @@ async def run_scheduler_tick(
                 "trigger_id": trigger["id"], "reason": "claim lost (already fired)",
             })
             continue
+
+        expiry_ids = await _check_trigger_expiry(
+            conn,
+            trigger=trigger,
+            occurrence_utc=decision.occurrence_utc,
+            occurrence_count=new_count,
+            log=log,
+        )
+        if expiry_ids:
+            result.expiring.append({
+                "trigger_id": trigger["id"],
+                "org_id": trigger["org_id"],
+                "occurrence_count": new_count,
+                "max_occurrences": trigger["max_occurrences"],
+                "alert_todo_ids": expiry_ids,
+            })
 
         try:
             run = await _fire(pool, trigger=trigger, occurrence_utc=decision.occurrence_utc)
