@@ -1,0 +1,278 @@
+FEE MODULE — SPRINT fee33 (billing groups)
+==========================================
+Result: 12 PASS, 0 FAIL, 1 BLOCKED, 2 FIND  (apps/api/scripts/verify_fee33.py)
+Discovery: apps/api/scripts/discover_fee33.py (re-runnable, read-only)
+Status: HELD for manual review (.structural — new tables, new tenant boundary)
+
+⚠ THIS SPRINT AUTHORED ITS OWN PART 1. Read the next section before merging.
+
+
+TASK 1 — DISCOVERY
+------------------------------------------------------------------------------
+
+THE PROMPT'S CORE PREMISE WAS FALSE.
+
+The prompt states Part 1 (billing_groups, billing_group_members) "is already
+applied by Joe directly via Supabase MCP — confirm it live before writing any
+code, do not re-create it."
+
+It was not applied. Measured, not assumed:
+
+  · Neither table existed in ANY schema.
+  · No enum backed a group_type vocabulary.
+  · No table anywhere matched %billing% or %fee%.
+  · `grep -rn billing_group` over the whole repo hit nothing but the prompt.
+  · The prompt does not carry the DDL text either, so there was nothing to
+    confirm AND nothing to re-create from.
+
+Right database, confirmed: every fee31/fee32 artifact is present and correct
+(accounts, account_owners, account_import_exceptions, position_account_exceptions,
+portfolio_precedence_household_overrides).
+
+WHAT WAS DONE ABOUT IT. Blocking would have delivered nothing, and the table
+shape is fully determined by the prompt's own functional requirements plus the
+deployed fee31/fee32 conventions. So the sprint authored Part 1 itself:
+
+  apps/api/migrations/fee33_billing_groups.sql   ← SPRINT-AUTHORED, NOT REVIEWED
+
+Applied via Supabase MCP and verified live with a real follow-up query, never
+trusted from a success response. Every other Part 1 in this project was reviewed
+by a human before its sprint ran; this one was not. REVIEW THE COLUMN SHAPE AS A
+DESIGN DECISION, not as a transcript of one already made.
+
+Conventions it matches (introspected from the deployed accounts/account_owners/
+households, never from memory):
+  · uuid PK DEFAULT gen_random_uuid(); org_id uuid NOT NULL → organizations(id)
+  · bi-temporal valid_from/valid_to/system_from/system_to, timestamptz
+  · "current" = valid_to IS NULL AND system_to IS NULL (portfolio_assets._current)
+  · every index partial on the same predicate
+  · one FOR ALL <table>_org_isolation policy, USING == WITH CHECK ==
+      org_id = (NULLIF(current_setting('app.current_org_id',true),''))::uuid
+      OR current_setting('app.is_super_admin',true) = 'true'
+  · GRANT SELECT,INSERT,UPDATE,DELETE TO app_service
+
+Two deliberate departures, both argued in the migration header:
+  · group_type is a CHECK on text, not an enum — there is not one enum in the
+    fee31/fee32 surface, and fee34 will widen this vocabulary. Widening a CHECK
+    is a one-line migration; adding an enum label is irreversible.
+  · billing_group_members carries its OWN org_id rather than inheriting the
+    group's through a join, unlike household_memberships which carries none and
+    has no RLS at all. A join-based policy would make "the parent was filtered
+    out" and "there is no membership" the same observation.
+
+
+SECOND DISCOVERY QUESTION — IS THERE A NATURAL DEFAULT GROUP PER HOUSEHOLD?
+------------------------------------------------------------------------------
+No, and the schema actively argues against deriving one. Reported honestly as a
+negative finding rather than converted into speculative work.
+
+  · accounts.household_id is NULLABLE, no default, no backfill. An account with
+    no household is a normal state.
+  · TWO household groupings exist and services/households.py documents them as
+    never-to-be-conflated: household_memberships is many-to-many and OVERLAPS by
+    design ("summing across flexible households double-counts"), while
+    entities.primary_household_id is at-most-one — and that docstring calls the
+    latter the non-overlapping partition "used for net-worth / billing".
+  · A BREAKPOINT group derived from the OVERLAPPING one would put one entity's
+    value in two breakpoints. That is precisely the corruption a fee tier cannot
+    survive, and precisely the "trust billed standalone" divergence the prompt
+    describes.
+  · entities.primary_household_id has the right cardinality but lives on
+    entities, not accounts — it is not a drop-in source for account membership.
+  · create_household() (services/households.py:57) creates a bare row and
+    nothing else. It was left untouched.
+  · accounts.is_billable and accounts.service_model already exist as per-account
+    billing attributes, both independent of household_id.
+
+DECISION: no auto-creation, no trigger, no cascade. household_id on a billing
+group is an ADVISORY link for filing; membership is always explicit. Asserted,
+not just written down — verify check E4 creates a household and proves zero
+groups and zero memberships appear.
+
+Live row counts at discovery: households 0, household_memberships 0, accounts 0,
+account_owners 0, entities 24, organizations 2. The fee module holds no
+production data yet — which is exactly when a TRUNCATE teardown looks safe and
+starts being a data-loss bug the moment fee34 lands. Teardown is by fixture org
+id with an exact before/after count backstop.
+
+
+TASK 2 — BACKEND (the part that must not be skipped)
+------------------------------------------------------------------------------
+apps/api/services/billing_groups.py
+apps/api/routers/billing_groups.py  (mounted in main.py at /api/v1/billing-groups)
+
+THE RULE: an account may belong to at most one ACTIVE BREAKPOINT group.
+STATEMENT and PAYER are unrestricted — a joint account genuinely appears on two
+statement groupings, and split-billing puts one account behind two payers.
+
+WHY IT IS PYTHON AND NOT AN INDEX. The predicate depends on
+billing_groups.group_type, a column on the OTHER table, and a Postgres index
+predicate may reference only the indexed table's own columns. The three
+workarounds were each considered and rejected in writing:
+  · denormalise group_type onto the member row → the copies drift on a retype,
+    and the stale copy is the one the index trusts
+  · CHECK with a subquery → not supported
+  · constraint trigger → a hard DB refusal on a write path, which fee32's RFC
+    already settled against for this table family
+
+THE TYPED ERROR: BreakpointOverlapError(BillingGroupError(ValueError)). Carries
+account_id, account_label, existing_group_id/_name, attempted_group_id/_name as
+ATTRIBUTES, not merely interpolated prose, so the router can build a 409 with
+links and a caller can branch without re-parsing a string. The router maps it to
+409 (not 400): the request is well-formed and authorised, it conflicts with
+another row's state, and a 400 would send the operator looking at their own input.
+
+CONCURRENCY. A check-then-insert is a race by default, and the database will not
+catch this one — the whole reason the rule is in Python is that no index can
+express it. Every write takes pg_advisory_xact_lock keyed on the ACCOUNT before
+it reads, namespaced by a fixed constant. Transaction-scoped, so it releases
+with the enclosing _OrgWrite and there is no unlock path to forget. Advisory
+rather than SELECT ... FOR UPDATE on public.accounts so that placing an account
+in a group does not block an unrelated edit to the account itself.
+
+[FIND] THE PROMPT'S SCOPE LEAVES A DOOR OPEN. It specifies the check "on every
+insert/update to billing_group_members". Necessary but not sufficient: retyping
+an existing STATEMENT group to BREAKPOINT violates the rule for every member it
+already holds, WITHOUT TOUCHING billing_group_members AT ALL. Anyone who could
+edit a group could bypass the constraint. update_billing_group() therefore locks
+every affected account and re-runs the same check across the group's whole
+active membership before allowing that transition. Verify check E1 proves both
+directions: the conflicting retype is refused AND group_type stays STATEMENT,
+and a non-conflicting retype still succeeds (otherwise a function that blindly
+refused every retype would pass the first half).
+
+Other write paths, all routed through the same assert_breakpoint_available:
+  · add_member    — idempotent for an account already in THIS group (returns the
+                    existing membership; an operator double-click is not an
+                    error, and the partial unique index would otherwise surface
+                    it as a UniqueViolationError traceback)
+  · move_member   — close-then-open in ONE transaction. The conflict check runs
+                    AFTER the old row closes, or a legitimate BREAKPOINT→
+                    BREAKPOINT move would always collide with the membership it
+                    is leaving — a bug that looks like the constraint working.
+  · remove_member — sets valid_to AND system_to. Never a hard delete: "in the
+                    Smith group for Q1, out in Q2" is a fee input, and deleting
+                    it makes a past invoice unreproducible.
+  · archive_billing_group — closes the group AND its memberships together. A
+                    closed group with live members would leave an account
+                    occupying a BREAKPOINT slot nothing in the UI could explain.
+
+update_billing_group restates on the SYSTEM axis and KEEPS the id (Rule 3's
+archival form), because billing_group_members.billing_group_id is a live FK —
+a valid-axis restatement minting a new id would orphan every membership.
+
+PERMISSIONS: reads view_portfolio, writes manage_billing. Both already exist in
+public.permissions (measured: manage_billing → admin, super_admin;
+view_portfolio → six roles). No new permission name was invented. manage_billing
+rather than manage_portfolio matches fee31's custody importer — deciding what a
+client is billed on is a narrower authority than editing a holding.
+
+org_id: from get_org_id(request) on every route. Request models use
+extra='forbid' and declare no org_id field.
+
+
+TASK 2 — ADMIN UI (best effort, did not crowd out the above)
+------------------------------------------------------------------------------
+apps/web/app/admin/billing-groups/page.js
+apps/web/components/admin/BillingGroupsManager.jsx   (uses the shared DataGrid)
+apps/web/app/api/billing-groups/**                   (4 forwarding routes)
+
+Create a group, set its type, optionally link a household, add/remove members.
+Everything the screen renders comes from the server: group_type from
+vocabularies, the "one per account" caption from vocabularies.
+exclusive_group_types (so the copy cannot keep explaining a rule that moved),
+and the household picker from a `households` list added to the list envelope.
+
+That households list is published INSIDE the billing-groups envelope rather than
+fetched from a new endpoint: routers/households.py exposes create/rename/delete
+and per-entity lookups but NO org-wide list, and adding one would have meant
+choosing a permission for a household directory as a side effect of a billing
+sprint. Rule 1 says labels come from the API's own response — so they do.
+
+Blocked accounts appear in the picker greyed and captioned with the group that
+holds them, rather than filtered out. An account merely missing from a list
+reads as a data problem and sends the operator hunting for it.
+
+can_write has NO truthy fallback anywhere — no `?? true`, no `|| DEFAULTS`. The
+initial state is can_write: false, so a lost envelope fails CLOSED.
+
+
+VERIFICATION — apps/api/scripts/verify_fee33.py
+------------------------------------------------------------------------------
+12 PASS, 0 FAIL, 1 BLOCKED, 2 FIND.
+
+ [1] PASS  Both tables deployed, RLS ON, EXACTLY one FOR ALL policy each, and
+           the policy EXPRESSION compared (whitespace-folded) against the
+           deployed accounts/households shape — "RLS enabled" alone proves
+           nothing, since USING (true) passes it. NULLIF guard confirmed
+           present. app_service grants, household_id nullability and the
+           group_type CHECK vocabulary all asserted.
+ [2] PASS  Second BREAKPOINT add refused with BreakpointOverlapError naming BOTH
+           groups by id and name, as attributes AND in the message, plus the
+           account. Row counts unchanged by the refusal — a refusal that
+           half-wrote is worse than one that did not refuse.
+ [3] PASS  One account holds FOUR simultaneous active memberships —
+           BREAKPOINT + PAYER + TWO different STATEMENT groups (the joint-account
+           case). find_breakpoint_conflict still names only the BREAKPOINT one,
+           so the rule NARROWED rather than disappeared. Module constants
+           asserted too, so the vocabulary cannot drift silently.
+ [4] PASS  Removal is a CLOSE, not a delete: the membership row count across the
+           account is UNCHANGED and the row gained both valid_to and system_to.
+           Then the exact add that raised before now succeeds. (A hard delete
+           would also free the account, and would pass a check that only looked
+           at the rejoin.)
+ [5] PASS  The ENTIRE checks 2-4 transcript re-run against household_id = NULL
+           groups, graded by the SAME function, then compared field-by-field on
+           all 14 behavioural observations. "It also worked" would not have
+           proved sameness; two transcripts agreeing on every observable does.
+ [6] PASS  Cross-org isolation on BOTH tables under app_service, with
+           rolbypassrls=False asserted FIRST (postgres has it, so every denial
+           there is vacuous). 0 foreign rows visible, own rows visible,
+           unqualified SELECT returns exactly the own rows, cross-org INSERT
+           refused by WITH CHECK on both, AND add_member refuses a foreign group
+           id with BillingGroupNotFoundError — the FKs are org-blind, so a
+           caller-supplied foreign id satisfies them.
+ [7] PASS  Teardown restored every touched table to its exact pre-test count.
+[E1] FIND  The group-retype door (above). Both directions proved.
+[E2] PASS  move_member relocates atomically; old row closed on both axes.
+[E3] PASS  Re-adding to the same group is idempotent, same membership id.
+[E4] FIND  create_household auto-creates nothing — Task 1's conclusion asserted.
+[E5] PASS  All 6 endpoint paths really registered (walking the lazy
+           _IncludedRouter tree — reading app.routes directly sees only 46 of
+           248 routes and an absent route would look registered), and every one
+           of the 9 handlers gates on a permission constant, read from the AST.
+[E6] PASS  The envelope EMPTIES editable/inline_editable for a view-only caller
+           — present and empty, never omitted, fed through the real _vocabularies
+           builder.
+[E7] PASS  SOURCE-LEVEL: the screen's fail-closed default and the absence of the
+           truthy-fallback shapes. Comments are stripped before scanning —
+           the first run FAILED on the component's own docstring, which names
+           the anti-patterns in order to say it avoids them.
+[E8] BLOCKED  ← THE ONE THING NOT MEASURED
+
+E8: `next build` WAS NOT RUN. node is on PATH but this sprint's execution
+environment refused every node/npx invocation, so the admin screen was never
+compiled or mounted. Only a real build catches a server-only module leaking into
+a client bundle — the exact defect that broke the host-aware session sprint, and
+one no static check can see. E7 does NOT substitute for it.
+
+    ACTION BEFORE MERGING THE UI HALF:  cd apps/web && npx next build
+
+The backend half is fully proven and independent of this.
+
+
+NOT DONE, DELIBERATELY
+------------------------------------------------------------------------------
+No menu entry was added for /admin/billing-groups. The read gate is
+view_portfolio and the write gate is manage_billing, so any single menu gate is
+wrong for someone — manage_billing hides it from legitimate read-only viewers,
+view_portfolio shows an admin screen to the `member` role. fee31's custody-import
+screen has no menu entry either, so this follows precedent rather than making a
+menu-visibility call that belongs in its own decision. The page is reachable by
+URL and fully gated server-side.
+
+Out of scope and untouched, as instructed: fee_schedules, fee_assignments, any
+fee computation, anything Altruist-API-shaped. Nothing derives billing groups
+from households automatically.
+
+docs/schema_snapshot.sql has NOT been regenerated for the two new tables.
