@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-26 (Workflow scheduler Sprint 4 — Run History)
+Last updated: 2026-08-27 (Fee module fee34 — schedule catalog)
 
 ## About this file
 
@@ -18,6 +18,74 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000. Fee module fee34 — schedule catalog BUILT, four follow-ups owed (2026-08-27)
+
+**Status: built and verified, 49/49 PASS, 0 BLOCKED, 3 FIND.**
+`apps/api/scripts/verify_fee34.py`. Nothing here is blocked on anything outside
+the codebase — the four items below are real, deliberate gaps a later fee
+sprint has to close, recorded so they are not rediscovered as bugs.
+
+### What now exists
+
+- `services/fee_validation.py` — pure, zero database access. Tier contiguity,
+  the `minimum_fee`/`minimum_fee_scope` pair, the `REDUCED_RATE`/`FLAT`
+  exclusion rules, non-empty `reason`, `approved_by`, and the
+  `ordering_policy` permutation. fee35 must **re-run this module**, never
+  re-implement the checks.
+- `services/fee_schedules.py` — create (always DRAFT v1), edit, submit,
+  retire, assign, end, and precedence resolution.
+- `routers/fee_schedules.py` — registered in `main.py` at
+  `/api/v1/fee-schedules`.
+
+**Part 1 was genuinely applied this time.** Confirmed live on the app's own DSN
+before any code was written (`scripts/discover_fee34.py`), not on the MCP
+endpoint alone. This is worth stating because fee33's prompt carried the
+identical "already applied by Joe" sentence and it was **not** applied.
+
+### Follow-ups owed
+
+1. **`fee_assignments` has NO unique index.** Nothing in the database stops two
+   active assignments on the same `scope_id` with overlapping effective dates,
+   which would make precedence ambiguous *within* a rung.
+   `create_assignment(replace_existing=True)` closes the incumbent first, so the
+   application never creates one — but an import path or a manual SQL fix can.
+   A partial unique index on `(org_id, scope_type, scope_id) WHERE valid_to IS
+   NULL AND system_to IS NULL` would close it properly.
+2. **No CRUD for `fee_exclusions` / `fee_discounts` / `fee_credits`.**
+   Deliberately out of scope for fee34, which builds the catalog only. The
+   validators for all three exist and are tested; the write paths do not. A
+   later sprint must call `validate_exclusion` / `validate_discount` /
+   `validate_credit` at those rows' own write time — they are **not** reachable
+   from the schedule-approval gate (see finding 3 below).
+3. **`ENTITY` and `ORG` scopes are unreachable on three of the six tables.**
+   `fee_exclusions.scope_type` admits `ORG` (not `ORG_DEFAULT`) and no `ENTITY`;
+   `fee_discounts` and `fee_credits` admit neither. Three different scope
+   vocabularies, kept as three constants in `fee_validation.py` precisely so
+   they cannot be collapsed into one. If the fee engine needs an entity-level
+   discount, that is a schema change, not a code change.
+4. **Nothing reads a schedule to produce a dollar.** By design — that is fee35.
+
+### The three findings
+
+1. `fee_schedules_code_version_uq` is `UNIQUE (org_id, code, version)` with **no
+   partial predicate**, so a Rule 3 valid-axis restatement of a schedule is
+   impossible: closing a row and re-inserting the same `(code, version)`
+   collides with the row just closed. Versioning goes through `version+1` and a
+   DRAFT edit is an in-place `UPDATE`. Not a style choice.
+2. `fee_assignments.precedence` is `NOT NULL` with no default and **no tie to
+   `scope_type` anywhere in the database**. A body carrying `precedence: 1` on
+   an `ORG_DEFAULT` assignment would outrank every account-specific agreement in
+   the org, silently. It is derived server-side from `scope_type` and the
+   request model declares no such field.
+3. **The exclusion rules are not reachable from the schedule-approval gate, and
+   the fee34 prompt assumes they are.** `fee_exclusions` has no
+   `fee_schedule_id` — only `alt_fee_schedule_id`, the REDUCED_RATE *target*.
+   There is no join path from a schedule to "its" exclusions because a schedule
+   does not have any. Folding them into `validate_schedule` would have produced
+   a gate that always passes vacuously on an empty list.
 
 ---
 

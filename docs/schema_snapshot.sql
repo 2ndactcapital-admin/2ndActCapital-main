@@ -869,6 +869,128 @@
 --   revoked_at                               timestamp with time zone
 --   PRIMARY KEY external_access_grants_pkey: (id)
 
+-- ===== fee_assignments =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid
+--   precedence                               integer NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   agreement_document_id                    uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_assignments_pkey: (id)
+
+-- ===== fee_credits =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid NOT NULL
+--   credit_source                            text NOT NULL
+--   offset_pct                               numeric NOT NULL DEFAULT 1.0
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   reason                                   text NOT NULL
+--   approved_by                              uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_credits_pkey: (id)
+
+-- ===== fee_discounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid NOT NULL
+--   discount_type                            text NOT NULL
+--   value                                    numeric
+--   applies_to                               text NOT NULL DEFAULT 'GROSS'::text
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   approved_by                              uuid NOT NULL
+--   reason                                   text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_discounts_pkey: (id)
+
+-- ===== fee_exclusions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid
+--   basis_type                               text NOT NULL
+--   basis_value                              text
+--   treatment                                text NOT NULL
+--   alt_fee_schedule_id                      uuid
+--   flat_amount                              numeric
+--   reason                                   text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_exclusions_pkey: (id)
+
+-- ===== fee_schedule_tiers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   tier_seq                                 integer NOT NULL
+--   lower_bound                              numeric NOT NULL
+--   upper_bound                              numeric
+--   rate_bps                                 numeric
+--   flat_amount                              numeric
+--   PRIMARY KEY fee_schedule_tiers_pkey: (id)
+
+-- ===== fee_schedules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   code                                     text NOT NULL
+--   version                                  integer NOT NULL DEFAULT 1
+--   name                                     text NOT NULL
+--   product_type                             text NOT NULL
+--   rate_type                                text NOT NULL
+--   tier_method                              text
+--   billing_frequency                        text NOT NULL
+--   billing_timing                           text NOT NULL
+--   valuation_method                         text NOT NULL
+--   day_weight_flows                         boolean NOT NULL DEFAULT true
+--   day_weight_threshold                     numeric
+--   proration_method                         text NOT NULL DEFAULT 'CALENDAR_DAYS'::text
+--   minimum_fee                              numeric
+--   minimum_fee_scope                        text
+--   maximum_fee                              numeric
+--   minimum_billable_value                   numeric
+--   cash_treatment                           text NOT NULL DEFAULT 'INCLUDE'::text
+--   cash_exclusion_pct                       numeric
+--   margin_treatment                         text NOT NULL DEFAULT 'IGNORE'::text
+--   ordering_policy                          jsonb NOT NULL DEFAULT '["EXCLUSIONS", "TIERS", "DISCOUNTS", "CREDITS", "MINIMUM", "MAXIMUM"]'::jsonb
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_schedules_pkey: (id)
+
 -- ===== fx_rates =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid

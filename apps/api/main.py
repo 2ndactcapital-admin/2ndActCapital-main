@@ -29,6 +29,7 @@ from routers.entities import router as entities_router, get_org_id
 from routers.entity_graph import router as entity_graph_router
 from routers.ownership_tree import router as ownership_tree_router
 from routers.billing_groups import router as billing_groups_router
+from routers.fee_schedules import router as fee_schedules_router
 from routers.households import router as households_router
 from routers.investment_profile import router as investment_profile_router
 from routers.enroll import router as enroll_router
@@ -545,6 +546,7 @@ app.include_router(invites_router, prefix="/api/v1")
 app.include_router(staff_assignments_router, prefix="/api/v1")
 app.include_router(households_router, prefix="/api/v1")
 app.include_router(billing_groups_router, prefix="/api/v1")
+app.include_router(fee_schedules_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(allocation_lens_router, prefix="/api/v1")
 app.include_router(ledger_router, prefix="/api/v1")
