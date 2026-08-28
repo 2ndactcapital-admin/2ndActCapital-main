@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-28 (Fee module fee35 — calculation engine)
+Last updated: 2026-08-28 (Fee module fee36 — fee runs & approvals)
 
 ## About this file
 
@@ -21,7 +21,68 @@ This file starts with the email item below.
 
 ---
 
-## 000. Fee module fee35 — calculation engine BUILT, three decisions owed by fee36 (2026-08-28)
+## 000. Fee module fee36 — runs & approvals BUILT; ONE decision owed, TWO findings for a later sprint (2026-08-28)
+
+`87/90 PASS, 3 FIND, 0 FAIL` — `apps/api/scripts/verify_fee36.py`. Nothing in
+fee36 is blocked; it closed fee35's F1 and F4 and fixed two live trigger
+defects. Four items are recorded here.
+
+### [A] DECISION NEEDED — which books does RIA fee revenue post to?
+
+The GL hook in `services/fee_runs.py::post_to_ledger` is a **deliberate,
+clearly-marked stub** that writes nothing and returns `posted: False` with the
+reason. It was not guessed, for a concrete reason measured live:
+`journal_entries.vehicle_id` is `NOT NULL`, every deployed `posting_templates`
+row (including `MANAGEMENT_FEE`) posts *inside a vehicle's* books, and
+`chart_of_accounts` has no advisory-revenue account — `5000 Management Fee
+Expense` is the **payer's** side. Wiring it would either invent a vehicle id
+for the firm's own revenue or book that revenue as somebody's expense.
+`fee_run_lines` are emitted regardless; posting is additive when the answer
+exists. Design doc open question #3.
+
+### [B] FINDING F36-C — a POSTED run can never reach status `'REVERSED'`
+
+`fee_runs_status_check` admits `'REVERSED'`, but
+`fee_runs_immutable_once_posted` refuses every UPDATE on a POSTED row — by
+design, and the sprint deliberately did not weaken it. The reversal link is
+therefore read *backwards*, through `fee_runs.reverses_run_id` on the new run.
+`'REVERSED'` is currently an unreachable value. Not a bug; worth knowing before
+someone writes a screen that filters on it.
+
+### [C] FINDING F36-D — a group minimum silently leaves the group when an account refunds
+
+fee35's `_minimum_step` short-circuits on `run.amount < 0` ("applying a minimum
+here would turn a refund into a charge") **before** it reaches the
+HOUSEHOLD/BILLING_GROUP branch, so `minimum_deferred_to_group` is never set and
+`calculate_group_fees` never puts that account in a bucket. In a group where
+one account refunds (a credit exceeding its fee) and others bill, the group
+subtotal is computed **without** the refund, so the shortfall charged to the
+remaining accounts is too large. The per-account skip is right; dropping the
+account out of the group aggregation is probably not. This is fee35's
+arithmetic and fee36 deliberately did not change it — pinned by check `6f`/`6g`
+in `verify_fee36.py` so a future edit has to decide about it on purpose.
+
+### [D] Closed here, for the record
+
+* **fee35 F1 (`fee_credits` has no amount column)** — resolved. Only
+  `SPV_MGMT_FEE_OFFSET` has a real source in the deployed schema: the sum of
+  the account's owning entity's `spv_transaction_allocations.allocated_amount`
+  across *posted* `call_mgmt_fee` transactions dated inside the period — the
+  investor's own share, not the vehicle-level amount. The other four sources
+  (`12B1`, `SUB_TA`, `SI_EMBEDDED_FEE_OFFSET`, `MODEL_FEE_OFFSET`) have **no
+  source table anywhere** and raise `CreditBasisUnavailableError` rather than
+  crediting zero. **A trail/revenue-receipt table is still owed before those
+  four credit sources can be billed.**
+* **fee35 F4 (`accounts` has no `billing_group_id`)** — resolved via
+  `billing_group_members` × `billing_groups(group_type='BREAKPOINT')`, as of the
+  date billed. Absent → `None`, which lets the engine raise its own
+  `GroupScopeMissingError`; ambiguous → `AmbiguousBillingGroupError`.
+* **Two live trigger defects fixed** — `docs/fee36_part1_fix.sql`. See the
+  fee35 section below for context on what Part 1 originally applied.
+
+---
+
+## 001. Fee module fee35 — calculation engine BUILT, three decisions owed by fee36 (2026-08-28)
 
 **Status: built and verified, 22/22 PASS, 0 BLOCKED, 9 FIND.**
 `apps/api/scripts/verify_fee35.py` — a pure unit suite that opens no database
@@ -81,7 +142,7 @@ carry/waterfall, which the design doc defers to its own sprint.
 
 ---
 
-## 001. Fee module fee34 — schedule catalog BUILT, four follow-ups owed (2026-08-27)
+## 002. Fee module fee34 — schedule catalog BUILT, four follow-ups owed (2026-08-27)
 
 **Status: built and verified, 49/49 PASS, 0 BLOCKED, 3 FIND.**
 `apps/api/scripts/verify_fee34.py`. Nothing here is blocked on anything outside

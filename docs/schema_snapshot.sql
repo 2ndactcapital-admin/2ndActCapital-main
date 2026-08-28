@@ -945,6 +945,56 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY fee_exclusions_pkey: (id)
 
+-- ===== fee_run_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_run_id                               uuid NOT NULL
+--   account_id                               uuid
+--   billing_group_id                         uuid
+--   household_id                             uuid
+--   entity_id                                uuid
+--   advisor_id                               uuid
+--   product_type                             text NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   billable_value                           numeric NOT NULL
+--   excluded_value                           numeric NOT NULL DEFAULT 0
+--   valuation_method                         text NOT NULL
+--   gross_fee                                numeric NOT NULL
+--   discount_amount                          numeric NOT NULL DEFAULT 0
+--   credit_amount                            numeric NOT NULL DEFAULT 0
+--   minimum_adjustment                       numeric NOT NULL DEFAULT 0
+--   net_fee                                  numeric NOT NULL
+--   payer_account_id                         uuid
+--   payment_method                           text NOT NULL DEFAULT 'CUSTODIAL_DEBIT'::text
+--   calc_detail                              jsonb NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_run_lines_pkey: (id)
+
+-- ===== fee_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   period_start                             date NOT NULL
+--   period_end                               date NOT NULL
+--   billing_frequency                        text NOT NULL
+--   run_type                                 text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   reverses_run_id                          uuid
+--   calculation_snapshot_hash                text
+--   engine_version                           text
+--   created_by                               uuid
+--   advisor_approved_by                      uuid
+--   advisor_approved_at                      timestamp with time zone
+--   compliance_approved_by                   uuid
+--   compliance_approved_at                   timestamp with time zone
+--   posted_at                                timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_runs_pkey: (id)
+
 -- ===== fee_schedule_tiers =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
