@@ -88,6 +88,7 @@ from services.fee_calc import (  # noqa: E402
     A_PCT_SCALE,
     ENGINE_VERSION,
     AltScheduleMissingError,
+    GroupScopeMissingError,
     OrderingNotSupportedError,
     calculate_account_fee,
     calculate_group_fees,
@@ -203,7 +204,9 @@ PERIOD_DAYS = 91
 
 ACCOUNT_A = "aaaaaaaa-0000-0000-0000-00000000000a"
 ACCOUNT_B = "bbbbbbbb-0000-0000-0000-00000000000b"
+ACCOUNT_C = "cccccccc-0000-0000-0000-00000000000c"
 HOUSEHOLD = "hhhhhhhh-0000-0000-0000-00000000000h"
+BILLING_GROUP = "b9111111-0000-0000-0000-0000000000b9"
 SCHEDULE_ID = "5cede111-0000-0000-0000-000000000001"
 ALT_SCHEDULE_ID = "5cede111-0000-0000-0000-000000000002"
 ASSET_CONCENTRATED = "a55e7000-0000-0000-0000-0000000000c1"
@@ -749,6 +752,215 @@ def case_12() -> str:
         "minimum_fee_scope is not being read")
     return ("A $2,000.00 + B $4,000.00 = $6,000.00 household minimum; the same "
             "fixture at ACCOUNT scope gives $6,000.00 each")
+
+
+def case_13() -> str:
+    """A refunding account inside a BILLING_GROUP-scoped minimum. fee35-F36D.
+
+    THIS CASE IS A REGRESSION TEST. It was added by patch fee35-F36D, and the
+    numbers below are what the engine produced BEFORE and AFTER that patch —
+    both are recorded, because a regression test that only knows the right
+    answer cannot tell you it is guarding anything.
+
+        account A   800,000 @ 1.00% = 8,000.00 annual →  2,000.00
+        account B   600,000 @ 1.00% = 6,000.00 annual →  1,500.00
+        account C   480,000 @ 1.00% = 4,800.00 annual →  1,200.00
+                    less a credit of 1.0 x a 2,000.00 basis
+                                                      →   -800.00   a REFUND
+        billing-group minimum                            5,000.00
+
+    CORRECT (this engine):
+        subtotal    2,000.00 + 1,500.00 + (-800.00)  =   2,700.00
+        shortfall   5,000.00 - 2,700.00              =   2,300.00
+        allocated pro-rata over the CHARGING accounts only, 2,000 : 1,500
+            A  2,300 x 2000/3500 = 1,314.285714…  →  1,314.29  (larger cent
+            B  2,300 x 1500/3500 =   985.714285…  →    985.71   remainder to A)
+        A 3,314.29  +  B 2,485.71  +  C -800.00   =   5,000.00  = the minimum
+
+    WRONG (before fee35-F36D):
+        ``_minimum_step`` short-circuited on ``run.amount < ZERO`` BEFORE it
+        reached the group branch, so C never set a group flag,
+        ``calculate_group_fees`` never put C in the bucket, and C's -800.00
+        never reached the sum:
+        subtotal 3,500.00 (OVERSTATED by the whole refund), shortfall 1,500.00
+        (UNDERSTATED by 800.00), A 2,857.14, B 2,142.86, and a group total of
+        4,200.00 — 800.00 BELOW the floor the group was told it was paying.
+
+    Note the direction. fee36's finding 6g, which reported this bug, described
+    the shortfall charged to the rest as "too large". Measured, it is too
+    SMALL: dropping a NEGATIVE contribution raises the subtotal, and a higher
+    subtotal is a smaller shortfall. The client is undercharged, not
+    overcharged.
+
+    Reverting the patch turns the four ``assert … != …`` guards below into
+    failures, so this case cannot pass against the old arithmetic.
+    """
+    sched = schedule(minimum_fee=D("5000"), minimum_fee_scope="BILLING_GROUP")
+
+    def acct(account_id: str) -> AccountInput:
+        return account(account_id, billing_group_id=BILLING_GROUP)
+
+    reqs = [
+        request(sched=sched, acct=acct(ACCOUNT_A),
+                balances=(balance("800000", account_id=ACCOUNT_A),)),
+        request(sched=sched, acct=acct(ACCOUNT_B),
+                balances=(balance("600000", account_id=ACCOUNT_B),)),
+        request(sched=sched, acct=acct(ACCOUNT_C),
+                balances=(balance("480000", account_id=ACCOUNT_C),),
+                credits=(CreditInput(
+                    id="c-f36d", credit_source="SPV_MGMT_FEE_OFFSET",
+                    offset_pct=D("1.0"), basis_amount=D("2000.00"),
+                    scope_type="ACCOUNT", scope_id=ACCOUNT_C,
+                    effective_from=date(2026, 1, 1)),)),
+    ]
+
+    grp = calculate_group_fees(reqs)
+    by_id = grp.by_account()
+
+    # ── The refunding account's own line is untouched by the group minimum.
+    eq(by_id[ACCOUNT_C].amount, D("-800.00"),
+       "case 13 the refunding account must bill exactly its refund")
+    assert by_id[ACCOUNT_C].is_refund, "case 13 C must still be flagged a refund"
+    c_min = step_of(by_id[ACCOUNT_C], "MINIMUM")
+    eq(c_min["outcome"], "skipped",
+       "case 13 a minimum must never bump a refund")
+    assert "uplift" not in c_min, (
+        "case 13 the refunding account received a group uplift — a minimum "
+        "turned a refund into a smaller refund")
+    eq(by_id[ACCOUNT_C].minimum_deferred_to_group, False,
+       "case 13 a refunding account is NOT eligible for a share of the uplift")
+
+    # ── The group arithmetic. This block comes FIRST among the post-fix
+    #    assertions on purpose: every check above it also passes against the
+    #    pre-F36D engine, so these are the ones that actually discriminate,
+    #    and a reader running this case against the old code should see it
+    #    fail on the arithmetic rather than on a missing attribute.
+    detail = grp.group_detail["groups"]
+    eq(len(detail), 1, "case 13 one billing group")
+    g = detail[0]
+    eq(g["scope"], "BILLING_GROUP", "case 13 scope")
+    eq(g["scope_id"], BILLING_GROUP, "case 13 scope id")
+    eq(sorted(g["account_ids"]), sorted([ACCOUNT_A, ACCOUNT_B, ACCOUNT_C]),
+       "case 13 all THREE accounts are in the bucket, the refund included")
+
+    eq(D(g["group_subtotal_before_minimum"]), D("2700.00"),
+       "case 13 the subtotal must be 2,000 + 1,500 - 800")
+    assert D(g["group_subtotal_before_minimum"]) != D("3500.00"), (
+        "case 13 REGRESSION: the subtotal is 3,500.00 — the refunding account "
+        "has been dropped from the sum again (fee35-F36D)")
+    eq(D(g["shortfall"]), D("2300.00"), "case 13 shortfall")
+    assert D(g["shortfall"]) != D("1500.00"), (
+        "case 13 REGRESSION: a 1,500.00 shortfall is the pre-F36D number, "
+        "computed against a subtotal that omitted the refund")
+
+    # ── C IS counted, and its own line's trace says so. [requirement 4]
+    eq(by_id[ACCOUNT_C].minimum_group_contributor, True,
+       "case 13 a refunding account is still a MEMBER of the group bucket")
+    eq(c_min["counted_in_group_subtotal"], True,
+       "case 13 C's own MINIMUM step must record that it was counted")
+    eq(D(c_min["group_contribution"]), D("-800.00"),
+       "case 13 C's own trace must name the -800.00 it contributed")
+    eq(c_min["scope_id"], BILLING_GROUP,
+       "case 13 C's trace must name the group it contributed to")
+
+    # calc_detail traces every contribution by name. [requirement 4]
+    contrib = {c["account_id"]: c for c in g["contributions"]}
+    eq(len(contrib), 3, "case 13 one contribution row per account")
+    eq(D(contrib[ACCOUNT_C]["amount_before"]), D("-800.00"),
+       "case 13 the group trace must show C's -800.00 explicitly")
+    eq(contrib[ACCOUNT_C]["counted_in_subtotal"], True, "case 13 C counted")
+    eq(contrib[ACCOUNT_C]["eligible_for_uplift"], False, "case 13 C not bumped")
+    eq(D(g["refund_contribution"]), D("-800.00"),
+       "case 13 the refunds inside the subtotal are totalled for the reader")
+    eq(sum((D(c["amount_before"]) for c in g["contributions"]), D(0)),
+       D(g["group_subtotal_before_minimum"]),
+       "case 13 the traced contributions must ADD UP to the stated subtotal")
+    # Spelled out with the EXACT unrounded terms, trailing zeros and all —
+    # a sum quantized for looks is no longer the sum that was used.
+    eq(g["subtotal_arithmetic"], "2000.00 + 1500.00 + (-800.000) = 2700.000",
+       "case 13 the sum is spelled out so a reader can check it by eye")
+    eq([x["account_id"] for x in g["uplift_excludes"]], [ACCOUNT_C],
+       "case 13 the trace names who was excluded from the uplift, and why")
+
+    # ── The uplift goes to the charging accounts only, and sums exactly.
+    alloc = {a["account_id"]: D(a["share"]) for a in g["allocations"]}
+    eq(sorted(alloc), sorted([ACCOUNT_A, ACCOUNT_B]),
+       "case 13 only the CHARGING accounts share the uplift")
+    eq(alloc[ACCOUNT_A], D("1314.29"), "case 13 A's pro-rata share")
+    eq(alloc[ACCOUNT_B], D("985.71"), "case 13 B's pro-rata share")
+    eq(sum(alloc.values(), D(0)), D(g["shortfall"]),
+       "case 13 allocations must sum EXACTLY to the shortfall")
+
+    eq(by_id[ACCOUNT_A].amount, D("3314.29"), "case 13 account A")
+    eq(by_id[ACCOUNT_B].amount, D("2485.71"), "case 13 account B")
+    assert by_id[ACCOUNT_A].amount != D("2857.14"), (
+        "case 13 REGRESSION: A billed 2,857.14, its pre-F36D number")
+    assert by_id[ACCOUNT_B].amount != D("2142.86"), (
+        "case 13 REGRESSION: B billed 2,142.86, its pre-F36D number")
+
+    eq(grp.total, D("5000.00"),
+       "case 13 the group's total net fee must equal the minimum EXACTLY when "
+       "the floor binds — the refund included")
+
+    # ── The floor that does NOT bind: the same fixture, minimum 2,000. The
+    #    subtotal (2,700) clears it, so nobody is bumped and the group bills
+    #    its true subtotal. A subtotal that still dropped the refund would
+    #    read 3,500 here too, but the group total would be 2,700 either way —
+    #    which is exactly why the binding case above is the one that proves it.
+    loose = calculate_group_fees([
+        request(sched=schedule(minimum_fee=D("2000"),
+                               minimum_fee_scope="BILLING_GROUP"),
+                acct=acct(r.data.account.id), balances=r.data.balances,
+                credits=r.credits)
+        for r in reqs
+    ])
+    lg = loose.group_detail["groups"][0]
+    eq(lg["outcome"], "not_reached", "case 13 a 2,000 floor is already cleared")
+    eq(D(lg["group_subtotal_before_minimum"]), D("2700.00"),
+       "case 13 the non-binding subtotal counts the refund too")
+    eq(loose.total, D("2700.00"),
+       "case 13 when the floor does not bind the group bills its true subtotal")
+
+    # ── A group that is ALL refunds has nowhere to put a shortfall.
+    all_refund = calculate_group_fees([reqs[2]])
+    ar = all_refund.group_detail["groups"][0]
+    eq(ar["outcome"], "no_chargeable_account",
+       "case 13 a group of nothing but refunds cannot be bumped to its minimum")
+    eq(all_refund.total, D("-800.00"),
+       "case 13 and it bills the refund, not the minimum")
+
+    # ── One DELIBERATE behaviour change comes with the fix, pinned here.
+    #    The refund guard now sits BELOW the scope resolution, so a refunding
+    #    account under a group-scoped minimum with no resolved group id raises
+    #    instead of silently billing its refund. It must: an account that
+    #    cannot be placed in a bucket cannot be counted in one, and silently
+    #    dropping it is the bug this patch exists to fix. Every NON-refunding
+    #    account under the same schedule already raised here (see F4), so this
+    #    removes an inconsistency rather than adding a rule.
+    orphan = request(
+        sched=sched,
+        acct=AccountInput(id=ACCOUNT_C, household_id=None,
+                          billing_group_id=None, is_billable=True),
+        balances=(balance("480000", account_id=ACCOUNT_C),),
+        credits=(CreditInput(
+            id="c-f36d", credit_source="SPV_MGMT_FEE_OFFSET",
+            offset_pct=D("1.0"), basis_amount=D("2000.00"),
+            scope_type="ACCOUNT", scope_id=ACCOUNT_C,
+            effective_from=date(2026, 1, 1)),))
+    try:
+        calculate_account_fee(orphan)
+        raise AssertionError(
+            "case 13 a refunding account under a BILLING_GROUP minimum with no "
+            "billing_group_id was billed silently — it cannot be placed in a "
+            "bucket, so its refund would go uncounted, which is fee35-F36D "
+            "again by another route")
+    except GroupScopeMissingError as exc:
+        assert "billing_group_id" in str(exc), (
+            "case 13 the refusal must name the field it could not resolve")
+
+    return ("A $3,314.29 + B $2,485.71 + C -$800.00 = $5,000.00, the group "
+            "minimum exactly; the subtotal is 2,700.00 counting C's refund, "
+            "not the pre-F36D 3,500.00 that dropped it")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1361,6 +1573,8 @@ def main() -> int:
     results.check("11", "termination mid-period billed in ADVANCE is a refund",
                   case_11)
     results.check("12", "a HOUSEHOLD minimum sees both accounts", case_12)
+    results.check("13", "a refund inside a GROUP minimum is counted, not bumped",
+                  case_13)
 
     print("\n── Verification: the properties the sprint asks for ───────────────")
     results.check("V1", "the engine cannot reach a database", v1_no_database)
@@ -1445,6 +1659,31 @@ def main() -> int:
         "calculation, since exclusions change a VALUE and tiers turn a value "
         "into money. The engine refuses rather than re-sorting. Same for a "
         "NET_OF_CREDITS discount under a policy that runs DISCOUNTS first.")
+    results.find(
+        "F10", "fee36's finding 6g had the SIGN of F36-D backwards",
+        "6g reported that dropping a refunding account from the group subtotal "
+        "made 'the shortfall charged to the rest too large'. Measured against "
+        "the pre-patch engine before anything was changed, it is too SMALL. "
+        "Dropping a NEGATIVE contribution RAISES the subtotal — 3,500.00 "
+        "instead of 2,700.00 on case 13's fixture — and a higher subtotal is a "
+        "smaller shortfall: 1,500.00 instead of 2,300.00. The group settled at "
+        "4,200.00 against a 5,000.00 floor. The error was a client UNDERCHARGE "
+        "of 800.00, exactly the size of the refund, not an overcharge. The same "
+        "bug either way, but 'who was billed wrongly, and do we owe them or do "
+        "they owe us' has the opposite answer, so the direction is recorded "
+        "here measured rather than reasoned.")
+    results.find(
+        "F11", "a refunding account with no group id now RAISES — behaviour change",
+        "The fix moves the refund guard BELOW the scope resolution in "
+        "_minimum_step, because an account that cannot be placed in a bucket "
+        "cannot be counted in one. A refunding account under a "
+        "BILLING_GROUP/HOUSEHOLD-scoped minimum whose billing_group_id or "
+        "household_id is unresolved therefore now raises GroupScopeMissingError "
+        "where it previously billed its refund silently. Every NON-refunding "
+        "account under the same schedule already raised (see F4), so this "
+        "removes an inconsistency rather than adding a rule — but it is still a "
+        "real change for any caller that was relying on the silence. Pinned in "
+        "case 13.")
 
     return results.summary()
 

@@ -142,11 +142,6 @@ A_PERIOD_AMOUNTS = (
     "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion "
     "flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
 )
-_REFUND_SKIP_REASON = (
-    "the running amount is negative — this line is a refund of "
-    "a fee billed in advance. Applying a minimum here would "
-    "turn a refund into a charge"
-)
 A_PCT_SCALE = (
     "fee_discounts.value for PCT_OFF was read as a PERCENT in [0, 100] "
     "(20 means 20%). Note the contrast with fee_credits.offset_pct, which the "
@@ -1040,7 +1035,6 @@ class _Run:
     account_value: Decimal = ZERO
     gross_period: Decimal = ZERO
     minimum_deferred: bool = False
-    minimum_group_contributor: bool = False
 
     def note(self, assumption: str) -> None:
         if assumption not in self.assumptions:
@@ -1056,21 +1050,6 @@ class FeeCalcResult:
     a group-level minimum has to allocate against the unrounded one — rounding
     twice, once per account and once for the group, is how allocations stop
     summing to their own total.
-
-    ``minimum_deferred_to_group`` and ``minimum_group_contributor`` are two
-    different questions and F36-D was the cost of conflating them:
-
-      * *contributor* — this account sits under a GROUP/HOUSEHOLD-scoped
-        minimum, so its signed amount belongs in the group's subtotal.
-      * *deferred* — this account is additionally ELIGIBLE to be bumped by
-        that group's shortfall.
-
-    An account whose credits exceed its fee is a contributor and NOT deferred:
-    its refund must be counted against the floor, and it must never be bumped.
-    Every deferred account is a contributor; the reverse does not hold. This
-    field is deliberately absent from ``calc_detail`` — the MINIMUM step
-    already records both facts in prose, and adding a key here would change
-    the stored trace of every account that has nothing to do with groups.
     """
 
     account_id: str
@@ -1086,7 +1065,6 @@ class FeeCalcResult:
     amount_unrounded: Decimal
     is_refund: bool
     minimum_deferred_to_group: bool
-    minimum_group_contributor: bool
     assumptions: tuple[str, ...]
     calc_detail: dict[str, Any]
 
@@ -1492,14 +1470,19 @@ def _minimum_step(
 
     run.note(A_PERIOD_AMOUNTS)
 
+    if run.amount < ZERO:
+        detail.update(
+            outcome="skipped",
+            reason=("the running amount is negative — this line is a refund of "
+                    "a fee billed in advance. Applying a minimum here would "
+                    "turn a refund into a charge"),
+            amount_after=_d(run.amount),
+        )
+        run.steps.append(detail)
+        return
+
     if schedule.minimum_fee_scope == "ACCOUNT":
-        if run.amount < ZERO:
-            detail.update(
-                outcome="skipped",
-                reason=_REFUND_SKIP_REASON,
-                amount_after=_d(run.amount),
-            )
-        elif run.amount < schedule.minimum_fee:
+        if run.amount < schedule.minimum_fee:
             uplift_amount = schedule.minimum_fee - run.amount
             run.amount = schedule.minimum_fee
             detail.update(outcome="applied", uplift=_d(uplift_amount),
@@ -1511,16 +1494,6 @@ def _minimum_step(
         return
 
     # HOUSEHOLD or BILLING_GROUP.
-    #
-    # The refund guard lives BELOW the scope resolution, not above it. Above
-    # it — where it sat until fee35-F36D — a refunding account returned before
-    # ``minimum_deferred`` was ever set, calculate_group_fees never put it in a
-    # bucket, and the group subtotal was computed as if the account did not
-    # exist. A group of 2,000 + 1,500 + (-800) under a 5,000 floor compared
-    # 3,500 against the floor instead of 2,700, charged a 1,500 shortfall
-    # instead of 2,300, and settled at 4,200 — 800 BELOW the minimum the group
-    # was told it was paying. Being refunding exempts an account from being
-    # BUMPED; it does not exempt it from being COUNTED.
     scope_id = (
         account.household_id if schedule.minimum_fee_scope == "HOUSEHOLD"
         else account.billing_group_id
@@ -1537,32 +1510,8 @@ def _minimum_step(
             account_id=account.id, minimum_fee_scope=schedule.minimum_fee_scope,
         )
     detail["scope_id"] = scope_id
-
-    if run.amount < ZERO:
-        # Counted, never bumped. ``minimum_deferred`` stays False — that flag
-        # means "eligible for a share of the shortfall" and this account is
-        # not. ``minimum_group_contributor`` is the separate, weaker claim
-        # that its signed amount belongs in the group's subtotal.
-        run.minimum_group_contributor = True
-        detail.update(
-            outcome="skipped",
-            reason=_REFUND_SKIP_REASON,
-            counted_in_group_subtotal=True,
-            group_contribution=_d(run.amount),
-            group_note=("this account is still a member of the group's bucket: "
-                        "its NEGATIVE amount is summed into the group subtotal "
-                        "that the group minimum is compared against, and it is "
-                        "excluded only from the resulting uplift. Dropping it "
-                        "from the subtotal would understate the group's "
-                        "shortfall and bill the group below its own minimum"),
-            amount_after=_d(run.amount),
-        )
-        run.steps.append(detail)
-        return
-
     if uplift is None:
         run.minimum_deferred = True
-        run.minimum_group_contributor = True
         detail.update(
             outcome="deferred_to_group",
             reason=("a group-scoped minimum is compared against the sum of the "
@@ -1571,7 +1520,6 @@ def _minimum_step(
             amount_after=_d(run.amount),
         )
     else:
-        run.minimum_group_contributor = True
         run.amount += uplift
         detail.update(
             outcome="group_share_applied", uplift=_d(uplift),
@@ -1644,7 +1592,6 @@ def _finish(
         amount_unrounded=amount,
         is_refund=quantized < ZERO,
         minimum_deferred_to_group=run.minimum_deferred,
-        minimum_group_contributor=run.minimum_group_contributor,
         assumptions=tuple(run.assumptions),
         calc_detail=header,
     )
@@ -1694,17 +1641,6 @@ def calculate_group_fees(
 
     An account whose minimum is ACCOUNT-scoped, or which has no minimum at all,
     is finished after pass 1 and its pass-1 result is returned unchanged.
-
-    MEMBERSHIP AND ELIGIBILITY ARE TWO DIFFERENT QUESTIONS (fee35-F36D)
-    ──────────────────────────────────────────────────────────────────────────
-    A bucket's members are every account with ``minimum_group_contributor``.
-    Only the subset that is also ``minimum_deferred_to_group`` can receive a
-    share of the shortfall. The two diverge for exactly one shape — an account
-    whose credits exceed its fee — and conflating them was a real, live bug:
-    the refunding account was dropped from the bucket entirely, so its negative
-    amount never reached the subtotal, the subtotal was OVERSTATED by the size
-    of the refund, and the group settled BELOW the minimum it was told it was
-    paying. Golden case 13 pins the arithmetic.
     """
     pass1 = [calculate_account_fee(r) for r in requests]
     group_detail: dict[str, Any] = {
@@ -1715,11 +1651,7 @@ def calculate_group_fees(
 
     buckets: dict[tuple[str, str], list[int]] = {}
     for i, (req, res) in enumerate(zip(requests, pass1)):
-        # CONTRIBUTOR, not deferred. A refunding account is a member of the
-        # bucket — its signed amount is part of what the floor is compared
-        # against — but it is not eligible for a share of the shortfall.
-        # Bucketing on the deferred flag was fee35-F36D.
-        if not res.minimum_group_contributor:
+        if not res.minimum_deferred_to_group:
             continue
         scope = req.schedule.minimum_fee_scope
         account = req.data.account
@@ -1735,12 +1667,7 @@ def calculate_group_fees(
             if requests[i].schedule.minimum_fee is not None
         ]
         minimum = max(minimums)
-        # EVERY member's signed amount, refunding or not. This is the whole of
-        # fee35-F36D: a refund reduces what the group has actually paid, so it
-        # must reduce the subtotal the floor is measured against.
         subtotal = sum((pass1[i].amount_unrounded for i in members), ZERO)
-        eligible = [i for i in members if pass1[i].minimum_deferred_to_group]
-        refunding = [i for i in members if i not in set(eligible)]
         entry: dict[str, Any] = {
             "scope": scope,
             "scope_id": scope_id,
@@ -1751,31 +1678,6 @@ def calculate_group_fees(
                 if len(set(minimums)) > 1 else "the group's shared minimum_fee"
             ),
             "group_subtotal_before_minimum": _d(subtotal),
-            # Named per account so a reader can add the column up by hand and
-            # see a refund counted rather than having to trust that it was.
-            "contributions": [
-                {"account_id": requests[i].data.account.id,
-                 "amount_before": _d(pass1[i].amount_unrounded),
-                 "counted_in_subtotal": True,
-                 "eligible_for_uplift": i in set(eligible),
-                 "role": ("charging — counted in the subtotal and shares any "
-                          "uplift"
-                          if pass1[i].minimum_deferred_to_group else
-                          "refunding — counted in the subtotal, never bumped")}
-                for i in members
-            ],
-            "refund_contribution": _d(
-                sum((pass1[i].amount_unrounded for i in refunding), ZERO)
-                .quantize(CENTS, rounding=ROUND_HALF_UP)),
-            # The exact unrounded terms, not a tidied-up rendering of them:
-            # this string exists so a reader can check the sum, and a sum that
-            # has been quantized for looks is no longer the sum that was used.
-            "subtotal_arithmetic": " + ".join(
-                (f"({_d(pass1[i].amount_unrounded)})"
-                 if pass1[i].amount_unrounded < ZERO
-                 else _d(pass1[i].amount_unrounded))
-                for i in members
-            ) + f" = {_d(subtotal)}",
         }
         if subtotal >= minimum:
             entry.update(outcome="not_reached", shortfall=_d(ZERO), allocations=[])
@@ -1783,25 +1685,8 @@ def calculate_group_fees(
             continue
 
         shortfall = minimum - subtotal
-        if not eligible:
-            # Every account in the group is refunding. There is no line the
-            # uplift could land on that would not turn a refund into a charge,
-            # which is the one thing the refund guard exists to prevent. Say so
-            # rather than dividing by an empty weight list.
-            entry.update(
-                outcome="no_chargeable_account",
-                shortfall=_d(shortfall),
-                allocations=[],
-                reason=("every account in this group is refunding, so the "
-                        "shortfall has nowhere to go: charging it would turn a "
-                        "refund into a charge. The group bills its true "
-                        "subtotal, below the minimum"),
-            )
-            group_detail["groups"].append(entry)
-            continue
-
-        shares = _allocate(shortfall, [pass1[i].amount_unrounded for i in eligible])
-        for i, share in zip(eligible, shares):
+        shares = _allocate(shortfall, [pass1[i].amount_unrounded for i in members])
+        for i, share in zip(members, shares):
             uplifts[i] = share
         entry.update(
             outcome="applied",
@@ -1812,18 +1697,9 @@ def calculate_group_fees(
                 {"account_id": requests[i].data.account.id,
                  "amount_before": _d(pass1[i].amount_unrounded),
                  "share": _d(share)}
-                for i, share in zip(eligible, shares)
+                for i, share in zip(members, shares)
             ],
         )
-        if refunding:
-            entry["uplift_excludes"] = [
-                {"account_id": requests[i].data.account.id,
-                 "amount": _d(pass1[i].amount_unrounded),
-                 "reason": ("refunding — its amount is inside "
-                            "group_subtotal_before_minimum above, but a "
-                            "minimum must never bump a refund")}
-                for i in refunding
-            ]
         group_detail["groups"].append(entry)
 
     if not uplifts:

@@ -1,0 +1,3333 @@
+[
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "5312.50",
+      "amount_unrounded": "5312.5000",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "5312.50",
+          "amount_unrounded": "5312.5000",
+          "billable_value": "2500000",
+          "currency": "USD",
+          "gross_fee_period": "5312.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2500000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "5312.5000",
+            "billable_value": "2500000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5312.5000",
+            "primary_annual": "21250.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11250.0000",
+                "base": "1500000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21250.0000"
+          },
+          {
+            "amount_after": "5312.5000",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "5312.5000",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "5312.5000",
+            "amount_before": "5312.5000",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "5312.5000",
+            "amount_before": "5312.5000",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "5312.5000",
+            "amount_before": "5312.5000",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "5312.5000",
+            "amount_before": "5312.5000",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 1,
+    "summary": "$5,312.50 \u2014 slices 10,000.00 + 11,250.00 = 21,250.00 annual, / 4. calc_detail slices sum to the subtotal"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "4687.50",
+      "amount_unrounded": "4687.5000",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "4687.50",
+          "amount_unrounded": "4687.5000",
+          "billable_value": "2500000",
+          "currency": "USD",
+          "gross_fee_period": "4687.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "CLIFF",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2500000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "4687.5000",
+            "billable_value": "2500000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "4687.5000",
+            "primary_annual": "18750.0000",
+            "slices": [
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "CLIFF",
+                "rate_bps": "100",
+                "reached": false,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "18750.0000",
+                "base": "2500000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "CLIFF",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "CLIFF",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "CLIFF",
+            "total_annual": "18750.0000"
+          },
+          {
+            "amount_after": "4687.5000",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "4687.5000",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 2,
+    "summary": "$4,687.50 vs case 1's $5,312.50 \u2014 whole 2,500,000 at tier 2's 75 bps, one reached slice in the trace"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "2743.82",
+      "amount_unrounded": "2743.818681318681318681318681",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": true,
+          "service_end": null,
+          "service_start": "2026-05-15",
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "2743.82",
+          "amount_unrounded": "2743.818681318681318681318681",
+          "billable_value": "2500000",
+          "currency": "USD",
+          "gross_fee_period": "5312.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2500000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "5312.5000",
+            "billable_value": "2500000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5312.5000",
+            "primary_annual": "21250.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11250.0000",
+                "base": "1500000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21250.0000"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "billing_timing": "ARREARS",
+            "factor": "0.5164835164835164835164835165",
+            "gross_before_proration": "5312.5000",
+            "in_service_days": 47,
+            "in_service_from": "2026-05-15",
+            "in_service_to": "2026-06-30",
+            "outcome": "inception_partial",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": "2026-05-15",
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 3,
+    "summary": "$2,743.82 \u2014 5,312.50 x 47/91, both day counts in the trace"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "5340.32",
+      "amount_unrounded": "5340.315934065934065934065935",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2530000",
+          "amount": "5340.32",
+          "amount_unrounded": "5340.315934065934065934065935",
+          "billable_value": "2514835.164835164835164835165",
+          "currency": "USD",
+          "gross_fee_period": "5340.315934065934065934065935",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2530000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": "10000",
+            "flows": [
+              {
+                "adjustment": "-15164.83516483516483516483516",
+                "amount": "30000",
+                "days_absent": 46,
+                "days_present": 45,
+                "flow_date": "2026-05-17",
+                "flow_type": "CONTRIBUTION",
+                "outcome": "weighted",
+                "reason": "present 45 of 91 days; the 46-day absent share of the flow is removed from the billable value",
+                "weight": "0.4945054945054945054945054945"
+              }
+            ],
+            "flows_supplied": 1,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "-15164.83516483516483516483516"
+          },
+          {
+            "account_value": "2530000",
+            "billable_value": "2514835.164835164835164835165",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "-15164.83516483516483516483516",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2514835.164835164835164835165"
+          },
+          {
+            "amount_period": "5340.315934065934065934065935",
+            "billable_value": "2514835.164835164835164835165",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5340.315934065934065934065935",
+            "primary_annual": "21361.26373626373626373626374",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11361.26373626373626373626374",
+                "base": "1514835.164835164835164835165",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21361.26373626373626373626374"
+          },
+          {
+            "amount_after": "5340.315934065934065934065935",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "5340.315934065934065934065935",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "5340.315934065934065934065935",
+            "amount_before": "5340.315934065934065934065935",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "5340.315934065934065934065935",
+            "amount_before": "5340.315934065934065934065935",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "5340.315934065934065934065935",
+            "amount_before": "5340.315934065934065934065935",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "5340.315934065934065934065935",
+            "amount_before": "5340.315934065934065934065935",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 4,
+    "summary": "$5,340.32 \u2014 30,000 present 45 of 91 days, absent share 15,164.8351648351 removed from a 2,530,000 period-end value"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "5316.25",
+      "amount_unrounded": "5316.2500",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2502000",
+          "amount": "5316.25",
+          "amount_unrounded": "5316.2500",
+          "billable_value": "2502000",
+          "currency": "USD",
+          "gross_fee_period": "5316.2500",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2502000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": "10000",
+            "flows": [
+              {
+                "adjustment": "0",
+                "amount": "2000",
+                "flow_date": "2026-05-17",
+                "flow_type": "CONTRIBUTION",
+                "outcome": "ignored",
+                "reason": "|2000| is below day_weight_threshold 10000; not weighted at all"
+              }
+            ],
+            "flows_supplied": 1,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2502000",
+            "billable_value": "2502000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2502000"
+          },
+          {
+            "amount_period": "5316.2500",
+            "billable_value": "2502000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5316.2500",
+            "primary_annual": "21265.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11265.0000",
+                "base": "1502000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21265.0000"
+          },
+          {
+            "amount_after": "5316.2500",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "5316.2500",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "5316.2500",
+            "amount_before": "5316.2500",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "5316.2500",
+            "amount_before": "5316.2500",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "5316.2500",
+            "amount_before": "5316.2500",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "5316.2500",
+            "amount_before": "5316.2500",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 5,
+    "summary": "$5,316.25 \u2014 the $2,000 flow is traced as ignored, adjustment 0.00"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "900.00",
+      "amount_unrounded": "900",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+        "fee_discounts.value for PCT_OFF was read as a PERCENT in [0, 100] (20 means 20%). Note the contrast with fee_credits.offset_pct, which the deployed CHECK constraint fee_credits_offset_pct_range confines to [0, 1] \u2014 two adjacent tables express a proportion on two different scales and nothing in the schema says so.",
+        "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "fee_discounts.value for PCT_OFF was read as a PERCENT in [0, 100] (20 means 20%). Note the contrast with fee_credits.offset_pct, which the deployed CHECK constraint fee_credits_offset_pct_range confines to [0, 1] \u2014 two adjacent tables express a proportion on two different scales and nothing in the schema says so.",
+          "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "400000",
+          "amount": "900.00",
+          "amount_unrounded": "900",
+          "billable_value": "400000",
+          "currency": "USD",
+          "gross_fee_period": "1000.00",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "400000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "400000",
+            "billable_value": "400000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "400000"
+          },
+          {
+            "amount_period": "1000.00",
+            "billable_value": "400000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "1000.00",
+            "primary_annual": "4000.00",
+            "slices": [
+              {
+                "amount_annual": "4000.00",
+                "base": "400000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": false,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "4000.00"
+          },
+          {
+            "amount_after": "1000.00",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "1000.00",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "800.00",
+            "amount_before": "1000.00",
+            "discounts": [
+              {
+                "amount": "-200.00",
+                "applied_to_amount": "1000.00",
+                "applies_to": "GROSS",
+                "discount_id": "d-20",
+                "discount_type": "PCT_OFF",
+                "note": "20% of the gross at the start of this step",
+                "outcome": "applied",
+                "running": "800.00",
+                "scope_type": "ACCOUNT",
+                "value": "20"
+              }
+            ],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "800.00",
+            "amount_before": "800.00",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "900",
+            "amount_before": "800.00",
+            "minimum_fee": "900",
+            "minimum_fee_scope": "ACCOUNT",
+            "outcome": "applied",
+            "step": "MINIMUM",
+            "uplift": "100.00"
+          },
+          {
+            "amount_after": "900",
+            "amount_before": "900",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 6,
+    "summary": "$900.00 \u2014 1,000.00 -20% = 800.00, then the 900.00 minimum lifts it"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "800.00",
+      "amount_unrounded": "800.00",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+        "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual.",
+        "fee_discounts.value for PCT_OFF was read as a PERCENT in [0, 100] (20 means 20%). Note the contrast with fee_credits.offset_pct, which the deployed CHECK constraint fee_credits_offset_pct_range confines to [0, 1] \u2014 two adjacent tables express a proportion on two different scales and nothing in the schema says so."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual.",
+          "fee_discounts.value for PCT_OFF was read as a PERCENT in [0, 100] (20 means 20%). Note the contrast with fee_credits.offset_pct, which the deployed CHECK constraint fee_credits_offset_pct_range confines to [0, 1] \u2014 two adjacent tables express a proportion on two different scales and nothing in the schema says so."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "MINIMUM",
+          "DISCOUNTS",
+          "CREDITS",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "400000",
+          "amount": "800.00",
+          "amount_unrounded": "800.00",
+          "billable_value": "400000",
+          "currency": "USD",
+          "gross_fee_period": "1000.00",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "400000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "400000",
+            "billable_value": "400000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "400000"
+          },
+          {
+            "amount_period": "1000.00",
+            "billable_value": "400000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "1000.00",
+            "primary_annual": "4000.00",
+            "slices": [
+              {
+                "amount_annual": "4000.00",
+                "base": "400000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": false,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "4000.00"
+          },
+          {
+            "amount_after": "1000.00",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "1000.00",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "1000.00",
+            "amount_before": "1000.00",
+            "minimum_fee": "900",
+            "minimum_fee_scope": "ACCOUNT",
+            "outcome": "not_reached",
+            "step": "MINIMUM",
+            "uplift": "0"
+          },
+          {
+            "amount_after": "800.00",
+            "amount_before": "1000.00",
+            "discounts": [
+              {
+                "amount": "-200.00",
+                "applied_to_amount": "1000.00",
+                "applies_to": "GROSS",
+                "discount_id": "d-20",
+                "discount_type": "PCT_OFF",
+                "note": "20% of the gross at the start of this step",
+                "outcome": "applied",
+                "running": "800.00",
+                "scope_type": "ACCOUNT",
+                "value": "20"
+              }
+            ],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "800.00",
+            "amount_before": "800.00",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "800.00",
+            "amount_before": "800.00",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 7,
+    "summary": "$800.00 vs case 6's $900.00 on identical inputs \u2014 only ordering_policy differs"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "4187.50",
+      "amount_unrounded": "4187.5000",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "4187.50",
+          "amount_unrounded": "4187.5000",
+          "billable_value": "1900000",
+          "currency": "USD",
+          "gross_fee_period": "4187.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "1900000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [
+              {
+                "amount": "-600000",
+                "basis_type": "SECURITY",
+                "basis_value": "a55e7000-0000-0000-0000-0000000000c1",
+                "exclusion_id": "x-conc",
+                "matched": "1 position(s)",
+                "matched_positions": [
+                  {
+                    "asset_id": "a55e7000-0000-0000-0000-0000000000c1",
+                    "market_value": "600000",
+                    "taxonomy_key": "taxonomy_sc_1"
+                  }
+                ],
+                "outcome": "excluded",
+                "running_billable": "1900000",
+                "scope_type": "ACCOUNT",
+                "source": "fee_exclusions",
+                "treatment": "EXCLUDE"
+              }
+            ],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "4187.5000",
+            "billable_value": "1900000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "4187.5000",
+            "primary_annual": "16750.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "6750.0000",
+                "base": "900000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "16750.0000"
+          },
+          {
+            "amount_after": "4187.5000",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "4187.5000",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "4187.5000",
+            "amount_before": "4187.5000",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "4187.5000",
+            "amount_before": "4187.5000",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "4187.5000",
+            "amount_before": "4187.5000",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "4187.5000",
+            "amount_before": "4187.5000",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 8,
+    "summary": "$4,187.50 \u2014 2,500,000 less a 600,000 SECURITY exclusion; the trace names the asset"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "4687.50",
+      "amount_unrounded": "4687.5000",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+        "A REDUCED_RATE carve-out was tiered on its alt schedule's own tiers but converted to a period amount using the PRIMARY schedule's billing_frequency, because the line is billed on the primary's cycle."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "A REDUCED_RATE carve-out was tiered on its alt schedule's own tiers but converted to a period amount using the PRIMARY schedule's billing_frequency, because the line is billed on the primary's cycle."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "4687.50",
+          "amount_unrounded": "4687.5000",
+          "billable_value": "2000000",
+          "currency": "USD",
+          "gross_fee_period": "4687.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2000000",
+            "carve_out_total": "500000",
+            "cash_treatment": "INCLUDE",
+            "deductions": [
+              {
+                "alt_fee_schedule_id": "5cede111-0000-0000-0000-000000000002",
+                "amount": "-500000",
+                "basis_type": "SECURITY",
+                "basis_value": "a55e7000-0000-0000-0000-0000000000c2",
+                "exclusion_id": "x-carve",
+                "matched": "1 position(s)",
+                "matched_positions": [
+                  {
+                    "asset_id": "a55e7000-0000-0000-0000-0000000000c2",
+                    "market_value": "500000",
+                    "taxonomy_key": null
+                  }
+                ],
+                "note": "removed from the primary billable value and billed on alt_fee_schedule_id at the TIERS step",
+                "outcome": "carved_out",
+                "running_billable": "2000000",
+                "scope_type": "ACCOUNT",
+                "source": "fee_exclusions",
+                "treatment": "REDUCED_RATE"
+              }
+            ],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "4687.5000",
+            "billable_value": "2000000",
+            "carve_out_annual": "1250.0000",
+            "carve_outs": [
+              {
+                "alt_fee_schedule_id": "5cede111-0000-0000-0000-000000000002",
+                "alt_schedule_code": "ALT-25",
+                "alt_tier_method": "GRADUATED",
+                "amount_annual": "1250.0000",
+                "amount_period": "312.5000",
+                "basis_type": "SECURITY",
+                "basis_value": "a55e7000-0000-0000-0000-0000000000c2",
+                "carved_value": "500000",
+                "exclusion_id": "x-carve",
+                "slices": [
+                  {
+                    "amount_annual": "1250.0000",
+                    "base": "500000",
+                    "flat_amount": null,
+                    "lower_bound": "0",
+                    "method": "GRADUATED",
+                    "rate_bps": "25",
+                    "reached": true,
+                    "tier_seq": 1,
+                    "upper_bound": null
+                  }
+                ]
+              }
+            ],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "4375.0000",
+            "primary_annual": "17500.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "7500.0000",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "18750.0000"
+          },
+          {
+            "amount_after": "4687.5000",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "4687.5000",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "4687.5000",
+            "amount_before": "4687.5000",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 9,
+    "summary": "$4,687.50 = 4,375.00 primary + 312.50 on ALT-25; both components in the trace and summing to the total"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "3812.50",
+      "amount_unrounded": "3812.5000",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": false,
+          "service_end": null,
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "3812.50",
+          "amount_unrounded": "3812.5000",
+          "billable_value": "2500000",
+          "currency": "USD",
+          "gross_fee_period": "5312.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2500000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "5312.5000",
+            "billable_value": "2500000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5312.5000",
+            "primary_annual": "21250.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11250.0000",
+                "base": "1500000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21250.0000"
+          },
+          {
+            "amount_after": "5312.5000",
+            "billing_timing": "ARREARS",
+            "factor": "1",
+            "gross_before_proration": "5312.5000",
+            "in_service_days": 91,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-06-30",
+            "outcome": "full_period",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": null,
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "5312.5000",
+            "amount_before": "5312.5000",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "3812.5000",
+            "amount_before": "5312.5000",
+            "credits": [
+              {
+                "amount": "-1500.0000",
+                "basis_amount": "3000.00",
+                "basis_origin": "caller-supplied (no column on fee_credits)",
+                "credit_id": "c-spv",
+                "credit_source": "SPV_MGMT_FEE_OFFSET",
+                "offset_pct": "0.50",
+                "outcome": "applied",
+                "running": "3812.5000",
+                "scope_type": "ACCOUNT"
+              }
+            ],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "3812.5000",
+            "amount_before": "3812.5000",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "3812.5000",
+            "amount_before": "3812.5000",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 10,
+    "summary": "$3,812.50 \u2014 5,312.50 less 50% of the 3,000.00 SPV fee basis"
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "-2568.68",
+      "amount_unrounded": "-2568.681318681318681318681319",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": true,
+          "service_end": "2026-05-17",
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "-2568.68",
+          "amount_unrounded": "-2568.681318681318681318681319",
+          "billable_value": "2500000",
+          "currency": "USD",
+          "gross_fee_period": "5312.5000",
+          "is_refund": true,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ADVANCE",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2500000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "5312.5000",
+            "billable_value": "2500000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5312.5000",
+            "primary_annual": "21250.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11250.0000",
+                "base": "1500000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21250.0000"
+          },
+          {
+            "amount_after": "-2568.681318681318681318681319",
+            "billing_timing": "ADVANCE",
+            "factor": "-0.4835164835164835164835164835",
+            "gross_before_proration": "5312.5000",
+            "in_service_days": 47,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-05-17",
+            "outcome": "termination_refund",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "reason": "billed in ADVANCE and terminated on 2026-05-17; 44 of 91 days were paid for and not earned, so this line is a refund",
+            "service_end": "2026-05-17",
+            "service_start": null,
+            "step": "PRORATION",
+            "unearned_days": 44
+          },
+          {
+            "amount_after": "-2568.681318681318681318681319",
+            "amount_before": "-2568.681318681318681318681319",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "-2568.681318681318681318681319",
+            "amount_before": "-2568.681318681318681318681319",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "-2568.681318681318681318681319",
+            "amount_before": "-2568.681318681318681318681319",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "-2568.681318681318681318681319",
+            "amount_before": "-2568.681318681318681318681319",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": true,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "call": "calculate_account_fee",
+    "result": {
+      "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+      "amount": "2743.82",
+      "amount_unrounded": "2743.818681318681318681318681",
+      "assumptions": [
+        "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+        "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+      ],
+      "calc_detail": {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either."
+        ],
+        "engine_version": "fee35.1",
+        "ordering_policy": [
+          "EXCLUSIONS",
+          "TIERS",
+          "DISCOUNTS",
+          "CREDITS",
+          "MINIMUM",
+          "MAXIMUM"
+        ],
+        "period": {
+          "calendar_days": 91,
+          "end": "2026-06-30",
+          "is_partial": true,
+          "service_end": "2026-05-17",
+          "service_start": null,
+          "start": "2026-04-01"
+        },
+        "result": {
+          "account_value": "2500000",
+          "amount": "2743.82",
+          "amount_unrounded": "2743.818681318681318681318681",
+          "billable_value": "2500000",
+          "currency": "USD",
+          "gross_fee_period": "5312.5000",
+          "is_refund": false,
+          "minimum_deferred_to_group": false,
+          "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+        },
+        "schedule": {
+          "billing_frequency": "QUARTERLY",
+          "billing_timing": "ARREARS",
+          "code": "STD-TIERED",
+          "currency": "USD",
+          "id": "5cede111-0000-0000-0000-000000000001",
+          "periods_per_year": 4,
+          "product_type": "ASSET_MANAGEMENT",
+          "proration_method": "CALENDAR_DAYS",
+          "rate_type": "BPS",
+          "status": "APPROVED",
+          "tier_method": "GRADUATED",
+          "valuation_method": "PERIOD_END",
+          "version": 1
+        },
+        "steps": [
+          {
+            "as_of": "2026-06-30",
+            "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+            "cash_value": "0",
+            "margin_balance": "0",
+            "rows_supplied": 1,
+            "source_system": "ALTRUIST",
+            "step": "VALUATION",
+            "total_market_value": "2500000",
+            "valuation_method": "PERIOD_END"
+          },
+          {
+            "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+            "day_weight_flows": true,
+            "day_weight_threshold": null,
+            "flows": [],
+            "flows_supplied": 0,
+            "period_days": 91,
+            "step": "FLOWS",
+            "total_adjustment": "0"
+          },
+          {
+            "account_value": "2500000",
+            "billable_value": "2500000",
+            "carve_out_total": "0",
+            "cash_treatment": "INCLUDE",
+            "deductions": [],
+            "flat_additions": "0",
+            "flow_adjustment": "0",
+            "margin_treatment": "IGNORE",
+            "step": "EXCLUSIONS",
+            "value_after_flow_adjustment": "2500000"
+          },
+          {
+            "amount_period": "5312.5000",
+            "billable_value": "2500000",
+            "carve_out_annual": "0",
+            "carve_outs": [],
+            "flat_exclusion_additions_period": "0",
+            "periods_per_year": 4,
+            "primary_amount_period": "5312.5000",
+            "primary_annual": "21250.0000",
+            "slices": [
+              {
+                "amount_annual": "10000.00",
+                "base": "1000000",
+                "flat_amount": null,
+                "lower_bound": "0",
+                "method": "GRADUATED",
+                "rate_bps": "100",
+                "reached": true,
+                "tier_seq": 1,
+                "upper_bound": "1000000"
+              },
+              {
+                "amount_annual": "11250.0000",
+                "base": "1500000",
+                "flat_amount": null,
+                "lower_bound": "1000000",
+                "method": "GRADUATED",
+                "rate_bps": "75",
+                "reached": true,
+                "tier_seq": 2,
+                "upper_bound": "5000000"
+              },
+              {
+                "amount_annual": "0",
+                "base": "0",
+                "flat_amount": null,
+                "lower_bound": "5000000",
+                "method": "GRADUATED",
+                "rate_bps": "50",
+                "reached": false,
+                "tier_seq": 3,
+                "upper_bound": null
+              }
+            ],
+            "step": "TIERS",
+            "tier_method": "GRADUATED",
+            "total_annual": "21250.0000"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "billing_timing": "ARREARS",
+            "factor": "0.5164835164835164835164835165",
+            "gross_before_proration": "5312.5000",
+            "in_service_days": 47,
+            "in_service_from": "2026-04-01",
+            "in_service_to": "2026-05-17",
+            "outcome": "termination_partial",
+            "period_days": 91,
+            "period_end": "2026-06-30",
+            "period_start": "2026-04-01",
+            "proration_method": "CALENDAR_DAYS",
+            "service_end": "2026-05-17",
+            "service_start": null,
+            "step": "PRORATION"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "discounts": [],
+            "step": "DISCOUNTS"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "credits": [],
+            "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+            "step": "CREDITS"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "minimum_fee": null,
+            "minimum_fee_scope": null,
+            "outcome": "not_configured",
+            "step": "MINIMUM"
+          },
+          {
+            "amount_after": "2743.818681318681318681318681",
+            "amount_before": "2743.818681318681318681318681",
+            "maximum_fee": null,
+            "outcome": "not_configured",
+            "step": "MAXIMUM"
+          }
+        ]
+      },
+      "is_refund": false,
+      "minimum_deferred_to_group": false
+    }
+  },
+  {
+    "case": 11,
+    "summary": "-$2,568.68 refund of 44 unearned days; the same termination in ARREARS bills +$2,743.82 for the 47 earned days"
+  },
+  {
+    "call": "calculate_group_fees",
+    "group_detail": {
+      "accounts": 2,
+      "engine_version": "fee35.1",
+      "groups": [
+        {
+          "account_ids": [
+            "aaaaaaaa-0000-0000-0000-00000000000a",
+            "bbbbbbbb-0000-0000-0000-00000000000b"
+          ],
+          "allocation_basis": "pro-rata by each account's pre-minimum amount; equal shares when every amount is zero",
+          "allocations": [
+            {
+              "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+              "amount_before": "1000.00",
+              "share": "1000.00"
+            },
+            {
+              "account_id": "bbbbbbbb-0000-0000-0000-00000000000b",
+              "amount_before": "2000.00",
+              "share": "2000.00"
+            }
+          ],
+          "contributions": [
+            {
+              "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+              "amount_before": "1000.00",
+              "counted_in_subtotal": true,
+              "eligible_for_uplift": true,
+              "role": "charging \u2014 counted in the subtotal and shares any uplift"
+            },
+            {
+              "account_id": "bbbbbbbb-0000-0000-0000-00000000000b",
+              "amount_before": "2000.00",
+              "counted_in_subtotal": true,
+              "eligible_for_uplift": true,
+              "role": "charging \u2014 counted in the subtotal and shares any uplift"
+            }
+          ],
+          "group_subtotal_before_minimum": "3000.00",
+          "minimum_fee": "6000",
+          "minimum_source": "the group's shared minimum_fee",
+          "outcome": "applied",
+          "refund_contribution": "0.00",
+          "scope": "HOUSEHOLD",
+          "scope_id": "hhhhhhhh-0000-0000-0000-00000000000h",
+          "shortfall": "3000.00",
+          "subtotal_arithmetic": "1000.00 + 2000.00 = 3000.00"
+        }
+      ]
+    },
+    "results": [
+      {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "amount": "2000.00",
+        "amount_unrounded": "2000.00",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+        ],
+        "calc_detail": {
+          "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+          "assumptions": [
+            "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+            "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+            "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+          ],
+          "engine_version": "fee35.1",
+          "ordering_policy": [
+            "EXCLUSIONS",
+            "TIERS",
+            "DISCOUNTS",
+            "CREDITS",
+            "MINIMUM",
+            "MAXIMUM"
+          ],
+          "period": {
+            "calendar_days": 91,
+            "end": "2026-06-30",
+            "is_partial": false,
+            "service_end": null,
+            "service_start": null,
+            "start": "2026-04-01"
+          },
+          "result": {
+            "account_value": "400000",
+            "amount": "2000.00",
+            "amount_unrounded": "2000.00",
+            "billable_value": "400000",
+            "currency": "USD",
+            "gross_fee_period": "1000.00",
+            "is_refund": false,
+            "minimum_deferred_to_group": false,
+            "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+          },
+          "schedule": {
+            "billing_frequency": "QUARTERLY",
+            "billing_timing": "ARREARS",
+            "code": "STD-TIERED",
+            "currency": "USD",
+            "id": "5cede111-0000-0000-0000-000000000001",
+            "periods_per_year": 4,
+            "product_type": "ASSET_MANAGEMENT",
+            "proration_method": "CALENDAR_DAYS",
+            "rate_type": "BPS",
+            "status": "APPROVED",
+            "tier_method": "GRADUATED",
+            "valuation_method": "PERIOD_END",
+            "version": 1
+          },
+          "steps": [
+            {
+              "as_of": "2026-06-30",
+              "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+              "cash_value": "0",
+              "margin_balance": "0",
+              "rows_supplied": 1,
+              "source_system": "ALTRUIST",
+              "step": "VALUATION",
+              "total_market_value": "400000",
+              "valuation_method": "PERIOD_END"
+            },
+            {
+              "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+              "day_weight_flows": true,
+              "day_weight_threshold": null,
+              "flows": [],
+              "flows_supplied": 0,
+              "period_days": 91,
+              "step": "FLOWS",
+              "total_adjustment": "0"
+            },
+            {
+              "account_value": "400000",
+              "billable_value": "400000",
+              "carve_out_total": "0",
+              "cash_treatment": "INCLUDE",
+              "deductions": [],
+              "flat_additions": "0",
+              "flow_adjustment": "0",
+              "margin_treatment": "IGNORE",
+              "step": "EXCLUSIONS",
+              "value_after_flow_adjustment": "400000"
+            },
+            {
+              "amount_period": "1000.00",
+              "billable_value": "400000",
+              "carve_out_annual": "0",
+              "carve_outs": [],
+              "flat_exclusion_additions_period": "0",
+              "periods_per_year": 4,
+              "primary_amount_period": "1000.00",
+              "primary_annual": "4000.00",
+              "slices": [
+                {
+                  "amount_annual": "4000.00",
+                  "base": "400000",
+                  "flat_amount": null,
+                  "lower_bound": "0",
+                  "method": "GRADUATED",
+                  "rate_bps": "100",
+                  "reached": true,
+                  "tier_seq": 1,
+                  "upper_bound": "1000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "1000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "75",
+                  "reached": false,
+                  "tier_seq": 2,
+                  "upper_bound": "5000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "5000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "50",
+                  "reached": false,
+                  "tier_seq": 3,
+                  "upper_bound": null
+                }
+              ],
+              "step": "TIERS",
+              "tier_method": "GRADUATED",
+              "total_annual": "4000.00"
+            },
+            {
+              "amount_after": "1000.00",
+              "billing_timing": "ARREARS",
+              "factor": "1",
+              "gross_before_proration": "1000.00",
+              "in_service_days": 91,
+              "in_service_from": "2026-04-01",
+              "in_service_to": "2026-06-30",
+              "outcome": "full_period",
+              "period_days": 91,
+              "period_end": "2026-06-30",
+              "period_start": "2026-04-01",
+              "proration_method": "CALENDAR_DAYS",
+              "service_end": null,
+              "service_start": null,
+              "step": "PRORATION"
+            },
+            {
+              "amount_after": "1000.00",
+              "amount_before": "1000.00",
+              "discounts": [],
+              "step": "DISCOUNTS"
+            },
+            {
+              "amount_after": "1000.00",
+              "amount_before": "1000.00",
+              "credits": [],
+              "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+              "step": "CREDITS"
+            },
+            {
+              "amount_after": "2000.00",
+              "amount_before": "1000.00",
+              "minimum_fee": "6000",
+              "minimum_fee_scope": "HOUSEHOLD",
+              "outcome": "group_share_applied",
+              "reason": "this account's pro-rata share of the group's shortfall against the group minimum",
+              "scope_id": "hhhhhhhh-0000-0000-0000-00000000000h",
+              "step": "MINIMUM",
+              "uplift": "1000.00"
+            },
+            {
+              "amount_after": "2000.00",
+              "amount_before": "2000.00",
+              "maximum_fee": null,
+              "outcome": "not_configured",
+              "step": "MAXIMUM"
+            }
+          ]
+        },
+        "is_refund": false,
+        "minimum_deferred_to_group": false
+      },
+      {
+        "account_id": "bbbbbbbb-0000-0000-0000-00000000000b",
+        "amount": "4000.00",
+        "amount_unrounded": "4000.00",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+        ],
+        "calc_detail": {
+          "account_id": "bbbbbbbb-0000-0000-0000-00000000000b",
+          "assumptions": [
+            "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+            "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+            "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+          ],
+          "engine_version": "fee35.1",
+          "ordering_policy": [
+            "EXCLUSIONS",
+            "TIERS",
+            "DISCOUNTS",
+            "CREDITS",
+            "MINIMUM",
+            "MAXIMUM"
+          ],
+          "period": {
+            "calendar_days": 91,
+            "end": "2026-06-30",
+            "is_partial": false,
+            "service_end": null,
+            "service_start": null,
+            "start": "2026-04-01"
+          },
+          "result": {
+            "account_value": "800000",
+            "amount": "4000.00",
+            "amount_unrounded": "4000.00",
+            "billable_value": "800000",
+            "currency": "USD",
+            "gross_fee_period": "2000.00",
+            "is_refund": false,
+            "minimum_deferred_to_group": false,
+            "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+          },
+          "schedule": {
+            "billing_frequency": "QUARTERLY",
+            "billing_timing": "ARREARS",
+            "code": "STD-TIERED",
+            "currency": "USD",
+            "id": "5cede111-0000-0000-0000-000000000001",
+            "periods_per_year": 4,
+            "product_type": "ASSET_MANAGEMENT",
+            "proration_method": "CALENDAR_DAYS",
+            "rate_type": "BPS",
+            "status": "APPROVED",
+            "tier_method": "GRADUATED",
+            "valuation_method": "PERIOD_END",
+            "version": 1
+          },
+          "steps": [
+            {
+              "as_of": "2026-06-30",
+              "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+              "cash_value": "0",
+              "margin_balance": "0",
+              "rows_supplied": 1,
+              "source_system": "ALTRUIST",
+              "step": "VALUATION",
+              "total_market_value": "800000",
+              "valuation_method": "PERIOD_END"
+            },
+            {
+              "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+              "day_weight_flows": true,
+              "day_weight_threshold": null,
+              "flows": [],
+              "flows_supplied": 0,
+              "period_days": 91,
+              "step": "FLOWS",
+              "total_adjustment": "0"
+            },
+            {
+              "account_value": "800000",
+              "billable_value": "800000",
+              "carve_out_total": "0",
+              "cash_treatment": "INCLUDE",
+              "deductions": [],
+              "flat_additions": "0",
+              "flow_adjustment": "0",
+              "margin_treatment": "IGNORE",
+              "step": "EXCLUSIONS",
+              "value_after_flow_adjustment": "800000"
+            },
+            {
+              "amount_period": "2000.00",
+              "billable_value": "800000",
+              "carve_out_annual": "0",
+              "carve_outs": [],
+              "flat_exclusion_additions_period": "0",
+              "periods_per_year": 4,
+              "primary_amount_period": "2000.00",
+              "primary_annual": "8000.00",
+              "slices": [
+                {
+                  "amount_annual": "8000.00",
+                  "base": "800000",
+                  "flat_amount": null,
+                  "lower_bound": "0",
+                  "method": "GRADUATED",
+                  "rate_bps": "100",
+                  "reached": true,
+                  "tier_seq": 1,
+                  "upper_bound": "1000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "1000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "75",
+                  "reached": false,
+                  "tier_seq": 2,
+                  "upper_bound": "5000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "5000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "50",
+                  "reached": false,
+                  "tier_seq": 3,
+                  "upper_bound": null
+                }
+              ],
+              "step": "TIERS",
+              "tier_method": "GRADUATED",
+              "total_annual": "8000.00"
+            },
+            {
+              "amount_after": "2000.00",
+              "billing_timing": "ARREARS",
+              "factor": "1",
+              "gross_before_proration": "2000.00",
+              "in_service_days": 91,
+              "in_service_from": "2026-04-01",
+              "in_service_to": "2026-06-30",
+              "outcome": "full_period",
+              "period_days": 91,
+              "period_end": "2026-06-30",
+              "period_start": "2026-04-01",
+              "proration_method": "CALENDAR_DAYS",
+              "service_end": null,
+              "service_start": null,
+              "step": "PRORATION"
+            },
+            {
+              "amount_after": "2000.00",
+              "amount_before": "2000.00",
+              "discounts": [],
+              "step": "DISCOUNTS"
+            },
+            {
+              "amount_after": "2000.00",
+              "amount_before": "2000.00",
+              "credits": [],
+              "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+              "step": "CREDITS"
+            },
+            {
+              "amount_after": "4000.00",
+              "amount_before": "2000.00",
+              "minimum_fee": "6000",
+              "minimum_fee_scope": "HOUSEHOLD",
+              "outcome": "group_share_applied",
+              "reason": "this account's pro-rata share of the group's shortfall against the group minimum",
+              "scope_id": "hhhhhhhh-0000-0000-0000-00000000000h",
+              "step": "MINIMUM",
+              "uplift": "2000.00"
+            },
+            {
+              "amount_after": "4000.00",
+              "amount_before": "4000.00",
+              "maximum_fee": null,
+              "outcome": "not_configured",
+              "step": "MAXIMUM"
+            }
+          ]
+        },
+        "is_refund": false,
+        "minimum_deferred_to_group": false
+      }
+    ],
+    "total": "6000.00"
+  },
+  {
+    "call": "calculate_group_fees",
+    "group_detail": {
+      "accounts": 2,
+      "engine_version": "fee35.1",
+      "groups": []
+    },
+    "results": [
+      {
+        "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+        "amount": "6000.00",
+        "amount_unrounded": "6000",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+        ],
+        "calc_detail": {
+          "account_id": "aaaaaaaa-0000-0000-0000-00000000000a",
+          "assumptions": [
+            "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+            "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+            "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+          ],
+          "engine_version": "fee35.1",
+          "ordering_policy": [
+            "EXCLUSIONS",
+            "TIERS",
+            "DISCOUNTS",
+            "CREDITS",
+            "MINIMUM",
+            "MAXIMUM"
+          ],
+          "period": {
+            "calendar_days": 91,
+            "end": "2026-06-30",
+            "is_partial": false,
+            "service_end": null,
+            "service_start": null,
+            "start": "2026-04-01"
+          },
+          "result": {
+            "account_value": "400000",
+            "amount": "6000.00",
+            "amount_unrounded": "6000",
+            "billable_value": "400000",
+            "currency": "USD",
+            "gross_fee_period": "1000.00",
+            "is_refund": false,
+            "minimum_deferred_to_group": false,
+            "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+          },
+          "schedule": {
+            "billing_frequency": "QUARTERLY",
+            "billing_timing": "ARREARS",
+            "code": "STD-TIERED",
+            "currency": "USD",
+            "id": "5cede111-0000-0000-0000-000000000001",
+            "periods_per_year": 4,
+            "product_type": "ASSET_MANAGEMENT",
+            "proration_method": "CALENDAR_DAYS",
+            "rate_type": "BPS",
+            "status": "APPROVED",
+            "tier_method": "GRADUATED",
+            "valuation_method": "PERIOD_END",
+            "version": 1
+          },
+          "steps": [
+            {
+              "as_of": "2026-06-30",
+              "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+              "cash_value": "0",
+              "margin_balance": "0",
+              "rows_supplied": 1,
+              "source_system": "ALTRUIST",
+              "step": "VALUATION",
+              "total_market_value": "400000",
+              "valuation_method": "PERIOD_END"
+            },
+            {
+              "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+              "day_weight_flows": true,
+              "day_weight_threshold": null,
+              "flows": [],
+              "flows_supplied": 0,
+              "period_days": 91,
+              "step": "FLOWS",
+              "total_adjustment": "0"
+            },
+            {
+              "account_value": "400000",
+              "billable_value": "400000",
+              "carve_out_total": "0",
+              "cash_treatment": "INCLUDE",
+              "deductions": [],
+              "flat_additions": "0",
+              "flow_adjustment": "0",
+              "margin_treatment": "IGNORE",
+              "step": "EXCLUSIONS",
+              "value_after_flow_adjustment": "400000"
+            },
+            {
+              "amount_period": "1000.00",
+              "billable_value": "400000",
+              "carve_out_annual": "0",
+              "carve_outs": [],
+              "flat_exclusion_additions_period": "0",
+              "periods_per_year": 4,
+              "primary_amount_period": "1000.00",
+              "primary_annual": "4000.00",
+              "slices": [
+                {
+                  "amount_annual": "4000.00",
+                  "base": "400000",
+                  "flat_amount": null,
+                  "lower_bound": "0",
+                  "method": "GRADUATED",
+                  "rate_bps": "100",
+                  "reached": true,
+                  "tier_seq": 1,
+                  "upper_bound": "1000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "1000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "75",
+                  "reached": false,
+                  "tier_seq": 2,
+                  "upper_bound": "5000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "5000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "50",
+                  "reached": false,
+                  "tier_seq": 3,
+                  "upper_bound": null
+                }
+              ],
+              "step": "TIERS",
+              "tier_method": "GRADUATED",
+              "total_annual": "4000.00"
+            },
+            {
+              "amount_after": "1000.00",
+              "billing_timing": "ARREARS",
+              "factor": "1",
+              "gross_before_proration": "1000.00",
+              "in_service_days": 91,
+              "in_service_from": "2026-04-01",
+              "in_service_to": "2026-06-30",
+              "outcome": "full_period",
+              "period_days": 91,
+              "period_end": "2026-06-30",
+              "period_start": "2026-04-01",
+              "proration_method": "CALENDAR_DAYS",
+              "service_end": null,
+              "service_start": null,
+              "step": "PRORATION"
+            },
+            {
+              "amount_after": "1000.00",
+              "amount_before": "1000.00",
+              "discounts": [],
+              "step": "DISCOUNTS"
+            },
+            {
+              "amount_after": "1000.00",
+              "amount_before": "1000.00",
+              "credits": [],
+              "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+              "step": "CREDITS"
+            },
+            {
+              "amount_after": "6000",
+              "amount_before": "1000.00",
+              "minimum_fee": "6000",
+              "minimum_fee_scope": "ACCOUNT",
+              "outcome": "applied",
+              "step": "MINIMUM",
+              "uplift": "5000.00"
+            },
+            {
+              "amount_after": "6000",
+              "amount_before": "6000",
+              "maximum_fee": null,
+              "outcome": "not_configured",
+              "step": "MAXIMUM"
+            }
+          ]
+        },
+        "is_refund": false,
+        "minimum_deferred_to_group": false
+      },
+      {
+        "account_id": "bbbbbbbb-0000-0000-0000-00000000000b",
+        "amount": "6000.00",
+        "amount_unrounded": "6000",
+        "assumptions": [
+          "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+          "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+          "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+        ],
+        "calc_detail": {
+          "account_id": "bbbbbbbb-0000-0000-0000-00000000000b",
+          "assumptions": [
+            "Valuation used account_balances_daily.total_market_value alone. accrued_income is a separate column and was NOT added to the billable base.",
+            "rate_bps and tier flat_amount were read as ANNUAL and divided by periods-per-year. The schema records no unit for either.",
+            "minimum_fee, maximum_fee, DOLLAR_CREDIT discount value and exclusion flat_amount were read as PER-BILLING-PERIOD amounts, not annual."
+          ],
+          "engine_version": "fee35.1",
+          "ordering_policy": [
+            "EXCLUSIONS",
+            "TIERS",
+            "DISCOUNTS",
+            "CREDITS",
+            "MINIMUM",
+            "MAXIMUM"
+          ],
+          "period": {
+            "calendar_days": 91,
+            "end": "2026-06-30",
+            "is_partial": false,
+            "service_end": null,
+            "service_start": null,
+            "start": "2026-04-01"
+          },
+          "result": {
+            "account_value": "800000",
+            "amount": "6000.00",
+            "amount_unrounded": "6000",
+            "billable_value": "800000",
+            "currency": "USD",
+            "gross_fee_period": "2000.00",
+            "is_refund": false,
+            "minimum_deferred_to_group": false,
+            "rounding": "ROUND_HALF_UP to 2 decimal places, once, at the end"
+          },
+          "schedule": {
+            "billing_frequency": "QUARTERLY",
+            "billing_timing": "ARREARS",
+            "code": "STD-TIERED",
+            "currency": "USD",
+            "id": "5cede111-0000-0000-0000-000000000001",
+            "periods_per_year": 4,
+            "product_type": "ASSET_MANAGEMENT",
+            "proration_method": "CALENDAR_DAYS",
+            "rate_type": "BPS",
+            "status": "APPROVED",
+            "tier_method": "GRADUATED",
+            "valuation_method": "PERIOD_END",
+            "version": 1
+          },
+          "steps": [
+            {
+              "as_of": "2026-06-30",
+              "billing_source_filter": "1 of 1 rows are flagged is_billing_source; only those were used",
+              "cash_value": "0",
+              "margin_balance": "0",
+              "rows_supplied": 1,
+              "source_system": "ALTRUIST",
+              "step": "VALUATION",
+              "total_market_value": "800000",
+              "valuation_method": "PERIOD_END"
+            },
+            {
+              "day_count_basis": "CALENDAR_DAYS (always, independent of proration_method)",
+              "day_weight_flows": true,
+              "day_weight_threshold": null,
+              "flows": [],
+              "flows_supplied": 0,
+              "period_days": 91,
+              "step": "FLOWS",
+              "total_adjustment": "0"
+            },
+            {
+              "account_value": "800000",
+              "billable_value": "800000",
+              "carve_out_total": "0",
+              "cash_treatment": "INCLUDE",
+              "deductions": [],
+              "flat_additions": "0",
+              "flow_adjustment": "0",
+              "margin_treatment": "IGNORE",
+              "step": "EXCLUSIONS",
+              "value_after_flow_adjustment": "800000"
+            },
+            {
+              "amount_period": "2000.00",
+              "billable_value": "800000",
+              "carve_out_annual": "0",
+              "carve_outs": [],
+              "flat_exclusion_additions_period": "0",
+              "periods_per_year": 4,
+              "primary_amount_period": "2000.00",
+              "primary_annual": "8000.00",
+              "slices": [
+                {
+                  "amount_annual": "8000.00",
+                  "base": "800000",
+                  "flat_amount": null,
+                  "lower_bound": "0",
+                  "method": "GRADUATED",
+                  "rate_bps": "100",
+                  "reached": true,
+                  "tier_seq": 1,
+                  "upper_bound": "1000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "1000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "75",
+                  "reached": false,
+                  "tier_seq": 2,
+                  "upper_bound": "5000000"
+                },
+                {
+                  "amount_annual": "0",
+                  "base": "0",
+                  "flat_amount": null,
+                  "lower_bound": "5000000",
+                  "method": "GRADUATED",
+                  "rate_bps": "50",
+                  "reached": false,
+                  "tier_seq": 3,
+                  "upper_bound": null
+                }
+              ],
+              "step": "TIERS",
+              "tier_method": "GRADUATED",
+              "total_annual": "8000.00"
+            },
+            {
+              "amount_after": "2000.00",
+              "billing_timing": "ARREARS",
+              "factor": "1",
+              "gross_before_proration": "2000.00",
+              "in_service_days": 91,
+              "in_service_from": "2026-04-01",
+              "in_service_to": "2026-06-30",
+              "outcome": "full_period",
+              "period_days": 91,
+              "period_end": "2026-06-30",
+              "period_start": "2026-04-01",
+              "proration_method": "CALENDAR_DAYS",
+              "service_end": null,
+              "service_start": null,
+              "step": "PRORATION"
+            },
+            {
+              "amount_after": "2000.00",
+              "amount_before": "2000.00",
+              "discounts": [],
+              "step": "DISCOUNTS"
+            },
+            {
+              "amount_after": "2000.00",
+              "amount_before": "2000.00",
+              "credits": [],
+              "note": "fee_credits has no amount column \u2014 offset_pct is multiplied by a basis_amount the caller supplied, not by anything the table stores",
+              "step": "CREDITS"
+            },
+            {
+              "amount_after": "6000",
+              "amount_before": "2000.00",
+              "minimum_fee": "6000",
+              "minimum_fee_scope": "ACCOUNT",
+              "outcome": "applied",
+              "step": "MINIMUM",
+              "uplift": "4000.00"
+            },
+            {
+              "amount_after": "6000",
+              "amount_before": "6000",
+              "maximum_fee": null,
+              "outcome": "not_configured",
+              "step": "MAXIMUM"
+            }
+          ]
+        },
+        "is_refund": false,
+        "minimum_deferred_to_group": false
+      }
+    ],
+    "total": "12000.00"
+  },
+  {
+    "case": 12,
+    "summary": "A $2,000.00 + B $4,000.00 = $6,000.00 household minimum; the same fixture at ACCOUNT scope gives $6,000.00 each"
+  }
+]
