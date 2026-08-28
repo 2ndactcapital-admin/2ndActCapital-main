@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-27 (Fee module fee34 — schedule catalog)
+Last updated: 2026-08-28 (Fee module fee35 — calculation engine)
 
 ## About this file
 
@@ -21,7 +21,67 @@ This file starts with the email item below.
 
 ---
 
-## 000. Fee module fee34 — schedule catalog BUILT, four follow-ups owed (2026-08-27)
+## 000. Fee module fee35 — calculation engine BUILT, three decisions owed by fee36 (2026-08-28)
+
+**Status: built and verified, 22/22 PASS, 0 BLOCKED, 9 FIND.**
+`apps/api/scripts/verify_fee35.py` — a pure unit suite that opens no database
+connection and needs no credentials. `services/fee_calc.py` (the pipeline) and
+`services/fee_calc_inputs.py` (the plain-data contracts). Nothing here is
+blocked outside the codebase; the three items below are real decisions fee36
+must make before a single invoice is produced.
+
+1. **`fee_credits` has no amount column.** Its only numeric column is
+   `offset_pct`, confined to `[0,1]`. A credit of "50% of the SPV management
+   fee" has nowhere to record what the SPV management fee *was*.
+   `CreditInput.basis_amount` is therefore a **required, caller-supplied**
+   field with no column behind it. **fee36 must decide where that number comes
+   from** — a `fee_runs` input, a second lookup, or a new column on
+   `fee_credits`. Defaulting it to zero would make every credit silently
+   worthless, which is why the engine refuses to construct a credit without it.
+
+2. **`fee_discounts.value` has no scale and no CHECK constraint.** A `PCT_OFF`
+   of `20` and one of `0.20` differ by 100x and both satisfy the column. The
+   engine reads `PCT_OFF` as a **percent in [0,100]** and refuses anything
+   outside that range. Note the deliberate contrast with
+   `fee_credits.offset_pct`, which the deployed constraint confines to `[0,1]`
+   — two adjacent tables express a proportion on two different scales and
+   nothing in the schema says so. **A CHECK constraint on
+   `fee_discounts.value`, scoped by `discount_type`, is the durable fix** and
+   is not applied yet.
+
+3. **No holiday calendar exists anywhere in this codebase.**
+   `proration_method='BUSINESS_DAYS'` is a deployed, valid value and is
+   currently calculated on a plain Mon–Fri count. A market holiday inside the
+   period is counted as a business day, overstating the denominator and
+   slightly understating a partial-period fee. The engine declares this in
+   every affected result's `assumptions`, so it will appear on the fee line
+   rather than only in a docstring — but a real NYSE calendar is owed before
+   any client is billed on a BUSINESS_DAYS schedule.
+
+**Two smaller things fee36 inherits rather than owes.** `POSITION_TAG` is a
+deployed `basis_type` but `portfolio.positions` has no tag column (tags live
+in `portfolio.udf_values`), so `PositionInput.tags` is caller-supplied; and
+`accounts` has no `billing_group_id` (membership is `billing_group_members`),
+so a `BILLING_GROUP`-scoped `minimum_fee` needs the caller to resolve it —
+a missing one raises `GroupScopeMissingError` rather than silently degrading
+to an account-scoped minimum.
+
+**One bug this sprint's own suite caught and fixed.** An `ASSET_CLASS`
+exclusion cannot use `startswith`. Under Rule 4's key scheme
+`taxonomy_mc_3_2` is a child of `taxonomy_sc_3` and is *not* a string prefix
+of it, while `taxonomy_sc_30` *is* a string prefix and is an unrelated class —
+so prefix matching was wrong in both directions at once. Keys are now parsed
+into numeric components and compared component-wise (`taxonomy_covers`), with
+both directions asserted.
+
+**Deliberately not built:** anything that writes (`fee_runs`/`fee_run_lines`
+is fee36), any resolution of *which* schedule/exclusions/discounts/credits
+apply (fee32/fee34 own that; the engine consumes their output), and SPV
+carry/waterfall, which the design doc defers to its own sprint.
+
+---
+
+## 001. Fee module fee34 — schedule catalog BUILT, four follow-ups owed (2026-08-27)
 
 **Status: built and verified, 49/49 PASS, 0 BLOCKED, 3 FIND.**
 `apps/api/scripts/verify_fee34.py`. Nothing here is blocked on anything outside
