@@ -292,6 +292,89 @@
 --   UNIQUE config_org_id_config_key_key: (org_id, config_key)
 --   PRIMARY KEY config_pkey: (id)
 
+-- ===== cost_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   event_date                               date NOT NULL
+--   period_start                             date
+--   period_end                               date
+--   amount                                   numeric NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   cost_type                                text NOT NULL
+--   cost_provider_id                         uuid
+--   allocation_method                        text NOT NULL
+--   allocation_driver                        text
+--   is_passed_through                        boolean NOT NULL DEFAULT false
+--   linked_revenue_event_id                  uuid
+--   account_id                               uuid
+--   entity_id                                uuid
+--   household_id                             uuid
+--   billing_group_id                         uuid
+--   advisor_id                               uuid
+--   product_type                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_events_pkey: (id)
+
+-- ===== cost_pass_through_policies =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   cost_schedule_id                         uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid
+--   policy                                   text NOT NULL
+--   pass_through_rate                        numeric
+--   disclosure_required                      boolean NOT NULL DEFAULT true
+--   disclosure_acknowledged_by               uuid
+--   disclosure_acknowledged_at               timestamp with time zone
+--   approved_by                              uuid NOT NULL
+--   reason                                   text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_pass_through_policies_pkey: (id)
+
+-- ===== cost_providers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   provider_code                            text NOT NULL
+--   provider_type                            text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_providers_pkey: (id)
+
+-- ===== cost_schedules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   cost_provider_id                         uuid NOT NULL
+--   cost_code                                text NOT NULL
+--   basis                                    text NOT NULL
+--   rate                                     numeric
+--   flat_amount                              numeric
+--   minimum_amount                           numeric
+--   frequency                                text NOT NULL
+--   applies_scope                            text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   source_url                               text
+--   source_verified_on                       date
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_schedules_pkey: (id)
+
 -- ===== dashboard_briefs =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
