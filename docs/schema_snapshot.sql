@@ -119,6 +119,25 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
+-- ===== altruist_one_evaluations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   evaluated_on                             date NOT NULL
+--   inputs                                   jsonb NOT NULL
+--   annual_cost                              numeric NOT NULL
+--   benefit_breakdown                        jsonb NOT NULL
+--   annual_benefit                           numeric NOT NULL
+--   net_benefit                              numeric NOT NULL
+--   recommendation                           text NOT NULL
+--   decision                                 text
+--   override_reason                          text
+--   decided_by                               uuid
+--   decided_at                               timestamp with time zone
+--   next_review_on                           date
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY altruist_one_evaluations_pkey: (id)
+
 -- ===== assistant_action_catalog =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -1523,6 +1542,27 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE profiles_org_id_name_key: (org_id, name)
 --   PRIMARY KEY profiles_pkey: (id)
+
+-- ===== provider_benefit_schedules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   cost_provider_id                         uuid NOT NULL
+--   benefit_code                             text NOT NULL
+--   basis                                    text NOT NULL
+--   rate                                     numeric
+--   flat_amount                              numeric
+--   applies_scope                            text NOT NULL DEFAULT 'HOUSEHOLD'::text
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   source_url                               text
+--   source_verified_on                       date
+--   notes                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY provider_benefit_schedules_pkey: (id)
 
 -- ===== reference_data =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()

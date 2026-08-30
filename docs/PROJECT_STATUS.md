@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-28 (Fee module fee36 — fee runs & approvals)
+Last updated: 2026-08-29 (Fee module fee38 — Altruist One evaluator)
 
 ## About this file
 
@@ -18,6 +18,114 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000. Fee module fee38 — Altruist One evaluator BUILT; FIVE items owed (2026-08-29)
+
+`64/67 PASS, 3 FIND, 0 FAIL, 0 BLOCKED` —
+`apps/api/scripts/verify_fee38.py`. `services/altruist_one.py` is the module.
+Nothing in fee38 is blocked on anything outside the codebase. The section
+numbering in this file has drifted (000 / 00 / 0 / 1); this entry follows the
+established prepend-a-zero pattern rather than renumbering everyone else's
+sections. **fee37 has no entry in this file at all** — its findings live in
+`verify_fee37.py` and its sprint log, and fee38 did not back-fill them.
+
+### [A] DECISION NEEDED — which reading of the Altruist One subscription line?
+
+fee37 seeded BOTH readings of one ambiguous rate-card line and a guard rail
+(`assert_no_ambiguous_overlap`) stopping anyone summing them. fee38 had to
+pick one, and picked **FLOOR** — `max(0.0012 x household_value,
+12 x account_count)` — because that is what the design doc states.
+
+**fee37's own seeded note argues the opposite**: that ADDITIVE is the
+conservative choice because it is the more expensive one. Both readings are
+implemented, `subscription_reading` is a parameter, and every persisted
+evaluation records which reading produced its number, so nothing is silently
+resolved. But a human still has to read altruist.com and settle it. Until
+then, every stored `annual_cost` is conditional on a coin-flip that has been
+recorded rather than made. (Verify check `8h`/`8i`.)
+
+### [B] THE DESIGN DOC'S "10% IN SWEEP CASH → ENROLL" HEURISTIC IS WRONG
+
+At the seeded rates, sweep cash alone must be **48% of household value** to
+break even against the subscription — 25 bps of uplift on cash against 12 bps
+of cost on total value. Ten percent gets you 2.5 bps. A $2M household with
+exactly 10% in sweep cash and nothing else recommends **DO_NOT_ENROLL**.
+
+This is not a bug in the evaluator; it is a false premise in the doc, and the
+sprint's own acceptance criterion was written from it. Verify check `2a`
+computes the counterexample explicitly before `2b` builds a household that
+genuinely does recommend ENROLL (cash plus margin plus model discount plus a
+counted trade figure). **The doc's heuristic should be corrected or dropped**
+— if it reaches an advisor as a rule of thumb it will produce wrong advice.
+
+Note this conclusion is only as good as the rates behind it — see [C].
+
+### [C] THE RATES ARE STILL UNVERIFIED (inherited fee37 F6, now wider)
+
+fee38 seeds five NEW rate rows into `provider_benefit_schedules` (sweep uplift,
+HY uplift, model-marketplace discount, per-ticket saving, TLH tax alpha). They
+carry `source_url` and `source_verified_on` exactly as fee37's cost rows do,
+and they carry the **identical limitation**: nobody has re-read the source.
+
+The evaluator attaches `UNVERIFIED_CAVEAT` to the persisted
+`benefit_breakdown` of every evaluation, so the caveat travels with the number
+to whatever screen displays it. That is a mitigation, not a fix. **Someone has
+to read altruist.com and stamp a real `source_verified_on`** before any of
+these figures is quoted to a client.
+
+Two of the five rows are fee37's `UNSEEDED_RATE_CARD_ITEMS` finally given a
+home: `CASH_SPREAD` (a benefit, so it could not live in `cost_schedules`
+without being summed as an expense) and the model-marketplace discount (whose
+base was unstated — fee38 resolves that by CAPPING it at the fee actually
+being paid, which is a defensible reading but still a reading).
+
+### [D] DATA GAPS — three inputs the deployed schema cannot supply
+
+Measured in Task 1, reported on every evaluation in `data_gaps` rather than
+papered over:
+
+1. **Sweep vs high-yield cash is not separable.** `account_balances_daily` has
+   one `cash_value` numeric and no cash-type dimension. The split is a
+   caller-supplied `sweep_share_of_cash`, defaulting to "all sweep".
+2. **Model-allocated AUM does not exist.** `accounts.service_model` is free
+   text with no allocated-value column behind it. Caller-supplied, default $0,
+   so the model-discount benefit is simply absent unless someone types a number.
+3. **No account-level trade count exists.** `portfolio.transactions` reaches an
+   account only through `positions.account_id`. The ticket-savings line is
+   **omitted** (not zeroed) when no counted figure is supplied — a zero would
+   read as "counted, and it was nothing".
+
+These are inputs a real deployment needs a source for. Until then the evaluator
+is running on two and a half of its six intended inputs.
+
+### [E] SCHEDULED RE-EVALUATION IS NOT WIRED — waiting on S29b
+
+`next_review_on` is accepted, persisted, and covered by the deployed
+`altruist_one_evaluations_review_idx`. `due_for_review()` is the query a
+scheduled trigger will call. **Nothing calls it on a schedule.** That needs a
+Workflow Manager trigger, which is the standing fee-module-external dependency
+on S29b landing. Recorded as `NEXT_REVIEW_WORKFLOW_TODO` in the module.
+
+### Two smaller things worth knowing
+
+**MARGINAL can never be MATCHED by a decision.** The deployed `decision` CHECK
+admits only `ENROLL` and `DO_NOT_ENROLL`, so the `override_requires_reason`
+CHECK treats every decision on a MARGINAL evaluation as a divergence needing a
+written reason and a named decider. That is correct — a near-breakeven call is
+exactly the one that should carry a reason — but it is invisible from the
+column list, so `record_decision` says it in the error text. (Check `1k`/`6h`.)
+
+**`account_balances_daily` double-counts on a naive SUM.** Its primary key
+includes `source_system`, so one account can hold several rows for the same
+day. `load_household_inputs` takes one row per account via `DISTINCT ON`
+restricted to `is_billing_source`, and separately counts accounts that still
+have more than one billing-source row on their latest date, reporting that as
+a data gap. The verify fixture plants a second AGGREGATOR feed on every account
+specifically so the dedupe is exercised against a real duplicate — without it a
+plain SUM would read $5,000,000 where the answer is $2,000,000. Same shape as
+fee37's F4.
 
 ---
 

@@ -1,0 +1,78 @@
+admin dsn:       DATABASE_URL (doppler/env)
+app_service dsn: APP_SERVICE_DATABASE_URL (doppler/env)
+
+pre-test row counts captured
+
+[PASS] 1a  both Part-1 tables are deployed in public
+[PASS] 1b  RLS is ENABLED on both tables
+[PASS] 1c  each table carries exactly one org-isolation policy
+[PASS] 1d  the module's BENEFIT_BASES set-EQUALS the deployed basis CHECK (drift in either direction fails)
+[PASS] 1e  BENEFIT_SCOPES set-EQUALS the deployed applies_scope CHECK
+[PASS] 1f  RECOMMENDATIONS set-EQUALS the deployed recommendation CHECK
+[PASS] 1g  DECISIONS set-EQUALS the deployed decision CHECK — and it admits only ENROLL/DO_NOT_ENROLL, so MARGINAL can never be MATCHED by a decision
+[PASS] 1h  the override-requires-reason CHECK is deployed (this is the gate [6] proves the service explains rather than replaces)
+[PASS] 1i  decided_by carries a REAL foreign key to users — fee37's F3 was that approved_by did NOT, and this sprint inherits the fixed shape
+[PASS] 1j  decided_by and decided_at are constrained as a pair (both or neither)
+[FIND] 1k  MARGINAL is a recommendation the model can make but NOT a decision a human can record. Consequence: the deployed override_requires_reason CHECK treats EVERY decision on a MARGINAL evaluation as a divergence needing a written reason. Correct behaviour for a near-breakeven call, but it is not visible from the column list — record_decision names it in its error.
+[PASS] 2a  a household with EXACTLY 10% of assets in sweep cash and nothing else does NOT clear the subscription: 0.00250000 on 10% of assets is 0.00025000 against a 0.00120000 subscription
+[FIND] 2a-F  the design doc's '10%+ in sweep cash → ENROLL' heuristic does NOT hold at the seeded rates. Sweep cash alone must be 48.00% of household value to break even on the subscription — nearly five times the stated threshold. The verification requirement is still met (see [2b]), but by a household where cash is one of several real benefits, not by cash alone.
+[PASS] 2b  the household's value and account count came from account_balances_daily / accounts, deduped to ONE billing-source row per account despite a second AGGREGATOR feed on the same day (a plain SUM would read $5,000,000.00)
+[PASS] 2c  annual_cost = max(0.0012 x $2,000,000 = $2,400.00, $12 x 3 = $36.00) = $2,400.00 — the FLOOR reading, hand-derived
+[PASS] 2d  sweep ($300,000 x 0.0025 = $750.00) and high-yield ($100,000 x 0.0010 = $100.00) are NAMED separately in benefit_breakdown, not blended
+[PASS] 2e  the model-marketplace discount is CAPPED at the fee actually paid: 15 bps would give $750.00 but only 10 bps ($500.00) is being paid, so $500.00 is credited and the uncapped figure is reported alongside
+[PASS] 2f  margin savings = $200,000 drawn x (0.0625 - 0.0525) = $2,000.00, and only the ONE account that actually draws margin contributes
+[PASS] 2g  ticket savings appear ONLY because a real counted figure (300) was supplied; the rate is seeded, the count is never invented
+[PASS] 2h  net benefit $3,650.00 - $2,400.00 = +$1,250.00, clear of the $365.00 band → ENROLL
+[PASS] 2i  the benefit_breakdown lines sum to EXACTLY annual_benefit — a reader adding up what is shown lands on the number the threshold used
+[PASS] 2j  with no trade count supplied the ticket line is OMITTED (not zeroed) and the missing source is reported in data_gaps
+[PASS] 2k  the fee37-F6 unverified-rate caveat is carried in the PERSISTED benefit_breakdown, not left in a code comment
+[PASS] 3a  eight accounts averaging $9,000 — under the $10,000/account crossover where the per-account term overtakes the 12 bps term
+[PASS] 3b  the account-count term ($96.0000) EXCEEDS the AUM term ($86.4000000000) on this fixture — without this the check below would prove nothing about the per-account minimum
+[PASS] 3c  annual_cost = max($86.40, $96.00) = $96.00, i.e. it EQUALS the account-count term: the per-account minimum is what is binding
+[PASS] 3d  $3,600 of sweep cash x 0.0025 = $9.00 of benefit
+[PASS] 3e  net -$87.00 is below the -$25.00 band → DO_NOT_ENROLL
+[PASS] 4a  $1,000,000 of sweep cash x 0.0025 = $2,500.00 against a $2,400.00 subscription — $100.00 apart
+[PASS] 4b  +$100.00 net sits inside the $250.00 band (10% of $2,500.00, the larger of cost and benefit) → MARGINAL, not a bare >0 ENROLL
+[PASS] 4c  the band's DEFINITION — not just its value — is in the persisted output, so a reader can see why the model declined to call it
+[PASS] 4d  the SAME household with $100,000 of drawn margin (+$1,000.00) crosses the band and resolves to ENROLL — the band is a band, not a sink
+[PASS] 5a  the ENROLL evaluation persisted as a row
+[PASS] 5b  recording ENROLL against an ENROLL recommendation needs NO reason and NO decider — the service asks for neither
+[PASS] 5c  re-read on an INDEPENDENT connection: decision ENROLL landed with override_reason, decided_by AND decided_at all NULL
+[PASS] 5d  next_review_on persisted; due_for_review() is the query a scheduled trigger will call once S29b lands (NOT wired here, by design)
+[PASS] 5e  due_for_review() INCLUDES the row after its review date and EXCLUDES it before — both directions on the same row
+[PASS] 5f  re-evaluating the same household on the same day APPENDS a second row rather than overwriting the first — evaluations are never updated
+[PASS] 5g  overwriting a recorded decision is refused and the original survives — the audit trail cannot be edited
+[PASS] 6a  a MARGINAL evaluation is on record to decide against
+[PASS] 6b  the DEPLOYED CHECK refuses a divergent decision with no reason, even in raw SQL — the database is the real gate
+[PASS] 6c  the service refuses FIRST with an error naming override_reason and decided_by as FIELDS — not a raw constraint violation (fee34 pattern)
+[PASS] 6d  NOTHING changed after the refusal — a service that raised AFTER updating would pass a naive 'it raised' check
+[PASS] 6e  a reason with no decider is still refused, naming only the field that is actually missing
+[PASS] 6f  the SAME divergent decision, with a reason and a decider, succeeds
+[PASS] 6g  re-read independently: decision, reason, decider and timestamp all landed, and decided_by resolves to a REAL users row via its FK
+[PASS] 6h  a MARGINAL recommendation can never be MATCHED, so every decision on one is a divergence — and the error says so rather than leaving the reader to infer it from the CHECK
+[PASS] 7-ENROLL  a synthetic $25000.00 of tax alpha leaves ENROLL UNCHANGED (tax alpha is always positive, so it cannot flip an ENROLL in any case — this leg proves invariance only; 7-DO_NOT_ENROLL and 7-MARGINAL carry the load-bearing half)
+[PASS] 7-DO_NOT_ENROLL  a synthetic $25000.00 of tax alpha leaves DO_NOT_ENROLL UNCHANGED and including it WOULD have produced ENROLL, so the exclusion is load-bearing here, not vacuous
+[PASS] 7-MARGINAL  a synthetic $25000.00 of tax alpha leaves MARGINAL UNCHANGED and including it WOULD have produced ENROLL, so the exclusion is load-bearing here, not vacuous
+[PASS] 7a  tax alpha appears in the persisted output LABELLED estimated and flagged as excluded from the threshold
+[PASS] 7b  tax alpha sits OUTSIDE benefit_breakdown['lines'], so a consumer summing the lines still lands exactly on annual_benefit
+[PASS] 7c  the threshold function cannot see tax alpha — its signature admits only the three threshold numbers, so the exclusion is structural rather than a caller remembering to subtract
+[PASS] 8a  all 8 rate citations in the persisted output carry a row id
+[PASS] 8b  EVERY cited rate re-queries to a live row in this org whose stored numeric equals the value the calculation used
+[PASS] 8c  the citations span BOTH rate tables — the cost card fee37 seeded and the benefit card this sprint seeded
+[PASS] 8d  the calculation path (evaluate, _recommend, load_rate_book) contains ZERO Decimal literals — every rate arrives through RateBook, so no figure can be produced from a hardcoded number
+[PASS] 8e  the one non-DB constant the calculation uses is MONTHS_PER_YEAR=12 — a unit conversion, not a rate, and named at module scope
+[PASS] 8f  archiving a benefit rate makes load_rate_book RAISE, naming the missing code — a rate silently read as zero would understate the benefit and flip a recommendation invisibly
+[PASS] 8g  the evaluator reads exactly ONE reading of the ambiguous subscription line (FLOOR), routed through fee37's assert_no_ambiguous_overlap
+[PASS] 8h  the ADDITIVE reading is implemented and selectable ($2,400 + $36 = $2,436.00), and every evaluation records WHICH reading produced its cost — the ambiguity is surfaced, not silently resolved
+[FIND] 8i  fee37 seeded BOTH readings and its own note argues ADDITIVE is the conservative choice (it is the more expensive). This evaluator defaults to FLOOR because the design doc states the cost as max(0.0012 x value, 12 x accounts), which IS the FLOOR reading. The conflict is unresolved upstream; subscription_reading is a parameter and the choice is recorded on every row.
+[PASS] 9a  the test role does NOT bypass RLS — without this every check below is vacuous
+[PASS] 9b  provider_benefit_schedules: the owning org sees the rows, the other org sees none, and an EMPTY org GUC sees none — inclusion, exclusion, and the policy's NULLIF, on the same rows
+[PASS] 9c  altruist_one_evaluations: the owning org sees the rows, the other org sees none, and an EMPTY org GUC sees none — inclusion, exclusion, and the policy's NULLIF, on the same rows
+[PASS] 9d  provider_benefit_schedules: inserting a row whose org_id is not the connection's org is refused by the policy's WITH CHECK, not merely hidden from reads
+[PASS] 9e  altruist_one_evaluations: inserting a row whose org_id is not the connection's org is refused by the policy's WITH CHECK, not merely hidden from reads
+
+==============================================================================
+fee38: 64/67 PASS  FIND=3
+==============================================================================
+
+[PASS] 10  every one of 9 touched tables is back to its pre-test row count
