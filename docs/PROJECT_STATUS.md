@@ -674,3 +674,18 @@ several sprints of false "blocked on credentials" results.
 **HTTPS API** using `DOPPLER_TOKEN` (stdlib only, no CLI, never prints a value).
 `verify_smtpservice.py` uses it and overwrites the ambient values deliberately —
 deferring to what is already set would preserve exactly the stale-copy bug.
+
+## fee38 — subscription-reading decision (accepted, revisit before real reliance)
+
+Altruist One subscription cost: FLOOR reading — max(0.0012 × household
+value, 12 × account count) — accepted as the interim default for the
+evaluator, per the design doc's own stated formula. fee37 also seeded
+the ADDITIVE reading (subscription + per-account minimum, both apply)
+and argued it as the more conservative choice. subscription_reading is
+a parameter on every evaluation, so the choice is recorded per row,
+not silently baked in.
+
+Revisit before any recommendation from this evaluator is relied on for
+a real client decision — the two readings can diverge meaningfully on
+low-AUM/high-account-count households, and which one actually matches
+Altruist's real billing behavior has not been confirmed.
