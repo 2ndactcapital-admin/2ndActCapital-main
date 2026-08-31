@@ -777,3 +777,25 @@ on both. All views in public/portfolio now carry security_invoker=true.
 
 Any future view creation must set security_invoker=true explicitly —
 this is not a Postgres default.
+
+## scripts/refresh_schema.py — stale-DATABASE_URL bug, fixed at the root
+
+Fixed in the same commit that added revenue_events/v_profitability_events
+to the schema snapshot (34d9a7e). The script previously read DATABASE_URL
+straight out of apps/api/.env, a file that has repeatedly gone stale
+(password rejected by Postgres) — documented by its own commit message
+as having bitten this repo three separate times (fee34's manual
+DB_PASSWORD substitution, fee36's refresh confusion, and this one).
+
+Now resolves via apps/api/scripts/_db_connect.admin_dsn() — the same
+probe-before-use resolver every verify script already relies on. It
+actually opens a connection to confirm a candidate DSN works before
+using it, rather than trusting that a variable's presence means it's
+correct. Fails loud with the provenance chain on failure; prints which
+source actually worked on success.
+
+No further workaround (manual DB_PASSWORD substitution, a separate
+_run_refresh_schema.py helper, etc.) should be needed going forward —
+if stale-DATABASE_URL symptoms recur after this fix, that's a signal
+something upstream of resolve_dsn itself has changed, not a reason to
+re-introduce a bespoke substitution.
