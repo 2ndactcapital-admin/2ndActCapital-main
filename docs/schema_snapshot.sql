@@ -1599,6 +1599,34 @@
 --   UNIQUE restricted_access_grants_entity_id_user_id_key: (entity_id, user_id)
 --   PRIMARY KEY restricted_access_grants_pkey: (id)
 
+-- ===== revenue_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   event_date                               date NOT NULL
+--   period_start                             date
+--   period_end                               date
+--   amount                                   numeric NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   revenue_type                             text NOT NULL
+--   recognition                              text NOT NULL DEFAULT 'ACCRUAL'::text
+--   account_id                               uuid
+--   entity_id                                uuid
+--   household_id                             uuid
+--   billing_group_id                         uuid
+--   spv_id                                   uuid
+--   deal_id                                  uuid
+--   advisor_id                               uuid
+--   product_type                             text
+--   source_type                              text NOT NULL
+--   source_id                                uuid
+--   journal_entry_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY revenue_events_pkey: (id)
+
 -- ===== role_permissions =====
 --   role_id                                  uuid NOT NULL
 --   permission_id                            uuid NOT NULL
@@ -3318,6 +3346,23 @@
 --   account_name                             text
 --   tax_character_code                       text
 --   balance                                  numeric
+
+-- ===== v_profitability_events =====  [VIEW]
+--   security_invoker: true — RLS applies to the querying role
+--   id                                       uuid
+--   org_id                                   uuid
+--   event_date                               date
+--   period_start                             date
+--   period_end                               date
+--   signed_amount                            numeric
+--   line_kind                                text
+--   category                                 text
+--   account_id                               uuid
+--   entity_id                                uuid
+--   household_id                             uuid
+--   billing_group_id                         uuid
+--   advisor_id                               uuid
+--   product_type                             text
 
 -- ===== v_trial_balance =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
