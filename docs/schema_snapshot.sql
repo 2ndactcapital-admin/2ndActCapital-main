@@ -3337,7 +3337,7 @@
 --   PRIMARY KEY valuations_pkey: (id)
 
 -- ===== v_capital_accounts =====  [VIEW]
---   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
+--   security_invoker: true — RLS applies to the querying role
 --   org_id                                   uuid
 --   vehicle_id                               uuid
 --   ledger_basis                             text
@@ -3365,7 +3365,7 @@
 --   product_type                             text
 
 -- ===== v_trial_balance =====  [VIEW]
---   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
+--   security_invoker: true — RLS applies to the querying role
 --   org_id                                   uuid
 --   vehicle_id                               uuid
 --   ledger_basis                             text

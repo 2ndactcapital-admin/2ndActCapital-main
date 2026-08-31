@@ -610,9 +610,10 @@ async def _load_schedule(conn, org_id: str, schedule_id: str, as_of: date):
 
 
 async def load_account_calc_request(
-    conn, org_id: str, *, account_id: str, fee_schedule_id: str,
+    conn, org_id: str, *, account_id: str, fee_schedule_id: str | None = None,
     period_start: date, period_end: date,
     service_start: date | None = None, service_end: date | None = None,
+    schedule_override: tuple[FeeScheduleInput, tuple[FeeTierInput, ...]] | None = None,
 ) -> tuple[AccountCalcRequest, dict[str, Any]]:
     """Build one :class:`AccountCalcRequest` out of the deployed tables.
 
@@ -625,7 +626,26 @@ async def load_account_calc_request(
 
     ``as_of`` for every scope resolution is ``period_end``: the state of the
     world at the close of the period being billed.
+
+    ``schedule_override`` (fee40) supplies a schedule that is not in the
+    database yet, so fee40's chat interface can price a PROPOSED schedule
+    against a real account's real balances before anything is saved. Everything
+    else — balances, flows, positions, exclusions, discounts, credits, the
+    billing-group resolution — is loaded exactly as it is for a real run.
+
+    It exists so there is ONE loader. The alternative was a second
+    fee40-specific assembler, and two loaders of the same eight tables drift:
+    the copy that stops filtering ``valid_to IS NULL`` prices a proposal against
+    superseded positions and the number still looks reasonable. Supplying the
+    override makes ``fee_schedule_id`` unnecessary; supplying neither is a
+    caller error.
     """
+    if schedule_override is None and not fee_schedule_id:
+        raise ScheduleNotLoadableError(
+            "load_account_calc_request needs either fee_schedule_id (to load a "
+            "saved schedule) or schedule_override (to price an unsaved one)",
+            fee_schedule_id=None,
+        )
     as_of = period_end
 
     acct = await conn.fetchrow(
@@ -657,7 +677,10 @@ async def load_account_calc_request(
         service_start=service_start, service_end=service_end,
     )
 
-    schedule, tiers = await _load_schedule(conn, org_id, fee_schedule_id, as_of)
+    if schedule_override is not None:
+        schedule, tiers = schedule_override[0], tuple(schedule_override[1])
+    else:
+        schedule, tiers = await _load_schedule(conn, org_id, fee_schedule_id, as_of)
 
     # ── balances / flows / positions ────────────────────────────────────────
     # Deliberately loaded for the WHOLE period and handed over unfiltered: the
@@ -723,6 +746,11 @@ async def load_account_calc_request(
         alt_schedules=alt,
     )
     provenance = {
+        # Which of the two schedule sources produced the rule that was priced.
+        # On the record because a number computed from an unsaved proposal and
+        # one computed from an approved schedule are indistinguishable once they
+        # are both just a dollar figure.
+        "schedule_source": "override" if schedule_override is not None else "database",
         "billing_group_id": billing_group_id,
         "billing_group_resolution": (
             f"billing_group_members joined to billing_groups "
