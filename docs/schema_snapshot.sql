@@ -692,6 +692,28 @@
 --   confirmed_at                             timestamp with time zone
 --   PRIMARY KEY documents_pkey: (id)
 
+-- ===== domain_event_deliveries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   domain_event_id                          uuid NOT NULL
+--   workflow_trigger_id                      uuid NOT NULL
+--   workflow_run_id                          uuid
+--   status                                   text NOT NULL DEFAULT 'DELIVERED'::text
+--   error_detail                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY domain_event_deliveries_pkey: (id)
+
+-- ===== domain_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   event_type                               text NOT NULL
+--   source_type                              text NOT NULL
+--   source_id                                uuid NOT NULL
+--   payload                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   occurred_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY domain_events_pkey: (id)
+
 -- ===== entities =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL

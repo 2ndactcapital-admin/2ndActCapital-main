@@ -320,6 +320,17 @@ async def post_transaction(
     bi-temporal, per sprint spec).
 
     For 'distribution' and other types, no subscription columns are updated.
+
+    POSTING IS ALSO THE EVENT BOUNDARY. This function is the single writer of
+    ``status='posted'`` in the codebase, which is exactly why the
+    ``spv_realization`` domain event is emitted from here rather than from the
+    router: every path that posts — the API, a script, a future importer —
+    publishes, and none of them has to remember to. The emit runs AFTER the
+    transaction above has committed and never raises (see
+    :func:`services.spv_events.emit_spv_realization`), so a subscriber problem
+    cannot undo a post that genuinely happened; and it decides for itself
+    whether this transaction is a realization by re-reading the row, so a
+    non-gain distribution posts with no event at all.
     """
     async with pool.acquire() as conn:
         # Load transaction.
@@ -410,3 +421,10 @@ async def post_transaction(
         new={"txn_type": txn_type, "allocation_count": len(alloc_rows)},
         actor=actor_user_id,
     )
+
+    # Publish the realization event, if this posting IS one. Imported locally:
+    # services.spv_events pulls in the workflow engine, and importing that at
+    # module scope would drag the whole BPMN stack into every allocation call.
+    from services.spv_events import emit_spv_realization
+
+    await emit_spv_realization(pool, transaction_id, actor_user_id=actor_user_id)

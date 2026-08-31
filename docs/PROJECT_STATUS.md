@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-31 (Fee module fee42 — SPV fee terms)
+Last updated: 2026-08-31 (Platform — domain event emission)
 
 ## About this file
 
@@ -18,6 +18,62 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000. Platform — domain event emission BUILT; nothing blocked (2026-08-31)
+
+`54/55 PASS, 1 FIND, 0 FAIL, 0 BLOCKED` —
+`apps/api/scripts/verify_event_emission.py`. Nothing here is blocked on
+anything outside the codebase. Recorded because it CLOSES a standing
+cross-module dependency and OPENS one new, deliberate gap.
+
+**What closed.** `workflow_triggers` has carried `trigger_type='event'` since
+the Workflow Manager shipped, and until now exactly one hard-wired publisher
+existed (`services/chancery_workflow_bridge.py`, for `document_confirmed`).
+`services/domain_events.py::publish_event` is now the generic publish side:
+any code can record a fact and every active, matching trigger in that org gets
+its own `workflow_runs` row and its own `domain_event_deliveries` audit row.
+Adding a new event type requires no change to that module.
+
+**The definition→version gap is resolved, not worked around.**
+`workflow_triggers.workflow_definition_id` → `workflow_runs.workflow_version_id`
+resolves via `workflow_versions.is_current = true`, scoped to
+`(workflow_definition_id, org_id)`. That is the ONE mechanism already used by
+both existing run-starters (`workflow_scheduler.load_due_candidates` and
+`chancery_workflow_bridge`); this sprint reuses it rather than adding a second.
+A trigger whose definition has no current version now produces a **`FAILED`
+delivery naming that definition**, not a silent skip — verified with the broken
+trigger deliberately ordered FIRST so the healthy one proves it was not aborted.
+
+**The first emitter is SPV realization.** `services/spv_events.py` publishes
+`spv_realization` from `spv_allocation.post_transaction` — the single writer of
+`status='posted'` in the codebase, so every posting path emits and none of them
+has to remember to. Payload carries per-investor
+`spv_transaction_allocations` amounts as exact `Decimal`-valued strings,
+because carry is owed per investor and any consumer re-deriving the split is a
+mispayment waiting to happen.
+
+### The one thing worth knowing before extending this
+
+**Realization is matched on `transaction_types`' own accounting flags, not on
+`code = 'dist_gain'`**: `category = 'distribution' AND performance_impact =
+'gain'`. Both halves are load-bearing — `sell` also carries
+`performance_impact='gain'` and is excluded only by `category='transfer'`. On
+the live catalogue this resolves to exactly `['dist_gain']`, asserted by the
+verify script so a future catalogue change that silently widens or narrows it
+fails loudly. This follows `services/portfolio_commitments.py`'s standing rule
+that these flag values are read, never re-derived.
+
+### NEW, DELIBERATE GAP — nothing subscribes to `spv_realization` yet
+
+The mechanism is proven end-to-end against fixture triggers, but **no
+production `workflow_triggers` row for `event_type='spv_realization'` exists**.
+`fee42b` is the intended first real subscriber (carry calculation) and was
+explicitly out of scope here. Until it lands, a posted `dist_gain` writes its
+`domain_events` row — the table is append-only and retains events with no
+subscriber, by design — and fans out to nobody. That is the correct state, not
+a defect: a trigger added later still finds the history intact.
 
 ---
 
