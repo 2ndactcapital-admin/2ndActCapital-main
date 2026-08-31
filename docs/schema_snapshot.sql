@@ -1047,6 +1047,38 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY fee_exclusions_pkey: (id)
 
+-- ===== fee_narrative_templates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   template_code                            text NOT NULL
+--   jurisdiction                             text
+--   body_template                            text NOT NULL
+--   version                                  integer NOT NULL DEFAULT 1
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_narrative_templates_pkey: (id)
+
+-- ===== fee_narratives =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   fee_assignment_id                        uuid
+--   household_id                             uuid
+--   template_id                              uuid NOT NULL
+--   rendered_text                            text NOT NULL
+--   input_hash                               text NOT NULL
+--   is_stale                                 boolean NOT NULL DEFAULT false
+--   adv_check_status                         text NOT NULL DEFAULT 'UNCHECKED'::text
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_narratives_pkey: (id)
+
 -- ===== fee_run_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
