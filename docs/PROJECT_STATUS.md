@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-30 (Fee module fee39 — profitability views)
+Last updated: 2026-08-31 (Fee module fee42 — SPV fee terms)
 
 ## About this file
 
@@ -18,6 +18,72 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000. Fee module fee42 — SPV fee terms BUILT; FOUR items owed (2026-08-31)
+
+`86/89 PASS, 3 FIND, 0 FAIL, 0 BLOCKED` — `apps/api/scripts/verify_fee42.py`.
+`services/spv_fee_terms.py` is the module; `scripts/seed_fee42_backfill.py` is
+the one-time migration and it has been RUN (1 SPV migrated). Nothing in fee42
+is blocked on anything outside the codebase.
+
+**The sprint's own premise was wrong, and this is the most important thing to
+carry forward.** fee42's brief said fee36's `SPV_MGMT_FEE_OFFSET` basis
+resolution reads `spvs.mgmt_fee_pct` and should be re-pointed at
+`spv_fee_terms`. It does not, and never did.
+`fee_run_inputs.resolve_credit_basis` resolves the basis from
+`spv_transaction_allocations.allocated_amount` over POSTED `call_mgmt_fee`
+transactions — an amount actually charged, not a rate. There was nothing to
+re-point and **no fee36 code was modified.** `spv_fee_terms` is the truth about
+what an SPV *will* charge; `spv_transaction_allocations` remains the truth about
+what it *did*. Do not conflate them in a later sprint.
+
+**Owed, in priority order:**
+
+1. **`spv_fee_side_letters` has ZERO check constraints and no uniqueness index.**
+   `overrides` is unconstrained jsonb, so the database will store an override
+   that violates the invariants `spv_fee_terms`' own CHECKs enforce (e.g.
+   `carry_pct` with no `hurdle_type`), and two overlapping active letters for
+   one `(spv_id, entity_id)` are reachable. Both are closed in the application
+   layer only (`apply_overrides` validates the MERGED row;
+   `load_side_letter` raises `AmbiguousSideLetterError`). A partial unique index
+   on `(org_id, spv_id, entity_id) WHERE system_to IS NULL` and a CHECK on
+   `effective_to > effective_from` are the schema-level fixes.
+
+2. **No wound-down status exists for an SPV.** The deployed vocabulary
+   (`routers/spv.py`'s `SPV_STATUS_TRANSITIONS`) is
+   `forming → open → closing → closed` plus `cancelled`. `closed` means the
+   RAISE closed, which is when a management fee STARTS — so a fund sits at
+   `closed` for its whole life and there is no way to say it has finished.
+   `mgmt_fee_term_years` is currently the only thing that stops the clock.
+
+3. **`mgmt_fee_basis`: only two of four are computable.** `COMMITTED`
+   (`spv_subscriptions.commitment_amount`) and `FUNDED` (`funded_amount`, which
+   is `0.00` on every deployed row today, so a FUNDED fee currently bills
+   nothing). `NAV`'s path exists — Portfolio D's
+   `portfolio.spv_derived_positions` → `portfolio.assets.internal_spv_id` →
+   `portfolio.valuations` — but zero assets carry `internal_spv_id` and
+   `portfolio.valuations` is empty, so it resolves to nothing.
+   `INVESTED_COST` has no source at all: it would have to be summed from
+   `spv_transactions`, whose `txn_type` has no CHECK constraint. fee42 stores
+   and resolves the basis; it deliberately does not compute the basis AMOUNT.
+
+4. **`offsets_advisory_fee` is a boolean; `fee_credits.offset_pct` is a
+   fraction.** The boolean cannot supply the fraction, so
+   `ensure_advisory_fee_offset_credit` takes `offset_pct` explicitly, defaulting
+   to a FULL offset. A PARTIAL offset is a real term-sheet clause with nowhere
+   to live in `spv_fee_terms` today. Related: fee34 shipped `fee_credits` and
+   `validate_credit` but **no service or router ever inserted a credit** — this
+   sprint's function is the first application write path the table has had.
+
+**Carry is deliberately out of scope and stays that way.** fee42 stores carry
+TERMS (`carry_pct`, `hurdle_pct`, `hurdle_type`, `catchup_pct`, `carry_basis`,
+`clawback_applies`) so a future waterfall sprint has real data to read. It
+computes no distribution. An active SPV with a known `carry_pct` and an unknown
+`hurdle_type` is deliberately NOT backfilled — `SKIPPED_NEEDS_HURDLE`, for a
+human to read the LPA, because `'NONE'` asserts the deal has no preferred return
+and no deployed data supports that claim.
 
 ---
 

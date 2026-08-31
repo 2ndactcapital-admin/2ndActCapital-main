@@ -1685,6 +1685,53 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY spv_documents_pkey: (id)
 
+-- ===== spv_fee_side_letters =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   overrides                                jsonb NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   approved_by                              uuid
+--   reason                                   text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY spv_fee_side_letters_pkey: (id)
+
+-- ===== spv_fee_terms =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   class_label                              text
+--   mgmt_fee_pct                             numeric
+--   mgmt_fee_basis                           text NOT NULL
+--   mgmt_fee_frequency                       text NOT NULL
+--   mgmt_fee_term_years                      numeric
+--   mgmt_fee_step_down                       jsonb
+--   organizational_cost_cap                  numeric
+--   admin_fee_flat                           numeric
+--   placement_fee_pct                        numeric
+--   carry_pct                                numeric
+--   hurdle_pct                               numeric
+--   hurdle_type                              text
+--   catchup_pct                              numeric
+--   carry_basis                              text
+--   clawback_applies                         boolean NOT NULL DEFAULT true
+--   offsets_advisory_fee                     boolean NOT NULL DEFAULT false
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY spv_fee_terms_pkey: (id)
+
 -- ===== spv_status_history =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
