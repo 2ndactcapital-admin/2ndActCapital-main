@@ -761,3 +761,19 @@ Revisit before any recommendation from this evaluator is relied on for
 a real client decision — the two readings can diverge meaningfully on
 low-AUM/high-account-count households, and which one actually matches
 Altruist's real billing behavior has not been confirmed.
+
+## Security — cross-tenant RLS bypass on views without security_invoker
+
+fee39 discovered and fixed a real cross-tenant data leak in its own
+Part 1 view (v_profitability_events): a view owned by `postgres`
+(rolbypassrls=TRUE) bypasses the RLS policies on its underlying
+tables entirely unless security_invoker=true is set — the base
+tables' own RLS is irrelevant once queried through such a view.
+
+Auditing all views in public/portfolio found two more with the
+identical exposure: v_capital_accounts and v_trial_balance (both GL
+views). Fixed same-day: ALTER VIEW ... SET (security_invoker = true)
+on both. All views in public/portfolio now carry security_invoker=true.
+
+Any future view creation must set security_invoker=true explicitly —
+this is not a Postgres default.
