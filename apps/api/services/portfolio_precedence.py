@@ -432,19 +432,27 @@ async def _household_for_candidates(
     )
 
 
-async def _resolve_source_order(
-    conn, org_id: str, rows: Sequence[Mapping[str, Any]]
+async def resolve_source_order_for_household(
+    conn, org_id: str, household_id: str | None, *, ambiguity: str | None = None
 ) -> SourceOrder:
-    """The order that governs THIS set of candidates. Household → org → default.
+    """The order that governs a HOUSEHOLD. Household override → org → default.
 
-    The ONLY new decision fee32 makes. When it returns without a household
-    override — because there is no household, or no override row for it, or the
-    override is unusable, or the candidates span several households — it returns
-    exactly what ``get_source_order(conn, org_id)`` returned before this sprint
-    existed, and the rest of resolution is byte-identical.
+    fee32 expressed this fall-through inline inside :func:`_resolve_source_order`,
+    which derives its household from a set of position candidates. fee41 needs
+    the identical decision for a household that may own no positions at all — a
+    fee narrative describes the arrangement, and an arrangement exists before the
+    first holding lands.
+
+    So the three-level fall-through lives HERE and
+    :func:`_resolve_source_order` calls it. Copying it would have been three
+    lines; it would also have been a second place for the precedence order of a
+    firm's billing prose to drift away from the precedence order its portfolio
+    actually resolves under, with nothing failing when they disagreed.
+
+    ``ambiguity`` is the caller's explanation for why ``household_id`` is
+    ``None`` when one might have been expected. It rides through onto
+    ``household_reason`` exactly as before.
     """
-    household_id, ambiguity = await _household_for_candidates(conn, org_id, rows)
-
     household_order = await get_household_source_order(conn, org_id, household_id)
     if household_order is not None and household_order.order:
         return household_order
@@ -457,6 +465,27 @@ async def _resolve_source_order(
             f"was ignored: {household_order.invalid_reason}"
         )
     return replace(org_order, household_id=household_id, household_reason=reason)
+
+
+async def _resolve_source_order(
+    conn, org_id: str, rows: Sequence[Mapping[str, Any]]
+) -> SourceOrder:
+    """The order that governs THIS set of candidates. Household → org → default.
+
+    The ONLY new decision fee32 makes. When it returns without a household
+    override — because there is no household, or no override row for it, or the
+    override is unusable, or the candidates span several households — it returns
+    exactly what ``get_source_order(conn, org_id)`` returned before this sprint
+    existed, and the rest of resolution is byte-identical.
+
+    fee41 moved the fall-through itself into
+    :func:`resolve_source_order_for_household`; deriving the household from the
+    candidate rows is still this function's own job and is unchanged.
+    """
+    household_id, ambiguity = await _household_for_candidates(conn, org_id, rows)
+    return await resolve_source_order_for_household(
+        conn, org_id, household_id, ambiguity=ambiguity
+    )
 
 
 # ── Managing an override ────────────────────────────────────────────────────
