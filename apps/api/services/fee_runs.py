@@ -836,8 +836,27 @@ async def post_run(conn, org_id: str, run_id: str) -> dict[str, Any]:
             WHERE id = $1::uuid AND org_id = $2::uuid""",
         run_id, org_id,
     )
+    # Imported here, not at module scope: services.profitability imports
+    # get_run/list_lines/IMMUTABLE_STATUSES from this module, so a top-level
+    # import would be circular. Reaching POSTED is the trigger for revenue
+    # recognition (fee39), and it happens in the SAME transaction as the status
+    # change on purpose — a run that was POSTED but whose revenue_events were
+    # never written is a silent hole in the P&L that nothing would re-check.
+    from services.profitability import emit_revenue_for_run
+
+    emission = await emit_revenue_for_run(conn, org_id, run_id)
     ledger = await post_to_ledger(conn, org_id, run_id)
-    return {"run_id": run_id, "status": "POSTED", "ledger": ledger}
+    return {
+        "run_id": run_id,
+        "status": "POSTED",
+        "ledger": ledger,
+        "revenue": {
+            "lines": emission.lines,
+            "emitted": emission.emitted,
+            "skipped": emission.skipped,
+            "total_amount": emission.total_amount,
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

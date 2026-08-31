@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-29 (Fee module fee38 — Altruist One evaluator)
+Last updated: 2026-08-30 (Fee module fee39 — profitability views)
 
 ## About this file
 
@@ -18,6 +18,78 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000. Fee module fee39 — profitability views BUILT; ONE fix applied, FOUR items owed (2026-08-30)
+
+`87/91 PASS, 4 FIND, 0 FAIL, 0 BLOCKED` — `apps/api/scripts/verify_fee39.py`.
+`services/profitability.py` is the module; `routers/profitability.py` and
+`apps/web/app/profitability/` are the read-only surface. Nothing in fee39 is
+blocked on anything outside the codebase.
+
+### [A] A REAL CROSS-ORG LEAK WAS FOUND AND FIXED — AND THE SAME BUG IS STILL OPEN ELSEWHERE
+
+`v_profitability_events` was deployed by Part 1 with **no `security_invoker`**,
+and its owner (`postgres`) has `rolbypassrls = TRUE`. A view without that
+option evaluates its base tables' RLS as the VIEW OWNER, so the view handed any
+`app_service` caller every org's revenue and cost rows — while both base tables
+were correctly locked down and looked it. The sprint prompt asked for this to
+be verified rather than assumed, and the assumption was false.
+
+Fixed live with `ALTER VIEW public.v_profitability_events SET (security_invoker
+= true)`. `verify_fee39` [7f] REPRODUCES the leak on a twin view built from the
+original definition before [7h] proves the real view now refuses the same read,
+so the fix is demonstrated against the actual defect rather than in isolation.
+
+**Still owed, not fixed here:** `v_trial_balance` and the other GL views carry
+the identical defect. They were flagged during the portfolio-D sprint and are
+still `security_invoker: FALSE` in `docs/schema_snapshot.sql`, which now
+records the flag per view. Anything reading them through a non-superuser
+connection is reading across orgs today.
+
+### [B] TWO PRODUCT TYPES SHARE ONE REVENUE TYPE
+
+`revenue_events_type_check` admits eight values; three of them cannot come from
+a fee run (`SPV_CARRY` is deferred and event-driven, `PASS_THROUGH_MARKUP` is
+fee37's cost engine, `INTEREST_SHARE` has no fee-run source). That leaves five
+revenue types for six `fee_schedules.product_type` values, so
+`STRUCTURED_INVESTMENT` and `TRANSACTION` both map to `PLACEMENT_FEE`.
+
+Nothing is lost for reporting — `revenue_events.product_type` is on the row and
+the product cut still separates them — but the two cannot be told apart by
+`revenue_type` alone, which matters the moment they need different GL
+treatment. Fixing it means adding a value to the deployed CHECK first.
+
+### [C] THE ADVISOR CUT GROUPS ON AN UNCONSTRAINED COLUMN
+
+Neither `revenue_events.advisor_id` nor `cost_events.advisor_id` has a FOREIGN
+KEY, unlike `account_id` / `household_id` / `billing_group_id` on both tables.
+A typo'd advisor id inserts cleanly and appears in an advisor roll-up as its
+own silent, empty-named bucket. Adding `REFERENCES users(id)` to both is a
+small migration nobody has done.
+
+### [D] cost_events IS STILL NOT PROVABLY DUPLICATE-FREE (inherited fee37 F4)
+
+`cost_events_dedupe_uq` indexes `account_id`/`household_id`/`billing_group_id`,
+and a UNIQUE index does not constrain rows where those are NULL — which is
+exactly every firm-level and provider-level cost. `verify_fee39` [5o]
+reproduces it: two byte-identical `cost_events` insert without complaint.
+
+fee39 does not fix the index; it makes the consequence visible instead.
+`profitability.duplicate_cost_scan` finds such groups and `profit_and_loss`
+attaches a warning naming the surplus, so a doubled cost line is reported
+rather than silently reducing a client's margin. The real fix is a partial
+unique index per NULL-combination, or a generated discriminator column.
+
+### [E] THE RATES BEHIND PASS-THROUGH COSTS ARE STILL UNVERIFIED (inherited fee37 F6)
+
+Any P&L containing a pass-through cost carries
+`profitability.UNVERIFIED_RATE_CAVEAT`, attached only when such a row is
+genuinely in the cut ([5m] proves it fires, [5n] that it does not fire
+otherwise). The underlying `cost_schedules` / `provider_benefit_schedules`
+`source_url`s still have not been re-checked against a primary source. Until
+they are, the cost side of every margin here is an order-of-magnitude figure.
 
 ---
 

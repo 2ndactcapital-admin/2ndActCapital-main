@@ -1,0 +1,98 @@
+admin: DATABASE_URL (doppler/env)
+app_service: APP_SERVICE_DATABASE_URL (doppler/env)
+
+[PASS] 0a  services.cost_model and services.profitability agree on the cost_type vocabulary
+[PASS] 1a  public.revenue_events is deployed as a table
+[PASS] 1b  revenue_events has RLS enabled
+[PASS] 1c  revenue_events' policy is org-isolating, NULLIFs the GUC and carries the super-admin bypass
+[PASS] 1d  services.profitability.REVENUE_TYPES matches the deployed revenue_events_type_check exactly, both directions
+[PASS] 1e  SOURCE_TYPES matches revenue_events_source_type_check exactly
+[PASS] 1f  the source_id-required CHECK is deployed
+[PASS] 1g  the source dedupe index is UNIQUE on (org_id, source_type, source_id) over live rows with a source
+[PASS] 1h  cost_events_linked_revenue_event_fkey exists and points at revenue_events(id) — the FK fee37 had to defer
+[PASS] 1i  the FK is genuinely ENFORCED: a cost_event pointing at a non-existent revenue_event is refused
+[PASS] 1j  the view UNIONs both sides for ACC_P1: 2 revenue rows, 2 cost rows
+[PASS] 1k  every REVENUE row's signed_amount is POSITIVE
+[PASS] 1l  every COST row's signed_amount is NEGATIVE — the view negates cost_events.amount, which is stored positive
+[PASS] 1m  category carries revenue_type on one side and cost_type on the other
+[PASS] 1n  SUM(signed_amount) over ACC_P1 is the hand-computed $10,500 (13,000 revenue - 500 custody - 2,000 comp)
+[PASS] 2a  the Q1 run previewed 2 lines
+[PASS] 2b  the two lines carry the hand-derived $2,500.00 and $2,000.00
+[PASS] 2c  the run reached POSTED
+[PASS] 2d  post_run reports 2 revenue_events emitted, 0 skipped
+[PASS] 2e  exactly 2 revenue_events rows appeared — one per fee_run_line
+[PASS] 2f  each revenue_event's source_id IS a fee_run_line id, one to one
+[PASS] 2g  amounts match net_fee EXACTLY, to the stored scale
+[PASS] 2h  ASSET_MANAGEMENT lines mapped to revenue_type ADVISORY_FEE
+[PASS] 2i  source_type is FEE_RUN_LINE and recognition is ACCRUAL on both
+[PASS] 2j  event_date is the run's period_end, and the accrual period is carried through unchanged
+[PASS] 2k  every dimensional key (household, advisor) is carried from the line onto the revenue_event, so the cuts work on emitted revenue
+[PASS] 3a  re-processing the same POSTED run emitted 0 and skipped 2 — a clean, counted no-op rather than a constraint violation
+[PASS] 3b  still exactly 2 revenue_events rows
+[PASS] 3c  the same two row ids survived — nothing was deleted and re-inserted behind a stable count
+[PASS] 3d  created_at did not move on either row
+[PASS] 3e  the DATABASE refuses a duplicate (org, source_type, source_id) independently of the service layer
+[PASS] 4a  emit_revenue_for_run contains no branch on run_type or REVERSAL — a reversal really does take the same path, it is not two implementations that happen to agree
+[PASS] 4b  the reversal's lines carry negated net_fee
+[PASS] 4c  posting the reversal emitted its own 2 revenue_events
+[PASS] 4d  both reversal revenue_events are NEGATIVE
+[PASS] 4e-026  through the view, 026's Q1 revenue nets to exactly 0 across the original (+2500.00) and its reversal
+[PASS] 4e-027  through the view, 027's Q1 revenue nets to exactly 0 across the original (+2000.00) and its reversal
+[PASS] 4f  the P&L for that account over Q1 is zero on 2 real rows — netted, not empty
+[PASS] 5-order  the published line order is gross revenue, direct costs, margin BEFORE allocation, service cost, margin after service, allocated overhead, net profit — in that order
+[PASS] 5-ACCOUNT  cut ACCOUNT: all seven P&L lines match the hand-computed figures
+[PASS] 5-ACCOUNT-lines  cut ACCOUNT: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-ACCOUNTS  cut ACCOUNTS: all seven P&L lines match the hand-computed figures
+[PASS] 5-ACCOUNTS-lines  cut ACCOUNTS: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-HOUSEHOLD  cut HOUSEHOLD: all seven P&L lines match the hand-computed figures
+[PASS] 5-HOUSEHOLD-lines  cut HOUSEHOLD: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-HOUSEHOLDS  cut HOUSEHOLDS: all seven P&L lines match the hand-computed figures
+[PASS] 5-HOUSEHOLDS-lines  cut HOUSEHOLDS: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-BILLING_GROUP  cut BILLING_GROUP: all seven P&L lines match the hand-computed figures
+[PASS] 5-BILLING_GROUP-lines  cut BILLING_GROUP: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-ADVISOR  cut ADVISOR: all seven P&L lines match the hand-computed figures
+[PASS] 5-ADVISOR-lines  cut ADVISOR: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-PRODUCT_TYPE  cut PRODUCT_TYPE: all seven P&L lines match the hand-computed figures
+[PASS] 5-PRODUCT_TYPE-lines  cut PRODUCT_TYPE: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5-FIRM  cut FIRM: all seven P&L lines match the hand-computed figures
+[PASS] 5-FIRM-lines  cut FIRM: lines() emits the fixed order and net profit still equals SUM(signed_amount)
+[PASS] 5i-ACCOUNT  ACCOUNT genuinely EXCLUDES: the cut and its complement add back to the firm total, and the cut is not the firm
+[PASS] 5i-HOUSEHOLD  HOUSEHOLD genuinely EXCLUDES: the cut and its complement add back to the firm total, and the cut is not the firm
+[PASS] 5i-ADVISOR  ADVISOR genuinely EXCLUDES: the cut and its complement add back to the firm total, and the cut is not the firm
+[PASS] 5j  a cut with genuinely no rows returns zero AND reports zero rows, so an empty answer is distinguishable from a broken filter
+[PASS] 5k  dropping the period window admits strictly more revenue rows — the window is a real filter, not a no-op
+[PASS] 5l  no caveat and no warning on a clean fixture — so one that does appear means something
+[PASS] 5m  a pass-through cost inside the cut attaches the fee37-F6 unverified-rate caveat — measured from the rows summed, not attached unconditionally
+[PASS] 5n  a cut with no pass-through cost gets no caveat, on the same database state
+[PASS] 5o  fee37 F4 REPRODUCED: two byte-identical cost_events with a NULL account_id both inserted — cost_events_dedupe_uq cannot see them
+[PASS] 5p  duplicate_cost_scan finds the pair and reports 777 as the SURPLUS (the amount a roll-up is overstated by), not the 1,554 group total
+[PASS] 5q  the P&L warns that its cost lines may be overstated rather than reporting a doubled number silently
+[PASS] 6a  ranked by net_profit, WORST FIRST: loss-making household, then small, then thin, then profitable
+[PASS] 6b  each household's net profit is the hand-computed figure
+[PASS] 6c  the list genuinely runs worst -> best and spans the sign change
+[PASS] 6d  ranked by margin_pct the order is DIFFERENT — the small household loses only $400 but on $100 of revenue, so rank_by is genuinely read rather than ignored
+[PASS] 6e  the two rankings are not the same list, so [6a] and [6d] are two distinct assertions rather than one repeated
+[PASS] 6f  the small household's margin_pct is the hand-computed -400/100 = -4.0
+[PASS] 6g  every ranked household publishes the same fixed seven lines
+[PASS] 6h  limit keeps the WORST n, not an arbitrary n
+[PASS] 6i  include_unhoused only ever adds the NULL-household bucket; it never drops a real household
+[PASS] 7a  the test role's rolbypassrls is False — without this every isolation check below proves nothing
+[PASS] 7b  on the BASE TABLE, org A cannot see org B's revenue_event
+[PASS] 7c  the owning org CAN see it — so [7b] is isolation, not an empty table
+[PASS] 7d  an EMPTY org GUC reads zero rows — the policy's NULLIF, not a cast error and not a wide-open read
+[PASS] 7e  the view's owner has rolbypassrls=TRUE, which is exactly why security_invoker is load-bearing here and not cosmetic
+[PASS] 7f  DEFECT REPRODUCED: a twin view WITHOUT security_invoker hands org A org B's row straight through, even though the base table refused the same read in [7b]
+[PASS] 7g  the real view now carries security_invoker=true
+[PASS] 7h  FIXED: through the real view, org A cannot see org B's row — the same read that leaked in [7f]
+[PASS] 7i  and the owning org still sees it through the view, so [7h] is isolation rather than the view returning nothing at all
+[PASS] 7j  the COST branch of the UNION is isolated too, proven in both directions
+[PASS] 7k  profit_and_loss on app_service returns this org's own hand-computed firm total, with the other org's 4,242 and 9,191 nowhere in it
+[FIND] F39-A  v_profitability_events was deployed by Part 1 WITHOUT security_invoker, and its owner (postgres) has rolbypassrls=TRUE. Both base tables were correctly locked down, so the leak was invisible from either table's own RLS. Fixed in this sprint with ALTER VIEW ... SET (security_invoker = true); reproduced in [7f] and proven fixed in [7h]. NOTE the same class of bug is still open on v_trial_balance and the other GL views (portfolio-D flagged them; they remain security_invoker=FALSE in the snapshot).
+[FIND] F39-B  fee_run_lines and fee_schedules were both EMPTY at sprint start — fee36's fixtures were torn down, so there was no real posted run to read product_type values from. The vocabulary was taken from the deployed fee_schedules_product_type_check instead. The advisory value is spelled ASSET_MANAGEMENT, not ADVISORY; the prompt named the other five and left this one implied.
+[FIND] F39-C  revenue_events_type_check admits 8 values, of which 3 cannot come from a fee run (SPV_CARRY is deferred, PASS_THROUGH_MARKUP is fee37's, INTEREST_SHARE has no fee-run source) — 5 revenue types for 6 product types. STRUCTURED_INVESTMENT and TRANSACTION both map to PLACEMENT_FEE. Nothing is lost, since product_type is on the revenue_events row itself and the product cut still separates them, but they cannot be told apart by revenue_type alone.
+[FIND] F39-D  Neither revenue_events.advisor_id nor cost_events.advisor_id has a FOREIGN KEY, unlike account_id / household_id / billing_group_id on both tables. The ADVISOR cut therefore groups on an unconstrained uuid: a typo'd advisor id inserts cleanly and shows up as its own silent, empty-named bucket in any advisor roll-up.
+[PASS] 8  every counted table is back to its pre-test row count
+
+==============================================================================
+fee39: 87/91 PASS  FIND=4
+==============================================================================
