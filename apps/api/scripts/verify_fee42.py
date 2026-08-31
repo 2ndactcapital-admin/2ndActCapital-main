@@ -843,16 +843,17 @@ async def check_4(app) -> None:
                      "repointing spv_id is refused, naming the key",
                      detail=str(exc))
 
-        try:
-            await SFT.resolve_terms_for_entity(
-                app, ORG, SPV_MAIN, E_DUPE, as_of=date(2026, 1, 1))
-            R.bad("4k", "two overlapping active side letters resolved silently "
-                        "to one of them")
-        except SFT.AmbiguousSideLetterError as exc:
-            R.expect("4k", len(exc.context.get("side_letter_ids", [])) == 2,
-                     "two side letters in force for one investor RAISE rather "
-                     "than let the resolver pick — reachable because the table "
-                     "has no unique index", detail=str(exc))
+        # Original check 4k asserted the RESOLVER raises AmbiguousSideLetterError
+        # when two active side letters exist for one investor. That state can no
+        # longer be constructed: spv_fee_side_letters_active_uq (added to close
+        # finding [1f]) now refuses a second active letter for the same
+        # (org, spv, entity) at INSERT time — proved by the database-level
+        # check 4k earlier in this file (see seed_terms_and_letters). The
+        # resolver's own AmbiguousSideLetterError path is retained in
+        # services/spv_fee_terms.py as defense in depth (belt-and-suspenders
+        # against any future write path that might bypass the index, e.g. a
+        # raw migration), but is no longer independently exercisable from a
+        # normally-seeded fixture and is not re-tested here.
 
         # A letter outside its effective window must not apply. The date is
         # chosen so the base TERMS are in force (from 2024-01-01) but the side
@@ -1244,7 +1245,6 @@ async def seed_terms_and_letters(app) -> None:
              {"mgmt_fee_pct": "0.005", "placement_fee_pct": None}, date(2025, 1, 1)),
             (SL_OFFSET, E_OFFSET, {"offsets_advisory_fee": True}, date(2025, 1, 1)),
             (SL_DUPE_A, E_DUPE, {"mgmt_fee_pct": "0.004"}, date(2025, 1, 1)),
-            (SL_DUPE_B, E_DUPE, {"mgmt_fee_pct": "0.003"}, date(2025, 6, 1)),
         ):
             await app.execute(
                 """INSERT INTO public.spv_fee_side_letters
@@ -1255,6 +1255,28 @@ async def seed_terms_and_letters(app) -> None:
                 sid, ORG, SPV_MAIN, eid, json.dumps(overrides), eff_from,
                 U_APPROVER, f"{TAG} side letter")
 
+        # SL_DUPE_B targets the SAME entity as SL_DUPE_A, on the same spv,
+        # while SL_DUPE_A is still active. spv_fee_side_letters_active_uq
+        # (added to close finding [1f]) now refuses this at the database.
+        # A nested transaction (savepoint) isolates the expected failure so
+        # it doesn't abort the rest of this fixture's outer transaction.
+        try:
+            async with app.transaction():
+                await app.execute(
+                    """INSERT INTO public.spv_fee_side_letters
+                         (id, org_id, spv_id, entity_id, overrides, effective_from,
+                          approved_by, reason)
+                       VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::jsonb,
+                               $6::date,$7::uuid,$8)""",
+                    SL_DUPE_B, ORG, SPV_MAIN, E_DUPE,
+                    json.dumps({"mgmt_fee_pct": "0.003"}), date(2025, 6, 1),
+                    U_APPROVER, f"{TAG} side letter")
+            raise AssertionError(
+                "spv_fee_side_letters_active_uq should have refused a second "
+                "active side letter for the same (org, spv, entity)")
+        except asyncpg.exceptions.UniqueViolationError:
+            print("[PASS] 4k  a second active side letter for the same investor "
+                  "is refused by spv_fee_side_letters_active_uq, at the database")
 
 async def main() -> int:
     admin_url, admin_prov = await admin_dsn()
