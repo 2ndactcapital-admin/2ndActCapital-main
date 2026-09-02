@@ -1,0 +1,147 @@
+publish_event: trigger 99000000-0000-0000-0000-00004b420081 failed to start a run for event 5fd266ac-346d-4710-8e05-58ca0a444595
+Traceback (most recent call last):
+  File "/mnt/c/Users/Joe/2ndActCapital/apps/api/services/domain_events.py", line 317, in publish_event
+    result = await workflow_engine.start_workflow_run(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "/mnt/c/Users/Joe/2ndActCapital/apps/api/services/workflow_engine.py", line 438, in start_workflow_run
+    executed = await _drive(workflow)
+               ^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/Users/Joe/2ndActCapital/apps/api/services/workflow_engine.py", line 176, in _drive
+    result = await _execute_service_task(step_key)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/Users/Joe/2ndActCapital/apps/api/services/workflow_engine.py", line 222, in _execute_service_task
+    await _assert_action_permission(pool, resolved, actor_id, step_key)
+  File "/mnt/c/Users/Joe/2ndActCapital/apps/api/services/workflow_engine.py", line 272, in _assert_action_permission
+    raise WorkflowEngineError(
+    ...<4 lines>...
+    )
+services.workflow_engine.WorkflowEngineError: Service Task 'Propose_Carry_Run' invokes action 'spv_carry.propose_from_realization', which requires permission 'manage_billing'. The member who started this run (99000000-0000-0000-0000-00004b420002) does not hold it. A workflow does not widen a member's permissions.
+admin       : DATABASE_URL (doppler/env)
+app_service : APP_SERVICE_DATABASE_URL (doppler/env)
+
+[PASS] 0  the end-to-end runs on the deployed _RLSPool, not a raw pool (a raw pool hides the savepoint-not-commit failure mode)
+[PASS] 1a:spv_carry_runs  spv_carry_runs is deployed
+[PASS] 1b:spv_carry_runs  spv_carry_runs has RLS enabled
+[PASS] 1c:spv_carry_runs  spv_carry_runs carries an org-isolation policy with the NULLIF guard on both USING and WITH CHECK
+[PASS] 1a:spv_carry_run_lines  spv_carry_run_lines is deployed
+[PASS] 1b:spv_carry_run_lines  spv_carry_run_lines has RLS enabled
+[PASS] 1c:spv_carry_run_lines  spv_carry_run_lines carries an org-isolation policy with the NULLIF guard on both USING and WITH CHECK
+[PASS] 1d  spv_carry_runs_status_check admits exactly the lifecycle this module implements, and the module's RUN_STATUSES was read from it
+[PASS] 1d2  spv_carry_runs_carry_basis_check admits DEAL_BY_DEAL and WHOLE_FUND
+[PASS] 1e  spv_carry_run_lines_balance_check is deployed on (net_to_lp + carry_to_gp = gross_gain_allocated)
+[PASS] 1e2  a line one cent out of balance (200.00 + 799.99 != 1000.00) is REFUSED by the database, not merely by the engine
+[PASS] 1e3  a line that DOES reconcile is accepted — the constraint refuses unbalanced rows, not every row
+[PASS] 1f:spv_carry_runs_immutable_once_posted  spv_carry_runs_immutable_once_posted fires BEFORE DELETE OR UPDATE on public.spv_carry_runs
+[PASS] 1f:spv_carry_run_lines_immutable_once_posted  spv_carry_run_lines_immutable_once_posted fires BEFORE DELETE OR UPDATE on public.spv_carry_run_lines
+[PASS] 1g  a line on a NON-posted run can still be UPDATEd — the trigger blocks POSTED rows, not all rows
+[PASS] 1g2  a line on a NON-posted run is really DELETEd — the trigger does not silently swallow the delete by returning NULL
+[PASS] 1g3  a NON-posted run can be UPDATEd and really DELETEd
+[PASS] 2a  golden case — fully absorbed by return of capital — matches the hand-computed result exactly
+[PASS] 2a-bal  golden case 2a satisfies the balance constraint exactly
+[PASS] 2a-detail  calc_detail for 2a traces all four tiers in order
+[PASS] 2a-chain  calc_detail for 2a shows the running balance handed from each tier to the next, opening at the cumulative distribution and closing at zero
+[PASS] 2a-tile  the four tiers tile 2a's gain exactly — no gap, no double-count
+[PASS] 2b  golden case — into the preferred return but hurdle NOT cleared — matches the hand-computed result exactly
+[PASS] 2b-bal  golden case 2b satisfies the balance constraint exactly
+[PASS] 2b-detail  calc_detail for 2b traces all four tiers in order
+[PASS] 2b-chain  calc_detail for 2b shows the running balance handed from each tier to the next, opening at the cumulative distribution and closing at zero
+[PASS] 2b-tile  the four tiers tile 2b's gain exactly — no gap, no double-count
+[PASS] 2c  golden case — hurdle cleared, HARD — no catch-up, carry only above the hurdle — matches the hand-computed result exactly
+[PASS] 2c-bal  golden case 2c satisfies the balance constraint exactly
+[PASS] 2c-detail  calc_detail for 2c traces all four tiers in order
+[PASS] 2c-chain  calc_detail for 2c shows the running balance handed from each tier to the next, opening at the cumulative distribution and closing at zero
+[PASS] 2c-tile  the four tiers tile 2c's gain exactly — no gap, no double-count
+[PASS] 2d  golden case — same fixture, SOFT — the GP catches up on the whole pref — matches the hand-computed result exactly
+[PASS] 2d-bal  golden case 2d satisfies the balance constraint exactly
+[PASS] 2d-detail  calc_detail for 2d traces all four tiers in order
+[PASS] 2d-chain  calc_detail for 2d shows the running balance handed from each tier to the next, opening at the cumulative distribution and closing at zero
+[PASS] 2d-tile  the four tiers tile 2d's gain exactly — no gap, no double-count
+[PASS] 2e  golden case — catch-up complete and the residual split at carry_pct — matches the hand-computed result exactly
+[PASS] 2e-bal  golden case 2e satisfies the balance constraint exactly
+[PASS] 2e-detail  calc_detail for 2e traces all four tiers in order
+[PASS] 2e-chain  calc_detail for 2e shows the running balance handed from each tier to the next, opening at the cumulative distribution and closing at zero
+[PASS] 2e-tile  the four tiers tile 2e's gain exactly — no gap, no double-count
+[PASS] 3a  cases 3 and 4 share gain, paid-in and prior distributions and differ ONLY in hurdle_type
+[PASS] 3b  HARD and SOFT produce genuinely different carry_to_gp on otherwise-identical fixtures — the distinction is real, not decorative
+[PASS] 3c  and the DIRECTION is right: a HARD hurdle pays the GP strictly LESS, because the preferred return stays the LP's
+[PASS] 3d  a HARD hurdle produces NO catch-up tier at all, a SOFT one does — that absence IS the hard hurdle
+[PASS] 3e  the SOFT case leaves the GP holding exactly carry_pct of the WHOLE profit (100,000 of 500,000) — the identity that defines a completed catch-up
+[PASS] 3f  case 5's cumulative carry is exactly 20% of cumulative profit across TWO realizations — differencing cumulative states does not drift
+[PASS] 3g  a carry_pct of 20 (percent, not fraction) is REFUSED — the deployed table has no range CHECK, so this is the only thing standing between 0.20 and paying the GP 20x the distribution
+[PASS] 3h  a SOFT hurdle with no catchup_pct is REFUSED rather than silently treated as HARD — the two pay the GP different money
+[PASS] 3i  catchup_pct <= carry_pct is REFUSED — that tier can never complete and would consume every remaining dollar
+[PASS] 3j  carry_pct with no hurdle_type is REFUSED, mirroring the deployed spv_fee_terms_carry_requires_hurdle_type CHECK
+[PASS] 3k  a NULL carry_basis is REFUSED — there is no safe default between netting against one deal and against a whole fund
+[PASS] 3l  a float amount is REFUSED at the boundary, not silently converted — Decimal(0.08) is not 0.08 and would move a hurdle
+[PASS] 4a  the capital call posted and allocated 600,000 / 400,000 — the cumulative paid-in the waterfall reads is real posted money, not a fixture constant
+[PASS] 4b  posting a real dist_gain fired the spv_realization domain event through the event-emission sprint's own mechanism
+[PASS] 4c  the carry subscriber's trigger was resolved and its workflow run started — a real DELIVERED row, not a skip
+[PASS] 4d  exactly ONE spv_carry_run appeared, with no human action of any kind between the post and the proposal
+[PASS] 4e  the run names the domain event AND the transaction that produced it — the provenance survives
+[PASS] 4f  one line per allocated investor
+[PASS] 4g:0021  investor 0021's line matches the hand-computed waterfall to the cent
+[PASS] 4g:0022  investor 0022's line matches the hand-computed waterfall to the cent
+[PASS] 4h  terms were resolved PER INVESTOR through fee42's own resolver — the side letter moved investor two to a HARD hurdle and the engine paid a different number for it
+[PASS] 4h2  and the line records WHICH side letter did it
+[PASS] 5a  the triggered run is DRAFT — a workflow trigger creates a proposal, never a posted fact
+[PASS] 5b  no approval column was stamped on the way past
+[PASS] 5c  and no approval activity was opened or closed by the automatic path — the maker-checker ledger is untouched
+[PASS] 5d  the workflow run itself is PAUSED, not completed — the BPMN's User Task is the gate, and the process genuinely stops at it
+[PASS] 5e  the run is waiting at Review_Carry_Proposal, its human review step
+[PASS] 5f  the Service Task really INVOKED the registered action (not merely resolved its key) and recorded that it produced a DRAFT
+[PASS] 5g  the handler priced the event named in the run's own context — it does not scan for 'the most recent realization', which would race the moment two distributions post together
+[PASS] 4i  a subscriber that cannot run does NOT undo the post that happened — publishing is an observation, not a precondition
+[PASS] 4j  an actor without manage_billing produces a FAILED delivery naming the missing permission — loudly, not silently
+[PASS] 4k  and NO carry run was written — an event trigger is not a route around a permission gate
+[PASS] F2-probe  the v_capital_accounts gap is re-measured live, not asserted
+[FIND] F2  v_capital_accounts CANNOT supply cumulative paid-in or distributions-to-date. It groups by journal_lines.dim_member_series_id — a column with NO dim_member_series table (none exists, nor any dim_* table), NO foreign key, and NULL in all deployed rows — while its own WHERE requires that column NOT NULL, so it returns 0 rows and structurally will until a GL posting path populates the dimension (fee43, open question #3). Even populated, there is no join path from that id to an SPV investor entity. It also keys on journal_entries.vehicle_id and every deployed SPV has vehicle_entity_id NULL. Cumulative figures are read instead from the POSTED spv_transaction_allocations themselves — not a second balance table, the actual transactions.
+[PASS] F4a  WHOLE_FUND on a member_series vehicle with a master is REFUSED rather than computed per-vehicle and labelled whole-fund
+[PASS] F4b  and WHOLE_FUND on a standalone SPV proceeds, recording that the two bases coincide at this grain
+[PASS] F4c  spv_transactions carries no investment/position reference — measured, not assumed
+[FIND] F4  WHOLE_FUND vs DEAL_BY_DEAL: an SPV has NO grain below itself (spv_transactions has zero investment/position/asset columns) and spvs.deal_id is NOT NULL, so on a standalone vehicle the two bases are the same arithmetic on the same rows and both are computed. They diverge only for investment_series/member_series vehicles under a master_entity_id, which would need a master-level rollup that has no deployed data — every deployed SPV is standalone_spv with master_entity_id NULL. That case is REFUSED (WholeFundScopeError), not approximated. This is the honest gap.
+[FIND] F3  HARD vs SOFT hurdle is defined NOWHERE in this repository — the only prior mention is prose in spv_fee_terms' docstring ('an 8% soft hurdle and a 100% catch-up') which uses the terms without defining them, and the deployed CHECK admits HARD/SOFT/NONE with no semantics. Standard PE convention adopted and stated once in services/spv_carry.py: SOFT = the GP catches up on the WHOLE preferred return once the hurdle clears (a timing preference); HARD = no catch-up at all, the GP carries only above the hurdle (an economic preference). Checks 3b-3e prove the two are different, in the right direction, and that SOFT leaves the GP holding exactly carry_pct of total profit.
+[FIND] F5  The preferred RETURN is an amount; hurdle_pct is a rate, and no deployed column, CHECK or document supplies the convention that turns one into the other. ONE is implemented and named in every calc_detail: preferred_return_owed = hurdle_pct x cumulative_paid_in, cumulative and NON-COMPOUNDING, not time-weighted. A time-weighted IRR-style accrual needs dated flows AND a compounding convention nobody has specified. compute_carry takes an explicit preferred_return_owed override so a later sprint replaces one argument, not the waterfall.
+[PASS] F6-probe  workflow_triggers.trigger_type carries no CHECK — measured
+[FIND] F6  workflow_triggers.trigger_type is FREE TEXT — there is no CHECK constraint on it. 'event' is a convention held only in code (domain_events.EVENT_TRIGGER_TYPE). A typo in a trigger row subscribes to nothing and fails silently; nothing in the database would catch it.
+[FIND] F7  workflow_engine._execute_service_task passed a handler only (pool, user_id, org_id) — NOT the run's context. An event-triggered Service Task therefore could not tell WHICH event started it, and every event looked identical to it. This sprint adds run_context and workflow_run_id to that call (both the start and the User-Task-resume paths). Additive: every existing handler already absorbs extra keyword arguments. Check 5g proves the carry handler prices the event named in its own run context rather than scanning for a recent one.
+[FIND] F8  public.permissions is a CLOSED vocabulary of 28 names and contains no carry-specific key. Rather than reference a permission that does not exist — which would make the gate inert — the action reuses manage_billing, the key fee33/fee34 already settled on as the fee module's write authority (fee_schedules.WRITE_PERMISSION). Check 4j proves the gate is live by naming it in a real refusal.
+[PASS] 6a  DRAFT -> PREVIEW, by a human calling the service
+[PASS] 6b  approving a gate nobody proposed is REFUSED, and the run did not move
+[PASS] 6c  proposing the ADVISOR gate does NOT advance the run — a proposal is a request for a second person
+[PASS] 6d  the SERVICE refuses self-approval and leaves the run untouched
+[PASS] 6e  and assistant_activities_maker_checker_chk refuses the same move issued as raw SQL — bypassing the service does not bypass the rule
+[PASS] 6f  a DIFFERENT member closes the ADVISOR gate and the run advances
+[PASS] 6g  posting with only ONE approval is REFUSED — compliance is not optional
+[PASS] 6h  a THIRD member closes the COMPLIANCE gate
+[PASS] 6i  with the run still SAYING COMPLIANCE_APPROVED but the ledger walked back, posting is REFUSED — the decision rests on the activities ledger, not on the status column that mirrors it
+[PASS] 6j  and with both gates genuinely closed the run POSTS
+[PASS] 6k  the posted totals are the sum of the two hand-computed lines (60,000 + 33,600 to the GP)
+[PASS] 6l  and posting the carry run does NOT post to the general ledger — that is fee43's open question #3, and it says so rather than quietly doing nothing
+[PASS] 7a  a direct SQL attempt to UPDATE the run of a POSTED run is REFUSED by the database itself, not by the service layer
+[PASS] 7b  a direct SQL attempt to DELETE the run of a POSTED run is REFUSED by the database itself, not by the service layer
+[PASS] 7c  a direct SQL attempt to UPDATE a line of a POSTED run is REFUSED by the database itself, not by the service layer
+[PASS] 7d  a direct SQL attempt to DELETE a line of a POSTED run is REFUSED by the database itself, not by the service layer
+[FIND] F9  The immutability triggers fire BEFORE DELETE OR UPDATE only. INSERTing a BRAND NEW line onto a POSTED run is ACCEPTED — no trigger and no constraint covers that path. So a POSTED run's existing lines cannot be altered or removed (checks 7a-7e), but a line can still be ADDED to one. Reported rather than patched: closing it is a Part-1 schema change (a BEFORE INSERT trigger on spv_carry_run_lines checking the parent run's status), which is outside this sprint's applied SQL.
+[PASS] 7e  and the run and both its lines are still there, unchanged — the refusals refused, they did not silently no-op
+[PASS] 8a:0021  line 0021 reconciles to the cent: net_to_lp + carry_to_gp = gross_gain_allocated
+[PASS] 8b:0021  line 0021's four tiers tile the gain exactly — return of capital + preferred return + catch-up tier + residual = 900000.0000
+[PASS] 8c:0021  and every tier's GP/LP split adds back to the two stored totals — the audit trail is not decorative
+[PASS] 8a:0022  line 0022 reconciles to the cent: net_to_lp + carry_to_gp = gross_gain_allocated
+[PASS] 8b:0022  line 0022's four tiers tile the gain exactly — return of capital + preferred return + catch-up tier + residual = 600000.0000
+[PASS] 8c:0022  and every tier's GP/LP split adds back to the two stored totals — the audit trail is not decorative
+[PASS] 9a  app_service has rolbypassrls = FALSE — without this every check below would pass vacuously
+[PASS] 9b  under app_service scoped to this org, the OTHER org's spv_carry_runs row is invisible
+[PASS] 9c  and its OWN org's run IS visible — the policy filters, it does not simply deny
+[PASS] 9d  the same holds on spv_carry_run_lines, in both directions
+[PASS] 9e  app_service scoped to this org cannot INSERT a spv_carry_runs row into another org — the policy's WITH CHECK is real
+[PASS] 9f  and cannot INSERT a line into another org either
+[PASS] 9g  while the SAME insert into its OWN org is accepted — app_service genuinely holds INSERT, so [9e]/[9f] measure the org policy and not a missing grant
+[PASS] 11  both immutability triggers are ENABLED again after teardown
+[PASS] 12  every one of the 24 tables this script writes to is back at its pre-test row count
+
+==============================================================================
+fee42b: 111/119 PASS  FIND=8
+==============================================================================

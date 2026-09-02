@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPV Realization -> Carry Proposal (fee42b).
+
+  The FIRST real subscriber to event_type='spv_realization'. A trigger row of
+  trigger_type='event' pointing at this definition is what
+  services/domain_events.py's fan-out resolves when spv_allocation.post_transaction
+  posts a gain-type distribution.
+
+  THE SHAPE IS THE GOVERNANCE, AND IT IS NOT DECORATIVE
+  ────────────────────────────────────────────────────────────────────────────
+  Start -> ServiceTask -> UserTask -> End.
+
+  The Service Task runs autonomously and writes a DRAFT spv_carry_run. Then the
+  process REACHES A USER TASK AND STOPS. That pause is the whole design: an
+  event-triggered run computes what is owed and hands it to a person, and there
+  is no path through this process that posts anything. The run sits at
+  'Review_Carry_Proposal' until a human completes it, and the engine records
+  the run's starter as proposed_by so a DIFFERENT member must complete it
+  (workflow_run_steps_maker_checker).
+
+  Removing the User Task would turn this into auto-execution. It is load-bearing.
+
+  autonomyTier is NOT overridden on the Service Task. The deriver's default for
+  a Service Task wrapping a WRITE-capable action is Tier 2 (confirm-and-log),
+  and that is the honest tier: the action inserts rows. The LiteLLM reload
+  workflow overrides to Tier 3 because that action writes nothing in this
+  database; this one does, so it does not get the same treatment. A Tier-3
+  write is a deliberate authoring choice and this is not one of them.
+
+  The action itself carries required_permission='manage_fees', which
+  workflow_engine._assert_action_permission re-checks against the member the
+  run belongs to — so firing automatically cannot reach further than the person
+  it runs as could reach by hand.
+
+  Money is NOT moved anywhere in this process. Reaching POSTED on the carry run
+  is four further decisions (preview, advisor approval, compliance approval,
+  post) through services/spv_carry_runs.py and assistant_activities, none of
+  which is reachable from this BPMN.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:twoa="http://2ndactcapital.com/bpmn/ext"
+                  id="Defs_spv_realization_carry_proposal"
+                  targetNamespace="http://2ndactcapital.com/bpmn">
+  <bpmn:process id="spv_realization_carry_proposal"
+                name="SPV Realization — Carry Proposal"
+                isExecutable="true">
+    <bpmn:startEvent id="Start_1">
+      <bpmn:outgoing>flow_start_propose</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:serviceTask id="Propose_Carry_Run"
+                      name="Compute the carry waterfall and propose a DRAFT run">
+      <bpmn:extensionElements>
+        <twoa:governance actionRegistryKey="spv_carry.propose_from_realization"/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow_start_propose</bpmn:incoming>
+      <bpmn:outgoing>flow_propose_review</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:userTask id="Review_Carry_Proposal"
+                   name="Review the proposed carry run">
+      <bpmn:incoming>flow_propose_review</bpmn:incoming>
+      <bpmn:outgoing>flow_review_end</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="End_1">
+      <bpmn:incoming>flow_review_end</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="flow_start_propose"
+                       sourceRef="Start_1" targetRef="Propose_Carry_Run"/>
+    <bpmn:sequenceFlow id="flow_propose_review"
+                       sourceRef="Propose_Carry_Run" targetRef="Review_Carry_Proposal"/>
+    <bpmn:sequenceFlow id="flow_review_end"
+                       sourceRef="Review_Carry_Proposal" targetRef="End_1"/>
+  </bpmn:process>
+</bpmn:definitions>

@@ -221,10 +221,18 @@ async def _execute_service_task(step_key: str) -> dict:
     actor_id = _SERVICE_CONTEXT.get("actor_id")
     await _assert_action_permission(pool, resolved, actor_id, step_key)
 
+    # ``run_context``/``run_id`` are passed so an event-driven action can tell
+    # WHICH event started it. Without them a Service Task on an event-triggered
+    # run knows only its own org — it cannot reach the domain_events row that
+    # publish_event put into ``workflow_runs.context``, and every event would
+    # look identical to it. Every existing handler already absorbs unexpected
+    # keyword arguments (``**_``), so this is additive.
     handler_result = await resolved.handler(
         pool=pool,
         user_id=actor_id,
         org_id=_SERVICE_CONTEXT.get("org_id"),
+        run_context=_SERVICE_CONTEXT.get("run_context") or {},
+        workflow_run_id=_SERVICE_CONTEXT.get("run_id"),
     )
     handler_result = handler_result or {}
     result["invoked"] = True
@@ -424,6 +432,7 @@ async def start_workflow_run(
                 }
                 _SERVICE_CONTEXT = {
                     "pool": pool, "org_id": org_id, "actor_id": started_by,
+                    "run_context": context, "run_id": run_id,
                 }
                 try:
                     executed = await _drive(workflow)
@@ -560,7 +569,8 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             """
             SELECT rs.id, rs.workflow_run_id, rs.org_id, rs.status, rs.proposed_by,
                    ws.step_key, ws.autonomy_tier, ws.assigned_role_profile_id,
-                   r.workflow_version_id, r.spiff_serialized_state, r.started_by
+                   r.workflow_version_id, r.spiff_serialized_state, r.started_by,
+                   r.context
             FROM workflow_run_steps rs
             JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
             JOIN workflow_runs r ON r.id = rs.workflow_run_id
@@ -607,8 +617,20 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             }
             # A Service Task downstream of a User Task is still attributable to
             # the member who STARTED the run, not to whoever approved the task.
+            # The run's own context travels here too, for the same reason as on
+            # the start path: a Service Task downstream of a User Task on an
+            # event-triggered run still needs to know which event started it.
+            # ``workflow_runs.context`` comes back as jsonb; on these pools no
+            # json codec is registered, so it may arrive as text.
+            _resume_context = step["context"]
+            if isinstance(_resume_context, (str, bytes)):
+                try:
+                    _resume_context = json.loads(_resume_context)
+                except (ValueError, TypeError):
+                    _resume_context = {}
             _SERVICE_CONTEXT = {
                 "pool": pool, "org_id": org_id, "actor_id": step["started_by"],
+                "run_context": _resume_context or {}, "run_id": run_id,
             }
             try:
                 executed = await _drive(workflow)

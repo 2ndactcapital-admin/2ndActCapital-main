@@ -1694,6 +1694,42 @@
 --   UNIQUE roles_org_id_name_key: (org_id, name)
 --   PRIMARY KEY roles_pkey: (id)
 
+-- ===== spv_carry_run_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_carry_run_id                         uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   spv_subscription_id                      uuid
+--   gross_gain_allocated                     numeric NOT NULL
+--   return_of_capital                        numeric NOT NULL DEFAULT 0
+--   preferred_return                         numeric NOT NULL DEFAULT 0
+--   gp_catchup                               numeric NOT NULL DEFAULT 0
+--   carry_to_gp                              numeric NOT NULL DEFAULT 0
+--   net_to_lp                                numeric NOT NULL
+--   calc_detail                              jsonb NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_carry_run_lines_pkey: (id)
+
+-- ===== spv_carry_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   domain_event_id                          uuid
+--   triggering_transaction_id                uuid
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   carry_basis                              text NOT NULL
+--   calculation_snapshot_hash                text
+--   engine_version                           text
+--   created_by                               uuid
+--   advisor_approved_by                      uuid
+--   advisor_approved_at                      timestamp with time zone
+--   compliance_approved_by                   uuid
+--   compliance_approved_at                   timestamp with time zone
+--   posted_at                                timestamp with time zone
+--   reverses_run_id                          uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_carry_runs_pkey: (id)
+
 -- ===== spv_documents =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL

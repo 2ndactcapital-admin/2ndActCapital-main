@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-31 (Platform — domain event emission)
+Last updated: 2026-09-02 (Fee module fee42b — SPV carry distribution engine)
 
 ## About this file
 
@@ -18,6 +18,78 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000. Fee module fee42b — SPV carry BUILT; THREE items owed (2026-09-02)
+
+`111/119 PASS, 8 FIND, 0 FAIL, 0 BLOCKED` —
+`apps/api/scripts/verify_fee42b.py`. Nothing here is blocked on anything
+outside the codebase. Recorded because it CLOSES the gap the event-emission
+entry below opened, and OPENS three tracked follow-ups.
+
+**What closed.** `spv_realization` now has its first real subscriber.
+`apps/api/fixtures/spv_realization_carry_proposal.bpmn` + the
+`spv_carry.propose_from_realization` registry action turn a posted `dist_gain`
+into a DRAFT `spv_carry_run` with one priced line per allocated investor, with
+no human in the loop and no path past DRAFT. `services/spv_carry.py` is the
+pure four-tier waterfall (zero DB access, fee35's discipline);
+`services/spv_carry_runs.py` is the DB half and the DRAFT → PREVIEW →
+ADVISOR_APPROVED → COMPLIANCE_APPROVED → POSTED lifecycle, maker-checkered
+through `assistant_activities` exactly as fee36 does it.
+
+**A trigger row must still be created per org.** The verify script builds its
+own `workflow_definitions`/`workflow_versions`/`workflow_triggers` fixture and
+tears it down. **No production trigger row for `event_type='spv_realization'`
+exists yet** — the BPMN and the action are shipped, the subscription is one
+row, and creating it is a deliberate operational decision, not a code change.
+
+### The three items owed
+
+1. **A line can still be ADDED to a POSTED run.** Both deployed immutability
+   triggers fire `BEFORE DELETE OR UPDATE` only; nothing covers INSERT.
+   Measured live, not inferred (`verify_fee42b.py` FIND F9). A POSTED run's
+   existing lines genuinely cannot be altered or removed (checks 7a–7e).
+   Closing this is a Part-1 schema change — a `BEFORE INSERT` trigger on
+   `spv_carry_run_lines` checking the parent run's status — and was outside
+   this sprint's applied SQL.
+
+2. **`v_capital_accounts` cannot supply cumulative capital, and structurally
+   will not until GL posting ships.** It groups by
+   `journal_lines.dim_member_series_id`: no `dim_member_series` table exists
+   (nor any `dim_*` table), the column has no FK, it is NULL in every deployed
+   row, and the view's own `WHERE` requires it NOT NULL — so it returns zero
+   rows. Even populated there is no join path from that id to an SPV investor
+   entity, and it also keys on `journal_entries.vehicle_id` while every
+   deployed SPV has `vehicle_entity_id` NULL. fee42b reads the POSTED
+   `spv_transaction_allocations` instead (not a second balance table — the
+   actual transactions), and `spv_carry_runs.capital_account_probe` re-measures
+   the view on every proposal so this finding goes stale visibly rather than
+   silently. Depends on open question #3 (fee43).
+
+3. **The preferred-return accrual convention is the simple one, deliberately.**
+   `preferred_return_owed = hurdle_pct × cumulative_paid_in`, cumulative and
+   NON-COMPOUNDING, not time-weighted — named in every `calc_detail` as
+   `PREF_CONVENTION`. A time-weighted IRR-style accrual needs dated flows AND a
+   compounding convention nobody has specified. `compute_carry` takes an
+   explicit `preferred_return_owed` override so settling it later replaces one
+   argument, not the waterfall.
+
+### Two things worth knowing before extending this
+
+**HARD vs SOFT was undefined anywhere in this repo and is now defined in one
+place.** SOFT = the GP catches up on the WHOLE preferred return once the hurdle
+clears (a *timing* preference); HARD = no catch-up tier at all, the GP carries
+only above the hurdle (an *economic* preference, and strictly cheaper for the
+LP). Stated once in `services/spv_carry.py` and proved in both directions on
+one-field-apart fixtures.
+
+**WHOLE_FUND is refused where it would be wrong, not approximated.**
+`spv_transactions` carries no investment/position reference, so an SPV has no
+grain below itself and on a standalone vehicle DEAL_BY_DEAL and WHOLE_FUND are
+the same rows. On an `investment_series`/`member_series` vehicle under a
+`master_entity_id` they are not, and no master-level rollup is deployed — that
+case raises `WholeFundScopeError`.
 
 ---
 
@@ -67,13 +139,20 @@ that these flag values are read, never re-derived.
 
 ### NEW, DELIBERATE GAP — nothing subscribes to `spv_realization` yet
 
-The mechanism is proven end-to-end against fixture triggers, but **no
-production `workflow_triggers` row for `event_type='spv_realization'` exists**.
-`fee42b` is the intended first real subscriber (carry calculation) and was
-explicitly out of scope here. Until it lands, a posted `dist_gain` writes its
-`domain_events` row — the table is append-only and retains events with no
-subscriber, by design — and fans out to nobody. That is the correct state, not
-a defect: a trigger added later still finds the history intact.
+**PARTLY CLOSED by fee42b (2026-09-02) — see the entry above.** The subscriber
+now exists in code: the BPMN, the `spv_carry.propose_from_realization` registry
+action and the whole carry engine shipped, and the end-to-end is proved against
+a real posted `dist_gain`. What remains is operational, not a code gap — **no
+production `workflow_triggers` row for `event_type='spv_realization'` has been
+created**, so a posted `dist_gain` still writes its `domain_events` row and
+fans out to nobody until somebody inserts that one row. The original reading
+below still holds for that interval.
+
+The mechanism is proven end-to-end against fixture triggers. Until a production
+trigger row lands, a posted `dist_gain` writes its `domain_events` row — the
+table is append-only and retains events with no subscriber, by design — and
+fans out to nobody. That is the correct state, not a defect: a trigger added
+later still finds the history intact.
 
 ---
 
