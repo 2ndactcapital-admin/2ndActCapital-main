@@ -1676,8 +1676,22 @@
 --   display_order                            integer NOT NULL DEFAULT 100
 --   is_active                                boolean NOT NULL DEFAULT true
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
---   UNIQUE reference_data_list_key_code_parent_code_key: (list_key, code, parent_code)
+--   list_id                                  uuid
 --   PRIMARY KEY reference_data_pkey: (id)
+
+-- ===== reference_data_lists =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid
+--   list_key                                 text NOT NULL
+--   label                                    text NOT NULL
+--   description                              text
+--   owner_scope                              text NOT NULL
+--   owner_scope_id                           uuid
+--   is_extensible                            boolean NOT NULL DEFAULT false
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY reference_data_lists_pkey: (id)
 
 -- ===== restricted_access_audit =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -3440,6 +3454,37 @@
 --   resolved_at                              timestamp with time zone
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
 
+-- ===== portfolio.ta_calibration_results =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   commitment_id                            uuid NOT NULL
+--   ta_strategy_key                          text NOT NULL
+--   calibrated_params                        jsonb NOT NULL
+--   realized_periods_used                    integer NOT NULL
+--   periods_per_year                         integer NOT NULL
+--   calibrated_at                            timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY ta_calibration_results_pkey: (id)
+
+-- ===== portfolio.ta_model_params =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   commitment_id                            uuid NOT NULL
+--   ta_strategy_key                          text NOT NULL
+--   rate_of_contribution                     numeric NOT NULL
+--   rate_of_distribution                     numeric NOT NULL
+--   growth_rate                              numeric NOT NULL
+--   bow_factor                               numeric NOT NULL
+--   fund_life_years                          numeric NOT NULL
+--   periods_per_year                         integer NOT NULL
+--   source                                   text NOT NULL DEFAULT 'override'::text
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY ta_model_params_pkey: (id)
+
 -- ===== portfolio.transactions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -3467,6 +3512,17 @@
 --   is_corporate_action_adjustment           boolean NOT NULL DEFAULT false
 --   PRIMARY KEY transactions_pkey: (id)
 
+-- ===== portfolio.udf_definition_audit =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   definition_id                            uuid NOT NULL
+--   org_id                                   uuid
+--   changed_by                               uuid
+--   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   change_kind                              text NOT NULL
+--   before_state                             jsonb
+--   after_state                              jsonb
+--   PRIMARY KEY udf_definition_audit_pkey: (id)
+
 -- ===== portfolio.udf_definitions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid
@@ -3483,7 +3539,40 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   type_params                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   api_name                                 text
+--   help_text                                text
+--   description                              text
+--   is_required                              boolean NOT NULL DEFAULT false
+--   default_value                            jsonb
+--   is_unique                                boolean NOT NULL DEFAULT false
+--   unique_case_sensitive                    boolean NOT NULL DEFAULT false
+--   is_external_id                           boolean NOT NULL DEFAULT false
+--   is_platform_managed                      boolean NOT NULL DEFAULT false
+--   value_set_id                             uuid
+--   deleted_at                               timestamp with time zone
+--   deleted_by                               uuid
+--   updated_at                               timestamp with time zone
+--   updated_by                               uuid
+--   record_type_id                           uuid
+--   controlling_definition_id                uuid
 --   PRIMARY KEY udf_definitions_pkey: (id)
+
+-- ===== portfolio.udf_tag_assignments =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   definition_id                            uuid NOT NULL
+--   target_type                              text NOT NULL
+--   target_id                                uuid NOT NULL
+--   tag_code                                 text NOT NULL
+--   normalized_code                          text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY udf_tag_assignments_pkey: (id)
 
 -- ===== portfolio.udf_values =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()

@@ -24,6 +24,16 @@ other module must resolve these through get_setting / get_all_settings.
 import json
 
 from services.rbac import can_manage_org_settings, load_principal
+from services.ta_config import (
+    DEFAULT_CALIBRATION_MIN_YEARS,
+    DEFAULT_PERIODS_PER_YEAR,
+    DEFAULT_PROJECTION_HORIZON_YEARS,
+    DEFAULT_TA_STRATEGY_PARAMS,
+    TA_CALIBRATION_MIN_YEARS_KEY,
+    TA_DEFAULT_PERIODS_PER_YEAR_KEY,
+    TA_PROJECTION_HORIZON_YEARS_KEY,
+    TA_STRATEGY_DEFAULTS_KEY,
+)
 
 # ── Keys owned by user management ─────────────────────────────────────────
 # Named constants because two other modules resolve them (services.invites for
@@ -198,6 +208,18 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # udf01b — layout shape caps, same "crm.udf." prefix as the six above.
     "crm.udf.max_sections_per_layout": 10,
     "crm.udf.max_items_per_section": 20,
+    # ── TA Model Sprint 1 ────────────────────────────────────────────────────
+    # Sourced from services.ta_config (the single owner of these literals) so
+    # an org that has never called PUT /admin/modeling/ta/defaults still gets
+    # usable TA parameters from GET /modeling/ta/defaults, exactly like every
+    # other category here — a key present in org_settings with no per-org row
+    # must resolve to SOMETHING, never to None. Task 2's 4 seed rows write the
+    # SAME values into the default org's own rows; this is what every OTHER
+    # org (never explicitly seeded) falls back to.
+    TA_STRATEGY_DEFAULTS_KEY: DEFAULT_TA_STRATEGY_PARAMS,
+    TA_PROJECTION_HORIZON_YEARS_KEY: DEFAULT_PROJECTION_HORIZON_YEARS,
+    TA_DEFAULT_PERIODS_PER_YEAR_KEY: DEFAULT_PERIODS_PER_YEAR,
+    TA_CALIBRATION_MIN_YEARS_KEY: DEFAULT_CALIBRATION_MIN_YEARS,
 }
 
 # Category per key, used when a key is written for the first time and when
@@ -217,6 +239,8 @@ CATEGORY_BY_PREFIX = {
     # udf01a — the UDF caps group under one heading; an admin raising a field
     # limit and a tag limit is doing one job.
     "crm.udf.": "crm",
+    # TA Model Sprint 1 — modeling.ta.* (services.ta_config.TA_SETTINGS_KEYS).
+    "modeling.": "modeling",
 }
 
 DEFAULT_CATEGORY = "general"

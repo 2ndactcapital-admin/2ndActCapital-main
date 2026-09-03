@@ -15,5 +15,5 @@
 # `doppler setup --project X` ad hoc, which reintroduces the per-machine drift
 # this file exists to remove.
 setup:
-  - project: 2ndactcapital
-    config: development
+  - project: hollisworks
+    config: prd
