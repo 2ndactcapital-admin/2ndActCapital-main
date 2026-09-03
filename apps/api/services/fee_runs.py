@@ -798,8 +798,16 @@ async def approval_activities(conn, org_id: str, run_id: str) -> list[dict[str, 
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def post_run(conn, org_id: str, run_id: str) -> dict[str, Any]:
+async def post_run(
+    conn, org_id: str, run_id: str, *, posted_by: str | None = None
+) -> dict[str, Any]:
     """COMPLIANCE_APPROVED -> POSTED. After this the DB refuses every change.
+
+    ``posted_by`` is threaded to the GL only. ``fee_runs`` has no posted_by
+    column — the person is on the approval activities, which are the authority
+    — but ``journal_entries`` has ``created_by``/``posted_by`` and an entry
+    with neither set is an audit gap in the ledger. Optional so every caller
+    that predates fee43 keeps working unchanged.
 
     Both approval gates are re-checked against ``assistant_activities`` rather
     than against ``fee_runs.status`` alone. The status could only have got here
@@ -831,21 +839,30 @@ async def post_run(conn, org_id: str, run_id: str) -> dict[str, Any]:
             run_id=run_id,
         )
 
-    await conn.execute(
-        f"""UPDATE {T_RUNS} SET status = 'POSTED', posted_at = now()
-            WHERE id = $1::uuid AND org_id = $2::uuid""",
-        run_id, org_id,
-    )
-    # Imported here, not at module scope: services.profitability imports
-    # get_run/list_lines/IMMUTABLE_STATUSES from this module, so a top-level
-    # import would be circular. Reaching POSTED is the trigger for revenue
-    # recognition (fee39), and it happens in the SAME transaction as the status
-    # change on purpose — a run that was POSTED but whose revenue_events were
-    # never written is a silent hole in the P&L that nothing would re-check.
-    from services.profitability import emit_revenue_for_run
+    # ONE transaction around the status change, the revenue emission and the GL
+    # posting. fee43 made the third of those real, and a real GL posting can
+    # fail — an unbalanced entry, a missing template, a book that was retired.
+    # If the caller already holds a transaction asyncpg nests this as a
+    # SAVEPOINT, which is the behaviour we want either way: the run does not
+    # reach POSTED unless everything POSTED implies also landed.
+    async with conn.transaction():
+        await conn.execute(
+            f"""UPDATE {T_RUNS} SET status = 'POSTED', posted_at = now()
+                WHERE id = $1::uuid AND org_id = $2::uuid""",
+            run_id, org_id,
+        )
+        # Imported here, not at module scope: services.profitability imports
+        # get_run/list_lines/IMMUTABLE_STATUSES from this module, so a top-level
+        # import would be circular. Reaching POSTED is the trigger for revenue
+        # recognition (fee39), and it happens in the SAME transaction as the
+        # status change on purpose — a run that was POSTED but whose
+        # revenue_events were never written is a silent hole in the P&L that
+        # nothing would re-check.
+        from services.profitability import emit_revenue_for_run
 
-    emission = await emit_revenue_for_run(conn, org_id, run_id)
-    ledger = await post_to_ledger(conn, org_id, run_id)
+        emission = await emit_revenue_for_run(conn, org_id, run_id)
+        ledger = await post_to_ledger(conn, org_id, run_id, posted_by=posted_by)
+
     return {
         "run_id": run_id,
         "status": "POSTED",
@@ -860,48 +877,47 @@ async def post_run(conn, org_id: str, run_id: str) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GL posting — a STUB, deliberately, and it says so at runtime
+# GL posting — REAL as of fee43
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-#: Design doc open question #3 — WHICH BOOKS RIA FEE REVENUE POSTS TO — is
-#: unanswered, so nothing is wired. The pieces all exist and were measured:
-#: ``posting_templates`` carries a ``MANAGEMENT_FEE`` template for org
-#: 00000000-…-0001, ``posting_template_lines`` names ``account_code``/``side``,
-#: ``chart_of_accounts`` has ``5000 Management Fee Expense``, and
-#: ``journal_entries.vehicle_id`` is NOT NULL.
+#: What this used to say, kept because the answer is only legible next to the
+#: question. Design doc open question #3 asked which books RIA fee revenue posts
+#: to. It was blocked on ``journal_entries.vehicle_id``: NOT NULL, and every
+#: deployed template posted inside a VEHICLE's books, while the adviser's own
+#: revenue has no vehicle.
 #:
-#: That last column is the whole problem, not a detail. Every existing template
-#: posts INSIDE a vehicle's books — an SPV paying its manager. RIA advisory fee
-#: revenue is the manager's OWN revenue and has no vehicle, and account 5000 is
-#: an EXPENSE account on the paying side. Guessing would either invent a
-#: vehicle id or book the firm's revenue as somebody's expense, and both are
-#: the kind of error a reconciliation finds a quarter later.
+#: fee43 answered it. ``vehicle_kind`` now says what ``vehicle_id`` points at,
+#: and ``ledger_books`` gives the adviser and the club each a vehicle of their
+#: own to post into. See :mod:`services.fee_gl`.
 GL_POSTING_DECISION_REQUIRED = (
-    "Which books does RIA fee revenue post to? journal_entries.vehicle_id is "
-    "NOT NULL and every deployed posting_template posts inside a vehicle's "
-    "books; chart_of_accounts has no revenue account for advisory fees "
-    "(5000 is Management Fee EXPENSE, the payer's side). Needs an answer "
-    "before fee_run_lines can generate journal_entries. Tracked as design doc "
-    "open question #3."
+    "RESOLVED by fee43. RIA fee revenue posts to the RIA_OPERATING "
+    "ledger_book and club dues to the CLUB_DUES ledger_book, via "
+    "journal_entries.vehicle_kind='LEDGER_BOOK'; SPV-scoped fee lines post "
+    "inside their own SPV's books, unchanged. See services.fee_gl."
 )
 
 
-async def post_to_ledger(conn, org_id: str, run_id: str) -> dict[str, Any]:
-    """STUB. Writes NOTHING to journal_entries and returns why.
+async def post_to_ledger(
+    conn, org_id: str, run_id: str, *, posted_by: str | None = None
+) -> dict[str, Any]:
+    """Book this run to the general ledger. Raises rather than half-succeed.
 
-    Returning a marked no-op rather than raising: the fee run itself is
-    complete and correct without a GL entry, and making posting fail would
-    block a real billing run on an accounting question. Returning silently
-    would let it look done.
+    Called from :func:`post_run` inside the transaction that sets POSTED, so a
+    :class:`services.fee_gl.GLPostingError` unwinds the status change with it.
+    That is deliberate and is a REVERSAL of this function's previous contract:
+    the stub returned a marked no-op precisely so a billing run would not be
+    blocked on an unanswered accounting question. The question is answered, so
+    a failure to book is now a real failure — a POSTED run with no journal
+    entry would be revenue recognised in ``revenue_events`` and missing from
+    the ledger, and nothing downstream re-checks that.
+
+    Imported at call time for symmetry with ``emit_revenue_for_run`` above, so
+    both of ``post_run``'s side effects are reached the same way.
     """
-    return {
-        "posted": False,
-        "reason": "not_implemented",
-        "decision_required": GL_POSTING_DECISION_REQUIRED,
-        "run_id": run_id,
-        "journal_entries_written": 0,
-    }
+    from services.fee_gl import post_fee_run
+
+    return await post_fee_run(conn, org_id, run_id, posted_by=posted_by)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

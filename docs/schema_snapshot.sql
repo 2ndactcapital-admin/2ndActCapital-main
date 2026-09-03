@@ -1069,6 +1069,24 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY fee_exclusions_pkey: (id)
 
+-- ===== fee_invoices =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_run_id                               uuid
+--   household_id                             uuid
+--   entity_id                                uuid
+--   invoice_number                           text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   total_amount                             numeric NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   issued_at                                timestamp with time zone
+--   delivered_at                             timestamp with time zone
+--   delivery_method                          text
+--   pdf_document_id                          uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_invoices_pkey: (id)
+
 -- ===== fee_narrative_templates =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -1100,6 +1118,21 @@
 --   approved_at                              timestamp with time zone
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY fee_narratives_pkey: (id)
+
+-- ===== fee_receipts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_run_line_id                          uuid NOT NULL
+--   received_amount                          numeric NOT NULL
+--   received_on                              date NOT NULL
+--   source                                   text NOT NULL
+--   variance                                 numeric
+--   reconciliation_status                    text NOT NULL DEFAULT 'UNRECONCILED'::text
+--   exception_reason                         text
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_receipts_pkey: (id)
 
 -- ===== fee_run_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -1307,6 +1340,7 @@
 --   posted_by                                uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   created_by                               uuid
+--   vehicle_kind                             text NOT NULL
 --   PRIMARY KEY journal_entries_pkey: (id)
 
 -- ===== journal_lines =====
@@ -1323,6 +1357,19 @@
 --   memo                                     text
 --   UNIQUE jl_line_unique: (entry_id, line_no)
 --   PRIMARY KEY journal_lines_pkey: (id)
+
+-- ===== ledger_books =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   book_code                                text NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY ledger_books_pkey: (id)
 
 -- ===== marketing_contacts =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()

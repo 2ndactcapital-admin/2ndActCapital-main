@@ -40,8 +40,10 @@ deployed database, it cannot supply either, for three independent reasons:
      and the view's own ``WHERE`` clause requires
      ``dim_member_series_id IS NOT NULL``. The view returns **zero rows** today
      and will keep returning zero until some GL posting path populates that
-     dimension. Nothing does: GL posting is still open question #3
-     (``fee_runs.GL_POSTING_DECISION_REQUIRED``), fee43's territory.
+     dimension. Nothing does. fee43 wired GL posting for real
+     (``services.fee_gl``) and did NOT change this: every template it added
+     declares ``dimension_source='none'``, because there is still no
+     ``dim_member_series`` table for the id to reference. This finding stands.
   3. It also groups by ``journal_entries.vehicle_id``, and the one deployed SPV
      has ``vehicle_entity_id`` NULL — so the SPV could not be located in it
      regardless.
@@ -917,7 +919,7 @@ async def approval_activities(conn, org_id, run_id) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-async def post_run(conn, org_id, run_id) -> dict[str, Any]:
+async def post_run(conn, org_id, run_id, *, posted_by=None) -> dict[str, Any]:
     """COMPLIANCE_APPROVED -> POSTED. After this the DB refuses every change.
 
     Both gates are re-checked against ``assistant_activities`` rather than
@@ -926,10 +928,16 @@ async def post_run(conn, org_id, run_id) -> dict[str, Any]:
     the code, and the point of the ledger is that the posting decision rests on
     the ledger.
 
-    Deliberately does NOT post to the general ledger. GL posting is open
-    question #3 (see ``fee_runs.GL_POSTING_DECISION_REQUIRED``) and is fee43's
-    territory; a carry run reaching POSTED here records that the numbers are
-    approved, not that they have been booked.
+    Posts to the general ledger, as of fee43 — this used to say it deliberately
+    did not, because open question #3 was unanswered. ``carry_to_gp`` books
+    inside the SPV's OWN book as an incentive-fee expense credited to
+    ``2100 Due to Affiliate``; there is no GP legal entity in this schema to
+    hold a capital account, so carry is booked as what it demonstrably is here,
+    an amount the vehicle owes its manager (finding F43-D).
+
+    The GL posting shares the transaction with the status change. A carry run
+    that reached POSTED with no journal entry would say the GP's carry was
+    approved and booked when only half of that happened.
     """
     run = await get_run(conn, org_id, run_id)
     _assert_transition(run["status"], "POSTED")
@@ -953,11 +961,21 @@ async def post_run(conn, org_id, run_id) -> dict[str, Any]:
             run_id=str(run_id),
         )
 
-    await conn.execute(
-        f"""UPDATE {T_RUNS} SET status = 'POSTED', posted_at = now()
-            WHERE id = $1::uuid AND org_id = $2::uuid""",
-        str(run_id), str(org_id),
-    )
+    # One transaction around the status change and the GL posting, so a GL
+    # failure unwinds the POSTED. asyncpg nests this as a SAVEPOINT when the
+    # caller already holds a transaction, which gives the same guarantee.
+    from services.fee_gl import post_carry_run as _post_carry_to_gl
+
+    async with conn.transaction():
+        await conn.execute(
+            f"""UPDATE {T_RUNS} SET status = 'POSTED', posted_at = now()
+                WHERE id = $1::uuid AND org_id = $2::uuid""",
+            str(run_id), str(org_id),
+        )
+        ledger = await _post_carry_to_gl(
+            conn, org_id, run_id, posted_by=posted_by
+        )
+
     lines = await list_lines(conn, org_id, run_id)
     return {
         "run_id": str(run_id),
@@ -969,10 +987,7 @@ async def post_run(conn, org_id, run_id) -> dict[str, Any]:
         "total_net_to_lp": sum(
             (Decimal(str(x["net_to_lp"])) for x in lines), ZERO
         ),
-        "general_ledger": (
-            "NOT POSTED. GL posting for carry is fee43's open question #3; "
-            "this run records approved numbers, not booked entries."
-        ),
+        "general_ledger": ledger,
     }
 
 
