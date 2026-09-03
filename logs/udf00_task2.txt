@@ -1,0 +1,264 @@
+wrote /tmp/udf00_task2.json (75532 bytes)
+
+==============================================================================
+portfolio.udf_definitions  deployed=True
+==============================================================================
+  rows=0 rls=True owner=postgres
+  COLUMNS
+     1 id                           uuid                             null=False default=uuid_generate_v4()
+     2 org_id                       uuid                             null=True  default=None
+     3 owner_scope                  text                             null=False default=None
+     4 owner_scope_id               uuid                             null=True  default=None
+     5 applies_to                   text                             null=False default=None
+     6 field_key                    text                             null=False default=None
+     7 label                        text                             null=False default=None
+     8 data_type                    text                             null=False default=None
+     9 options                      jsonb                            null=True  default=None
+    10 display_order                integer                          null=False default=0
+    11 is_active                    boolean                          null=False default=true
+    12 valid_from                   timestamp with time zone         null=False default=now()
+    13 valid_to                     timestamp with time zone         null=True  default=None
+    14 system_from                  timestamp with time zone         null=False default=now()
+    15 system_to                    timestamp with time zone         null=True  default=None
+  CONSTRAINTS
+    [c] udf_def_applies_chk: CHECK ((applies_to = ANY (ARRAY['asset'::text, 'position'::text, 'valuation'::text, 'transaction'::text, 'commitment'::text, 'entity'::text])))
+    [c] udf_def_scope_chk: CHECK ((owner_scope = ANY (ARRAY['platform'::text, 'org'::text, 'team'::text, 'user'::text])))
+    [c] udf_def_scope_org_chk: CHECK ((((owner_scope = 'platform'::text) AND (org_id IS NULL) AND (owner_scope_id IS NULL)) OR ((owner_scope = 'org'::text) AND (org_id IS NOT NULL)) OR ((owner_scope = ANY (ARRAY['team'::text, 'user'::text])) AND (org_id IS NOT NULL) AND (owner_scope_id IS NOT NULL))))
+    [c] udf_def_type_chk: CHECK ((data_type = ANY (ARRAY['text'::text, 'numeric'::text, 'date'::text, 'boolean'::text, 'select'::text])))
+    [f] udf_definitions_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] udf_definitions_pkey: PRIMARY KEY (id)
+  REFERENCED BY
+    portfolio.udf_values.udf_values_definition_id_fkey: FOREIGN KEY (definition_id) REFERENCES portfolio.udf_definitions(id)
+  INDEXES
+    [btree] idx_udf_def_applies: CREATE INDEX idx_udf_def_applies ON portfolio.udf_definitions USING btree (applies_to)
+    [btree] idx_udf_def_key_unique: CREATE UNIQUE INDEX idx_udf_def_key_unique ON portfolio.udf_definitions USING btree (COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), owner_scope, COALESCE(owner_scope_id, '00000000-0000-0000-0000-000000000000'::uuid), applies_to, field_key) WHERE ((system_to IS NULL) AND (valid_to IS NULL))
+    [btree] idx_udf_def_org: CREATE INDEX idx_udf_def_org ON portfolio.udf_definitions USING btree (org_id) WHERE (org_id IS NOT NULL)
+    [btree] udf_definitions_pkey: CREATE UNIQUE INDEX udf_definitions_pkey ON portfolio.udf_definitions USING btree (id)
+  TRIGGERS
+    (none)
+  POLICIES
+    udf_definitions_scoped_delete [DELETE] roles={public}
+      USING (((owner_scope = 'platform'::text) AND (current_setting('app.is_super_admin'::text, true) = 'true'::text)) OR (org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK None
+    udf_definitions_scoped_read [SELECT] roles={public}
+      USING ((owner_scope = 'platform'::text) OR (org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK None
+    udf_definitions_scoped_update [UPDATE] roles={public}
+      USING (((owner_scope = 'platform'::text) AND (current_setting('app.is_super_admin'::text, true) = 'true'::text)) OR (org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK (((owner_scope = 'platform'::text) AND (current_setting('app.is_super_admin'::text, true) = 'true'::text)) OR ((owner_scope <> 'platform'::text) AND (org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid)) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+    udf_definitions_scoped_write [INSERT] roles={public}
+      USING None
+      CHECK (((owner_scope = 'platform'::text) AND (current_setting('app.is_super_admin'::text, true) = 'true'::text)) OR ((owner_scope <> 'platform'::text) AND (org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid)) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+  DISTRIBUTIONS
+    org_id: []
+    owner_scope: []
+    owner_scope_id: []
+  SAMPLE (0 rows)
+
+==============================================================================
+portfolio.udf_values  deployed=True
+==============================================================================
+  rows=0 rls=True owner=postgres
+  COLUMNS
+     1 id                           uuid                             null=False default=uuid_generate_v4()
+     2 org_id                       uuid                             null=False default=None
+     3 definition_id                uuid                             null=False default=None
+     4 target_type                  text                             null=False default=None
+     5 target_id                    uuid                             null=False default=None
+     6 value_text                   text                             null=True  default=None
+     7 value_numeric                numeric                          null=True  default=None
+     8 value_date                   date                             null=True  default=None
+     9 value_json                   jsonb                            null=True  default=None
+    10 valid_from                   timestamp with time zone         null=False default=now()
+    11 valid_to                     timestamp with time zone         null=True  default=None
+    12 system_from                  timestamp with time zone         null=False default=now()
+    13 system_to                    timestamp with time zone         null=True  default=None
+  CONSTRAINTS
+    [c] udf_values_target_chk: CHECK ((target_type = ANY (ARRAY['asset'::text, 'position'::text, 'valuation'::text, 'transaction'::text, 'commitment'::text, 'entity'::text])))
+    [f] udf_values_definition_id_fkey: FOREIGN KEY (definition_id) REFERENCES portfolio.udf_definitions(id)
+    [f] udf_values_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] udf_values_pkey: PRIMARY KEY (id)
+  REFERENCED BY
+    (nothing)
+  INDEXES
+    [btree] idx_udf_values_org: CREATE INDEX idx_udf_values_org ON portfolio.udf_values USING btree (org_id)
+    [btree] idx_udf_values_target: CREATE INDEX idx_udf_values_target ON portfolio.udf_values USING btree (target_type, target_id)
+    [btree] idx_udf_values_unique: CREATE UNIQUE INDEX idx_udf_values_unique ON portfolio.udf_values USING btree (org_id, definition_id, target_type, target_id) WHERE ((system_to IS NULL) AND (valid_to IS NULL))
+    [btree] udf_values_pkey: CREATE UNIQUE INDEX udf_values_pkey ON portfolio.udf_values USING btree (id)
+  TRIGGERS
+    (none)
+  POLICIES
+    udf_values_org_isolation [ALL] roles={public}
+      USING ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+  DISTRIBUTIONS
+    org_id: []
+  SAMPLE (0 rows)
+
+==============================================================================
+public.entity_attributes  deployed=True
+==============================================================================
+  rows=8 rls=True owner=postgres
+  COLUMNS
+     1 id                           uuid                             null=False default=uuid_generate_v4()
+     2 org_id                       uuid                             null=False default=None
+     3 entity_id                    uuid                             null=False default=None
+     4 attribute_key                text                             null=False default=None
+     5 attribute_value              text                             null=True  default=None
+     6 value_type                   text                             null=False default='string'::text
+     7 valid_from                   timestamp with time zone         null=False default=now()
+     8 valid_to                     timestamp with time zone         null=True  default=None
+     9 system_from                  timestamp with time zone         null=False default=now()
+    10 system_to                    timestamp with time zone         null=True  default=None
+    11 created_by                   uuid                             null=True  default=None
+    12 created_at                   timestamp with time zone         null=False default=now()
+  CONSTRAINTS
+    [f] entity_attributes_created_by_fkey: FOREIGN KEY (created_by) REFERENCES users(id)
+    [f] entity_attributes_entity_id_fkey: FOREIGN KEY (entity_id) REFERENCES entities(id)
+    [f] entity_attributes_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] entity_attributes_pkey: PRIMARY KEY (id)
+  REFERENCED BY
+    (nothing)
+  INDEXES
+    [btree] entity_attributes_pkey: CREATE UNIQUE INDEX entity_attributes_pkey ON public.entity_attributes USING btree (id)
+    [btree] idx_entity_attributes_entity: CREATE INDEX idx_entity_attributes_entity ON public.entity_attributes USING btree (entity_id)
+    [btree] idx_entity_attributes_key: CREATE INDEX idx_entity_attributes_key ON public.entity_attributes USING btree (attribute_key)
+  TRIGGERS
+    (none)
+  POLICIES
+    entity_attributes_org_isolation [ALL] roles={public}
+      USING ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+  DISTRIBUTIONS
+    org_id: [{'value': '00000000-0000-0000-0000-000000000001', 'n': 8}]
+  SAMPLE (8 rows)
+    {'id': 'f1ce4c67-1274-44d4-af75-314d2bd6654e', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '15ced073-9fe9-42b6-9fae-be7d15ae9ef1', 'attribute_key': 'risk_floor', 'attribute_value': 'catastrophic loss - unacceptable', 'value_type': 'string', 'valid_from': '2026-06-26 14:16:41.834829+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:16:41.834829+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:16:41.834829+00:00'}
+    {'id': 'd4f913c0-521e-40fe-be8a-8d1819ab8579', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '15ced073-9fe9-42b6-9fae-be7d15ae9ef1', 'attribute_key': 'time_horizon_years', 'attribute_value': '20', 'value_type': 'string', 'valid_from': '2026-06-26 14:16:41.834829+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:16:41.834829+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:16:41.834829+00:00'}
+    {'id': '83e02bb5-7802-473d-a99b-8e8e6b387c71', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '15ced073-9fe9-42b6-9fae-be7d15ae9ef1', 'attribute_key': 'investment_objectives', 'attribute_value': '["wealth preservation", "family protection"]', 'value_type': 'string', 'valid_from': '2026-06-26 14:16:41.834829+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:16:41.834829+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:16:41.834829+00:00'}
+    {'id': '93f4dc9c-2980-4d41-9c05-581b166e18da', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '15ced073-9fe9-42b6-9fae-be7d15ae9ef1', 'attribute_key': 'behavioral_risk_indicators', 'attribute_value': '["loss aversion", "capital preservation focus"]', 'value_type': 'string', 'valid_from': '2026-06-26 14:16:41.834829+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:16:41.834829+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:16:41.834829+00:00'}
+    {'id': '73d37309-4192-4a47-82e6-b2ad231bfa51', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': 'a1e5938b-6ed2-4b83-aaf3-e3725d7a5ea5', 'attribute_key': 'risk_floor', 'attribute_value': 'catastrophic loss', 'value_type': 'string', 'valid_from': '2026-06-26 14:27:19.907097+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:27:19.907097+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:27:19.907097+00:00'}
+    {'id': 'e1f75935-7484-4009-b56d-cdf553e68b5b', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': 'a1e5938b-6ed2-4b83-aaf3-e3725d7a5ea5', 'attribute_key': 'non_negotiables', 'attribute_value': '["capital preservation", "family wealth protection"]', 'value_type': 'string', 'valid_from': '2026-06-26 14:27:19.907097+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:27:19.907097+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:27:19.907097+00:00'}
+    {'id': '3d7adf6b-40bb-4c22-9a87-c63f9a9fb4fa', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': 'a1e5938b-6ed2-4b83-aaf3-e3725d7a5ea5', 'attribute_key': 'time_horizon_years', 'attribute_value': '20', 'value_type': 'string', 'valid_from': '2026-06-26 14:27:19.907097+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:27:19.907097+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:27:19.907097+00:00'}
+    {'id': '40894aa9-d2b1-4116-8f7f-13a9e91b5b2c', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': 'a1e5938b-6ed2-4b83-aaf3-e3725d7a5ea5', 'attribute_key': 'investment_objectives', 'attribute_value': '["wealth preservation"]', 'value_type': 'string', 'valid_from': '2026-06-26 14:27:19.907097+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 14:27:19.907097+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 14:27:19.907097+00:00'}
+
+==============================================================================
+public.entity_document_tags  deployed=True
+==============================================================================
+  rows=1 rls=True owner=postgres
+  COLUMNS
+     1 id                           uuid                             null=False default=uuid_generate_v4()
+     2 org_id                       uuid                             null=False default=None
+     3 document_id                  uuid                             null=False default=None
+     4 tag                          text                             null=False default=None
+     5 is_fixed                     boolean                          null=False default=false
+     6 created_at                   timestamp with time zone         null=False default=now()
+  CONSTRAINTS
+    [f] entity_document_tags_document_id_fkey: FOREIGN KEY (document_id) REFERENCES entity_documents(id)
+    [f] entity_document_tags_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] entity_document_tags_pkey: PRIMARY KEY (id)
+    [u] entity_document_tags_document_id_tag_key: UNIQUE (document_id, tag)
+  REFERENCED BY
+    (nothing)
+  INDEXES
+    [btree] entity_document_tags_document_id_tag_key: CREATE UNIQUE INDEX entity_document_tags_document_id_tag_key ON public.entity_document_tags USING btree (document_id, tag)
+    [btree] entity_document_tags_pkey: CREATE UNIQUE INDEX entity_document_tags_pkey ON public.entity_document_tags USING btree (id)
+    [btree] idx_entity_doc_tags_doc: CREATE INDEX idx_entity_doc_tags_doc ON public.entity_document_tags USING btree (document_id)
+  TRIGGERS
+    (none)
+  POLICIES
+    entity_document_tags_org_isolation [ALL] roles={public}
+      USING ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+  DISTRIBUTIONS
+    org_id: [{'value': '00000000-0000-0000-0000-000000000001', 'n': 1}]
+  SAMPLE (1 rows)
+    {'id': 'ba07b39a-1525-4d78-a0ce-c92515f8b97c', 'org_id': '00000000-0000-0000-0000-000000000001', 'document_id': '9418e4a3-835a-4aa4-b78b-a5ded7c08747', 'tag': 'signed', 'is_fixed': 'False', 'created_at': '2026-07-02 05:47:20.362485+00:00'}
+
+==============================================================================
+public.reference_data  deployed=True
+==============================================================================
+  rows=155 rls=True owner=postgres
+  COLUMNS
+     1 id                           uuid                             null=False default=uuid_generate_v4()
+     2 org_id                       uuid                             null=True  default=None
+     3 list_key                     text                             null=False default=None
+     4 code                         text                             null=False default=None
+     5 label                        text                             null=False default=None
+     6 parent_code                  text                             null=True  default=None
+     7 extra                        jsonb                            null=True  default=None
+     8 display_order                integer                          null=False default=100
+     9 is_active                    boolean                          null=False default=true
+    10 created_at                   timestamp with time zone         null=False default=now()
+  CONSTRAINTS
+    [f] reference_data_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] reference_data_pkey: PRIMARY KEY (id)
+    [u] reference_data_list_key_code_parent_code_key: UNIQUE (list_key, code, parent_code)
+  REFERENCED BY
+    (nothing)
+  INDEXES
+    [btree] idx_refdata_list: CREATE INDEX idx_refdata_list ON public.reference_data USING btree (list_key, is_active, display_order)
+    [btree] reference_data_list_key_code_parent_code_key: CREATE UNIQUE INDEX reference_data_list_key_code_parent_code_key ON public.reference_data USING btree (list_key, code, parent_code)
+    [btree] reference_data_org_list_code_uniq: CREATE UNIQUE INDEX reference_data_org_list_code_uniq ON public.reference_data USING btree (org_id, list_key, code) NULLS NOT DISTINCT
+    [btree] reference_data_pkey: CREATE UNIQUE INDEX reference_data_pkey ON public.reference_data USING btree (id)
+  TRIGGERS
+    (none)
+  POLICIES
+    reference_data_global_or_org [ALL] roles={public}
+      USING ((org_id IS NULL) OR (org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+      CHECK ((org_id = (NULLIF(current_setting('app.current_org_id'::text, true), ''::text))::uuid) OR (current_setting('app.is_super_admin'::text, true) = 'true'::text))
+  DISTRIBUTIONS
+    org_id: [{'value': None, 'n': 155}]
+  SAMPLE (20 rows)
+    {'id': '2c856c27-63b5-4b61-9bf5-44688b4e2a51', 'org_id': 'None', 'list_key': 'currency', 'code': 'USD', 'label': 'US Dollar', 'parent_code': 'None', 'extra': '{"symbol": "$"}', 'display_order': '1', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': 'c43122d3-3367-442a-935c-3192ed5754bd', 'org_id': 'None', 'list_key': 'currency', 'code': 'EUR', 'label': 'Euro', 'parent_code': 'None', 'extra': '{"symbol": "€"}', 'display_order': '2', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '44cdab13-41b5-4264-a3e8-d5ae0ee959fe', 'org_id': 'None', 'list_key': 'currency', 'code': 'GBP', 'label': 'British Pound', 'parent_code': 'None', 'extra': '{"symbol": "£"}', 'display_order': '3', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '9bf4ae93-4002-4932-8582-fe6bc205ef23', 'org_id': 'None', 'list_key': 'currency', 'code': 'CHF', 'label': 'Swiss Franc', 'parent_code': 'None', 'extra': '{"symbol": "CHF"}', 'display_order': '4', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '192776bf-d963-47ca-90fb-5e861a760933', 'org_id': 'None', 'list_key': 'currency', 'code': 'JPY', 'label': 'Japanese Yen', 'parent_code': 'None', 'extra': '{"symbol": "¥"}', 'display_order': '5', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '5a380a7e-771f-48c2-980e-ce0eb17e0e41', 'org_id': 'None', 'list_key': 'currency', 'code': 'CAD', 'label': 'Canadian Dollar', 'parent_code': 'None', 'extra': '{"symbol": "C$"}', 'display_order': '6', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '16f2f144-d560-4bf8-a615-0ce4a3ce8554', 'org_id': 'None', 'list_key': 'month', 'code': '1', 'label': 'January', 'parent_code': 'None', 'extra': 'None', 'display_order': '1', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': 'f2eeaa93-88c0-4266-a8ac-aebde0f04ee5', 'org_id': 'None', 'list_key': 'month', 'code': '2', 'label': 'February', 'parent_code': 'None', 'extra': 'None', 'display_order': '2', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': 'be1c9f2e-5378-4d40-bfcc-9f82fdcc15eb', 'org_id': 'None', 'list_key': 'month', 'code': '3', 'label': 'March', 'parent_code': 'None', 'extra': 'None', 'display_order': '3', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '6a4b6a9e-228a-4ff3-be07-9aeb467d0a81', 'org_id': 'None', 'list_key': 'month', 'code': '4', 'label': 'April', 'parent_code': 'None', 'extra': 'None', 'display_order': '4', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '7bad4e74-b1ec-4222-bb9c-bebf2fdf2d22', 'org_id': 'None', 'list_key': 'month', 'code': '5', 'label': 'May', 'parent_code': 'None', 'extra': 'None', 'display_order': '5', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '3cad217f-5c6c-4263-941c-6dfc715e20e8', 'org_id': 'None', 'list_key': 'month', 'code': '6', 'label': 'June', 'parent_code': 'None', 'extra': 'None', 'display_order': '6', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '95c55fca-0bee-4508-b40c-15881436db93', 'org_id': 'None', 'list_key': 'month', 'code': '7', 'label': 'July', 'parent_code': 'None', 'extra': 'None', 'display_order': '7', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': 'caa53012-6d97-48ab-b9df-080279e060ba', 'org_id': 'None', 'list_key': 'month', 'code': '8', 'label': 'August', 'parent_code': 'None', 'extra': 'None', 'display_order': '8', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '07e82afe-701a-401f-a8a1-8de62928eec1', 'org_id': 'None', 'list_key': 'month', 'code': '9', 'label': 'September', 'parent_code': 'None', 'extra': 'None', 'display_order': '9', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '50935e54-9c85-4084-94ab-c87d98281b68', 'org_id': 'None', 'list_key': 'month', 'code': '10', 'label': 'October', 'parent_code': 'None', 'extra': 'None', 'display_order': '10', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '02f04a32-83f0-49cb-bfe4-f28a02191e2e', 'org_id': 'None', 'list_key': 'month', 'code': '11', 'label': 'November', 'parent_code': 'None', 'extra': 'None', 'display_order': '11', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '099f44b3-44c4-439a-b63d-7929f80d5624', 'org_id': 'None', 'list_key': 'month', 'code': '12', 'label': 'December', 'parent_code': 'None', 'extra': 'None', 'display_order': '12', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': '3b06fa4e-8f24-4d15-b909-40c1cf531f53', 'org_id': 'None', 'list_key': 'name_prefix', 'code': 'mr', 'label': 'Mr.', 'parent_code': 'None', 'extra': 'None', 'display_order': '1', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+    {'id': 'ecabd38f-ad25-499a-8b9a-16959eaa8cde', 'org_id': 'None', 'list_key': 'name_prefix', 'code': 'mrs', 'label': 'Mrs.', 'parent_code': 'None', 'extra': 'None', 'display_order': '2', 'is_active': 'True', 'created_at': '2026-07-01 21:35:25.134732+00:00'}
+
+=== ENUMS in public/portfolio (10) ===
+  public.accreditation_status: ['not_verified', 'self_certified', 'third_party_verified', 'expired']
+  public.address_type: ['primary_residence', 'mailing', 'business', 'registered']
+  public.aml_risk_rating: ['low', 'medium', 'high']
+  public.deal_document_status: ['pending', 'processing', 'extracted', 'failed']
+  public.deal_status: ['draft', 'submitted', 'under_review', 'active', 'closed', 'archived']
+  public.entity_type: ['individual', 'trust', 'llc', 'lp', 'corporation', 'foundation', 'other', 'gp', 's_corp', 'c_corp', 'corp_uk', 'corp_eu', 'corp_cayman', 'corp_luxembourg', 'corp_other_intl', 'family_office', 'household', 'spv', 'account']
+  public.kyc_status: ['not_started', 'in_progress', 'approved', 'flagged', 'expired']
+  public.ofac_status: ['not_screened', 'passed', 'false_positive', 'review_required']
+  public.social_platform: ['linkedin', 'twitter', 'facebook', 'instagram', 'angellist', 'crunchbase', 'other']
+  public.tax_id_type: ['ssn', 'ein', 'itin', 'utr', 'vat', 'trn', 'nino', 'tin_other']
+
+=== portfolio schema relations (19) ===
+  [r] asset_identifiers
+  [r] assets
+  [r] commitments
+  [r] external_references
+  [r] note_terms_field_registry
+  [r] note_terms_stp_policy
+  [r] positions
+  [r] reference_filings
+  [r] securities_global
+  [r] securities_global_corporate_actions
+  [r] securities_global_identifiers
+  [r] securities_global_note_terms
+  [r] securities_global_prices
+  [r] securities_global_relationships
+  [r] transactions
+  [r] udf_definitions
+  [r] udf_values
+  [r] valuations
+  [v] spv_derived_positions

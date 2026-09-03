@@ -1,0 +1,256 @@
+wrote /tmp/udf00_task3.json (116210 bytes)
+
+===== A — PERMISSION MODEL =====
+
+  public.permissions  rows=28
+    cols: ['id', 'name', 'resource', 'action']
+    [p] permissions_pkey: PRIMARY KEY (id)
+    [u] permissions_name_key: UNIQUE (name)
+    [u] permissions_resource_action_key: UNIQUE (resource, action)
+
+  public.permission_sets  rows=1
+    cols: ['id', 'org_id', 'name', 'description', 'created_at', 'updated_at']
+    [f] permission_sets_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] permission_sets_pkey: PRIMARY KEY (id)
+    [u] permission_sets_org_id_name_key: UNIQUE (org_id, name)
+
+  public.permission_set_permissions  rows=1
+    cols: ['id', 'org_id', 'permission_set_id', 'permission_key', 'created_at']
+    [f] permission_set_permissions_permission_set_id_fkey: FOREIGN KEY (permission_set_id) REFERENCES permission_sets(id) ON DELETE CASCADE
+    [p] permission_set_permissions_pkey: PRIMARY KEY (id)
+    [u] permission_set_permissions_set_key_unique: UNIQUE (permission_set_id, permission_key)
+
+  public.profiles  rows=6
+    cols: ['id', 'org_id', 'name', 'description', 'is_seed', 'created_at', 'updated_at']
+    [f] profiles_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] profiles_pkey: PRIMARY KEY (id)
+    [u] profiles_org_id_name_key: UNIQUE (org_id, name)
+
+  public.profile_permissions  rows=32
+    cols: ['id', 'org_id', 'profile_id', 'permission_key', 'created_at']
+    [f] profile_permissions_profile_id_fkey: FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    [p] profile_permissions_pkey: PRIMARY KEY (id)
+    [u] profile_permissions_profile_key_unique: UNIQUE (profile_id, permission_key)
+
+  public.roles  rows=13
+    cols: ['id', 'org_id', 'name', 'description']
+    [f] roles_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] roles_pkey: PRIMARY KEY (id)
+    [u] roles_org_id_name_key: UNIQUE (org_id, name)
+
+  public.role_permissions  rows=91
+    cols: ['role_id', 'permission_id']
+    [f] role_permissions_permission_id_fkey: FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+    [f] role_permissions_role_id_fkey: FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+    [p] role_permissions_pkey: PRIMARY KEY (role_id, permission_id)
+
+  public.user_permission_sets  rows=1
+    cols: ['user_id', 'permission_set_id', 'granted_at', 'granted_by']
+    [f] user_permission_sets_granted_by_fkey: FOREIGN KEY (granted_by) REFERENCES users(id)
+    [f] user_permission_sets_permission_set_id_fkey: FOREIGN KEY (permission_set_id) REFERENCES permission_sets(id)
+    [f] user_permission_sets_user_id_fkey: FOREIGN KEY (user_id) REFERENCES users(id)
+    [p] user_permission_sets_pkey: PRIMARY KEY (user_id, permission_set_id)
+
+  public.user_roles  rows=1
+    cols: ['user_id', 'role_id']
+    [f] user_roles_role_id_fkey: FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+    [f] user_roles_user_id_fkey: FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    [p] user_roles_pkey: PRIMARY KEY (user_id, role_id)
+
+  public.assistant_action_catalog  rows=16
+    cols: ['id', 'org_id', 'action_key', 'module', 'description', 'access_type', 'required_permission', 'default_autonomy', 'reversible', 'render_target', 'is_active', 'registered_at']
+    [f] assistant_action_catalog_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] assistant_action_catalog_pkey: PRIMARY KEY (id)
+    [u] assistant_action_catalog_org_id_action_key_key: UNIQUE (org_id, action_key)
+
+  field-shaped columns in perm tables: []
+
+  permissions resource/action (28):
+    audit_log / view x1
+    billing / manage x1
+    community / view x1
+    compliance / manage x1
+    compliance / override x1
+    compliance / view x1
+    content / manage x1
+    dashboard / view x1
+    deals / interest x1
+    deals / score x1
+    deals / view x1
+    deals / vote x1
+    documents / manage x1
+    insurance / view x1
+    marketplace / manage x1
+    marketplace / submit x1
+    marketplace / view x1
+    members / manage x1
+    members / view x1
+    portfolio / manage x1
+    portfolio / view x1
+    roles / manage x1
+    spv / manage x1
+    spv / view x1
+    users / manage x1
+    workflows / author x1
+    workflows / configure_triggers x1
+    workflows / view_runs x1
+
+  distinct permission_key granted (18):
+    author_workflows x1
+    configure_workflow_triggers x1
+    indicate_interest x1
+    manage_deals x1
+    manage_documents x1
+    manage_members x1
+    manage_portfolio x1
+    score_deal x1
+    staff x2
+    view_community x2
+    view_dashboard x5
+    view_deals x3
+    view_insurance x1
+    view_marketplace x3
+    view_members x2
+    view_portfolio x3
+    view_workflow_runs x3
+    vote_deal x1
+
+===== C — JOURNAL CANDIDATES =====
+  public.audit_log: rows=88 triggers=[]
+    cols: ['id', 'org_id', 'user_id', 'action', 'resource_type', 'resource_id', 'payload', 'created_at']
+  public.ownership_change_log: rows=2 triggers=[]
+    cols: ['id', 'org_id', 'relationship_id', 'from_entity_id', 'to_entity_id', 'prior_pct', 'new_pct', 'change_reason', 'change_source_type', 'change_source_id', 'effective_date', 'note', 'changed_by', 'changed_at']
+  public.document_field_corrections: rows=29 triggers=['document_field_corrections_default_target_trg']
+    cols: ['id', 'document_id', 'org_id', 'template_extraction_id', 'field_name', 'original_value', 'corrected_value', 'notes', 'corrected_by', 'corrected_at', 'target_type', 'target_id']
+  public.investment_stage_history: rows=0 triggers=[]
+    cols: ['id', 'org_id', 'member_investment_id', 'from_stage', 'to_stage', 'changed_by', 'notes', 'created_at']
+  public.spv_status_history: rows=2 triggers=[]
+    cols: ['id', 'org_id', 'spv_id', 'from_status', 'to_status', 'note', 'changed_by', 'changed_at']
+  public.restricted_access_audit: rows=0 triggers=[]
+    cols: ['id', 'org_id', 'entity_id', 'action', 'performed_by', 'performed_at', 'notes']
+  public.domain_events: rows=0 triggers=[]
+    cols: ['id', 'org_id', 'event_type', 'source_type', 'source_id', 'payload', 'occurred_at', 'created_by']
+  public.assistant_activities: rows=0 triggers=[]
+    cols: ['id', 'org_id', 'user_id', 'action_key', 'title', 'status', 'rationale', 'payload', 'result', 'reversible', 'undo_token', 'undone_at', 'related_type', 'related_id', 'created_at', 'updated_at', 'entity_id', 'proposed_by', 'approved_by']
+  public.workflow_versions: rows=3 triggers=[]
+    cols: ['id', 'workflow_definition_id', 'org_id', 'version_number', 'bpmn_xml', 'change_summary', 'is_current', 'created_by', 'created_at']
+  public.notification_delivery_log: rows=0 triggers=[]
+    cols: ['id', 'org_id', 'notification_id', 'recipient_id', 'channel', 'status', 'attempted_at', 'delivered_at', 'failed_at', 'failure_reason', 'external_id', 'metadata', 'created_at', 'updated_at']
+  public.ai_decision_log: rows=277 triggers=[]
+    cols: ['id', 'org_id', 'task_type', 'model_requested', 'model_used', 'fallback_used', 'fallback_reason', 'cost_usd', 'latency_ms', 'success', 'error_detail', 'created_at']
+
+  bi-temporal (valid_to + system_to) tables: 52
+    ['portfolio.asset_identifiers', 'portfolio.assets', 'portfolio.commitments', 'portfolio.positions', 'portfolio.securities_global', 'portfolio.securities_global_corporate_actions', 'portfolio.securities_global_identifiers', 'portfolio.securities_global_note_terms', 'portfolio.securities_global_prices', 'portfolio.securities_global_relationships', 'portfolio.transactions', 'portfolio.udf_definitions', 'portfolio.udf_values', 'portfolio.valuations', 'public.account_flows', 'public.account_owners', 'public.accounts', 'public.billing_group_members', 'public.billing_groups', 'public.chart_of_accounts', 'public.compliance_records', 'public.cost_events', 'public.cost_pass_through_policies', 'public.cost_providers', 'public.cost_schedules', 'public.deals', 'public.entities', 'public.entity_addresses', 'public.entity_attributes', 'public.entity_employment', 'public.entity_ownership', 'public.entity_relationships', 'public.entity_social_profiles', 'public.entity_tax_ids', 'public.fee_assignments', 'public.fee_credits', 'public.fee_discounts', 'public.fee_exclusions', 'public.fee_narrative_templates', 'public.fee_runs', 'public.fee_schedules', 'public.fx_rates', 'public.investment_profile_answers', 'public.investment_profile_questions', 'public.ledger_books', 'public.member_investments', 'public.member_target_allocations', 'public.portfolio_precedence_household_overrides', 'public.provider_benefit_schedules', 'public.revenue_events', 'public.spv_fee_side_letters', 'public.spv_fee_terms']
+
+===== D — TAGS / REFERENCE DATA =====
+  entity_document_tags vocabulary: [{'tag': 'signed', 'is_fixed': False, 'n': 1}]
+  entities.tags: []
+  deals.tags: []
+  other text[] columns: ['portfolio.note_terms_field_registry.applies_to_archetypes', 'public.deal_ai_summaries.key_risks', 'public.deal_ai_summaries.key_strengths', 'public.deals.highlights', 'public.deals.tags', 'public.entities.tags', 'public.entity_briefs.key_themes', 'public.transaction_types.applies_to_security_types']
+  reference_data lists:
+    account_type                 n=7    org_scoped=0 with_extra=7 with_parent=0 inactive=0
+    ca_province                  n=13   org_scoped=0 with_extra=0 with_parent=13 inactive=0
+    country                      n=24   org_scoped=0 with_extra=24 with_parent=0 inactive=0
+    currency                     n=6    org_scoped=0 with_extra=6 with_parent=0 inactive=0
+    doc_category                 n=12   org_scoped=0 with_extra=0 with_parent=0 inactive=0
+    ledger_basis                 n=3    org_scoped=0 with_extra=3 with_parent=0 inactive=0
+    month                        n=12   org_scoped=0 with_extra=0 with_parent=0 inactive=0
+    name_prefix                  n=5    org_scoped=0 with_extra=0 with_parent=0 inactive=0
+    name_suffix                  n=6    org_scoped=0 with_extra=0 with_parent=0 inactive=0
+    tax_character                n=16   org_scoped=0 with_extra=16 with_parent=0 inactive=0
+    us_state                     n=51   org_scoped=0 with_extra=0 with_parent=51 inactive=0
+  config table: {'exists': True, 'columns': ['id', 'org_id', 'config_key', 'config_value', 'value_type', 'category', 'display_order', 'is_active', 'created_at'], 'categories': [{'category': 'asset_taxonomy', 'n': 181}, {'category': 'assistant_posture', 'n': 2}, {'category': 'deal_scoring', 'n': 6}, {'category': 'deal_stages', 'n': 6}, {'category': 'document_statuses', 'n': 3}, {'category': 'fee_narrative_vocab', 'n': 66}, {'category': 'investment_stages', 'n': 9}, {'category': 'notification_channels', 'n': 5}, {'category': 'notification_types', 'n': 11}, {'category': 'profile_modes', 'n': 2}, {'category': 'roles_config', 'n': 5}]}
+
+===== PRIOR ART =====
+
+  public.investment_profile_questions  rows=20
+    id                         uuid                         null=False def=uuid_generate_v4()
+    org_id                     uuid                         null=False def=None
+    question_key               text                         null=False def=None
+    question_text              text                         null=False def=None
+    question_type              text                         null=False def='text'::text
+    options                    jsonb                        null=True def=None
+    category                   text                         null=False def='general'::text
+    is_required                boolean                      null=False def=false
+    display_order              integer                      null=False def=0
+    valid_from                 timestamp with time zone     null=False def=now()
+    valid_to                   timestamp with time zone     null=True def=None
+    system_from                timestamp with time zone     null=False def=now()
+    system_to                  timestamp with time zone     null=True def=None
+    created_by                 uuid                         null=True def=None
+    created_at                 timestamp with time zone     null=False def=now()
+    [f] investment_profile_questions_created_by_fkey: FOREIGN KEY (created_by) REFERENCES users(id)
+    [f] investment_profile_questions_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [p] investment_profile_questions_pkey: PRIMARY KEY (id)
+    [u] investment_profile_questions_question_key_key: UNIQUE (question_key)
+    ROW {'id': '47a98830-bf94-4943-96d3-2e9faca6eedd', 'org_id': '00000000-0000-0000-0000-000000000001', 'question_key': 'accredited_investor', 'question_text': 'Are you an accredited investor?', 'question_type': 'boolean', 'options': 'None', 'category': 'compliance', 'is_required': 'True', 'display_order': '1', 'valid_from': '2026-06-24 06:28:43.836571+00:00', 'valid_to': '2026-06-26 13:05:49.011211+00:00', 'system_from': '2026-06-24 06:28:43.836571+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:28:43.836571+00:00'}
+    ROW {'id': 'cdd3611e-657b-47bb-adb6-106eacf28a09', 'org_id': '00000000-0000-0000-0000-000000000001', 'question_key': 'net_worth', 'question_text': 'What is your approximate net worth (excluding primary residence)?', 'question_type': 'select', 'options': '{"options": ["<$1M", "$1M-$5M", "$5M-$10M", "$10M-$25M", "$25M+"]}', 'category': 'financial', 'is_required': 'True', 'display_order': '2', 'valid_from': '2026-06-24 06:28:43.836571+00:00', 'valid_to': '2026-06-26 13:05:49.011211+00:00', 'system_from': '2026-06-24 06:28:43.836571+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:28:43.836571+00:00'}
+    ROW {'id': '191b8ca4-fa8b-4600-877c-0336f5915872', 'org_id': '00000000-0000-0000-0000-000000000001', 'question_key': 'investment_experience_years', 'question_text': 'How many years of investment experience do you have?', 'question_type': 'number', 'options': 'None', 'category': 'financial', 'is_required': 'True', 'display_order': '3', 'valid_from': '2026-06-24 06:28:43.836571+00:00', 'valid_to': '2026-06-26 13:05:49.011211+00:00', 'system_from': '2026-06-24 06:28:43.836571+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:28:43.836571+00:00'}
+    ROW {'id': '27efbfae-49f1-41fa-87cf-b46315f8f8ee', 'org_id': '00000000-0000-0000-0000-000000000001', 'question_key': 'risk_tolerance', 'question_text': 'How would you describe your risk tolerance?', 'question_type': 'select', 'options': '{"options": ["Conservative", "Moderate", "Growth", "Aggressive"]}', 'category': 'financial', 'is_required': 'True', 'display_order': '4', 'valid_from': '2026-06-24 06:28:43.836571+00:00', 'valid_to': '2026-06-26 13:05:49.011211+00:00', 'system_from': '2026-06-24 06:28:43.836571+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:28:43.836571+00:00'}
+    ROW {'id': 'fd160360-f8d3-4289-bf37-53b53b324bc3', 'org_id': '00000000-0000-0000-0000-000000000001', 'question_key': 'investment_horizon_years', 'question_text': 'What is your typical investment horizon (years)?', 'question_type': 'number', 'options': 'None', 'category': 'financial', 'is_required': 'True', 'display_order': '5', 'valid_from': '2026-06-24 06:28:43.836571+00:00', 'valid_to': '2026-06-26 13:05:49.011211+00:00', 'system_from': '2026-06-24 06:28:43.836571+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:28:43.836571+00:00'}
+    ROW {'id': 'aeb767eb-0433-45ab-8bcf-0105c1c6fcc2', 'org_id': '00000000-0000-0000-0000-000000000001', 'question_key': 'liquidity_needs', 'question_text': 'What percentage of this investment do you need liquid within 12 months?', 'question_type': 'select', 'options': '{"options": ["0%", "<10%", "10-25%", "25-50%", ">50%"]}', 'category': 'financial', 'is_required': 'False', 'display_order': '6', 'valid_from': '2026-06-24 06:28:43.836571+00:00', 'valid_to': '2026-06-26 13:05:49.011211+00:00', 'system_from': '2026-06-24 06:28:43.836571+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:28:43.836571+00:00'}
+
+  public.investment_profile_answers  rows=10
+    id                         uuid                         null=False def=uuid_generate_v4()
+    org_id                     uuid                         null=False def=None
+    entity_id                  uuid                         null=False def=None
+    question_id                uuid                         null=False def=None
+    answer_value               text                         null=True def=None
+    answer_json                jsonb                        null=True def=None
+    valid_from                 timestamp with time zone     null=False def=now()
+    valid_to                   timestamp with time zone     null=True def=None
+    system_from                timestamp with time zone     null=False def=now()
+    system_to                  timestamp with time zone     null=True def=None
+    created_by                 uuid                         null=True def=None
+    created_at                 timestamp with time zone     null=False def=now()
+    updated_at                 timestamp with time zone     null=False def=now()
+    [f] investment_profile_answers_created_by_fkey: FOREIGN KEY (created_by) REFERENCES users(id)
+    [f] investment_profile_answers_entity_id_fkey: FOREIGN KEY (entity_id) REFERENCES entities(id)
+    [f] investment_profile_answers_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [f] investment_profile_answers_question_id_fkey: FOREIGN KEY (question_id) REFERENCES investment_profile_questions(id)
+    [p] investment_profile_answers_pkey: PRIMARY KEY (id)
+    [u] investment_profile_answers_entity_id_question_id_key: UNIQUE (entity_id, question_id)
+    ROW {'id': 'a553433d-95a6-4be7-9c23-67fee5e25cb2', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '10000000-0000-0000-0000-000000000003', 'question_id': '47a98830-bf94-4943-96d3-2e9faca6eedd', 'answer_value': 'true', 'answer_json': 'None', 'valid_from': '2026-06-26 04:19:29.344671+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 04:19:29.344671+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-24 06:40:44.121949+00:00', 'updated_at': '2026-06-26 04:19:29.344671+00:00'}
+    ROW {'id': '75b8c105-0b62-4bae-a7ca-db39ba808cc8', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '10000000-0000-0000-0000-000000000003', 'question_id': '9211d274-154b-4bdc-ab9b-f8b095fb6523', 'answer_value': 'usa', 'answer_json': 'None', 'valid_from': '2026-06-26 04:19:36.855574+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 04:19:36.855574+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 04:19:36.855574+00:00', 'updated_at': '2026-06-26 04:19:36.855574+00:00'}
+    ROW {'id': '25a4942c-df8d-4174-acde-a0d2f4a95f8d', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '10000000-0000-0000-0000-000000000003', 'question_id': 'cdd3611e-657b-47bb-adb6-106eacf28a09', 'answer_value': '$25M+', 'answer_json': 'None', 'valid_from': '2026-06-26 04:19:46.418868+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 04:19:46.418868+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 04:19:46.418868+00:00', 'updated_at': '2026-06-26 04:19:46.418868+00:00'}
+    ROW {'id': 'faf7309d-1577-4520-a348-df0f69a13c47', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '10000000-0000-0000-0000-000000000003', 'question_id': '191b8ca4-fa8b-4600-877c-0336f5915872', 'answer_value': '35', 'answer_json': 'None', 'valid_from': '2026-06-26 04:19:59.299344+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 04:19:59.299344+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 04:19:59.299344+00:00', 'updated_at': '2026-06-26 04:19:59.299344+00:00'}
+    ROW {'id': '52ac3dee-464f-444c-95fd-9a1d54149885', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '10000000-0000-0000-0000-000000000003', 'question_id': '27efbfae-49f1-41fa-87cf-b46315f8f8ee', 'answer_value': 'Growth', 'answer_json': 'None', 'valid_from': '2026-06-26 04:20:03.260431+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 04:20:03.260431+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 04:20:03.260431+00:00', 'updated_at': '2026-06-26 04:20:03.260431+00:00'}
+    ROW {'id': 'c0f01cf3-5acd-4622-993d-c9ad95384bea', 'org_id': '00000000-0000-0000-0000-000000000001', 'entity_id': '10000000-0000-0000-0000-000000000003', 'question_id': 'fd160360-f8d3-4289-bf37-53b53b324bc3', 'answer_value': '21', 'answer_json': 'None', 'valid_from': '2026-06-26 04:20:14.425610+00:00', 'valid_to': 'None', 'system_from': '2026-06-26 04:20:14.425610+00:00', 'system_to': 'None', 'created_by': 'None', 'created_at': '2026-06-26 04:20:14.425610+00:00', 'updated_at': '2026-06-26 04:20:14.425610+00:00'}
+
+  portfolio.note_terms_field_registry  rows=19
+    field_key                  text                         null=False def=None
+    display_label              text                         null=False def=None
+    data_type                  text                         null=False def=None
+    applies_to_archetypes      text[]                       null=True def=None
+    hazard_field               boolean                      null=False def=false
+    created_at                 timestamp with time zone     null=False def=now()
+    [c] note_terms_field_registry_archetypes_chk: CHECK (((applies_to_archetypes IS NULL) OR (cardinality(applies_to_archetypes) > 0)))
+    [c] note_terms_field_registry_data_type_chk: CHECK ((data_type = ANY (ARRAY['numeric'::text, 'text'::text, 'boolean'::text, 'date'::text])))
+    [p] note_terms_field_registry_pkey: PRIMARY KEY (field_key)
+    ROW {'field_key': 'terms_status', 'display_label': 'Terms Status', 'data_type': 'text', 'applies_to_archetypes': 'None', 'hazard_field': 'True', 'created_at': '2026-08-22 12:40:32.832377+00:00'}
+    ROW {'field_key': 'protection_type', 'display_label': 'Protection Type', 'data_type': 'text', 'applies_to_archetypes': 'None', 'hazard_field': 'True', 'created_at': '2026-08-22 12:40:32.832377+00:00'}
+    ROW {'field_key': 'basket_type', 'display_label': 'Basket Type', 'data_type': 'text', 'applies_to_archetypes': 'None', 'hazard_field': 'True', 'created_at': '2026-08-22 12:40:32.832377+00:00'}
+    ROW {'field_key': 'return_basis', 'display_label': 'Return Basis', 'data_type': 'text', 'applies_to_archetypes': 'None', 'hazard_field': 'True', 'created_at': '2026-08-22 12:40:32.832377+00:00'}
+    ROW {'field_key': 'is_decrement_index', 'display_label': 'Decrement Index', 'data_type': 'boolean', 'applies_to_archetypes': 'None', 'hazard_field': 'True', 'created_at': '2026-08-22 12:40:32.832377+00:00'}
+    ROW {'field_key': 'autocall_frequency', 'display_label': 'Autocall Frequency', 'data_type': 'text', 'applies_to_archetypes': "['autocallable']", 'hazard_field': 'True', 'created_at': '2026-08-22 12:40:32.832377+00:00'}
+
+  public.org_settings  rows=29
+    id                         uuid                         null=False def=uuid_generate_v4()
+    org_id                     uuid                         null=False def=None
+    setting_key                text                         null=False def=None
+    setting_value              jsonb                        null=False def=None
+    category                   text                         null=False def='general'::text
+    is_public                  boolean                      null=False def=true
+    updated_at                 timestamp with time zone     null=False def=now()
+    updated_by                 uuid                         null=True def=None
+    created_at                 timestamp with time zone     null=False def=now()
+    [f] org_settings_org_id_fkey: FOREIGN KEY (org_id) REFERENCES organizations(id)
+    [f] org_settings_updated_by_fkey: FOREIGN KEY (updated_by) REFERENCES users(id)
+    [p] org_settings_pkey: PRIMARY KEY (id)
+    [u] org_settings_org_id_setting_key_key: UNIQUE (org_id, setting_key)
+    ROW {'id': '30ef6db6-c4ca-4c59-a5dd-bc338e321296', 'org_id': '00000000-0000-0000-0000-000000000001', 'setting_key': 'brand.name', 'setting_value': '"2nd Act Capital"', 'category': 'branding', 'is_public': 'True', 'updated_at': '2026-07-22 01:20:17.680350+00:00', 'updated_by': 'None', 'created_at': '2026-07-22 01:20:17.680350+00:00'}
+    ROW {'id': 'f07eb6b2-a3b0-4971-a104-0db276dfabc0', 'org_id': '00000000-0000-0000-0000-000000000001', 'setting_key': 'brand.short_name', 'setting_value': '"2nd Act"', 'category': 'branding', 'is_public': 'True', 'updated_at': '2026-07-22 01:20:17.680350+00:00', 'updated_by': 'None', 'created_at': '2026-07-22 01:20:17.680350+00:00'}
+    ROW {'id': 'bd10d573-8ccd-4d79-895c-8f946d8f3a6f', 'org_id': '00000000-0000-0000-0000-000000000001', 'setting_key': 'brand.color.navy', 'setting_value': '"#1B2B4B"', 'category': 'branding', 'is_public': 'True', 'updated_at': '2026-07-22 01:20:17.680350+00:00', 'updated_by': 'None', 'created_at': '2026-07-22 01:20:17.680350+00:00'}
+    ROW {'id': '475d60ab-4df4-4aac-94a0-c57d037e4f8b', 'org_id': '00000000-0000-0000-0000-000000000001', 'setting_key': 'brand.color.gold', 'setting_value': '"#C5A880"', 'category': 'branding', 'is_public': 'True', 'updated_at': '2026-07-22 01:20:17.680350+00:00', 'updated_by': 'None', 'created_at': '2026-07-22 01:20:17.680350+00:00'}
+    ROW {'id': '576764bb-2720-4264-8d04-e6c14454c1f3', 'org_id': '00000000-0000-0000-0000-000000000001', 'setting_key': 'brand.color.gold_light', 'setting_value': '"#E8D5A3"', 'category': 'branding', 'is_public': 'True', 'updated_at': '2026-07-22 01:20:17.680350+00:00', 'updated_by': 'None', 'created_at': '2026-07-22 01:20:17.680350+00:00'}
+    ROW {'id': '1e6a9969-f1b0-458b-bd87-fc68e772b767', 'org_id': '00000000-0000-0000-0000-000000000001', 'setting_key': 'brand.color.slate_blue', 'setting_value': '"#9AA6BF"', 'category': 'branding', 'is_public': 'True', 'updated_at': '2026-07-22 01:20:17.680350+00:00', 'updated_by': 'None', 'created_at': '2026-07-22 01:20:17.680350+00:00'}

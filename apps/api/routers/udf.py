@@ -61,6 +61,38 @@ from services.portfolio_udf import (
     undelete_definition,
     update_definition,
 )
+from services.portfolio_udf_layouts import (
+    LayoutCapError,
+    LayoutColSpanError,
+    LayoutDuplicateError,
+    LayoutError,
+    LayoutScopeError,
+    add_item,
+    add_section,
+    get_or_create_layout,
+    get_resolved_layout,
+    move_item,
+    remove_item,
+    reorder_sections,
+)
+from services.portfolio_udf_tabs import (
+    TabCapError,
+    TabDuplicateError,
+    TabError,
+    TabGranteeError,
+    TabImmutableError,
+    TabReferencedError,
+    create_tab,
+    deactivate_tab,
+    get_tab,
+    list_visible_tabs,
+    reactivate_tab,
+    resolve_tab_visibility,
+    set_tab_visibility,
+    soft_delete_tab,
+    undelete_tab,
+    update_tab,
+)
 from services.portfolio_udf_tags import (
     TAG_CREATE_PERMISSION,
     TagCapError,
@@ -84,6 +116,9 @@ _VALIDATION_ERRORS = (
     UdfError, UdfDuplicateError, UdfImmutableError, UdfScopeError,
     UdfTargetMismatchError, UdfTypeChangeError, UdfTypeParamError,
     UdfValueTypeError, TagCapError,
+    TabError, TabDuplicateError, TabImmutableError, TabCapError, TabGranteeError,
+    LayoutError, LayoutScopeError, LayoutDuplicateError, LayoutCapError,
+    LayoutColSpanError,
 )
 
 
@@ -135,8 +170,29 @@ def _vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tab_vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "applies_to": sorted(APPLIES_TO),
+        "editable": ["label"] if perms["can_write"] else [],
+        "inline_editable": ["label"] if perms["can_write"] else [],
+    }
+
+
+def _layout_vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
+    """Sprint 1c note: tab-visible currently means every field in the layout
+    is visible — there is no field-level-security check here yet
+    (``udf_field_permissions`` is explicitly out of scope for this sprint).
+    ``editable`` therefore mirrors ``can_write`` only, with no per-field
+    narrowing."""
+    return {
+        "editable": ["title", "display_order", "column_index", "col_span"]
+        if perms["can_write"] else [],
+        "inline_editable": [],
+    }
+
+
 def _http_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, UdfReferencedError):
+    if isinstance(exc, (UdfReferencedError, TabReferencedError)):
         return HTTPException(
             status_code=409,
             detail={"message": str(exc), "references": exc.references},
@@ -223,6 +279,65 @@ class TagMergeIn(BaseModel):
 
     from_code: str
     into_code: str
+
+
+class TabCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    applies_to: str
+    label: str
+    api_name: str
+    display_order: int = 0
+
+
+class TabUpdateIn(BaseModel):
+    """Sparse PATCH — only ``label`` is actually mutable (``api_name`` present
+    with a different value is refused by the service layer with a 422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str | None = None
+    api_name: str | None = None
+
+
+class TabPermissionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str | None = None
+    permission_set_id: str | None = None
+    is_visible: bool
+
+
+class SectionCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    column_count: int = 2
+    display_order: int = 0
+    record_type_id: str | None = None
+
+
+class ItemCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    definition_id: str | None = None
+    display_order: int = 0
+    column_index: int = 0
+    col_span: int = 1
+    is_read_only: bool = False
+
+
+class ItemUpdateIn(BaseModel):
+    """Sparse PATCH for ``move_item`` — section/column/order only.
+    ``definition_id`` is not settable here; remove and re-add the item to
+    change which field it binds to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    section_id: str | None = None
+    column_index: int | None = None
+    col_span: int | None = None
+    display_order: int | None = None
 
 
 # ── Definitions ──────────────────────────────────────────────────────────────
@@ -469,3 +584,217 @@ async def merge_tags_route(request: Request, definition_id: str, body: TagMergeI
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     return {"targets_repointed": n}
+
+
+# ── Tabs — udf01b Task 3a ───────────────────────────────────────────────────
+#
+# Tabs are org-scoped only (no platform/team/user namespace — see
+# services.portfolio_udf_tabs's module docstring). Tab visibility is a THIRD,
+# separate permission system (public.profiles / public.permission_sets), not
+# services.rbac's roles — see resolve_tab_visibility's docstring for why.
+#
+# FLS LIMITATION (repeated here per the sprint's scope boundary): tab-visible
+# currently means every field in the tab's layout is visible. Field-level
+# security (udf_field_permissions) is Sprint 1c scope and does not exist yet.
+
+
+@router.get("/udf/tabs")
+async def list_tabs(request: Request, applies_to: str = Query(...)):
+    """Tabs visible to the caller, per ``resolve_tab_visibility`` — a tab
+    hidden by either grant path is never returned, the same non-bypassing
+    principle RLS uses (filtered server-side, not left for the client to
+    hide)."""
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            rows = await list_visible_tabs(
+                conn, org_id=org_id, user_id=user_id, applies_to=applies_to
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    perms = await _permission_envelope(pool, user_id, org_id)
+    return {"rows": rows, "permissions": perms, "vocabularies": _tab_vocabularies(perms)}
+
+
+@router.post("/udf/tabs", status_code=201)
+async def create_tab_route(request: Request, body: TabCreateIn):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            tab = await create_tab(
+                conn, org_id=org_id, applies_to=body.applies_to, label=body.label,
+                api_name=body.api_name, display_order=body.display_order,
+                created_by=user_id,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"tab": tab}
+
+
+@router.patch("/udf/tabs/{tab_id}")
+async def patch_tab(request: Request, tab_id: str, body: TabUpdateIn):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    changes = body.model_dump(exclude_unset=True)
+    async with pool.acquire() as conn:
+        try:
+            tab = await update_tab(conn, tab_id=tab_id, org_id=org_id, changes=changes)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"tab": tab}
+
+
+@router.delete("/udf/tabs/{tab_id}")
+async def delete_tab(request: Request, tab_id: str):
+    """Soft delete. 409 with the reference list if the tab has a non-empty
+    layout — see ``TabReferencedError``."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            tab = await soft_delete_tab(conn, tab_id=tab_id, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"tab": tab}
+
+
+@router.post("/udf/tabs/{tab_id}/deactivate")
+async def deactivate_tab_route(request: Request, tab_id: str):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            tab = await deactivate_tab(conn, tab_id=tab_id, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"tab": tab}
+
+
+@router.post("/udf/tabs/{tab_id}/reactivate")
+async def reactivate_tab_route(request: Request, tab_id: str):
+    """Not in the sprint's endpoint list verbatim, but Task 2b requires
+    deactivate to be reversible (``reactivate_tab`` exists in the service
+    layer) and there is no way to invoke that reversal without a route — same
+    reasoning udf01a's own ``/undelete`` route documented."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            tab = await reactivate_tab(conn, tab_id=tab_id, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"tab": tab}
+
+
+@router.post("/udf/tabs/{tab_id}/undelete")
+async def undelete_tab_route(request: Request, tab_id: str):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            tab = await undelete_tab(conn, tab_id=tab_id, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"tab": tab}
+
+
+@router.put("/udf/tabs/{tab_id}/permissions")
+async def put_tab_permissions(request: Request, tab_id: str, body: TabPermissionIn):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            grant = await set_tab_visibility(
+                conn, tab_id=tab_id, org_id=org_id, is_visible=body.is_visible,
+                profile_id=body.profile_id, permission_set_id=body.permission_set_id,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"permission": grant}
+
+
+# ── Layouts — udf01b Task 3a ─────────────────────────────────────────────────
+
+
+@router.get("/udf/layouts/{tab_id}")
+async def get_layout_route(
+    request: Request, tab_id: str, record_type_id: str | None = Query(default=None),
+):
+    """Resolved section -> item tree, PositionsGrid-compatible envelope
+    (``rows``/``permissions``/``vocabularies`` at the top level, plus the
+    layout's own ``layout_id``/``tab_id``/``sections`` keys). 403, not an
+    empty layout, if the tab is hidden for this caller."""
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    async with pool.acquire() as conn:
+        tab = await get_tab(conn, tab_id=tab_id)
+        if tab is None:
+            raise HTTPException(status_code=404, detail=f"tab {tab_id} not found")
+        visible = await resolve_tab_visibility(
+            conn, tab_id=tab_id, org_id=org_id, user_id=user_id
+        )
+        if not visible:
+            raise HTTPException(status_code=403, detail="this tab is hidden for the caller")
+        try:
+            resolved = await get_resolved_layout(
+                conn, tab_id=tab_id, org_id=org_id, record_type_id=record_type_id
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    perms = await _permission_envelope(pool, user_id, org_id)
+    return {
+        **resolved, "rows": resolved["sections"],
+        "permissions": perms, "vocabularies": _layout_vocabularies(perms),
+    }
+
+
+@router.post("/udf/layouts/{tab_id}/sections", status_code=201)
+async def create_section(request: Request, tab_id: str, body: SectionCreateIn):
+    """Lazily creates the tab's (single, default) layout on first use — see
+    ``get_or_create_layout``."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            layout = await get_or_create_layout(
+                conn, org_id=org_id, tab_id=tab_id,
+                record_type_id=body.record_type_id, created_by=user_id,
+            )
+            section = await add_section(
+                conn, layout_id=layout["id"], org_id=org_id, title=body.title,
+                column_count=body.column_count, display_order=body.display_order,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"section": section}
+
+
+@router.post("/udf/layouts/{tab_id}/sections/{section_id}/items", status_code=201)
+async def create_item(request: Request, tab_id: str, section_id: str, body: ItemCreateIn):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            item = await add_item(
+                conn, section_id=section_id, org_id=org_id,
+                definition_id=body.definition_id, display_order=body.display_order,
+                column_index=body.column_index, col_span=body.col_span,
+                is_read_only=body.is_read_only,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"item": item}
+
+
+@router.patch("/udf/layouts/{tab_id}/items/{item_id}")
+async def patch_item(request: Request, tab_id: str, item_id: str, body: ItemUpdateIn):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    changes = body.model_dump(exclude_unset=True)
+    async with pool.acquire() as conn:
+        try:
+            item = await move_item(conn, item_id=item_id, org_id=org_id, **changes)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"item": item}
+
+
+@router.delete("/udf/layouts/{tab_id}/items/{item_id}")
+async def delete_item(request: Request, tab_id: str, item_id: str):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            await remove_item(conn, item_id=item_id, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"deleted": True}

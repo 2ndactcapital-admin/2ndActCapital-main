@@ -195,6 +195,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "crm.udf.max_tag_vocabulary": 500,
     # 131072 = 128 KiB. Bounds long_text/rich_text `length` in the type contract.
     "crm.udf.max_rich_text_chars": 131072,
+    # udf01b — layout shape caps, same "crm.udf." prefix as the six above.
+    "crm.udf.max_sections_per_layout": 10,
+    "crm.udf.max_items_per_section": 20,
 }
 
 # Category per key, used when a key is written for the first time and when
