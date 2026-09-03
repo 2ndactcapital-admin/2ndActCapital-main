@@ -1000,3 +1000,18 @@ _run_refresh_schema.py helper, etc.) should be needed going forward —
 if stale-DATABASE_URL symptoms recur after this fix, that's a signal
 something upstream of resolve_dsn itself has changed, not a reason to
 re-introduce a bespoke substitution.
+
+## v_capital_accounts is structurally broken (found by fee42b)
+
+Returns ZERO rows unconditionally. It groups on
+journal_lines.dim_member_series_id, a column with no backing table, no
+FK, and NULL on every deployed row — while the view's own WHERE clause
+requires that column NOT NULL. It also keys on journal_entries.vehicle_id,
+and every deployed SPV has vehicle_entity_id NULL. Fixed nowhere yet;
+fee42b worked around it by reading cumulative investor figures directly
+from posted spv_transaction_allocations instead of this view.
+
+Real fix requires fee43's GL posting work (open question #3) to actually
+populate the dimension this view depends on. Until then, do not build
+anything else against v_capital_accounts expecting real data — check for
+yourself first, this note is not a substitute for re-verifying.
