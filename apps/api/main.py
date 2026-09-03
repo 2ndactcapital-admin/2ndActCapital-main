@@ -47,6 +47,7 @@ from routers.portfolio_securities import router as portfolio_securities_router
 from routers.portfolio_transactions import router as portfolio_transactions_router
 from routers.profiles import router as profiles_router
 from routers.tenant import router as tenant_router
+from routers.udf import router as udf_router
 from routers.entity_documents import router as entity_documents_router
 from routers.documents import router as documents_router
 from routers.document_links import router as document_links_router
@@ -562,5 +563,6 @@ app.include_router(pricing_surface_router, prefix="/api/v1")
 app.include_router(trading_authority_router, prefix="/api/v1")
 app.include_router(profiles_router, prefix="/api/v1")
 app.include_router(workflows_router, prefix="/api/v1")
+app.include_router(udf_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)

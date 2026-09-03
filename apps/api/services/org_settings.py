@@ -177,6 +177,24 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # that no admin initiated is not something to ship without a decision. The
     # column and the setting are what a later sprint would need to enforce it.
     USER_INACTIVITY_TIMEOUT_DAYS_KEY: 90,
+    # ── UDF definitions layer (udf01a) ─────────────────────────────────────
+    # The caps the UDF layer enforces. They live HERE, as DEFAULT_SETTINGS, and
+    # not as module constants in services/portfolio_udf, for the reason this
+    # module's own docstring gives: DEFAULT_SETTINGS *is* the default data.
+    #
+    # This is also the only workable home for a "platform default". org_settings
+    # .org_id is NOT NULL with an FK to organizations and the table has no
+    # owner_scope column, so there is no platform-scope ROW to seed — the
+    # platform default is the fallback in this dict, and an org_settings row is
+    # an org's OVERRIDE of it. get_setting already resolves in that order, so an
+    # org that configures nothing gets these values without any row existing.
+    "crm.udf.max_custom_tabs": 3,
+    "crm.udf.max_fields_per_target": 100,
+    "crm.udf.max_value_set_values": 500,
+    "crm.udf.max_tags_per_record": 25,
+    "crm.udf.max_tag_vocabulary": 500,
+    # 131072 = 128 KiB. Bounds long_text/rich_text `length` in the type contract.
+    "crm.udf.max_rich_text_chars": 131072,
 }
 
 # Category per key, used when a key is written for the first time and when
@@ -193,6 +211,9 @@ CATEGORY_BY_PREFIX = {
     # job, not two.
     "invite.": "membership",
     "user.": "membership",
+    # udf01a — the UDF caps group under one heading; an admin raising a field
+    # limit and a tag limit is doing one job.
+    "crm.udf.": "crm",
 }
 
 DEFAULT_CATEGORY = "general"
