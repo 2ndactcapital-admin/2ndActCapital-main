@@ -26,6 +26,7 @@ from routers.custody_import import router as custody_import_router
 from routers.dashboard import router as dashboard_router
 from routers.debug import router as debug_router
 from routers.entities import router as entities_router, get_org_id
+from routers.modeling_ta import router as modeling_ta_router
 from routers.entity_graph import router as entity_graph_router
 from routers.ownership_tree import router as ownership_tree_router
 from routers.households import router as households_router
@@ -554,5 +555,6 @@ app.include_router(pricing_surface_router, prefix="/api/v1")
 app.include_router(trading_authority_router, prefix="/api/v1")
 app.include_router(profiles_router, prefix="/api/v1")
 app.include_router(workflows_router, prefix="/api/v1")
+app.include_router(modeling_ta_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)

@@ -119,6 +119,25 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
+-- ===== altruist_one_evaluations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   evaluated_on                             date NOT NULL
+--   inputs                                   jsonb NOT NULL
+--   annual_cost                              numeric NOT NULL
+--   benefit_breakdown                        jsonb NOT NULL
+--   annual_benefit                           numeric NOT NULL
+--   net_benefit                              numeric NOT NULL
+--   recommendation                           text NOT NULL
+--   decision                                 text
+--   override_reason                          text
+--   decided_by                               uuid
+--   decided_at                               timestamp with time zone
+--   next_review_on                           date
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY altruist_one_evaluations_pkey: (id)
+
 -- ===== assistant_action_catalog =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -189,6 +208,35 @@
 --   payload                                  jsonb
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY audit_log_pkey: (id)
+
+-- ===== billing_group_members =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   billing_group_id                         uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   added_by                                 uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY billing_group_members_pkey: (id)
+
+-- ===== billing_groups =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   group_type                               text NOT NULL
+--   household_id                             uuid
+--   notes                                    text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY billing_groups_pkey: (id)
 
 -- ===== chart_of_accounts =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -262,6 +310,89 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE config_org_id_config_key_key: (org_id, config_key)
 --   PRIMARY KEY config_pkey: (id)
+
+-- ===== cost_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   event_date                               date NOT NULL
+--   period_start                             date
+--   period_end                               date
+--   amount                                   numeric NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   cost_type                                text NOT NULL
+--   cost_provider_id                         uuid
+--   allocation_method                        text NOT NULL
+--   allocation_driver                        text
+--   is_passed_through                        boolean NOT NULL DEFAULT false
+--   linked_revenue_event_id                  uuid
+--   account_id                               uuid
+--   entity_id                                uuid
+--   household_id                             uuid
+--   billing_group_id                         uuid
+--   advisor_id                               uuid
+--   product_type                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_events_pkey: (id)
+
+-- ===== cost_pass_through_policies =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   cost_schedule_id                         uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid
+--   policy                                   text NOT NULL
+--   pass_through_rate                        numeric
+--   disclosure_required                      boolean NOT NULL DEFAULT true
+--   disclosure_acknowledged_by               uuid
+--   disclosure_acknowledged_at               timestamp with time zone
+--   approved_by                              uuid NOT NULL
+--   reason                                   text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_pass_through_policies_pkey: (id)
+
+-- ===== cost_providers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   provider_code                            text NOT NULL
+--   provider_type                            text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_providers_pkey: (id)
+
+-- ===== cost_schedules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   cost_provider_id                         uuid NOT NULL
+--   cost_code                                text NOT NULL
+--   basis                                    text NOT NULL
+--   rate                                     numeric
+--   flat_amount                              numeric
+--   minimum_amount                           numeric
+--   frequency                                text NOT NULL
+--   applies_scope                            text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   source_url                               text
+--   source_verified_on                       date
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY cost_schedules_pkey: (id)
 
 -- ===== dashboard_briefs =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -561,6 +692,28 @@
 --   confirmed_at                             timestamp with time zone
 --   PRIMARY KEY documents_pkey: (id)
 
+-- ===== domain_event_deliveries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   domain_event_id                          uuid NOT NULL
+--   workflow_trigger_id                      uuid NOT NULL
+--   workflow_run_id                          uuid
+--   status                                   text NOT NULL DEFAULT 'DELIVERED'::text
+--   error_detail                             text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY domain_event_deliveries_pkey: (id)
+
+-- ===== domain_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   event_type                               text NOT NULL
+--   source_type                              text NOT NULL
+--   source_id                                uuid NOT NULL
+--   payload                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   occurred_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY domain_events_pkey: (id)
+
 -- ===== entities =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -840,6 +993,243 @@
 --   revoked_at                               timestamp with time zone
 --   PRIMARY KEY external_access_grants_pkey: (id)
 
+-- ===== fee_assignments =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid
+--   precedence                               integer NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   agreement_document_id                    uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_assignments_pkey: (id)
+
+-- ===== fee_credits =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid NOT NULL
+--   credit_source                            text NOT NULL
+--   offset_pct                               numeric NOT NULL DEFAULT 1.0
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   reason                                   text NOT NULL
+--   approved_by                              uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_credits_pkey: (id)
+
+-- ===== fee_discounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid NOT NULL
+--   discount_type                            text NOT NULL
+--   value                                    numeric
+--   applies_to                               text NOT NULL DEFAULT 'GROSS'::text
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   approved_by                              uuid NOT NULL
+--   reason                                   text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_discounts_pkey: (id)
+
+-- ===== fee_exclusions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   scope_type                               text NOT NULL
+--   scope_id                                 uuid
+--   basis_type                               text NOT NULL
+--   basis_value                              text
+--   treatment                                text NOT NULL
+--   alt_fee_schedule_id                      uuid
+--   flat_amount                              numeric
+--   reason                                   text NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_exclusions_pkey: (id)
+
+-- ===== fee_invoices =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_run_id                               uuid
+--   household_id                             uuid
+--   entity_id                                uuid
+--   invoice_number                           text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   total_amount                             numeric NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   issued_at                                timestamp with time zone
+--   delivered_at                             timestamp with time zone
+--   delivery_method                          text
+--   pdf_document_id                          uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_invoices_pkey: (id)
+
+-- ===== fee_narrative_templates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   template_code                            text NOT NULL
+--   jurisdiction                             text
+--   body_template                            text NOT NULL
+--   version                                  integer NOT NULL DEFAULT 1
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_narrative_templates_pkey: (id)
+
+-- ===== fee_narratives =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   fee_assignment_id                        uuid
+--   household_id                             uuid
+--   template_id                              uuid NOT NULL
+--   rendered_text                            text NOT NULL
+--   input_hash                               text NOT NULL
+--   is_stale                                 boolean NOT NULL DEFAULT false
+--   adv_check_status                         text NOT NULL DEFAULT 'UNCHECKED'::text
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_narratives_pkey: (id)
+
+-- ===== fee_receipts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_run_line_id                          uuid NOT NULL
+--   received_amount                          numeric NOT NULL
+--   received_on                              date NOT NULL
+--   source                                   text NOT NULL
+--   variance                                 numeric
+--   reconciliation_status                    text NOT NULL DEFAULT 'UNRECONCILED'::text
+--   exception_reason                         text
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_receipts_pkey: (id)
+
+-- ===== fee_run_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_run_id                               uuid NOT NULL
+--   account_id                               uuid
+--   billing_group_id                         uuid
+--   household_id                             uuid
+--   entity_id                                uuid
+--   advisor_id                               uuid
+--   product_type                             text NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   billable_value                           numeric NOT NULL
+--   excluded_value                           numeric NOT NULL DEFAULT 0
+--   valuation_method                         text NOT NULL
+--   gross_fee                                numeric NOT NULL
+--   discount_amount                          numeric NOT NULL DEFAULT 0
+--   credit_amount                            numeric NOT NULL DEFAULT 0
+--   minimum_adjustment                       numeric NOT NULL DEFAULT 0
+--   net_fee                                  numeric NOT NULL
+--   payer_account_id                         uuid
+--   payment_method                           text NOT NULL DEFAULT 'CUSTODIAL_DEBIT'::text
+--   calc_detail                              jsonb NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY fee_run_lines_pkey: (id)
+
+-- ===== fee_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   period_start                             date NOT NULL
+--   period_end                               date NOT NULL
+--   billing_frequency                        text NOT NULL
+--   run_type                                 text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   reverses_run_id                          uuid
+--   calculation_snapshot_hash                text
+--   engine_version                           text
+--   created_by                               uuid
+--   advisor_approved_by                      uuid
+--   advisor_approved_at                      timestamp with time zone
+--   compliance_approved_by                   uuid
+--   compliance_approved_at                   timestamp with time zone
+--   posted_at                                timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_runs_pkey: (id)
+
+-- ===== fee_schedule_tiers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   fee_schedule_id                          uuid NOT NULL
+--   tier_seq                                 integer NOT NULL
+--   lower_bound                              numeric NOT NULL
+--   upper_bound                              numeric
+--   rate_bps                                 numeric
+--   flat_amount                              numeric
+--   PRIMARY KEY fee_schedule_tiers_pkey: (id)
+
+-- ===== fee_schedules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   code                                     text NOT NULL
+--   version                                  integer NOT NULL DEFAULT 1
+--   name                                     text NOT NULL
+--   product_type                             text NOT NULL
+--   rate_type                                text NOT NULL
+--   tier_method                              text
+--   billing_frequency                        text NOT NULL
+--   billing_timing                           text NOT NULL
+--   valuation_method                         text NOT NULL
+--   day_weight_flows                         boolean NOT NULL DEFAULT true
+--   day_weight_threshold                     numeric
+--   proration_method                         text NOT NULL DEFAULT 'CALENDAR_DAYS'::text
+--   minimum_fee                              numeric
+--   minimum_fee_scope                        text
+--   maximum_fee                              numeric
+--   minimum_billable_value                   numeric
+--   cash_treatment                           text NOT NULL DEFAULT 'INCLUDE'::text
+--   cash_exclusion_pct                       numeric
+--   margin_treatment                         text NOT NULL DEFAULT 'IGNORE'::text
+--   ordering_policy                          jsonb NOT NULL DEFAULT '["EXCLUSIONS", "TIERS", "DISCOUNTS", "CREDITS", "MINIMUM", "MAXIMUM"]'::jsonb
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fee_schedules_pkey: (id)
+
 -- ===== fx_rates =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid
@@ -950,6 +1340,7 @@
 --   posted_by                                uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   created_by                               uuid
+--   vehicle_kind                             text NOT NULL
 --   PRIMARY KEY journal_entries_pkey: (id)
 
 -- ===== journal_lines =====
@@ -966,6 +1357,19 @@
 --   memo                                     text
 --   UNIQUE jl_line_unique: (entry_id, line_no)
 --   PRIMARY KEY journal_lines_pkey: (id)
+
+-- ===== ledger_books =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   book_code                                text NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY ledger_books_pkey: (id)
 
 -- ===== marketing_contacts =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -1157,6 +1561,35 @@
 --   PRIMARY KEY permissions_pkey: (id)
 --   UNIQUE permissions_resource_action_key: (resource, action)
 
+-- ===== portfolio_precedence_household_overrides =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   source_order                             jsonb NOT NULL
+--   reason                                   text NOT NULL
+--   approved_by                              uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY portfolio_precedence_household_overrides_pkey: (id)
+
+-- ===== position_account_exceptions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   position_id                              uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   owner_entity_id                          uuid NOT NULL
+--   reason_code                              text NOT NULL
+--   reason                                   text NOT NULL
+--   source_system                            text
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   reviewed_at                              timestamp with time zone
+--   reviewed_by                              uuid
+--   PRIMARY KEY position_account_exceptions_pkey: (id)
+
 -- ===== posting_template_lines =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   template_id                              uuid NOT NULL
@@ -1211,6 +1644,27 @@
 --   UNIQUE profiles_org_id_name_key: (org_id, name)
 --   PRIMARY KEY profiles_pkey: (id)
 
+-- ===== provider_benefit_schedules =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   cost_provider_id                         uuid NOT NULL
+--   benefit_code                             text NOT NULL
+--   basis                                    text NOT NULL
+--   rate                                     numeric
+--   flat_amount                              numeric
+--   applies_scope                            text NOT NULL DEFAULT 'HOUSEHOLD'::text
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   source_url                               text
+--   source_verified_on                       date
+--   notes                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY provider_benefit_schedules_pkey: (id)
+
 -- ===== reference_data =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid
@@ -1222,8 +1676,22 @@
 --   display_order                            integer NOT NULL DEFAULT 100
 --   is_active                                boolean NOT NULL DEFAULT true
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
---   UNIQUE reference_data_list_key_code_parent_code_key: (list_key, code, parent_code)
+--   list_id                                  uuid
 --   PRIMARY KEY reference_data_pkey: (id)
+
+-- ===== reference_data_lists =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid
+--   list_key                                 text NOT NULL
+--   label                                    text NOT NULL
+--   description                              text
+--   owner_scope                              text NOT NULL
+--   owner_scope_id                           uuid
+--   is_extensible                            boolean NOT NULL DEFAULT false
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY reference_data_lists_pkey: (id)
 
 -- ===== restricted_access_audit =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -1246,6 +1714,34 @@
 --   UNIQUE restricted_access_grants_entity_id_user_id_key: (entity_id, user_id)
 --   PRIMARY KEY restricted_access_grants_pkey: (id)
 
+-- ===== revenue_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   event_date                               date NOT NULL
+--   period_start                             date
+--   period_end                               date
+--   amount                                   numeric NOT NULL
+--   currency                                 text NOT NULL DEFAULT 'USD'::text
+--   revenue_type                             text NOT NULL
+--   recognition                              text NOT NULL DEFAULT 'ACCRUAL'::text
+--   account_id                               uuid
+--   entity_id                                uuid
+--   household_id                             uuid
+--   billing_group_id                         uuid
+--   spv_id                                   uuid
+--   deal_id                                  uuid
+--   advisor_id                               uuid
+--   product_type                             text
+--   source_type                              text NOT NULL
+--   source_id                                uuid
+--   journal_entry_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY revenue_events_pkey: (id)
+
 -- ===== role_permissions =====
 --   role_id                                  uuid NOT NULL
 --   permission_id                            uuid NOT NULL
@@ -1259,6 +1755,42 @@
 --   UNIQUE roles_org_id_name_key: (org_id, name)
 --   PRIMARY KEY roles_pkey: (id)
 
+-- ===== spv_carry_run_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_carry_run_id                         uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   spv_subscription_id                      uuid
+--   gross_gain_allocated                     numeric NOT NULL
+--   return_of_capital                        numeric NOT NULL DEFAULT 0
+--   preferred_return                         numeric NOT NULL DEFAULT 0
+--   gp_catchup                               numeric NOT NULL DEFAULT 0
+--   carry_to_gp                              numeric NOT NULL DEFAULT 0
+--   net_to_lp                                numeric NOT NULL
+--   calc_detail                              jsonb NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_carry_run_lines_pkey: (id)
+
+-- ===== spv_carry_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   domain_event_id                          uuid
+--   triggering_transaction_id                uuid
+--   status                                   text NOT NULL DEFAULT 'DRAFT'::text
+--   carry_basis                              text NOT NULL
+--   calculation_snapshot_hash                text
+--   engine_version                           text
+--   created_by                               uuid
+--   advisor_approved_by                      uuid
+--   advisor_approved_at                      timestamp with time zone
+--   compliance_approved_by                   uuid
+--   compliance_approved_at                   timestamp with time zone
+--   posted_at                                timestamp with time zone
+--   reverses_run_id                          uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY spv_carry_runs_pkey: (id)
+
 -- ===== spv_documents =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -1271,6 +1803,53 @@
 --   uploaded_by                              uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY spv_documents_pkey: (id)
+
+-- ===== spv_fee_side_letters =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   overrides                                jsonb NOT NULL
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   approved_by                              uuid
+--   reason                                   text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY spv_fee_side_letters_pkey: (id)
+
+-- ===== spv_fee_terms =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   spv_id                                   uuid NOT NULL
+--   class_label                              text
+--   mgmt_fee_pct                             numeric
+--   mgmt_fee_basis                           text NOT NULL
+--   mgmt_fee_frequency                       text NOT NULL
+--   mgmt_fee_term_years                      numeric
+--   mgmt_fee_step_down                       jsonb
+--   organizational_cost_cap                  numeric
+--   admin_fee_flat                           numeric
+--   placement_fee_pct                        numeric
+--   carry_pct                                numeric
+--   hurdle_pct                               numeric
+--   hurdle_type                              text
+--   catchup_pct                              numeric
+--   carry_basis                              text
+--   clawback_applies                         boolean NOT NULL DEFAULT true
+--   offsets_advisory_fee                     boolean NOT NULL DEFAULT false
+--   effective_from                           date NOT NULL
+--   effective_to                             date
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY spv_fee_terms_pkey: (id)
 
 -- ===== spv_status_history =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -2734,6 +3313,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   account_id                               uuid
 --   PRIMARY KEY positions_pkey: (id)
 
 -- ===== portfolio.reference_filings =====
@@ -2874,6 +3454,37 @@
 --   resolved_at                              timestamp with time zone
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
 
+-- ===== portfolio.ta_calibration_results =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   commitment_id                            uuid NOT NULL
+--   ta_strategy_key                          text NOT NULL
+--   calibrated_params                        jsonb NOT NULL
+--   realized_periods_used                    integer NOT NULL
+--   periods_per_year                         integer NOT NULL
+--   calibrated_at                            timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY ta_calibration_results_pkey: (id)
+
+-- ===== portfolio.ta_model_params =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   commitment_id                            uuid NOT NULL
+--   ta_strategy_key                          text NOT NULL
+--   rate_of_contribution                     numeric NOT NULL
+--   rate_of_distribution                     numeric NOT NULL
+--   growth_rate                              numeric NOT NULL
+--   bow_factor                               numeric NOT NULL
+--   fund_life_years                          numeric NOT NULL
+--   periods_per_year                         integer NOT NULL
+--   source                                   text NOT NULL DEFAULT 'override'::text
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY ta_model_params_pkey: (id)
+
 -- ===== portfolio.transactions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -2901,6 +3512,17 @@
 --   is_corporate_action_adjustment           boolean NOT NULL DEFAULT false
 --   PRIMARY KEY transactions_pkey: (id)
 
+-- ===== portfolio.udf_definition_audit =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   definition_id                            uuid NOT NULL
+--   org_id                                   uuid
+--   changed_by                               uuid
+--   changed_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   change_kind                              text NOT NULL
+--   before_state                             jsonb
+--   after_state                              jsonb
+--   PRIMARY KEY udf_definition_audit_pkey: (id)
+
 -- ===== portfolio.udf_definitions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid
@@ -2917,7 +3539,40 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   type_params                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   api_name                                 text
+--   help_text                                text
+--   description                              text
+--   is_required                              boolean NOT NULL DEFAULT false
+--   default_value                            jsonb
+--   is_unique                                boolean NOT NULL DEFAULT false
+--   unique_case_sensitive                    boolean NOT NULL DEFAULT false
+--   is_external_id                           boolean NOT NULL DEFAULT false
+--   is_platform_managed                      boolean NOT NULL DEFAULT false
+--   value_set_id                             uuid
+--   deleted_at                               timestamp with time zone
+--   deleted_by                               uuid
+--   updated_at                               timestamp with time zone
+--   updated_by                               uuid
+--   record_type_id                           uuid
+--   controlling_definition_id                uuid
 --   PRIMARY KEY udf_definitions_pkey: (id)
+
+-- ===== portfolio.udf_tag_assignments =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   definition_id                            uuid NOT NULL
+--   target_type                              text NOT NULL
+--   target_id                                uuid NOT NULL
+--   tag_code                                 text NOT NULL
+--   normalized_code                          text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY udf_tag_assignments_pkey: (id)
 
 -- ===== portfolio.udf_values =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
@@ -2955,7 +3610,7 @@
 --   PRIMARY KEY valuations_pkey: (id)
 
 -- ===== v_capital_accounts =====  [VIEW]
---   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
+--   security_invoker: true — RLS applies to the querying role
 --   org_id                                   uuid
 --   vehicle_id                               uuid
 --   ledger_basis                             text
@@ -2965,8 +3620,25 @@
 --   tax_character_code                       text
 --   balance                                  numeric
 
+-- ===== v_profitability_events =====  [VIEW]
+--   security_invoker: true — RLS applies to the querying role
+--   id                                       uuid
+--   org_id                                   uuid
+--   event_date                               date
+--   period_start                             date
+--   period_end                               date
+--   signed_amount                            numeric
+--   line_kind                                text
+--   category                                 text
+--   account_id                               uuid
+--   entity_id                                uuid
+--   household_id                             uuid
+--   billing_group_id                         uuid
+--   advisor_id                               uuid
+--   product_type                             text
+
 -- ===== v_trial_balance =====  [VIEW]
---   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
+--   security_invoker: true — RLS applies to the querying role
 --   org_id                                   uuid
 --   vehicle_id                               uuid
 --   ledger_basis                             text

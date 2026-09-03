@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-08-26 (Workflow scheduler Sprint 4 — Run History)
+Last updated: 2026-09-03 (TA Model Sprint 1 — substrate)
 
 ## About this file
 
@@ -18,6 +18,53 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## -1. TA Model Sprint 1 — substrate BUILT, real end-to-end verification green (2026-09-03)
+
+**Status: complete.** `docs/TA_MODEL_INTEGRATION_BRIEF.md` has the full design
+writeup. In short: three pure-function modules
+(`services/ta_model.py`, `services/ta_config.py`, `services/ta_calibrate.py`)
+implement a Takahashi-Alexander PE cash-flow projection model with 8 seeded
+strategy defaults and a frequency-aware minimum-history floor for calibration
+(3 years of history required, converted to periods at the series' own
+frequency — 12 quarters, not a flat 3). `services/ta_params.py` and two new
+bi-temporal/append-only tables (`portfolio.ta_model_params`,
+`portfolio.ta_calibration_results`, `docs/tamodel1_part1.sql`) persist
+parameter overrides and calibration runs — never projected cash flows
+themselves, which are computed at read time only. Five endpoints under
+`/api/v1/modeling/ta/*` and `/api/v1/admin/modeling/ta/defaults`
+(`routers/modeling_ta.py`).
+
+The sprint prompt that requested this work asserted the three modules and an
+integration brief already existed, "verified standalone (93/93)". Neither
+existed anywhere in this repo or its git history — see the brief's own
+opening section for the full discovery writeup. This sprint built all of it
+for the first time rather than treating the false premise as blocking.
+
+**Verification:** `apps/api/scripts/verify_tamodel1.py` — **77 PASS, 0 FAIL,
+0 BLOCKED**, run against the real deployed database (Doppler-hydrated
+credentials — see §2 below) through the real ASGI app, including a real
+commitment's real data projected end-to-end, non-persistence of projected
+cash flows proven by row-count before/after, a bi-temporal override
+restatement proven by a closed `valid_to` on the superseded row, the
+frequency-aware floor proven both ways (refuses 3 quarters, accepts 3 years)
+through the real `/calibrate` endpoint, cross-org isolation, and the
+view/write permission split on the admin endpoint. Three real bugs were
+found and fixed during this sprint's own verification (not left as known
+issues): a `Decimal` read back from Postgres for a round number can carry a
+positive exponent and render as scientific notation (`"3.5E+5"`) through a
+bare `str()` — fixed with fixed-point formatting in `ta_model.py`; a raw SQL
+query in `ta_params.py` had a parameter-numbering gap (`$4` referenced with
+no `$3` in the query text) that asyncpg cannot bind; and `GET
+/modeling/ta/defaults` returned `None` for an org that had never been
+explicitly seeded, because the 4 new settings keys were never added to
+`org_settings.DEFAULT_SETTINGS`'s own fallback.
+
+**Next, independent of each other:** Sprint 2 (admin UX — a settings editor
+for `modeling.ta.*`) and Sprint 3 (commitment projection UX — the
+member/staff-facing projection view). Both depend only on Sprint 1.
 
 ---
 

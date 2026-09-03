@@ -1,0 +1,101 @@
+[INFO] hydrated 38 secrets from Doppler over HTTPS (overwriting any stale ambient copies, e.g. apps/api/.env / ~/.bashrc)
+==============================================================================
+TA MODEL SPRINT 1 — verify
+==============================================================================
+[FIND] 1a — no ta_strategy field / PE-strategy taxonomy existed anywhere
+       docs/schema_snapshot.sql and every seed SQL file were searched for 'buyout', 'venture_capital', 'growth_equity', 'secondaries', 'fund_of_funds', 'private_credit', 'real_assets': zero hits. The closest existing thing, config.category='asset_taxonomy', is a generic SC/MC/Sub asset-CLASS tree (services/taxonomy.py), not a PE-strategy vocabulary, and portfolio.commitments carries no strategy column. The 8 keys are new — added as a CHECK constraint vocabulary on the new portfolio.ta_model_params /  ta_calibration_results tables (docs/tamodel1_part1.sql), not on commitments itself.
+[FIND] 1b — Chancery does NOT source commitment financial data
+       services/portfolio_chancery.py:COMMITMENT_EXTRACTION_GAP states plainly that no deployed Chancery extractor produces commitment_amount/called_to_date/distributed_to_date/recallable_amount — narrative extraction has no monetary keys and template extraction (k1) maps five income boxes, not commitment figures. The real, deployed source of commitment data is services.portfolio_commitments.create_commitment / recompute_commitment against portfolio.commitments + portfolio.transactions — used below as 'the real commitment data' for Task 5's end-to-end proof, since that is what is actually deployed, not what the prompt assumed was deployed.
+[FIND] 1c — org_settings had ZERO 'modeling.*' keys before this sprint
+       Confirmed both by static read of services/org_settings.py (DEFAULT_SETTINGS / CATEGORY_BY_PREFIX had no modeling.* entries before this sprint's edit) and, when the database is reachable, by a direct query below (Assertion 3.1) — genuinely greenfield, not assumed from the absence in code alone.
+[FIND] no seed_rows() helper exists in this codebase
+       The prompt's Task 2 instruction to seed settings 'via seed_rows()' does not match anything deployed — grepped, the only match is a local one-off function in verify_soc1.py, not reusable infrastructure. The real, existing precedent for org-default config is services.org_settings.DEFAULT_SETTINGS + set_setting's own upsert, which is what services.ta_config.default_settings_seed() + this script's seeding step use instead.
+
+── Section 1: pure-module assertions (ta_model / ta_config / ta_calibrate) ──
+[PASS] 1.1 ta_model.py imports nothing from asyncpg/services.database/fastapi/routers
+[PASS] 1.2 TAParams accepts a valid all-Decimal parameter set
+[PASS] 1.2 TAParams rejects a float in rate_of_contribution
+[PASS] 1.2 TAParams rejects a float in rate_of_distribution
+[PASS] 1.2 TAParams rejects a float in growth_rate
+[PASS] 1.2 TAParams rejects a float in bow_factor
+[PASS] 1.2 TAParams rejects a float in fund_life_years
+[PASS] 1.2 TAParams rejects rate_of_contribution=-0.1 outside [0,1]
+[PASS] 1.2 TAParams rejects rate_of_contribution=1.1 outside [0,1]
+[PASS] 1.2 TAParams rejects fund_life_years=0
+[PASS] 1.2 TAParams rejects periods_per_year=0
+[PASS] 1.3 project_cash_flows rejects float committed_capital
+[PASS] 1.3 project_cash_flows rejects float called_to_date
+[PASS] 1.3 project_cash_flows rejects float distributed_to_date
+[PASS] 1.3 project_cash_flows rejects float current_nav
+[PASS] 1.3 project_cash_flows accepts str/int/Decimal money interchangeably
+[PASS] 1.3 project_cash_flows rejects horizon_periods=0
+[PASS] 1.3 project_cash_flows rejects horizon_periods=-1
+[PASS] 1.3 project_cash_flows rejects horizon_periods=401
+[PASS] 1.3 project_cash_flows rejects negative committed_capital
+[PASS] 1.3 project_cash_flows rejects negative called_to_date
+[PASS] 1.3 project_cash_flows rejects negative distributed_to_date
+[PASS] 1.3 project_cash_flows rejects negative current_nav
+[PASS] 1.4 project_cash_flows returns exactly horizon_periods rows
+[PASS] 1.4 cumulative_paid_in never exceeds committed_capital
+[PASS] 1.4 NAV is never negative across the projection
+[PASS] 1.4 every monetary field is a Decimal (never a float) in the output
+[PASS] 1.4 calling project_cash_flows twice with identical inputs returns EQUAL but NOT the same list object (nothing is memoized/cached)
+[PASS] 1.5 params_for_strategy resolves strategy 'buyout' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'growth_equity' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'venture_capital' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'real_estate' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'real_assets' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'private_credit' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'fund_of_funds' from built-in defaults
+[PASS] 1.5 params_for_strategy resolves strategy 'secondaries' from built-in defaults
+[PASS] 1.5 exactly 8 TA strategy keys are seeded
+[PASS] 1.5 params_for_strategy rejects an unknown strategy_key
+[PASS] 1.5 params_for_strategy uses the ORG's overridden strategy_defaults when present
+[PASS] 1.5 an org override for buyout does NOT change growth_equity's resolved params (per-key, not global)
+[PASS] 1.5 projection_horizon_periods = horizon_years * periods_per_year using defaults
+[PASS] 1.5 default_settings_seed() returns exactly the 4 keys Task 2 asks for
+[PASS] 1.5 default_settings_seed()'s strategy_defaults covers all 8 keys with all-string rate fields
+[PASS] 1.6 minimum_realized_periods(periods_per_year=1) == 3 (unchanged from the flat floor)
+[PASS] 1.6 minimum_realized_periods(periods_per_year=4) == 12, NOT 3 — the actual fix: a flat floor would have left this at 3
+[PASS] 1.6 the floor scales linearly with frequency: monthly (12) needs 36
+[PASS] 1.6 minimum_realized_periods == ceil(MIN_CALIBRATION_YEARS * periods_per_year) exactly
+[PASS] 1.6 calibrate_strategy ACCEPTS exactly 3 years of annual realized history (periods_per_year=1)
+[PASS] 1.6 a 3-year calibration's bow_factor/fund_life_years pass through UNCHANGED (not calibrated — see the function's own docstring for why)
+[PASS] 1.6 calibrate_strategy REFUSES 3 quarters of history at periods_per_year=4 (below the 12-period floor)
+[PASS] 1.6 calibrate_strategy ACCEPTS exactly 12 quarters (3 years' worth at quarterly frequency)
+[PASS] 1.6 calibrate_strategy rejects a float committed_capital
+
+── Database connectivity check (real attempt, not a presence check) ──
+
+── Section 2: schema + settings-seed (direct DB) ──
+[PASS] 2.1 both new tables exist: portfolio.ta_model_params, portfolio.ta_calibration_results
+[PASS] 2.2 portfolio.ta_model_params carries all 4 bi-temporal columns (Rule 3)
+[PASS] 2.3 the active-row uniqueness is a PARTIAL index on (org_id, commitment_id) WHERE valid_to IS NULL AND system_to IS NULL — the member_target_allocations shape
+[PASS] 2.4 exactly 2 RLS policies exist (one org-isolation policy per table)
+[PASS] 3.1 all 4 org_settings seed rows are LIVE, confirmed by direct query (not assumed from the seed function's return value)
+[PASS] 3.1 get_all_settings resolves the seeded strategy_defaults for org A
+
+── Section 2: the 5 endpoints, through the REAL ASGI app ──
+[PASS] 4.1 all 5 endpoints are declared, with the admin write under the literal /api/v1/admin/ prefix (not /admin/api/v1)
+[PASS] 5.1 GET projection succeeds end-to-end for a real commitment through the real API (not a fixture bypassing the endpoint)
+[PASS] 5.1 the projection's current_nav reflects the position's REAL market_value (350000)
+[PASS] 5.1 every period's monetary fields are JSON STRINGS, never numbers-with-decimal
+[PASS] 5.2 re-running the same projection twice does not grow ta_model_params or ta_calibration_results — no cached-projection row count appears anywhere
+[PASS] 5.2 no table anywhere in the schema is shaped like a stored projection (only ta_model_params [parameters] and ta_calibration_results [calibration runs] exist under the ta_ prefix)
+[PASS] 5.3 POST calibrate (periods_per_year=1, 3 real annual call transactions) succeeds and persists an override
+[PASS] 5.3 exactly ONE active override row exists after the first calibration
+[PASS] 5.3 a SECOND calibration (restatement) succeeds and returns a DIFFERENT params_id
+[PASS] 5.3 STILL exactly ONE active row after restatement (the old one was CLOSED, not deleted and not left active alongside the new one)
+[PASS] 5.3 the FIRST override row now has valid_to SET (closed, per Rule 3) rather than being UPDATEd in place
+[PASS] 5.4 the real /calibrate endpoint REFUSES a 3-quarter calibration attempt (422)
+[PASS] 5.4 the SAME real endpoint ACCEPTS a 3(+)-year annual calibration on the same commitment
+[PASS] 5.5 org B's GET defaults returns the UNMODIFIED built-in default (never org A's seeded/overridden value) — no cross-org leakage
+[PASS] 5.5 org B cannot read org A's commitment via GET projection (404, not org A's data)
+[PASS] 5.6 a plain member (no special permission) CAN read GET defaults — matches org_settings' own 'reads open to any authenticated org member' rule
+[PASS] 5.6 the SAME plain member is REFUSED (403) on PUT admin defaults — the write gate (can_manage_org_settings) is real, not vacuous
+[PASS] 5.6 the SAME PUT succeeds (200) for org_admin — the gate refuses the wrong caller and admits the right one on the identical request (a gate that refuses everyone would pass the negative half trivially)
+[PASS] 5.7 teardown complete — zero leftover test rows
+
+==============================================================================
+TA Model Sprint 1: 77 passed, 0 failed, 0 blocked
+==============================================================================
