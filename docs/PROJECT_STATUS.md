@@ -1,6 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
 
-Last updated: 2026-09-02 (Fee module fee42b — SPV carry distribution engine)
+Last updated: 2026-09-03 (Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -18,6 +18,53 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000. Fee module fee43 — GL posting SHIPPED; ONE gap owed (2026-09-03)
+
+`68/68 PASS, 1 FIND, 0 FAIL, 0 BLOCKED` — `apps/api/scripts/verify_fee43.py`.
+HELD for manual review (`.structural`). Nothing here is blocked on anything
+outside the codebase; this entry records the one real gap the sprint found and
+deliberately did not invent its way around.
+
+**Design-doc open question #3 is CLOSED.** RIA fee revenue posts to the
+`RIA_OPERATING` ledger book and club dues to `CLUB_DUES`, via the new
+`journal_entries.vehicle_kind='LEDGER_BOOK'`; SPV-scoped revenue and carry keep
+posting inside their own SPV's books (`vehicle_kind='SPV'`, unchanged). This
+closes fee36's F4o stub and fee42b's 6l.
+
+**The one gap — no GP legal entity exists.** `entity_type` has a `gp` enum
+value, but ZERO `entities` rows use it and `spvs` has no GP/manager/sponsor
+column. Carry therefore books inside the SPV's own book as an expense
+(`5500 Carried Interest`) credited to the existing `2100 Due to Affiliate` —
+a payable to the manager, NOT an equity allocation to a GP capital account.
+That is the correct achievable treatment today and it is what shipped. If the
+GP ever needs its own capital account, that is a real modelling decision
+(entity + capital-account plumbing), not a posting-template change.
+
+**Two premises in the sprint brief were wrong, and the code follows what is
+actually deployed, not the brief:**
+
+1. The brief said `chart_of_accounts` "has no advisory-fee or club-dues revenue
+   account". Four revenue accounts were needed, not the two it sketched —
+   `4400/4500/4600/4700` — because fee39 already resolves fee lines to three
+   different RIA revenue types (ADVISORY / PLANNING / PLACEMENT). Collapsing
+   them would have made `revenue_events` and the GL impossible to reconcile
+   line-for-line.
+2. The brief expected the chart to have a `parent_code` hierarchy to slot into.
+   It does not — all 20 pre-existing rows have `parent_code` NULL. The real
+   convention is a flat 4-digit code banded by `account_type`, and the new
+   accounts follow that.
+
+**`v_capital_accounts` is still broken and fee43 did NOT fix it** — see the
+entry at the bottom of this file, now updated with the measured answer.
+
+**Not done, deliberately:** runs POSTED before fee43 have no journal entries
+and do not acquire any. Backfilling history is an explicit decision, not an
+oversight. `revenue_events.journal_entry_id` is also left NULL — that column is
+exactly the revenue-to-GL link a reconciliation wants, and wiring it is fee39's
+territory, scoped out of this sprint. Both are worth picking up.
 
 ---
 
@@ -1011,7 +1058,18 @@ and every deployed SPV has vehicle_entity_id NULL. Fixed nowhere yet;
 fee42b worked around it by reading cumulative investor figures directly
 from posted spv_transaction_allocations instead of this view.
 
-Real fix requires fee43's GL posting work (open question #3) to actually
-populate the dimension this view depends on. Until then, do not build
-anything else against v_capital_accounts expecting real data — check for
-yourself first, this note is not a substitute for re-verifying.
+**UPDATE 2026-09-03 — fee43 shipped GL posting and did NOT fix this.**
+Measured, not assumed: every posting template fee43 added declares
+`dimension_source='none'`, so no posting path populates
+`dim_member_series_id`. It cannot, because there is still no
+`dim_member_series` table for that id to reference — populating it would be
+inventing a key. The earlier expectation on this line ("real fix requires
+fee43's GL posting work") turned out to be wrong: this view's brokenness is a
+DIFFERENT dimension than the vehicle-routing problem fee43 solved, and closing
+open question #3 did nothing for it.
+
+The real fix is its own piece of work: either create the missing
+`dim_member_series` table and have a posting path populate it, or rewrite the
+view to key on something that exists. Until then, do not build anything else
+against v_capital_accounts expecting real data — check for yourself first, this
+note is not a substitute for re-verifying.
