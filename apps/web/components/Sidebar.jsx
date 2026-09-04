@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { label: "Investments", href: "/portfolio", icon: "portfolio" },
   { label: "Positions", href: "/portfolio/positions", icon: "portfolio-reporting" },
   { label: "Securities", href: "/portfolio/securities", icon: "portfolio" },
+  { label: "Commitments", href: "/portfolio/commitments", icon: "portfolio-reporting" },
   { label: "Portfolio Reporting", href: "/portfolio-reporting", icon: "portfolio-reporting" },
   { label: "SPV Manager", href: "/spvs", icon: "spv-manager" },
   { label: "Insurance", href: "/insurance", icon: "insurance" },

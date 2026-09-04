@@ -252,5 +252,17 @@ silently discarded every other strategy's prior override, since
 merges rather than replaces.
 
 Sprint 3 — commitment projection UX (the member/staff-facing projection
-view) is next, independent of Sprint 2, depending only on Sprint 1 per this
-brief's own sequencing.
+view), at `/portfolio/commitments/[commitmentId]`. **Complete** — 22/22
+verified (`apps/api/scripts/verify_tamodel3.py`). No commitments list/detail
+screen or general list-commitments endpoint existed before this sprint, so
+it is a new standalone screen (id-lookup entry point) rather than a tab
+added to an existing one. Read-only chart + by-period table against the
+real saved projection, plus a live "what if" panel against the real,
+non-persisting preview endpoint. Reuses `view_portfolio` verbatim. Found and
+fixed a real gap along the way: `GET /projection/{commitment_id}` computed
+but never returned `committed_capital`/`called_to_date`/`distributed_to_date`
+— required inputs for seeding the preview tool with the commitment's real
+state — fixed additively.
+
+Sprint 4 — calibration UX + obligation ledger integration is next, depending
+on Sprints 1–3.

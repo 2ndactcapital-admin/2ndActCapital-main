@@ -643,6 +643,20 @@ export const getWorkflowVersions = (id) =>
 // server-side.
 export const getTaDefaults = () => fetchAPI("/api/v1/modeling/ta/defaults");
 
+// --- TA Model — commitment projection UX (TA Model Sprint 3) ---
+// GET returns the saved, calibrated-or-strategy-default projection for one
+// real commitment (never persisted itself — computed at read time). Gated
+// server-side on view_portfolio, the same real permission every other
+// portfolio read endpoint uses (Task 1b) — not a new one.
+export const getTaProjection = (commitmentId, { strategyKey, periodsPerYear, horizonPeriods } = {}) =>
+  fetchAPI(`/api/v1/modeling/ta/projection/${commitmentId}`, {
+    searchParams: {
+      strategy_key: strategyKey,
+      periods_per_year: periodsPerYear,
+      horizon_periods: horizonPeriods,
+    },
+  });
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

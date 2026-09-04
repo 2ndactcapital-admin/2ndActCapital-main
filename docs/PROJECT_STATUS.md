@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-03 (TA Model Sprint 2 — admin settings UX; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-03 (TA Model Sprint 3 — commitment projection UX; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -711,9 +711,42 @@ gate), cross-org isolation on both the settings values and the new
 routes present in the build output. `verify_tamodel1.py` re-run clean at
 77/77 after this sprint's backend changes (no regression).
 
-**Next, independent of each other:** Sprint 3 (commitment projection UX —
-the member/staff-facing projection view) is the only remaining piece; it
-depends only on Sprint 1.
+**Sprint 3 (commitment projection UX) — complete.** The member/staff-facing
+projection view, at `/portfolio/commitments/[commitmentId]`
+(`CommitmentProjectionScreen.jsx`), reached via a minimal id-lookup form
+(`/portfolio/commitments`) rather than a tab on an existing screen — no
+commitments list/detail screen, and no general list-commitments backend
+endpoint, existed anywhere before this sprint (`services/portfolio_
+commitments.py` had only `get_commitment` by id, `create_commitment`, and
+`tax_chase_list` by tax year). Read-only: a real, saved projection (chart +
+by-period table, both driven from the same API response) plus a live "what
+if" panel against the real, non-persisting preview endpoint, clearly labeled
+as an unsaved preview. Reuses `view_portfolio` verbatim — no new permission.
+No charting dependency was added (`apps/web/package.json` has none); the
+chart is a small inline SVG component. `lib/decimalString.js` formats every
+monetary/rate value by string manipulation only (digit-grouping, decimal-
+point shift) — no `Number()`/`parseFloat()` anywhere in the display path.
+
+One real, additive backend fix: `GET /modeling/ta/projection/{commitment_id}`
+now also publishes `committed_capital`/`called_to_date`/`distributed_to_date`
+(already computed in the handler, never previously returned) — without them
+the preview tool had no way to seed `committed_capital`, a required field on
+`POST /projection/preview`.
+
+**Verification:** `apps/api/scripts/verify_tamodel3.py` — **22 PASS, 0 FAIL,
+0 BLOCKED**, including a real commitment's real projection end-to-end (chart
+and table proven consistent by construction — both driven from the same
+`periods` array), the preview tool proving a measurably different result for
+a changed `bow_factor` (a uniform scale on the distribution ramp — NOT a
+deferral, corrected from this sprint's own initial, wrong assumption once
+measured against the real endpoint), preview non-persistence via a real
+row-count check, permission enforcement proven with a REAL zero-permission
+role grant (not a zero-roles fixture, which would default-allow and make the
+refusal vacuous), cross-org isolation (404), an executed (not merely
+grepped) proof that the exact money formatter preserves digits a JS `Number`
+would corrupt, and `npm run build` exiting 0.
+
+**Next:** Sprint 4 (calibration UX + obligation ledger integration).
 ---
 
 ## 00. LiteLLM Phase B — routing BUILT, three real blockers to a first success (2026-08-26)

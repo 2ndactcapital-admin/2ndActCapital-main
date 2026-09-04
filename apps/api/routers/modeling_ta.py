@@ -409,6 +409,13 @@ async def get_projection(
         "ta_strategy_key": ta_strategy_key,
         "params": params.to_json(),
         "current_nav": _fixed(current_nav),
+        # Published so a caller (the projection UX's "what if" preview panel)
+        # can seed POST /projection/preview with this commitment's REAL known
+        # state — these three Decimals were already computed above for the
+        # projection itself; this is additive publishing, not new computation.
+        "committed_capital": _fixed(committed),
+        "called_to_date": _fixed(called),
+        "distributed_to_date": _fixed(distributed),
         "periods": [p.to_json() for p in periods],
     }
 
