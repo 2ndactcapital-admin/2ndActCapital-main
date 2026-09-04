@@ -43,6 +43,7 @@ import asyncpg
 
 from services.portfolio_assets import _OrgWrite, _require_org
 from services.portfolio_udf import TABLE_UDF_DEFINITIONS, UdfError, _current
+from services.portfolio_udf_field_permissions import ACCESS_HIDDEN, ACCESS_READ, resolve_field_access_bulk
 from services.portfolio_udf_tabs import get_tab
 
 TABLE_UDF_LAYOUTS = "portfolio.udf_layouts"
@@ -492,7 +493,7 @@ async def remove_item(conn, *, item_id: str, org_id: str) -> None:
 
 
 async def get_resolved_layout(
-    conn, *, tab_id: str, org_id: str, record_type_id: str | None = None,
+    conn, *, tab_id: str, org_id: str, user_id: str, record_type_id: str | None = None,
 ) -> dict:
     """The full section -> item tree for one tab, each item enriched with its
     definition's ``label``/``data_type``/``type_params``/``is_required`` so
@@ -501,6 +502,19 @@ async def get_resolved_layout(
     Returns a structure with ``layout_id: None`` and ``sections: []`` when no
     layout has been configured for this tab yet — that is a normal state
     (a brand-new tab has no layout), not an error.
+
+    Sprint udf01c, Task 2e — field-level security applied here, on TOP of
+    whatever tab-visibility gate the caller already ran (the router 403s
+    before this is even called if the tab itself is hidden). A ``'hidden'``
+    field's layout item is dropped from its section's ``items`` list
+    entirely — not returned with a null definition, not returned empty. A
+    ``'read'`` field's item is flagged ``is_read_only: true`` regardless of
+    what the layout itself set, combined with the layout's own
+    ``is_read_only`` by most-restrictive-wins (boolean OR — a layout that
+    already said read-only stays read-only no matter what FLS says; FLS
+    saying read forces it true even over a layout that said false). An
+    ``'edit'`` field's item is unchanged. A spacer item (``definition_id IS
+    NULL``) has no field to resolve access for and is always kept as-is.
     """
     org_id = _require_org(org_id)
     layout = await get_layout_by_tab(conn, tab_id=tab_id, record_type_id=record_type_id)
@@ -533,6 +547,11 @@ async def get_resolved_layout(
             ORDER BY i.column_index, i.display_order""",
         layout["id"],
     )
+    def_ids = [r["definition_id"] for r in item_rows if r["definition_id"] is not None]
+    access_map = await resolve_field_access_bulk(
+        conn, definition_ids=def_ids, tab_id=tab_id, org_id=org_id, user_id=user_id,
+    )
+
     items_by_section: dict[str, list[dict]] = {}
     for r in item_rows:
         row = dict(r)
@@ -541,6 +560,13 @@ async def get_resolved_layout(
             import json
 
             row["type_params"] = json.loads(tp)
+        definition_id = row["definition_id"]
+        if definition_id is not None:
+            access = access_map.get(definition_id, ACCESS_HIDDEN)
+            if access == ACCESS_HIDDEN:
+                continue
+            if access == ACCESS_READ:
+                row["is_read_only"] = True
         items_by_section.setdefault(row["section_id"], []).append(row)
 
     sections = []

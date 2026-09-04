@@ -61,6 +61,15 @@ from services.portfolio_udf import (
     undelete_definition,
     update_definition,
 )
+from services.portfolio_udf_field_permissions import (
+    ACCESS_EDIT,
+    ACCESS_HIDDEN,
+    FieldAccessDeniedError,
+    list_field_grants,
+    resolve_field_access,
+    resolve_field_access_bulk,
+    set_field_access,
+)
 from services.portfolio_udf_layouts import (
     LayoutCapError,
     LayoutColSpanError,
@@ -181,11 +190,12 @@ def _tab_vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
 
 
 def _layout_vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
-    """Sprint 1c note: tab-visible currently means every field in the layout
-    is visible — there is no field-level-security check here yet
-    (``udf_field_permissions`` is explicitly out of scope for this sprint).
-    ``editable`` therefore mirrors ``can_write`` only, with no per-field
-    narrowing."""
+    """Tenant-level write vocabulary only — mirrors ``can_write``, with no
+    per-field narrowing. ``get_resolved_layout`` is where FLS actually
+    narrows a specific field's ``is_read_only``/presence (Sprint udf01c);
+    this vocabulary describes what the LAYOUT mechanics (title, ordering,
+    column placement) allow, not any one field's access level, which is
+    frontend consumption explicitly held out of this sprint's scope."""
     return {
         "editable": ["title", "display_order", "column_index", "col_span"]
         if perms["can_write"] else [],
@@ -310,6 +320,14 @@ class TabPermissionIn(BaseModel):
     is_visible: bool
 
 
+class FieldPermissionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str | None = None
+    permission_set_id: str | None = None
+    access: Literal["hidden", "read", "edit"]
+
+
 class SectionCreateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -361,6 +379,14 @@ async def list_definitions(
             rows = await resolve_visible_definitions(
                 conn, org_id=org_id, user_id=user_id, applies_to=target_type
             )
+            # No tab is in scope for this endpoint — see the FLS module's
+            # docstring for why that means the tab-hidden precedence step is
+            # skipped and only the field-grant paths are evaluated.
+            access_map = await resolve_field_access_bulk(
+                conn, definition_ids=[r["id"] for r in rows], tab_id=None,
+                org_id=org_id, user_id=user_id,
+            )
+            rows = [r for r in rows if access_map.get(r["id"], ACCESS_EDIT) != ACCESS_HIDDEN]
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     perms = await _permission_envelope(pool, user_id, org_id)
@@ -511,6 +537,16 @@ async def get_values(request: Request, target_type: str, target_id: str):
                 conn, org_id=org_id, user_id=user_id,
                 target_type=target_type, target_id=target_id,
             )
+            # No tab is in scope for this endpoint either — see the FLS
+            # module's docstring.
+            access_map = await resolve_field_access_bulk(
+                conn, definition_ids=[r["definition_id"] for r in rows], tab_id=None,
+                org_id=org_id, user_id=user_id,
+            )
+            rows = [
+                r for r in rows
+                if access_map.get(r["definition_id"], ACCESS_EDIT) != ACCESS_HIDDEN
+            ]
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     perms = await _permission_envelope(pool, user_id, org_id)
@@ -522,6 +558,18 @@ async def put_value(request: Request, target_type: str, target_id: str, body: Va
     org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
     async with pool.acquire() as conn:
         try:
+            access = await resolve_field_access(
+                conn, definition_id=body.definition_id, tab_id=None,
+                org_id=org_id, user_id=user_id,
+            )
+            if access != ACCESS_EDIT:
+                definition = await get_definition(conn, definition_id=body.definition_id)
+                field_name = definition["field_key"] if definition else body.definition_id
+                raise FieldAccessDeniedError(
+                    f"field {field_name!r} (definition_id={body.definition_id}) "
+                    f"has access={access!r} for this caller — writes require "
+                    f"'edit'"
+                )
             value_id = await record_udf_value(
                 conn, org_id=org_id, definition_id=body.definition_id,
                 target_type=target_type, target_id=target_id, value=body.value,
@@ -534,6 +582,8 @@ async def put_value(request: Request, target_type: str, target_id: str, body: Va
                 conn, org_id=org_id, definition_id=body.definition_id,
                 target_type=target_type, target_id=target_id,
             )
+        except FieldAccessDeniedError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     return {"id": value_id, "value": current, "history": history}
@@ -595,9 +645,10 @@ async def merge_tags_route(request: Request, definition_id: str, body: TagMergeI
 # separate permission system (public.profiles / public.permission_sets), not
 # services.rbac's roles — see resolve_tab_visibility's docstring for why.
 #
-# FLS LIMITATION (repeated here per the sprint's scope boundary): tab-visible
-# currently means every field in the tab's layout is visible. Field-level
-# security (udf_field_permissions) is Sprint 1c scope and does not exist yet.
+# Field-level security (udf_field_permissions) is layered on TOP of tab
+# visibility as of Sprint udf01c — tab-hidden still wins outright, but a
+# visible tab can now further narrow individual fields to hidden/read/edit.
+# See services.portfolio_udf_field_permissions's module docstring.
 
 
 @router.get("/udf/tabs")
@@ -709,6 +760,38 @@ async def put_tab_permissions(request: Request, tab_id: str, body: TabPermission
     return {"permission": grant}
 
 
+# ── Field-level security — udf01c Task 3a ────────────────────────────────────
+
+
+@router.put("/udf/fields/{definition_id}/permissions")
+async def put_field_permissions(request: Request, definition_id: str, body: FieldPermissionIn):
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        principal = await load_principal(conn, user_id)
+        super_admin = is_super_admin(principal)
+        try:
+            grant = await set_field_access(
+                conn, definition_id=definition_id, access=body.access, org_id=org_id,
+                profile_id=body.profile_id, permission_set_id=body.permission_set_id,
+                is_super_admin=super_admin, created_by=user_id,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"permission": grant}
+
+
+@router.get("/udf/fields/{definition_id}/permissions")
+async def list_field_permissions(request: Request, definition_id: str):
+    """Admin visibility into every current grant for one field — gated on
+    the same WRITE_PERMISSION as configuring the grants themselves, since
+    there is no separate 'view FLS config' permission string in this
+    router's model."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        rows = await list_field_grants(conn, definition_id=definition_id)
+    return {"rows": rows}
+
+
 # ── Layouts — udf01b Task 3a ─────────────────────────────────────────────────
 
 
@@ -732,7 +815,8 @@ async def get_layout_route(
             raise HTTPException(status_code=403, detail="this tab is hidden for the caller")
         try:
             resolved = await get_resolved_layout(
-                conn, tab_id=tab_id, org_id=org_id, record_type_id=record_type_id
+                conn, tab_id=tab_id, org_id=org_id, user_id=user_id,
+                record_type_id=record_type_id,
             )
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc

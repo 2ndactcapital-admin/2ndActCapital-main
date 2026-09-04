@@ -3558,6 +3558,65 @@
 --   controlling_definition_id                uuid
 --   PRIMARY KEY udf_definitions_pkey: (id)
 
+-- ===== portfolio.udf_field_permissions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   definition_id                            uuid NOT NULL
+--   profile_id                               uuid
+--   permission_set_id                        uuid
+--   access                                   text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY udf_field_permissions_pkey: (id)
+
+-- ===== portfolio.udf_layout_items =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   section_id                               uuid NOT NULL
+--   definition_id                            uuid
+--   display_order                            integer NOT NULL DEFAULT 0
+--   column_index                             integer NOT NULL DEFAULT 0
+--   col_span                                 integer NOT NULL DEFAULT 1
+--   is_read_only                             boolean NOT NULL DEFAULT false
+--   PRIMARY KEY udf_layout_items_pkey: (id)
+
+-- ===== portfolio.udf_layout_sections =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   layout_id                                uuid NOT NULL
+--   title                                    text
+--   display_order                            integer NOT NULL DEFAULT 0
+--   column_count                             integer NOT NULL DEFAULT 2
+--   PRIMARY KEY udf_layout_sections_pkey: (id)
+
+-- ===== portfolio.udf_layouts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   tab_id                                   uuid NOT NULL
+--   record_type_id                           uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   PRIMARY KEY udf_layouts_pkey: (id)
+
+-- ===== portfolio.udf_tab_permissions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   tab_id                                   uuid NOT NULL
+--   profile_id                               uuid
+--   permission_set_id                        uuid
+--   is_visible                               boolean NOT NULL DEFAULT true
+--   PRIMARY KEY udf_tab_permissions_pkey: (id)
+
+-- ===== portfolio.udf_tabs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   applies_to                               text NOT NULL
+--   label                                    text NOT NULL
+--   api_name                                 text NOT NULL
+--   display_order                            integer NOT NULL DEFAULT 0
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   deleted_at                               timestamp with time zone
+--   deleted_by                               uuid
+--   PRIMARY KEY udf_tabs_pkey: (id)
+
 -- ===== portfolio.udf_tag_assignments =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL

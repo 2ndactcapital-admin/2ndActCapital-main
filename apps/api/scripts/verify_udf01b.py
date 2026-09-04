@@ -555,7 +555,11 @@ async def test_8_spacer_item(conn, section_id: str) -> None:
         "JOIN portfolio.udf_layouts l ON l.id = s.layout_id WHERE s.id = $1::uuid",
         section_id,
     )
-    resolved = await get_resolved_layout(conn, tab_id=tab_id, org_id=ORG)
+    # udf01c added a required user_id param for field-level-security
+    # resolution; U_ADMIN has no profile_id and no permission_set_id grants
+    # (setup() only assigns those to U_VIEWER/U_VIEWER2/U_DEFAULT), so every
+    # field still defaults to 'edit' — this call's outcome is unchanged.
+    resolved = await get_resolved_layout(conn, tab_id=tab_id, org_id=ORG, user_id=U_ADMIN)
     found = [i for sec in resolved["sections"] for i in sec["items"] if i["id"] == spacer["id"]]
     ok("9 — spacer item appears in get_resolved_layout output",
        len(found) == 1 and found[0]["definition_id"] is None and found[0]["label"] is None,
