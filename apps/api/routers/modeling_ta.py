@@ -50,8 +50,9 @@ from services.org_settings import (
 from services.permissions import get_user_id
 from services.portfolio_assets import READ_PERMISSION, WRITE_PERMISSION
 from services.portfolio_commitments import CommitmentError, get_commitment
-from services.rbac import can_manage_org_settings, is_super_admin, load_principal, require_permission
+from services.rbac import can_manage_org_settings, has_permission, is_super_admin, load_principal, require_permission
 from services.ta_calibrate import TACalibrationError, calibrate_strategy, minimum_realized_periods
+from services.ta_confidence import TIER_DESCRIPTIONS, confidence_tier_for
 from services.ta_config import (
     DEFAULT_CALIBRATION_MIN_YEARS,
     DEFAULT_TA_STRATEGY_PARAMS,
@@ -64,7 +65,7 @@ from services.ta_config import (
     projection_horizon_periods,
     strategy_overrides,
 )
-from services.ta_model import TAModelError, TAParams, _fixed, project_cash_flows
+from services.ta_model import TAModelError, TAParams, _fixed, contributions_in_years, project_cash_flows
 from services.ta_params import (
     TAParamsError,
     get_active_params,
@@ -76,6 +77,11 @@ from services.ta_params import (
 router = APIRouter(tags=["modeling-ta"])
 
 _SUPPORTED_CALIBRATION_FREQUENCIES = (1, 4)
+
+#: The obligation ledger's forward visibility window — 36 months, per
+#: ta_model.py's own docstring (TA Model Sprint 4, Task 2). Expressed in
+#: years since contributions_in_years takes whole years.
+_OBLIGATION_LEDGER_YEARS = 3
 
 
 # ── Money at the API boundary — same discipline as portfolio_positions.py ──
@@ -156,6 +162,13 @@ class CalibrateBody(BaseModel):
 
     ta_strategy_key: str
     periods_per_year: int
+    # TA MODEL SPRINT 4, TASK 3 — additive, defaults False so every existing
+    # caller (verify_tamodel1.py's own proof included) is unaffected. When
+    # True, the SAME real fit + SAME frequency-aware floor check run, but
+    # neither persistence call fires — a genuine preview-then-confirm flow
+    # against the real endpoint, not a client-side re-derivation of what
+    # calibration would produce.
+    dry_run: bool = False
 
 
 class DefaultsWriteBody(BaseModel):
@@ -321,6 +334,96 @@ async def put_ta_defaults(request: Request, body: DefaultsWriteBody):
     return _defaults_envelope(resolved, principal, org_id)
 
 
+# ── shared: resolve one commitment's real state + active params (Sprint 1,
+# refactored additively in Sprint 4 so GET /projection and GET /obligations
+# — Task 2 — never diverge on what "this commitment's own state" means).
+# Deliberately stops SHORT of projecting — each caller asks for its own
+# horizon, since GET /projection's horizon (the org's configured default)
+# and GET /obligations' horizon (a fixed 36-month window) are genuinely
+# different questions and must not silently affect one another. ───────────
+
+
+async def _resolve_commitment_state(
+    conn, *, org_id: str, commitment_id: _uuid.UUID,
+    strategy_key: str | None, periods_per_year: int | None,
+) -> dict:
+    try:
+        commitment = await get_commitment(conn, org_id=org_id, commitment_id=str(commitment_id))
+    except CommitmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if commitment is None:
+        raise HTTPException(status_code=404, detail="commitment not found")
+
+    settings = await get_all_settings(conn, org_id)  # fetched ONCE
+
+    override = await get_active_params(conn, org_id=org_id, commitment_id=str(commitment_id))
+    if override is not None:
+        params = override["params"]
+        ta_strategy_key = override["ta_strategy_key"]
+        source = override["source"]
+    else:
+        if not strategy_key:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "this commitment has no TA parameter override set — pass "
+                    "?strategy_key=<one of "
+                    f"{TA_STRATEGY_KEYS}> to project against a strategy default"
+                ),
+            )
+        try:
+            params = params_for_strategy(strategy_key, settings, periods_per_year=periods_per_year)
+        except (TAConfigError, TAModelError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        ta_strategy_key = strategy_key
+        source = None
+
+    position = await conn.fetchrow(
+        """
+        SELECT p.market_value
+        FROM portfolio.positions p
+        JOIN portfolio.commitments c ON c.position_id = p.id AND c.org_id = p.org_id
+        WHERE c.id = $1::uuid AND c.org_id = $2::uuid
+          AND p.valid_to IS NULL AND p.system_to IS NULL
+          AND c.valid_to IS NULL AND c.system_to IS NULL
+        """,
+        str(commitment_id), org_id,
+    )
+
+    committed = commitment["commitment_amount"] or Decimal(0)
+    called = commitment["called_to_date"] or Decimal(0)
+    distributed = commitment["distributed_to_date"] or Decimal(0)
+    if position is not None and position["market_value"] is not None:
+        current_nav = Decimal(position["market_value"])
+    else:
+        current_nav = called - distributed
+        if current_nav < 0:
+            current_nav = Decimal(0)
+
+    return {
+        "commitment_id": str(commitment_id),
+        "ta_strategy_key": ta_strategy_key,
+        "source": source,
+        "params": params,
+        "settings": settings,
+        "current_nav": current_nav,
+        "committed_capital": committed,
+        "called_to_date": called,
+        "distributed_to_date": distributed,
+    }
+
+
+def _project(state: dict, *, horizon_periods: int) -> list:
+    try:
+        return project_cash_flows(
+            committed_capital=state["committed_capital"], called_to_date=state["called_to_date"],
+            distributed_to_date=state["distributed_to_date"], current_nav=state["current_nav"],
+            params=state["params"], horizon_periods=horizon_periods,
+        )
+    except TAModelError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 # ── GET /modeling/ta/projection/{commitment_id} ─────────────────────────────
 
 
@@ -335,6 +438,15 @@ async def get_projection(
     """Project one real commitment's cash flows forward. Computed inline —
     never persisted. Gated on ``view_portfolio``: this reads and computes,
     never writes.
+
+    TA MODEL SPRINT 4 — also publishes the real confidence tier (Task 1a/4:
+    no such field existed anywhere before this sprint — see
+    ``services.ta_confidence`` for the honest accounting of which of the
+    prompt's four tiers this codebase can actually compute) and a
+    ``permissions.can_calibrate`` envelope so the UI's Calibrate panel never
+    has to guess or default whether the caller may write a calibration —
+    computed via the SAME real gate (``manage_portfolio``) POST /calibrate
+    itself enforces (Task 1b), never a client-side re-implementation.
     """
     org_id = get_org_id(request)
     user_id = get_user_id(request)
@@ -342,81 +454,96 @@ async def get_projection(
     await require_permission(pool, user_id, org_id, READ_PERMISSION)
 
     async with pool.acquire() as conn:
-        try:
-            commitment = await get_commitment(conn, org_id=org_id, commitment_id=str(commitment_id))
-        except CommitmentError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if commitment is None:
-            raise HTTPException(status_code=404, detail="commitment not found")
-
-        settings = await get_all_settings(conn, org_id)  # fetched ONCE
-
-        override = await get_active_params(conn, org_id=org_id, commitment_id=str(commitment_id))
-        if override is not None:
-            params = override["params"]
-            ta_strategy_key = override["ta_strategy_key"]
-        else:
-            if not strategy_key:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "this commitment has no TA parameter override set — pass "
-                        "?strategy_key=<one of "
-                        f"{TA_STRATEGY_KEYS}> to project against a strategy default"
-                    ),
-                )
-            try:
-                params = params_for_strategy(strategy_key, settings, periods_per_year=periods_per_year)
-            except (TAConfigError, TAModelError) as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            ta_strategy_key = strategy_key
-
-        position = await conn.fetchrow(
-            """
-            SELECT p.market_value
-            FROM portfolio.positions p
-            JOIN portfolio.commitments c ON c.position_id = p.id AND c.org_id = p.org_id
-            WHERE c.id = $1::uuid AND c.org_id = $2::uuid
-              AND p.valid_to IS NULL AND p.system_to IS NULL
-              AND c.valid_to IS NULL AND c.system_to IS NULL
-            """,
-            str(commitment_id), org_id,
+        state = await _resolve_commitment_state(
+            conn, org_id=org_id, commitment_id=commitment_id,
+            strategy_key=strategy_key, periods_per_year=periods_per_year,
         )
+    can_calibrate = await has_permission(pool, user_id, org_id, WRITE_PERMISSION)
 
-    committed = commitment["commitment_amount"] or Decimal(0)
-    called = commitment["called_to_date"] or Decimal(0)
-    distributed = commitment["distributed_to_date"] or Decimal(0)
-    if position is not None and position["market_value"] is not None:
-        current_nav = Decimal(position["market_value"])
-    else:
-        current_nav = called - distributed
-        if current_nav < 0:
-            current_nav = Decimal(0)
-
-    horizon = horizon_periods or projection_horizon_periods(settings, params.periods_per_year)
-
-    try:
-        periods = project_cash_flows(
-            committed_capital=committed, called_to_date=called,
-            distributed_to_date=distributed, current_nav=current_nav,
-            params=params, horizon_periods=horizon,
-        )
-    except TAModelError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    params = state["params"]
+    horizon = horizon_periods or projection_horizon_periods(state["settings"], params.periods_per_year)
+    periods = _project(state, horizon_periods=horizon)
+    tier = confidence_tier_for(state["source"])
 
     return {
-        "commitment_id": str(commitment_id),
-        "ta_strategy_key": ta_strategy_key,
+        "commitment_id": state["commitment_id"],
+        "ta_strategy_key": state["ta_strategy_key"],
         "params": params.to_json(),
-        "current_nav": _fixed(current_nav),
+        "current_nav": _fixed(state["current_nav"]),
         # Published so a caller (the projection UX's "what if" preview panel)
         # can seed POST /projection/preview with this commitment's REAL known
         # state — these three Decimals were already computed above for the
         # projection itself; this is additive publishing, not new computation.
-        "committed_capital": _fixed(committed),
-        "called_to_date": _fixed(called),
-        "distributed_to_date": _fixed(distributed),
+        "committed_capital": _fixed(state["committed_capital"]),
+        "called_to_date": _fixed(state["called_to_date"]),
+        "distributed_to_date": _fixed(state["distributed_to_date"]),
         "periods": [p.to_json() for p in periods],
+        "source": state["source"],
+        "confidence_tier": tier,
+        "confidence_description": TIER_DESCRIPTIONS[tier],
+        "permissions": {"can_calibrate": bool(can_calibrate)},
+    }
+
+
+# ── GET /modeling/ta/obligations/{commitment_id} — TA MODEL SPRINT 4, TASK 2 ─
+
+
+@router.get("/modeling/ta/obligations/{commitment_id}")
+async def get_obligation_ledger(
+    request: Request,
+    commitment_id: _uuid.UUID,
+    strategy_key: str | None = Query(default=None),
+    periods_per_year: int | None = Query(default=None),
+):
+    """The real, first obligation-ledger consumer of ``ta_model.py``'s
+    ``contributions_in_years``/``contributions_between`` primitives (Task 1a:
+    a full-repo grep found no prior consumer — those functions did not even
+    exist before this sprint, so there was nothing to wire into). A genuine
+    36-month forward capital-call visibility view over one commitment's live
+    projection — its OWN horizon (fixed at 36 months), independent of
+    whatever horizon GET /projection happens to be configured with.
+
+    COMPUTED AT READ TIME, NEVER PERSISTED — the identical rule
+    ``services.spv_rollup`` already applies to SPV-derived capital call
+    totals (live SUM over ``spv_subscriptions``/transactions, no cached
+    ledger row): this handler writes to no table. Reuses the same
+    ``_resolve_commitment_state`` helper GET /projection uses, so the ledger
+    can never silently disagree with the projection screen about a
+    commitment's own state or active parameters.
+
+    Gated on ``view_portfolio`` — same read-only gate as the projection
+    itself, not a new permission.
+    """
+    org_id = get_org_id(request)
+    user_id = get_user_id(request)
+    pool = await get_pool()
+    await require_permission(pool, user_id, org_id, READ_PERMISSION)
+
+    async with pool.acquire() as conn:
+        state = await _resolve_commitment_state(
+            conn, org_id=org_id, commitment_id=commitment_id,
+            strategy_key=strategy_key, periods_per_year=periods_per_year,
+        )
+
+    params = state["params"]
+    horizon = _OBLIGATION_LEDGER_YEARS * params.periods_per_year
+    periods = _project(state, horizon_periods=horizon)
+
+    total = contributions_in_years(periods, 0, _OBLIGATION_LEDGER_YEARS, params.periods_per_year)
+    by_year = []
+    for yr in range(_OBLIGATION_LEDGER_YEARS):
+        amount = contributions_in_years(periods, yr, yr + 1, params.periods_per_year)
+        by_year.append({"year_offset": yr, "projected_contribution": _fixed(amount)})
+
+    tier = confidence_tier_for(state["source"])
+    return {
+        "commitment_id": state["commitment_id"],
+        "ta_strategy_key": state["ta_strategy_key"],
+        "confidence_tier": tier,
+        "visibility_horizon_years": _OBLIGATION_LEDGER_YEARS,
+        "periods_per_year": params.periods_per_year,
+        "total_projected_contribution": _fixed(total),
+        "by_year": by_year,
     }
 
 
@@ -544,6 +671,23 @@ async def calibrate(request: Request, commitment_id: _uuid.UUID, body: Calibrate
         except TACalibrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        # TA MODEL SPRINT 4, TASK 3 — dry_run stops HERE, after the exact same
+        # fit and the exact same frequency-aware floor check (already run
+        # above, unconditionally) that a real calibration would run, but
+        # BEFORE either persistence call. A refusal (422, floor or otherwise)
+        # happens identically whether dry_run is True or False — the preview
+        # can never claim success where a real submission would be refused.
+        if body.dry_run:
+            return {
+                "commitment_id": str(commitment_id),
+                "dry_run": True,
+                "calibration_id": None,
+                "params_id": None,
+                "realized_periods_used": len(realized),
+                "params": calibrated.to_json(),
+                "confidence_tier": confidence_tier_for("calibrated"),
+            }
+
         calibration_id = await record_calibration_result(
             conn, org_id=org_id, commitment_id=str(commitment_id),
             ta_strategy_key=body.ta_strategy_key, calibrated_params=calibrated,
@@ -557,8 +701,10 @@ async def calibrate(request: Request, commitment_id: _uuid.UUID, body: Calibrate
 
     return {
         "commitment_id": str(commitment_id),
+        "dry_run": False,
         "calibration_id": calibration_id,
         "params_id": params_id,
         "realized_periods_used": len(realized),
         "params": calibrated.to_json(),
+        "confidence_tier": confidence_tier_for("calibrated"),
     }

@@ -187,6 +187,46 @@ class TAPeriod:
         }
 
 
+def contributions_between(periods: list[TAPeriod], period_start: int, period_end: int) -> Decimal:
+    """Sum of ``contribution`` across periods whose ``period`` index falls in
+    ``[period_start, period_end]``, inclusive. TA MODEL SPRINT 4, TASK 2 — this
+    is the read-time primitive the obligation ledger consumes: it operates on
+    a projection's already-computed ``TAPeriod`` list (the same list a caller
+    already got back from :func:`project_cash_flows`), never recomputes a
+    projection itself. Nothing here touches the database.
+    """
+    if isinstance(period_start, bool) or not isinstance(period_start, int):
+        raise TAModelError("period_start must be an int")
+    if isinstance(period_end, bool) or not isinstance(period_end, int):
+        raise TAModelError("period_end must be an int")
+    if period_start < 1 or period_end < period_start:
+        raise TAModelError("period_start must be >= 1 and period_end must be >= period_start")
+    return sum(
+        (p.contribution for p in periods if period_start <= p.period <= period_end),
+        Decimal(0),
+    )
+
+
+def contributions_in_years(
+    periods: list[TAPeriod], start_year: int, end_year: int, periods_per_year: int,
+) -> Decimal:
+    """Sum of ``contribution`` across whole years ``[start_year, end_year)``
+    (0-based, relative to the projection's own period 1), converted to a
+    period-index range at ``periods_per_year`` and delegated to
+    :func:`contributions_between`. A "36-month visibility horizon" is
+    ``contributions_in_years(periods, 0, 3, periods_per_year)``.
+    """
+    if isinstance(periods_per_year, bool) or not isinstance(periods_per_year, int) or periods_per_year < 1:
+        raise TAModelError("periods_per_year must be a positive int")
+    if isinstance(start_year, bool) or not isinstance(start_year, int):
+        raise TAModelError("start_year must be an int")
+    if isinstance(end_year, bool) or not isinstance(end_year, int) or end_year <= start_year:
+        raise TAModelError("end_year must be an int greater than start_year")
+    period_start = start_year * periods_per_year + 1
+    period_end = end_year * periods_per_year
+    return contributions_between(periods, period_start, period_end)
+
+
 def project_cash_flows(
     *,
     committed_capital: Decimal,

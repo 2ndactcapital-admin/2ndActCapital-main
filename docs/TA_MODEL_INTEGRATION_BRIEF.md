@@ -264,5 +264,74 @@ but never returned `committed_capital`/`called_to_date`/`distributed_to_date`
 — required inputs for seeding the preview tool with the commitment's real
 state — fixed additively.
 
-Sprint 4 — calibration UX + obligation ledger integration is next, depending
-on Sprints 1–3.
+Sprint 4 — calibration UX + obligation ledger integration. **Complete** — see
+§9 below. All four TA Model sprints are now done.
+
+## 9. Sprint 4 — calibration UX + obligation ledger integration
+
+**Task 1 findings — another false premise, same shape as Sprint 1's.** The
+sprint prompt asserted `ta_model.py` already carried two read-time
+primitives, `contributions_between`/`contributions_in_years`, with docstrings
+naming a "36-month visibility horizon" and describing themselves as "the
+read-time primitive the obligation ledger consumes." A full grep of this
+repo, pre-sprint, found neither function anywhere — no primitives, no
+docstrings, no obligation ledger, nothing calling them. This sprint built
+both functions and the first real consumer, not a wire-up of prior work.
+
+Also confirmed directly, not assumed:
+- **1b.** `POST /calibrate/{commitment_id}`'s real gate is `manage_portfolio`
+  (`WRITE_PERMISSION`), genuinely stricter than the `view_portfolio` read
+  gate Sprint 3's projection screen uses — proven both ways with a real
+  zero-permission role grant, independent of the read gate.
+- **1c.** Sprint 3's `CommitmentProjectionScreen.jsx` published no
+  confidence signal at all. Closed by `ConfidenceTierCard`.
+- **1d.** `/calibrate`'s real body is `{ta_strategy_key, periods_per_year}`
+  only — there was never a period+amount list to submit. Realized periods
+  are derived server-side from `portfolio.transactions` already
+  (`services.ta_params.realized_periods_from_transactions`). The Calibrate
+  UX is therefore a strategy/frequency picker, not a data-entry form.
+
+**Obligation ledger (Task 2).** `contributions_between(periods, period_start,
+period_end)` and `contributions_in_years(periods, start_year, end_year,
+periods_per_year)` — pure functions added to `ta_model.py`, operating on an
+already-computed `TAPeriod` list (never a second projection). The first real
+consumer: `GET /modeling/ta/obligations/{commitment_id}`
+(`routers/modeling_ta.py`), a genuine 36-month (3-year) forward capital-call
+visibility view, computed at read time and never persisted — the same rule
+`services.spv_rollup` already applies to SPV-derived capital-call totals
+(live `SUM` over subscriptions/transactions, no cached ledger row), matched
+here rather than reinvented. Gated on `view_portfolio`, same as the
+projection read.
+
+**Confidence tier (Task 4) — an honest, partial implementation.** The
+prompt's four-tier vocabulary (`OBSERVED` / `PEER_CALIBRATED` /
+`STRATEGY_DEFAULT` / `ASSUMED`) and `weakest_confidence` did not exist
+anywhere before this sprint either (same Task 1a grep, zero hits). Three of
+the four tiers ARE backed by real data already in this schema, derived from
+`portfolio.ta_model_params.source` (`services/ta_confidence.py`):
+no active override → `STRATEGY_DEFAULT`; `source='override'` → `ASSUMED`;
+`source='calibrated'` → `OBSERVED`. `PEER_CALIBRATED` has NO real data
+source — no cross-commitment/cross-fund aggregation of realized TA history
+exists anywhere in this codebase — and is deliberately never returned by
+`confidence_tier_for`, a genuine gap left for a future sprint rather than
+faked. There is also no real per-parameter tier system to take a
+"weakest" of (exactly one active params row per commitment exists); the
+router publishes a single `confidence_tier`, the honest equivalent when
+there is only one axis.
+
+**Calibration UX (Task 3).** `CalibratePanel` on `CommitmentProjectionScreen`,
+rendered only when the server's own `permissions.can_calibrate` (added to
+`GET /projection`'s response, computed via `rbac.has_permission` against the
+real `manage_portfolio` gate — never a client-side guess) is `true`. Preview
+via a new, additive `dry_run` field on `CalibrateBody` (default `False`,
+every existing caller unaffected): the same fit and the same frequency-aware
+floor check run, but neither persistence call fires. Confirm re-submits with
+`dry_run` omitted/false. A refusal (the floor, or any other) surfaces
+identically under `dry_run` — a preview can never claim success where a real
+submission would be refused. On confirm, the screen issues a fresh,
+independent `GET /projection` (never a locally patched object) so the
+confidence tier shown updates on the same load.
+
+**Verification:** `apps/api/scripts/verify_tamodel4.py` — **48 PASS, 0 FAIL,
+0 BLOCKED**, including `npm run build` exiting 0. See
+`docs/PROJECT_STATUS.md` for the full proof summary.

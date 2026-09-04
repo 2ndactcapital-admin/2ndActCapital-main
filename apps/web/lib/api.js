@@ -657,6 +657,26 @@ export const getTaProjection = (commitmentId, { strategyKey, periodsPerYear, hor
     },
   });
 
+// --- TA Model — obligation ledger (TA Model Sprint 4, Task 2) ---
+// A real, 36-month forward capital-call visibility view, computed at read
+// time from the same live projection GET above uses — never persisted.
+// Gated server-side on view_portfolio, same as the projection read.
+export const getTaObligationLedger = (commitmentId, { strategyKey, periodsPerYear } = {}) =>
+  fetchAPI(`/api/v1/modeling/ta/obligations/${commitmentId}`, {
+    searchParams: { strategy_key: strategyKey, periods_per_year: periodsPerYear },
+  });
+
+// --- TA Model — calibration (TA Model Sprint 4, Task 3) ---
+// Gated server-side on manage_portfolio — a REAL, stricter gate than the
+// view_portfolio reads above (Task 1b). `dryRun: true` fits and validates
+// (including the real frequency-aware floor) without persisting anything —
+// a genuine preview-then-confirm flow against the real endpoint.
+export const postTaCalibrate = (commitmentId, { taStrategyKey, periodsPerYear, dryRun = false }) =>
+  fetchAPI(`/api/v1/modeling/ta/calibrate/${commitmentId}`, {
+    method: "POST",
+    body: { ta_strategy_key: taStrategyKey, periods_per_year: periodsPerYear, dry_run: dryRun },
+  });
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

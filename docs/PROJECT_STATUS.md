@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-03 (TA Model Sprint 3 — commitment projection UX; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-04 (TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -746,7 +746,64 @@ refusal vacuous), cross-org isolation (404), an executed (not merely
 grepped) proof that the exact money formatter preserves digits a JS `Number`
 would corrupt, and `npm run build` exiting 0.
 
-**Next:** Sprint 4 (calibration UX + obligation ledger integration).
+**Sprint 4 (calibration UX + obligation ledger integration) — complete. ALL
+FOUR TA MODEL SPRINTS NOW DONE.** Task 1 found a second false premise of the
+same shape as Sprint 1's own brief: the prompt asserted `ta_model.py` already
+carried `contributions_between`/`contributions_in_years` (with docstrings
+naming a "36-month visibility horizon" and calling themselves "the read-time
+primitive the obligation ledger consumes") and that `ConfidenceTier`/
+`weakest_confidence` were "real, live fields." A full grep found none of it —
+no primitives, no obligation ledger consumer, no confidence-tier vocabulary
+anywhere in the codebase. This sprint built the first real versions of both,
+not a wire-up of prior work — see `docs/TA_MODEL_INTEGRATION_BRIEF.md` §9 for
+the full writeup.
+
+- **Obligation ledger:** two new pure functions on `ta_model.py`
+  (`contributions_between`, `contributions_in_years`) and the first real
+  consumer, `GET /modeling/ta/obligations/{commitment_id}` — a genuine
+  36-month forward capital-call visibility view, computed at read time and
+  never persisted (matches the same rule `services.spv_rollup` already
+  applies to SPV-derived capital-call totals). Gated on `view_portfolio`.
+- **Confidence tier:** a new module, `services/ta_confidence.py`, derives an
+  HONEST, PARTIAL implementation of the prompt's 4-tier vocabulary from the
+  one real signal already in the schema (`ta_model_params.source`):
+  `STRATEGY_DEFAULT` / `ASSUMED` / `OBSERVED` are real; `PEER_CALIBRATED` has
+  no backing data anywhere in this codebase (no cross-fund aggregation
+  exists) and is deliberately never returned — a reported gap, not a faked
+  tier. Surfaced on `CommitmentProjectionScreen` via `ConfidenceTierCard`
+  (plain-language description, not just a color chip) — Sprint 3's screen
+  published none of this.
+- **Calibration UX:** `CalibratePanel`, rendered only when a new
+  `permissions.can_calibrate` envelope on `GET /projection` (computed via
+  `rbac.has_permission` against the real `manage_portfolio` gate) is `true`
+  — fail-closed, no client-side default. A real preview-then-confirm flow
+  via a new, additive `dry_run` field on the existing `POST /calibrate` body
+  (default `False`; Sprint 1's own verify script is unaffected): the same
+  fit and the same frequency-aware floor check run under `dry_run`, but
+  neither persistence call fires, so a refusal is identical either way. On
+  confirm, the screen re-fetches the projection fresh so the tier shown
+  updates on the same load, not only after a manual refresh.
+- **Task 1d, a genuine simplification found along the way:** the prompt
+  assumed `/calibrate` needed a submitted list of period+amount pairs. It
+  never did — `services.ta_params.realized_periods_from_transactions`
+  already derives realized history server-side from
+  `portfolio.transactions`. The Calibrate UX is therefore a strategy/
+  frequency picker, not a data-entry form.
+
+**Verification:** `apps/api/scripts/verify_tamodel4.py` — **48 PASS, 0 FAIL,
+0 BLOCKED**, run against the real deployed database (Doppler-hydrated
+credentials) through the real ASGI app. Covers: the confidence tier and
+`can_calibrate` envelope before any override, the calibration permission
+gate proven both ways with a REAL zero-permission role grant (independent of
+the read gate), `dry_run` proven non-persisting by row count, the
+frequency-aware floor's real refusal surfacing verbatim, a real calibration
+persisting and a FRESH independent GET showing the upgraded `OBSERVED` tier
+(with a genuinely different fitted `rate_of_contribution`), two real
+commitments showing genuinely different confidence tiers AND genuinely
+different obligation-ledger totals (driven by real, different
+`committed_capital` — 2,000,000 vs 500,000), the ledger's read-time-only
+guarantee proven by row count, cross-org isolation on both new surfaces, and
+`npm run build` exiting 0.
 ---
 
 ## 00. LiteLLM Phase B — routing BUILT, three real blockers to a first success (2026-08-26)
