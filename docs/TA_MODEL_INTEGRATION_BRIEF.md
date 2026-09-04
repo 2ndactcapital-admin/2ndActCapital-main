@@ -239,8 +239,18 @@ Sprint 1 (this sprint) — substrate: the three modules, the two new tables, the
 5 endpoints, the frequency-aware calibration floor, real end-to-end
 verification. **Complete.**
 
-Sprint 2 — admin UX (the settings editor for `modeling.ta.*`, matching the
-existing org_settings admin screens) and Sprint 3 — commitment projection UX
-(the member/staff-facing projection view) are independent of each other and
-both depend only on Sprint 1, per this brief's own sequencing — neither
-sprint depends on the other.
+Sprint 2 — admin UX: the settings editor for `modeling.ta.*` at
+`/admin/modeling/ta`. **Complete** — 31/31 verified
+(`apps/api/scripts/verify_tamodel2.py`). Built on the real permission-envelope
+pattern (not the older `OrgSettingsEditor.jsx` shape, which this brief
+originally pointed at — that screen turned out to lack a real
+`permissions.can_write` envelope entirely; the Workflow Triggers screen was
+the correct template instead). Found and fixed a real clobber bug in Sprint
+1's PUT endpoint along the way: a partial per-strategy write would have
+silently discarded every other strategy's prior override, since
+`modeling.ta.strategy_defaults` is one jsonb blob for all 8 — the router now
+merges rather than replaces.
+
+Sprint 3 — commitment projection UX (the member/staff-facing projection
+view) is next, independent of Sprint 2, depending only on Sprint 1 per this
+brief's own sequencing.

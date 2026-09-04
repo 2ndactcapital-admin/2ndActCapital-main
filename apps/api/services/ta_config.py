@@ -32,7 +32,7 @@ writeup):
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from services.ta_model import TAModelError, TAParams
 
@@ -168,6 +168,43 @@ def projection_horizon_periods(settings: dict, periods_per_year: int) -> int:
     """The default projection horizon, in PERIODS at ``periods_per_year``."""
     years = int(settings.get(TA_PROJECTION_HORIZON_YEARS_KEY) or DEFAULT_PROJECTION_HORIZON_YEARS)
     return years * periods_per_year
+
+
+_STRATEGY_PARAM_FIELDS = (
+    "rate_of_contribution", "rate_of_distribution", "growth_rate",
+    "bow_factor", "fund_life_years",
+)
+
+
+def strategy_overrides(strategy_defaults: dict | None) -> dict[str, bool]:
+    """Per-strategy ``{strategy_key: True}`` if the org has overridden that
+    strategy's params away from :data:`DEFAULT_TA_STRATEGY_PARAMS` — the
+    signal the admin settings screen (TA Model Sprint 2) needs to show "your
+    override" vs. "platform default" at strategy granularity.
+
+    The underlying org_settings row for ``TA_STRATEGY_DEFAULTS_KEY`` is ONE
+    jsonb blob covering all 8 strategies, so row existence alone (``is_default``
+    from ``get_setting_with_origin``) cannot answer this per strategy — an org
+    that has written the row at all reads as "not default" for every strategy,
+    even ones it never touched. This compares resolved VALUES instead, as
+    Decimal (not raw string), so "2.20" and "2.2" are not reported as an
+    override of each other.
+    """
+    result: dict[str, bool] = {}
+    for key in TA_STRATEGY_KEYS:
+        current = (strategy_defaults or {}).get(key) or DEFAULT_TA_STRATEGY_PARAMS[key]
+        default = DEFAULT_TA_STRATEGY_PARAMS[key]
+        differs = False
+        for field in _STRATEGY_PARAM_FIELDS:
+            try:
+                if Decimal(str(current.get(field))) != Decimal(str(default[field])):
+                    differs = True
+                    break
+            except (InvalidOperation, TypeError, KeyError, AttributeError):
+                differs = True
+                break
+        result[key] = differs
+    return result
 
 
 def default_settings_seed() -> dict[str, object]:

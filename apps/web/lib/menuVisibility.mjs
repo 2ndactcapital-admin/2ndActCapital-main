@@ -95,6 +95,12 @@ export const MENU_ITEMS = [
     gate: GATE_ORG_OR_SUPER_ADMIN,
     adminIndex: true,
   },
+  {
+    href: "/admin/modeling/ta",
+    label: "TA Model Defaults",
+    gate: GATE_ORG_OR_SUPER_ADMIN,
+    adminIndex: true,
+  },
 
   {
     href: "/admin/restricted-access",

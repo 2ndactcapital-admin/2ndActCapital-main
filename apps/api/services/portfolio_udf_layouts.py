@@ -80,6 +80,19 @@ class LayoutColSpanError(LayoutError):
     support it, or a duplicate real field in one section."""
 
 
+class LayoutSectionReferencedError(LayoutError):
+    """Soft delete refused: the section still has items.
+
+    Carries ``references`` — the same shape ``TabReferencedError``/
+    ``UdfReferencedError`` use — so the caller sees exactly what would need
+    clearing first.
+    """
+
+    def __init__(self, message: str, *, references: dict[str, int] | None = None):
+        super().__init__(message)
+        self.references = references or {}
+
+
 # ── Ownership-chain helpers ─────────────────────────────────────────────────
 
 
@@ -288,6 +301,29 @@ async def reorder_sections(
             str(layout_id),
         )
         return [dict(r) for r in rows]
+
+
+async def remove_section(conn, *, section_id: str, org_id: str) -> None:
+    """Refused, not cascaded, if the section still has items — mirrors
+    ``soft_delete_tab``'s reference-blocking principle so a section can never
+    take its items down with it silently."""
+    org_id = _require_org(org_id)
+    current = await _section_layout(conn, section_id)
+    if current is None:
+        raise LayoutError(f"section {section_id} does not exist")
+    if current["org_id"] != org_id:
+        raise LayoutScopeError(f"section {section_id} belongs to a different org")
+    count = await _count_items(conn, section_id=section_id)
+    if count:
+        raise LayoutSectionReferencedError(
+            f"section {section_id} has {count} item(s) and cannot be removed: "
+            f"udf_layout_items={count}. Remove the items first.",
+            references={"udf_layout_items": count},
+        )
+    async with _OrgWrite(conn, org_id) as c:
+        await c.execute(
+            f"DELETE FROM {TABLE_UDF_LAYOUT_SECTIONS} WHERE id = $1::uuid", str(section_id)
+        )
 
 
 # ── Items ────────────────────────────────────────────────────────────────────

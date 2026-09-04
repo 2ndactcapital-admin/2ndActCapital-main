@@ -634,6 +634,15 @@ export const previewWorkflowSchedule = (body) =>
 export const getWorkflowVersions = (id) =>
   fetchAPI(`/api/v1/admin/workflows/${id}/versions`);
 
+// --- TA Model — admin settings (TA Model Sprint 2) ---
+// Returns an ENVELOPE — the 4 modeling.ta.* settings, `strategy_overrides`
+// (per-strategy "your override" vs. "platform default" — see
+// services.ta_config.strategy_overrides) and `permissions.can_write` — same
+// no-client-fallback contract as the Triggers screen. Open read (any
+// authenticated org member); writes need can_manage_org_settings, enforced
+// server-side.
+export const getTaDefaults = () => fetchAPI("/api/v1/modeling/ta/defaults");
+
 // --- Entity Hierarchy (Sprint 15) ---
 export const getEntityTree = (id) => fetchAPI(`/api/v1/entities/${id}/tree`);
 export const getEntityLookthrough = (id) => fetchAPI(`/api/v1/entities/${id}/lookthrough`);

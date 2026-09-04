@@ -50,16 +50,19 @@ from services.org_settings import (
 from services.permissions import get_user_id
 from services.portfolio_assets import READ_PERMISSION, WRITE_PERMISSION
 from services.portfolio_commitments import CommitmentError, get_commitment
-from services.rbac import require_permission
-from services.ta_calibrate import TACalibrationError, calibrate_strategy
+from services.rbac import can_manage_org_settings, is_super_admin, load_principal, require_permission
+from services.ta_calibrate import TACalibrationError, calibrate_strategy, minimum_realized_periods
 from services.ta_config import (
     DEFAULT_CALIBRATION_MIN_YEARS,
+    DEFAULT_TA_STRATEGY_PARAMS,
     TA_CALIBRATION_MIN_YEARS_KEY,
     TA_SETTINGS_KEYS,
+    TA_STRATEGY_DEFAULTS_KEY,
     TA_STRATEGY_KEYS,
     TAConfigError,
     params_for_strategy,
     projection_horizon_periods,
+    strategy_overrides,
 )
 from services.ta_model import TAModelError, TAParams, _fixed, project_cash_flows
 from services.ta_params import (
@@ -161,6 +164,34 @@ class DefaultsWriteBody(BaseModel):
     values: dict[str, Any]
 
 
+# ── Permission envelope — CLAUDE.md "Permission Envelope Pattern": every
+# permission-gated screen's response publishes can_read/can_write/
+# is_super_admin from the server, never a client-derived default. Neither
+# ``routers/org_settings.py`` nor ``OrgSettingsEditor.jsx`` do this today (a
+# real, pre-existing gap in that older screen — confirmed by this sprint's
+# own Task 1 discovery); the TA settings screen follows the newer, correct
+# convention established by the Workflow Triggers screen instead.
+
+
+def _ta_permissions(principal: dict | None, org_id: str) -> dict:
+    return {
+        "can_read": True,
+        "can_write": bool(can_manage_org_settings(principal, org_id)),
+        "is_super_admin": bool(is_super_admin(principal)),
+        "read_permission": None,  # open read — no permission required
+        "write_permission": "manage_org_settings",
+    }
+
+
+def _defaults_envelope(settings: dict, principal: dict | None, org_id: str) -> dict:
+    strategy_defaults = settings.get(TA_STRATEGY_DEFAULTS_KEY) or DEFAULT_TA_STRATEGY_PARAMS
+    return {
+        **{key: settings.get(key) for key in TA_SETTINGS_KEYS},
+        "strategy_overrides": strategy_overrides(strategy_defaults),
+        "permissions": _ta_permissions(principal, org_id),
+    }
+
+
 # ── GET /modeling/ta/defaults — open read, mirrors org_settings' own pattern ─
 
 
@@ -172,12 +203,50 @@ async def get_ta_defaults(request: Request):
     user of the org"). TA defaults are configuration an org member needs to
     understand any projection they see; there is no reason to gate them more
     tightly than org_settings itself.
+
+    Also publishes ``strategy_overrides`` (per-strategy "your override" vs.
+    "platform default" — see ``ta_config.strategy_overrides``) and the real
+    ``permissions`` envelope (Task 1a/1b gap: neither existed before this
+    sprint) so the admin screen never has to guess or default either.
+    """
+    org_id = get_org_id(request)
+    user_id = get_user_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        settings = await get_all_settings(conn, org_id)  # fetched ONCE
+        principal = await load_principal(conn, user_id)
+    return _defaults_envelope(settings, principal, org_id)
+
+
+# ── GET /modeling/ta/calibration-floor — reuses the real frequency-aware floor
+
+
+@router.get("/modeling/ta/calibration-floor")
+async def get_calibration_floor(
+    request: Request,
+    periods_per_year: int = Query(..., ge=1),
+):
+    """The real minimum realized-history requirement at a given frequency,
+    computed by calling ``ta_calibrate.minimum_realized_periods`` itself — so
+    the settings screen can show the true floor as an admin edits
+    periods_per_year (e.g. 12 quarters, not a flat 3), never a value
+    re-derived in the browser that could drift from the real calibration gate.
+    Open read, same convention as ``GET /modeling/ta/defaults``.
     """
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
         settings = await get_all_settings(conn, org_id)
-    return {key: settings.get(key) for key in TA_SETTINGS_KEYS}
+    min_years = Decimal(str(settings.get(TA_CALIBRATION_MIN_YEARS_KEY) or DEFAULT_CALIBRATION_MIN_YEARS))
+    try:
+        periods = minimum_realized_periods(periods_per_year, min_years=min_years)
+    except TACalibrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "periods_per_year": periods_per_year,
+        "calibration_min_years": str(min_years),
+        "minimum_realized_periods": periods,
+    }
 
 
 # ── PUT /admin/modeling/ta/defaults — write, gated like org_settings writes ─
@@ -189,6 +258,15 @@ async def put_ta_defaults(request: Request, body: DefaultsWriteBody):
     ``can_manage_org_settings`` — NOT a new permission — because this IS an
     org_settings write; ``services.org_settings.set_settings`` already
     enforces that check internally, so this handler does not duplicate it.
+
+    ``modeling.ta.strategy_defaults`` is stored as ONE jsonb blob covering all
+    8 strategies (Task 1a). A caller that submits only the strategies it
+    actually edited is MERGED into the org's existing blob here, not written
+    as a full replacement — writing a partial dict as-is would silently drop
+    every other strategy's prior override the first time an admin edited just
+    one strategy through this screen. Submitting the full 8-strategy object
+    (the previous, only-safe usage) still works unchanged, since merging a
+    superset into itself is a no-op.
     """
     org_id = get_org_id(request)
     user_id = get_user_id(request)
@@ -200,38 +278,47 @@ async def put_ta_defaults(request: Request, body: DefaultsWriteBody):
             detail=f"unknown TA settings key(s): {sorted(unknown)} — allowed: {TA_SETTINGS_KEYS}",
         )
 
-    for key, value in body.values.items():
-        if key == "modeling.ta.strategy_defaults" and value is not None:
-            for strategy_key, raw in value.items():
-                if strategy_key not in TA_STRATEGY_KEYS:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"strategy_defaults key {strategy_key!r} is not one of {TA_STRATEGY_KEYS}",
-                    )
-                try:
-                    TAParams(
-                        rate_of_contribution=Decimal(str(raw["rate_of_contribution"])),
-                        rate_of_distribution=Decimal(str(raw["rate_of_distribution"])),
-                        growth_rate=Decimal(str(raw["growth_rate"])),
-                        bow_factor=Decimal(str(raw["bow_factor"])),
-                        fund_life_years=Decimal(str(raw["fund_life_years"])),
-                        periods_per_year=4,
-                    )
-                except (TAModelError, KeyError, InvalidOperation) as exc:
-                    raise HTTPException(
-                        status_code=400, detail=f"malformed params for {strategy_key!r}: {exc}"
-                    ) from exc
-
     pool = await get_pool()
     async with pool.acquire() as conn:
+        existing = await get_all_settings(conn, org_id)  # fetched ONCE, base for merge
+        principal = await load_principal(conn, user_id)
+
+    values_to_write = dict(body.values)
+    submitted_strategy_defaults = values_to_write.get(TA_STRATEGY_DEFAULTS_KEY)
+    if submitted_strategy_defaults is not None:
+        for strategy_key, raw in submitted_strategy_defaults.items():
+            if strategy_key not in TA_STRATEGY_KEYS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"strategy_defaults key {strategy_key!r} is not one of {TA_STRATEGY_KEYS}",
+                )
+            try:
+                TAParams(
+                    rate_of_contribution=Decimal(str(raw["rate_of_contribution"])),
+                    rate_of_distribution=Decimal(str(raw["rate_of_distribution"])),
+                    growth_rate=Decimal(str(raw["growth_rate"])),
+                    bow_factor=Decimal(str(raw["bow_factor"])),
+                    fund_life_years=Decimal(str(raw["fund_life_years"])),
+                    periods_per_year=4,
+                )
+            except (TAModelError, KeyError, InvalidOperation) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"malformed params for {strategy_key!r}: {exc}"
+                ) from exc
+
+        merged = dict(existing.get(TA_STRATEGY_DEFAULTS_KEY) or DEFAULT_TA_STRATEGY_PARAMS)
+        merged.update(submitted_strategy_defaults)
+        values_to_write[TA_STRATEGY_DEFAULTS_KEY] = merged
+
+    async with pool.acquire() as conn:
         try:
-            resolved = await set_settings(conn, org_id, body.values, user_id)
+            resolved = await set_settings(conn, org_id, values_to_write, user_id, principal=principal)
         except SettingsPermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except SettingsValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {key: resolved.get(key) for key in TA_SETTINGS_KEYS}
+    return _defaults_envelope(resolved, principal, org_id)
 
 
 # ── GET /modeling/ta/projection/{commitment_id} ─────────────────────────────

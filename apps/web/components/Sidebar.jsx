@@ -39,6 +39,9 @@ const WORKFLOWS_ITEM = { label: "Workflows", href: "/admin/workflows", icon: "ad
 // Sprint 24 — white-label settings. Org Admins see their own org; Super
 // Admins additionally get the platform-wide screen.
 const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
+// TA Model Sprint 2 — per-strategy J-curve defaults + platform TA settings.
+// Org Admin (own org) or Super Admin, same gate as Organization settings.
+const TA_MODEL_SETTINGS_ITEM = { label: "TA Model Defaults", href: "/admin/modeling/ta", icon: "admin" };
 const PLATFORM_ITEM = { label: "Platform", href: "/admin/platform", icon: "admin" };
 // SOC Phase 4 — restrict accounts + manage their allow-list (populates the
 // unified restriction filter's data; does not change enforcement yet). Super
@@ -369,6 +372,11 @@ export default function Sidebar() {
                 item={ORG_SETTINGS_ITEM}
                 expanded={expanded}
                 active={isActive(ORG_SETTINGS_ITEM.href)}
+              />
+              <NavLink
+                item={TA_MODEL_SETTINGS_ITEM}
+                expanded={expanded}
+                active={isActive(TA_MODEL_SETTINGS_ITEM.href)}
               />
             </>
           )}

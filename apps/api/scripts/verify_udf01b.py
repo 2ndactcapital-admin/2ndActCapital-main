@@ -394,8 +394,13 @@ async def test_4_soft_delete_reversible(conn) -> None:
 
 async def test_5_soft_delete_blocked_by_layout(conn) -> None:
     from services.portfolio_udf import create_org_definition
-    from services.portfolio_udf_layouts import add_item, add_section, create_layout
-    from services.portfolio_udf_tabs import TabReferencedError, create_tab, soft_delete_tab
+    from services.portfolio_udf_layouts import (
+        LayoutSectionReferencedError, add_item, add_section, create_layout,
+        remove_item, remove_section,
+    )
+    from services.portfolio_udf_tabs import (
+        TabReferencedError, create_tab, get_tab_references, soft_delete_tab,
+    )
 
     tab = await create_tab(
         conn, org_id=ORG, applies_to="asset", label="Blocked Delete",
@@ -408,7 +413,7 @@ async def test_5_soft_delete_blocked_by_layout(conn) -> None:
     )
     layout = await create_layout(conn, org_id=ORG, tab_id=tab["id"])
     section = await add_section(conn, layout_id=layout["id"], org_id=ORG, title="Sec 1")
-    await add_item(conn, section_id=section["id"], org_id=ORG, definition_id=def_id)
+    item = await add_item(conn, section_id=section["id"], org_id=ORG, definition_id=def_id)
 
     try:
         await soft_delete_tab(conn, tab_id=tab["id"], org_id=ORG)
@@ -417,12 +422,29 @@ async def test_5_soft_delete_blocked_by_layout(conn) -> None:
         ok("6 — soft delete blocked by non-empty layout, references reported",
            bool(exc.references), f"references={exc.references}")
 
-    find("6 — no remove_section function",
-         "Task 2d's endpoint/function list has add_section but no remove_section "
-         "(and no route for it) — a tab that has ever had a section added can "
-         "never clear get_tab_references down to zero and can never be "
-         "soft-deleted again through the API this sprint built. Not fixed here: "
-         "not in the sprint's explicit function list.")
+    # FIND 6 fix: remove_section now exists and closes the one-way door — a
+    # tab that has ever had a section added can clear get_tab_references back
+    # to zero and become soft-deletable again through the API.
+    try:
+        await remove_section(conn, section_id=section["id"], org_id=ORG)
+        ok("6b — remove_section rejected while section still has items",
+           False, "no exception raised")
+    except LayoutSectionReferencedError as exc:
+        ok("6b — remove_section rejected while section still has items, "
+           "reference count reported",
+           exc.references == {"udf_layout_items": 1}, f"references={exc.references}")
+
+    await remove_item(conn, item_id=item["id"], org_id=ORG)
+    await remove_section(conn, section_id=section["id"], org_id=ORG)
+    refs_after_section_removed = await get_tab_references(conn, tab_id=tab["id"])
+    ok("6b — remove_section succeeds once the section is empty",
+       refs_after_section_removed == {},
+       f"refs_after_section_removed={refs_after_section_removed}")
+
+    deleted_tab = await soft_delete_tab(conn, tab_id=tab["id"], org_id=ORG)
+    ok("6b — previously-blocked tab soft-delete now succeeds after "
+       "removing all sections",
+       deleted_tab["deleted_at"] is not None, f"tab={deleted_tab}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -860,6 +882,17 @@ def endpoint_tests() -> None:
                 r = admin.delete(f"/api/v1/udf/layouts/{tab_id}/items/{item_id}",
                                    headers=HEADERS)
                 ok("12 DELETE .../items/{id} — 200 with manage_portfolio",
+                   r.status_code == 200, f"got {r.status_code}: {r.text[:300]}")
+
+            if section_id:
+                r = viewer.delete(f"/api/v1/udf/layouts/{tab_id}/sections/{section_id}",
+                                    headers=HEADERS)
+                ok("12b DELETE .../sections/{id} — 403 without manage_portfolio",
+                   r.status_code == 403, f"got {r.status_code}")
+                r = admin.delete(f"/api/v1/udf/layouts/{tab_id}/sections/{section_id}",
+                                   headers=HEADERS)
+                ok("12b DELETE .../sections/{id} — 200 with manage_portfolio "
+                   "(section is empty — item was already deleted above)",
                    r.status_code == 200, f"got {r.status_code}: {r.text[:300]}")
 
         # ── GET /udf/tabs excludes a tab hidden for the caller's permission set ──

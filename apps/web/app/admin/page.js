@@ -24,6 +24,7 @@ const SECTION_DESCRIPTIONS = {
   "/admin/permission-sets": "Reusable bundles of permissions.",
   "/admin/workflows": "Governance and approval workflows.",
   "/admin/settings": "White-label and organization settings.",
+  "/admin/modeling/ta": "TA model per-strategy defaults and projection settings.",
   "/admin/restricted-access": "Restrict accounts and manage allow-lists.",
   "/admin/trading-authority": "Per-entity trading-authority tiers.",
   "/admin/pricing/note-terms-queue":

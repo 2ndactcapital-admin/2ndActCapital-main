@@ -67,12 +67,14 @@ from services.portfolio_udf_layouts import (
     LayoutDuplicateError,
     LayoutError,
     LayoutScopeError,
+    LayoutSectionReferencedError,
     add_item,
     add_section,
     get_or_create_layout,
     get_resolved_layout,
     move_item,
     remove_item,
+    remove_section,
     reorder_sections,
 )
 from services.portfolio_udf_tabs import (
@@ -192,7 +194,7 @@ def _layout_vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
 
 
 def _http_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, (UdfReferencedError, TabReferencedError)):
+    if isinstance(exc, (UdfReferencedError, TabReferencedError, LayoutSectionReferencedError)):
         return HTTPException(
             status_code=409,
             detail={"message": str(exc), "references": exc.references},
@@ -759,6 +761,19 @@ async def create_section(request: Request, tab_id: str, body: SectionCreateIn):
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     return {"section": section}
+
+
+@router.delete("/udf/layouts/{tab_id}/sections/{section_id}")
+async def delete_section(request: Request, tab_id: str, section_id: str):
+    """Refused, not cascaded, while the section still has items — see
+    ``remove_section``."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    async with pool.acquire() as conn:
+        try:
+            await remove_section(conn, section_id=section_id, org_id=org_id)
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return {"deleted": True}
 
 
 @router.post("/udf/layouts/{tab_id}/sections/{section_id}/items", status_code=201)

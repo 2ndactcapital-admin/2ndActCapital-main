@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-03 (TA Model Sprint 1 — substrate; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-03 (TA Model Sprint 2 — admin settings UX; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -674,9 +674,46 @@ no `$3` in the query text) that asyncpg cannot bind; and `GET
 explicitly seeded, because the 4 new settings keys were never added to
 `org_settings.DEFAULT_SETTINGS`'s own fallback.
 
-**Next, independent of each other:** Sprint 2 (admin UX — a settings editor
-for `modeling.ta.*`) and Sprint 3 (commitment projection UX — the
-member/staff-facing projection view). Both depend only on Sprint 1.
+**Sprint 2 (admin settings UX) — complete.** A DataGrid + right-pane screen
+at `/admin/modeling/ta` (`TaSettingsScreen.jsx`, gated `GATE_ORG_OR_SUPER_
+ADMIN` in the nav — same tier as Organization settings) editing the 8
+strategy defaults and the 3 platform-level settings, built on the real
+Workflow-Triggers-style permission envelope (`permissions.can_write`, no
+client fallback — a pattern `OrgSettingsEditor.jsx` still lacks, left
+unfixed as out of scope). Two real backend gaps found and fixed in
+`routers/modeling_ta.py` / `services/ta_config.py`:
+
+1. Neither GET nor PUT published any signal for which of the 8 strategies an
+   org had actually overridden vs. inherited from the seed — added
+   `ta_config.strategy_overrides`, a real per-strategy Decimal-value
+   comparison (the underlying org_settings row is ONE blob for all 8, so
+   row-existence alone cannot answer this at strategy granularity).
+2. **A real clobber bug**: PUT wrote `body.values` straight through with no
+   merge step, so an admin editing just one strategy through the new screen
+   would have silently discarded every other strategy's prior override.
+   Fixed: the router now merges a partial per-strategy submission into the
+   org's existing blob before writing — the reason this sprint is
+   `.structural`, not `.lowrisk`, despite being "just a UI sprint" on paper.
+
+A new read-only endpoint, `GET /modeling/ta/calibration-floor`, lets the
+screen show the real, frequency-aware minimum-calibration-periods
+requirement as an admin edits `periods_per_year`, by calling
+`ta_calibrate.minimum_realized_periods` itself rather than re-deriving it in
+the browser.
+
+**Verification:** `apps/api/scripts/verify_tamodel2.py` — **31 PASS, 0 FAIL,
+0 BLOCKED**, including a reproduction of the clobber bug's precondition and
+proof of the fix, a real 400 confirmed as a plain string (verbatim-
+renderable), view-only checked independently at both the API (403) and the
+component source (every write control behind an unfallback-able `canWrite`
+gate), cross-org isolation on both the settings values and the new
+`strategy_overrides` signal, and `npm run build` exiting 0 with the new
+routes present in the build output. `verify_tamodel1.py` re-run clean at
+77/77 after this sprint's backend changes (no regression).
+
+**Next, independent of each other:** Sprint 3 (commitment projection UX —
+the member/staff-facing projection view) is the only remaining piece; it
+depends only on Sprint 1.
 ---
 
 ## 00. LiteLLM Phase B — routing BUILT, three real blockers to a first success (2026-08-26)
