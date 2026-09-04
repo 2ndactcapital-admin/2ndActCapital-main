@@ -92,7 +92,7 @@ echo ""
 echo "--- Step 1: refresh-schema ---"
 for refresh_attempt in 1 2 3; do
   refresh_result=$(timeout 600 claude -p "/refresh-schema" \
-    --permission-mode acceptEdits \
+    --permission-mode acceptEdits --dangerously-skip-permissions \
     --allowedTools "$
 
   ALLOWED_TOOLS" \
@@ -139,14 +139,14 @@ run_one_leg() {
 
   if [[ -n "$resume_session" ]]; then
     nohup claude --resume "$resume_session" -p "$prompt_arg" \
-      --permission-mode acceptEdits \
+      --permission-mode acceptEdits --dangerously-skip-permissions \
       --allowedTools "$ALLOWED_TOOLS" \
       --max-turns "$MAX_TURNS" \
       --output-format json \
       > "$leg_json" 2>>"$SPRINT_LOG" &
   else
     nohup claude -p "$prompt_arg" \
-      --permission-mode acceptEdits \
+      --permission-mode acceptEdits --dangerously-skip-permissions \
       --allowedTools "$ALLOWED_TOOLS" \
       --max-turns "$MAX_TURNS" \
       --output-format json \
