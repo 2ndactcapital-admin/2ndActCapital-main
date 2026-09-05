@@ -201,6 +201,25 @@ Super-admin bypass is checked FIRST, before any granular permission lookup,
 via ONE shared helper (`is_super_admin` / `rbac.has_permission`) — never a
 second, local re-implementation of the same check.
 
+## Dual-Path Permission Resolution (most-restrictive-wins)
+
+Established by the CRM UDF module (six sprints, 462 assertions, all merged)
+for field-level security binding to BOTH `profile_permissions` and
+`permission_set_permissions` simultaneously — a real, recurring shape
+whenever access needs to resolve across two independent permission paths
+rather than one.
+
+The reusable functions: `resolve_field_access_bulk` / `resolve_tab_visibility`
+(`services/portfolio_udf*.py`). The rule: when the two paths disagree,
+the MORE RESTRICTIVE result always wins — a field marked `edit` on one path
+and `hidden` on the other resolves to `hidden`, never split the difference
+or let either path unilaterally grant access the other denies.
+
+Reuse this pattern (or these functions directly, if the shape genuinely
+matches) anywhere else in the platform that needs to bind one resource's
+access to two independent, potentially-conflicting permission sources.
+Do not write a second, bespoke dual-path resolver — check here first.
+
 ## AI Provider Abstraction
 
 All AI calls route through the central `call_claude_text` / `call_claude_json`
