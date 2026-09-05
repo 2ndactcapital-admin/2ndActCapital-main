@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from routers.entities import get_org_id
@@ -111,6 +111,8 @@ from services.portfolio_udf_records import (
     FilterValueError,
     RecordListError,
     SortFieldError,
+    export_records_csv,
+    import_records_csv,
     list_records_with_udf,
 )
 from services.portfolio_udf_tags import (
@@ -995,3 +997,72 @@ async def list_records_route(
         "permissions": perms,
         "vocabularies": _records_vocabularies(perms, result["columns"]),
     }
+
+
+# ── Records — Sprint udf02b (CSV import/export) ────────────────────────────
+
+
+@router.get("/udf/records/{target_type}/export")
+async def export_records_route(
+    request: Request,
+    target_type: str,
+    tab_id: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+):
+    """CSV export of ``target_type``, honoring 2a's exact column/filter rules
+    (same ``get_available_columns``/``list_records_with_udf`` calls the list
+    endpoint makes).
+
+    The response body is materialized server-side from the paged generator
+    before being returned, rather than opened as a live chunked HTTP stream —
+    holding a pooled RLS connection open for an entire ASGI streaming
+    response, with no clean way to downgrade to a 422 once headers are sent,
+    has no precedent anywhere else in this codebase and is not worth
+    introducing for a CRM-scale export. The service layer still pages
+    internally (bounded LIMIT/OFFSET batches, same query-count discipline as
+    ``list_records_with_udf``) rather than loading the whole table in one
+    unbounded query.
+    """
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    filters = _parse_records_filter(filter)
+    async with pool.acquire() as conn:
+        try:
+            chunks = [
+                chunk async for chunk in export_records_csv(
+                    conn, target_type=target_type, org_id=org_id, user_id=user_id,
+                    tab_id=tab_id, filters=filters,
+                )
+            ]
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return Response(
+        content="".join(chunks),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{target_type}.csv"'},
+    )
+
+
+@router.post("/udf/records/{target_type}/import", status_code=201)
+async def import_records_route(
+    request: Request,
+    target_type: str,
+    tab_id: str | None = Query(default=None),
+    file: UploadFile = File(...),
+):
+    """Row-level CSV import of UDF values against EXISTING ``target_type``
+    records. One bad row rejects only that row — see
+    ``services.portfolio_udf_records.import_records_csv`` for the full
+    convention (``target_id`` column, ``api_name``-keyed headers, per-row
+    atomicity)."""
+    org_id, user_id, pool = await _tenant_gate(request, WRITE_PERMISSION)
+    can_create_tags = await has_permission(pool, user_id, org_id, TAG_CREATE_PERMISSION)
+    contents = await file.read()
+    async with pool.acquire() as conn:
+        try:
+            result = await import_records_csv(
+                conn, target_type=target_type, org_id=org_id, user_id=user_id,
+                tab_id=tab_id, csv_bytes=contents, can_create_tags=can_create_tags,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    return result

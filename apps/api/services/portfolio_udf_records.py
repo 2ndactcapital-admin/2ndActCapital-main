@@ -67,7 +67,10 @@ asserting a hardcoded number.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+import uuid as _uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -88,6 +91,7 @@ from services.portfolio_udf import (
     _datetime,
     _numeric,
     _value_set_codes,
+    record_udf_value,
     resolve_visible_definitions,
 )
 from services.portfolio_udf_field_permissions import (
@@ -100,7 +104,7 @@ from services.portfolio_udf_layouts import (
     TABLE_UDF_LAYOUT_SECTIONS,
     TABLE_UDF_LAYOUTS,
 )
-from services.portfolio_udf_tags import normalize_tag
+from services.portfolio_udf_tags import assign_tags, normalize_tag
 
 #: Every ``applies_to``/``target_type`` maps to exactly one base table — the
 #: real, deployed record a UDF value or tag assignment is keyed against.
@@ -143,6 +147,14 @@ class FilterFieldError(RecordListError):
 
 class SortFieldError(RecordListError):
     """``sort``'s ``definition_id`` is not an available/sortable column."""
+
+
+class RecordImportError(RecordListError):
+    """One CSV row failed row-level import validation — Sprint udf02b.
+
+    Always caught PER ROW by :func:`import_records_csv`, never allowed to
+    escape the batch: a bad row lands in ``rejected``, the batch continues.
+    """
 
 
 # ── Operator vocabulary per data_type ────────────────────────────────────────
@@ -727,3 +739,314 @@ async def list_records_with_udf(
         row["udf_values"] = values_by_target.get(tid, {})
 
     return {"rows": base_rows, "columns": columns, "total_count": total_count}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sprint udf02b — CSV export/import
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Both functions below reuse 2a's own building blocks verbatim rather than
+# re-deriving column visibility or filter semantics: ``get_available_columns``
+# for what a caller may see, ``list_records_with_udf`` (export) for the exact
+# row/filter query 2a's list endpoint runs, and ``record_udf_value`` /
+# ``portfolio_udf_tags.assign_tags`` (import) for the exact write path every
+# other UDF write in this layer already goes through. Nothing here
+# reimplements type/``type_params``/value-set validation — a bad value is
+# refused by the same code that refuses it everywhere else, and this module's
+# own job is limited to what those functions cannot check on their own:
+# resolving which base row a CSV row means, and refusing a field the caller's
+# FLS access does not allow before ever handing it to a write path that would
+# otherwise happily write it.
+#
+# CSV IDENTIFIER CONVENTION — target_id, not external_id
+# ──────────────────────────────────────────────────────────────────────────
+# Every row is resolved by a literal ``target_id`` column carrying the base
+# table's own uuid. Chosen over ``udf_definitions.is_external_id`` because
+# every other write in this layer (record_udf_value, PUT
+# /udf/values/{target_type}/{target_id}) already addresses a target by its
+# real id directly, and ``is_external_id`` designates at most an org's OWN
+# convention for what counts as an external id, with no uniqueness guarantee
+# and no existing resolver anywhere in this codebase — a caller could mark
+# zero, one, or several definitions ``is_external_id=true`` for the same
+# ``target_type``, which would leave "the" external id ambiguous rather than
+# well-defined. A literal id has no such ambiguity.
+#
+# CSV HEADER CONVENTION — api_name only, never field_key
+# ──────────────────────────────────────────────────────────────────────────
+# ``api_name`` is nullable (introspected in docs/schema_snapshot.sql); a
+# column with none is simply not exposed over CSV at all, in either
+# direction. ``field_key`` is NOT used as a fallback: two definitions visible
+# to the same caller may legitimately share a ``field_key`` across the four
+# parallel owner scopes (see ``resolve_visible_definitions``'s own
+# docstring), so it cannot serve as a unique CSV column name the way
+# ``api_name`` is meant to. A duplicate ``api_name`` — not database-enforced
+# unique either — keeps only the first occurrence encountered.
+
+EXPORT_PAGE_SIZE = 500
+
+
+def _csv_format_value(data_type: str, value: Any) -> str:
+    if value is None:
+        return ""
+    if data_type in ("multiselect", "tags"):
+        return ";".join(value) if isinstance(value, list) else str(value)
+    if data_type == "boolean":
+        return "true" if value else "false"
+    return str(value)
+
+
+def _exportable_columns(columns: list[dict]) -> list[dict]:
+    out = []
+    seen: set[str] = set()
+    for c in columns:
+        api_name = c.get("api_name")
+        if not api_name or api_name in seen:
+            continue
+        seen.add(api_name)
+        out.append(c)
+    return out
+
+
+async def export_records_csv(
+    conn,
+    *,
+    target_type: str,
+    org_id: str,
+    user_id: str,
+    tab_id: str | None = None,
+    filters: list[dict] | None = None,
+):
+    """Async generator of CSV text chunks for ``target_type`` — Sprint udf02b.
+
+    Same column-visibility and filter rules as 2a's list endpoint, because
+    this calls the SAME two functions 2a's list endpoint calls
+    (``get_available_columns``, ``list_records_with_udf``) rather than
+    re-deriving either: an export can never disagree with the grid about
+    which columns or rows are visible. Hidden fields are excluded because
+    ``get_available_columns`` never returns them; read-only fields ARE
+    included — export is read-only regardless of access level, so 'read' vs
+    'edit' makes no difference to what gets written to the file.
+
+    Header row: ``target_id`` (the base row's own id, so a re-import can
+    resolve it) followed by every exportable column's ``api_name`` — see the
+    module-level convention notes above for why ``field_key`` is never used
+    as a fallback.
+
+    Paged internally via ``list_records_with_udf``'s own LIMIT/OFFSET rather
+    than one unbounded query — the same query-count discipline 2a already
+    established for the list endpoint, just repeated once per page instead
+    of once per request.
+    """
+    org_id = _require_org(org_id)
+    target_type = _check_choice(target_type, APPLIES_TO, "target_type")
+
+    columns = await get_available_columns(
+        conn, target_type=target_type, tab_id=tab_id, org_id=org_id, user_id=user_id,
+    )
+    header_cols = _exportable_columns(columns)
+
+    buf = io.StringIO()
+    csv.writer(buf).writerow(["target_id"] + [c["api_name"] for c in header_cols])
+    yield buf.getvalue()
+
+    offset = 0
+    while True:
+        result = await list_records_with_udf(
+            conn, target_type=target_type, org_id=org_id, user_id=user_id,
+            tab_id=tab_id, filters=filters, sort=None,
+            limit=EXPORT_PAGE_SIZE, offset=offset,
+        )
+        rows = result["rows"]
+        if not rows:
+            break
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        for row in rows:
+            values = row.get("udf_values") or {}
+            line = [row["id"]] + [
+                _csv_format_value(c["data_type"], values.get(c["definition_id"]))
+                for c in header_cols
+            ]
+            writer.writerow(line)
+        yield buf.getvalue()
+        if len(rows) < EXPORT_PAGE_SIZE:
+            break
+        offset += EXPORT_PAGE_SIZE
+
+
+_CSV_TRUE = {"true", "1", "yes"}
+_CSV_FALSE = {"false", "0", "no"}
+
+
+def _parse_csv_boolean(raw: str) -> bool:
+    """A CSV cell to a real ``bool`` — never passed through as a string.
+
+    ``portfolio_udf._boolean`` (called inside ``coerce_value``, which
+    ``record_udf_value`` always runs) strictly requires an actual Python
+    ``bool`` and refuses a string outright, on purpose (Python truthiness
+    would read the string ``'false'`` as ``True``). A CSV cell is always a
+    string, so THIS layer — not ``coerce_value`` — is where that string is
+    turned into a real bool, with the same refuse-rather-than-guess posture:
+    an unrecognized spelling is rejected, not coerced.
+    """
+    v = raw.strip().casefold()
+    if v in _CSV_TRUE:
+        return True
+    if v in _CSV_FALSE:
+        return False
+    raise RecordImportError(
+        f"value {raw!r} is not a recognized boolean (true/false/yes/no/1/0)"
+    )
+
+
+def _parse_csv_list(raw: str) -> list[str]:
+    """``;``-delimited CSV cell to a list — CSV's own comma is the field
+    delimiter, so multiselect/tags values use a different separator."""
+    return [v.strip() for v in raw.split(";") if v.strip()]
+
+
+async def import_records_csv(
+    conn,
+    *,
+    target_type: str,
+    org_id: str,
+    user_id: str,
+    tab_id: str | None,
+    csv_bytes: bytes,
+    can_create_tags: bool,
+) -> dict[str, list[dict]]:
+    """Row-level CSV import of UDF values against EXISTING ``target_type``
+    records — Sprint udf02b. Returns ``{accepted: [...], rejected: [...]}``.
+
+    See the module-level convention notes above for the ``target_id``/
+    ``api_name`` conventions. A row with no resolvable ``target_id`` —
+    including EVERY row, if the file has no such column at all — is rejected
+    with that reason; nothing else about the file is inferred from it.
+
+    ROW-LEVEL ATOMICITY: each row's writes run inside one nested transaction
+    (``conn.transaction()``, which asyncpg opens as a SAVEPOINT here, since
+    ``services.database``'s pool already wraps the whole request in an outer
+    transaction — see that module's docstring). Any field failure for a row
+    rolls back every write already made for THAT row, without touching rows
+    already committed earlier in the same file — "a row with ANY invalid
+    field is entirely rejected" falls out of the database's own rollback
+    rather than being reimplemented as Python bookkeeping.
+    """
+    org_id = _require_org(org_id)
+    target_type = _check_choice(target_type, APPLIES_TO, "target_type")
+    base_table = TARGET_TABLES[target_type]
+
+    columns = await get_available_columns(
+        conn, target_type=target_type, tab_id=tab_id, org_id=org_id, user_id=user_id,
+    )
+    columns_by_api_name: dict[str, dict] = {}
+    for c in columns:
+        api_name = c.get("api_name")
+        if api_name and api_name not in columns_by_api_name:
+            columns_by_api_name[api_name] = c
+
+    def_ids = [c["definition_id"] for c in columns_by_api_name.values()]
+    required_map: dict[str, bool] = {}
+    if def_ids:
+        rows = await conn.fetch(
+            f"SELECT id::text AS id, is_required FROM {TABLE_UDF_DEFINITIONS} "
+            f"WHERE id = ANY($1::uuid[])",
+            def_ids,
+        )
+        required_map = {r["id"]: r["is_required"] for r in rows}
+
+    text = csv_bytes.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    fieldnames = reader.fieldnames or []
+
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+
+    for i, raw_row in enumerate(reader, start=1):
+        try:
+            raw_target_id = (raw_row.get("target_id") or "").strip()
+            if not raw_target_id:
+                raise RecordImportError(
+                    "row has no target_id — every row must carry a "
+                    "'target_id' column naming an existing record's own id"
+                )
+            try:
+                _uuid.UUID(raw_target_id)
+            except ValueError:
+                raise RecordImportError(
+                    f"target_id={raw_target_id!r} is not a valid uuid"
+                ) from None
+            exists = await conn.fetchval(
+                f"SELECT 1 FROM {base_table} t WHERE t.id = $1::uuid "
+                f"AND t.org_id = $2::uuid AND {_current('t')}",
+                raw_target_id, org_id,
+            )
+            if not exists:
+                raise RecordImportError(
+                    f"target_id={raw_target_id!r} is not a current "
+                    f"{target_type} record in this org"
+                )
+
+            writes: list[tuple[dict, Any]] = []
+            for field_name in fieldnames:
+                if field_name == "target_id":
+                    continue
+                column = columns_by_api_name.get(field_name)
+                raw_value = (raw_row.get(field_name) or "").strip()
+                if column is None:
+                    # Also the outcome for a field HIDDEN to this caller —
+                    # get_available_columns never returns a hidden column at
+                    # all, so it is indistinguishable here from a column that
+                    # does not exist. That is deliberate, not a gap: the same
+                    # information-hiding posture FilterFieldError documents
+                    # for the list endpoint applies here too.
+                    if raw_value:
+                        raise RecordImportError(
+                            f"column {field_name!r} does not match any "
+                            f"field available to this caller"
+                        )
+                    continue
+                if not raw_value:
+                    if required_map.get(column["definition_id"]):
+                        raise RecordImportError(
+                            f"field {field_name!r} is required and cannot "
+                            f"be left blank"
+                        )
+                    continue
+                if column["access"] != ACCESS_EDIT:
+                    raise RecordImportError(
+                        f"field {field_name!r} has access="
+                        f"{column['access']!r} for this caller — writes "
+                        f"require 'edit'"
+                    )
+                data_type = column["data_type"]
+                if data_type in ("tags", "multiselect"):
+                    writes.append((column, _parse_csv_list(raw_value)))
+                elif data_type == "boolean":
+                    writes.append((column, _parse_csv_boolean(raw_value)))
+                else:
+                    writes.append((column, raw_value))
+
+            written_fields: list[str] = []
+            async with conn.transaction():
+                for column, value in writes:
+                    if column["data_type"] == "tags":
+                        await assign_tags(
+                            conn, org_id=org_id, definition_id=column["definition_id"],
+                            target_id=raw_target_id, codes=value,
+                            assigned_by=user_id, can_create_tags=can_create_tags,
+                        )
+                    else:
+                        await record_udf_value(
+                            conn, org_id=org_id, definition_id=column["definition_id"],
+                            target_type=target_type, target_id=raw_target_id,
+                            value=value,
+                        )
+                    written_fields.append(column["api_name"])
+            accepted.append({
+                "row": i, "target_id": raw_target_id, "fields": written_fields,
+            })
+        except UdfError as exc:
+            rejected.append({"row": i, "reason": str(exc)})
+
+    return {"accepted": accepted, "rejected": rejected}
