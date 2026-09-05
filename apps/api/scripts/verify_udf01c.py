@@ -380,7 +380,10 @@ async def test_1b_regression_baseline() -> None:
 
     import verify_udf01b
 
-    exit_b = await verify_udf01b.main()
+    # include_regression=False: this script already called verify_udf01a.main()
+    # directly above, so verify_udf01b's own internal regression gate (which
+    # would call verify_udf01a.main() a second time) must be skipped.
+    exit_b = await verify_udf01b.main(include_regression=False)
     ok("1 — verify_udf01b.py regression baseline still green",
        exit_b == 0 and not verify_udf01b.FAIL,
        f"exit={exit_b} PASS={len(verify_udf01b.PASS)} FAIL={len(verify_udf01b.FAIL)}")
@@ -657,21 +660,31 @@ async def test_7_platform_scope_rls_gap(conn, app_conn) -> None:
         access = await resolve_field_access(
             app_conn, definition_id=platform_def, tab_id=None, org_id=ORG, user_id=U_VIEWER,
         )
-        find("7 — platform-scope FLS grants are invisible under a non-super-admin "
-             "connection (empirically reproduced)",
+        # udf02a re-confirmation (Task 1): this assertion originally
+        # documented the FAIL-OPEN gap (a 'hidden' grant on a platform-scope
+        # field was invisible to a normal org connection, silently resolving
+        # to the 'edit' default). apps/api/migrations/
+        # udf01c_fix_platform_scope_rls_gap.sql has since been applied live —
+        # it widens udf_field_permissions_org_isolation to also allow
+        # `org_id IS NULL` — so the grant is now visible and resolution
+        # correctly returns 'hidden'. The assertion is updated to confirm the
+        # FIX holds, not the gap; the FIND below records that this was
+        # re-verified, empirically, not merely assumed from the migration's
+        # existence.
+        find("7 — platform-scope FLS grants are now visible under a "
+             "non-super-admin connection (empirically reproduced, gap fixed)",
              f"a 'hidden' grant exists in the database for this platform-scope "
-             f"field, but resolve_field_access under a normal app_service "
+             f"field; resolve_field_access under a normal app_service "
              f"connection (RLS enforced, no app.is_super_admin) returns "
-             f"{access!r} — the grant row is invisible to RLS (definition's "
-             f"org_id IS NULL never equals current_org_id), so resolution "
-             f"silently falls back to the 'no grant' default of 'edit'. This "
-             f"is a FAIL-OPEN outcome for platform-scope fields specifically: "
-             f"an admin who configured 'hidden' for PROFILE_1 would see the "
-             f"field genuinely hidden from a super-admin view, but a normal "
-             f"org viewer sees it as 'edit' regardless.")
-        ok("7 — (documented above) resolution falls back to the visible "
-           "default rather than erroring",
-           access == "edit", f"got {access!r}")
+             f"{access!r}, matching what was configured. Prior to "
+             f"udf01c_fix_platform_scope_rls_gap.sql the grant row was "
+             f"invisible to RLS (definition's org_id IS NULL never equalled "
+             f"current_org_id) and resolution silently fell back to the "
+             f"'no grant' default of 'edit' — a fail-open outcome. That "
+             f"policy now also allows `org_id IS NULL`, closing the gap.")
+        ok("7 — (documented above) resolution now returns the configured "
+           "'hidden' access rather than falling open to 'edit'",
+           access == "hidden", f"got {access!r}")
     finally:
         await tr.rollback()
 
@@ -862,7 +875,7 @@ def endpoint_tests(fx: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def main() -> int:
+async def main(include_regression: bool = True) -> int:
     admin, admin_prov = await admin_dsn()
     app, app_prov = await app_service_dsn()
     if not admin:
@@ -882,7 +895,8 @@ async def main() -> int:
         await setup(conn)
         try:
             await test_1_schema(conn)
-            await test_1b_regression_baseline()
+            if include_regression:
+                await test_1b_regression_baseline()
             fx = await build_udf_fixtures(conn)
             await test_2_precedence(conn, fx)
             await test_3_set_field_access(conn, fx)

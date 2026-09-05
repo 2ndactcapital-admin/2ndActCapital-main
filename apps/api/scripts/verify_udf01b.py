@@ -305,6 +305,12 @@ async def test_1b_udf01a_baseline() -> None:
             print(f"    [udf01a FAIL] {f}")
 
 
+#: Set to False by a caller (verify_udf01c.py, verify_udf02a.py, ...) that is
+#: already calling verify_udf01a.main() itself as part of its own flat
+#: regression chain — prevents this script's own nested call to
+#: verify_udf01a.main() from running a second time in the same process.
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # TASK 2b — tab CRUD, cap enforcement, immutability, soft delete
 # ═══════════════════════════════════════════════════════════════════════════
@@ -943,7 +949,7 @@ def endpoint_tests() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def main() -> int:
+async def main(include_regression: bool = True) -> int:
     admin, admin_prov = await admin_dsn()
     app, app_prov = await app_service_dsn()
     if not admin:
@@ -963,7 +969,8 @@ async def main() -> int:
         await setup(conn)
         try:
             await test_1_schema(conn)
-            await test_1b_udf01a_baseline()
+            if include_regression:
+                await test_1b_udf01a_baseline()
             await test_2_cap_enforcement(conn)
             await test_3_api_name_immutable(conn)
             await test_4_soft_delete_reversible(conn)

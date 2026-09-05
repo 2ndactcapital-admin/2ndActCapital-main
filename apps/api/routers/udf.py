@@ -25,6 +25,7 @@ request model below either has no org_id field or would fail Pydantic's
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -104,6 +105,14 @@ from services.portfolio_udf_tabs import (
     undelete_tab,
     update_tab,
 )
+from services.portfolio_udf_records import (
+    FilterFieldError,
+    FilterOperatorError,
+    FilterValueError,
+    RecordListError,
+    SortFieldError,
+    list_records_with_udf,
+)
 from services.portfolio_udf_tags import (
     TAG_CREATE_PERMISSION,
     TagCapError,
@@ -130,6 +139,8 @@ _VALIDATION_ERRORS = (
     TabError, TabDuplicateError, TabImmutableError, TabCapError, TabGranteeError,
     LayoutError, LayoutScopeError, LayoutDuplicateError, LayoutCapError,
     LayoutColSpanError,
+    RecordListError, FilterFieldError, FilterOperatorError, FilterValueError,
+    SortFieldError,
 )
 
 
@@ -897,3 +908,90 @@ async def delete_item(request: Request, tab_id: str, item_id: str):
         except _VALIDATION_ERRORS as exc:
             raise _http_error(exc) from exc
     return {"deleted": True}
+
+
+# ── Records — Sprint udf02a (DataGrid columns & list filters) ──────────────
+
+
+def _records_vocabularies(perms: dict[str, Any], columns: list[dict]) -> dict[str, Any]:
+    """A UDF column is editable here only in the sense that its value can be
+    written through the EXISTING ``PUT /udf/values/{target_type}/{target_id}``
+    endpoint (Sprint udf01a) — this sprint adds no write path of its own.
+    ``inline_editable`` mirrors ``editable`` exactly: a UDF value is always a
+    single scalar per (record, definition), so there is no "editable but not
+    inline" distinction the way a multi-part form field might have."""
+    editable = (
+        [c["definition_id"] for c in columns if c["access"] == "edit"]
+        if perms["can_write"] else []
+    )
+    return {"editable": editable, "inline_editable": list(editable)}
+
+
+def _parse_records_filter(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"filter is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=422, detail="filter must be a JSON array")
+    for item in parsed:
+        if (
+            not isinstance(item, dict)
+            or "definition_id" not in item
+            or "operator" not in item
+            or "value" not in item
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="each filter entry requires definition_id, operator, value",
+            )
+    return parsed
+
+
+def _parse_records_sort(raw: str | None) -> dict[str, Any] | None:
+    """``-definition_id`` for descending, ``definition_id`` for ascending —
+    one column only, per this sprint's explicit scope boundary."""
+    if not raw:
+        return None
+    if raw.startswith("-"):
+        return {"definition_id": raw[1:], "direction": "desc"}
+    return {"definition_id": raw, "direction": "asc"}
+
+
+@router.get("/udf/records/{target_type}")
+async def list_records_route(
+    request: Request,
+    target_type: str,
+    tab_id: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Rows of ``target_type`` with their available UDF columns inlined,
+    filtered/sorted server-side. A hidden tab (``tab_id`` given) degrades to
+    zero available UDF columns rather than 403ing — see
+    ``portfolio_udf_records`` module docstring: unlike the layout endpoint,
+    there is still a real base-table row set to return."""
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    filters = _parse_records_filter(filter)
+    sort_spec = _parse_records_sort(sort)
+    async with pool.acquire() as conn:
+        try:
+            result = await list_records_with_udf(
+                conn, target_type=target_type, org_id=org_id, user_id=user_id,
+                tab_id=tab_id, filters=filters, sort=sort_spec,
+                limit=limit, offset=offset,
+            )
+        except _VALIDATION_ERRORS as exc:
+            raise _http_error(exc) from exc
+    perms = await _permission_envelope(pool, user_id, org_id)
+    return {
+        "rows": result["rows"],
+        "columns": result["columns"],
+        "total_count": result["total_count"],
+        "permissions": perms,
+        "vocabularies": _records_vocabularies(perms, result["columns"]),
+    }
