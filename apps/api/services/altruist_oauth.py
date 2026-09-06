@@ -539,9 +539,21 @@ async def require_active_connection(conn, *, org_id: str, environment: str) -> d
 # in the source Guides (households under /api/v2/, accounts under /v2/,
 # neither confirmed against a live /reference page in this environment).
 # Isolated here for the same one-edit-fixes-it reason as _OAUTH_PATHS above.
+#
+# [FIND] Altruist Sprint 3 — ``positions``/``transactions`` are NOT confirmed
+# against any live spec either (checked this repo's docs/ for an existing
+# Altruist API reference — none exists, same absence Sprint 1/2 found for the
+# OAuth and households/accounts paths). No sandbox access exists to confirm
+# against a live /reference page. Falls back to the same ``/v2/<resource>``
+# convention ``accounts`` already uses, with the resource scoped by
+# ``account_id`` as a query parameter — a guess, not a confirmed fact, and
+# isolated here for the same one-edit-fixes-it reason as everything else in
+# this dict.
 _API_PATHS = {
     "households": "/api/v2/households",
     "accounts": "/v2/accounts",
+    "positions": "/v2/positions",
+    "transactions": "/v2/transactions",
 }
 
 
@@ -577,6 +589,57 @@ def _normalize_account(raw: dict) -> dict:
     return {
         "id": str(raw.get("id") or raw.get("account_id") or ""),
         "name": raw.get("name") or raw.get("account_name") or raw.get("nickname") or "",
+        "raw": raw,
+    }
+
+
+def _normalize_position(raw: dict) -> dict:
+    """A single Altruist position, in the documented-or-best-guess shape.
+
+    Field names are unconfirmed (same [FIND] as the path itself) — every
+    candidate key is a defensive guess, exactly as ``_normalize_account``
+    already does for ``id``/``name``. ``raw`` is kept whole so a caller can
+    recover a field this function did not anticipate.
+    """
+    return {
+        "id": raw.get("id") or raw.get("position_id"),
+        "cusip": raw.get("cusip"),
+        "isin": raw.get("isin"),
+        "ticker": raw.get("ticker") or raw.get("symbol"),
+        "name": raw.get("name") or raw.get("security_name") or raw.get("description"),
+        "asset_type": raw.get("asset_type") or raw.get("security_type"),
+        "quantity": raw.get("quantity") or raw.get("units"),
+        "market_value": raw.get("market_value") or raw.get("value"),
+        "cost_basis": raw.get("cost_basis"),
+        "currency_code": raw.get("currency_code") or raw.get("currency"),
+        "raw": raw,
+    }
+
+
+def _normalize_transaction(raw: dict) -> dict:
+    """A single Altruist transaction, in the documented-or-best-guess shape.
+
+    Same defensive-field-lookup approach as ``_normalize_position`` — see its
+    docstring. ``type`` is left as whatever string Altruist sends; mapping it
+    onto this codebase's ``transaction_type_code`` vocabulary is the caller's
+    job (``altruist_positions_sync``), not this normalizer's.
+    """
+    return {
+        "id": raw.get("id") or raw.get("transaction_id"),
+        "type": raw.get("type") or raw.get("transaction_type") or raw.get("activity_type"),
+        "cusip": raw.get("cusip"),
+        "isin": raw.get("isin"),
+        "ticker": raw.get("ticker") or raw.get("symbol"),
+        "name": raw.get("name") or raw.get("security_name") or raw.get("description"),
+        "trade_date": raw.get("trade_date") or raw.get("date"),
+        "settle_date": raw.get("settle_date"),
+        "quantity": raw.get("quantity") or raw.get("units"),
+        "price": raw.get("price"),
+        "gross_amount": raw.get("gross_amount") or raw.get("amount"),
+        "fees": raw.get("fees"),
+        "taxes": raw.get("taxes"),
+        "net_amount": raw.get("net_amount"),
+        "currency_code": raw.get("currency_code") or raw.get("currency"),
         "raw": raw,
     }
 
@@ -667,3 +730,89 @@ async def fetch_accounts_for_household(
         )
     body = response.json()
     return [_normalize_account(a) for a in _extract_list(body, "accounts", "data", "results")]
+
+
+async def call_positions(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    account_id: str,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> list[dict]:
+    """GET /v2/positions?account_id=... — one account's current positions.
+
+    Sprint 3. Same guard-first, injectable-transport shape as
+    ``fetch_accounts_for_household`` — see its docstring. The path itself is
+    an unconfirmed [FIND]; see ``_API_PATHS``.
+    """
+    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
+    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
+    api_base = ALTRUIST_HOSTS[environment]["api_base"]
+    url = f"{api_base}{_API_PATHS['positions']}"
+
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        try:
+            response = await client.get(
+                url,
+                params={"account_id": account_id},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"GET {url} failed at the transport layer: {type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"GET {url} was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return [_normalize_position(p) for p in _extract_list(body, "positions", "data", "results")]
+
+
+async def call_transactions(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    account_id: str,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> list[dict]:
+    """GET /v2/transactions?account_id=... — one account's transaction history.
+
+    Sprint 3. Same guard-first, injectable-transport shape as
+    ``fetch_accounts_for_household`` — see its docstring. The path itself is
+    an unconfirmed [FIND]; see ``_API_PATHS``.
+    """
+    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
+    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
+    api_base = ALTRUIST_HOSTS[environment]["api_base"]
+    url = f"{api_base}{_API_PATHS['transactions']}"
+
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        try:
+            response = await client.get(
+                url,
+                params={"account_id": account_id},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"GET {url} failed at the transport layer: {type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"GET {url} was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return [_normalize_transaction(t) for t in _extract_list(body, "transactions", "data", "results")]

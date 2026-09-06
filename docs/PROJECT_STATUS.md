@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-06 (Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-06 (Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,75 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000. Altruist Sprint 3 — positions/transactions sync for resolved accounts BUILT; sandbox smoke test BLOCKED (2026-09-06)
+
+`21/22 PASS, 1 FIND, 0 FAIL, 1 BLOCKED` —
+`apps/api/scripts/verify_altruist_sprint3_positions_transactions_sync.py`.
+HELD for manual review (`.structural`). Adds `call_positions`/
+`call_transactions` (`GET /v2/positions?account_id=...`, `GET /v2/
+transactions?account_id=...`) to `services/altruist_oauth.py`, and the new
+`services/altruist_positions_sync.py` — the sync pass itself, for every
+Altruist account Sprint 2 already resolved.
+
+**Live.** For every Altruist account with a real `portfolio.external_
+references` row (`source_system='ALTRUIST'`, `record_type='account'`) —
+enumerated directly from that table, not by re-running Sprint 2's resolution
+— this pulls current positions and transaction history and writes them into
+the SAME tables `services/portfolio_import` (Phase B's flat-file importer)
+already uses for every other custodian/reporting-tool source:
+`portfolio.positions` / `portfolio.transactions`. No new table. An account
+still sitting in `public.account_import_exceptions` (unresolved) is never
+touched — the enumeration query has no path to it — proven against a real
+mixed fixture set (one resolved, one unresolved) rather than assumed by
+construction; the synthetic transport additionally asserts it is NEVER
+called with the unresolved account's id. Idempotent by the same pre-insert-
+read-of-`external_references` pattern Phase B established: a position's
+external id is Altruist's own id (or a content hash) suffixed with the
+sync's as-of date, so a same-day re-sync is a no-op while a later day's
+sync is a legitimate new bitemporal snapshot; a transaction's external id
+has no date suffix, since a real-world trade only happens once.
+
+**[FIND] — neither `portfolio.positions` nor `portfolio.transactions` has a
+`custodian_code`/`custodian_system` column.** The sprint's instructions said
+to tag synced rows with the seeded `reference_data` codes `custodian='ALT'`
+/ `custodian_system='ALT-DEF'`. Measured against the live schema: neither
+table has anywhere to put those literal codes. The only provenance column
+either table has is `source_system`, and on `portfolio.positions` that
+column carries a real, deployed CHECK constraint (`positions_source_chk`)
+whose vocabulary already contains `'altruist'` (lowercase) — added ahead of
+this sprint for exactly this integration. Per the standing rule against
+improvising ledger-adjacent DDL unsupervised, this sprint does NOT add a
+column: it uses `source_system='altruist'`, the one already-live, DB-legal
+token, as the real tag on both tables, and exposes `CUSTODIAN_CODE`/
+`CUSTODIAN_SYSTEM_CODE` (`'ALT'`/`'ALT-DEF'`) as module constants a future
+API envelope can attach for display, per CLAUDE.md's Rule 1 — not by
+duplicating the config-table code onto every ledger row. If a future sprint
+wants the code stored literally on each row, that is a real, known column
+addition still owed, not a decision this sprint made silently.
+
+**A transaction with no matching position synced this run, and no existing
+current position to attach to, is skipped and recorded as a row error** —
+never given a fabricated zero-quantity position to satisfy the FK. This is a
+real, deliberate scope boundary: Altruist's transaction history can reference
+a security that was fully liquidated before the sync window, and inventing a
+position for it would misrepresent what was actually held.
+
+**Sandbox smoke test — BLOCKED, not attempted, re-confirmed live** (same
+`doppler secrets --only-names` check as Sprint 1/2). No live Altruist call
+was made; `call_positions`/`call_transactions` were instead exercised
+end-to-end against an injected `httpx.MockTransport` returning a synthetic,
+documented-or-best-guess-shape payload, exactly like Sprint 2's precedent.
+
+**Still unconfirmed, prominently flagged:** the `/v2/positions` and
+`/v2/transactions` paths (and every field name in their response shape) are
+a best-guess convention, not confirmed against a live Altruist spec — no
+reference doc exists in this repo (checked) and no sandbox access exists to
+confirm against a live `/reference` page. Isolated in `_API_PATHS` in
+`services/altruist_oauth.py` for a one-edit fix once real access exists,
+same as every other Altruist path in this codebase.
 
 ---
 
