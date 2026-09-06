@@ -36,6 +36,35 @@
 --   source_row_hash                          text
 --   PRIMARY KEY account_flows_pkey: (id)
 
+-- ===== account_group_members =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_group_id                         uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   added_by                                 uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_group_members_pkey: (id)
+
+-- ===== account_groups =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   group_type                               text
+--   team_id                                  uuid
+--   notes                                    text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_groups_pkey: (id)
+
 -- ===== account_import_batches =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -118,6 +147,41 @@
 --   error_detail                             text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ai_decision_log_pkey: (id)
+
+-- ===== altruist_connections =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   environment                              text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'connected'::text
+--   client_id                                text NOT NULL
+--   client_secret_encrypted                  bytea NOT NULL
+--   client_secret_last4                      text
+--   access_token_encrypted                   bytea
+--   access_token_last4                       text
+--   refresh_token_encrypted                  bytea NOT NULL
+--   refresh_token_last4                      text
+--   scope                                    text
+--   token_expires_at                         timestamp with time zone
+--   last_refreshed_at                        timestamp with time zone
+--   connected_by                             uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY altruist_connections_pkey: (id)
+
+-- ===== altruist_oauth_states =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   environment                              text NOT NULL
+--   state                                    text NOT NULL
+--   initiated_by                             uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   expires_at                               timestamp with time zone NOT NULL
+--   used_at                                  timestamp with time zone
+--   PRIMARY KEY altruist_oauth_states_pkey: (id)
 
 -- ===== altruist_one_evaluations =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -756,6 +820,10 @@
 --   created_via                              text
 --   primary_household_id                     uuid
 --   access_restricted                        boolean NOT NULL DEFAULT false
+--   marital_status                           text
+--   citizenship_status                       text
+--   annual_income                            text
+--   liquid_net_worth                         text
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
@@ -3484,6 +3552,27 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY ta_model_params_pkey: (id)
+
+-- ===== portfolio.tax_lots =====
+--   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   org_id                                   uuid NOT NULL
+--   position_id                              uuid NOT NULL
+--   opening_transaction_id                   uuid
+--   closing_transaction_id                   uuid
+--   acquired_date                            date
+--   quantity                                 numeric
+--   original_cost                            numeric
+--   adjusted_cost                            numeric
+--   term                                     text
+--   realized_gain_loss                       numeric
+--   status                                   text NOT NULL DEFAULT 'open'::text
+--   source_system                            text
+--   external_ref                             text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY tax_lots_pkey: (id)
 
 -- ===== portfolio.transactions =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()

@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-04 (TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-06 (Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,75 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000. Altruist Sprint 1 — OAuth2 connection scaffold BUILT; sandbox smoke test BLOCKED (2026-09-06)
+
+`24/26 PASS, 1 FIND, 0 FAIL, 1 BLOCKED` —
+`apps/api/scripts/verify_altruist_sprint1_openapi_connection.py`. HELD for
+manual review (`.structural`). This is the first real Altruist Open API
+integration code in the repo — everything prior
+(`services/portfolio_altruist.py`, fee38's `services/altruist_one.py`)
+either read a single global env-var credential or evaluated Altruist One
+subscription heuristics; neither implements OAuth2 or per-org credential
+storage.
+
+**Live.** `altruist_oauth_states` (short-lived, single-use CSRF state for the
+authorization-code redirect) and `altruist_connections` (per-org,
+per-environment OAuth2 credential + token storage) — both org-isolation RLS,
+`altruist_connections` bi-temporal (system-axis: a genuine reconnect archives
+the old row via `system_to`; a routine hourly token refresh updates the
+current row in place, see the migration's comment for why these are two
+different axes of the same table). `services/altruist_oauth.py` implements
+the full authorization-code flow: state generation/consumption,
+`build_authorize_url`, `exchange_code_for_tokens`, `refresh_access_token`,
+`store_new_connection`/`persist_refresh`/`get_active_connection`, and
+`require_active_connection` — the pre-connection guard any future Altruist
+API call site must sit behind (`call_households` is the Sprint 2 stand-in
+that already uses it correctly).
+
+**Sandbox smoke test — BLOCKED, not attempted.** No `ALTRUIST_*` secrets
+exist anywhere in this project's Doppler config
+(`doppler secrets --only-names`, project `hollisworks`) — confirmed live by
+the verify script itself at run time, not assumed. No HTTP call to Altruist
+has ever been made from this codebase. This blocks Task 3 only; Tasks 1, 2,
+4, and 5 do not depend on it and are fully proven.
+
+**Two real, separate blockers recorded as [FIND] in `services/altruist_oauth.py`,
+neither of which is this sprint's to fix:**
+
+1. No AWS KMS key or any existing encryption-at-rest helper exists in this
+   codebase. The interim path — application-layer Fernet symmetric
+   encryption keyed by `ALTRUIST_TOKEN_ENCRYPTION_KEY` — is what shipped.
+   That Doppler secret does not exist yet either; this is a separate
+   blocker from the sandbox-credential one. KMS envelope encryption remains
+   the intended production path and should replace `encrypt_secret`/
+   `decrypt_secret` without changing any caller.
+2. The exact `/oauth/authorize` and `/oauth/token` path segments are an
+   assumption (standard OAuth2 authorization-code convention), not confirmed
+   against a live Altruist spec — none exists in-repo. Isolated to
+   `_OAUTH_PATHS` for a single-point fix once real sandbox docs/access exist.
+
+**One design nuance recorded as [FIND] by the verify script itself:**
+`consume_oauth_state` raises the same exception class
+(`AltruistOAuthError`) for all four rejection reasons (missing, expired,
+already-used, cross-org) as designed — a caller cannot branch on exception
+type to learn which reason applied. The exact message TEXT is not uniform
+across all four, though: missing and cross-org happen to share one generic
+message (both hit the same "row is None" branch), but expired and
+already-used each carry their own distinct text. A caller that logs or
+surfaces the message string verbatim, rather than catching the class and
+emitting one fixed response, would leak more than the class-level design
+intends. Worth a follow-up if a real callback endpoint is built directly on
+top of this message text rather than the exception class.
+
+**Sprint 2 (identity resolution) is unblocked for the parts that don't
+require a live call** — the connection/credential storage layer, the
+pre-connection guard, and the encryption plumbing are all proven. Anything
+that needs a real Altruist API response shape (the actual `GET /v2/households`
+call, real refresh-token rotation behavior) remains blocked on the same
+sandbox-credential gap as Task 3.
 
 ---
 
