@@ -148,6 +148,41 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
+-- ===== altruist_connections =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   environment                              text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'connected'::text
+--   client_id                                text NOT NULL
+--   client_secret_encrypted                  bytea NOT NULL
+--   client_secret_last4                      text
+--   access_token_encrypted                   bytea
+--   access_token_last4                       text
+--   refresh_token_encrypted                  bytea NOT NULL
+--   refresh_token_last4                      text
+--   scope                                    text
+--   token_expires_at                         timestamp with time zone
+--   last_refreshed_at                        timestamp with time zone
+--   connected_by                             uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY altruist_connections_pkey: (id)
+
+-- ===== altruist_oauth_states =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   environment                              text NOT NULL
+--   state                                    text NOT NULL
+--   initiated_by                             uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   expires_at                               timestamp with time zone NOT NULL
+--   used_at                                  timestamp with time zone
+--   PRIMARY KEY altruist_oauth_states_pkey: (id)
+
 -- ===== altruist_one_evaluations =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
