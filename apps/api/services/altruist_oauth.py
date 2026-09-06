@@ -1,5 +1,7 @@
 """Altruist Open API — OAuth2 authorization-code flow + per-tenant credential
-storage (Altruist Sprint 1).
+storage (Altruist Sprint 1), plus ``call_households``/``fetch_accounts_for_
+household`` (Altruist Sprint 2) — the first two real resource calls built on
+top of that connection.
 
 WHAT THIS IS, AND WHAT IT IS NOT
 ────────────────────────────────────────────────────────────────────────────
@@ -17,12 +19,16 @@ neither stores a per-org, per-environment OAuth2 connection. This module does:
     see docs/PROJECT_STATUS.md Sprint 1 entry).
   * Fernet encryption of every credential/token value at rest.
 
-NO LIVE ALTRUIST CALL HAS EVER BEEN MADE FROM THIS MODULE. ``exchange_code_for_tokens``
-and ``refresh_access_token`` build and send real HTTP requests when called, but
-this sprint's own verify script cannot exercise them against the real sandbox —
-it proves the callback/refresh *plumbing* (state validation, encryption, DB
-persistence) using synthetic token-response payloads shaped like what Altruist's
-docs describe, never a fabricated "live call succeeded" claim.
+NO LIVE ALTRUIST CALL HAS EVER BEEN MADE FROM THIS MODULE. Every function that
+builds and sends a real HTTP request (``exchange_code_for_tokens``,
+``refresh_access_token``, ``call_households``, ``fetch_accounts_for_
+household``) accepts no live-sandbox shortcuts — no credentials exist in this
+project's Doppler config (Sprint 1, re-confirmed Sprint 2). ``call_households``
+and ``fetch_accounts_for_household`` additionally take an optional ``transport``
+so a caller (the verify script) can inject an ``httpx.MockTransport`` and
+exercise the real request-building/response-parsing code path against a
+synthetic, documented-shape payload — never a fabricated "live call succeeded"
+claim.
 
 ENCRYPTION — INTERIM, NOT THE INTENDED PRODUCTION PATH
 ────────────────────────────────────────────────────────────────────────────
@@ -485,6 +491,20 @@ async def get_decrypted_refresh_token(conn, *, connection_id: str) -> str:
     return decrypt_secret(row["refresh_token_encrypted"])
 
 
+async def get_decrypted_access_token(conn, *, connection_id: str) -> str:
+    row = await conn.fetchrow(
+        "SELECT access_token_encrypted FROM altruist_connections WHERE id = $1",
+        connection_id,
+    )
+    if row is None:
+        raise AltruistOAuthError(f"No altruist_connections row with id={connection_id}")
+    if row["access_token_encrypted"] is None:
+        raise AltruistOAuthError(
+            f"altruist_connections row id={connection_id} has no access token stored."
+        )
+    return decrypt_secret(row["access_token_encrypted"])
+
+
 class AltruistNotConnected(RuntimeError):
     """Raised by the pre-connection guard: no active connection row exists.
 
@@ -515,20 +535,135 @@ async def require_active_connection(conn, *, org_id: str, environment: str) -> d
     return row
 
 
-async def call_households(conn, *, org_id: str, environment: str) -> list[dict]:
-    """Stand-in for the real GET /v2/households call site.
+# [FIND] Altruist Sprint 2 — path segments as documented, flagged inconsistent
+# in the source Guides (households under /api/v2/, accounts under /v2/,
+# neither confirmed against a live /reference page in this environment).
+# Isolated here for the same one-edit-fixes-it reason as _OAUTH_PATHS above.
+_API_PATHS = {
+    "households": "/api/v2/households",
+    "accounts": "/v2/accounts",
+}
 
-    This is intentionally the ONLY thing Sprint 2 (identity resolution) needs
-    to build on: the guard runs first and raises AltruistNotConnected before
-    any network call is attempted. The actual HTTP call is not implemented
-    here (no sandbox credentials exist to observe the real response shape —
-    same reasoning as portfolio_altruist.py's ingest_positions), but the guard
-    itself is real and is what Task 4 proves.
+
+def _extract_list(body: Any, *keys: str) -> list[dict]:
+    """Altruist's real list-envelope shape has never been observed (no sandbox
+    access — see module docstring). Defensively accept a bare JSON list, or
+    the first of ``keys`` present on an object body, mirroring
+    ``_parse_token_response``'s defensive field lookups above. [FIND] to
+    correct once a real response is observed.
+    """
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        for key in keys:
+            value = body.get(key)
+            if isinstance(value, list):
+                return value
+    raise AltruistOAuthError(
+        f"Unexpected response shape from Altruist (expected a list or one of "
+        f"{keys!r} to be a list): {type(body).__name__}"
+    )
+
+
+def _normalize_household(raw: dict) -> dict:
+    return {
+        "id": str(raw.get("id") or raw.get("household_id") or ""),
+        "name": raw.get("name") or raw.get("household_name") or "",
+        "raw": raw,
+    }
+
+
+def _normalize_account(raw: dict) -> dict:
+    return {
+        "id": str(raw.get("id") or raw.get("account_id") or ""),
+        "name": raw.get("name") or raw.get("account_name") or raw.get("nickname") or "",
+        "raw": raw,
+    }
+
+
+async def call_households(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> list[dict]:
+    """GET /api/v2/households — the households visible to this connection.
+
+    Runs ``require_active_connection`` first, exactly as the Sprint 1 stub
+    did, so a caller with no active connection never reaches the network.
+
+    ``transport`` is an optional ``httpx.BaseTransport`` — production callers
+    never pass it (a real ``httpx.AsyncClient`` opens a real socket); the
+    verify script passes an ``httpx.MockTransport`` so this exact code path
+    (URL construction, bearer header, JSON parsing) runs against a synthetic,
+    documented-shape response instead of a live call.
     """
     connection = await require_active_connection(conn, org_id=org_id, environment=environment)
-    raise NotImplementedError(
-        "GET /v2/households is not implemented: the pre-connection guard "
-        "passed (a real connection row exists), but the live HTTP call has "
-        "never been made and its response shape has never been observed. "
-        f"connection_id={connection['id']}"
-    )
+    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
+    api_base = ALTRUIST_HOSTS[environment]["api_base"]
+    url = f"{api_base}{_API_PATHS['households']}"
+
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        try:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"GET {url} failed at the transport layer: {type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"GET {url} was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return [_normalize_household(h) for h in _extract_list(body, "households", "data", "results")]
+
+
+async def fetch_accounts_for_household(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    household_id: str,
+    timeout: float = 15.0,
+    transport: Any = None,
+) -> list[dict]:
+    """GET /v2/accounts?household_id=... — the accounts under one household.
+
+    Same guard-first, injectable-transport shape as ``call_households`` — see
+    its docstring.
+    """
+    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
+    access_token = await get_decrypted_access_token(conn, connection_id=connection["id"])
+    api_base = ALTRUIST_HOSTS[environment]["api_base"]
+    url = f"{api_base}{_API_PATHS['accounts']}"
+
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        try:
+            response = await client.get(
+                url,
+                params={"household_id": household_id},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"GET {url} failed at the transport layer: {type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"GET {url} was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return [_normalize_account(a) for a in _extract_list(body, "accounts", "data", "results")]

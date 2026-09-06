@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-06 (Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-06 (Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,68 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000. Altruist Sprint 2 — household/account identity resolution BUILT; sandbox smoke test BLOCKED (2026-09-06)
+
+`19/20 PASS, 0 FIND, 0 FAIL, 1 BLOCKED` —
+`apps/api/scripts/verify_altruist_sprint2_identity_resolution.py`. HELD for
+manual review (`.structural`). Replaces Sprint 1's `call_households`
+`NotImplementedError` stub with a real `GET /api/v2/households` call, adds
+`fetch_accounts_for_household` (`GET /v2/accounts?household_id=...`), and adds
+`services/altruist_identity.py`'s `resolve_identity` — the identity-resolution
+pass itself.
+
+**Live.** For each Altruist account under each Altruist household: a lookup
+against `portfolio.external_references` (`source_system='ALTRUIST'`,
+`record_type='account'`) either resolves to an existing Hollisworks
+`public.accounts.id` (and refreshes `last_seen`), or — per the Architecture
+Decisions' "Hollisworks' own households/entities stay authoritative" rule —
+is routed to `public.account_import_exceptions` for manual review.
+Hollisworks households/entities/accounts are never auto-created. Both writes
+are idempotent by content (re-running the identical pass twice, proven live
+in the verify script, produces zero new `external_references` rows and zero
+new `account_import_exceptions` rows on the second pass).
+
+**[FIND] — households are not, and structurally cannot be, a crosswalk
+target.** Both `portfolio.external_references.record_type` and
+`public.account_import_exceptions.record_kind` carry deployed CHECK
+constraints admitting `'account'` (plus asset/position/transaction on the
+former, balance/flow on the latter) but never `'household'`. This mirrors an
+existing precedent in `services/portfolio_account_link.py` (fee32), which
+built an entirely separate table rather than force-fit
+`account_import_exceptions` for the same NOT-NULL-`batch_id` reason. Per this
+sprint's standing rule against improvising DDL, household identity is not
+persisted anywhere: `GET /api/v2/households` is used purely to enumerate
+household ids to traverse into `GET /v2/accounts?household_id=...` — once an
+account resolves, its Hollisworks household is already known via
+`public.accounts.household_id` on the resolved row, so a second crosswalk
+entry would be redundant even if the constraint allowed one.
+
+**A second, real, previously-undocumented constraint discovered live:**
+`account_import_exceptions.batch_id` is NOT just a NOT NULL column — it is a
+real foreign key to `public.account_import_batches`, a table shaped for a
+custodian CSV upload (`custodian_code`, `source_filename`, `row_count`), not
+an API sync pass. No new table was needed: one `account_import_batches` row
+per org is reused (`custodian_code='ALTRUIST'`, looked up before being
+created), exactly like any other existing-table write.
+
+**Sandbox smoke test — BLOCKED, not attempted, re-confirmed live** (same
+`doppler secrets --only-names` check as Sprint 1). No live Altruist call was
+made; the HTTP-call code paths in `call_households`/`fetch_accounts_for_
+household` were instead exercised end-to-end against an injected
+`httpx.MockTransport` returning a synthetic, documented-shape payload — a
+stronger proof than Sprint 1's own verify script, which tested token
+persistence directly and never actually drove an HTTP-calling function
+through a transport.
+
+**Sprint 3 (positions/transactions sync) is unblocked for the parts that
+don't require a live call** — an Altruist account can now be resolved to its
+Hollisworks `accounts.id` (or routed for manual review) without ever needing
+a real sandbox response; whatever Sprint 3 does with `portfolio.positions`/
+`portfolio.transactions` per resolved account remains blocked on the same
+sandbox-credential gap as this sprint's Task 3.
 
 ---
 
@@ -42,8 +104,9 @@ the full authorization-code flow: state generation/consumption,
 `build_authorize_url`, `exchange_code_for_tokens`, `refresh_access_token`,
 `store_new_connection`/`persist_refresh`/`get_active_connection`, and
 `require_active_connection` — the pre-connection guard any future Altruist
-API call site must sit behind (`call_households` is the Sprint 2 stand-in
-that already uses it correctly).
+API call site must sit behind (`call_households` was a stand-in stub in this
+sprint that raised `NotImplementedError` once past the guard; Sprint 2
+replaced it with a real implementation, see below).
 
 **Sandbox smoke test — BLOCKED, not attempted.** No `ALTRUIST_*` secrets
 exist anywhere in this project's Doppler config
