@@ -1,0 +1,534 @@
+"""Altruist Open API — OAuth2 authorization-code flow + per-tenant credential
+storage (Altruist Sprint 1).
+
+WHAT THIS IS, AND WHAT IT IS NOT
+────────────────────────────────────────────────────────────────────────────
+This is the first real piece of Altruist Open API integration code. Everything
+prior (``services/portfolio_altruist.py``, fee38's ``altruist_one.py``) either
+reads a single global env-var credential or evaluates Altruist One heuristics —
+neither stores a per-org, per-environment OAuth2 connection. This module does:
+
+  * ``build_authorize_url`` + the state table — the redirect leg.
+  * ``exchange_code_for_tokens`` — code-for-token exchange on callback.
+  * ``refresh_access_token`` — rotates the access token before the 1-hour
+    expiry, defensively handling both "Altruist issues a new refresh_token on
+    refresh" and "it doesn't" (real response shape has never been observed —
+    no sandbox credentials exist anywhere in this project's Doppler config,
+    see docs/PROJECT_STATUS.md Sprint 1 entry).
+  * Fernet encryption of every credential/token value at rest.
+
+NO LIVE ALTRUIST CALL HAS EVER BEEN MADE FROM THIS MODULE. ``exchange_code_for_tokens``
+and ``refresh_access_token`` build and send real HTTP requests when called, but
+this sprint's own verify script cannot exercise them against the real sandbox —
+it proves the callback/refresh *plumbing* (state validation, encryption, DB
+persistence) using synthetic token-response payloads shaped like what Altruist's
+docs describe, never a fabricated "live call succeeded" claim.
+
+ENCRYPTION — INTERIM, NOT THE INTENDED PRODUCTION PATH
+────────────────────────────────────────────────────────────────────────────
+[FIND] No existing encryption-at-rest helper exists anywhere in this codebase
+(searched for "client_secret", "refresh_token", "secretsmanager", "kms",
+"fernet", "vault" — the only hits were the single-tenant env-var probe in
+portfolio_altruist.py). No AWS KMS key exists in this project's Doppler config
+either. Per the sprint's own instructions, the documented interim fallback is
+used here: application-layer Fernet symmetric encryption, keyed by
+``ALTRUIST_TOKEN_ENCRYPTION_KEY`` (intended to be a Doppler secret in every
+real deployment — it does not exist there yet, which is a real, separate
+blocker from the sandbox-credential one; see PROJECT_STATUS.md). KMS envelope
+encryption remains the intended production path and should replace this layer
+without changing any caller — ``encrypt_secret``/``decrypt_secret`` are the
+only two functions that would need to change.
+
+OAUTH HOST / PATH ASSUMPTIONS — [FIND]
+────────────────────────────────────────────────────────────────────────────
+The sprint's CONFIRMED REAL FACTS give the sandbox/production API and login
+hosts but not the exact authorize/token path segments (no live spec doc exists
+in this repo — checked, see sprint log Task 1a). ``/oauth/authorize`` and
+``/oauth/token`` on the login-portal host are the standard OAuth2
+authorization-code convention and are used here as the best-available
+assumption; they are isolated to ``_OAUTH_PATHS`` below so a single edit
+corrects them once real sandbox docs/access are available.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import secrets
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from urllib.parse import urlencode
+
+import httpx
+from cryptography.fernet import Fernet, InvalidToken
+
+# ── Environment / host configuration ───────────────────────────────────────
+# Confirmed real facts (sprint prompt): sandbox host
+# openapi.stage1.altruistnet.tech/altruist-open-api/ (login portal
+# oauth.stage1.altruistnet.tech); production openapi.altruist.com/altruist-open-api/
+# (login portal oauth.altruist.com). Access token expires in 1 hour; refresh
+# token valid 30 days.
+ALTRUIST_HOSTS: dict[str, dict[str, str]] = {
+    "sandbox": {
+        "api_base": "https://openapi.stage1.altruistnet.tech/altruist-open-api",
+        "login_base": "https://oauth.stage1.altruistnet.tech",
+    },
+    "production": {
+        "api_base": "https://openapi.altruist.com/altruist-open-api",
+        "login_base": "https://oauth.altruist.com",
+    },
+}
+
+# [FIND] path segments assumed per standard OAuth2 authorization-code
+# convention — not confirmed against a live spec (none exists in-repo).
+_OAUTH_PATHS = {
+    "authorize": "/oauth/authorize",
+    "token": "/oauth/token",
+}
+
+ACCESS_TOKEN_LIFETIME = timedelta(hours=1)
+REFRESH_TOKEN_LIFETIME = timedelta(days=30)
+STATE_TTL = timedelta(minutes=10)
+
+ENVIRONMENTS = ("sandbox", "production")
+
+
+class AltruistOAuthError(RuntimeError):
+    """Raised for any OAuth flow failure (bad state, exchange failure, etc.)."""
+
+
+class AltruistConfigError(RuntimeError):
+    """Raised when required configuration (redirect URI, client id/secret,
+    encryption key) is missing. Distinct from AltruistOAuthError so a caller
+    can tell "this deployment is not configured" from "the flow itself failed".
+    """
+
+
+# ── Encryption ──────────────────────────────────────────────────────────────
+
+def _fernet() -> Fernet:
+    """Build the Fernet cipher from ALTRUIST_TOKEN_ENCRYPTION_KEY.
+
+    Raises AltruistConfigError (never silently falls back to an insecure
+    default) if the key is missing — a missing encryption key must fail loud,
+    not write plaintext secrets to Postgres.
+    """
+    raw = os.environ.get("ALTRUIST_TOKEN_ENCRYPTION_KEY")
+    if not raw:
+        raise AltruistConfigError(
+            "ALTRUIST_TOKEN_ENCRYPTION_KEY is not set — refusing to store an "
+            "Altruist credential without application-layer encryption. This "
+            "is a Doppler secret that does not yet exist in this project "
+            "(see docs/PROJECT_STATUS.md, Altruist Sprint 1)."
+        )
+    # Accept either a ready-made urlsafe-base64 Fernet key, or derive one
+    # deterministically from an arbitrary passphrase so a plain, human-typed
+    # Doppler secret works without a separate "generate a Fernet key" step.
+    try:
+        return Fernet(raw.encode("utf-8"))
+    except Exception:
+        digest = base64.urlsafe_b64encode(raw.encode("utf-8").ljust(32, b"0")[:32])
+        return Fernet(digest)
+
+
+def encrypt_secret(plaintext: str) -> bytes:
+    """Encrypt a credential/token value for storage. Never logs the input."""
+    return _fernet().encrypt(plaintext.encode("utf-8"))
+
+
+def decrypt_secret(ciphertext: bytes) -> str:
+    """Decrypt a stored credential/token value."""
+    try:
+        return _fernet().decrypt(bytes(ciphertext)).decode("utf-8")
+    except InvalidToken as exc:
+        raise AltruistOAuthError(
+            "Stored Altruist credential could not be decrypted — the "
+            "encryption key may have rotated without re-encrypting existing rows."
+        ) from exc
+
+
+def last4(value: str) -> str:
+    """Redaction-safe reference: the last 4 characters, never the full value."""
+    if not value:
+        return ""
+    return value[-4:]
+
+
+def redact(value: str | None) -> str:
+    """Safe-for-logs representation of a secret — NEVER the value itself."""
+    if not value:
+        return "<empty>"
+    return f"***{last4(value)}"
+
+
+# ── State / CSRF handling (Task 1d — designed from scratch, no existing
+#    bespoke pattern in this codebase; Auth0 is entirely SDK-managed) ───────
+
+def generate_state() -> str:
+    return secrets.token_urlsafe(32)
+
+
+async def create_oauth_state(conn, *, org_id: str, environment: str, user_id: str | None) -> str:
+    state = generate_state()
+    expires_at = datetime.now(timezone.utc) + STATE_TTL
+    await conn.execute(
+        """
+        INSERT INTO altruist_oauth_states (org_id, environment, state, initiated_by, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        org_id, environment, state, user_id, expires_at,
+    )
+    return state
+
+
+async def consume_oauth_state(conn, *, org_id: str, state: str) -> dict:
+    """Validate and single-use-consume a state token.
+
+    Raises AltruistOAuthError if the state is missing, expired, already used,
+    or scoped to a different org — the same error class for all of these on
+    purpose: a CSRF check must not leak *which* reason it failed for.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT id, org_id, environment, expires_at, used_at
+        FROM altruist_oauth_states
+        WHERE state = $1 AND org_id = $2
+        """,
+        state, org_id,
+    )
+    if row is None:
+        raise AltruistOAuthError("Invalid or unrecognized OAuth state parameter.")
+    if row["used_at"] is not None:
+        raise AltruistOAuthError("OAuth state has already been used.")
+    if row["expires_at"] < datetime.now(timezone.utc):
+        raise AltruistOAuthError("OAuth state has expired.")
+
+    updated = await conn.fetchval(
+        """
+        UPDATE altruist_oauth_states SET used_at = now()
+        WHERE id = $1 AND used_at IS NULL
+        RETURNING id
+        """,
+        row["id"],
+    )
+    if updated is None:
+        # Lost a race with a concurrent callback using the same state.
+        raise AltruistOAuthError("OAuth state has already been used.")
+
+    return {"environment": row["environment"]}
+
+
+# ── Authorization-code flow ──────────────────────────────────────────────
+
+def _redirect_uri() -> str:
+    uri = os.environ.get("ALTRUIST_REDIRECT_URI")
+    if not uri:
+        raise AltruistConfigError(
+            "ALTRUIST_REDIRECT_URI is not set. Altruist requires an exact, "
+            "pre-registered HTTPS redirect URI (no localhost — local dev "
+            "needs a tunnel)."
+        )
+    if not uri.startswith("https://"):
+        raise AltruistConfigError(
+            f"ALTRUIST_REDIRECT_URI must be HTTPS, got: {uri!r}"
+        )
+    return uri
+
+
+def _client_credentials(environment: str) -> tuple[str, str]:
+    prefix = "ALTRUIST_SANDBOX" if environment == "sandbox" else "ALTRUIST_PRODUCTION"
+    client_id = os.environ.get(f"{prefix}_CLIENT_ID")
+    client_secret = os.environ.get(f"{prefix}_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise AltruistConfigError(
+            f"{prefix}_CLIENT_ID / {prefix}_CLIENT_SECRET are not configured. "
+            "No Altruist sandbox or production credentials exist in this "
+            "project's Doppler config as of Sprint 1 — this is the documented "
+            "blocker, not a code defect."
+        )
+    return client_id, client_secret
+
+
+def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:read") -> str:
+    if environment not in ENVIRONMENTS:
+        raise ValueError(f"Unknown environment: {environment!r}")
+    client_id, _ = _client_credentials(environment)
+    redirect_uri = _redirect_uri()
+    login_base = ALTRUIST_HOSTS[environment]["login_base"]
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "scope": scope,
+    }
+    return f"{login_base}{_OAUTH_PATHS['authorize']}?{urlencode(params)}"
+
+
+@dataclass(frozen=True)
+class TokenResponse:
+    access_token: str
+    refresh_token: str
+    expires_in: int
+    scope: str | None = None
+
+
+async def exchange_code_for_tokens(*, environment: str, code: str, timeout: float = 15.0) -> TokenResponse:
+    """Exchange an authorization code for tokens. Makes a REAL HTTP call.
+
+    Never called by the verify script against the live Altruist sandbox — no
+    credentials exist. Exercised in verify with a monkeypatched transport
+    instead (see verify script Task 4).
+    """
+    client_id, client_secret = _client_credentials(environment)
+    redirect_uri = _redirect_uri()
+    login_base = ALTRUIST_HOSTS[environment]["login_base"]
+    url = f"{login_base}{_OAUTH_PATHS['token']}"
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(
+                url,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+                headers={"Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"Token exchange request to {url} failed at the transport layer: "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"Token exchange was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return _parse_token_response(body)
+
+
+async def refresh_access_token(*, environment: str, refresh_token: str, timeout: float = 15.0) -> TokenResponse:
+    """Rotate the access token using the stored refresh token.
+
+    Altruist's 30-day refresh tokens may or may not rotate on use — [FIND]
+    this response shape has never been observed live (no sandbox credentials
+    exist). Handled defensively via _parse_token_response: if the response
+    includes a new refresh_token, the caller stores it; if not, the caller
+    keeps the existing one (see persist_refresh below).
+    """
+    client_id, client_secret = _client_credentials(environment)
+    login_base = ALTRUIST_HOSTS[environment]["login_base"]
+    url = f"{login_base}{_OAUTH_PATHS['token']}"
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(
+                url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+                headers={"Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise AltruistOAuthError(
+                f"Token refresh request to {url} failed at the transport layer: "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    if response.status_code >= 400:
+        raise AltruistOAuthError(
+            f"Token refresh was refused: HTTP {response.status_code}"
+        )
+    body = response.json()
+    return _parse_token_response(body, fallback_refresh_token=refresh_token)
+
+
+def _parse_token_response(body: dict[str, Any], fallback_refresh_token: str | None = None) -> TokenResponse:
+    access_token = body.get("access_token")
+    if not access_token:
+        raise AltruistOAuthError("Token response missing access_token.")
+    # Defensive handling of the "does the refresh response include a new
+    # refresh_token?" open question (see module docstring).
+    refresh_token = body.get("refresh_token") or fallback_refresh_token
+    if not refresh_token:
+        raise AltruistOAuthError("Token response missing refresh_token.")
+    expires_in = int(body.get("expires_in") or int(ACCESS_TOKEN_LIFETIME.total_seconds()))
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=expires_in,
+        scope=body.get("scope"),
+    )
+
+
+# ── Connection persistence ──────────────────────────────────────────────
+
+async def get_active_connection(conn, *, org_id: str, environment: str) -> dict | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id, org_id, environment, status, client_id, client_secret_last4,
+               access_token_last4, refresh_token_last4, scope,
+               token_expires_at, last_refreshed_at, connected_by,
+               created_at, updated_at
+        FROM altruist_connections
+        WHERE org_id = $1 AND environment = $2 AND system_to IS NULL
+        """,
+        org_id, environment,
+    )
+    return dict(row) if row else None
+
+
+async def _get_active_connection_row_full(conn, *, org_id: str, environment: str):
+    """Internal: includes the encrypted columns. Never returned from an API response."""
+    return await conn.fetchrow(
+        """
+        SELECT * FROM altruist_connections
+        WHERE org_id = $1 AND environment = $2 AND system_to IS NULL
+        """,
+        org_id, environment,
+    )
+
+
+async def store_new_connection(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    client_id: str,
+    client_secret: str,
+    tokens: TokenResponse,
+    connected_by: str | None,
+) -> str:
+    """Create (or replace, via system-axis archival) the active connection row.
+
+    A genuine reconnect archives the prior row (system_to = now()) and inserts
+    a new one — see the migration's comment for why this is system-time, not
+    valid-time, restatement: it models "a new physical credential set supersedes
+    the old one", not "we learned the old fact was wrong".
+    """
+    existing = await _get_active_connection_row_full(conn, org_id=org_id, environment=environment)
+    if existing is not None:
+        await conn.execute(
+            "UPDATE altruist_connections SET system_to = now() WHERE id = $1",
+            existing["id"],
+        )
+
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.expires_in)
+    new_id = await conn.fetchval(
+        """
+        INSERT INTO altruist_connections (
+            org_id, environment, status, client_id,
+            client_secret_encrypted, client_secret_last4,
+            access_token_encrypted, access_token_last4,
+            refresh_token_encrypted, refresh_token_last4,
+            scope, token_expires_at, last_refreshed_at, connected_by
+        ) VALUES (
+            $1, $2, 'connected', $3,
+            $4, $5,
+            $6, $7,
+            $8, $9,
+            $10, $11, now(), $12
+        )
+        RETURNING id
+        """,
+        org_id, environment, client_id,
+        encrypt_secret(client_secret), last4(client_secret),
+        encrypt_secret(tokens.access_token), last4(tokens.access_token),
+        encrypt_secret(tokens.refresh_token), last4(tokens.refresh_token),
+        tokens.scope, expires_at, connected_by,
+    )
+    return str(new_id)
+
+
+async def persist_refresh(conn, *, connection_id: str, tokens: TokenResponse) -> None:
+    """Update-in-place: an hourly token refresh does not version the row
+    bi-temporally (see migration comment) — it updates the current row's
+    token columns and last_refreshed_at.
+    """
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.expires_in)
+    await conn.execute(
+        """
+        UPDATE altruist_connections
+        SET access_token_encrypted = $2,
+            access_token_last4 = $3,
+            refresh_token_encrypted = $4,
+            refresh_token_last4 = $5,
+            token_expires_at = $6,
+            last_refreshed_at = now(),
+            status = 'connected',
+            updated_at = now()
+        WHERE id = $1
+        """,
+        connection_id,
+        encrypt_secret(tokens.access_token), last4(tokens.access_token),
+        encrypt_secret(tokens.refresh_token), last4(tokens.refresh_token),
+        expires_at,
+    )
+
+
+async def get_decrypted_refresh_token(conn, *, connection_id: str) -> str:
+    row = await conn.fetchrow(
+        "SELECT refresh_token_encrypted FROM altruist_connections WHERE id = $1",
+        connection_id,
+    )
+    if row is None:
+        raise AltruistOAuthError(f"No altruist_connections row with id={connection_id}")
+    return decrypt_secret(row["refresh_token_encrypted"])
+
+
+class AltruistNotConnected(RuntimeError):
+    """Raised by the pre-connection guard: no active connection row exists.
+
+    A distinct type (not a bare ValueError) so a caller making a real Altruist
+    API call can catch specifically "not configured" and refuse BEFORE ever
+    reaching the network — see Task 4's proof of the pre-connection guard.
+    """
+
+
+async def require_active_connection(conn, *, org_id: str, environment: str) -> dict:
+    """Guard used by any future Altruist API call site (e.g. GET /v2/households).
+
+    Raises AltruistNotConnected if no connection row exists for this org+environment,
+    or if the connection's status is not 'connected' — the call must never reach
+    the network in either case.
+    """
+    row = await get_active_connection(conn, org_id=org_id, environment=environment)
+    if row is None:
+        raise AltruistNotConnected(
+            f"No Altruist connection configured for this organization "
+            f"(environment={environment!r}). Connect via the authorize flow first."
+        )
+    if row["status"] != "connected":
+        raise AltruistNotConnected(
+            f"Altruist connection exists but status={row['status']!r} "
+            f"(environment={environment!r}) — re-authorization required."
+        )
+    return row
+
+
+async def call_households(conn, *, org_id: str, environment: str) -> list[dict]:
+    """Stand-in for the real GET /v2/households call site.
+
+    This is intentionally the ONLY thing Sprint 2 (identity resolution) needs
+    to build on: the guard runs first and raises AltruistNotConnected before
+    any network call is attempted. The actual HTTP call is not implemented
+    here (no sandbox credentials exist to observe the real response shape —
+    same reasoning as portfolio_altruist.py's ingest_positions), but the guard
+    itself is real and is what Task 4 proves.
+    """
+    connection = await require_active_connection(conn, org_id=org_id, environment=environment)
+    raise NotImplementedError(
+        "GET /v2/households is not implemented: the pre-connection guard "
+        "passed (a real connection row exists), but the live HTTP call has "
+        "never been made and its response shape has never been observed. "
+        f"connection_id={connection['id']}"
+    )

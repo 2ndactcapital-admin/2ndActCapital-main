@@ -1,0 +1,96 @@
+ALTRUIST SPRINT 1 — Open API connection scaffold (OAuth2 authorization-code flow + per-tenant credential storage)
+Worktree: /mnt/c/Users/Joe/2ndActCapital/.claude/worktrees/agent-ad742ff54c3e691d8
+Branch: sprint/altruist-sprint1-openapi-connection-structural
+Started: 2026-09-06
+
+NOTE: this log file is untracked in the main checkout (git status showed it as `??`)
+so it was not present in this isolated worktree at start. Writing it here on the
+sprint branch; it will land at the main-checkout path once this branch is merged.
+
+=== TASK 1: DISCOVER ===
+
+1a. Pre-existing tables / design doc check:
+- Searched repo for "altruist" (case-insensitive, excluding node_modules/.git):
+  apps/api/services/altruist_one.py, apps/api/services/portfolio_altruist.py,
+  apps/api/scripts/seed_fee37_altruist.py exist (all pre-existing, fee38/fee37 era).
+  No Hollisworks-Altruist-Integration-Spec.docx anywhere in the repo.
+  [FIND] No design spec doc exists in-repo (docs/ mentions of "altruist" are only in
+  DEVELOPMENT_ENVIRONMENT.md, LITELLM_INTEGRATION_DESIGN_V1.md, portfoliob_part1.sql,
+  PORTFOLIO_REPORTING_DESIGN_V6.md, PROJECT_STATUS.md, schema_snapshot.sql — all
+  pre-existing custodian/seed references, not a Section 6 integration spec). Proceeding
+  from the sprint prompt's CONFIRMED REAL FACTS instead.
+- Live schema check (Supabase MCP, project mmgwmcinimzuhargsazs): grepped
+  information_schema.tables for %altruist%, %oauth%, %external_credential%,
+  %api_credential%, %integration% — only hits were `altruist_one_evaluations`
+  (fee38 sprint, unrelated), and Supabase's own `auth.oauth_*` / `auth.custom_oauth_providers`
+  tables (GoTrue's own schema, not application-level, not reusable for per-tenant
+  Altruist OAuth storage) and `litellm."LiteLLM_MCPServerOAuthClient"` (LiteLLM's
+  internal MCP server OAuth, unrelated subsystem). CONFIRMED: no altruist_connections
+  or generic external-credential table exists to extend. This is genuinely new,
+  matching the orchestrating session's prior finding.
+- Read apps/api/services/portfolio_altruist.py (existing Altruist reference, fee38-era):
+  it is a SINGLE-TENANT, env-var-based credential probe (ALTRUIST_CLIENT_ID/
+  ALTRUIST_CLIENT_SECRET/ALTRUIST_BASE_URL read directly from os.environ, Bearer
+  token = the client_secret itself) — NOT a per-tenant OAuth2 authorization-code
+  flow, and explicitly documented in its own docstring as deliberately unmapped/
+  BLOCKED pending real credentials. Confirmed this is a different, older, simpler
+  mechanism and not something to extend for this sprint's per-org/per-environment
+  OAuth2 storage requirement.
+
+1b. Bi-temporal convention + RLS naming (confirmed via refreshed docs/schema_snapshot.sql
+    and live pg_policies query against account_groups, account_group_members,
+    portfolio.tax_lots):
+  - id default: public.* tables (account_groups, account_group_members) use
+    `gen_random_uuid()`. portfolio.* tables (portfolio.tax_lots, portfolio.transactions)
+    use `uuid_generate_v4()`. Confirms CLAUDE.md's own warning about schema-qualifying
+    uuid_generate_v4 in portfolio.* — moot for this sprint since altruist_connections/
+    altruist_oauth_states are public.* tables, so gen_random_uuid() is the correct
+    default, used verbatim.
+  - Full bi-temporal columns on account_groups: created_at, updated_at, valid_from,
+    valid_to, system_from, system_to (account_group_members omits updated_at).
+    portfolio.tax_lots: valid_from/valid_to/system_from/system_to (no created_at/
+    updated_at — portfolio.* tables track their own convention). Used the fuller
+    public.* shape (created_at/updated_at/valid_from/valid_to/system_from/system_to)
+    for both new tables.
+  - RLS policy naming: `<table>_org_isolation`, verified live via pg_policies —
+    account_group_members_org_isolation, account_groups_org_isolation,
+    tax_lots_org_isolation all use exactly the qual/with_check text given in the
+    prompt's CONFIRMED REAL FACTS. Reused verbatim, no variant.
+
+1c. [FIND — encryption pattern] Searched apps/api for "client_secret", "refresh_token",
+    "secretsmanager", "kms", "fernet", "vault": the only client_secret/refresh_token
+    hits are portfolio_altruist.py's single env-var-based probe (see above) — no
+    existing encryption-at-rest helper, no KMS wiring, no Fernet usage anywhere in
+    the codebase. `cryptography` (pulled in transitively via `python-jose[cryptography]`)
+    and `boto3` are both already in apps/api/requirements.txt, so either KMS envelope
+    encryption or Fernet is technically wireable as a dependency, but no AWS KMS key
+    ARN or alias exists anywhere in this sprint's environment and no Doppler secret
+    resembles one (consistent with the orchestrating session's finding of zero
+    Altruist/KMS-shaped secrets in Doppler prd/dev). DECISION: implement application-layer
+    Fernet symmetric encryption (services/altruist_oauth.py), keyed by a new env var
+    ALTRUIST_TOKEN_ENCRYPTION_KEY (intended to be Doppler-sourced in real deployment;
+    does not exist there yet — a real, separate blocker from the sandbox-creds one,
+    noted below). KMS envelope encryption is the intended production path per the
+    sprint's own instructions; this Fernet layer is the documented interim fallback.
+    client_secret/access_token/refresh_token are stored ONLY as encrypted bytea plus
+    a last-4 plaintext reference column for audit/display — never plaintext.
+
+1d. Confirmed by the orchestrating session: Auth0 is entirely SDK-managed
+    (@auth0/nextjs-auth0), no bespoke callback/state-validation code exists anywhere
+    in apps/api or apps/web source (only .next build artifacts reference SDK-internal
+    state handling). [FIND] Designed the Altruist OAuth state/CSRF handling from
+    scratch: a dedicated `altruist_oauth_states` table (random `secrets.token_urlsafe(32)`
+    state, org-scoped, 10-minute TTL, single-use via `used_at`), checked and consumed
+    atomically in the callback handler before any token exchange is attempted.
+
+1e. Searched information_schema.columns for any existing "environment"/"env" column
+    on an application table: the only hits are litellm."LiteLLM_MCPServerTable".env
+    (jsonb, LiteLLM's own internal schema) and litellm."LiteLLM_PromptTable".environment
+    — both belong to LiteLLM's own internal schema, not a reusable application-level
+    convention. [FIND] No existing sandbox/production representation exists anywhere
+    in this codebase's own tables. Used `environment text NOT NULL CHECK (environment
+    IN ('sandbox','production'))` exactly as specified in the sprint prompt — genuinely
+    new, not modeled on a prior convention because none exists.
+
+=== TASK 1 CONTINUING TO TASK 2 (BUILD) IMMEDIATELY, per standing rules ===
+
