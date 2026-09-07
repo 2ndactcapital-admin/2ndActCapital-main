@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-06 (Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-07 (Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,89 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000. Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect BUILT; sandbox smoke test BLOCKED (2026-09-07)
+
+`32/34 PASS, 1 FIND, 0 FAIL, 1 BLOCKED` —
+`apps/api/scripts/verify_altruist_sprint5_sync_orchestration.py`. HELD for
+manual review (`.structural`). Sprint 4 wired the connection lifecycle
+(connect/callback/status/disconnect) into real HTTP endpoints but
+deliberately left identity resolution (Sprint 2) and positions/transactions
+sync (Sprint 3) unreachable from the app — callable only by their own verify
+scripts. This sprint closes that gap.
+
+`POST /api/v1/altruist/sync` (`routers/altruist_connection.py`) — admin-only
+(reuses `manage_custody_connections`, the same permission connect/disconnect
+already require; no new permission — see below), calls
+`require_active_connection` then `resolve_identity` (Sprint 2) then
+`sync_resolved_accounts` (Sprint 3) for the caller's org, and returns a real
+summary pulled from what those functions actually reported:
+`households_seen`, `accounts_resolved`, `accounts_unmatched`,
+`accounts_synced`, `positions_created`/`positions_skipped_duplicate`,
+`transactions_created`/`transactions_skipped_duplicate`.
+
+**Auto-trigger on connect.** The same sync now fires automatically right
+after `altruist_callback` stores a new connection, via FastAPI
+`BackgroundTasks` — a genuine, already-used mechanism in this app
+(`routers/entities.py`'s note-extraction background task, `routers/
+investment_profile.py`'s profile-extraction background task), not a new
+pattern. The background task (`_run_auto_sync`) acquires its own pool
+connection (the request's own connection is already released by the time it
+runs) and never raises — a sync failure is swallowed and logged, never
+visible to or blocking the caller who merely connected; the connection
+itself is always correctly stored regardless of how the auto-sync goes.
+
+**No new permission.** Task 1 checked this app's live permission catalog:
+most resources (`portfolio`, `documents`) use a 2-tier view/manage split;
+`workflows` is the only 3-way split, and that's for genuinely distinct
+capabilities (author vs configure-triggers vs view-runs). Triggering a sync
+is an operational action on the same `custody_connections` resource
+connect/disconnect already gate, not a distinct capability —
+`manage_custody_connections` is reused, not a new one invented.
+
+**Sprint 1's stale verify-script assertion (flagged as a FIND in Sprint 4's
+own entry below) is now fixed.** `check_task4a_guard`'s `4a-4` previously
+asserted `call_households` on a connected fixture raises
+`NotImplementedError`; Sprint 2 made that assertion stale once it
+implemented the function for real (a genuine, reachable-host HTTP attempt
+now raises `AltruistOAuthError` instead — confirmed live, the sandbox host
+resolves and responds 401 on synthetic credentials). Sprint 1's verify
+script now reports clean (24/26 PASS + 1 BLOCKED + 1 FIND) on an unmodified
+checkout.
+
+**[FIND] `sync_resolved_accounts`'s summary is not environment-scoped.**
+`portfolio.external_references` (the resolved-account crosswalk) has no
+environment column, so calling `/altruist/sync` for one environment
+re-syncs EVERY resolved account for the org, including ones originally
+resolved under a different environment's connection — harmless in practice
+(an already-synced account is a no-op skip-duplicate), but the response's
+`accounts_synced`/position/transaction counts can include more than just
+the environment named in the request. Confirmed live in this sprint's own
+round-trip test (assertion `5-6g`).
+
+**Sandbox smoke test — BLOCKED, not attempted, re-confirmed live** (same
+`doppler secrets --only-names` check as Sprints 1-4). The permission
+refusal/control pair, the full round trip (connect → synthetic callback →
+auto-sync fires → both the endpoint's own response and an independent DB
+re-read show correct resolved account/positions/transactions), idempotency
+(called twice through the real endpoint, DB row counts diffed — not
+asserted), the no-active-connection 409 (reproduced first, before any fix
+was proven), and cross-org isolation are all exercised end-to-end through
+the real ASGI app (`starlette.testclient.TestClient` against `main.app`),
+with `call_households`/`fetch_accounts_for_household`/`call_positions`/
+`call_transactions` monkeypatched on the CALLING modules' own bound names
+(`services.altruist_identity`/`services.altruist_positions_sync` — the same
+lesson Sprint 4 documented for `exchange_code_for_tokens`: a bare import
+means patching `services.altruist_oauth` directly would be a silent no-op).
+Sprints 1-4's own verify scripts were re-run as a regression check
+afterward, against a clean DB, and all report clean.
+
+**Everything through Sprint 5 is still proven only against synthetic/
+monkeypatched Altruist responses, pending Sprint 0's real sandbox
+credentials** — no live Altruist call has been made by any sprint in this
+integration yet.
 
 ---
 

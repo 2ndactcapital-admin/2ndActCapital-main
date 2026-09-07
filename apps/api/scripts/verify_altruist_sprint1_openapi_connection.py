@@ -272,7 +272,12 @@ def check_task3_credentials() -> None:
 # Task 4a — the pre-connection guard fails BEFORE the connected case
 # ═══════════════════════════════════════════════════════════════════════════
 async def check_task4a_guard(admin) -> None:
-    from services.altruist_oauth import AltruistNotConnected, call_households, require_active_connection
+    from services.altruist_oauth import (
+        AltruistNotConnected,
+        AltruistOAuthError,
+        call_households,
+        require_active_connection,
+    )
 
     # No altruist_connections row exists for ORG/production (fixtures only
     # cover ORG/sandbox) — the negative case, proven FIRST.
@@ -314,13 +319,18 @@ async def check_task4a_guard(admin) -> None:
         await call_households(admin, org_id=ORG, environment="sandbox")
     except AltruistNotConnected:
         guard_passed = False
-    except NotImplementedError:
+    except AltruistOAuthError:
+        # Sprint 2 implemented call_households for real: past the guard, this
+        # now attempts a genuine HTTP call to the sandbox host with a
+        # synthetic bearer token, which fails at the transport or HTTP layer
+        # (no live Altruist credentials exist) — AltruistOAuthError, not the
+        # NotImplementedError a pre-Sprint-2 stub would have raised.
         guard_passed = True
     R.expect("4a-4", guard_passed,
               "call_households on a genuinely connected org+environment gets PAST "
-              "the guard (raises NotImplementedError, not AltruistNotConnected) — "
-              "proving [4a-2]'s rejection was the guard, not an unconditional "
-              "failure")
+              "the guard (raises AltruistOAuthError from the real HTTP attempt, "
+              "not AltruistNotConnected) — proving [4a-2]'s rejection was the "
+              "guard, not an unconditional failure")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
