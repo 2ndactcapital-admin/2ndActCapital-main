@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-06 (Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-06 (Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,107 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000. Altruist Sprint 4 — connection lifecycle API + automatic token refresh BUILT; sandbox smoke test BLOCKED (2026-09-06)
+
+`26/27 PASS, 0 FIND, 0 FAIL, 1 BLOCKED` —
+`apps/api/scripts/verify_altruist_sprint4_connection_api.py`. HELD for manual
+review (`.structural`). Sprints 1-3 built the full OAuth/identity/sync engine
+as service-layer Python only, called directly by verify scripts — nothing was
+reachable over HTTP. This sprint exposes exactly the connection lifecycle (not
+identity resolution or positions/transactions sync, which stay internal) via
+a new router, `routers/altruist_connection.py`:
+
+  * `POST /api/v1/altruist/connect` — admin-only, creates an OAuth state row
+    and returns Altruist's `authorize_url` for the frontend to redirect to.
+  * `GET /api/v1/altruist/callback` — the route Altruist redirects back to;
+    consumes the state, exchanges the code for tokens, persists the connection.
+  * `GET /api/v1/altruist/status` — the caller's org's connection status
+    (`connected`, `environment`, `status`, `token_expires_at`,
+    `last_refreshed_at`, `scope`, masked `*_last4` markers) — proven, by
+    parsing the actual response JSON (not by eye), to never contain a raw
+    token/secret value in any field.
+  * `POST /api/v1/altruist/disconnect` — admin-only, bitemporal close
+    (`system_to`, matching `store_new_connection`'s own archival convention
+    for this table — never a hard delete).
+
+**Permission check matches an existing, already-shipped feature exactly, per
+the sprint's own instruction not to invent a new pattern**: `custody_import.py`
+(the file-upload custodian ingestion path) is the closest real analog — same
+`services.permissions.get_user_id` (claims-derived) + `services.rbac.
+require_permission`/`has_permission` (database-backed RBAC, `is_super_admin`
+bypass checked first inside `rbac.has_permission` itself) combination, not
+`admin.py`'s DB-lookup `ensure_user` chain (a user-management-shaped pattern,
+not a custodian-connection-shaped one). Two new permissions were added to the
+existing `permissions` catalog — data only, no DDL, matching how every other
+resource (`spv`, `workflows`, `roles`) was added incrementally over time:
+`view_custody_connections` / `manage_custody_connections`, both granted to the
+real, already-deployed `admin` role.
+
+**org_id** comes from `routers.entities.get_org_id` (JWT claims) on every
+route, never the body or a path parameter — every request body is
+`ConfigDict(extra="forbid")` so a body that even declares an `org_id` field
+fails validation mechanically.
+
+**[FIND] No existing "connect a custodian" / integration-settings UI or API
+pattern exists anywhere in this app**, for Altruist or any other custodian —
+confirmed by a thorough search of `apps/api`, `apps/web`, and `docs/`. The one
+custodian-adjacent UI, `CustodyImportWizard.jsx`, is a file-upload wizard, a
+different shape entirely from a live OAuth connect/disconnect/status flow.
+This sprint's routes are new, not matched to any prior UI/API convention
+beyond Sprint 1-3's own service-layer design.
+
+**[FIND] No generic recurring-job/scheduler mechanism exists in this app.**
+The one real cron process (`workflow_scheduler_tick.py`, Render cron, every
+5 minutes) is purpose-built to scan `workflow_triggers` for BPMN workflow
+runs — it has no generic "run this job on a timer" registry a different
+subsystem could hook into. `docs/WORKFLOW_SCHEDULER_DESIGN_V1.md`, referenced
+by CLAUDE.md as a built design doc, **does not exist** (confirmed by
+`docs/OUTSTANDING_TODO_LIST.md`, a real, separate gap this sprint did not
+introduce). Per the sprint's own authorized interim answer, automatic token
+refresh ships as an **on-demand, just-in-time check** instead: a new
+`ensure_fresh_token` (`services/altruist_oauth.py`) refreshes in place
+whenever a token is within 5 minutes of `token_expires_at`, wired into BOTH
+`require_active_connection` (default `auto_refresh=True` — every future real
+Altruist API call already goes through this guard) and the `/altruist/status`
+endpoint directly. A failed refresh on a token that has NOT yet actually
+expired is swallowed and the still-valid token is returned as-is (a
+transient refresh failure must not turn a working connection into a hard
+failure); a failed refresh on an ALREADY-expired token re-raises. Proven via
+an independent re-read (a connection distinct from the one that triggered
+the refresh) that `token_expires_at`/`last_refreshed_at` both actually
+advanced — not just "the call didn't error". **Swapping this for a real
+timer later needs no caller change** — `ensure_fresh_token` is the only
+function that would move. Sprint 5 (or a dedicated follow-up) owns actually
+building that timer if/when it's judged worth a second Render cron service.
+
+**[FIND] Sprint 1's own verify script has a pre-existing, unrelated failure**,
+confirmed identical on `HEAD` before this sprint's changes (`git stash` +
+re-run): `check_task4a_guard`'s assertion `4a-4` expects
+`call_households(...)` on a connected fixture to raise `NotImplementedError`
+— true when Sprint 1 wrote it (the function was a stub), false since Sprint 2
+actually implemented `call_households` for real. The call now reaches a real,
+live `httpx` request to Altruist's sandbox host (which resolves and responds
+HTTP 401 — network egress to Altruist's stage1 host is reachable from this
+environment, just unauthorized on synthetic credentials) and raises
+`AltruistOAuthError` instead, aborting the rest of that script's run. Not a
+regression from this sprint — a stale assertion Sprint 1 left behind once
+Sprint 2 shipped. Sprint 2 and 3's own verify scripts re-ran clean at their
+original counts (19/20 PASS + 1 BLOCKED; 21/22 PASS + 1 BLOCKED) — this
+sprint's `require_active_connection` signature change (`auto_refresh=True`
+default) is backward-compatible with every existing fixture, since none of
+Sprint 1-3's fixture tokens fall within the 5-minute refresh threshold.
+
+**Sandbox smoke test — BLOCKED, not attempted, re-confirmed live** (same
+`doppler secrets --only-names` check as Sprints 1-3). The full connect →
+callback → status → disconnect round trip, the four state-rejection cases,
+the permission refusal/control pairs, cross-org isolation, and the token-
+refresh proof are all exercised end-to-end through the real ASGI app
+(`starlette.testclient.TestClient` against `main.app`, only `verify_token`
+stubbed) with `exchange_code_for_tokens`/`refresh_access_token` monkeypatched
+at the module level — never a live Altruist call.
 
 ---
 

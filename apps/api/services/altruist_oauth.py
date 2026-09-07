@@ -242,7 +242,7 @@ def _redirect_uri() -> str:
     return uri
 
 
-def _client_credentials(environment: str) -> tuple[str, str]:
+def client_credentials(environment: str) -> tuple[str, str]:
     prefix = "ALTRUIST_SANDBOX" if environment == "sandbox" else "ALTRUIST_PRODUCTION"
     client_id = os.environ.get(f"{prefix}_CLIENT_ID")
     client_secret = os.environ.get(f"{prefix}_CLIENT_SECRET")
@@ -259,7 +259,7 @@ def _client_credentials(environment: str) -> tuple[str, str]:
 def build_authorize_url(*, environment: str, state: str, scope: str = "accounts:read") -> str:
     if environment not in ENVIRONMENTS:
         raise ValueError(f"Unknown environment: {environment!r}")
-    client_id, _ = _client_credentials(environment)
+    client_id, _ = client_credentials(environment)
     redirect_uri = _redirect_uri()
     login_base = ALTRUIST_HOSTS[environment]["login_base"]
     params = {
@@ -287,7 +287,7 @@ async def exchange_code_for_tokens(*, environment: str, code: str, timeout: floa
     credentials exist. Exercised in verify with a monkeypatched transport
     instead (see verify script Task 4).
     """
-    client_id, client_secret = _client_credentials(environment)
+    client_id, client_secret = client_credentials(environment)
     redirect_uri = _redirect_uri()
     login_base = ALTRUIST_HOSTS[environment]["login_base"]
     url = f"{login_base}{_OAUTH_PATHS['token']}"
@@ -328,7 +328,7 @@ async def refresh_access_token(*, environment: str, refresh_token: str, timeout:
     includes a new refresh_token, the caller stores it; if not, the caller
     keeps the existing one (see persist_refresh below).
     """
-    client_id, client_secret = _client_credentials(environment)
+    client_id, client_secret = client_credentials(environment)
     login_base = ALTRUIST_HOSTS[environment]["login_base"]
     url = f"{login_base}{_OAUTH_PATHS['token']}"
 
@@ -514,12 +514,102 @@ class AltruistNotConnected(RuntimeError):
     """
 
 
-async def require_active_connection(conn, *, org_id: str, environment: str) -> dict:
+async def close_connection(conn, *, org_id: str, environment: str) -> bool:
+    """Disconnect: bitemporal close of the active row, never a hard delete.
+
+    Matches ``store_new_connection``'s own archival convention for this table
+    (system-axis: the row's id is kept stable, only ``system_to`` changes) —
+    that convention was fixed by Sprint 1, not chosen here. Returns False (a
+    no-op, not an error) if no connection was active — disconnecting twice is
+    not a failure.
+    """
+    closed_id = await conn.fetchval(
+        """
+        UPDATE altruist_connections
+        SET status = 'disconnected', updated_at = now(), system_to = now()
+        WHERE org_id = $1 AND environment = $2 AND system_to IS NULL
+        RETURNING id
+        """,
+        org_id, environment,
+    )
+    return closed_id is not None
+
+
+# ── Automatic token refresh — INTERIM, ON-DEMAND (Sprint 4 Task 1c/2) ───────
+#
+# [FIND] No generic recurring-job/scheduler mechanism exists in this app that
+# a timer-based Altruist refresh could hook into. The one real cron process,
+# ``workflow_scheduler_tick.py`` (Render cron, every 5 minutes), is
+# purpose-built to scan `workflow_triggers` for BPMN workflow runs — it has no
+# generic "run this job" table or registry a different subsystem could
+# register into. Building a second, Altruist-only Render cron service was
+# judged out of scope for a sprint with no live sandbox credentials to
+# actually validate a refresh against. Per the sprint's own standing rule,
+# this ships the authorized interim answer instead: a just-in-time check,
+# run at every real choke point a token is about to be used — inside
+# ``require_active_connection`` (every future live Altruist API call already
+# goes through it) and inside the connection-status endpoint. Swapping this
+# for a real timer later needs no caller change: ``ensure_fresh_token`` is the
+# only function that would move.
+
+DEFAULT_REFRESH_THRESHOLD = timedelta(minutes=5)
+
+
+async def ensure_fresh_token(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    connection: dict,
+    threshold: timedelta = DEFAULT_REFRESH_THRESHOLD,
+) -> dict:
+    """Refresh the access token in place if it is expired or expiring soon.
+
+    A no-op (no network call at all) unless ``token_expires_at`` is within
+    ``threshold`` of now — every Sprint 1-3 fixture's token expires an hour
+    out, so this never fires for their verify scripts. If the refresh call
+    itself fails (e.g. still-unconfigured sandbox credentials) and the token
+    has NOT yet actually expired, the failure is swallowed and the still-valid
+    token is returned as-is — a transient refresh failure must not turn a
+    working connection into a hard failure. If the token HAS already expired,
+    the failure is re-raised: there is no valid token left to fall back to.
+    """
+    expires_at = connection.get("token_expires_at")
+    if expires_at is None:
+        return connection
+    now = datetime.now(timezone.utc)
+    if expires_at - now > threshold:
+        return connection
+
+    try:
+        refresh_token = await get_decrypted_refresh_token(conn, connection_id=connection["id"])
+        tokens = await refresh_access_token(environment=environment, refresh_token=refresh_token)
+    except (AltruistOAuthError, AltruistConfigError):
+        if expires_at <= now:
+            raise
+        return connection
+
+    await persist_refresh(conn, connection_id=connection["id"], tokens=tokens)
+    refreshed = await get_active_connection(conn, org_id=org_id, environment=environment)
+    return refreshed or connection
+
+
+async def require_active_connection(
+    conn,
+    *,
+    org_id: str,
+    environment: str,
+    auto_refresh: bool = True,
+    refresh_threshold: timedelta = DEFAULT_REFRESH_THRESHOLD,
+) -> dict:
     """Guard used by any future Altruist API call site (e.g. GET /v2/households).
 
     Raises AltruistNotConnected if no connection row exists for this org+environment,
     or if the connection's status is not 'connected' — the call must never reach
-    the network in either case.
+    the network in either case. Also runs the on-demand refresh check (see
+    ``ensure_fresh_token`` above) by default, so a caller reaching this guard
+    never proceeds with a token that is about to expire — pass
+    ``auto_refresh=False`` to opt out (e.g. the OAuth flow's own bookkeeping).
     """
     row = await get_active_connection(conn, org_id=org_id, environment=environment)
     if row is None:
@@ -531,6 +621,10 @@ async def require_active_connection(conn, *, org_id: str, environment: str) -> d
         raise AltruistNotConnected(
             f"Altruist connection exists but status={row['status']!r} "
             f"(environment={environment!r}) — re-authorization required."
+        )
+    if auto_refresh:
+        row = await ensure_fresh_token(
+            conn, org_id=org_id, environment=environment, connection=row, threshold=refresh_threshold
         )
     return row
 
