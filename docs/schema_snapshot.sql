@@ -202,6 +202,18 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY altruist_one_evaluations_pkey: (id)
 
+-- ===== altruist_webhook_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   event_id                                 text NOT NULL
+--   org_id                                   uuid
+--   event_type                               text
+--   raw_payload                              jsonb NOT NULL
+--   received_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   processed_at                             timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE altruist_webhook_events_event_id_key: (event_id)
+--   PRIMARY KEY altruist_webhook_events_pkey: (id)
+
 -- ===== assistant_action_catalog =====
 --   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
