@@ -21,6 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from routers.admin import router as admin_router
 from routers.allocation_lens import router as allocation_lens_router
 from routers.altruist_connection import router as altruist_connection_router
+from routers.altruist_webhook import router as altruist_webhook_router
 from routers.ledger import router as ledger_router
 from routers.assistant import router as assistant_router
 from routers.custody_import import router as custody_import_router
@@ -103,6 +104,14 @@ PUBLIC_PATHS = {
     # writes nothing. The matching WRITE (/api/v1/enroll/accept) is deliberately
     # NOT public: it needs a verified Auth0 sub. See routers/enroll.
     "/api/v1/enroll/validate",
+    # Altruist Realtime API webhook receiver (Altruist Sprint 6) — pre-auth by
+    # necessity, unlike every path above: the caller is Altruist itself, with
+    # no Auth0 session, so it is NOT unsigned like the rest of this set — it
+    # is gated by its own HMAC signature check inside routers/altruist_webhook
+    # BEFORE any payload parsing or DB write. See that router's module
+    # docstring for why this is the first genuinely signature-verified
+    # unauthenticated route in this app.
+    "/api/v1/altruist/webhook",
 }
 
 
@@ -536,6 +545,7 @@ app.include_router(marketing_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(custody_import_router, prefix="/api/v1")
 app.include_router(altruist_connection_router, prefix="/api/v1")
+app.include_router(altruist_webhook_router, prefix="/api/v1")
 app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(portfolio_ingest_router, prefix="/api/v1")
 app.include_router(portfolio_positions_router, prefix="/api/v1")

@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-07 (Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,91 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000000. Altruist Sprint 6 — Realtime API webhook receiver: DISCOVERY ONLY, STOPPED per standing rule (2026-09-07)
+
+`0/0 PASS + 6 FIND + 1 BLOCKED (design assertions) via
+`apps/api/scripts/verify_altruist_sprint6_realtime_webhook_receiver.py`
+(discovery-only script; see its own header for the full breakdown of what it
+*could* still verify live). **No webhook receiver code was built this
+sprint** — the sprint prompt's own standing rule required stopping after
+Task 1 if no existing table is suitable for webhook event-id
+deduplication/logging, and Task 1 confirmed, live, that none is.
+
+**What Task 1 found.** Sprints 1-5 built the Open API surface (OAuth2
+connection, identity resolution, positions/transactions sync, connection
+lifecycle, sync orchestration) — all authenticated, app-user-triggered. A
+Realtime API webhook receiver is fundamentally different: it is called BY
+Altruist, not by a logged-in app user, so it needs signature verification
+against a shared secret, not `rbac.require_permission`. This app has no
+existing precedent for that — the only unauthenticated-route mechanism is
+`PUBLIC_PATHS` (pre-auth, but genuinely UNSIGNED: `theme/public`,
+`tenant/resolve`, `marketing/*`, `enroll/validate` all serve only public
+metadata or single-use tokens, none verify a cryptographic signature).
+
+A live `information_schema` search for any table shaped for inbound webhook
+event dedup/logging (`webhook`, `event`, `integration_log`, `dedup`,
+`inbound` name patterns) found no genuine match:
+
+  * `domain_events` / `domain_event_deliveries` (Domain event emission
+    sprint) is the closest name match but the wrong shape: `org_id` and
+    `source_id` are both NOT NULL, and it is the OUTBOUND publish side for
+    `workflow_triggers` — an inbound webhook for an unrecognized identifier
+    must be logged with NO org, which this table cannot represent, and there
+    is no unique constraint to dedupe an external event id against.
+  * `cost_events` / `revenue_events` / `v_profitability_events` — real, but
+    fee/billing domain, unrelated.
+  * `litellm."LiteLLM_WorkflowEvent"` — a third-party (LiteLLM) schema, not
+    ours to write into for an unrelated integration.
+
+**Needed shape, owed as a real schema decision before Task 2 can run:**
+
+```sql
+CREATE TABLE public.altruist_webhook_events (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id        text NOT NULL,       -- Altruist's own event id; the dedup key
+    org_id          uuid,                -- NULL when the payload's identifier is unrecognized
+    event_type      text,                -- best-effort, payload shape unconfirmed
+    received_at     timestamptz NOT NULL DEFAULT now(),
+    processed_at    timestamptz,
+    raw_payload     jsonb NOT NULL,
+    UNIQUE (event_id)
+);
+```
+
+`org_id` nullable is deliberate (unlike every other table in this app, per
+CLAUDE.md's org_id rule) — an unrecognized payload must still be logged
+without guessing an org, and a NULL org_id must never be silently defaulted
+to a real one as a stand-in for "unknown."
+
+**Also confirmed live, independent of the STOP condition:** `resolve_
+identity`/`sync_resolved_accounts` (Sprints 2/3) are callable as
+`(conn, *, org_id, environment, ...)` — real, introspected signatures — so
+once the schema exists, Task 2's dispatch logic can call them directly for
+one identified org without re-deriving their behavior. No reference to
+Altruist's real Realtime API webhook signature scheme or payload shape
+exists anywhere in this repo (checked, confirmed live) — Task 2, when it
+runs, should use the HMAC-SHA256-over-raw-body default already specified in
+the sprint prompt, explicitly flagged unconfirmed.
+
+**Sandbox smoke test — BLOCKED, re-confirmed live** (same `doppler secrets
+--only-names` check as Sprints 1-5). No `ALTRUIST_*` secrets exist,
+including any webhook secret.
+
+**Regression — Sprints 1-5's own verify scripts were re-run and all report
+clean**, unaffected, since this sprint made no code changes.
+
+**Sprint 0's outreach should now also explicitly request Altruist's real
+webhook documentation and signature scheme** — not just sandbox
+credentials — since this sprint proved that gap blocks Task 2 from even
+starting, independent of the schema decision above.
+
+**Not held for merge in the usual `.structural` sense — there is no code to
+merge.** This entry, the verify script (which re-confirms the STOP
+condition live and will need re-running once the schema question above is
+answered), and the schema decision itself are the actual deliverable.
 
 ---
 
