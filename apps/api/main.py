@@ -514,13 +514,24 @@ async def _startup() -> None:
     from services.assistant_actions import register_all
     from services.action_registry import REGISTRY
     from services.brief_blocks import register_brief_blocks
-    from services.database import get_pool
+    from services.database import get_pool, reset_rls_context, set_rls_context
 
     register_all()
     register_brief_blocks()
+    seed_org_id = "00000000-0000-0000-0000-000000000001"
     try:
         pool = await get_pool()
-        await REGISTRY.sync_catalog(pool, "00000000-0000-0000-0000-000000000001")
+        # RLS is enforced now (app_service, not a bypass role) — this write's
+        # own org_id already matches seed_org_id, so scoping the RLS context
+        # to that org (not is_super_admin) is the minimal, correct fix. Found
+        # by the rlscutover sprint's own smoke test: under postgres-bypass
+        # this insert always silently succeeded with no context set at all,
+        # so the gap was invisible until app_service actually enforced it.
+        tokens = set_rls_context(seed_org_id, False)
+        try:
+            await REGISTRY.sync_catalog(pool, seed_org_id)
+        finally:
+            reset_rls_context(tokens)
     except Exception as exc:
         print(f"[startup] sync_catalog failed (non-fatal): {exc}")
 

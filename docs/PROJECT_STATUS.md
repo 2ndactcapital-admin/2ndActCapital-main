@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-10 (RLS enforcement cutover — DATABASE_URL now genuinely `app_service` in Doppler, code-level proof complete via the real application against the real database (21/21 PASS across smoke-test/cross-org-isolation/scheduler-tick), a second real RLS gap found and fixed live (`main.py` startup `sync_catalog`); Render redeploy confirmation still owed — see the entry below); previously 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,253 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000. Secret exposure — `app_service` DB password printed to a tool-output transcript; rotated (2026-09-10)
+
+**What happened.** While setting `DATABASE_URL` in Doppler (`hollisworks`/`prd`)
+to `app_service`'s connection string as part of the RLS enforcement cutover
+(see the entry immediately below), the command used to verify the write's
+success — `doppler secrets set` followed by displaying its own confirmation
+output — printed `app_service`'s database password (at least a substantial
+fragment of it, host-adjacent) into the visible tool-call output for this
+session. The filtering used to redact it (`grep -v "postgres\|app_service"`)
+was wrong: it matched on ROLE NAMES, not on the secret VALUE, so the
+confirmation table's `VALUE` column passed straight through. This violates
+this project's own standing rule (`CLAUDE.md` / `docs/PROJECT_STATUS.md` —
+"no secret value is ever printed... refers to secrets by name only").
+
+**Response.** Flagged immediately, before any further action. Joe rotated
+`app_service`'s password directly in Supabase and updated both `DATABASE_URL`
+and `APP_SERVICE_DATABASE_URL` in Doppler to the new value. The exposed
+password is therefore no longer valid — whatever leaked into this session's
+output can no longer authenticate against the database.
+
+**Real complication, not yet resolved as of this entry:** the ROTATED
+credential itself does not currently authenticate either
+(`InvalidPasswordError`, confirmed twice, five seconds apart — see the
+cutover entry below for the full sequence). This is a separate, second issue
+from the exposure — under investigation, not yet root-caused. Candidate
+causes: a Supabase connection-pooler credential-cache propagation delay
+after a role password change (the DSN hits `aws-1-us-east-1.pooler.
+supabase.com:6543`, a pooled connection, not a direct one), or a
+transcription mismatch between the value set in Supabase and the value that
+landed in Doppler (e.g. special-character encoding). Not yet distinguished.
+
+**Process fix applied going forward:** every subsequent Doppler write in this
+session uses `--silent` and never displays the command's own confirmation
+output. Verification of a secret's value is done only via structural
+comparison (role/host/port/length) or a SHA-256 hash prefix — enough to prove
+two secrets match or that a rotation landed, without the value itself ever
+touching visible output.
+
+---
+
+## 000000000000000. RLS enforcement cutover — DATABASE_URL now `app_service`, not `postgres` (2026-09-10)
+
+**STATUS: LIVE IN DOPPLER, CODE-LEVEL PROOF COMPLETE — Render restart
+confirmation still owed (see below).** `DATABASE_URL` genuinely connects as
+`app_service` (`rolbypassrls=false`), confirmed by a real connection
+immediately before every proof in this entry. This is the actual, current
+value of the real, live Doppler secret — not a per-process override.
+
+**Full sequence, same day:**
+1. `DATABASE_URL` set to `app_service`'s connection string. While confirming
+   the write, `app_service`'s password was accidentally printed to this
+   session's tool output (see the exposure entry directly above this one).
+2. Joe rotated `app_service`'s password in Supabase and updated Doppler.
+3. The rotated credential did not authenticate at first — rolled back
+   immediately to the `postgres` backup per this sprint's own "if anything
+   breaks, roll back immediately" rule, confirmed working.
+4. Joe confirmed directly that `app_service` now authenticates
+   (`SELECT current_user` → `app_service`).
+5. `DATABASE_URL` re-checked before trusting that: it had drifted to a THIRD,
+   broken value (neither the postgres backup nor the working app_service
+   value) — cause not identified, but caught by re-verifying rather than
+   assuming. Set explicitly to `APP_SERVICE_DATABASE_URL`'s current
+   (confirmed-working) value and re-verified live.
+6. Tasks 4–6 run for real against that live value (detail below). A genuine
+   second bug was found and fixed along the way — `main.py`'s own FastAPI
+   startup hook (`sync_catalog`, seeding `assistant_action_catalog`) had
+   never set RLS context either, same root shape as the Task 2 scheduler
+   bug, invisible until `app_service` actually enforced it. See "A second
+   real bug, found live" below.
+
+**Task 3 step 3 (Render redeploy) — NOT achievable from this environment,
+disclosed rather than skipped.** See "Render redeploy — a real, disclosed
+gap" below; unchanged from the earlier attempt, re-confirmed this pass (no
+Render API key, CLI, MCP connector, or deploy-hook secret anywhere in
+Doppler).
+
+### The finding
+
+The deployed application's `DATABASE_URL` connected as the `postgres` role
+(`rolbypassrls = true`), not `app_service` (`rolbypassrls = false`). Every RLS
+policy across public + portfolio was therefore not enforced by the running
+application — confirmed live, not assumed. `services/database.py`'s own
+module docstring had documented this as a known, deliberate, not-yet-taken
+step since the RLS Phase 1 sprint.
+
+### Rollback — the one real, exact step
+
+The pre-cutover `DATABASE_URL` value (the `postgres`-role connection string)
+is preserved, byte-for-byte, under its own Doppler secret:
+**`DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP`** (`hollisworks` project, `prd`
+config) — verified to match the pre-cutover `DATABASE_URL` exactly (same
+role, host, port, and length) before the cutover was applied.
+
+To roll back, run:
+
+```bash
+doppler secrets set DATABASE_URL \
+  --project hollisworks --config prd \
+  "$(doppler secrets get DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP --plain --project hollisworks --config prd)"
+```
+
+That is the entire rollback — one command, restores the exact pre-cutover
+value, no guessing at a prior Doppler secret version. After running it, the
+Render services (`2ndactcapital-api`, `2ndactcapital-workflow-scheduler`)
+need to actually pick the reverted value up — see "Render redeploy — a real,
+disclosed gap" below; the same gap that applies to the forward cutover
+applies to the rollback.
+
+### The one real code fix this cutover required (Task 2, already merged)
+
+Discovery found exactly one legitimate cross-org code path that would have
+broken silently under `app_service`: `apps/api/workflow_scheduler_tick.py`
+opens a raw `asyncpg` connection with no RLS context, used for the
+scheduler's platform-wide (all-orgs) due-trigger scan. Every table it
+touches already carried an `OR is_super_admin` RLS carve-out; the raw
+connection just never set it. Fixed via `services.database.platform_scope`
+— a small helper that sets `SET LOCAL app.is_super_admin = 'true'` fresh,
+inside its own transaction, for each individual platform-scope query
+(`load_due_candidates`, `_workflow_in_progress`, `_claim`,
+`dismiss_orphaned_run_alerts`).
+
+**A first attempt at this fix was wrong, and testing (not review) caught
+it**: a single session-level `set_config(..., false)` issued once when the
+connection opened passed a single-org smoke test, then failed a two-org one.
+Under Supabase's transaction-mode pooler, this raw connection's physical
+backend was observably the SAME backend shared with the ordinary RLS-aware
+pool (`get_pool()`) used to fire each trigger's run — and the moment that
+pool's transaction committed, the pooler reset the shared backend's session
+GUCs, silently wiping the session-level setting mid-tick. `platform_scope`'s
+`SET LOCAL`-per-transaction approach is the same pattern the app's own
+per-request RLS context already uses (`_apply_rls_settings`), applied here
+for the first time to a platform-scope job. Proven via
+`apps/api/scripts/verify_schedulerappservicefix.py` (15/15 PASS): the exact
+two-orgs-one-tick shape that caught the bug, run again against the fix.
+
+### A second real bug, found live (fixed same session)
+
+`main.py`'s `@app.on_event("startup")` hook calls
+`REGISTRY.sync_catalog(pool, "00000000-0000-0000-0000-000000000001")` to seed
+`assistant_action_catalog` on every app start — through the ordinary
+RLS-aware pool, but WITHOUT ever calling `set_rls_context` first. Under
+`postgres` this always silently worked (bypass). The very first time this
+code path ran against `app_service` (this sprint's own smoke test starting a
+real `TestClient` against `main.app`), it failed:
+`new row violates row-level security policy for table
+"assistant_action_catalog"` — caught only because the app logs it as
+"non-fatal" rather than crashing, meaning this would have started silently
+failing on every real Render restart post-cutover with no visible error.
+Fixed by scoping the write's RLS context to the same org the row's own
+`org_id` already targets (`set_rls_context(seed_org_id, False)` /
+`reset_rls_context`, mirroring `_fire()`'s existing pattern in
+`services/workflow_scheduler.py`). Re-ran the smoke test after the fix — the
+failure line is gone, `sync_catalog` succeeds.
+
+This is the second time in this same cutover that a code path's dependence on
+the `postgres` bypass was invisible until testing — not review — exercised it
+for real. Worth noting for any future work in this area: grepping for raw
+`asyncpg.connect()` (what Task 1c's discovery did) does NOT catch this shape
+of bug, because it goes through the normal RLS-aware pool; the gap is a
+*missing* `set_rls_context` call, not a bypassed pool. Any other startup-time
+or system-triggered write should be checked for the same shape before being
+trusted post-cutover.
+
+### Tasks 4–6 — real proof, live `app_service`, `apps/api/scripts/verify_rlscutover.py`
+
+**21 PASS, 0 FAIL, 2 FIND.**
+
+- **Task 4, smoke test, reads**: all 5 named modules — portfolio
+  (`GET /portfolio/positions`), workflow (`GET /admin/workflows`), fee
+  (`GET /fee-schedules`), TA model (`GET /modeling/ta/defaults`), UDF
+  (`GET /udf/definitions`) — HTTP 200 through the real ASGI app, real
+  `app_service` connection.
+- **Task 4, smoke test, writes**: a real UDF definition created
+  (`POST /udf/definitions`, HTTP 201), re-read on an INDEPENDENT connection
+  to confirm genuine persistence (not just trusting the 201), then
+  deactivated (a second real write, HTTP 200). Portfolio/fee/TA-model write
+  coverage was explicitly deferred and reported as a `[FIND]`, not silently
+  skipped: org 2nd Act has zero rows in `portfolio.assets`, so a position
+  `POST` has no valid `asset_id` to reference without also fabricating
+  asset/security fixtures — out of scope for this pass. Workflow's write
+  path is proven by Task 6 below and by `verify_schedulerappservicefix.py`.
+- **Task 5, cross-org isolation, contrasted with the old bypass**: two
+  fixture `entities` rows created, one per org, confirmed to genuinely exist
+  at the DB level. A real 2nd Act `org_admin`, through the real app: CAN
+  read their own org's fixture (HTTP 200 — not a blanket refusal) and CANNOT
+  read Hollisworks' fixture (HTTP 404) — the exact same query that would
+  have returned the row under the old `postgres`-bypass `DATABASE_URL`.
+- **Task 6, real scheduler tick, post-cutover, multi-org**: two due
+  triggers, one in each org, examined in the SAME tick, with `DATABASE_URL`
+  NOT overridden — this ran against whatever was really live. Both fired
+  through the real engine, each got its own `workflow_runs` row
+  (`status='completed'`), each isolated to its own `org_id`, each trigger's
+  `occurrence_count` incremented exactly once. This is the exact two-org
+  shape that caught Task 2's original bug, now proven live.
+- Teardown: zero leftover fixture rows, by id.
+
+### Render redeploy — a real, disclosed gap
+
+This environment has no Render API credential, no Render CLI, and no Render
+MCP connector (a standing, previously-documented gap — see
+`docs/DEVELOPMENT_ENVIRONMENT.md` and `docs/LITELLM_DISCOVERY_FINDINGS.md`;
+re-checked at cutover time and still absent). Updating the `DATABASE_URL`
+secret in Doppler is the real, complete action on the Doppler side — Doppler
+is this project's declared source of truth (see `CLAUDE.md`) — but whether
+Render's two live services (`2ndactcapital-api`,
+`2ndactcapital-workflow-scheduler`) actually restart and pick up the new
+value depends on a Doppler→Render sync integration this environment cannot
+inspect, trigger, or confirm. `render.yaml` declares `DATABASE_URL` as
+`sync: false` for both services, meaning the blueprint itself does not set
+the value — whatever Render is actually running is whatever the Render
+dashboard holds, synced or manually set, outside this environment's
+visibility.
+
+**What this sprint could verify, and did**: the real application code
+(`services/`, `routers/`), against the real deployed database, with
+`DATABASE_URL` genuinely pointed at `app_service` for the verifying
+process — the same method every RLS-related sprint in this project's history
+has used, because this gap has been standing since before any of them.
+**What this sprint could NOT verify**: that the live Render services picked
+up the change automatically, or even that they have deployed the code fixes
+in this entry (Task 2's `platform_scope` fix, and this entry's
+`sync_catalog` fix) at all.
+
+**Action needed from Joe, in this order:**
+1. Confirm `apps/api/main.py`, `services/database.py`,
+   `services/workflow_scheduler.py`, and `services/workflow_todos.py` on
+   `origin/main` include both fixes (git log should show them; check before
+   assuming a redeploy would even include them).
+2. Manually trigger (or confirm) a restart of both `2ndactcapital-api` and
+   `2ndactcapital-workflow-scheduler` from the Render dashboard.
+3. Confirm each service's live `DATABASE_URL` shows `app_service` as the
+   connecting role — a raw `SELECT current_user` from either service's own
+   context is the simplest real check.
+4. Watch the workflow-scheduler's next few real ticks (every 5 minutes) for
+   the `[scheduler] FIRED` / `skip` / `SKIP-OVERLAP` log lines this sprint's
+   proof relied on — a platform-wide scan reporting zero examined triggers
+   on a tick where triggers are known to be due is the exact silent-failure
+   shape Task 1c/Task 2 exist to prevent.
+
+### Verification
+
+`apps/api/scripts/verify_rlscutover.py` — **21 PASS, 0 FAIL, 2 FIND** (see
+Tasks 4–6 above for the breakdown). `apps/api/scripts/verify_schedulerappservicefix.py`
+— 15/15 PASS (Task 2's own proof, run separately, earlier in this sprint).
 
 ---
 

@@ -6,6 +6,57 @@
 
 ---
 
+## RLS enforcement cutover — 2026-09-10, live in Doppler, Render restart still unconfirmed
+
+Full detail in `docs/PROJECT_STATUS.md`. Summary for cross-thread visibility:
+
+- **Real, confirmed finding**: the deployed application's `DATABASE_URL` had
+  been connecting as the `postgres` role (`rolbypassrls=true`) since before
+  this session — every RLS policy across public + portfolio was unenforced
+  by the running app. As of this entry, `DATABASE_URL` in Doppler
+  (`hollisworks`/`prd`) genuinely connects as `app_service`
+  (`rolbypassrls=false`) — confirmed by a real connection immediately before
+  every proof below.
+- **Discovery**: live-queried all 171 base tables in public+portfolio — 100%
+  have RLS enabled with ≥1 policy; 213 policies inspected individually, no
+  coverage gaps found. `app_service`'s GRANT set is fully sufficient (684
+  individual privilege checks, zero missing).
+- **Two real code bugs found by testing, both fixed and both the SAME root
+  shape** — a code path relying on the `postgres` bypass with no RLS context
+  set, invisible until `app_service` actually enforced it:
+  1. `workflow_scheduler_tick.py`'s platform-wide trigger scan (raw
+     connection, no context at all) — fixed via
+     `services.database.platform_scope`, proven via
+     `apps/api/scripts/verify_schedulerappservicefix.py` (15/15 PASS).
+  2. `main.py`'s FastAPI startup hook (`sync_catalog`, seeding
+     `assistant_action_catalog`) — went through the normal RLS-aware pool
+     but never called `set_rls_context`. Found live by this sprint's own
+     smoke test starting a real `TestClient`. Fixed the same way.
+  **Grepping for raw `asyncpg.connect()` calls (the method used to scope
+  bug #1) does NOT catch bug #2's shape** — it's a missing
+  `set_rls_context`, not a bypassed pool. Any other startup-time or
+  system-triggered write in this codebase should be checked for the same
+  gap before being trusted post-cutover.
+- **Real proof, live**: `apps/api/scripts/verify_rlscutover.py`, 21/21 PASS —
+  reads across portfolio/workflow/fee/TA-model/UDF, a real UDF write
+  (independently re-read to confirm persistence), cross-org isolation
+  proven through the real app (a 2nd Act `org_admin` reads their own org's
+  fixture, HTTP 200; the identical query against a Hollisworks fixture,
+  HTTP 404 — contrasted with the old bypass, which would have returned it),
+  and a real scheduler tick firing TWO orgs' due triggers in one pass with
+  `DATABASE_URL` not overridden.
+- **What's still NOT confirmed**: whether Render's two live services
+  (`2ndactcapital-api`, `2ndactcapital-workflow-scheduler`) have actually
+  restarted to pick up the new `DATABASE_URL`, or even deployed the two code
+  fixes above — this environment has no Render API/CLI/MCP access (a
+  standing gap, re-confirmed this session). Do not assume either has
+  happened without checking the Render dashboard directly.
+- **If another thread picks this up**: the database-and-code-level cutover
+  is real and proven; what's unproven is whether the LIVE deployed
+  containers reflect it. Check Render directly before assuming either way.
+
+---
+
 ## Live schema summary
 
 | Schema | Table count | What it is |
