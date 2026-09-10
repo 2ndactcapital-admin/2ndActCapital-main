@@ -35,7 +35,7 @@ Three real schemas in the deployed database:
 
 **`altruist_connections`, `altruist_oauth_states`, `altruist_one_evaluations`, `altruist_webhook_events` all exist in the live schema — and are all genuinely empty (0 rows).**
 
-This means either these tables were scaffolded ahead of that thread's own Sprint 1 (a real Part 1-style migration applied by someone, at some point), or something started and never connected. **Action needed**: that thread's Sprint 1 Task 1 discovery must check this directly before assuming a clean slate — building a second, parallel table for the same purpose would be a real schema collision.
+This means either these tables were scaffolded ahead of that thread's own Sprint 1 (a real Part 1-style migration applied by someone, at some point), or something started and never actually connected. **Action needed**: that thread's Sprint 1 Task 1 discovery must check this directly before assuming a clean slate — building a second, parallel table for the same purpose would be a real schema collision.
 
 ---
 
@@ -84,3 +84,23 @@ Real, existing design on record:
 3. Run a direct discovery sprint on Structured Investments' real scope before marking it done or not-done.
 4. Run a direct discovery sprint on whether TA Model's new obligation ledger resolves the cash-planning module's flagged SPV-overlap dependency, before scoping `cash00`.
 5. Re-run this kind of live-schema discovery periodically as more threads accumulate independent work — chat-level summaries alone have already proven unreliable multiple times in one session (the Workflow Scheduler was independently reported as "not built" by a different thread despite five real, merged sprints).
+
+---
+
+## Undeveloped specs — real design work not yet tracked as a sprint or TODO
+
+Populated by running the two-part review prompt (see `docs/SPRINT_WORKFLOW_STANDARD.md`'s own review process) against each chat thread in the Project. Every thread reports here regardless of whether it has ever run a real sprint — this section exists specifically to surface architecture and design work sitting in a chat that hasn't become tracked work anywhere else.
+
+**Format per entry**: `Thread` — one-line description — enough scoping detail for a discovery sprint to start from.
+
+*(Entries added below as each thread's review comes back. Once an entry becomes a real sprint or a tracked `OUTSTANDING_TODO_LIST.md` item, move it out of this section and note where it landed, rather than deleting it — this section doubles as a record of where each piece of design work actually originated.)*
+
+- **Implementing agentic methods at Hollisworks** — architecture-only thread, no sprints run. Real design work discussed: agent design, tool boundaries, "desks," context assembly, guardrails — the ~6-8 dedicated agents/Desks layer referenced elsewhere as gated on Workflow Manager Wave 2. Not yet scoped as a sprint sequence anywhere. *(Awaiting that thread's own detailed Part 2 response for full scoping detail — this entry recorded on the strength of this session's own knowledge that this layer exists as a real, named architectural concept, not yet a tracked sprint plan.)*
+
+*(Additional entries pending as each remaining thread's review completes.)*
+
+---
+
+## Also found and fixed this pass
+
+- **Two contradictory copies of `SPRINT_WORKFLOW_STANDARD.md` existed simultaneously** — `sprint_prompts/SPRINT_WORKFLOW_STANDARD.md` (stale ancestor, missing 5 real sections including known gotchas, DB-contamination recovery, and the regression-check caveat) vs. the root copy (live, correct). Root copy confirmed canonical; the `sprint_prompts/` copy replaced with a one-line pointer rather than left as a second, independently-editable version — found by the "Implementing agentic methods at Hollisworks" thread during its own review pass, a genuinely valuable finding despite that thread never having run a sprint.
