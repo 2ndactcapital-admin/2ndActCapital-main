@@ -55,6 +55,14 @@ data-at-rest (e.g. `LITELLM_SALT_KEY`) must be backed up in a separate,
 durable location outside Doppler at creation time. Losing it or changing it
 after first use makes encrypted data permanently unrecoverable.
 
+**A Doppler sync can be destructive, not additive.** Confirmed twice this
+project: connecting or re-triggering a sync can silently overwrite a
+service's manually-set values with root config's values, even for a
+variable the service was never meant to receive. If a service needs a
+genuinely different value than the shared root config (e.g. a dedicated
+least-privilege role's own connection string), use a Doppler branch config
+for that service, not a manual override that a future sync will clobber.
+
 ## Database Schema Namespacing — Read This Before Writing Any Query
 
 **`portfolio` and `litellm` are real, separate Postgres schemas — neither is
@@ -220,6 +228,19 @@ matches) anywhere else in the platform that needs to bind one resource's
 access to two independent, potentially-conflicting permission sources.
 Do not write a second, bespoke dual-path resolver — check here first.
 
+## The Custody Cliff — permanent, not a phase-two item
+
+**Trade execution, money movement, filing submission, and GL posting never
+get an agent.** Not "not yet" — permanently. This is a hard boundary on the
+agents-propose/code-disposes model (see the agentic-methods design work),
+not a capability gap to close later. Any future sprint touching agent tool
+allowlists, capability annotations on the action registry, or Desk
+configuration must treat these four action classes as structurally
+unreachable by agent-initiated writes — never merely gated behind a review
+step, never a "Tier 1 with extra approval." If a real business need seems to
+require an agent anywhere near one of these four, that is a signal the
+task needs to be redesigned, not that this rule needs an exception.
+
 ## AI Provider Abstraction
 
 All AI calls route through the central `call_claude_text` / `call_claude_json`
@@ -255,36 +276,16 @@ between a prompt's assumption and the deployed schema has caused repeated
 real bugs — the snapshot is the fix, and it must be re-read, not assumed
 current from an earlier sprint in the same session.
 
-## Standard Sprint Structure (four parts)
+## Standard Sprint Structure
 
-**Part 1 — Schema, applied directly.** If a sprint needs new tables/columns/
-roles with a KNOWN shape, apply the SQL directly (e.g. via the Supabase MCP
-tool) before the sprint runs, and VERIFY it actually landed with a real
-follow-up query — never trust a "success" response alone. If the correct
-shape genuinely depends on discovery the sprint itself needs to do (e.g. an
-unclear join path), leave Part 1 empty deliberately and let the sprint's own
-Task 1 inform the schema — do not guess and apply blind.
-
-**Part 2 — Branch + schema refresh.** Fetch, checkout the working branch,
-merge origin, refresh `docs/schema_snapshot.sql`.
-
-**Part 3 — The sprint prompt itself**, structured as: DISCOVER (report real,
-measured findings — not quoted from the prompt — then continue immediately,
-never stop and wait, since there is no human available mid-sprint), BUILD,
-PROVE (real proof, see below), UPDATE PROJECT STATUS.
-
-**Part 4 — Merge.** `.lowrisk` sprints (discovery-only, or genuinely
-low-stakes) can auto-merge. `.structural` sprints (schema changes,
-permission changes, anything touching money/auth/tenant boundaries) are
-HELD for manual review — read the verify log, confirm the reasoning holds,
-then merge deliberately.
-
-**If a sprint's wrapper reports "expected verify script not found"** — this
-is often a wrapper mismatch (e.g. a discovery-only sprint with no code to
-verify), not a sign the work was lost. Check `git log --oneline -3` and
-`git status` before assuming anything needs re-running — the real work
-frequently already committed successfully even when the wrapper's own
-report looks like a failure.
+The full, canonical process lives in `docs/SPRINT_WORKFLOW_STANDARD.md` —
+read it before drafting any sprint. Do not improvise a variant, and do not
+let a second, divergent copy of it accumulate anywhere in this repo or in
+any chat's own Context — this has happened once already and cost real
+confusion (a stale ancestor copy in `sprint_prompts/` was missing 5 real,
+hard-won sections). If you ever find more than one copy of this document,
+treat the discrepancy itself as a bug worth fixing immediately, not
+something to route around.
 
 ## Verify Script Discipline
 
@@ -330,11 +331,6 @@ wrong, here's what's actually true" or "this negative behavior is a
 deliberate, correct design choice, not a bug." Don't bury a real finding
 inside a bare PASS line.
 
-**Seed a real test user before tests** (or the project's current equivalent
-pattern — confirm against `docs/schema_snapshot.sql`, this convention
-predates the multi-tenant/Doppler work and the exact seed shape may need
-reconfirming for a new sprint).
-
 ## Schema Notes
 
 ### member_target_allocations — Partial Unique Index
@@ -357,7 +353,10 @@ deliberately excluded from CRM-visibility surfaces by default).
 See `docs/reference.md` for seed entity UUIDs, role UUIDs, entity type enum
 values, and sprint history. See `docs/PROJECT_STATUS.md` for current build
 status across every major subsystem. See `docs/OUTSTANDING_TODO_LIST.md` for
-the current, real list of unfinished work.
+the current, real list of unfinished work. See
+`docs/CROSS_PROJECT_STATUS_RECONCILIATION.md` for live-database-verified
+status across every chat thread in this Project, and for undeveloped specs
+sitting in a chat that haven't become a tracked sprint yet.
 
 ## Major Subsystem Design Docs
 - `docs/PORTFOLIO_REPORTING_DESIGN_V6.md` — positions, transactions,
@@ -367,6 +366,8 @@ the current, real list of unfinished work.
   touching this service again)
 - `docs/WORKFLOW_SCHEDULER_DESIGN_V1.md` — RRULE-based scheduling (built,
   all sprints merged)
+- `docs/TA_MODEL_INTEGRATION_BRIEF.md` — Takahashi-Alexander PE cash-flow
+  model (built, all 4 sprints merged)
 
 ## Brand System
 

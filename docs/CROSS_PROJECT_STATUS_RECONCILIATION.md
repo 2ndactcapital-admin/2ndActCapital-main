@@ -8,8 +8,6 @@
 
 ## Live schema summary
 
-Three real schemas in the deployed database:
-
 | Schema | Table count | What it is |
 |---|---|---|
 | `public` | 145 | Core application tables |
@@ -25,9 +23,9 @@ Three real schemas in the deployed database:
 - **TA Model integration** — `portfolio.ta_model_params`, `portfolio.ta_calibration_results` confirmed live; all 4 sprints.
 - **CRM UDF module** — `portfolio.udf_definitions`, `udf_values`, `udf_layouts`, `udf_layout_sections`, `udf_layout_items`, `udf_field_permissions`, `udf_tab_permissions`, `udf_tabs`, `udf_tag_assignments`, `udf_definition_audit` all confirmed live; 6 sprints, 462 assertions.
 - **Workflow Scheduler** — `workflow_definitions`, `workflow_runs`, `workflow_run_steps`, `workflow_steps`, `workflow_triggers`, `workflow_versions` confirmed live; all 5 sprints.
-- **Fee/Billing module** — substantial real schema: `fee_assignments/credits/discounts/exclusions/invoices/narratives/receipts/run_lines/runs/schedule_tiers/schedules`, `chart_of_accounts`, `journal_entries/lines`, `ledger_books`, `posting_templates`, `revenue_events`, `v_capital_accounts`, `v_profitability_events`, `v_trial_balance`. fee31 → fee43 shipped per that thread's own reports.
+- **Fee/Billing module** — substantial real schema (fee assignments/invoices/schedules, chart_of_accounts, journal_entries/lines, ledger_books, posting_templates, revenue_events, GL views). fee31 → fee43 shipped per that thread's own reports.
 - **LiteLLM Phase A + B** — proxy deployed, application code routes through it, rollback proven. **No usable tool/UX exists yet** — this is plumbing only.
-- **Account layer + household precedence override** — the RFC exchange between this thread and the fee-module thread resolved cleanly: `account_id` added nullable to `positions`; `portfolio_precedence_household_overrides` table exists, confirming the recommendation (extend the existing org-level precedence mechanism to household granularity) was implemented rather than a duplicate `data_source_precedence` table being built. Currently empty (0 rows) — not yet exercised against real data.
+- **Account layer + household precedence override** — RFC exchange resolved: `account_id` nullable on `positions`; `portfolio_precedence_household_overrides` exists, confirming the recommended extension (not a duplicate `data_source_precedence` table) was implemented. Currently empty — not yet exercised against real data.
 
 ---
 
@@ -35,72 +33,100 @@ Three real schemas in the deployed database:
 
 **`altruist_connections`, `altruist_oauth_states`, `altruist_one_evaluations`, `altruist_webhook_events` all exist in the live schema — and are all genuinely empty (0 rows).**
 
-This means either these tables were scaffolded ahead of that thread's own Sprint 1 (a real Part 1-style migration applied by someone, at some point), or something started and never actually connected. **Action needed**: that thread's Sprint 1 Task 1 discovery must check this directly before assuming a clean slate — building a second, parallel table for the same purpose would be a real schema collision.
+Either scaffolded ahead of that thread's own Sprint 1, or something started and never connected. **Action needed**: that thread's Sprint 1 Task 1 discovery must check this directly before assuming a clean slate.
 
 ---
 
 ## Distinction worth being precise about — the "agentic layer"
 
-`assistant_action_catalog` has 16 real, live rows — but this is the **S11 action-registry infrastructure** (the `agents propose, deterministic code disposes` mechanism), **not** the ~6-8 dedicated agents/Desks layer referenced elsewhere as unbuilt. Both are real; they are different tiers. The registry mechanism exists and is populated; the agents built on top of it do not exist yet. Table existence does not imply the higher-level feature is complete — the same caution applies to `deal_scores`/`deal_ai_summaries` (schema exists, the AI-generation layer populating them is the documented gap) and to Structured Investments generally (see below).
+`assistant_action_catalog` has 16 real, live rows — the **S11 action-registry infrastructure**, **not** the ~6-8 dedicated agents/Desks layer (see the full spec below — this layer is real design work, genuinely not built). Table existence does not imply the higher-level feature is complete.
 
 ---
 
 ## Confirmed NOT done
 
 - Workflow Manager Wave 2 (NL-authored, editable BPMN) + the NL-to-workflow-template library.
-- **Agentic layer / Desks** (~6-8 agents) — gated on Wave 2, per the platform's own sequencing.
-- **LiteLLM Phases C–J** — Voyage routing, model picker, task assignment, budget UX, reporting, recommender, voice. The actual tool + UX a person would touch.
-- Deal Diligence Engine AI wiring (schema exists, generation layer does not), Pipeline A / member-acquisition funnel, Chancery/Document Vault, TaskRouter, correspondence tracking, voice onboarding, MCP connector registry, retention policy.
-- Custodial Flat Files ingestion, Altruist OAuth integration (Sprint 1 drafted, not yet run, real schema pre-exists per the finding above).
+- **Agentic layer / Desks** — gated on Wave 2. See the full, real spec below — 14 real design decisions exist, zero are built.
+- **LiteLLM Phases C–J** — Voyage routing, model picker, task assignment, budget UX, reporting, recommender, voice.
+- Deal Diligence Engine AI wiring, Pipeline A, Chancery/Document Vault, TaskRouter, correspondence tracking, voice onboarding, MCP connector registry, retention policy.
+- Custodial Flat Files ingestion, Altruist OAuth integration.
 
 ---
 
 ## Structured Investments — unresolved, needs direct follow-up
 
-No table in the live schema is literally named for this. The closest candidate is `portfolio.securities_global_note_terms` + `note_terms_field_registry` + `note_terms_stp_policy` — structured-*note* infrastructure, one real category of structured investment, but coverage of the full intended scope is **not confirmed** by this discovery. Needs a direct, targeted follow-up rather than being marked done or not-done on the strength of this pass alone.
+No table literally named for this. Closest candidate: `portfolio.securities_global_note_terms` + `note_terms_field_registry` + `note_terms_stp_policy` — structured-*note* infrastructure, coverage of full intended scope **not confirmed**.
 
 ---
 
 ## Financial / Cash-Flow Planning module — corrected status
 
-**Previously logged as "not yet scoped." This is wrong — it is scoped in detail, zero sprints executed.**
+**Scoped in detail (`acct00`–`acct02`, `cash00`–`cash12`), zero sprints executed.**
 
-Real, existing design on record:
-- Sprint sequence: `acct00`–`acct02`, then `cash00`–`cash12`.
-- **Prerequisite, not started**: read-only Altruist integration (account list, balances, positions, entity mapping) — connects directly to the Altruist finding above; the prerequisite tables exist but are empty, so this hasn't actually begun.
-- **Real, unresolved open questions with Altruist**: write-endpoint sandbox access, brokered CD availability, the actual Altruist One cash rate (negotiated vs. scheduled), whether Altruist takes a spread on cash (needed regardless, for ADV Item 5 disclosure).
-- **Design decision already made**: instrument selection driven by account tax treatment — T-bills dominate CDs on after-tax yield for NY-domiciled taxable members.
-- **The differentiated product**: obligation-matched laddering.
-- **A flagged, unresolved dependency, now newly actionable**: the original planning note explicitly flags a *potential overlap between the obligation ledger and existing SPV commitment tracking*, to be resolved before `cash00`. **A real obligation ledger was built tonight** — TA Model Sprint 4, `GET /modeling/ta/obligations/{commitment_id}`, genuinely computed at read time, real 36-month visibility, proven with two commitments producing genuinely different real output. This is very likely the exact thing that planning note anticipated needing reconciliation against — worth a direct discovery sprint confirming whether tonight's work resolves this dependency before scoping `cash00` further.
-
-**Corrected status: 🔄 scoped, zero sprints executed. Prerequisite (Altruist read-only) not started. One real, newly-relevant dependency to resolve before `cash00`.**
+- **Prerequisite, not started**: read-only Altruist integration — tables exist but empty, matching the Altruist finding above.
+- **Real, unresolved Altruist questions**: write-endpoint sandbox access, brokered CD availability, actual Altruist One cash rate, whether Altruist takes a spread on cash (needed for ADV Item 5 disclosure).
+- **Design decision made**: instrument selection driven by account tax treatment — T-bills dominate CDs on after-tax yield for NY-domiciled taxable members.
+- **Differentiated product**: obligation-matched laddering.
+- **Newly-actionable dependency**: the plan flags a potential overlap between the obligation ledger and SPV commitment tracking, to resolve before `cash00`. TA Model Sprint 4 built a real obligation ledger tonight (`GET /modeling/ta/obligations/{commitment_id}`, read-time, 36-month visibility) — very likely the resolution. Worth a direct discovery sprint confirming this before scoping `cash00`.
 
 ---
 
 ## Recommended next actions
 
-1. Send the Altruist-tables-already-exist finding to that thread directly, before their Sprint 1 runs.
-2. Confirm the fee-module thread's `data_source_precedence` decision is fully wired (the household-override table exists but is empty — worth confirming intent to actually populate/exercise it).
-3. Run a direct discovery sprint on Structured Investments' real scope before marking it done or not-done.
-4. Run a direct discovery sprint on whether TA Model's new obligation ledger resolves the cash-planning module's flagged SPV-overlap dependency, before scoping `cash00`.
-5. Re-run this kind of live-schema discovery periodically as more threads accumulate independent work — chat-level summaries alone have already proven unreliable multiple times in one session (the Workflow Scheduler was independently reported as "not built" by a different thread despite five real, merged sprints).
+1. Send the Altruist-tables-already-exist finding to that thread before their Sprint 1 runs.
+2. Confirm the fee-module thread intends to actually populate/exercise `portfolio_precedence_household_overrides`.
+3. Run a direct discovery sprint on Structured Investments' real scope.
+4. Run a direct discovery sprint on whether TA Model's obligation ledger resolves the cash-planning module's SPV-overlap dependency before scoping `cash00`.
+5. **New, from the agentic-methods review**: items #3 and #5 below (capability annotation on the action registry; `review_role` on the proposal queue) get more expensive to retrofit every sprint they wait — worth scoping before more Workflow Manager Wave 2 / TaskRouter (S27) work proceeds, since #2 and #10 below are described as literally "the substance of S27."
+6. Re-run this kind of live-schema discovery periodically — chat-level summaries alone have already proven unreliable multiple times in one session.
 
 ---
 
 ## Undeveloped specs — real design work not yet tracked as a sprint or TODO
 
-Populated by running the two-part review prompt (see `docs/SPRINT_WORKFLOW_STANDARD.md`'s own review process) against each chat thread in the Project. Every thread reports here regardless of whether it has ever run a real sprint — this section exists specifically to surface architecture and design work sitting in a chat that hasn't become tracked work anywhere else.
+Populated by running the two-part review prompt (`docs/SPRINT_WORKFLOW_STANDARD.md`) against each chat thread. Entries stay here until they become a real sprint or tracked TODO item — move, don't delete, at that point, so this remains a record of where each piece of design work originated.
 
-**Format per entry**: `Thread` — one-line description — enough scoping detail for a discovery sprint to start from.
+### Implementing agentic methods at Hollisworks
 
-*(Entries added below as each thread's review comes back. Once an entry becomes a real sprint or a tracked `OUTSTANDING_TODO_LIST.md` item, move it out of this section and note where it landed, rather than deleting it — this section doubles as a record of where each piece of design work actually originated.)*
+Architecture-only thread, no sprints run. **14 real, specific design decisions, none tracked as a sprint or TODO anywhere else.** Full detail below — this is substantial enough to warrant its own future discovery-sprint sequence, not a single line item.
 
-- **Implementing agentic methods at Hollisworks** — architecture-only thread, no sprints run. Real design work discussed: agent design, tool boundaries, "desks," context assembly, guardrails — the ~6-8 dedicated agents/Desks layer referenced elsewhere as gated on Workflow Manager Wave 2. Not yet scoped as a sprint sequence anywhere. *(Awaiting that thread's own detailed Part 2 response for full scoping detail — this entry recorded on the strength of this session's own knowledge that this layer exists as a real, named architectural concept, not yet a tracked sprint plan.)*
+**Suggested priority, per that thread's own sequencing note**: #3 and #5 are schema decisions that get more expensive the longer they wait — do these before more S27/Workflow-Manager work proceeds. #13 is roughly an afternoon of work. #2 and #10 ARE the substance of S27 — scope them together with whatever picks up TaskRouter. #6, #9, #14 are product work that can run in parallel with the engineering track.
 
-*(Additional entries pending as each remaining thread's review completes.)*
+1. **Agents-propose / code-disposes as a platform invariant.** No agent writes to a domain table; all agent output lands in Tier-1 proposal rows. *Scope*: confirm the proposed-state table can carry every object type an agent would produce (documents, adjustments, memos, scores, obligations), or whether it needs a generic payload + object_type shape.
+
+2. **Agent contract belongs in S27, not S29a.** Six constraints — principal-as-user, workflow-instance execution, bounded loop, per-step decision log, idempotency, eval gate — land before the first real agent. *Scope*: whether S27's TaskRouter schema already covers per-step logging or needs new `agent_runs`/`agent_run_steps` tables.
+
+3. **Capability annotation on the action registry.** Each verb carries capability (SOC vocabulary) + tier + idempotent, so `tools_for(allowlist ∩ principal ∩ ceiling)` filters at the registry layer, not per-endpoint. *Flagged in-thread as cheap now, expensive to retrofit across S26–S29a — highest-urgency item on this list.*
+
+4. **Eight agents, boundary = tool allowlist × reviewer role.** Chancery, Custodial Ops, Portfolio & Suitability, Deal & SPV, Fund Admin & Billing, Compliance Analyst, Hollis (member, read-only), Authoring (internal). *Scope*: map the ~85-verb taxonomy onto the eight allowlists; find verbs belonging to none or several.
+
+5. **`review_role` on the proposal queue.** Routing by reviewer from day one, not a global queue segmented later — direct consequence of #4's boundary rule. *Scope*: column + routing rules + queue-per-role UI.
+
+6. **Desks as the user-facing object.** Presentation layer between agents (8) and skills (dozens); 15–20 desks, each a config row: name, scope, agent, task keys, queue, human owner. Two rules: no human first names; every desk renders its owner. White-label-native. *Scope*: desks table, resolution from task key → desk → agent, and the naming convention as a written standard.
+
+7. **Compliance Analyst ≠ Compliance Officer.** Agent emits findings-with-evidence, no disposition field; the CCO's disposition is a separate human-principal write. Agent runs are 204-2 records; prompt versions are supervised documents; eval results are 206(4)-7 testing evidence; the Compliance agent cannot surveil its own runs (real S30 SOC-matrix constraint). *Scope*: schema shape that makes a disposition field structurally impossible, plus the self-supervision exclusion rule.
+
+8. **Progressive context loading with a manifest.** Stage 0 cached prefix → stage 1 manifest (what exists, not contents) → stage 2 agent-requested reads → stage 3 retrieval. Read tools return `{value, source_ref, as_of}`. *Scope*: manifest generation per entity; token/accuracy comparison vs. stuffing.
+
+9. **Three-depth progressive disclosure in review UI.** L1 claim / L2 reasoning + evidence / L3 full trace. L2 assembles from `source_refs` in the step log, not agent prose. *Scope*: the review console — L2 is the piece most systems skip, and the reason approval doesn't become rubber-stamping.
+
+10. **`entity_context(entity_id, as_of, principal)` as the single shared assembler.** Seven fields; one-hop graph by default; mandatory `as_of` with no default-to-now; built through `resolve_entity_set`; flags rendered first. *Flagged in-thread as the sleeper dependency — if each agent assembles context its own way, you get eight subtly different visibility bugs.*
+
+11. **Workflow context: variables cross step boundaries, reasoning does not.** Prior steps' structured outputs are readable; their chain-of-thought is not. One `as_of` stamped for the whole run. *Scope*: what the workflow engine currently passes between steps.
+
+12. **Guardrails: four layers, only the top one is a prompt.** Tool surface / write boundary / budget are non-bypassable; instructions are for quality only. Plus input isolation (third-party PDF text is data, not instructions — real vector once Chancery ingests K-1s) and no self-escalation (an agent can't write `agent_defs` or widen its own allowlist).
+
+13. **Fixed escalation-reason enum.** `budget | max_steps | tool_error | low_confidence | refused | ambiguous`. Free-text makes operating metrics useless within a month. *Trivial to add now.*
+
+14. **Acceptance rate as the primary production quality metric.** Per agent, per org; a drop is an incident. Shadow mode (agent runs on real traffic, proposals nobody acts on, compare to what humans did) as the promotion gate before Tier 1. *Scope*: metric definition, shadow-mode plumbing, thresholds.
+
+**Custody cliff** — not a work item, a permanent standing rule, now also recorded in `CLAUDE.md`: trade execution, money movement, filing submission, and GL posting never get an agent. Permanently, not phase-two.
+
+*(Additional thread entries pending as remaining reviews complete.)*
 
 ---
 
 ## Also found and fixed this pass
 
-- **Two contradictory copies of `SPRINT_WORKFLOW_STANDARD.md` existed simultaneously** — `sprint_prompts/SPRINT_WORKFLOW_STANDARD.md` (stale ancestor, missing 5 real sections including known gotchas, DB-contamination recovery, and the regression-check caveat) vs. the root copy (live, correct). Root copy confirmed canonical; the `sprint_prompts/` copy replaced with a one-line pointer rather than left as a second, independently-editable version — found by the "Implementing agentic methods at Hollisworks" thread during its own review pass, a genuinely valuable finding despite that thread never having run a sprint.
+- **Two contradictory copies of `SPRINT_WORKFLOW_STANDARD.md` existed simultaneously** — the `sprint_prompts/` copy was a stale ancestor missing 5 real sections (heredoc save method, Part-1 apply-before-handoff timing, the 8-entry gotchas section, DB-contamination recovery, the regression-check stuck-transaction caveat, FK teardown ordering). Root copy confirmed canonical; `sprint_prompts/` copy replaced with a one-line pointer. Found independently by the "Implementing agentic methods at Hollisworks" thread during its own review pass.
+- **`litellm_diagnose.py` removed from Project Context** — was a one-off debugging script for the now-resolved `PROXY_ADMIN` role-resolution bug; sitting as ambient context in every chat with nothing left to diagnose. Kept in the repo for historical reference; no longer loaded into every thread's context window.
