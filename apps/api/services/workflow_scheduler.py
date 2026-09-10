@@ -81,7 +81,7 @@ from datetime import datetime, timezone
 
 from services import workflow_engine, workflow_todos
 from services.action_registry import REGISTRY
-from services.database import reset_rls_context, set_rls_context
+from services.database import platform_scope, reset_rls_context, set_rls_context
 from services.workflow_schedule import (
     DEFAULT_LOOKBACK_MINUTES,
     ScheduleError,
@@ -155,24 +155,27 @@ async def load_due_candidates(conn) -> list:
     acting for all of them, so this scan carries no org filter. Isolation is
     enforced where it matters — each run is created under ITS OWN trigger's
     org_id and RLS context (see :func:`_fire`), never the scanning connection's.
+    See :func:`services.database.platform_scope` for why this needs the
+    ``is_super_admin`` carve-out re-asserted fresh here rather than once.
     """
-    return await conn.fetch(
-        """
-        SELECT t.id, t.org_id, t.workflow_definition_id, t.schedule_cron,
-               t.timezone, t.start_date, t.end_date, t.max_occurrences,
-               t.occurrence_count, t.last_fired_at, t.created_by,
-               d.name AS workflow_name,
-               v.id   AS workflow_version_id
-        FROM workflow_triggers t
-        JOIN workflow_definitions d ON d.id = t.workflow_definition_id
-        LEFT JOIN workflow_versions v
-               ON v.workflow_definition_id = t.workflow_definition_id
-              AND v.is_current
-        WHERE t.trigger_type = $1 AND t.is_active
-        ORDER BY t.created_at, t.id
-        """,
-        SCHEDULED_TRIGGER_TYPE,
-    )
+    async with platform_scope(conn):
+        return await conn.fetch(
+            """
+            SELECT t.id, t.org_id, t.workflow_definition_id, t.schedule_cron,
+                   t.timezone, t.start_date, t.end_date, t.max_occurrences,
+                   t.occurrence_count, t.last_fired_at, t.created_by,
+                   d.name AS workflow_name,
+                   v.id   AS workflow_version_id
+            FROM workflow_triggers t
+            JOIN workflow_definitions d ON d.id = t.workflow_definition_id
+            LEFT JOIN workflow_versions v
+                   ON v.workflow_definition_id = t.workflow_definition_id
+                  AND v.is_current
+            WHERE t.trigger_type = $1 AND t.is_active
+            ORDER BY t.created_at, t.id
+            """,
+            SCHEDULED_TRIGGER_TYPE,
+        )
 
 
 async def _workflow_in_progress(conn, *, definition_id, org_id):
@@ -181,19 +184,20 @@ async def _workflow_in_progress(conn, *, definition_id, org_id):
     Scoped to the trigger's own org as well as its definition: two orgs running
     copies of the same definition must not block each other.
     """
-    return await conn.fetchrow(
-        """
-        SELECT r.id, r.status, r.started_at
-        FROM workflow_runs r
-        JOIN workflow_versions v ON v.id = r.workflow_version_id
-        WHERE v.workflow_definition_id = $1
-          AND r.org_id = $2
-          AND r.status <> ALL($3::text[])
-        ORDER BY r.started_at DESC
-        LIMIT 1
-        """,
-        definition_id, org_id, list(TERMINAL_RUN_STATUSES),
-    )
+    async with platform_scope(conn):
+        return await conn.fetchrow(
+            """
+            SELECT r.id, r.status, r.started_at
+            FROM workflow_runs r
+            JOIN workflow_versions v ON v.id = r.workflow_version_id
+            WHERE v.workflow_definition_id = $1
+              AND r.org_id = $2
+              AND r.status <> ALL($3::text[])
+            ORDER BY r.started_at DESC
+            LIMIT 1
+            """,
+            definition_id, org_id, list(TERMINAL_RUN_STATUSES),
+        )
 
 
 async def _claim(conn, *, trigger_id, occurrence_utc) -> int | None:
@@ -202,21 +206,25 @@ async def _claim(conn, *, trigger_id, occurrence_utc) -> int | None:
     Returns the new occurrence_count, or ``None`` when the claim was lost —
     another tick already recorded this occurrence, the trigger was deactivated,
     or its cap filled in between. See the module docstring for why this single
-    statement IS the idempotency guarantee.
+    statement IS the idempotency guarantee — the transaction
+    :func:`~services.database.platform_scope` opens here commits (or rolls
+    back) around this one UPDATE, same durability boundary as the bare
+    autocommit statement this replaced.
     """
-    return await conn.fetchval(
-        """
-        UPDATE workflow_triggers
-        SET last_fired_at = $2,
-            occurrence_count = occurrence_count + 1
-        WHERE id = $1
-          AND is_active
-          AND (last_fired_at IS NULL OR last_fired_at < $2)
-          AND (max_occurrences IS NULL OR occurrence_count < max_occurrences)
-        RETURNING occurrence_count
-        """,
-        trigger_id, occurrence_utc,
-    )
+    async with platform_scope(conn):
+        return await conn.fetchval(
+            """
+            UPDATE workflow_triggers
+            SET last_fired_at = $2,
+                occurrence_count = occurrence_count + 1
+            WHERE id = $1
+              AND is_active
+              AND (last_fired_at IS NULL OR last_fired_at < $2)
+              AND (max_occurrences IS NULL OR occurrence_count < max_occurrences)
+            RETURNING occurrence_count
+            """,
+            trigger_id, occurrence_utc,
+        )
 
 
 async def _fire(pool, *, trigger, occurrence_utc):

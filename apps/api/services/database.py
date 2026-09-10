@@ -75,6 +75,7 @@ non-bypass ``app_service`` role is a deliberate, separate, manual step.
 """
 
 import os
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
 import asyncpg
@@ -303,3 +304,36 @@ async def close_pool() -> None:
     if _pool is not None:
         await _pool.close()
         _pool = None
+
+
+@asynccontextmanager
+async def platform_scope(conn):
+    """Wrap ONE unit of work on a raw (non-pooled) connection with the
+    ``is_super_admin`` RLS carve-out, scoped ``SET LOCAL`` to one transaction.
+
+    For platform-level jobs that open their own raw ``asyncpg`` connection
+    instead of going through :func:`get_pool` (currently: the workflow
+    scheduler cron tick, ``workflow_scheduler_tick.py``), and that genuinely
+    need to see or touch rows across every org — the same ``OR
+    is_super_admin`` carve-out every such table's RLS policy already carries
+    (``workflow_triggers``, ``workflow_definitions``, ``workflow_versions``,
+    ``member_todos``, ``workflow_runs``), never a bypass-role connection.
+
+    MUST be ``SET LOCAL``, and MUST be reapplied fresh per transaction — NOT
+    set once for the connection's whole lifetime. This was measured, not
+    assumed, during the ``rlscutover`` sprint: under Supabase's
+    transaction-mode pooler, a raw connection's physical backend can be, and
+    in practice was, the SAME backend process handed out to a completely
+    separate logical connection (here: :func:`get_pool`'s RLS-aware pool,
+    used by the very same tick to fire a run under a specific org's
+    context). The moment that OTHER connection's transaction commits, the
+    pooler resets the shared backend's session-level GUCs — silently wiping
+    out a plain, connection-lifetime ``SET`` made earlier on this
+    connection, mid-tick, with no error. Re-asserting it fresh inside each
+    transaction, exactly like :func:`_apply_rls_settings` already does for
+    the ordinary per-request pool, is what makes it reliable regardless of
+    what else is sharing the backend.
+    """
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        yield conn

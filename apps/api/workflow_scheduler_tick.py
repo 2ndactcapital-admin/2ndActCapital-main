@@ -27,12 +27,31 @@ invoked nothing. ``run_scheduler_tick`` therefore registers the actions itself,
 once per tick, rather than relying on an import side effect that this process
 does not have.
 
-WHY TWO CONNECTIONS. The scan and the atomic claim run on a PLAIN asyncpg
-connection: the scheduler is a platform-level process and must see every org's
-triggers, which an org-scoped RLS context would prevent. The runs themselves go
-through the ordinary RLS-aware application pool, with each run created under
-its OWN trigger's org context — so a trigger in one org can never start a run
-in another.
+WHY TWO CONNECTIONS. The scan and the atomic claim run on a separate, plain
+asyncpg connection: the scheduler is a platform-level process and must see
+every org's triggers, which an org-scoped RLS context would prevent. Every
+query this connection issues (``services.workflow_scheduler
+.load_due_candidates`` / ``_workflow_in_progress`` / ``_claim``, and
+``services.workflow_todos.dismiss_orphaned_run_alerts``) goes through
+``services.database.platform_scope`` — the SAME ``OR is_super_admin``
+carve-out every RLS policy on those tables already carries for exactly this
+kind of platform job, never a bypass role or a different DB user.
+
+That carve-out is set ``SET LOCAL``, fresh, INSIDE each individual query's own
+transaction — never once for this connection's whole lifetime. An earlier
+version of this fix set it once, session-wide, right after connecting, on the
+theory that a connection used by nobody else for its whole life has nothing to
+leak into. That was wrong, and testing (not review) is what caught it: under
+Supabase's transaction-mode pooler this connection's physical backend was
+observably the SAME backend handed to the ordinary RLS-aware pool below (see
+``get_pool()``) for firing an individual trigger's run — and the moment THAT
+pool transaction committed, the pooler reset the shared backend's session
+GUCs, silently wiping this connection's session-wide setting mid-tick with no
+error. See ``platform_scope``'s docstring for the full mechanism.
+
+The runs themselves go through the ordinary RLS-aware application pool, with
+each run created under its OWN trigger's org context — so a trigger in one org
+can never start a run in another.
 
 SCHEDULE. Declared in render.yaml as every 5 minutes, UTC. Render's cron
 schedules are UTC-only and cannot be made timezone-aware, which is exactly why
@@ -61,6 +80,9 @@ async def main() -> int:
 
     try:
         # statement_cache_size=0 is mandatory behind Supabase's PgBouncer.
+        # No is_super_admin GUC is set here — see "WHY TWO CONNECTIONS" above:
+        # each query that needs the platform-scope carve-out sets it itself,
+        # fresh, via services.database.platform_scope.
         conn = await asyncpg.connect(
             database_url, statement_cache_size=0, ssl="require", timeout=30,
         )

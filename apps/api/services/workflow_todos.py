@@ -27,6 +27,8 @@ its own transaction / connection.
 """
 from __future__ import annotations
 
+from services.database import platform_scope
+
 # Stable ``source`` markers so a run/step's todos can be found and updated
 # idempotently (there is no natural unique key on member_todos to rely on).
 TODO_SOURCE_USER_TASK = "workflow_user_task"
@@ -255,27 +257,30 @@ async def dismiss_orphaned_run_alerts(conn, *, org_id=None) -> int:
     ``org_id=None`` sweeps every org — that is the scheduler's platform scope,
     the same scope its trigger scan already runs at, and it is why this takes
     the tick's plain connection rather than an org-scoped pool connection.
-    Passing an ``org_id`` narrows it to one tenant.
+    Passing an ``org_id`` narrows it to one tenant. See
+    :func:`services.database.platform_scope` for why the ``is_super_admin``
+    carve-out is re-asserted fresh in its own transaction here.
     """
     note = " [Auto-dismissed: the workflow run this alert points to no longer exists.]"
-    return int(
-        (
-            await conn.execute(
-                """
-                UPDATE member_todos t
-                SET status = 'dismissed',
-                    detail = left(coalesce(t.detail, '') || $2, 2000),
-                    updated_at = now()
-                WHERE t.source = $1
-                  AND t.related_type = 'workflow_run'
-                  AND t.related_id IS NOT NULL
-                  AND t.status = 'open'
-                  AND ($3::uuid IS NULL OR t.org_id = $3)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM workflow_runs r WHERE r.id = t.related_id
-                  )
-                """,
-                TODO_SOURCE_RUN_HELD, note, org_id,
-            )
-        ).split()[-1]
-    )
+    async with platform_scope(conn):
+        return int(
+            (
+                await conn.execute(
+                    """
+                    UPDATE member_todos t
+                    SET status = 'dismissed',
+                        detail = left(coalesce(t.detail, '') || $2, 2000),
+                        updated_at = now()
+                    WHERE t.source = $1
+                      AND t.related_type = 'workflow_run'
+                      AND t.related_id IS NOT NULL
+                      AND t.status = 'open'
+                      AND ($3::uuid IS NULL OR t.org_id = $3)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM workflow_runs r WHERE r.id = t.related_id
+                      )
+                    """,
+                    TODO_SOURCE_RUN_HELD, note, org_id,
+                )
+            ).split()[-1]
+        )
