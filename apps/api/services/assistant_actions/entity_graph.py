@@ -143,7 +143,7 @@ async def _link_ownership_undo(pool, user_id: str, org_id: str,
 def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
-            key="entity.show_hierarchy",
+            key="entity_graph.show_hierarchy",
             module="entity_graph",
             description=(
                 "Show the ownership hierarchy for an entity, including its "
@@ -171,7 +171,7 @@ def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
             key="entity.link_ownership",
-            module="entity_graph",
+            module="entity",
             description=(
                 "Link two entities with an ownership relationship, "
                 "specifying the ownership percentage."

@@ -154,7 +154,7 @@ def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
             key=ACTION_KEY,
-            module="litellm_ops",
+            module="litellm",
             description=(
                 "Reload the LiteLLM proxy's in-memory model cost map from the "
                 "upstream price table, so per-model pricing and cost attribution "

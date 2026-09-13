@@ -235,7 +235,7 @@ def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
             key="entities.count",
-            module="queries",
+            module="entities",
             description=(
                 "Count how many entities match a filter, and return a short "
                 "sample. Use this for aggregate questions like 'how many "
@@ -277,7 +277,7 @@ def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
             key="investments.count",
-            module="queries",
+            module="investments",
             description=(
                 "Count how many member investments match a filter, and return a "
                 "short sample. Use this for aggregate questions like 'how many "

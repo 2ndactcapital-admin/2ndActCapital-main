@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-10 (RLS enforcement cutover — DATABASE_URL now genuinely `app_service` in Doppler, code-level proof complete via the real application against the real database (21/21 PASS across smoke-test/cross-org-isolation/scheduler-tick), a second real RLS gap found and fixed live (`main.py` startup `sync_catalog`); Render redeploy confirmation still owed — see the entry below); previously 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-13 (Registry defects + escalation_reason enum — five `assistant_action_catalog` module/action_key drifts corrected per-key (one rename, four module fixes), `crm.draft_note.reversible` fixed with a new undo-path gap surfaced and recorded, `escalation_reason` enum reconfirmed and still deliberately unwired; see the entry below); previously 2026-09-10 (RLS enforcement cutover — DATABASE_URL now genuinely `app_service` in Doppler, code-level proof complete via the real application against the real database (21/21 PASS across smoke-test/cross-org-isolation/scheduler-tick), a second real RLS gap found and fixed live (`main.py` startup `sync_catalog`); Render redeploy confirmation still owed — see the entry below); previously 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +17,56 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000000000. Registry defects + escalation_reason enum — 5 fixes SHIPPED; nothing blocked (2026-09-13)
+
+`30/30 PASS` — `apps/api/scripts/verify_registryfix.py`. Corrects the five
+confirmed-wrong `assistant_action_catalog` rows found by
+`agenticdiscovery.lowrisk` (`docs/AGENTIC_SUBSTRATE_DISCOVERY.md`, Task 5) and
+asserts the `escalation_reason` enum (already created, deliberately unwired).
+
+**Module/action_key prefix drift — resolved per-key, not uniformly.** Of the
+five drifting rows, only `entity.show_hierarchy` had zero references to its
+key string anywhere outside its own registration — it alone was renamed, to
+`entity_graph.show_hierarchy`. The other four
+(`entity.link_ownership`, `entities.count`, `investments.count`,
+`litellm.reload_model_cost_map`) have real code references to their current
+key (verify scripts, and for `litellm.reload_model_cost_map` a live BPMN
+fixture, `apps/api/fixtures/litellm_cost_map_reload.bpmn`) that a rename would
+silently break — for those four, `module` was corrected instead
+(`entity_graph`→`entity`, `queries`→`entities`/`investments`,
+`litellm_ops`→`litellm`). `module` is write-only metadata (upserted by
+`sync_catalog`, read back by nothing) so correcting it can never break a
+lookup-by-key. Fixed in both the source files
+(`services/assistant_actions/entity_graph.py`, `queries.py`, `litellm_ops.py`)
+and the live DB row; a real `sync_catalog` run (identical to `main.py`
+`_startup`) was proved not to revert any of them, the registry still has
+exactly 16 rows (no orphan left behind by the one rename), and every
+`workflow_steps.action_registry_key` still resolves via a real join.
+
+**`crm.draft_note.reversible` is now `true`**, matching its own
+draft-and-confirm description. **New finding surfaced by the flip, not fixed
+here:** `reversible` gates a real code path
+(`POST /assistant/activity/{id}/undo`, `routers/assistant.py`) that now
+returns HTTP 200 `"undone"` for this action without actually reversing
+anything — `_save_note` never sets an `undo_token`, and `entity_notes` has no
+soft-delete column in the deployed schema. Closing this for real needs a
+schema change; out of scope for this sprint, recorded here so it isn't lost.
+
+**`escalation_reason` enum** — created in an earlier Part-1 sprint, verified
+live again here: exactly the six expected labels
+(`budget, max_steps, tool_error, low_confidence, refused, ambiguous`), in
+order. Still deliberately unwired — no column uses it yet, pending a real
+agent-run table.
+
+**Recorded, not resolved — open design question.** Across all 16 live
+registry rows, `default_autonomy` currently correlates 1:1 with
+`access_type` (every `write` row is `confirm`, every `read` row is `auto`,
+zero exceptions). Whether that is a deliberate invariant this catalog should
+enforce, or simply an artifact of a 16-row sample, is an open question this
+sprint does not resolve.
 
 ---
 

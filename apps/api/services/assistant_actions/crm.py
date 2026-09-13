@@ -71,7 +71,7 @@ def register_actions() -> None:
             access_type="write",
             required_permission=None,
             default_autonomy="confirm",
-            reversible=False,
+            reversible=True,
             render_target="inline",
             handler=_save_note,
             draft_handler=_draft_note_preview,
