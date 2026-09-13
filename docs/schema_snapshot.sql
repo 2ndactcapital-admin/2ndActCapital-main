@@ -134,7 +134,7 @@
 --   PRIMARY KEY accounts_pkey: (id)
 
 -- ===== ai_decision_log =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   task_type                                text NOT NULL
 --   model_requested                          text NOT NULL
@@ -215,7 +215,7 @@
 --   PRIMARY KEY altruist_webhook_events_pkey: (id)
 
 -- ===== assistant_action_catalog =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   action_key                               text NOT NULL
 --   module                                   text NOT NULL
@@ -231,7 +231,7 @@
 --   PRIMARY KEY assistant_action_catalog_pkey: (id)
 
 -- ===== assistant_activities =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid NOT NULL
 --   action_key                               text NOT NULL
@@ -253,7 +253,7 @@
 --   PRIMARY KEY assistant_activities_pkey: (id)
 
 -- ===== assistant_autonomy_prefs =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid NOT NULL
 --   action_key                               text NOT NULL
@@ -263,7 +263,7 @@
 --   UNIQUE assistant_autonomy_prefs_user_id_action_key_key: (user_id, action_key)
 
 -- ===== assistant_conversations =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid NOT NULL
 --   title                                    text
@@ -275,7 +275,7 @@
 --   PRIMARY KEY assistant_conversations_pkey: (id)
 
 -- ===== audit_log =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid
 --   action                                   text NOT NULL
@@ -332,7 +332,7 @@
 --   PRIMARY KEY chart_of_accounts_pkey: (id)
 
 -- ===== compliance_override_requests =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -348,7 +348,7 @@
 --   PRIMARY KEY compliance_override_requests_pkey: (id)
 
 -- ===== compliance_records =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   kyc_status                               USER-DEFINED NOT NULL DEFAULT 'not_started'::kyc_status
@@ -375,7 +375,7 @@
 --   PRIMARY KEY compliance_records_pkey: (id)
 
 -- ===== config =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   config_key                               text NOT NULL
 --   config_value                             text NOT NULL
@@ -471,7 +471,7 @@
 --   PRIMARY KEY cost_schedules_pkey: (id)
 
 -- ===== dashboard_briefs =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid NOT NULL
 --   greeting                                 text
@@ -482,7 +482,7 @@
 --   UNIQUE dashboard_briefs_user_id_key: (user_id)
 
 -- ===== deal_ai_summaries =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   summary_text                             text NOT NULL
@@ -498,7 +498,7 @@
 --   PRIMARY KEY deal_ai_summaries_pkey: (id)
 
 -- ===== deal_documents =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   file_name                                text NOT NULL
@@ -522,7 +522,7 @@
 --   PRIMARY KEY deal_documents_pkey: (id)
 
 -- ===== deal_interest =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -540,7 +540,7 @@
 --   PRIMARY KEY deal_interest_pkey: (id)
 
 -- ===== deal_scores =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   dimension                                text NOT NULL
@@ -558,7 +558,7 @@
 --   PRIMARY KEY deal_scores_pkey: (id)
 
 -- ===== deal_votes =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -569,7 +569,7 @@
 --   PRIMARY KEY deal_votes_pkey: (id)
 
 -- ===== deals =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   slug                                     text
@@ -605,7 +605,7 @@
 --   UNIQUE deals_slug_key: (slug)
 
 -- ===== delegate_grants =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   principal_entity_id                      uuid NOT NULL
 --   delegate_user_id                         uuid
@@ -622,7 +622,7 @@
 --   PRIMARY KEY delegate_grants_pkey: (id)
 
 -- ===== doc_category_proposals =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   proposed_code                            text
 --   proposed_label                           text NOT NULL
@@ -636,7 +636,7 @@
 --   PRIMARY KEY doc_category_proposals_pkey: (id)
 
 -- ===== document_drops =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   source                                   text NOT NULL DEFAULT 'upload'::text
 --   file_count                               integer NOT NULL DEFAULT 0
@@ -647,7 +647,7 @@
 --   PRIMARY KEY document_drops_pkey: (id)
 
 -- ===== document_embeddings =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   provider                                 text NOT NULL
@@ -662,7 +662,7 @@
 --   PRIMARY KEY document_embeddings_pkey: (id)
 
 -- ===== document_entity_links =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   org_id                                   uuid NOT NULL
@@ -673,7 +673,7 @@
 --   PRIMARY KEY document_entity_links_pkey: (id)
 
 -- ===== document_extractions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   extraction_method                        text NOT NULL
@@ -685,7 +685,7 @@
 --   PRIMARY KEY document_extractions_pkey: (id)
 
 -- ===== document_field_corrections =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid
 --   org_id                                   uuid
 --   template_extraction_id                   uuid
@@ -700,7 +700,7 @@
 --   PRIMARY KEY document_field_corrections_pkey: (id)
 
 -- ===== document_link_proposals =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   proposed_link_type                       text NOT NULL
@@ -713,7 +713,7 @@
 --   PRIMARY KEY document_link_proposals_pkey: (id)
 
 -- ===== document_narrative_extractions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   summary                                  text
@@ -724,7 +724,7 @@
 --   PRIMARY KEY document_narrative_extractions_pkey: (id)
 
 -- ===== document_record_links =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   record_type                              text NOT NULL
@@ -735,7 +735,7 @@
 --   PRIMARY KEY document_record_links_pkey: (id)
 
 -- ===== document_template_extractions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   document_id                              uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   template_type                            text NOT NULL
@@ -748,7 +748,7 @@
 --   PRIMARY KEY document_template_extractions_pkey: (id)
 
 -- ===== documents =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid
 --   original_filename                        text NOT NULL
@@ -791,7 +791,7 @@
 --   PRIMARY KEY domain_events_pkey: (id)
 
 -- ===== entities =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_type                              USER-DEFINED NOT NULL
 --   display_name                             text NOT NULL
@@ -839,7 +839,7 @@
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   address_type                             USER-DEFINED NOT NULL DEFAULT 'primary_residence'::address_type
@@ -866,7 +866,7 @@
 --   PRIMARY KEY entity_addresses_pkey: (id)
 
 -- ===== entity_attributes =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   attribute_key                            text NOT NULL
@@ -881,7 +881,7 @@
 --   PRIMARY KEY entity_attributes_pkey: (id)
 
 -- ===== entity_briefs =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   brief_text                               text NOT NULL
@@ -899,7 +899,7 @@
 --   PRIMARY KEY entity_briefs_pkey: (id)
 
 -- ===== entity_document_tags =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   document_id                              uuid NOT NULL
 --   tag                                      text NOT NULL
@@ -909,7 +909,7 @@
 --   PRIMARY KEY entity_document_tags_pkey: (id)
 
 -- ===== entity_documents =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   title                                    text NOT NULL
@@ -926,7 +926,7 @@
 --   PRIMARY KEY entity_documents_pkey: (id)
 
 -- ===== entity_employment =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   employee_id                              uuid NOT NULL
 --   employer_id                              uuid NOT NULL
@@ -944,7 +944,7 @@
 --   PRIMARY KEY entity_employment_pkey: (id)
 
 -- ===== entity_group_members =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   group_id                                 uuid NOT NULL
 --   entity_id                                uuid NOT NULL
@@ -953,7 +953,7 @@
 --   PRIMARY KEY entity_group_members_pkey: (id)
 
 -- ===== entity_groups =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   description                              text
@@ -962,7 +962,7 @@
 --   PRIMARY KEY entity_groups_pkey: (id)
 
 -- ===== entity_holdings =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   taxonomy_key                             text NOT NULL
@@ -976,7 +976,7 @@
 --   PRIMARY KEY entity_holdings_pkey: (id)
 
 -- ===== entity_notes =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   note_text                                text NOT NULL
@@ -991,7 +991,7 @@
 --   PRIMARY KEY entity_notes_pkey: (id)
 
 -- ===== entity_ownership =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   parent_id                                uuid NOT NULL
 --   child_id                                 uuid NOT NULL
@@ -1006,7 +1006,7 @@
 --   PRIMARY KEY entity_ownership_pkey: (id)
 
 -- ===== entity_relationships =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   from_entity_id                           uuid NOT NULL
 --   to_entity_id                             uuid NOT NULL
@@ -1026,7 +1026,7 @@
 --   PRIMARY KEY entity_relationships_pkey: (id)
 
 -- ===== entity_social_profiles =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   platform                                 USER-DEFINED NOT NULL
@@ -1043,7 +1043,7 @@
 --   PRIMARY KEY entity_social_profiles_pkey: (id)
 
 -- ===== entity_tax_ids =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   tax_id_type                              USER-DEFINED NOT NULL DEFAULT 'ssn'::tax_id_type
@@ -1060,7 +1060,7 @@
 --   PRIMARY KEY entity_tax_ids_pkey: (id)
 
 -- ===== external_access_grants =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   grantee_email                            text NOT NULL
@@ -1311,7 +1311,7 @@
 --   PRIMARY KEY fee_schedules_pkey: (id)
 
 -- ===== fx_rates =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid
 --   base_ccy                                 text NOT NULL DEFAULT 'USD'::text
 --   quote_ccy                                text NOT NULL
@@ -1335,7 +1335,7 @@
 --   PRIMARY KEY household_memberships_pkey: (household_id, entity_id)
 
 -- ===== households =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
@@ -1343,7 +1343,7 @@
 --   PRIMARY KEY households_pkey: (id)
 
 -- ===== investment_profile_answers =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   question_id                              uuid NOT NULL
@@ -1360,7 +1360,7 @@
 --   PRIMARY KEY investment_profile_answers_pkey: (id)
 
 -- ===== investment_profile_extractions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   question_id                              uuid NOT NULL
@@ -1376,7 +1376,7 @@
 --   PRIMARY KEY investment_profile_extractions_pkey: (id)
 
 -- ===== investment_profile_questions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   question_key                             text NOT NULL
 --   question_text                            text NOT NULL
@@ -1395,7 +1395,7 @@
 --   UNIQUE investment_profile_questions_question_key_key: (question_key)
 
 -- ===== investment_stage_history =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   member_investment_id                     uuid NOT NULL
 --   from_stage                               text
@@ -1452,7 +1452,7 @@
 --   PRIMARY KEY ledger_books_pkey: (id)
 
 -- ===== marketing_contacts =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   name                                     text NOT NULL
 --   firm                                     text NOT NULL
 --   email                                    text NOT NULL
@@ -1463,7 +1463,7 @@
 --   PRIMARY KEY marketing_contacts_pkey: (id)
 
 -- ===== member_investments =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -1488,7 +1488,7 @@
 --   PRIMARY KEY member_investments_pkey: (id)
 
 -- ===== member_target_allocations =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid
 --   entity_id                                uuid NOT NULL
@@ -1506,7 +1506,7 @@
 --   PRIMARY KEY member_target_allocations_pkey: (id)
 
 -- ===== member_todos =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid NOT NULL
 --   entity_id                                uuid
@@ -1528,7 +1528,7 @@
 --   PRIMARY KEY member_todos_pkey: (id)
 
 -- ===== notification_delivery_log =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   notification_id                          uuid NOT NULL
 --   recipient_id                             uuid NOT NULL
@@ -1545,7 +1545,7 @@
 --   PRIMARY KEY notification_delivery_log_pkey: (id)
 
 -- ===== notification_recipients =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   notification_id                          uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -1559,7 +1559,7 @@
 --   PRIMARY KEY notification_recipients_pkey: (id)
 
 -- ===== notifications =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   event_type                               text NOT NULL
 --   title                                    text NOT NULL
@@ -1573,7 +1573,7 @@
 --   PRIMARY KEY notifications_pkey: (id)
 
 -- ===== org_settings =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   setting_key                              text NOT NULL
 --   setting_value                            jsonb NOT NULL
@@ -1586,7 +1586,7 @@
 --   PRIMARY KEY org_settings_pkey: (id)
 
 -- ===== organizations =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   name                                     text NOT NULL
 --   slug                                     text NOT NULL
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
@@ -1597,7 +1597,7 @@
 --   UNIQUE organizations_slug_key: (slug)
 
 -- ===== ownership_change_log =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   relationship_id                          uuid
 --   from_entity_id                           uuid NOT NULL
@@ -1614,7 +1614,7 @@
 --   PRIMARY KEY ownership_change_log_pkey: (id)
 
 -- ===== permission_set_permissions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   permission_set_id                        uuid NOT NULL
 --   permission_key                           text NOT NULL
@@ -1623,7 +1623,7 @@
 --   UNIQUE permission_set_permissions_set_key_unique: (permission_set_id, permission_key)
 
 -- ===== permission_sets =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   description                              text
@@ -1633,7 +1633,7 @@
 --   PRIMARY KEY permission_sets_pkey: (id)
 
 -- ===== permissions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   name                                     text NOT NULL
 --   resource                                 text NOT NULL
 --   action                                   text NOT NULL
@@ -1692,7 +1692,7 @@
 --   PRIMARY KEY posting_templates_pkey: (id)
 
 -- ===== profile_conversations =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   current_question_index                   integer NOT NULL DEFAULT 0
@@ -1705,7 +1705,7 @@
 --   PRIMARY KEY profile_conversations_pkey: (id)
 
 -- ===== profile_permissions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   profile_id                               uuid NOT NULL
 --   permission_key                           text NOT NULL
@@ -1714,7 +1714,7 @@
 --   UNIQUE profile_permissions_profile_key_unique: (profile_id, permission_key)
 
 -- ===== profiles =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   description                              text
@@ -1746,7 +1746,7 @@
 --   PRIMARY KEY provider_benefit_schedules_pkey: (id)
 
 -- ===== reference_data =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid
 --   list_key                                 text NOT NULL
 --   code                                     text NOT NULL
@@ -1774,7 +1774,7 @@
 --   PRIMARY KEY reference_data_lists_pkey: (id)
 
 -- ===== restricted_access_audit =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   action                                   text NOT NULL
@@ -1784,7 +1784,7 @@
 --   PRIMARY KEY restricted_access_audit_pkey: (id)
 
 -- ===== restricted_access_grants =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -1828,7 +1828,7 @@
 --   PRIMARY KEY role_permissions_pkey: (role_id, permission_id)
 
 -- ===== roles =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   description                              text
@@ -1872,7 +1872,7 @@
 --   PRIMARY KEY spv_carry_runs_pkey: (id)
 
 -- ===== spv_documents =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   spv_id                                   uuid NOT NULL
 --   subscription_id                          uuid
@@ -1932,7 +1932,7 @@
 --   PRIMARY KEY spv_fee_terms_pkey: (id)
 
 -- ===== spv_status_history =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   spv_id                                   uuid NOT NULL
 --   from_status                              text
@@ -1943,7 +1943,7 @@
 --   PRIMARY KEY spv_status_history_pkey: (id)
 
 -- ===== spv_subscriptions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   spv_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
@@ -1960,7 +1960,7 @@
 --   PRIMARY KEY spv_subscriptions_pkey: (id)
 
 -- ===== spv_transaction_allocations =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   transaction_id                           uuid NOT NULL
 --   spv_id                                   uuid NOT NULL
@@ -1974,7 +1974,7 @@
 --   PRIMARY KEY spv_transaction_allocations_pkey: (id)
 
 -- ===== spv_transactions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   spv_id                                   uuid NOT NULL
 --   txn_type                                 text NOT NULL
@@ -1995,7 +1995,7 @@
 --   PRIMARY KEY spv_transactions_pkey: (id)
 
 -- ===== spvs =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   vehicle_entity_id                        uuid
@@ -2020,7 +2020,7 @@
 --   PRIMARY KEY spvs_pkey: (id)
 
 -- ===== staff_assignments =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   assigned_to_user_id                      uuid
@@ -2038,7 +2038,7 @@
 --   PRIMARY KEY team_members_pkey: (team_id, user_id)
 
 -- ===== teams =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   description                              text
@@ -2047,7 +2047,7 @@
 --   PRIMARY KEY teams_pkey: (id)
 
 -- ===== trading_authority_grants =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   entity_id                                uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -2058,7 +2058,7 @@
 --   PRIMARY KEY trading_authority_grants_pkey: (id)
 
 -- ===== transaction_types =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid
 --   code                                     text NOT NULL
 --   label                                    text NOT NULL
@@ -2080,7 +2080,7 @@
 --   PRIMARY KEY transaction_types_pkey: (id)
 
 -- ===== trusted_contacts =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   member_entity_id                         uuid NOT NULL
 --   contact_name                             text NOT NULL
@@ -2092,7 +2092,7 @@
 --   PRIMARY KEY trusted_contacts_pkey: (id)
 
 -- ===== user_notification_preferences =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   user_id                                  uuid NOT NULL
 --   event_type                               text NOT NULL
@@ -2116,7 +2116,7 @@
 --   PRIMARY KEY user_roles_pkey: (user_id, role_id)
 
 -- ===== users =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   email                                    text NOT NULL
 --   full_name                                text
@@ -2144,7 +2144,7 @@
 --   PRIMARY KEY users_pkey: (id)
 
 -- ===== vdr_deal_proposals =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   document_drop_id                         uuid NOT NULL
 --   proposed_fields                          jsonb NOT NULL
@@ -2156,7 +2156,7 @@
 --   PRIMARY KEY vdr_deal_proposals_pkey: (id)
 
 -- ===== workflow_definitions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   name                                     text NOT NULL
 --   description                              text
@@ -2167,7 +2167,7 @@
 --   PRIMARY KEY workflow_definitions_pkey: (id)
 
 -- ===== workflow_run_steps =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   workflow_run_id                          uuid NOT NULL
 --   workflow_step_id                         uuid NOT NULL
 --   org_id                                   uuid NOT NULL
@@ -2182,7 +2182,7 @@
 --   PRIMARY KEY workflow_run_steps_pkey: (id)
 
 -- ===== workflow_runs =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   workflow_version_id                      uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   status                                   text NOT NULL DEFAULT 'running'::text
@@ -2195,7 +2195,7 @@
 --   PRIMARY KEY workflow_runs_pkey: (id)
 
 -- ===== workflow_steps =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   workflow_version_id                      uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   step_key                                 text NOT NULL
@@ -2209,7 +2209,7 @@
 --   UNIQUE workflow_steps_workflow_version_id_step_key_key: (workflow_version_id, step_key)
 
 -- ===== workflow_triggers =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   workflow_definition_id                   uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   trigger_type                             text NOT NULL DEFAULT 'manual'::text
@@ -2227,7 +2227,7 @@
 --   PRIMARY KEY workflow_triggers_pkey: (id)
 
 -- ===== workflow_versions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   workflow_definition_id                   uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   version_number                           integer NOT NULL
@@ -2239,1047 +2239,8 @@
 --   PRIMARY KEY workflow_versions_pkey: (id)
 --   UNIQUE workflow_versions_workflow_definition_id_version_number_key: (workflow_definition_id, version_number)
 
--- ===== litellm.LiteLLM_AccessGroupTable =====
---   access_group_id                          text NOT NULL
---   access_group_name                        text NOT NULL
---   description                              text
---   access_mcp_server_ids                    ARRAY DEFAULT ARRAY[]::text[]
---   access_agent_ids                         ARRAY DEFAULT ARRAY[]::text[]
---   assigned_team_ids                        ARRAY DEFAULT ARRAY[]::text[]
---   assigned_key_ids                         ARRAY DEFAULT ARRAY[]::text[]
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
---   access_model_names                       ARRAY DEFAULT ARRAY[]::text[]
-
--- ===== litellm.LiteLLM_AdaptiveRouterSession =====
---   session_id                               text NOT NULL
---   router_name                              text NOT NULL
---   model_name                               text NOT NULL
---   classified_type                          text NOT NULL
---   misalignment_count                       integer NOT NULL DEFAULT 0
---   stagnation_count                         integer NOT NULL DEFAULT 0
---   disengagement_count                      integer NOT NULL DEFAULT 0
---   satisfaction_count                       integer NOT NULL DEFAULT 0
---   failure_count                            integer NOT NULL DEFAULT 0
---   loop_count                               integer NOT NULL DEFAULT 0
---   exhaustion_count                         integer NOT NULL DEFAULT 0
---   last_user_content                        text
---   last_assistant_content                   text
---   tool_call_history                        jsonb NOT NULL DEFAULT '[]'::jsonb
---   pending_tool_calls                       jsonb NOT NULL DEFAULT '{}'::jsonb
---   turn_count                               integer NOT NULL DEFAULT 0
---   last_processed_turn                      integer NOT NULL DEFAULT '-1'::integer
---   clean_credit_awarded                     boolean NOT NULL DEFAULT false
---   terminal_status                          integer
---   last_activity_at                         timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_AdaptiveRouterState =====
---   router_name                              text NOT NULL
---   request_type                             text NOT NULL
---   model_name                               text NOT NULL
---   alpha                                    double precision NOT NULL
---   beta                                     double precision NOT NULL
---   total_samples                            integer NOT NULL DEFAULT 0
---   last_updated_at                          timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_AgentsTable =====
---   agent_id                                 text NOT NULL
---   agent_name                               text NOT NULL
---   litellm_params                           jsonb
---   agent_card_params                        jsonb NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
---   agent_access_groups                      ARRAY DEFAULT ARRAY[]::text[]
---   object_permission_id                     text
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   static_headers                           jsonb DEFAULT '{}'::jsonb
---   extra_headers                            ARRAY DEFAULT ARRAY[]::text[]
---   tpm_limit                                integer
---   rpm_limit                                integer
---   session_tpm_limit                        integer
---   session_rpm_limit                        integer
-
--- ===== litellm.LiteLLM_AuditLog =====
---   id                                       text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   changed_by                               text NOT NULL DEFAULT ''::text
---   changed_by_api_key                       text NOT NULL DEFAULT ''::text
---   action                                   text NOT NULL
---   table_name                               text NOT NULL
---   object_id                                text NOT NULL
---   before_value                             jsonb
---   updated_values                           jsonb
-
--- ===== litellm.LiteLLM_BudgetTable =====
---   budget_id                                text NOT NULL
---   max_budget                               double precision
---   soft_budget                              double precision
---   max_parallel_requests                    integer
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   model_max_budget                         jsonb
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
---   allowed_models                           ARRAY DEFAULT ARRAY[]::text[]
-
--- ===== litellm.LiteLLM_CacheConfig =====
---   id                                       text NOT NULL DEFAULT 'cache_config'::text
---   cache_settings                           jsonb NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_ClaudeCodePluginTable =====
---   id                                       text NOT NULL
---   name                                     text NOT NULL
---   version                                  text
---   description                              text
---   manifest_json                            text
---   files_json                               text DEFAULT '{}'::text
---   enabled                                  boolean NOT NULL DEFAULT true
---   created_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
-
--- ===== litellm.LiteLLM_Config =====
---   param_name                               text NOT NULL
---   param_value                              jsonb
-
--- ===== litellm.LiteLLM_ConfigOverrides =====
---   config_type                              text NOT NULL
---   config_value                             jsonb NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_CredentialsTable =====
---   credential_id                            text NOT NULL
---   credential_name                          text NOT NULL
---   credential_values                        jsonb NOT NULL
---   credential_info                          jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
-
--- ===== litellm.LiteLLM_CronJob =====
---   cronjob_id                               text NOT NULL
---   pod_id                                   text NOT NULL
---   status                                   USER-DEFINED NOT NULL DEFAULT 'INACTIVE'::litellm."JobStatus"
---   last_updated                             timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   ttl                                      timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_DailyAgentSpend =====
---   id                                       text NOT NULL
---   agent_id                                 text
---   date                                     text NOT NULL
---   api_key                                  text NOT NULL
---   model                                    text
---   model_group                              text
---   custom_llm_provider                      text
---   mcp_namespaced_tool_name                 text
---   prompt_tokens                            bigint NOT NULL DEFAULT 0
---   completion_tokens                        bigint NOT NULL DEFAULT 0
---   cache_read_input_tokens                  bigint NOT NULL DEFAULT 0
---   cache_creation_input_tokens              bigint NOT NULL DEFAULT 0
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   api_requests                             bigint NOT NULL DEFAULT 0
---   successful_requests                      bigint NOT NULL DEFAULT 0
---   failed_requests                          bigint NOT NULL DEFAULT 0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   endpoint                                 text
---   compression_saved_tokens                 bigint NOT NULL DEFAULT 0
---   compression_savings_spend                double precision NOT NULL DEFAULT 0.0
---   prompt_caching_savings_spend             double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_DailyEndUserSpend =====
---   id                                       text NOT NULL
---   end_user_id                              text
---   date                                     text NOT NULL
---   api_key                                  text NOT NULL
---   model                                    text
---   model_group                              text
---   custom_llm_provider                      text
---   mcp_namespaced_tool_name                 text
---   prompt_tokens                            bigint NOT NULL DEFAULT 0
---   completion_tokens                        bigint NOT NULL DEFAULT 0
---   cache_read_input_tokens                  bigint NOT NULL DEFAULT 0
---   cache_creation_input_tokens              bigint NOT NULL DEFAULT 0
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   api_requests                             bigint NOT NULL DEFAULT 0
---   successful_requests                      bigint NOT NULL DEFAULT 0
---   failed_requests                          bigint NOT NULL DEFAULT 0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   endpoint                                 text
---   compression_saved_tokens                 bigint NOT NULL DEFAULT 0
---   compression_savings_spend                double precision NOT NULL DEFAULT 0.0
---   prompt_caching_savings_spend             double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_DailyGuardrailMetrics =====
---   guardrail_id                             text NOT NULL
---   date                                     text NOT NULL
---   requests_evaluated                       bigint NOT NULL DEFAULT 0
---   passed_count                             bigint NOT NULL DEFAULT 0
---   blocked_count                            bigint NOT NULL DEFAULT 0
---   flagged_count                            bigint NOT NULL DEFAULT 0
---   avg_score                                double precision
---   avg_latency_ms                           double precision
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_DailyOrganizationSpend =====
---   id                                       text NOT NULL
---   organization_id                          text
---   date                                     text NOT NULL
---   api_key                                  text NOT NULL
---   model                                    text
---   model_group                              text
---   custom_llm_provider                      text
---   mcp_namespaced_tool_name                 text
---   prompt_tokens                            bigint NOT NULL DEFAULT 0
---   completion_tokens                        bigint NOT NULL DEFAULT 0
---   cache_read_input_tokens                  bigint NOT NULL DEFAULT 0
---   cache_creation_input_tokens              bigint NOT NULL DEFAULT 0
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   api_requests                             bigint NOT NULL DEFAULT 0
---   successful_requests                      bigint NOT NULL DEFAULT 0
---   failed_requests                          bigint NOT NULL DEFAULT 0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   endpoint                                 text
---   compression_saved_tokens                 bigint NOT NULL DEFAULT 0
---   compression_savings_spend                double precision NOT NULL DEFAULT 0.0
---   prompt_caching_savings_spend             double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_DailyPolicyMetrics =====
---   policy_id                                text NOT NULL
---   date                                     text NOT NULL
---   requests_evaluated                       bigint NOT NULL DEFAULT 0
---   passed_count                             bigint NOT NULL DEFAULT 0
---   blocked_count                            bigint NOT NULL DEFAULT 0
---   flagged_count                            bigint NOT NULL DEFAULT 0
---   avg_score                                double precision
---   avg_latency_ms                           double precision
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_DailyTagSpend =====
---   id                                       text NOT NULL
---   tag                                      text
---   date                                     text NOT NULL
---   api_key                                  text NOT NULL
---   model                                    text
---   model_group                              text
---   custom_llm_provider                      text
---   prompt_tokens                            bigint NOT NULL DEFAULT 0
---   completion_tokens                        bigint NOT NULL DEFAULT 0
---   cache_read_input_tokens                  bigint NOT NULL DEFAULT 0
---   cache_creation_input_tokens              bigint NOT NULL DEFAULT 0
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   api_requests                             bigint NOT NULL DEFAULT 0
---   successful_requests                      bigint NOT NULL DEFAULT 0
---   failed_requests                          bigint NOT NULL DEFAULT 0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   mcp_namespaced_tool_name                 text
---   request_id                               text
---   endpoint                                 text
---   compression_saved_tokens                 bigint NOT NULL DEFAULT 0
---   compression_savings_spend                double precision NOT NULL DEFAULT 0.0
---   prompt_caching_savings_spend             double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_DailyTeamSpend =====
---   id                                       text NOT NULL
---   team_id                                  text
---   date                                     text NOT NULL
---   api_key                                  text NOT NULL
---   model                                    text
---   model_group                              text
---   custom_llm_provider                      text
---   prompt_tokens                            bigint NOT NULL DEFAULT 0
---   completion_tokens                        bigint NOT NULL DEFAULT 0
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   api_requests                             bigint NOT NULL DEFAULT 0
---   successful_requests                      bigint NOT NULL DEFAULT 0
---   failed_requests                          bigint NOT NULL DEFAULT 0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   cache_creation_input_tokens              bigint NOT NULL DEFAULT 0
---   cache_read_input_tokens                  bigint NOT NULL DEFAULT 0
---   mcp_namespaced_tool_name                 text
---   endpoint                                 text
---   compression_saved_tokens                 bigint NOT NULL DEFAULT 0
---   compression_savings_spend                double precision NOT NULL DEFAULT 0.0
---   prompt_caching_savings_spend             double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_DailyToolSpend =====
---   date                                     text NOT NULL
---   tool_name                                text NOT NULL
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   total_tokens                             bigint NOT NULL DEFAULT 0
---   request_count                            bigint NOT NULL DEFAULT 0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_DailyUserSpend =====
---   id                                       text NOT NULL
---   user_id                                  text
---   date                                     text NOT NULL
---   api_key                                  text NOT NULL
---   model                                    text
---   model_group                              text
---   custom_llm_provider                      text
---   prompt_tokens                            bigint NOT NULL DEFAULT 0
---   completion_tokens                        bigint NOT NULL DEFAULT 0
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   api_requests                             bigint NOT NULL DEFAULT 0
---   failed_requests                          bigint NOT NULL DEFAULT 0
---   successful_requests                      bigint NOT NULL DEFAULT 0
---   cache_creation_input_tokens              bigint NOT NULL DEFAULT 0
---   cache_read_input_tokens                  bigint NOT NULL DEFAULT 0
---   mcp_namespaced_tool_name                 text
---   endpoint                                 text
---   compression_saved_tokens                 bigint NOT NULL DEFAULT 0
---   compression_savings_spend                double precision NOT NULL DEFAULT 0.0
---   prompt_caching_savings_spend             double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_DeletedTeamTable =====
---   id                                       text NOT NULL
---   team_id                                  text NOT NULL
---   team_alias                               text
---   organization_id                          text
---   object_permission_id                     text
---   admins                                   ARRAY
---   members                                  ARRAY
---   members_with_roles                       jsonb NOT NULL DEFAULT '{}'::jsonb
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   max_budget                               double precision
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   models                                   ARRAY
---   max_parallel_requests                    integer
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   blocked                                  boolean NOT NULL DEFAULT false
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_max_budget                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   team_member_permissions                  ARRAY DEFAULT ARRAY[]::text[]
---   model_id                                 integer
---   created_at                               timestamp without time zone
---   updated_at                               timestamp without time zone
---   deleted_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   deleted_by                               text
---   deleted_by_api_key                       text
---   litellm_changed_by                       text
---   router_settings                          jsonb DEFAULT '{}'::jsonb
---   policies                                 ARRAY DEFAULT ARRAY[]::text[]
---   allow_team_guardrail_config              boolean NOT NULL DEFAULT false
---   soft_budget                              double precision
---   access_group_ids                         ARRAY DEFAULT ARRAY[]::text[]
-
--- ===== litellm.LiteLLM_DeletedVerificationToken =====
---   id                                       text NOT NULL
---   token                                    text NOT NULL
---   key_name                                 text
---   key_alias                                text
---   soft_budget_cooldown                     boolean NOT NULL DEFAULT false
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   expires                                  timestamp without time zone
---   models                                   ARRAY
---   aliases                                  jsonb NOT NULL DEFAULT '{}'::jsonb
---   config                                   jsonb NOT NULL DEFAULT '{}'::jsonb
---   user_id                                  text
---   team_id                                  text
---   permissions                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   max_parallel_requests                    integer
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   blocked                                  boolean
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   max_budget                               double precision
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   allowed_cache_controls                   ARRAY DEFAULT ARRAY[]::text[]
---   allowed_routes                           ARRAY DEFAULT ARRAY[]::text[]
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_max_budget                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   budget_id                                text
---   organization_id                          text
---   object_permission_id                     text
---   created_at                               timestamp without time zone
---   created_by                               text
---   updated_at                               timestamp without time zone
---   updated_by                               text
---   rotation_count                           integer DEFAULT 0
---   auto_rotate                              boolean DEFAULT false
---   rotation_interval                        text
---   last_rotation_at                         timestamp without time zone
---   key_rotation_at                          timestamp without time zone
---   deleted_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   deleted_by                               text
---   deleted_by_api_key                       text
---   litellm_changed_by                       text
---   router_settings                          jsonb DEFAULT '{}'::jsonb
---   policies                                 ARRAY DEFAULT ARRAY[]::text[]
---   access_group_ids                         ARRAY DEFAULT ARRAY[]::text[]
---   last_active                              timestamp without time zone
---   project_id                               text
---   agent_id                                 text
---   budget_fallbacks                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   key_type                                 text
-
--- ===== litellm.LiteLLM_DeprecatedVerificationToken =====
---   id                                       text NOT NULL
---   token                                    text NOT NULL
---   active_token_id                          text NOT NULL
---   revoke_at                                timestamp without time zone NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_EndUserTable =====
---   user_id                                  text NOT NULL
---   alias                                    text
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   allowed_model_region                     text
---   default_model                            text
---   budget_id                                text
---   blocked                                  boolean NOT NULL DEFAULT false
---   object_permission_id                     text
-
--- ===== litellm.LiteLLM_ErrorLogs =====
---   request_id                               text NOT NULL
---   startTime                                timestamp without time zone NOT NULL
---   endTime                                  timestamp without time zone NOT NULL
---   api_base                                 text NOT NULL DEFAULT ''::text
---   model_group                              text NOT NULL DEFAULT ''::text
---   litellm_model_name                       text NOT NULL DEFAULT ''::text
---   model_id                                 text NOT NULL DEFAULT ''::text
---   request_kwargs                           jsonb NOT NULL DEFAULT '{}'::jsonb
---   exception_type                           text NOT NULL DEFAULT ''::text
---   exception_string                         text NOT NULL DEFAULT ''::text
---   status_code                              text NOT NULL DEFAULT ''::text
-
--- ===== litellm.LiteLLM_GuardrailsTable =====
---   guardrail_id                             text NOT NULL
---   guardrail_name                           text NOT NULL
---   litellm_params                           jsonb NOT NULL
---   guardrail_info                           jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   team_id                                  text
---   reviewed_at                              timestamp without time zone
---   status                                   text NOT NULL DEFAULT 'active'::text
---   submitted_at                             timestamp without time zone
-
--- ===== litellm.LiteLLM_HealthCheckTable =====
---   health_check_id                          text NOT NULL
---   model_name                               text NOT NULL
---   model_id                                 text
---   status                                   text NOT NULL
---   healthy_count                            integer NOT NULL DEFAULT 0
---   unhealthy_count                          integer NOT NULL DEFAULT 0
---   error_message                            text
---   response_time_ms                         double precision
---   details                                  jsonb
---   checked_by                               text
---   checked_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_InvitationLink =====
---   id                                       text NOT NULL
---   user_id                                  text NOT NULL
---   is_accepted                              boolean NOT NULL DEFAULT false
---   accepted_at                              timestamp without time zone
---   expires_at                               timestamp without time zone NOT NULL
---   created_at                               timestamp without time zone NOT NULL
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL
---   updated_by                               text NOT NULL
-
--- ===== litellm.LiteLLM_JWTKeyMapping =====
---   id                                       text NOT NULL
---   jwt_claim_name                           text NOT NULL
---   jwt_claim_value                          text NOT NULL
---   token                                    text NOT NULL
---   description                              text
---   is_active                                boolean NOT NULL DEFAULT true
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
-
--- ===== litellm.LiteLLM_MCPServerOAuthClient =====
---   server_id                                text NOT NULL
---   credentials                              jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_MCPServerTable =====
---   server_id                                text NOT NULL
---   server_name                              text
---   description                              text
---   url                                      text
---   transport                                text NOT NULL DEFAULT 'sse'::text
---   auth_type                                text
---   created_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
---   status                                   text DEFAULT 'unknown'::text
---   last_health_check                        timestamp without time zone
---   health_check_error                       text
---   mcp_info                                 jsonb DEFAULT '{}'::jsonb
---   args                                     ARRAY DEFAULT ARRAY[]::text[]
---   command                                  text
---   env                                      jsonb DEFAULT '{}'::jsonb
---   mcp_access_groups                        ARRAY
---   alias                                    text
---   allowed_tools                            ARRAY DEFAULT ARRAY[]::text[]
---   extra_headers                            ARRAY DEFAULT ARRAY[]::text[]
---   static_headers                           jsonb DEFAULT '{}'::jsonb
---   credentials                              jsonb DEFAULT '{}'::jsonb
---   authorization_url                        text
---   registration_url                         text
---   token_url                                text
---   allow_all_keys                           boolean NOT NULL DEFAULT false
---   available_on_public_internet             boolean NOT NULL DEFAULT true
---   spec_path                                text
---   byok_api_key_help_url                    text
---   byok_description                         ARRAY DEFAULT ARRAY[]::text[]
---   is_byok                                  boolean NOT NULL DEFAULT false
---   tool_name_to_description                 jsonb DEFAULT '{}'::jsonb
---   tool_name_to_display_name                jsonb DEFAULT '{}'::jsonb
---   approval_status                          text DEFAULT 'active'::text
---   submitted_by                             text
---   submitted_at                             timestamp without time zone
---   reviewed_at                              timestamp without time zone
---   review_notes                             text
---   source_url                               text
---   instructions                             text
---   delegate_auth_to_upstream                boolean NOT NULL DEFAULT false
---   env_vars                                 jsonb DEFAULT '[]'::jsonb
---   oauth_passthrough                        boolean NOT NULL DEFAULT false
---   oauth2_flow                              text
---   timeout                                  double precision
---   max_concurrent_requests                  integer
---   token_exchange_endpoint                  text
---   audience                                 text
---   subject_token_type                       text
---   token_exchange_profile                   text
---   dcr_bridge                               boolean
---   issuer                                   text
-
--- ===== litellm.LiteLLM_MCPToolsetTable =====
---   toolset_id                               text NOT NULL
---   toolset_name                             text NOT NULL
---   description                              text
---   tools                                    jsonb NOT NULL DEFAULT '[]'::jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
-
--- ===== litellm.LiteLLM_MCPUserCredentials =====
---   id                                       text NOT NULL
---   user_id                                  text NOT NULL
---   server_id                                text NOT NULL
---   credential_b64                           text NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_MCPUserEnvVars =====
---   id                                       text NOT NULL
---   user_id                                  text NOT NULL
---   server_id                                text NOT NULL
---   values_b64                               text NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_ManagedFileTable =====
---   id                                       text NOT NULL
---   unified_file_id                          text NOT NULL
---   file_object                              jsonb
---   model_mappings                           jsonb NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   created_by                               text
---   flat_model_file_ids                      ARRAY DEFAULT ARRAY[]::text[]
---   updated_by                               text
---   storage_backend                          text
---   storage_url                              text
---   team_id                                  text
-
--- ===== litellm.LiteLLM_ManagedObjectTable =====
---   id                                       text NOT NULL
---   unified_object_id                        text NOT NULL
---   model_object_id                          text NOT NULL
---   file_object                              jsonb NOT NULL
---   file_purpose                             text NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL
---   updated_by                               text
---   status                                   text
---   batch_processed                          boolean NOT NULL DEFAULT false
---   team_id                                  text
-
--- ===== litellm.LiteLLM_ManagedVectorStoreIndexTable =====
---   id                                       text NOT NULL
---   index_name                               text NOT NULL
---   litellm_params                           jsonb NOT NULL
---   index_info                               jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL
---   updated_by                               text
-
--- ===== litellm.LiteLLM_ManagedVectorStoreTable =====
---   id                                       text NOT NULL
---   unified_resource_id                      text NOT NULL
---   resource_object                          jsonb
---   model_mappings                           jsonb NOT NULL
---   flat_model_resource_ids                  ARRAY DEFAULT ARRAY[]::text[]
---   storage_backend                          text
---   storage_url                              text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL
---   updated_by                               text
---   team_id                                  text
-
--- ===== litellm.LiteLLM_ManagedVectorStoresTable =====
---   vector_store_id                          text NOT NULL
---   custom_llm_provider                      text NOT NULL
---   vector_store_name                        text
---   vector_store_description                 text
---   vector_store_metadata                    jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   litellm_credential_name                  text
---   litellm_params                           jsonb
---   team_id                                  text
---   user_id                                  text
-
--- ===== litellm.LiteLLM_MemoryTable =====
---   memory_id                                text NOT NULL
---   key                                      text NOT NULL
---   value                                    text NOT NULL
---   metadata                                 jsonb
---   user_id                                  text
---   team_id                                  text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
-
--- ===== litellm.LiteLLM_ModelTable =====
---   id                                       integer NOT NULL DEFAULT nextval('litellm."LiteLLM_ModelTable_id_seq"'::regclass)
---   aliases                                  jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
-
--- ===== litellm.LiteLLM_ObjectPermissionTable =====
---   object_permission_id                     text NOT NULL
---   mcp_servers                              ARRAY DEFAULT ARRAY[]::text[]
---   vector_stores                            ARRAY DEFAULT ARRAY[]::text[]
---   mcp_access_groups                        ARRAY DEFAULT ARRAY[]::text[]
---   mcp_tool_permissions                     jsonb
---   agents                                   ARRAY DEFAULT ARRAY[]::text[]
---   agent_access_groups                      ARRAY DEFAULT ARRAY[]::text[]
---   blocked_tools                            ARRAY DEFAULT ARRAY[]::text[]
---   models                                   ARRAY DEFAULT ARRAY[]::text[]
---   mcp_toolsets                             ARRAY DEFAULT ARRAY[]::text[]
---   search_tools                             ARRAY DEFAULT ARRAY[]::text[]
---   mcp_tool_search_enabled                  boolean
-
--- ===== litellm.LiteLLM_OrganizationMembership =====
---   user_id                                  text NOT NULL
---   organization_id                          text NOT NULL
---   user_role                                text
---   spend                                    double precision DEFAULT 0.0
---   budget_id                                text
---   created_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_OrganizationTable =====
---   organization_id                          text NOT NULL
---   organization_alias                       text NOT NULL
---   budget_id                                text NOT NULL
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   models                                   ARRAY
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
---   object_permission_id                     text
-
--- ===== litellm.LiteLLM_PolicyAttachmentTable =====
---   attachment_id                            text NOT NULL
---   policy_name                              text NOT NULL
---   scope                                    text
---   teams                                    ARRAY DEFAULT ARRAY[]::text[]
---   keys                                     ARRAY DEFAULT ARRAY[]::text[]
---   models                                   ARRAY DEFAULT ARRAY[]::text[]
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
---   tags                                     ARRAY DEFAULT ARRAY[]::text[]
-
--- ===== litellm.LiteLLM_PolicyTable =====
---   policy_id                                text NOT NULL
---   policy_name                              text NOT NULL
---   inherit                                  text
---   description                              text
---   guardrails_add                           ARRAY DEFAULT ARRAY[]::text[]
---   guardrails_remove                        ARRAY DEFAULT ARRAY[]::text[]
---   condition                                jsonb DEFAULT '{}'::jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
---   pipeline                                 jsonb
---   is_latest                                boolean NOT NULL DEFAULT true
---   parent_version_id                        text
---   production_at                            timestamp without time zone
---   published_at                             timestamp without time zone
---   version_number                           integer NOT NULL DEFAULT 1
---   version_status                           text NOT NULL DEFAULT 'production'::text
-
--- ===== litellm.LiteLLM_ProjectTable =====
---   project_id                               text NOT NULL
---   project_alias                            text
---   team_id                                  text
---   budget_id                                text
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   models                                   ARRAY
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   blocked                                  boolean NOT NULL DEFAULT false
---   object_permission_id                     text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
---   description                              text
---   model_rpm_limit                          jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_tpm_limit                          jsonb NOT NULL DEFAULT '{}'::jsonb
-
--- ===== litellm.LiteLLM_PromptTable =====
---   id                                       text NOT NULL
---   prompt_id                                text NOT NULL
---   litellm_params                           jsonb NOT NULL
---   prompt_info                              jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   version                                  integer NOT NULL DEFAULT 1
---   environment                              text NOT NULL DEFAULT 'development'::text
---   created_by                               text
-
--- ===== litellm.LiteLLM_ProxyModelTable =====
---   model_id                                 text NOT NULL
---   model_name                               text NOT NULL
---   litellm_params                           jsonb NOT NULL
---   model_info                               jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text NOT NULL
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text NOT NULL
---   blocked                                  boolean NOT NULL DEFAULT false
-
--- ===== litellm.LiteLLM_SSOConfig =====
---   id                                       text NOT NULL DEFAULT 'sso_config'::text
---   sso_settings                             jsonb NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_SSOIdentityAssertion =====
---   user_id                                  text NOT NULL
---   assertion_b64                            text NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_SearchToolsTable =====
---   search_tool_id                           text NOT NULL
---   search_tool_name                         text NOT NULL
---   litellm_params                           jsonb NOT NULL
---   search_tool_info                         jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_SkillsTable =====
---   skill_id                                 text NOT NULL
---   display_title                            text
---   description                              text
---   instructions                             text
---   source                                   text NOT NULL DEFAULT 'custom'::text
---   latest_version                           text
---   file_content                             bytea
---   file_name                                text
---   file_type                                text
---   metadata                                 jsonb DEFAULT '{}'::jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
-
--- ===== litellm.LiteLLM_SpendLogGuardrailIndex =====
---   request_id                               text NOT NULL
---   guardrail_id                             text NOT NULL
---   policy_id                                text
---   start_time                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_SpendLogToolIndex =====
---   request_id                               text NOT NULL
---   tool_name                                text NOT NULL
---   start_time                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_SpendLogs =====
---   request_id                               text NOT NULL
---   call_type                                text NOT NULL
---   api_key                                  text NOT NULL DEFAULT ''::text
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   total_tokens                             integer NOT NULL DEFAULT 0
---   prompt_tokens                            integer NOT NULL DEFAULT 0
---   completion_tokens                        integer NOT NULL DEFAULT 0
---   startTime                                timestamp without time zone NOT NULL
---   endTime                                  timestamp without time zone NOT NULL
---   completionStartTime                      timestamp without time zone
---   model                                    text NOT NULL DEFAULT ''::text
---   model_id                                 text DEFAULT ''::text
---   model_group                              text DEFAULT ''::text
---   custom_llm_provider                      text DEFAULT ''::text
---   api_base                                 text DEFAULT ''::text
---   user                                     text DEFAULT ''::text
---   metadata                                 jsonb DEFAULT '{}'::jsonb
---   cache_hit                                text DEFAULT ''::text
---   cache_key                                text DEFAULT ''::text
---   request_tags                             jsonb DEFAULT '[]'::jsonb
---   team_id                                  text
---   end_user                                 text
---   requester_ip_address                     text
---   messages                                 jsonb DEFAULT '{}'::jsonb
---   response                                 jsonb DEFAULT '{}'::jsonb
---   proxy_server_request                     jsonb DEFAULT '{}'::jsonb
---   session_id                               text
---   status                                   text
---   mcp_namespaced_tool_name                 text
---   organization_id                          text
---   agent_id                                 text
---   request_duration_ms                      integer
-
--- ===== litellm.LiteLLM_TagTable =====
---   tag_name                                 text NOT NULL
---   description                              text
---   models                                   ARRAY
---   model_info                               jsonb
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   budget_id                                text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_TeamMembership =====
---   user_id                                  text NOT NULL
---   team_id                                  text NOT NULL
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   budget_id                                text
---   total_spend                              double precision NOT NULL DEFAULT 0.0
-
--- ===== litellm.LiteLLM_TeamTable =====
---   team_id                                  text NOT NULL
---   team_alias                               text
---   organization_id                          text
---   admins                                   ARRAY
---   members                                  ARRAY
---   members_with_roles                       jsonb NOT NULL DEFAULT '{}'::jsonb
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   max_budget                               double precision
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   models                                   ARRAY
---   max_parallel_requests                    integer
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   blocked                                  boolean NOT NULL DEFAULT false
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_max_budget                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_id                                 integer
---   team_member_permissions                  ARRAY DEFAULT ARRAY[]::text[]
---   object_permission_id                     text
---   router_settings                          jsonb DEFAULT '{}'::jsonb
---   policies                                 ARRAY DEFAULT ARRAY[]::text[]
---   allow_team_guardrail_config              boolean NOT NULL DEFAULT false
---   soft_budget                              double precision
---   access_group_ids                         ARRAY DEFAULT ARRAY[]::text[]
---   budget_limits                            jsonb
---   default_team_member_models               ARRAY DEFAULT ARRAY[]::text[]
-
--- ===== litellm.LiteLLM_ToolTable =====
---   tool_id                                  text NOT NULL
---   tool_name                                text NOT NULL
---   origin                                   text
---   input_policy                             text NOT NULL DEFAULT 'untrusted'::text
---   call_count                               integer NOT NULL DEFAULT 0
---   assignments                              jsonb DEFAULT '{}'::jsonb
---   key_hash                                 text
---   team_id                                  text
---   key_alias                                text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
---   output_policy                            text NOT NULL DEFAULT 'untrusted'::text
---   user_agent                               text
---   last_used_at                             timestamp without time zone
-
--- ===== litellm.LiteLLM_UISettings =====
---   id                                       text NOT NULL DEFAULT 'ui_settings'::text
---   ui_settings                              jsonb NOT NULL
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
-
--- ===== litellm.LiteLLM_UserNotifications =====
---   request_id                               text NOT NULL
---   user_id                                  text NOT NULL
---   models                                   ARRAY
---   justification                            text NOT NULL
---   status                                   text NOT NULL
-
--- ===== litellm.LiteLLM_UserTable =====
---   user_id                                  text NOT NULL
---   user_alias                               text
---   team_id                                  text
---   sso_user_id                              text
---   organization_id                          text
---   password                                 text
---   teams                                    ARRAY DEFAULT ARRAY[]::text[]
---   user_role                                text
---   max_budget                               double precision
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   user_email                               text
---   models                                   ARRAY
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   max_parallel_requests                    integer
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   allowed_cache_controls                   ARRAY DEFAULT ARRAY[]::text[]
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_max_budget                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   created_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   object_permission_id                     text
---   policies                                 ARRAY DEFAULT ARRAY[]::text[]
-
--- ===== litellm.LiteLLM_VerificationToken =====
---   token                                    text NOT NULL
---   key_name                                 text
---   key_alias                                text
---   soft_budget_cooldown                     boolean NOT NULL DEFAULT false
---   spend                                    double precision NOT NULL DEFAULT 0.0
---   expires                                  timestamp without time zone
---   models                                   ARRAY
---   aliases                                  jsonb NOT NULL DEFAULT '{}'::jsonb
---   config                                   jsonb NOT NULL DEFAULT '{}'::jsonb
---   user_id                                  text
---   team_id                                  text
---   permissions                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   max_parallel_requests                    integer
---   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
---   blocked                                  boolean
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   max_budget                               double precision
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   allowed_cache_controls                   ARRAY DEFAULT ARRAY[]::text[]
---   model_spend                              jsonb NOT NULL DEFAULT '{}'::jsonb
---   model_max_budget                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   budget_id                                text
---   organization_id                          text
---   created_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   created_by                               text
---   updated_at                               timestamp without time zone DEFAULT CURRENT_TIMESTAMP
---   updated_by                               text
---   allowed_routes                           ARRAY DEFAULT ARRAY[]::text[]
---   object_permission_id                     text
---   auto_rotate                              boolean DEFAULT false
---   key_rotation_at                          timestamp without time zone
---   last_rotation_at                         timestamp without time zone
---   rotation_count                           integer DEFAULT 0
---   rotation_interval                        text
---   project_id                               text
---   router_settings                          jsonb DEFAULT '{}'::jsonb
---   policies                                 ARRAY DEFAULT ARRAY[]::text[]
---   access_group_ids                         ARRAY DEFAULT ARRAY[]::text[]
---   last_active                              timestamp without time zone
---   agent_id                                 text
---   budget_limits                            jsonb
---   budget_fallbacks                         jsonb NOT NULL DEFAULT '{}'::jsonb
---   key_type                                 text
-
--- ===== litellm.LiteLLM_WorkflowEvent =====
---   event_id                                 text NOT NULL
---   run_id                                   text NOT NULL
---   event_type                               text NOT NULL
---   step_name                                text NOT NULL
---   sequence_number                          integer NOT NULL
---   data                                     jsonb
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_WorkflowMessage =====
---   message_id                               text NOT NULL
---   run_id                                   text NOT NULL
---   role                                     text NOT NULL
---   content                                  text NOT NULL
---   sequence_number                          integer NOT NULL
---   session_id                               text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
-
--- ===== litellm.LiteLLM_WorkflowRun =====
---   run_id                                   text NOT NULL
---   session_id                               text NOT NULL
---   workflow_type                            text NOT NULL
---   status                                   text NOT NULL DEFAULT 'pending'::text
---   created_by                               text
---   created_at                               timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
---   updated_at                               timestamp without time zone NOT NULL
---   input                                    jsonb
---   output                                   jsonb
---   metadata                                 jsonb
-
--- ===== litellm._prisma_migrations =====
---   id                                       character varying NOT NULL
---   checksum                                 character varying NOT NULL
---   finished_at                              timestamp with time zone
---   migration_name                           character varying NOT NULL
---   logs                                     text
---   rolled_back_at                           timestamp with time zone
---   started_at                               timestamp with time zone NOT NULL DEFAULT now()
---   applied_steps_count                      integer NOT NULL DEFAULT 0
-
 -- ===== portfolio.asset_identifiers =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   asset_id                                 uuid NOT NULL
 --   org_id                                   uuid NOT NULL
 --   id_type                                  text NOT NULL
@@ -3292,7 +2253,7 @@
 --   PRIMARY KEY asset_identifiers_pkey: (id)
 
 -- ===== portfolio.assets =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   global_security_id                       uuid
 --   name                                     text NOT NULL
@@ -3316,7 +2277,7 @@
 --   PRIMARY KEY assets_pkey: (id)
 
 -- ===== portfolio.commitments =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   position_id                              uuid NOT NULL
 --   commitment_amount                        numeric
@@ -3337,7 +2298,7 @@
 --   PRIMARY KEY commitments_pkey: (id)
 
 -- ===== portfolio.external_references =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   source_system                            text NOT NULL
 --   external_id                              text NOT NULL
@@ -3358,7 +2319,7 @@
 --   PRIMARY KEY note_terms_field_registry_pkey: (field_key)
 
 -- ===== portfolio.note_terms_stp_policy =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   cik                                      text NOT NULL
 --   form_type                                text NOT NULL
 --   enabled                                  boolean NOT NULL DEFAULT true
@@ -3370,7 +2331,7 @@
 --   PRIMARY KEY note_terms_stp_policy_pkey: (id)
 
 -- ===== portfolio.positions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   owner_entity_id                          uuid NOT NULL
 --   asset_id                                 uuid NOT NULL
@@ -3397,7 +2358,7 @@
 --   PRIMARY KEY positions_pkey: (id)
 
 -- ===== portfolio.reference_filings =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   cik                                      text NOT NULL
 --   filer_name                               text NOT NULL
 --   form_type                                text NOT NULL
@@ -3419,7 +2380,7 @@
 --   PRIMARY KEY reference_filings_pkey: (id)
 
 -- ===== portfolio.securities_global =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   name                                     text NOT NULL
 --   short_name                               text
 --   security_type                            text NOT NULL
@@ -3434,7 +2395,7 @@
 --   PRIMARY KEY securities_global_pkey: (id)
 
 -- ===== portfolio.securities_global_corporate_actions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   global_security_id                       uuid NOT NULL
 --   resulting_global_security_id             uuid
 --   action_type                              text NOT NULL
@@ -3451,7 +2412,7 @@
 --   PRIMARY KEY securities_global_corporate_actions_pkey: (id)
 
 -- ===== portfolio.securities_global_identifiers =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   global_security_id                       uuid NOT NULL
 --   id_type                                  text NOT NULL
 --   id_value                                 text NOT NULL
@@ -3463,7 +2424,7 @@
 --   PRIMARY KEY securities_global_identifiers_pkey: (id)
 
 -- ===== portfolio.securities_global_note_terms =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   global_security_id                       uuid NOT NULL
 --   reference_filing_id                      uuid
 --   terms_status                             text NOT NULL
@@ -3498,7 +2459,7 @@
 --   PRIMARY KEY securities_global_note_terms_pkey: (id)
 
 -- ===== portfolio.securities_global_prices =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   global_security_id                       uuid NOT NULL
 --   price_date                               date NOT NULL
 --   price                                    numeric NOT NULL
@@ -3512,7 +2473,7 @@
 --   PRIMARY KEY securities_global_prices_pkey: (id)
 
 -- ===== portfolio.securities_global_relationships =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   from_global_security_id                  uuid NOT NULL
 --   to_global_security_id                    uuid
 --   raw_underlying_text                      text NOT NULL
@@ -3535,7 +2496,7 @@
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
 
 -- ===== portfolio.ta_calibration_results =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   commitment_id                            uuid NOT NULL
 --   ta_strategy_key                          text NOT NULL
@@ -3547,7 +2508,7 @@
 --   PRIMARY KEY ta_calibration_results_pkey: (id)
 
 -- ===== portfolio.ta_model_params =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   commitment_id                            uuid NOT NULL
 --   ta_strategy_key                          text NOT NULL
@@ -3566,7 +2527,7 @@
 --   PRIMARY KEY ta_model_params_pkey: (id)
 
 -- ===== portfolio.tax_lots =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   position_id                              uuid NOT NULL
 --   opening_transaction_id                   uuid
@@ -3587,7 +2548,7 @@
 --   PRIMARY KEY tax_lots_pkey: (id)
 
 -- ===== portfolio.transactions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   position_id                              uuid NOT NULL
 --   transaction_type_code                    text NOT NULL
@@ -3625,7 +2586,7 @@
 --   PRIMARY KEY udf_definition_audit_pkey: (id)
 
 -- ===== portfolio.udf_definitions =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid
 --   owner_scope                              text NOT NULL
 --   owner_scope_id                           uuid
@@ -3735,7 +2696,7 @@
 --   PRIMARY KEY udf_tag_assignments_pkey: (id)
 
 -- ===== portfolio.udf_values =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   definition_id                            uuid NOT NULL
 --   target_type                              text NOT NULL
@@ -3751,7 +2712,7 @@
 --   PRIMARY KEY udf_values_pkey: (id)
 
 -- ===== portfolio.valuations =====
---   id                                       uuid NOT NULL DEFAULT uuid_generate_v4()
+--   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
 --   asset_id                                 uuid NOT NULL
 --   valuation_date                           date NOT NULL
@@ -3812,99 +2773,27 @@
 
 -- ===== litellm.DailyTagSpend =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   individual_request_tag                   text
---   spend_date                               date
---   log_count                                bigint
---   total_spend                              double precision
 
 -- ===== litellm.Last30dKeysBySpend =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   api_key                                  text
---   key_alias                                text
---   key_name                                 text
---   total_spend                              double precision
 
 -- ===== litellm.Last30dModelsBySpend =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   model                                    text
---   total_spend                              double precision
 
 -- ===== litellm.Last30dTopEndUsersSpend =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   end_user                                 text
---   total_events                             bigint
---   total_spend                              double precision
 
 -- ===== litellm.LiteLLM_VerificationTokenView =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   token                                    text
---   key_name                                 text
---   key_alias                                text
---   soft_budget_cooldown                     boolean
---   spend                                    double precision
---   expires                                  timestamp without time zone
---   models                                   ARRAY
---   aliases                                  jsonb
---   config                                   jsonb
---   user_id                                  text
---   team_id                                  text
---   permissions                              jsonb
---   max_parallel_requests                    integer
---   metadata                                 jsonb
---   blocked                                  boolean
---   tpm_limit                                bigint
---   rpm_limit                                bigint
---   max_budget                               double precision
---   budget_duration                          text
---   budget_reset_at                          timestamp without time zone
---   allowed_cache_controls                   ARRAY
---   model_spend                              jsonb
---   model_max_budget                         jsonb
---   budget_id                                text
---   organization_id                          text
---   created_at                               timestamp without time zone
---   created_by                               text
---   updated_at                               timestamp without time zone
---   updated_by                               text
---   allowed_routes                           ARRAY
---   object_permission_id                     text
---   auto_rotate                              boolean
---   key_rotation_at                          timestamp without time zone
---   last_rotation_at                         timestamp without time zone
---   rotation_count                           integer
---   rotation_interval                        text
---   project_id                               text
---   router_settings                          jsonb
---   policies                                 ARRAY
---   access_group_ids                         ARRAY
---   last_active                              timestamp without time zone
---   agent_id                                 text
---   budget_limits                            jsonb
---   budget_fallbacks                         jsonb
---   key_type                                 text
---   team_spend                               double precision
---   team_max_budget                          double precision
---   team_tpm_limit                           bigint
---   team_rpm_limit                           bigint
---   project_alias                            text
 
 -- ===== litellm.MonthlyGlobalSpend =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   date                                     date
---   spend                                    double precision
 
 -- ===== litellm.MonthlyGlobalSpendPerKey =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   date                                     date
---   spend                                    double precision
---   api_key                                  text
 
 -- ===== litellm.MonthlyGlobalSpendPerUserPerKey =====  [VIEW]
 --   security_invoker: FALSE — runs as the view owner, RLS on the base tables is BYPASSED
---   date                                     date
---   spend                                    double precision
---   api_key                                  text
---   user                                     text
 
 -- ===== portfolio.spv_derived_positions =====  [VIEW]
 --   security_invoker: true — RLS applies to the querying role
