@@ -36,7 +36,12 @@ export const ORG_ADMIN = "org_admin";
 
 /** Gate shapes used below, named so both menus and the harness agree. */
 export const GATE_MANAGE_MEMBERS = { perm: "manage_members" };
-export const GATE_ORG_OR_SUPER_ADMIN = { roles: [ORG_ADMIN, SUPER_ADMIN] };
+// org_admin role reconciliation (Task 4): these 5 items used to gate on the
+// `users.role` string directly ({ roles: [ORG_ADMIN, SUPER_ADMIN] }). They now
+// gate on the real `manage_org_settings` permission, resolved the same way
+// GATE_MANAGE_MEMBERS already is — `canPerm` already carries the super_admin
+// bypass, so nothing else changes for platform staff.
+export const GATE_MANAGE_ORG_SETTINGS = { perm: "manage_org_settings" };
 export const GATE_SUPER_ADMIN = { roles: [SUPER_ADMIN] };
 
 /**
@@ -74,31 +79,31 @@ export const MENU_ITEMS = [
   {
     href: "/admin/profiles",
     label: "Profiles",
-    gate: GATE_ORG_OR_SUPER_ADMIN,
+    gate: GATE_MANAGE_ORG_SETTINGS,
     adminIndex: true,
   },
   {
     href: "/admin/permission-sets",
     label: "Permission Sets",
-    gate: GATE_ORG_OR_SUPER_ADMIN,
+    gate: GATE_MANAGE_ORG_SETTINGS,
     adminIndex: true,
   },
   {
     href: "/admin/workflows",
     label: "Workflows",
-    gate: GATE_ORG_OR_SUPER_ADMIN,
+    gate: GATE_MANAGE_ORG_SETTINGS,
     adminIndex: true,
   },
   {
     href: "/admin/settings",
     label: "Organization",
-    gate: GATE_ORG_OR_SUPER_ADMIN,
+    gate: GATE_MANAGE_ORG_SETTINGS,
     adminIndex: true,
   },
   {
     href: "/admin/modeling/ta",
     label: "TA Model Defaults",
-    gate: GATE_ORG_OR_SUPER_ADMIN,
+    gate: GATE_MANAGE_ORG_SETTINGS,
     adminIndex: true,
   },
 

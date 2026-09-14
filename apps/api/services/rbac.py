@@ -103,6 +103,33 @@ async def get_users_by_role(pool, org_id, role_name: str) -> list[str]:
     return [str(r["id"]) for r in rows]
 
 
+async def get_users_with_permission(pool, org_id, permission_name: str) -> list[str]:
+    """Return ids of users in ``org_id`` who hold ``permission_name`` via a
+    granted role — org_admin role migration (Task 4), used for alert
+    recipient fan-out (``services.workflow_todos``).
+
+    Deliberately does NOT apply ``has_permission``'s zero-role default-allow
+    bootstrap: that escape hatch exists to keep a single not-yet-provisioned
+    operator from locking themselves out of a page THEY are trying to reach.
+    It has no sensible meaning for a broadcast recipient list — "everyone
+    with no roles assigned is a recipient" would silently balloon an alert's
+    audience rather than protect anyone.
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT u.id
+            FROM users u
+            JOIN user_roles ur ON ur.user_id = u.id
+            JOIN role_permissions rp ON rp.role_id = ur.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE u.org_id = $1 AND p.name = $2
+            """,
+            org_id, permission_name,
+        )
+    return [str(r["id"]) for r in rows]
+
+
 # ── Sprint 24: platform / org administration roles ────────────────────────
 #
 # ``users.role`` is free text with no CHECK constraint (confirmed against
@@ -121,6 +148,17 @@ async def get_users_by_role(pool, org_id, role_name: str) -> list[str]:
 
 SUPER_ADMIN_ROLE = "super_admin"
 ORG_ADMIN_ROLE = "org_admin"
+
+# ── org_admin role reconciliation ──────────────────────────────────────────
+#
+# The permission that gates org-level admin access (org_settings writes,
+# Profiles, Permission Sets, Workflow authoring, TA model defaults). Resolved
+# through the real RBAC axis (``roles`` / ``role_permissions`` / user_roles``)
+# now, not the ``users.role`` string below — see ``is_org_admin``.
+# ``routers/modeling_ta.py`` already referenced this exact string in its
+# envelope's ``write_permission`` field before a real permission row backed
+# it; this is that permission, made real.
+ORG_ADMIN_PERMISSION = "manage_org_settings"
 
 
 def _field(user, name):
@@ -143,16 +181,35 @@ def is_super_admin(user) -> bool:
     return _field(user, "role") == SUPER_ADMIN_ROLE
 
 
-def is_org_admin(user, org_id) -> bool:
-    """True when the user administers ``org_id`` as that org's own admin."""
-    if _field(user, "role") != ORG_ADMIN_ROLE:
+async def is_org_admin(pool, user, org_id) -> bool:
+    """True when the user administers ``org_id`` as that org's own admin.
+
+    Resolved by PERMISSION (``ORG_ADMIN_PERMISSION``, via ``has_permission``),
+    not by the ``users.role`` string — org_admin role migration Task 4. Still
+    scoped to the caller's OWN org_id first: a permission granted in one org
+    must never authorize a different org, and ``has_permission`` itself has
+    no org-crossing concept to rely on for that.
+
+    Note this inherits ``has_permission``'s zero-role default-allow bootstrap
+    for a user who has never been assigned ANY role — the same posture that
+    already governs every other ``has_permission``-gated permission in this
+    app (``manage_members`` included). It is not a new risk introduced here;
+    it is the existing single-admin-safety posture extended consistently to
+    this permission. See docs/PROJECT_STATUS.md for the real accounts this
+    currently affects.
+    """
+    if _field(user, "org_id") != str(org_id):
         return False
-    return _field(user, "org_id") == str(org_id)
+    user_id = _field(user, "id")
+    if user_id is None:
+        return False
+    return await has_permission(pool, user_id, org_id, ORG_ADMIN_PERMISSION)
 
 
-def can_manage_org_settings(user, org_id) -> bool:
-    """Write gate for org_settings: super_admin anywhere, org_admin at home."""
-    return is_super_admin(user) or is_org_admin(user, org_id)
+async def can_manage_org_settings(pool, user, org_id) -> bool:
+    """Write gate for org_settings: super_admin anywhere, org_admin (by
+    permission) at home."""
+    return is_super_admin(user) or await is_org_admin(pool, user, org_id)
 
 
 async def load_principal(conn, user_id) -> dict | None:

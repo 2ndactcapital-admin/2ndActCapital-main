@@ -159,7 +159,7 @@ async def activate_springing_delegate(pool, org_id, grant_id, by_user_id) -> Non
     """
     async with pool.acquire() as conn:
         principal = await load_principal(conn, by_user_id)
-        if not (is_super_admin(principal) or is_org_admin(principal, org_id)):
+        if not (is_super_admin(principal) or await is_org_admin(pool, principal, org_id)):
             raise DelegateError(
                 "Super Admin or Org Admin required to activate a springing delegate"
             )

@@ -63,11 +63,19 @@ const MEMBER_WITH_MANAGE_MEMBERS = {
   permissions: ["manage_members", "view_dashboard"],
 };
 
+// org_admin role reconciliation: a MIGRATED org_admin now also holds the real
+// granted role/permission (Task 3), not just the account_role string. Updated
+// from this sprint's own predecessor shape ({ role: "admin", permissions:
+// ["manage_members", ...] }, no manage_org_settings) — that shape represented
+// the PRE-migration world where the 5 org-admin menu items gated on
+// account_role directly; gating on the real manage_org_settings permission
+// instead (this sprint's Task 4) is what makes that fixture's org-admin menu
+// access correct again, deliberately, not a regression.
 const ORG_ADMIN = {
   account_role: "org_admin",
-  role: "admin",
-  roles: ["admin"],
-  permissions: ["manage_members", "view_dashboard"],
+  role: "org_admin",
+  roles: ["org_admin"],
+  permissions: ["manage_org_settings"],
 };
 
 // Pre-RBAC single operator: no roles at all → default-allow posture.

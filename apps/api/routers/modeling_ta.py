@@ -186,22 +186,22 @@ class DefaultsWriteBody(BaseModel):
 # convention established by the Workflow Triggers screen instead.
 
 
-def _ta_permissions(principal: dict | None, org_id: str) -> dict:
+async def _ta_permissions(pool, principal: dict | None, org_id: str) -> dict:
     return {
         "can_read": True,
-        "can_write": bool(can_manage_org_settings(principal, org_id)),
+        "can_write": bool(await can_manage_org_settings(pool, principal, org_id)),
         "is_super_admin": bool(is_super_admin(principal)),
         "read_permission": None,  # open read — no permission required
         "write_permission": "manage_org_settings",
     }
 
 
-def _defaults_envelope(settings: dict, principal: dict | None, org_id: str) -> dict:
+async def _defaults_envelope(pool, settings: dict, principal: dict | None, org_id: str) -> dict:
     strategy_defaults = settings.get(TA_STRATEGY_DEFAULTS_KEY) or DEFAULT_TA_STRATEGY_PARAMS
     return {
         **{key: settings.get(key) for key in TA_SETTINGS_KEYS},
         "strategy_overrides": strategy_overrides(strategy_defaults),
-        "permissions": _ta_permissions(principal, org_id),
+        "permissions": await _ta_permissions(pool, principal, org_id),
     }
 
 
@@ -228,7 +228,7 @@ async def get_ta_defaults(request: Request):
     async with pool.acquire() as conn:
         settings = await get_all_settings(conn, org_id)  # fetched ONCE
         principal = await load_principal(conn, user_id)
-    return _defaults_envelope(settings, principal, org_id)
+    return await _defaults_envelope(pool, settings, principal, org_id)
 
 
 # ── GET /modeling/ta/calibration-floor — reuses the real frequency-aware floor
@@ -331,7 +331,7 @@ async def put_ta_defaults(request: Request, body: DefaultsWriteBody):
         except SettingsValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return _defaults_envelope(resolved, principal, org_id)
+    return await _defaults_envelope(pool, resolved, principal, org_id)
 
 
 # ── shared: resolve one commitment's real state + active params (Sprint 1,

@@ -24,16 +24,69 @@ Discovery notes that shape this module (verified live this phase):
 
 Every function takes an open ``conn`` so the engine can enlist these writes in
 its own transaction / connection.
+
+org_admin role reconciliation (Task 4): the recipient rule's "every Org Admin
+of the org" leg used to be a raw ``users.role = 'org_admin'`` scan. It now
+resolves by the real ``manage_org_settings`` PERMISSION
+(``rbac.get_users_with_permission``) — an org can grant alert visibility to
+someone who is not a full admin later without touching this module again.
+
+org_admin role reconciliation (Task 5): a recipient set that resolves to
+EMPTY used to write nothing at all and fail silently (the live, confirmed
+case: the Hollisworks org, which currently has zero org_admin holders and
+would have zero recipients for any run/trigger with no ``started_by`` /
+``created_by``). ``_alert_recipients_or_record_failure`` below now writes a
+findable ``audit_log`` row instead — see its docstring.
 """
 from __future__ import annotations
 
-from services.database import platform_scope
+from services.audit import write_audit_log
+from services.database import get_pool, platform_scope
+from services.rbac import ORG_ADMIN_PERMISSION, get_users_with_permission
 
 # Stable ``source`` markers so a run/step's todos can be found and updated
 # idempotently (there is no natural unique key on member_todos to rely on).
 TODO_SOURCE_USER_TASK = "workflow_user_task"
 TODO_SOURCE_RUN_HELD = "workflow_run_held"
 TODO_SOURCE_TRIGGER_EXPIRING = "workflow_trigger_expiring"
+
+# audit_log.action for Task 5's loud-failure record.
+ALERT_UNDELIVERED_ACTION = "workflow_alert_undelivered"
+
+
+async def _org_admin_recipients(org_id) -> set[str]:
+    """Every real holder of the org-admin permission in ``org_id``, as
+    strings — the permission-based replacement for the old
+    ``role = 'org_admin'`` scan. Recipients are collected as strings
+    throughout this module (``get_users_with_permission`` already returns
+    ``str(uuid)``) so a ``started_by``/``created_by`` UUID object and its
+    string twin dedupe correctly in the same ``set``."""
+    pool = await get_pool()
+    ids = await get_users_with_permission(pool, org_id, ORG_ADMIN_PERMISSION)
+    return set(ids)
+
+
+async def _record_undelivered_alert(
+    conn, *, org_id, source: str, related_type: str, related_id, reason: str
+) -> None:
+    """Task 5: a recipient set that resolved to EMPTY used to write nothing
+    and fail silently — this is the loud, findable replacement.
+
+    Reuses ``audit_log`` (``user_id`` is nullable there — confirmed against
+    docs/schema_snapshot.sql) rather than a new table: no schema change, and
+    it is already the place every other "something happened, nobody to
+    attribute it to a specific write" event in this app is queryable from.
+    ``write_audit_log`` never raises, so a failure here cannot itself break
+    the caller's hold/expiry transaction — the finding is the audit row
+    existing at all, not an exception propagating.
+    """
+    await write_audit_log(
+        org_id=org_id,
+        action=ALERT_UNDELIVERED_ACTION,
+        table_name=related_type,
+        record_id=related_id,
+        new={"source": source, "reason": reason},
+    )
 
 TODO_CATEGORY = "workflow"
 _RUN_CONSOLE_PATH = "/admin/workflows/runs"
@@ -148,16 +201,26 @@ async def create_held_run_alerts(
     Org Admins are notified alongside whoever started it."""
     recipients = set()
     if started_by is not None:
-        recipients.add(started_by)
-    admins = await conn.fetch(
-        "SELECT id FROM users WHERE org_id = $1 AND role = 'org_admin'",
-        org_id,
-    )
-    for a in admins:
-        recipients.add(a["id"])
+        recipients.add(str(started_by))
+    recipients |= await _org_admin_recipients(org_id)
 
     detail = (error_detail or "The run stopped after an error and needs review.")
     detail = detail[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn,
+            org_id=org_id,
+            source=TODO_SOURCE_RUN_HELD,
+            related_type="workflow_run",
+            related_id=run_id,
+            reason=(
+                "run held with no resolvable recipient: started_by is null "
+                "and the org has no manage_org_settings holder"
+            ),
+        )
+        return []
+
     ids = []
     for uid in recipients:
         ids.append(
@@ -202,13 +265,22 @@ async def create_trigger_expiring_alerts(
     """
     recipients = set()
     if created_by is not None:
-        recipients.add(created_by)
-    admins = await conn.fetch(
-        "SELECT id FROM users WHERE org_id = $1 AND role = 'org_admin'",
-        org_id,
-    )
-    for a in admins:
-        recipients.add(a["id"])
+        recipients.add(str(created_by))
+    recipients |= await _org_admin_recipients(org_id)
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn,
+            org_id=org_id,
+            source=TODO_SOURCE_TRIGGER_EXPIRING,
+            related_type="workflow_trigger",
+            related_id=trigger_id,
+            reason=(
+                "trigger expiring with no resolvable recipient: created_by "
+                "is null and the org has no manage_org_settings holder"
+            ),
+        )
+        return []
 
     ids = []
     for uid in recipients:

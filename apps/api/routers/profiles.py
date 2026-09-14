@@ -99,7 +99,7 @@ async def _require_admin(request: Request) -> tuple[str, str]:
         principal = await load_principal(conn, actor_id)
     if principal is None:
         principal = {"id": actor_id, "org_id": org_id, "role": None}
-    if not can_manage_org_settings(principal, org_id):
+    if not await can_manage_org_settings(pool, principal, org_id):
         raise HTTPException(status_code=403, detail="Admin access required")
     return actor_id, org_id
 

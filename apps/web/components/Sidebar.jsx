@@ -7,7 +7,7 @@ import BrandNavIcon from "./BrandNavIcon";
 import { useBrand } from "@/components/ThemeProvider";
 import { usePermissions } from "@/lib/usePermissions";
 import {
-  GATE_ORG_OR_SUPER_ADMIN,
+  GATE_MANAGE_ORG_SETTINGS,
   GATE_SUPER_ADMIN,
   canAccess,
 } from "@/lib/menuVisibility";
@@ -352,7 +352,7 @@ export default function Sidebar() {
             </>
           )}
 
-          {canAccess(me, GATE_ORG_OR_SUPER_ADMIN) && (
+          {canAccess(me, GATE_MANAGE_ORG_SETTINGS) && (
             <>
               <NavLink
                 item={PROFILES_ITEM}

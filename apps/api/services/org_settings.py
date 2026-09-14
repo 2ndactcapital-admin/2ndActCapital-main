@@ -493,18 +493,24 @@ async def get_settings_detail(conn, org_id) -> list[dict]:
 # ── Writes ────────────────────────────────────────────────────────────────
 
 
-async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=None):
+async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=None, pool=None):
     """Upsert one setting on (org_id, setting_key).
 
-    Permission: super_admin (any org) or org_admin (own org only). ``principal``
-    may be passed pre-loaded; otherwise it is read from ``updated_by``. Raises
-    SettingsPermissionError when the caller is not allowed — the router maps
-    that to HTTP 403.
+    Permission: super_admin (any org) or org_admin (own org only, resolved by
+    the ``manage_org_settings`` permission). ``principal`` may be passed
+    pre-loaded; otherwise it is read from ``updated_by``. ``pool`` is used for
+    the permission check only — falls back to ``services.database.get_pool()``
+    when omitted, so existing callers that only ever passed ``conn`` keep
+    working. Raises SettingsPermissionError when the caller is not allowed —
+    the router maps that to HTTP 403.
     """
     if principal is None:
         principal = await load_principal(conn, updated_by)
+    if pool is None:
+        from services.database import get_pool
+        pool = await get_pool()
 
-    if not can_manage_org_settings(principal, org_id):
+    if not await can_manage_org_settings(pool, principal, org_id):
         role = (principal or {}).get("role") or "unknown"
         raise SettingsPermissionError(
             f"Role '{role}' may not manage settings for org {org_id}"
@@ -538,12 +544,15 @@ async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=No
     return value
 
 
-async def set_settings(conn, org_id, values: dict, updated_by, *, principal=None):
+async def set_settings(conn, org_id, values: dict, updated_by, *, principal=None, pool=None):
     """Upsert several settings under a single permission check."""
     if principal is None:
         principal = await load_principal(conn, updated_by)
+    if pool is None:
+        from services.database import get_pool
+        pool = await get_pool()
 
-    if not can_manage_org_settings(principal, org_id):
+    if not await can_manage_org_settings(pool, principal, org_id):
         role = (principal or {}).get("role") or "unknown"
         raise SettingsPermissionError(
             f"Role '{role}' may not manage settings for org {org_id}"
@@ -551,6 +560,6 @@ async def set_settings(conn, org_id, values: dict, updated_by, *, principal=None
 
     for key, value in values.items():
         await set_setting(
-            conn, org_id, key, value, updated_by, principal=principal
+            conn, org_id, key, value, updated_by, principal=principal, pool=pool
         )
     return await get_all_settings(conn, org_id)
