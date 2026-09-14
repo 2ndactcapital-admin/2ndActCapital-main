@@ -1573,12 +1573,14 @@ guarantee proven by row count, cross-org isolation on both new surfaces, and
 `npm run build` exiting 0.
 ---
 
-## 00. LiteLLM Phase B — routing BUILT, three real blockers to a first success (2026-08-26)
+## 00. LiteLLM Phase B — FULLY COMPLETE, first real billed call proven (2026-09-14)
 
-**Status: built and verified, 68/68, with 5 BLOCKED.**
-`apps/api/scripts/verify_litellmphaseb.py`. The routing change is complete and
-the transport is proven against the live proxy. What is blocked is a *successful*
-generation, and it is blocked on three things outside the codebase.
+**Status: built and verified, 68/68 (2026-08-26) + 25/25 (2026-09-14), 0
+BLOCKED.** `apps/api/scripts/verify_litellmphaseb.py` proved the transport
+layer; `apps/api/scripts/verify_litellmphasebproof.py` proves the real thing —
+a genuine, billed, successful generation through the full chain, dual-logged,
+with a genuine rollback-absence proof. All three blockers that stopped a first
+real success (below) are closed. Phase C (Voyage) is next.
 
 ### What now exists
 
@@ -1618,32 +1620,44 @@ The item below (and `render.yaml`'s note) recorded `LITELLM_BASE_URL` as the one
 this sprint added it** to `hollisworks/prd`, pointing at the live
 `https://hollisworks-litellm.onrender.com`. Verified by re-reading it back.
 
-### ACTION REQUIRED — three blockers to a first successful call
+### RESOLVED (2026-09-14) — all three blockers closed, in the order predicted
 
-None of these are code. All three need console access.
+1. **A real model deployment exists.** `GET /v1/models` returns `claude-sonnet`;
+   `GET /model/info` confirms it persists as `litellm."LiteLLM_ProxyModelTable"`
+   row `7fcd845c-0a47-413c-b77d-3da88d984425`, routing to
+   `anthropic/claude-sonnet-4-6`. Real DB row, survives restarts.
+2. **`LITELLM_MASTER_KEY` now authenticates as PROXY_ADMIN.** Root cause of the
+   `role=internal_user` failure: a Doppler sync had silently overwritten
+   `hollisworks-litellm`'s own `DATABASE_URL` with the shared root config's
+   value — the exact "sync is destructive, not additive" hazard this project's
+   CLAUDE.md already warns about, confirmed a third time. Fixed with a
+   dedicated Doppler branch config (`lite_llm`) syncing `DATABASE_URL` only to
+   that service. Full writeup in `docs/LITELLM_INTEGRATION_DESIGN_V1.md` §13.5.
+3. **`ANTHROPIC_API_KEY` exists in Doppler and is real** — proven by a call made
+   directly against `api.anthropic.com`, independent of LiteLLM entirely.
 
-1. **The proxy has ZERO model deployments.** `GET /v1/models` returns
-   `{"data":[]}`; `GET /model/info` returns HTTP 500 *"LLM Model List not loaded
-   in"*. LiteLLM cannot route any model name. Corroborated independently: **every
-   row LiteLLM has ever written to its own spend log is `status=failure`** — the
-   proxy has never successfully served a single call.
-2. **Doppler's `LITELLM_MASTER_KEY` is NOT the proxy's master key.** LiteLLM
-   reports `role=internal_user` and refuses `POST /model/new` with HTTP 403
-   *"only if you are a PROXY_ADMIN"*. It is a virtual/internal-user key. So this
-   sprint could not fix blocker 1 either. **This also corrects the note below:**
-   adding `LITELLM_BASE_URL` does *not* by itself unblock
-   `litellm.reload_model_cost_map` — that admin endpoint needs PROXY_ADMIN, so it
-   will still fail, now with a 403 rather than a `LiteLLMConfigError`.
-3. **`ANTHROPIC_API_KEY` exists nowhere** — not in Doppler `prd` (all 35 secret
-   names enumerated), not in `~/.bashrc`, not in `apps/api/.env`. Neither
-   LiteLLM's upstream nor the direct-Anthropic rollback path has a provider
-   credential. AWS Bedrock is not an alternative: the existing `AWS_*` creds are
-   the Textract-only IAM user and `bedrock:ListFoundationModels` returns
-   `AccessDeniedException`.
+**The proof this unlocked**, via `apps/api/scripts/verify_litellmphasebproof.py`
+(25/25, 1 FIND): a genuine `200` with real generated text through
+`call_claude_text` → LiteLLM → Anthropic; `ai_decision_log` recording real
+`success=true` with non-zero `cost_usd`/`latency_ms`; LiteLLM's own spend
+ledger recording the SAME call with non-zero spend (**the first real, billed
+call this proxy has ever routed** — every prior row was `status=failure,
+spend=0`); the two logs agreeing on outcome; the rollback path succeeding via
+direct Anthropic, proven by genuine absence of a new LiteLLM spend row after
+the full flush window; and the fallback chain still walking correctly via
+LiteLLM under a forced first-model failure.
 
-**Order to unblock:** obtain the real PROXY_ADMIN master key (2) → store a
-provider key (3) → register a model deployment (1) → re-run
-`verify_litellmphaseb.py`, which will convert the 5 BLOCKED items to PASS.
+**[FIND], recorded not silently routed around:** `app_service` (the role
+`DATABASE_URL` now points at, post RLS-enforcement-cutover) gets
+`InsufficientPrivilegeError: permission denied for schema litellm` on any
+direct SQL against `litellm.*` — the earlier verify script's direct queries
+only worked because they pre-dated that cutover, when `DATABASE_URL` was still
+`postgres`. The obvious workaround (`LITELLM_DATABASE_URL`, the
+`litellm_service` role's own connection string) is *also* currently blocked by
+an `InvalidPasswordError` — same class of credential drift as the historical
+`DB_PASSWORD` issue. The completion-proof script instead reads LiteLLM's own
+admin HTTP API (`GET /spend/logs`) with `LITELLM_MASTER_KEY`, which is the
+correct interface for this anyway and needs no schema-crossing grant.
 
 ### What IS proven, against the live proxy
 
@@ -1653,12 +1667,17 @@ provider key (3) → register a model deployment (1) → re-run
 - The fallback chain still walks every model, in order, via LiteLLM, proven with
   a real forced-failure primary.
 - **Dual visibility is real.** The same call appears in *both* `ai_decision_log`
-  and `litellm."LiteLLM_SpendLogs"`, naming the same models in the same order and
-  agreeing on the outcome. **Measured, and it matters: LiteLLM flushes that table
-  asynchronously, seconds after answering.** A before/after count taken around
-  the call sees nothing — an earlier draft of the verify script reported a false
-  negative for exactly this reason. Any assertion about that log, presence *or*
-  absence, must poll across the flush window.
+  and LiteLLM's own spend log (read via `GET /spend/logs` post-cutover — see
+  the [FIND] above), agreeing on outcome. They do **not** agree on model name
+  literally: `ai_decision_log` records the request-facing name (`claude-sonnet`)
+  while LiteLLM's log records the resolved deployment string
+  (`anthropic/claude-sonnet-4-6`) — correlate by time window + the
+  `/model/info` alias mapping, not a naive string match. **Measured, and it
+  matters: LiteLLM flushes that table asynchronously, seconds after
+  answering.** A before/after count taken around the call sees nothing — an
+  earlier draft of the verify script reported a false negative for exactly
+  this reason. Any assertion about that log, presence *or* absence, must poll
+  across the flush window.
 - `ai_decision_log`'s shape is unchanged, compared column-by-column and
   type-by-type against a real pre-sprint row.
 
@@ -1667,12 +1686,10 @@ provider key (3) → register a model deployment (1) → re-run
 `LITELLM_ROUTING_DISABLED` is **not** declared in `render.yaml` — it is an
 break-glass switch, and a declared-but-unset variable invites someone to set it
 permanently. Set it directly in the Render dashboard if the proxy misbehaves.
-Until blockers 1–3 clear, production is on the **degraded** path: LiteLLM is
-configured, so calls route to it, and they will fail. **If Phase B is deployed
-before those blockers clear, set `LITELLM_ROUTING_DISABLED=1` in Render at the
-same time** — but note blocker 3 means direct Anthropic has no key either, so AI
-features are non-functional in production regardless, exactly as they were
-before this sprint.
+**As of 2026-09-14, production is off the degraded path**: LiteLLM has a real
+model deployment, a working PROXY_ADMIN key, and a real Anthropic credential —
+calls route through it and succeed. The rollback switch remains available and
+proven (see RESOLVED section above) if the proxy misbehaves in production.
 
 ---
 

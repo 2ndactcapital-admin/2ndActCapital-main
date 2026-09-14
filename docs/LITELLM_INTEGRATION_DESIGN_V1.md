@@ -161,13 +161,54 @@ Confirmed: zero existing call sites. This section is unconstrained by legacy int
 
 ---
 
+## 13.5 · Deployment gotchas — read this before touching this service again
+
+**The B2 `PROXY_ADMIN` mystery, root-caused.** `LITELLM_MASTER_KEY` in Doppler
+`prd` was always the *right value* — the proxy kept authenticating it as
+`role=internal_user` anyway. Root cause: **a Doppler sync had silently
+overwritten `hollisworks-litellm`'s `DATABASE_URL`** with the shared root
+config's value on some prior sync/re-trigger, pointing the LiteLLM service at a
+database session where its own bootstrap-created master key's role record
+didn't match what Doppler's copy of the key claimed. This is exactly the
+"Doppler sync can be destructive, not additive" hazard called out at the top
+of this project's CLAUDE.md, confirmed for a **third** time on this project.
+**Fix:** a dedicated Doppler **branch config** (`lite_llm`) syncing `DATABASE_URL`
+*only* to `hollisworks-litellm`, so a future root-config sync can never
+clobber it again. Anyone adding a fourth Render service to this project should
+set up its own branch config for anything that must differ from the shared
+root value, before the first sync — not after losing hours to this exact
+symptom.
+
+**A new, separate finding from the completion-proof sprint:** direct SQL
+against `litellm.*` from `app_service` (the role `DATABASE_URL` has pointed at
+since the RLS enforcement cutover) now fails
+`InsufficientPrivilegeError: permission denied for schema litellm`. This is
+the platform's own least-privilege design working as intended — `app_service`
+and `litellm_service` are deliberately separate, scoped roles, and
+`app_service` was never granted into LiteLLM's schema (§2). The *earlier*
+Phase B verify script's direct queries against
+`litellm."LiteLLM_SpendLogs"` only worked because they ran **before** that
+cutover, when `DATABASE_URL` was still the `postgres` superuser. The obvious
+workaround — connecting directly as `litellm_service` via the
+`LITELLM_DATABASE_URL` secret — is **also currently blocked**: both its
+embedded password and the separate `LITELLM_DB_PASSWORD` secret fail
+`InvalidPasswordError` against Supabase's pooler, the same class of credential
+drift previously documented for `DB_PASSWORD`. **Any code or script that needs
+to read LiteLLM's own spend/usage data should use LiteLLM's own admin HTTP API
+(`GET /spend/logs`, `GET /global/spend`) with `LITELLM_MASTER_KEY`, not a raw
+SQL connection into its schema** — this is not a workaround so much as the
+correct interface for an external caller, and it sidesteps the schema
+separation entirely rather than punching a hole in it.
+
+---
+
 ## 14 · Phasing
 
 | Phase | Scope |
 |---|---|
-| **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE, but only partly.** The proxy is live and the `litellm` schema is migrated (77 tables). **It has ZERO model deployments and has never successfully routed a call** — every row in its own spend log is `status=failure`. The `render.yaml` service-adoption gap is still open. |
-| **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **COMPLETE (2026-08-26), 68/68, 5 BLOCKED** — `verify_litellmphaseb.py`. See §14.1. |
-| **C** | Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism. |
+| **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE.** The proxy is live and the `litellm` schema is migrated (77 tables). **A real model deployment now exists** (`claude-sonnet` → `anthropic/claude-sonnet-4-6`) and the proxy has routed its first successful, billed call (2026-09-14) — see §14.1. The `render.yaml` service-adoption gap is still open. |
+| **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **FULLY COMPLETE (2026-09-14)** — routing built 68/68 (2026-08-26), all 5 previously-BLOCKED assertions now PASS, 25/25, `verify_litellmphasebproof.py`. See §14.1. |
+| **C** | **NEXT.** Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism. |
 | **D** | Model pick-list screen (org-scoped, filterable, LiteLLM metadata-driven). |
 | **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
 | **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
@@ -178,9 +219,12 @@ Confirmed: zero existing call sites. This section is unconstrained by legacy int
 
 ---
 
-## 14.1 · Phase B — what actually shipped (2026-08-26)
+## 14.1 · Phase B — what actually shipped (2026-08-26, completed 2026-09-14)
 
-`apps/api/scripts/verify_litellmphaseb.py` — **68/68 PASS, 5 BLOCKED.**
+`apps/api/scripts/verify_litellmphaseb.py` — **68/68 PASS, 5 BLOCKED** (transport
+layer, 2026-08-26). `apps/api/scripts/verify_litellmphasebproof.py` — **25/25
+PASS, 1 FIND, 0 BLOCKED** (completion proof, 2026-09-14) — see the RESOLVED
+section below and §13.5.
 
 ### The routing change
 
@@ -248,19 +292,40 @@ reported a false negative for exactly this reason. **Any assertion or reporting
 query against that table — presence or absence — must tolerate the flush lag.**
 This matters directly for Phase G's billing surfaces.
 
-### Blocked, and on what
+### RESOLVED (2026-09-14) — Phase B is now fully, genuinely complete
 
-Phase A is live but **not usable for traffic**. Three external blockers, none of
-them code, all needing console access — full detail in
-`docs/PROJECT_STATUS.md` item 00:
+`apps/api/scripts/verify_litellmphasebproof.py` — **25/25 PASS, 1 FIND, 0
+BLOCKED.** All three blockers below (and the 5 assertions they blocked in
+`verify_litellmphaseb.py`) are closed:
 
-1. The proxy has **zero model deployments** (`/v1/models` → `{"data":[]}`).
-2. Doppler's `LITELLM_MASTER_KEY` is an **`internal_user` virtual key, not
-   PROXY_ADMIN** — so this sprint could not register one either. This also means
-   `litellm.reload_model_cost_map` remains blocked despite the `LITELLM_BASE_URL`
-   fix, contrary to `render.yaml`'s note.
-3. **`ANTHROPIC_API_KEY` exists nowhere.** Bedrock is not an alternative — the
-   existing `AWS_*` creds are Textract-only and Bedrock returns `AccessDenied`.
+1. **A real model deployment exists.** `GET /v1/models` returns `claude-sonnet`;
+   `GET /model/info` confirms it persists as `litellm."LiteLLM_ProxyModelTable"`
+   row `7fcd845c-0a47-413c-b77d-3da88d984425`, routing to
+   `anthropic/claude-sonnet-4-6`. Survives restarts — a real DB row, not
+   in-memory config.
+2. **`LITELLM_MASTER_KEY` now authenticates as `PROXY_ADMIN`.** Root cause of
+   the earlier `internal_user` failure, and the fix — see §13.5 below.
+3. **`ANTHROPIC_API_KEY` exists in Doppler and is real** — proven by a minimal
+   call made directly against `api.anthropic.com`, independent of LiteLLM.
+
+**The one proof `verify_litellmphaseb.py` could not make, now made for real:**
+a genuine `200` with real generated text through the full chain
+(`call_claude_text` → LiteLLM → Anthropic); `ai_decision_log` recording real
+`success=true`, non-zero `cost_usd`, non-zero `latency_ms`; LiteLLM's own spend
+ledger recording the SAME call with non-zero spend (the first real, billed call
+this proxy has ever routed); the two logs agreeing on outcome; the rollback path
+(`LITELLM_ROUTING_DISABLED=1`) succeeding via direct Anthropic, proven by a
+genuine ABSENCE of a new LiteLLM spend row after the full flush window; and the
+fallback chain still walking correctly via LiteLLM under a forced first-model
+failure.
+
+**Real finding, not a regression:** the two logs don't correlate on model name
+directly. `ai_decision_log.model_used` records the request-facing name we
+called with (`claude-sonnet`); LiteLLM's spend log records the *resolved*
+deployment string (`anthropic/claude-sonnet-4-6`). Any future reporting surface
+(Phase G) that joins these two logs needs to correlate by time window +
+deployment identity (via `/model/info`'s `model_name` → `litellm_params.model`
+mapping), not by a naive string match on model name.
 
 **Gap closed by this sprint:** `LITELLM_BASE_URL` was still absent from Doppler
 `prd` and is now set to the live Render URL, verified by read-back.
