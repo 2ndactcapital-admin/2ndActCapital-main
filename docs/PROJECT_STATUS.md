@@ -1573,6 +1573,130 @@ guarantee proven by row count, cross-org isolation on both new surfaces, and
 `npm run build` exiting 0.
 ---
 
+## 00. LiteLLM Phase C — Voyage embeddings routed through the proxy (2026-09-14)
+
+**Status: built and verified, 34/34, 0 BLOCKED.**
+`apps/api/scripts/verify_litellmphasec.py`. Phase B (entry immediately below)
+proved TEXT calls; this closes the parallel gap the original LiteLLM
+discovery sprint found — Voyage embeddings bypassing the router entirely, no
+fallback chain, no `ai_decision_log` row. Phase D (per-org model pick-list
+UI) is next.
+
+### What now exists
+
+- **Voyage registered as a real, persisted proxy deployment**:
+  `model_name='voyage-3.5' -> litellm_params.model='voyage/voyage-3.5'`,
+  `api_key=os.environ/VOYAGE_API_KEY` (the same `os.environ/` indirection the
+  Anthropic deployment uses — never a literal key). Confirmed via
+  `POST /model/new` + a FRESH re-read on `GET /v1/models` and
+  `GET /model/info` (`db_model=true` — persisted to LiteLLM's own DB, not an
+  in-memory-only registration), not by trusting the POST's own response.
+- `services/document_embedding.py` now calls LiteLLM's OpenAI-shaped
+  `POST /v1/embeddings` (both `/v1/embeddings` and bare `/embeddings` answer
+  identically live; `/v1/embeddings` is used to match the documented
+  OpenAI-compatible surface) instead of calling Voyage directly. The
+  transport resolver is the SAME one text calls use
+  (`services/extraction.resolve_transport` / `LITELLM_ROUTING_DISABLED`) —
+  **one rollback switch now covers both text and embeddings**, the correct
+  blast radius for a platform-wide ops escape hatch. When LiteLLM is not the
+  resolved transport, this module falls back to the SAME direct-Voyage call
+  it always made — now the explicit fallback, not the only path.
+- A real, embedding-specific fallback chain: `ai.embedding.fallback_chain`
+  (its own org_settings key, deliberately NOT shared with
+  `ai.model.fallback_chain` — a wrong-dimension fallback model would silently
+  corrupt vector search, so embeddings need their own chain with a per-attempt
+  dimension gate). Defaults to `["voyage-3.5"]`, mirroring
+  `ai.model.fallback_chain`'s single-item default.
+- Every embedding call now writes exactly one `ai_decision_log` row — the SAME
+  table, the SAME shape text calls use (`task_type='embedding_document'` /
+  `'embedding_query'`), via the identical `_safe_log`/`_write_ai_decision`
+  helper `services/extraction.py` already uses. Embeddings are no longer
+  invisible to per-org AI cost attribution.
+- **The re-indexing friction dialog** (CLAUDE.md's embedding-compatibility
+  rule — embeddings from different models are not comparable, and switching
+  one without re-indexing silently degrades search). New endpoint
+  `GET /orgs/{org_id}/settings/embedding-reindex-estimate?new_model=X`
+  (`services/document_embedding.reindex_estimate`) returns the org's REAL
+  corpus count (`COUNT(*) FROM document_embeddings WHERE org_id=$1` at call
+  time, never an estimate) and a REAL cost estimate computed from the
+  corpus's actual stored `content_chars` and the candidate model's LIVE
+  LiteLLM price (`GET /model/info` → `input_cost_per_token`, never a
+  hardcoded local price table). `OrgSettingsEditor.jsx` intercepts a genuine
+  `ai.embedding.model` change and shows this before saving — Cancel, or
+  "Change model anyway" (friction, not a lock; a confirming admin always
+  proceeds).
+
+### [FIND]s recorded, not silently routed around
+
+- **The live `document_embeddings` corpus was genuinely EMPTY (0 rows, all
+  orgs)** at the start of this sprint — Chancery's semantic INDEX had never
+  successfully embedded a document in this environment before now, reported
+  honestly rather than papered over. `verify_litellmphasec.py` seeds real
+  fixture rows (via the full `embed_document` path AND a raw pre-seeded row,
+  simulating genuinely pre-existing data) to prove both the friction dialog's
+  live-count claim and the existing-embedding-survives-untouched claim
+  against real data.
+- **No re-indexing mechanism exists anywhere in this codebase** — no script,
+  no endpoint, no scheduled job. Changing `ai.embedding.model` only changes
+  what NEW documents embed with; every already-embedded document keeps its
+  OLD-model vector until someone manually re-runs `embed_document` on it. The
+  friction dialog's `note` field says this plainly rather than implying an
+  automatic migration will run — the real gap the sprint prompt asked to be
+  recorded honestly if found.
+- **`ai_decision_log.cost_usd` is `numeric(10,6)`** — sized for Claude's
+  per-call cost. Voyage's real live price ($0.06 / 1M input tokens, read from
+  LiteLLM's own `GET /model/info`) means a short embedding call (a handful of
+  tokens) silently floors to `0.000000` at that scale — not an error, a real
+  precision gap. A migration exists
+  (`migrations/litellmphasec_cost_precision.sql`, widens to
+  `numeric(14,10)`) but is **BLOCKED**: `DATABASE_URL` now connects as
+  `app_service` (the RLS-cutover role), which is not `ai_decision_log`'s
+  owner (`postgres`) and cannot `ALTER` it, and no `postgres`-role credential
+  is available in this environment. Until someone with owner access applies
+  it, short embedding calls will log `cost_usd=0.000000` even though a real,
+  non-zero cost was billed (correctly visible in LiteLLM's own spend log,
+  which has no such precision limit). The verify script's own real-call proof
+  uses a realistic multi-sentence fixture text specifically so its non-zero
+  `cost_usd` assertion does not depend on this migration landing.
+- **The Doppler `VOYAGE_API_KEY` is on Voyage's rate-limited free tier** (live
+  error text: "reduced rate limits of 3 RPM and 10K TPM" — no payment method
+  on file). `verify_litellmphasec.py` paces its real Voyage calls around this
+  (a 65s pause between real calls; 25s measurably was not enough). Production
+  usage at any real volume will need a paid Voyage tier or app-side request
+  pacing to avoid the same throttling.
+- `docs/schema_snapshot.sql`'s generator does not capture FOREIGN KEY
+  constraints at all (confirmed: zero `FOREIGN KEY` occurrences in the whole
+  file). `document_embeddings.document_id` has a real, live
+  `REFERENCES documents(id) ON DELETE CASCADE` the snapshot is silent about —
+  discovered building this sprint's verify fixtures the hard way. Worth
+  fixing in the snapshot generator; out of scope here.
+
+### What IS proven, against the live proxy
+
+- A real `embed_document()` call through the FULL app path succeeds
+  end-to-end through LiteLLM, stores a real 1024-wide vector, and both
+  LiteLLM's own spend log (`GET /spend/logs`, non-zero spend,
+  `call_type='aembedding'`) and `ai_decision_log` (`success=true`, real
+  `latency_ms`, real non-zero `cost_usd`) record it.
+- The fallback chain genuinely walks: a forced-bogus primary model fails with
+  LiteLLM's own "Invalid model name" error (proof the request really reached
+  the live proxy), and the real model recovers on the second attempt —
+  `ai_decision_log` records `fallback_used=true`.
+- The rollback (`LITELLM_ROUTING_DISABLED=1`) genuinely bypasses LiteLLM for
+  embeddings too — the call still succeeds (via direct Voyage, the
+  pre-Phase-C path), and LiteLLM's own spend log shows ZERO new rows after
+  the full flush window.
+- The friction dialog's `corpus_document_count` exactly matches a direct SQL
+  count, both before and after a real write (proving it's live, not cached or
+  hardcoded), and its price comes from LiteLLM's live `/model/info`, not a
+  local table.
+- A raw, pre-existing embedding row (inserted directly, never touched by any
+  Phase-C code path) is still readable, byte-identical, at its original
+  dimensionality after every maneuver above — this sprint did not silently
+  invalidate the existing corpus.
+
+---
+
 ## 00. LiteLLM Phase B — FULLY COMPLETE, first real billed call proven (2026-09-14)
 
 **Status: built and verified, 68/68 (2026-08-26) + 25/25 (2026-09-14), 0
@@ -1580,7 +1704,8 @@ BLOCKED.** `apps/api/scripts/verify_litellmphaseb.py` proved the transport
 layer; `apps/api/scripts/verify_litellmphasebproof.py` proves the real thing —
 a genuine, billed, successful generation through the full chain, dual-logged,
 with a genuine rollback-absence proof. All three blockers that stopped a first
-real success (below) are closed. Phase C (Voyage) is next.
+real success (below) are closed. **Phase C (Voyage) is now complete too — see
+the entry immediately above.**
 
 ### What now exists
 

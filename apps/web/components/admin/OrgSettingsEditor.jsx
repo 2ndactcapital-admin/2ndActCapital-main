@@ -61,12 +61,24 @@ const EMBEDDING_PROVIDER_OPTIONS = [
   { value: "cohere", label: "Cohere" },
 ];
 
+// LiteLLM Phase C — the embedding-compatibility rule (CLAUDE.md): embeddings
+// from different models are not comparable, and switching one without
+// re-indexing silently degrades search. Changing THIS key is the one save
+// action on this whole screen that gets a real confirmation step, showing the
+// org's actual corpus size and a real cost estimate rather than a generic
+// "are you sure?" — friction, not a lock; an admin who confirms may proceed.
+const EMBEDDING_MODEL_KEY = "ai.embedding.model";
+
 export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
   const [rows, setRows] = useState(null);
   const [draft, setDraft] = useState({});
   const [status, setStatus] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Phase C friction dialog state: null when closed; while open holds
+  // { loading, error, estimate, newModel } for the pending ai.embedding.model
+  // change the admin is about to confirm.
+  const [reindexDialog, setReindexDialog] = useState(null);
 
   useEffect(() => {
     if (!orgId) return;
@@ -120,6 +132,39 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
 
   async function save() {
     if (invalidColors.length) return;
+
+    // The embedding-compatibility rule (CLAUDE.md): a genuine ai.embedding.model
+    // CHANGE (not merely touched-and-reverted, and not a first-time set with no
+    // stored value yet) gets the friction dialog before anything is written.
+    const modelRow = (rows || []).find((r) => r.key === EMBEDDING_MODEL_KEY);
+    const storedModel = modelRow?.value ?? "";
+    const draftModel = draft[EMBEDDING_MODEL_KEY];
+    const modelChanged =
+      Object.prototype.hasOwnProperty.call(draft, EMBEDDING_MODEL_KEY) &&
+      draftModel !== storedModel &&
+      draftModel !== "";
+
+    if (modelChanged) {
+      setReindexDialog({ loading: true, error: null, estimate: null, newModel: draftModel });
+      try {
+        const res = await fetch(
+          `/api/orgs/${orgId}/settings/embedding-reindex-estimate` +
+            `?new_model=${encodeURIComponent(draftModel)}`,
+          { cache: "no-store" },
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Could not load the re-indexing estimate.");
+        setReindexDialog({ loading: false, error: null, estimate: data, newModel: draftModel });
+      } catch (e) {
+        setReindexDialog({ loading: false, error: e.message, estimate: null, newModel: draftModel });
+      }
+      return; // wait for the admin to explicitly confirm or cancel in the dialog
+    }
+
+    await commitSave();
+  }
+
+  async function commitSave() {
     setSaving(true);
     setError(null);
     try {
@@ -303,6 +348,112 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
           </div>
         </section>
       ))}
+
+      {reindexDialog && (
+        <ReindexConfirmDialog
+          state={reindexDialog}
+          onCancel={() => setReindexDialog(null)}
+          onConfirm={() => {
+            setReindexDialog(null);
+            commitSave();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// The re-indexing friction dialog (Task 4, LiteLLM Phase C). Shows the org's
+// REAL corpus count and a REAL cost estimate — both come from the backend's
+// live numbers (services/document_embedding.reindex_estimate), never a
+// hardcoded or client-guessed figure. This is friction, not a lock: the
+// "Change model anyway" button always works once the estimate has loaded.
+function ReindexConfirmDialog({ state, onCancel, onConfirm }) {
+  const { loading, error, estimate, newModel } = state;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(15, 23, 42, 0.45)" }}
+    >
+      <div
+        className="w-full max-w-md rounded-md border bg-bg-card p-6"
+        style={{ borderColor: "var(--2a-border)", background: "var(--2a-bg-card)" }}
+      >
+        <h3 className="text-sm font-semibold" style={{ color: "var(--2a-navy)" }}>
+          Change embedding model to &ldquo;{newModel}&rdquo;?
+        </h3>
+
+        {loading && (
+          <p className="mt-3 text-sm text-text-muted">Loading the real corpus size…</p>
+        )}
+
+        {!loading && error && (
+          <p className="mt-3 text-sm" style={{ color: "#9B2335" }}>
+            {error}
+          </p>
+        )}
+
+        {!loading && !error && estimate && (
+          <div className="mt-3 space-y-3 text-sm text-text-primary">
+            <p>
+              Embeddings from different models are not comparable. Changing the
+              model does not touch anything already indexed — it only changes
+              what NEW documents use going forward.
+            </p>
+            <div
+              className="rounded border px-3 py-2"
+              style={{ borderColor: "var(--2a-border)" }}
+            >
+              <div>
+                Currently indexed under{" "}
+                <strong>{estimate.current_model || "no model yet"}</strong>:{" "}
+                <strong>{estimate.corpus_document_count}</strong> document
+                {estimate.corpus_document_count === 1 ? "" : "s"}
+              </div>
+              <div className="mt-1">
+                Estimated cost to re-embed all of them under{" "}
+                <strong>{newModel}</strong>:{" "}
+                {estimate.estimated_reindex_cost_usd !== null ? (
+                  <strong>${estimate.estimated_reindex_cost_usd}</strong>
+                ) : (
+                  <span>
+                    unavailable ({estimate.price_source})
+                  </span>
+                )}
+              </div>
+            </div>
+            {!estimate.reindex_mechanism_exists && (
+              <p style={{ color: "#9B2335" }}>{estimate.note}</p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded border px-4 py-2 text-sm font-medium"
+            style={{ borderColor: "var(--2a-border)" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="rounded border px-4 py-2 text-sm font-medium disabled:opacity-40"
+            style={{
+              background: "var(--2a-navy)",
+              color: "var(--2a-bg)",
+              borderColor: "var(--2a-navy)",
+            }}
+          >
+            Change model anyway
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

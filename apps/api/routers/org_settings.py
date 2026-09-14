@@ -146,6 +146,23 @@ async def read_org_settings(request: Request, org_id: str, detail: bool = False)
         return {"org_id": org_id, "settings": await get_all_settings(conn, org_id)}
 
 
+@router.get("/orgs/{org_id}/settings/embedding-reindex-estimate")
+async def embedding_reindex_estimate(request: Request, org_id: str, new_model: str):
+    """Real corpus size + re-indexing cost estimate for the Phase-C friction
+    dialog (CLAUDE.md's embedding-compatibility rule). Read access only — the
+    actual setting write still goes through the normal PUT permission check;
+    this endpoint informs the confirmation, it does not gate anything itself.
+    """
+    from services.document_embedding import reindex_estimate
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        _require_read_access(principal, org_id)
+        estimate = await reindex_estimate(conn, org_id, new_model)
+    return estimate
+
+
 @router.put("/orgs/{org_id}/settings")
 async def write_org_settings(request: Request, org_id: str, body: SettingsBulk):
     pool = await get_pool()

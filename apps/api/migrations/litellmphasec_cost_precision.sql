@@ -1,0 +1,11 @@
+-- LiteLLM Phase C — widen ai_decision_log.cost_usd's precision.
+--
+-- The column was numeric(10,6), sized for Claude's per-call cost (haiku's
+-- cheapest realistic call is > $0.000001). Voyage's real live price
+-- ($0.06 / 1M input tokens, confirmed via LiteLLM's GET /model/info) means a
+-- single short embedding call costs $0.0000001-$0.000001 — below the old
+-- scale's precision, so it was SILENTLY STORED AS 0.000000, not an error.
+-- Widening to numeric(14,10) preserves every existing text-call value
+-- unchanged (6 decimal places is a strict subset of 10) while making
+-- embedding costs real, non-zero numbers instead of a silent floor.
+ALTER TABLE ai_decision_log ALTER COLUMN cost_usd TYPE numeric(14,10);

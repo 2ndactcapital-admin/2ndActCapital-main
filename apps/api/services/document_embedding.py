@@ -29,11 +29,37 @@ CREDENTIALS
 ``VOYAGE_API_KEY`` comes from the environment (Render) and, for local/verify
 runs, falls back to ``apps/api/.env`` — the same file the FastAPI Settings model
 loads. The key is NEVER printed or logged.
+
+LiteLLM Phase C (litellmphasec.structural) — Voyage embeddings now route
+through the same self-hosted LiteLLM proxy as every text call
+(``services/extraction.py``), instead of calling Voyage's API directly with raw
+``httpx``. This closes the gap the original LiteLLM discovery sprint found:
+embeddings bypassed the router entirely, had no fallback chain, and wrote no
+``ai_decision_log`` row. The transport swap reuses ``services/extraction.py``'s
+own transport resolver (``resolve_transport`` / the ``LITELLM_ROUTING_DISABLED``
+rollback switch / ``LITELLM_BASE_URL`` / ``LITELLM_MASTER_KEY``) rather than a
+second, parallel copy — one rollback switch disables LiteLLM routing for BOTH
+text and embeddings at once, which is the correct blast radius for an ops
+escape hatch. LiteLLM serves an OpenAI-shaped ``POST /v1/embeddings`` route
+(confirmed live; ``/embeddings`` also answers identically, but ``/v1/embeddings``
+is used to match the documented OpenAI-compatible surface). When LiteLLM is not
+the transport (rollback engaged, or not configured), this module calls Voyage
+directly — the same code path this module always used, now the explicit
+fallback rather than the only path.
+
+The embedding fallback chain is a SEPARATE ``ai.embedding.fallback_chain``
+org_settings key, not a shared chain with ``ai.model.fallback_chain`` — see the
+module docstring's dimension note above. A model swap mid-chain that returned a
+different dimensionality would silently corrupt vector search, so a per-attempt
+dimension check (against the org's configured ``ai.embedding.dimensions``) gates
+every candidate in the chain, not just the one ultimately stored.
 """
 
 import asyncio
 import json
 import os
+import time
+from decimal import Decimal
 
 import httpx
 
@@ -62,6 +88,21 @@ EMBEDDING_PROVIDER_DISABLED_MSG = "Voyage is the only model enabled right now"
 EMBEDDING_PROVIDER_KEY = "ai.embedding.provider"
 EMBEDDING_MODEL_KEY = "ai.embedding.model"
 EMBEDDING_DIMENSIONS_KEY = "ai.embedding.dimensions"
+# Phase C — the embedding-side fallback chain. Deliberately its own key, not
+# ai.model.fallback_chain — see module docstring.
+EMBEDDING_FALLBACK_CHAIN_KEY = "ai.embedding.fallback_chain"
+
+# task_type values written to ai_decision_log — same table/shape text calls use.
+EMBED_TASK_DOCUMENT = "embedding_document"
+EMBED_TASK_QUERY = "embedding_query"
+
+# USD per 1M input tokens, by provider. Voyage's real live price (verified via
+# LiteLLM's GET /model/info -> input_cost_per_token == 6e-08 for voyage-3.5,
+# i.e. $0.06 / 1M tokens) at Phase C registration time. Embeddings have no
+# output tokens, unlike extraction.py's _MODEL_PRICING table.
+_EMBEDDING_PRICING: dict[str, Decimal] = {
+    "voyage": Decimal("0.06"),
+}
 
 # Voyage's real defaults (verified live at Task 1).
 DEFAULT_EMBEDDING_PROVIDER = "voyage"
@@ -178,18 +219,188 @@ async def _embed_stub(provider):
     )
 
 
+# ── LiteLLM transport (Phase C) ───────────────────────────────────────────────
+async def _embed_litellm(texts, model, *, input_type=None) -> tuple[list[list[float]], dict | None]:
+    """REAL embeddings call through the LiteLLM proxy's OpenAI-shaped route.
+
+    Confirmed live against hollisworks-litellm: both ``/v1/embeddings`` and
+    ``/embeddings`` answer identically; ``/v1/embeddings`` is used to match the
+    documented OpenAI-compatible surface. Returns ``(vectors, usage)`` — usage
+    (token counts) feeds the cost estimate written to ai_decision_log, mirroring
+    how extraction.py computes cost from Anthropic's usage object.
+    """
+    from services import extraction as ex
+
+    base_url = os.environ[ex.LITELLM_BASE_URL_VAR].rstrip("/")
+    master_key = os.environ[ex.LITELLM_MASTER_KEY_VAR]
+    payload = {"model": model, "input": texts}
+    if input_type:
+        payload["input_type"] = input_type
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(f"{base_url}/v1/embeddings", json=payload, headers=headers)
+    if resp.status_code != 200:
+        raise EmbeddingUnavailable(
+            f"LiteLLM embeddings HTTP {resp.status_code} at {base_url}/v1/embeddings: "
+            f"{resp.text[:200]}"
+        )
+    data = resp.json()
+    vectors = [row["embedding"] for row in data.get("data", [])]
+    if not vectors:
+        raise EmbeddingUnavailable("LiteLLM /v1/embeddings returned no embeddings")
+    return vectors, data.get("usage")
+
+
+def _compute_embedding_cost(usage) -> Decimal | None:
+    """Dollar cost of one embedding call from LiteLLM's usage object.
+
+    Voyage is the only provider ever reaching this point (embed_texts gates on
+    provider == 'voyage' before calling the chain), so a single, known-live
+    price applies — no per-model lookup table needed today.
+    """
+    if not usage:
+        return None
+    tokens = usage.get("total_tokens") or usage.get("prompt_tokens") or 0
+    if not tokens:
+        return None
+    price = _EMBEDDING_PRICING.get("voyage")
+    if price is None:
+        return None
+    return ((Decimal(tokens) / Decimal(1_000_000)) * price).quantize(Decimal("0.00000001"))
+
+
+async def resolve_embedding_fallback_chain(conn, org_id) -> list[str]:
+    """The org's ordered embedding fallback chain.
+
+    Mirrors services/extraction.py's resolve_fallback_chain, reading the
+    embedding-specific EMBEDDING_FALLBACK_CHAIN_KEY instead of
+    ai.model.fallback_chain — see the module docstring for why the two chains
+    are deliberately separate.
+    """
+    from services.org_settings import DEFAULT_SETTINGS
+
+    default = DEFAULT_SETTINGS.get(EMBEDDING_FALLBACK_CHAIN_KEY) or []
+    chain = await get_setting(conn, org_id, EMBEDDING_FALLBACK_CHAIN_KEY)
+    chain = chain if chain else default
+    if isinstance(chain, str):  # tolerate a mis-stored scalar
+        chain = [chain]
+    return [m for m in (chain or []) if isinstance(m, str) and m]
+
+
+def _embedding_credential_state() -> tuple[bool, str]:
+    """Is there a usable path to a real embedding call right now?
+
+    True when LiteLLM is the resolved transport (the proxy holds its own
+    VOYAGE_API_KEY server-side — see render/Doppler prd_lite_llm), OR when this
+    process has its own VOYAGE_API_KEY for the direct-Voyage fallback (rollback
+    engaged, or LiteLLM not configured). Mirrors the two real paths
+    _execute_embedding_chain can actually take.
+    """
+    from services import extraction as ex
+
+    transport, reason = ex.resolve_transport()
+    if transport == ex.TRANSPORT_LITELLM:
+        return True, ""
+    if voyage_configured():
+        return True, ""
+    return False, (
+        f"no VOYAGE_API_KEY for the direct-Voyage fallback, and LiteLLM is not "
+        f"the transport ({reason})"
+    )
+
+
+async def _execute_embedding_chain(
+    texts, *, org_id, task_type, model, chain, input_type, expected_dims,
+) -> list[list[float]]:
+    """Walk the org's embedding fallback chain, timing/costing/logging every
+    attempt — the embedding-side twin of extraction.py's _execute_chain.
+
+    Tries ``model`` first, then each model in ``chain``, until one both
+    succeeds AND returns a vector of ``expected_dims`` width (a wrong-width
+    response is treated as a failed attempt, never silently stored — the
+    embedding-compatibility rule). Writes exactly one ai_decision_log row via
+    extraction.py's own _safe_log, so embeddings land in the SAME table with
+    the SAME shape text calls use. Raises EmbeddingUnavailable when the whole
+    chain is exhausted.
+    """
+    from services import extraction as ex
+
+    transport, transport_reason = ex.resolve_transport()
+    if transport_reason:
+        print(f"[embedding_router] transport={transport}: {transport_reason}")
+
+    attempts = list(dict.fromkeys([m for m in [model, *(chain or [])] if m]))
+    t0 = time.monotonic()
+    last_error = None
+    for model_id in attempts:
+        try:
+            if transport == ex.TRANSPORT_LITELLM:
+                vectors, usage = await _embed_litellm(texts, model_id, input_type=input_type)
+            else:
+                vectors = await _embed_voyage(texts, model_id, input_type=input_type)
+                usage = None
+        except Exception as exc:  # noqa: BLE001 — any transport/provider failure
+            last_error = f"{type(exc).__name__}: {exc}"
+            print(f"[embedding_router] model '{model_id}' failed for task "
+                  f"'{task_type}' via {transport}: {last_error}")
+            continue
+
+        if expected_dims and vectors and len(vectors[0]) != expected_dims:
+            last_error = (f"model '{model_id}' returned dim {len(vectors[0])}, "
+                           f"expected {expected_dims}")
+            print(f"[embedding_router] {last_error}")
+            continue
+
+        latency_ms = max(1, int((time.monotonic() - t0) * 1000))
+        fallback_used = model_id != model
+        await ex._safe_log(
+            org_id=org_id, task_type=task_type, model_requested=model,
+            model_used=model_id, fallback_used=fallback_used,
+            fallback_reason=(
+                f"primary '{model}' failed: {last_error}" if fallback_used else None
+            ),
+            cost_usd=_compute_embedding_cost(usage),
+            latency_ms=latency_ms, success=True, error_detail=None,
+        )
+        return vectors
+
+    latency_ms = max(1, int((time.monotonic() - t0) * 1000))
+    fallback_used = len(attempts) > 1
+    await ex._safe_log(
+        org_id=org_id, task_type=task_type, model_requested=model,
+        model_used=(attempts[-1] if attempts else model),
+        fallback_used=fallback_used,
+        fallback_reason=(
+            f"all {len(attempts)} model(s) in chain failed" if fallback_used else None
+        ),
+        cost_usd=None, latency_ms=latency_ms, success=False, error_detail=last_error,
+    )
+    raise EmbeddingUnavailable(
+        f"All models failed for embedding task '{task_type}' (chain={attempts}): "
+        f"{last_error}"
+    )
+
+
 async def embed_texts(
     texts, *, provider=DEFAULT_EMBEDDING_PROVIDER, model=DEFAULT_EMBEDDING_MODEL,
-    input_type=None,
+    input_type=None, org_id=None, task_type=EMBED_TASK_DOCUMENT,
+    fallback_chain=None, expected_dims=None,
 ) -> list[list[float]]:
     """Embed a batch of texts through the given provider abstraction.
 
     Only Voyage is functionally wired; every other listed provider raises
-    ``EmbeddingProviderNotEnabled`` WITHOUT touching the network.
+    ``EmbeddingProviderNotEnabled`` WITHOUT touching the network. A Voyage call
+    routes through LiteLLM (or its direct fallback) via the chain executor,
+    which is what writes the ai_decision_log row — ``org_id``/``task_type`` are
+    only meaningful for that path.
     """
     provider = (provider or DEFAULT_EMBEDDING_PROVIDER).lower()
     if provider == "voyage":
-        return await _embed_voyage(texts, model, input_type=input_type)
+        return await _execute_embedding_chain(
+            texts, org_id=org_id, task_type=task_type, model=model,
+            chain=fallback_chain, input_type=input_type, expected_dims=expected_dims,
+        )
     if provider in EMBEDDING_PROVIDERS:
         return await _embed_stub(provider)
     raise EmbeddingProviderNotEnabled(
@@ -338,14 +549,19 @@ async def embed_document(pool, doc, org_id) -> dict:
     try:
         async with pool.acquire() as conn:
             provider, model, dims = await resolve_embedding_config(conn, org_id)
+            chain = await resolve_embedding_fallback_chain(conn, org_id)
             text, source = await _assemble_document_text(conn, org_id, document_id)
         if not text.strip():
             return {"outcome": "skipped", "reason": "no extractable content"}
-        if provider == "voyage" and not voyage_configured():
-            return {"outcome": "skipped", "reason": "no Voyage credential"}
+        if provider == "voyage":
+            available, why = _embedding_credential_state()
+            if not available:
+                return {"outcome": "skipped", "reason": f"no Voyage credential: {why}"}
 
         vectors = await embed_texts(
-            [text], provider=provider, model=model, input_type="document"
+            [text], provider=provider, model=model, input_type="document",
+            org_id=org_id, task_type=EMBED_TASK_DOCUMENT, fallback_chain=chain,
+            expected_dims=dims,
         )
         vec = vectors[0]
         if len(vec) != dims:
@@ -394,13 +610,119 @@ async def embed_query(pool, org_id, query_text) -> list[float]:
     tokens = set_rls_context(org_id, False)
     try:
         async with pool.acquire() as conn:
-            provider, model, _dims = await resolve_embedding_config(conn, org_id)
+            provider, model, dims = await resolve_embedding_config(conn, org_id)
+            chain = await resolve_embedding_fallback_chain(conn, org_id)
         vectors = await embed_texts(
-            [query_text], provider=provider, model=model, input_type="query"
+            [query_text], provider=provider, model=model, input_type="query",
+            org_id=org_id, task_type=EMBED_TASK_QUERY, fallback_chain=chain,
+            expected_dims=dims,
         )
         return vectors[0]
     finally:
         reset_rls_context(tokens)
+
+
+# ── Task 4: the re-indexing friction dialog ───────────────────────────────────
+# Chars-per-token heuristic for the cost estimate below. Not exact (no
+# tokenizer call is made for an estimate), but the SAME rough ratio the module
+# already leans on implicitly via _MAX_EMBED_CHARS (~20000 chars / ~5000
+# tokens, Voyage's stated ~32k-token ceiling) — consistent, not a new
+# assumption.
+_CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+async def _live_price_per_million(model_name: str) -> tuple[Decimal | None, str]:
+    """The REAL live per-1M-token price LiteLLM has for ``model_name``.
+
+    Read from GET /model/info — never a hardcoded local price table — so the
+    friction dialog can never show a stale or guessed number. Returns
+    ``(None, reason)`` when no live price is available (LiteLLM not
+    configured, unreachable, or the model is not a registered deployment);
+    the caller surfaces ``reason`` in the dialog rather than silently omitting
+    the cost line.
+    """
+    from services import extraction as ex
+
+    base_url = os.environ.get(ex.LITELLM_BASE_URL_VAR)
+    master_key = os.environ.get(ex.LITELLM_MASTER_KEY_VAR)
+    if not base_url or not master_key:
+        return None, "LiteLLM is not configured for this deployment"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(
+                f"{base_url.rstrip('/')}/model/info",
+                headers={"Authorization": f"Bearer {master_key}"},
+            )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"LiteLLM /model/info unreachable: {type(exc).__name__}"
+    if resp.status_code != 200:
+        return None, f"LiteLLM /model/info returned HTTP {resp.status_code}"
+    for entry in resp.json().get("data", []):
+        if entry.get("model_name") == model_name:
+            price = (entry.get("model_info") or {}).get("input_cost_per_token")
+            if price is None:
+                return None, f"'{model_name}' has no input_cost_per_token on LiteLLM"
+            return Decimal(str(price)) * Decimal(1_000_000), "live from LiteLLM GET /model/info"
+    return None, f"'{model_name}' is not a registered deployment on the LiteLLM proxy"
+
+
+async def reindex_estimate(conn, org_id, new_model: str) -> dict:
+    """Real, live numbers for the embedding-model-change confirmation dialog.
+
+    *** THE EMBEDDING COMPATIBILITY RULE *** embeddings from different models
+    are not comparable — changing the model without re-indexing silently
+    degrades search with no error. This function supplies the REAL numbers an
+    admin needs to make that call: the org's actual current corpus size
+    (COUNT(*) against document_embeddings, not an estimate), and a real cost
+    estimate computed from the corpus's actual stored content_chars and the
+    candidate model's live LiteLLM price. It does NOT block the change — the
+    caller (the settings write path) still accepts it on confirmation; this is
+    friction, not a lock.
+
+    No re-indexing job exists anywhere in this codebase today (Task 1d) — the
+    returned ``note`` says so plainly rather than implying one will run.
+    """
+    row = await conn.fetchrow(
+        "SELECT count(*) AS n, coalesce(sum(content_chars), 0) AS chars, "
+        "min(model) AS current_model "
+        "FROM document_embeddings WHERE org_id = $1",
+        org_id,
+    )
+    corpus_count = row["n"]
+    total_chars = row["chars"]
+    current_model = row["current_model"]
+    est_tokens = total_chars // _CHARS_PER_TOKEN_ESTIMATE
+
+    price_per_million, price_source = await _live_price_per_million(new_model)
+    est_cost = None
+    if price_per_million is not None:
+        est_cost = (Decimal(est_tokens) / Decimal(1_000_000)) * price_per_million
+
+    return {
+        "org_id": str(org_id),
+        "new_model": new_model,
+        "current_model": current_model,
+        "corpus_document_count": corpus_count,
+        "corpus_total_content_chars": total_chars,
+        "estimated_tokens": est_tokens,
+        "price_per_million_tokens_usd": (
+            str(price_per_million) if price_per_million is not None else None
+        ),
+        "price_source": price_source,
+        "estimated_reindex_cost_usd": (
+            str(est_cost.quantize(Decimal("0.000001"))) if est_cost is not None else None
+        ),
+        "reindex_mechanism_exists": False,
+        "note": (
+            "No automated re-indexing job exists in this platform yet. "
+            "Confirming this change updates the setting only — the "
+            f"{corpus_count} document(s) already embedded above keep their "
+            "OLD-model vectors and will NOT be automatically re-embedded. "
+            "Search results comparing old- and new-model vectors will "
+            "silently degrade until every one of those documents is "
+            "manually re-embedded."
+        ),
+    }
 
 
 # ── RETRIEVE: visibility-scoped semantic search ───────────────────────────────

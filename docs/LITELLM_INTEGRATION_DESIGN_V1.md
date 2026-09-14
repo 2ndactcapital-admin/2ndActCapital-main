@@ -84,6 +84,16 @@ Embeddings from different models are not comparable. Switching an org's embeddin
 - Requires an explicit, typed or checkbox confirmation, not a single click
 - Triggers a real, tracked re-indexing job on confirmation — this is not just a warning, it's the trigger for the actual migration work
 
+> **Phase C update (2026-09-14):** the first three bullets shipped, proven
+> live — see §14.2. The fourth did **not**: no re-indexing job, script, or
+> endpoint exists anywhere in this codebase, confirmed by direct search
+> (Phase C's own discovery task). The shipped dialog says this plainly in its
+> own copy (real corpus count + real cost estimate + "no automated
+> re-indexing job exists yet, you will need to re-embed manually") rather
+> than implying a migration will run that doesn't exist. Building the actual
+> tracked re-indexing job is real, unstarted work — a natural Phase D/E-
+> adjacent task, not yet scheduled.
+
 **Also worth naming**: Voyage's own finance-specific quality matters here specifically. `voyage-context-4` was deliberately chosen over `voyage-finance-2` earlier this project based on Voyage's own benchmarks. The picker should surface this kind of task-fit signal where it exists (§9's recommender is the natural home for this), not just cost and context window.
 
 ---
@@ -208,8 +218,8 @@ separation entirely rather than punching a hole in it.
 |---|---|
 | **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE.** The proxy is live and the `litellm` schema is migrated (77 tables). **A real model deployment now exists** (`claude-sonnet` → `anthropic/claude-sonnet-4-6`) and the proxy has routed its first successful, billed call (2026-09-14) — see §14.1. The `render.yaml` service-adoption gap is still open. |
 | **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **FULLY COMPLETE (2026-09-14)** — routing built 68/68 (2026-08-26), all 5 previously-BLOCKED assertions now PASS, 25/25, `verify_litellmphasebproof.py`. See §14.1. |
-| **C** | **NEXT.** Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism. |
-| **D** | Model pick-list screen (org-scoped, filterable, LiteLLM metadata-driven). |
+| **C** | ~~Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism.~~ **DONE (2026-09-14)** — 34/34, 0 BLOCKED, `verify_litellmphasec.py`. See §14.2. |
+| **D** | **NEXT.** Model pick-list screen (org-scoped, filterable, LiteLLM metadata-driven). |
 | **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
 | **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
 | **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data. |
@@ -329,3 +339,122 @@ mapping), not by a naive string match on model name.
 
 **Gap closed by this sprint:** `LITELLM_BASE_URL` was still absent from Doppler
 `prd` and is now set to the live Render URL, verified by read-back.
+
+---
+
+## 14.2 · Phase C — what actually shipped (2026-09-14)
+
+`apps/api/scripts/verify_litellmphasec.py` — **34/34 PASS, 0 BLOCKED.**
+
+### The routing change
+
+`services/document_embedding.py` — Chancery's semantic-embedding module —
+now calls LiteLLM's `POST /v1/embeddings` instead of Voyage's API directly.
+Both `/v1/embeddings` and bare `/embeddings` are live and answer identically;
+`/v1/embeddings` is used to match the documented OpenAI-compatible surface.
+The direct-Voyage call this module always made is now the explicit fallback
+path (rollback engaged, or LiteLLM unconfigured), reached through the exact
+same `resolve_transport()` text calls use — **one rollback switch,
+`LITELLM_ROUTING_DISABLED`, now covers both text and embeddings.**
+
+**Voyage registered as a real proxy deployment**, via `POST /model/new` with
+the master key (now proven `PROXY_ADMIN` since Phase B's completion —
+§14.1's blocker 2):
+
+```json
+{"model_name": "voyage-3.5",
+ "litellm_params": {"model": "voyage/voyage-3.5",
+                     "api_key": "os.environ/VOYAGE_API_KEY"}}
+```
+
+Persistence confirmed by a FRESH `GET /v1/models` / `GET /model/info` read
+(`db_model=true`), not by trusting the registration POST's own response —
+same discipline §14.1 used for `claude-sonnet`.
+
+### The fallback chain — a separate key, on purpose
+
+`ai.embedding.fallback_chain` (new org_settings key, default
+`["voyage-3.5"]`) is **not** shared with `ai.model.fallback_chain`. A
+text-model fallback just needs to answer; an embedding-model fallback that
+silently returned a different vector width would corrupt vector search — so
+`_execute_embedding_chain` gates every candidate on the org's configured
+`ai.embedding.dimensions` before accepting it, treating a wrong-width
+response as a failed attempt, never a silently-stored one.
+
+### `ai_decision_log` — same table, same shape, new task_types
+
+Every embedding call writes one row via the identical `_safe_log` /
+`_write_ai_decision` helper `services/extraction.py` already uses —
+`task_type='embedding_document'` (INDEX) or `'embedding_query'` (RETRIEVE).
+No new columns, no parallel logging path. Proven: `success`, `model_used`,
+`fallback_used`, `latency_ms`, `cost_usd` all populate correctly for a real
+call, a forced-fallback call, and a rollback call.
+
+**Real precision finding:** `ai_decision_log.cost_usd` is `numeric(10,6)`,
+sized for Claude's per-call cost (cheapest realistic call > $0.000001).
+Voyage's real live price ($0.06/1M input tokens) means a short embedding
+call (a handful of tokens) silently rounds to `0.000000` at that scale — not
+an error, a real precision floor. A migration
+(`migrations/litellmphasec_cost_precision.sql`, `numeric(10,6)` →
+`numeric(14,10)`) is written but **BLOCKED**: `DATABASE_URL` connects as
+`app_service` post-RLS-cutover, which does not own the table (`postgres`
+does) and cannot `ALTER` it, and no `postgres`-role credential exists in
+this environment. LiteLLM's own spend log has no such limit and correctly
+shows the real, non-zero cost regardless.
+
+### The re-indexing friction dialog — shipped, honestly scoped
+
+New endpoint `GET /orgs/{org_id}/settings/embedding-reindex-estimate?new_model=X`
+(`services/document_embedding.reindex_estimate`) returns:
+
+- `corpus_document_count` — `COUNT(*) FROM document_embeddings WHERE org_id=$1`, live, not cached
+- `estimated_reindex_cost_usd` — computed from the corpus's real stored `content_chars` and the candidate model's LIVE LiteLLM price (`GET /model/info` → `input_cost_per_token`, never a local table)
+- `reindex_mechanism_exists: false`, and a `note` saying so in plain language
+
+`OrgSettingsEditor.jsx` intercepts a genuine `ai.embedding.model` change
+(dirty, and different from the stored value) and blocks the save behind this
+dialog — Cancel, or "Change model anyway." This is friction, not a lock, per
+direction: a confirming admin always proceeds; nothing is enforced
+server-side beyond the informational read.
+
+**Honest scope note, per §6's update above:** this ships the confirmation
+UX only. No re-indexing job exists to trigger on confirmation — building one
+is real, unscheduled future work.
+
+### RESOLVED / PROVEN (2026-09-14)
+
+A real `embed_document()` call through the full app path (Chancery's own
+INDEX entrypoint, not a bespoke test path) succeeds end-to-end through
+LiteLLM: a genuine 1024-wide vector stored in `document_embeddings`,
+LiteLLM's own spend log recording non-zero spend
+(`call_type='aembedding'`), and `ai_decision_log` recording the same call in
+its standard shape. The fallback chain walks on a forced-bogus primary
+(LiteLLM's own "Invalid model name" error proves the request reached the
+live proxy) and recovers via `voyage-3.5`. The rollback switch bypasses
+LiteLLM for embeddings exactly as it does for text — proven by genuine
+ABSENCE from LiteLLM's spend log after the full flush window, not merely a
+successful direct-Voyage result. A raw, pre-existing `document_embeddings`
+row (inserted directly, never touched by any Phase-C code path) survives
+every maneuver above unchanged, at its original dimensionality — this
+sprint did not silently invalidate the existing corpus.
+
+**[FIND] — the live corpus was empty.** `document_embeddings` had zero rows,
+across every org, at the start of this sprint: Chancery's semantic INDEX had
+never successfully embedded a document in this environment before Phase C.
+The verify script seeds real fixture rows (via the full `embed_document`
+path, plus a raw pre-seeded row simulating genuinely pre-existing data) to
+prove both the friction dialog's live-count claim and the
+existing-embedding-survival claim against real, not synthetic-only, data.
+
+**[FIND] — the Doppler `VOYAGE_API_KEY` is rate-limited.** Live error text:
+"reduced rate limits of 3 RPM and 10K TPM" — no payment method on file. The
+verify script paces its real Voyage-hitting calls (a 65s gap; 25s measurably
+was not enough — reproduced live). Any real production volume through this
+key will need a paid Voyage tier or app-side request pacing.
+
+**[FIND] — `docs/schema_snapshot.sql` does not capture FOREIGN KEY
+constraints.** Confirmed: zero `FOREIGN KEY` occurrences in the entire file.
+`document_embeddings.document_id` has a real, live
+`REFERENCES documents(id) ON DELETE CASCADE` the snapshot never recorded —
+found building this sprint's verify fixtures. A generator gap worth fixing;
+out of scope for this sprint.

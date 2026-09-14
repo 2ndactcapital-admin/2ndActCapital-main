@@ -145,6 +145,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "ai.embedding.provider": "voyage",
     "ai.embedding.model": "voyage-3.5",
     "ai.embedding.dimensions": 1024,
+    # LiteLLM Phase C — the embedding-side equivalent of ai.model.fallback_chain.
+    # A SEPARATE key, not a shared chain with text: an embedding fallback that
+    # silently landed on a different-dimension model would corrupt vector search
+    # (the embedding-compatibility rule — see services/document_embedding.py).
+    # The single-item default preserves today's behaviour (voyage-3.5 only,
+    # same as mini-bedrock's ai.model.fallback_chain default), while letting an
+    # org_admin add same-dimension backup deployments without a code change.
+    "ai.embedding.fallback_chain": ["voyage-3.5"],
     # Portfolio Phase B — the ORDERED list of `positions.source_system` values,
     # most-trusted first, deciding which of several sources reporting the same
     # holding is the portfolio's answer (design V6 §1.1). Same shape as
