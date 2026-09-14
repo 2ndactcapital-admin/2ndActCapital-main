@@ -82,6 +82,39 @@ superuser.** `app_service` (main app), `litellm_service` (LiteLLM's own
 schema only) are separate roles, each scoped to what they actually need.
 Follow this pattern for any new subsystem needing its own database access.
 
+## RLS Is Now Genuinely Enforced — What That Changes
+
+The live `DATABASE_URL` connects as `app_service` (`rolbypassrls = false`).
+Every RLS policy across all 171 tables is now really enforced, where it
+previously was not. Three consequences for anything touching the database
+directly:
+
+**A script reading or writing an RLS-protected table must set RLS context
+first.** `ai_decision_log` is the confirmed case: a script calling
+`_execute_chain` directly without `set_rls_context` gets **silent RLS
+denials — zero rows, no error**. It looks like the table is empty rather
+than like access was refused. Use `set_rls_context` / `reset_rls_context`
+around any direct access, or go through a code path that already does.
+
+**A raw connection that legitimately needs platform scope must ask for it
+explicitly.** `services/database.py`'s `platform_scope()` is the real
+mechanism — an async context manager that wraps one unit of work with
+`SET LOCAL app.is_super_admin = 'true'` inside its own transaction. Use it
+for genuinely cross-org work (the scheduler's due-trigger scan, the
+orphaned-alert sweep). Do NOT use a session-level `SET` instead: under
+Supabase's transaction pooler, an unrelated connection sharing the same
+physical backend can silently wipe session GUCs mid-task when it commits —
+this was caught in real testing, where trigger A fired correctly and
+trigger B silently lost its claim.
+
+**`app_service` cannot read the `litellm` schema at all** (`permission
+denied for schema litellm`) — correct least-privilege behavior, not a bug.
+Anything needing LiteLLM's spend or model data should use the proxy's own
+admin API (`GET /spend/logs`, `GET /model/info`), which is the better
+interface regardless. Direct schema access would require the
+`litellm_service` credential, which lives only in Doppler's `prd_lite_llm`
+branch config, not in root `prd`.
+
 ## Design Tokens — Never Change
 Navy #1B2B4B | Gold #C5A880 | Gold Light #E8D5A3
 BG App #FAF9F6 | BG Sidebar #F5F1EB
