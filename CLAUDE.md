@@ -261,6 +261,28 @@ matches) anywhere else in the platform that needs to bind one resource's
 access to two independent, potentially-conflicting permission sources.
 Do not write a second, bespoke dual-path resolver — check here first.
 
+## org_admin Is a Real Role, Resolved by Permission
+
+`org_admin` is a real row on the RBAC role axis (`roles` — per-org, part of a
+`(org_id, name)` UNIQUE key), granted the `manage_org_settings` permission via
+`role_permissions`. Every org-admin gate resolves this permission through
+`services.rbac.is_org_admin` / `can_manage_org_settings` (both async, take
+`pool`) — the same `has_permission` path every other permission check in this
+app uses. **Never branch on the literal string `users.role == 'org_admin'`**
+for an access decision; that string is being phased out as the gate, even
+though the column itself stays.
+
+`users.role` is **still read** (do not drop it) by: `services.rbac.
+is_super_admin` / `load_principal` (super_admin only — unaffected),
+`routers/admin.py`'s staff-protection checks, `routers/users.py`'s
+`account_role` field, and — **not yet migrated** — `services/invites.py`
+(`ALLOWED_INVITE_ROLES`) and `apps/web/components/admin/UserManagement.jsx`
+(the role dropdown), both of which still WRITE `users.role='org_admin'`
+directly with no corresponding RBAC grant. A user promoted through either path
+needs the same migration logic re-run for them before permission-gated
+org-admin surfaces will actually let them in. See docs/PROJECT_STATUS.md
+("org_admin role reconciliation") for the full accounting.
+
 ## The Custody Cliff — permanent, not a phase-two item
 
 **Trade execution, money movement, filing submission, and GL posting never

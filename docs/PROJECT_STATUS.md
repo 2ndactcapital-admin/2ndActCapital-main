@@ -1,5 +1,14 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-13 (Registry defects + escalation_reason enum — five `assistant_action_catalog` module/action_key drifts corrected per-key (one rename, four module fixes), `crm.draft_note.reversible` fixed with a new undo-path gap surfaced and recorded, `escalation_reason` enum reconfirmed and still deliberately unwired; see the entry below); previously 2026-09-10 (RLS enforcement cutover — DATABASE_URL now genuinely `app_service` in Doppler, code-level proof complete via the real application against the real database (21/21 PASS across smoke-test/cross-org-isolation/scheduler-tick), a second real RLS gap found and fixed live (`main.py` startup `sync_catalog`); Render redeploy confirmation still owed — see the entry below); previously 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
+Last updated: 2026-09-14 (org_admin role reconciliation — org_admin is now a
+real RBAC role resolved by permission (`manage_org_settings`), not a
+`users.role` string; the single real holder migrated additively and proven
+count-for-count; alert recipient resolution and every org-admin-gated page
+switched to permission-based resolution; a zero-recipient alert now leaves a
+findable `audit_log` row instead of failing silently; `35/35 PASS` via
+`apps/api/scripts/verify_orgadminrole.py`; two real call sites — the invite
+flow and the user-management role dropdown — still WRITE `users.role`
+directly with no corresponding RBAC grant, see the entry below); previously
+2026-09-13 (Registry defects + escalation_reason enum — five `assistant_action_catalog` module/action_key drifts corrected per-key (one rename, four module fixes), `crm.draft_note.reversible` fixed with a new undo-path gap surfaced and recorded, `escalation_reason` enum reconfirmed and still deliberately unwired; see the entry below); previously 2026-09-10 (RLS enforcement cutover — DATABASE_URL now genuinely `app_service` in Doppler, code-level proof complete via the real application against the real database (21/21 PASS across smoke-test/cross-org-isolation/scheduler-tick), a second real RLS gap found and fixed live (`main.py` startup `sync_catalog`); Render redeploy confirmation still owed — see the entry below); previously 2026-09-07 (Altruist Sprint 6 — Realtime API webhook receiver, DISCOVERY ONLY, STOPPED per standing rule, schema decision owed; Altruist Sprint 5 — sync orchestration endpoint + auto-trigger on connect; Altruist Sprint 4 — connection lifecycle API + automatic token refresh; Altruist Sprint 3 — positions/transactions sync for resolved accounts; Altruist Sprint 2 — household/account identity resolution; Altruist Sprint 1 — OpenAPI OAuth2 connection scaffold; TA Model Sprint 4 — calibration UX + obligation ledger integration, ALL FOUR TA MODEL SPRINTS COMPLETE; Fee module fee43 — invoices, reconciliation, GL posting)
 
 ## About this file
 
@@ -17,6 +26,90 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000. org_admin role reconciliation — SHIPPED; two call sites still owed a migration (2026-09-14)
+
+`35/35 PASS` — `apps/api/scripts/verify_orgadminrole.py`. Makes `org_admin` a
+real row on the RBAC role axis instead of a free-text `users.role` string with
+no mapping to `roles`/`role_permissions`/`user_roles` at all.
+
+**What changed.** `roles` (per-org: `roles.org_id` is part of a
+`(org_id, name)` UNIQUE key, there is no global role catalog) gained an
+`org_admin` row for 2nd Act — the only org with a real holder. A new
+`manage_org_settings` permission (`resource='org_settings', action='manage'`)
+was created — `routers/modeling_ta.py` already referenced this exact string in
+its envelope's `write_permission` field before any real permission row backed
+it — and granted to `org_admin` via `role_permissions`. The single existing
+holder (`jpl99172@gmail.com`, 2nd Act) got an additive `user_roles` grant;
+`users.role` was never cleared or written to by this sprint.
+
+Every org-admin gate now resolves by PERMISSION, not by the `users.role`
+string: `services.rbac.is_org_admin` / `can_manage_org_settings` (now async,
+take `pool`) call the same `has_permission` path every other permission check
+in this app uses — no second mechanism invented. Callers migrated:
+`services/org_settings.py` (`set_setting`/`set_settings`),
+`routers/profiles.py` (`_require_admin`), `routers/modeling_ta.py`
+(`_ta_permissions`/`_defaults_envelope`), `services/delegate_grants.py`
+(`activate_springing_delegate`). `services/workflow_todos.py`'s alert
+recipient resolution (`create_held_run_alerts`,
+`create_trigger_expiring_alerts`) dropped its raw
+`SELECT id FROM users WHERE role = 'org_admin'` scan for a new
+`rbac.get_users_with_permission(org_id, 'manage_org_settings')` — same
+resolved set, proven set-to-set against the old query for 2nd Act. On the
+frontend, `apps/web/lib/menuVisibility.mjs`'s 5 org-admin menu items moved
+from `{ roles: ['org_admin', 'super_admin'] }` to `{ perm:
+'manage_org_settings' }` (`GATE_MANAGE_ORG_SETTINGS`), and
+`apps/web/app/admin/settings/page.js` — which had its OWN independent
+`theme.role === 'org_admin' || 'super_admin'` copy of the gate, a real,
+confirmed inconsistency with every other org-admin page's server-enforced
+pattern — now calls the same `canPerm()` the sidebar uses.
+
+**The silent-no-recipient bug is fixed.** An alert whose recipient set
+resolves to empty (confirmed live: the Hollisworks org has real users but
+zero `manage_org_settings` holders) used to write nothing and fail silently.
+It now writes a findable `audit_log` row (`action =
+'workflow_alert_undelivered'`, `resource_type`/`resource_id` = the run or
+trigger, `payload` states why) — reusing the existing table
+(`audit_log.user_id` is nullable) rather than a schema change.
+
+**Proven, not assumed, in both directions.** The real org_admin reaches every
+previously-reachable org-admin page/endpoint through the real ASGI app; a real
+non-admin fixture holding a REAL deployed role (the seeded `member` role — a
+zero-role fixture would default-allow via `has_permission`'s single-admin
+bootstrap posture and prove nothing) is refused the identical requests;
+cross-org isolation holds both for alert recipients and admin page access; the
+real super_admin account with ZERO `user_roles` grants (`jlarizza@gmail.com`)
+still resolves correctly through the `is_super_admin` bypass, checked first.
+
+**Known, accepted gap — inherited, not introduced.** `has_permission`
+default-allows a user with zero `user_roles` rows at all (documented
+single-admin-bootstrap posture, already governing `manage_members` and every
+other permission in this app). Any REAL user who still has zero role rows
+would therefore also default-allow `manage_org_settings` once it's checked via
+`has_permission` — this is the same systemic characteristic that already
+applies to every other permission-gated surface, not a new risk created by
+routing org_admin through it. Closing it (assigning every real user a real
+role) is separate, unscoped work.
+
+**NOT migrated — two real call sites still WRITE `users.role='org_admin'`
+directly with no corresponding RBAC grant, by name, so this is scoped follow-up
+rather than vague:**
+- `services/invites.py` (`ALLOWED_INVITE_ROLES = ('member', 'org_admin')`) —
+  inviting someone as org_admin sets `users.role` only.
+- `apps/web/components/admin/UserManagement.jsx` (the "Organization Admin"
+  role dropdown) — the UI that sets `users.role`, same gap.
+
+Until one of these also grants the RBAC role/permission (reusing this
+sprint's migration logic, keyed off the same `(org_id, 'org_admin')` role
+row), a user promoted through either path will show `users.role='org_admin'`
+but be refused every permission-gated org-admin surface until someone re-runs
+the migration for them. **`users.role` must not be dropped** until these two
+call sites (plus `services/rbac.py`'s `is_super_admin`/`load_principal`,
+`routers/admin.py`'s super-admin checks, and `routers/users.py`'s
+`account_role` field — all still legitimately read it for `super_admin`, out
+of this sprint's scope) are migrated too.
 
 ---
 
