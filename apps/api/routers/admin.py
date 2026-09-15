@@ -51,7 +51,13 @@ from routers.entities import get_org_id
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.org_settings import USER_INACTIVITY_TIMEOUT_DAYS_KEY, get_setting
-from services.rbac import is_super_admin, load_principal, require_permission
+from services.rbac import (
+    ORG_ADMIN_ROLE,
+    ensure_org_admin_role,
+    is_super_admin,
+    load_principal,
+    require_permission,
+)
 from services.users import ensure_user
 
 router = APIRouter(tags=["admin"])
@@ -204,10 +210,31 @@ def _forbid_staff_target(target, caller_is_super: bool, verb: str) -> None:
 
 @router.get("/admin/roles", response_model=list[RoleOption])
 async def list_roles(request: Request):
-    await _require_manage_members(request)
+    """The roles an admin may assign — scoped to THEIR OWN org.
+
+    THE BUG THIS FIXES (orgadminwrites.structural): this previously read
+    ``SELECT id, name FROM roles`` with no ``org_id`` filter at all — ``roles``
+    is a per-org table (``(org_id, name)`` UNIQUE, confirmed live: every row
+    today happens to belong to 2nd Act, which is why the leak was not yet
+    visible), so this returned every org's role catalog to every org's admin,
+    and ``PUT /admin/users/{id}/role`` below trusted a bare ``role_id`` with no
+    matching org check — an admin who saw (or guessed) another org's role id
+    could grant it to one of their own users.
+
+    Also lazily ensures THIS org has its own org_admin role — additive,
+    idempotent (``ensure_org_admin_role``), so an org with zero org_admin
+    holders today (confirmed live: Hollisworks) gets one created on first
+    view of this screen instead of needing a second manual migration before
+    "Organization Admin" is even selectable.
+    """
+    _, org_id = await _require_manage_members(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT id, name FROM roles ORDER BY name")
+        async with conn.transaction():
+            await ensure_org_admin_role(conn, org_id)
+        rows = await conn.fetch(
+            "SELECT id, name FROM roles WHERE org_id = $1 ORDER BY name", org_id
+        )
     return [RoleOption(**dict(r)) for r in rows]
 
 
@@ -302,20 +329,37 @@ async def user_management_settings(request: Request):
 
 @router.put("/admin/users/{user_id}/role", response_model=AdminUser)
 async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
+    """Assign an RBAC role to a user in the caller's own org.
+
+    THE GAP THIS CLOSES (orgadminwrites.structural): this endpoint always
+    wrote the ``user_roles`` grant but never touched ``users.role`` — so
+    promoting someone to org_admin here left the account role string
+    unchanged (drift in the OPPOSITE direction from the invite gap), and
+    demoting someone away from org_admin left the stale 'org_admin' string
+    behind with the grant already gone — a privilege-ratchet-shaped bug even
+    though the actual permission WAS correctly revoked. The role string and
+    the grant now move together, in both directions, guarded to never rewrite
+    a super_admin's string (that axis is untouched by RBAC — see
+    ``services.rbac.is_super_admin``).
+    """
     actor_id, org_id = await _require_manage_members(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             target = await conn.fetchrow(
-                "SELECT id, email, full_name FROM users WHERE id = $1 AND org_id = $2",
+                "SELECT id, email, full_name, role FROM users WHERE id = $1 AND org_id = $2",
                 user_id, org_id,
             )
             if target is None:
                 raise HTTPException(status_code=404, detail="User not found")
 
+            # Scoped to the CALLER'S OWN org — a bare `id = $1` here (the
+            # pre-fix behaviour) trusted a role_id from ANY org, since
+            # GET /admin/roles used to leak every org's role catalog.
             role = await conn.fetchrow(
-                "SELECT id, name FROM roles WHERE id = $1", body.role_id
+                "SELECT id, name FROM roles WHERE id = $1 AND org_id = $2",
+                body.role_id, org_id,
             )
             if role is None:
                 raise HTTPException(status_code=400, detail="Unknown role")
@@ -325,6 +369,19 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
                 "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
                 user_id, body.role_id,
             )
+
+            if role["name"] == ORG_ADMIN_ROLE:
+                await conn.execute(
+                    "UPDATE users SET role = $2, updated_at = now() "
+                    "WHERE id = $1 AND role <> 'super_admin'",
+                    user_id, ORG_ADMIN_ROLE,
+                )
+            elif target["role"] == ORG_ADMIN_ROLE:
+                await conn.execute(
+                    "UPDATE users SET role = 'member', updated_at = now() "
+                    "WHERE id = $1 AND role = $2",
+                    user_id, ORG_ADMIN_ROLE,
+                )
 
         await write_audit_log(
             conn,
@@ -555,6 +612,13 @@ async def delete_user(request: Request, user_id: UUID):
                     invite_token   = NULL,
                     invite_status  = NULL,
                     is_active      = false,
+                    -- The user_roles DELETE above already revoked the real
+                    -- org_admin grant (if any) — this keeps the STRING in
+                    -- lockstep with that, the same rule assign_role enforces,
+                    -- so an anonymized row never keeps reading as an admin in
+                    -- the user list with no grant behind it. Never touches
+                    -- 'super_admin' (untouched by RBAC).
+                    role = CASE WHEN role = 'org_admin' THEN 'member' ELSE role END,
                     deactivated_at = COALESCE(deactivated_at, now()),
                     deactivated_by = COALESCE(deactivated_by, $4),
                     updated_at     = now()

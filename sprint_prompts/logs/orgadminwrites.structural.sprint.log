@@ -1,0 +1,45 @@
+orgadminwrites.structural — executed directly (not via run_sprint.sh), all
+tasks completed in one leg, no connection drops.
+
+Task 1 (discover): confirmed live — services/invites.py create_invite is the
+primary write-path gap (users.role='org_admin', zero grant); routers/admin.py
+assign_role has the REVERSE gap (writes the real grant, never synced
+users.role, in either direction); routers/admin.py delete_user revokes
+grants but left the string stale; services/users.py ensure_user never writes
+'org_admin' (out of scope, super_admin only). Real, existing grant mechanism
+reused from scripts/_apply_orgadminrole_migration.py, promoted into reusable
+services.rbac helpers. Task 1d proven live: has_permission's zero-role
+default-allow bootstrap means a freshly invited org_admin with no grant is
+NOT immediately refused — they are over-privileged to everything until any
+role is ever assigned to them, at which point they lose manage_org_settings
+specifically. New defect found in the same pass: GET /admin/roles and
+assign_role's role lookup were both org-blind (no org_id filter) — fixed.
+
+Task 2 (fix write paths): services/rbac.py gained ensure_permission /
+ensure_role / ensure_org_admin_role / grant_org_admin / revoke_org_admin /
+has_org_admin_grant. services/invites.py create_invite grants inside the
+insert's transaction. routers/admin.py assign_role syncs users.role both
+directions (guarded to never touch 'super_admin'); list_roles and
+assign_role's role lookup scoped to org_id; delete_user resets the string on
+anonymization.
+
+Task 3 (backfill drift): ran apps/api/scripts/_reconcile_orgadminwrites_drift.py
+for real against the live dev DB — 0 drift found in either direction (the
+single real org_admin holder was already exactly in sync).
+
+Task 4 (real proof): apps/api/scripts/verify_orgadminwrites.py — 32 PASS,
+0 FAIL, 1 FIND. Invite through the real ASGI app, independent DB read-back,
+real endpoint reachability (GET /modeling/ta/defaults can_write), promotion,
+demotion (access genuinely lost), normal-invite no-grant, cross-org isolation
+(grant scoped to org A only, 403 on Hollisworks), Task 3's reconcile()
+exercised against injected fixtures for both drift directions, zero drift
+confirmed after. Regression: apps/api/scripts/verify_orgadminrole.py
+re-run standalone — 35 PASS, 0 FAIL, 3 FIND (unchanged, no regression).
+
+Task 5: docs/PROJECT_STATUS.md updated (UPDATE 2026-09-14 under the
+org_admin role reconciliation entry) and CLAUDE.md's "org_admin Is a Real
+Role" section updated to describe the closed write paths instead of the
+now-stale "not yet migrated" list.
+
+Result: 32/32 PASS. HELD for manual review (structural tier) on branch
+orgadminwrites-work — not merged to main.

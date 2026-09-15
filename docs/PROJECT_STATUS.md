@@ -1,5 +1,11 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-14 (org_admin role reconciliation — org_admin is now a
+Last updated: 2026-09-14 (orgadminwrites.structural — closed the invite/
+promotion/demotion write-path gap that org_admin role reconciliation
+deliberately left open: `create_invite` and `assign_role` now keep `users.role` and the
+real RBAC grant in lockstep both ways, plus a newly-found org-blind role
+lookup fixed in the same pass; `32/32 PASS` via `apps/api/scripts/
+verify_orgadminwrites.py`; see the entry below); previously 2026-09-14
+(org_admin role reconciliation — org_admin is now a
 real RBAC role resolved by permission (`manage_org_settings`), not a
 `users.role` string; the single real holder migrated additively and proven
 count-for-count; alert recipient resolution and every org-admin-gated page
@@ -110,6 +116,56 @@ call sites (plus `services/rbac.py`'s `is_super_admin`/`load_principal`,
 `routers/admin.py`'s super-admin checks, and `routers/users.py`'s
 `account_role` field — all still legitimately read it for `super_admin`, out
 of this sprint's scope) are migrated too.
+
+**UPDATE 2026-09-14 (orgadminwrites.structural): CLOSED.** `32/32 PASS` —
+`apps/api/scripts/verify_orgadminwrites.py`. Both real gaps above are fixed,
+plus one discovered in the same class while fixing them:
+
+- `services/invites.py` `create_invite` — now calls the new
+  `services.rbac.grant_org_admin` inside the SAME transaction as the insert
+  when `role='org_admin'`. `ensure_org_admin_role` creates the per-org role +
+  `manage_org_settings` grant on demand, so an org with zero org_admin
+  holders today (Hollisworks, confirmed live, still zero) gets one the first
+  time it needs it — no second manual migration required.
+- `routers/admin.py` `assign_role` (`PUT /admin/users/{id}/role`) — this
+  endpoint actually had the OPPOSITE half of the same bug: it always wrote
+  the real `user_roles` grant correctly but never touched `users.role` at
+  all, in either direction. A promotion via the RBAC role dropdown left the
+  string stale; a demotion away from org_admin correctly revoked the
+  permission but left `users.role='org_admin'` behind — a real
+  privilege-ratchet-shaped inconsistency even though the actual access WAS
+  correctly revoked. Now syncs the string both ways, guarded to never
+  rewrite a `'super_admin'` string.
+- `routers/admin.py` `delete_user` (anonymization) — already revoked
+  `user_roles` unconditionally but left `users.role` untouched, which would
+  have created NEW drift going forward. Fixed with the same guarded rule.
+- **New defect found and fixed in the same pass, not previously flagged**:
+  `GET /admin/roles` and `assign_role`'s role lookup were both **org-blind**
+  (`SELECT ... FROM roles`, no `org_id` filter at all; `WHERE id = $1` with
+  no org check) — live data happened to mask it (every `roles` row today
+  belongs to 2nd Act, so the leak/escalation path was structurally live but
+  not yet exploitable). Both now scope to the caller's own org.
+- **Real finding, not just a fix**: the prompt's framing ("will be REFUSED")
+  undersold the actual pre-fix failure mode. `has_permission`'s zero-role
+  default-allow bootstrap means a freshly invited org_admin with NO grant
+  was not immediately refused — they were silently OVER-privileged
+  (default-allow to every permission, not just `manage_org_settings`) until
+  the first time ANY role was ever assigned to them, at which point the
+  strict per-permission check engaged and, absent the real grant, refused
+  them at every org-admin surface despite `users.role` still saying
+  `'org_admin'`. Proven live with a controlled fixture in both states.
+- Zero drift existed in live data before this sprint (`_reconcile_
+  orgadminwrites_drift.py`, run for real: 0 found) — the single real
+  org_admin holder was already in sync. The reconciliation function itself
+  is proven against injected, fully-torn-down fixtures covering both
+  directions, since live data had none to exercise it against.
+- Hollisworks still has **zero** `manage_org_settings` holders — unchanged by
+  this sprint (closing that gap means inviting/promoting an actual
+  Hollisworks admin, which is a real operational action, not a code fix).
+- `users.role` remaining READ call sites are unchanged from the list above
+  (`is_super_admin`/`load_principal`, `routers/admin.py` staff checks,
+  `routers/users.py` `account_role`) — still legitimately out of scope, still
+  not dropped.
 
 ---
 

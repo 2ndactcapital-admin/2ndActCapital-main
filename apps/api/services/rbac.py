@@ -212,6 +212,109 @@ async def can_manage_org_settings(pool, user, org_id) -> bool:
     return is_super_admin(user) or await is_org_admin(pool, user, org_id)
 
 
+# ── org_admin write-path reconciliation (orgadminwrites.structural) ────────
+#
+# org_admin role reconciliation (see above) migrated every EXISTING holder
+# and switched every READER to resolve by permission. It deliberately left
+# every WRITER alone. These helpers are the one, real, reusable mechanism for
+# keeping a user_roles grant and the users.role string in lockstep going
+# forward — lifted from `scripts/_apply_orgadminrole_migration.py`'s one-time
+# migration logic, made safe to call on every invite/promotion/demotion
+# instead of only once. Every statement is additive/ON CONFLICT DO NOTHING or
+# scoped to exactly the (user_id, org_id, org_admin) triple — never a second,
+# bespoke grant mechanism.
+
+ORG_ADMIN_ROLE_DESCRIPTION = (
+    "Organization administrator — manages org-level settings, profiles, "
+    "permission sets, and workflow authoring for this org."
+)
+
+
+async def ensure_permission(conn, name: str, resource: str, action: str) -> str:
+    """Idempotently ensure a row exists in the ``permissions`` catalog."""
+    return await conn.fetchval(
+        """
+        INSERT INTO permissions (name, resource, action)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id
+        """,
+        name, resource, action,
+    )
+
+
+async def ensure_role(conn, org_id, name: str, description: str) -> str:
+    """Idempotently ensure ``org_id`` has a role named ``name``.
+
+    ``roles`` is per-org (``(org_id, name)`` UNIQUE) — there is no global role
+    catalog, so this must be called per-org, not once globally.
+    """
+    return await conn.fetchval(
+        """
+        INSERT INTO roles (org_id, name, description)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (org_id, name) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id
+        """,
+        org_id, name, description,
+    )
+
+
+async def ensure_org_admin_role(conn, org_id) -> str:
+    """Idempotently ensure THIS org has an org_admin role wired to
+    ``manage_org_settings``. Safe to call unconditionally (e.g. on every
+    invite or every ``GET /admin/roles``) — an org that already has the role
+    is a no-op; an org that has never had an org_admin holder before (e.g.
+    Hollisworks, confirmed live to have zero today) gets one created on
+    demand instead of needing a second manual migration. Returns the role id.
+    """
+    perm_id = await ensure_permission(conn, ORG_ADMIN_PERMISSION, "org_settings", "manage")
+    role_id = await ensure_role(conn, org_id, ORG_ADMIN_ROLE, ORG_ADMIN_ROLE_DESCRIPTION)
+    await conn.execute(
+        "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) "
+        "ON CONFLICT DO NOTHING",
+        role_id, perm_id,
+    )
+    return role_id
+
+
+async def grant_org_admin(conn, user_id, org_id) -> None:
+    """Additive: ensure ``user_id`` holds the org_admin RBAC grant IN
+    ``org_id``. Never touches any other role the user may separately hold —
+    ``user_roles`` is a plain (user_id, role_id) join, not single-valued."""
+    role_id = await ensure_org_admin_role(conn, org_id)
+    await conn.execute(
+        "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        user_id, role_id,
+    )
+
+
+async def revoke_org_admin(conn, user_id, org_id) -> None:
+    """Remove ONLY the org_admin grant scoped to ``org_id`` — never another
+    org's org_admin role, never another role this user separately holds."""
+    await conn.execute(
+        """
+        DELETE FROM user_roles
+        WHERE user_id = $1
+          AND role_id = (SELECT id FROM roles WHERE org_id = $2 AND name = $3)
+        """,
+        user_id, org_id, ORG_ADMIN_ROLE,
+    )
+
+
+async def has_org_admin_grant(conn, user_id, org_id) -> bool:
+    """True if ``user_id`` holds a real user_roles grant for org_id's own
+    org_admin role — used to detect string/grant drift, not as a gate
+    (``is_org_admin`` above is the gate)."""
+    return bool(await conn.fetchval(
+        """
+        SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = $1 AND r.org_id = $2 AND r.name = $3
+        """,
+        user_id, org_id, ORG_ADMIN_ROLE,
+    ))
+
+
 async def load_principal(conn, user_id) -> dict | None:
     """Fetch the minimal ``{id, org_id, role}`` the checks above operate on.
 

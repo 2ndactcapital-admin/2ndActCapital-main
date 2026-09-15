@@ -274,14 +274,26 @@ though the column itself stays.
 
 `users.role` is **still read** (do not drop it) by: `services.rbac.
 is_super_admin` / `load_principal` (super_admin only — unaffected),
-`routers/admin.py`'s staff-protection checks, `routers/users.py`'s
-`account_role` field, and — **not yet migrated** — `services/invites.py`
-(`ALLOWED_INVITE_ROLES`) and `apps/web/components/admin/UserManagement.jsx`
-(the role dropdown), both of which still WRITE `users.role='org_admin'`
-directly with no corresponding RBAC grant. A user promoted through either path
-needs the same migration logic re-run for them before permission-gated
-org-admin surfaces will actually let them in. See docs/PROJECT_STATUS.md
-("org_admin role reconciliation") for the full accounting.
+`routers/admin.py`'s staff-protection checks, and `routers/users.py`'s
+`account_role` field.
+
+**Every WRITE path keeps `users.role` and the real RBAC grant in lockstep**
+(orgadminwrites.structural, closed the gap the paragraph above used to
+describe): `services/invites.py` `create_invite` grants `org_admin` via
+`services.rbac.grant_org_admin` in the same transaction as the insert when
+`role='org_admin'`; `routers/admin.py` `assign_role`
+(`PUT /admin/users/{id}/role`) syncs `users.role` to match whichever RBAC
+role it just granted, in both directions — a promotion sets the string, a
+demotion away from `org_admin` clears it — guarded to never rewrite a
+`'super_admin'` string; `delete_user` (anonymization) resets the string the
+same way when it revokes every grant. All three reuse the same
+`services.rbac` helpers (`ensure_org_admin_role` / `grant_org_admin` /
+`revoke_org_admin` / `has_org_admin_grant`) — do not write a second, bespoke
+grant mechanism for a future role that needs this same shape. See
+docs/PROJECT_STATUS.md ("org_admin role reconciliation" and
+"orgadminwrites.structural") for the full accounting, including a real
+org-blind role-lookup bug (`GET /admin/roles` / `assign_role` trusted a
+`role_id` from ANY org) found and fixed in the same pass.
 
 ## The Custody Cliff — permanent, not a phase-two item
 

@@ -47,6 +47,7 @@ from services.org_settings import (
     get_setting,
     get_setting_with_origin,
 )
+from services.rbac import ORG_ADMIN_ROLE, grant_org_admin
 
 # 32 random bytes → ~43 URL-safe chars. Comfortably beyond guessing range while
 # staying short enough for a clean enrollment link.
@@ -398,22 +399,33 @@ async def create_invite(
         ttl_days = await resolve_invite_ttl_days(conn, org_id)
 
     token = generate_invite_token()
-    row = await conn.fetchrow(
-        """
-        INSERT INTO users (
-            id, org_id, email, full_name, role, auth0_sub, profile_id,
-            invite_token, invite_status, invited_by, invited_at, invite_expires_at
+    # THE GAP THIS CLOSES (orgadminwrites.structural): an invite minted with
+    # role='org_admin' used to write only this free-text column — no
+    # user_roles grant followed it. Every org-admin gate now resolves by
+    # PERMISSION (org_admin role reconciliation), so that invitee would
+    # enroll, show as an admin in the user list, and be refused at every
+    # org-admin page. The INSERT and the grant run in ONE transaction: a row
+    # carrying the string with no grant (or vice versa) is exactly the drift
+    # this sprint exists to prevent, not just backfill once.
+    async with conn.transaction():
+        row = await conn.fetchrow(
+            """
+            INSERT INTO users (
+                id, org_id, email, full_name, role, auth0_sub, profile_id,
+                invite_token, invite_status, invited_by, invited_at, invite_expires_at
+            )
+            VALUES (
+                extensions.uuid_generate_v4(), $1, $2, $3, $4, NULL, $8,
+                $5, 'pending', $6, now(), now() + make_interval(days => $7)
+            )
+            RETURNING id, org_id, email, full_name, role, profile_id,
+                      invite_token, invite_status,
+                      invited_by, invited_at, invite_expires_at
+            """,
+            org_id, email, full_name, role, token, invited_by, ttl_days, profile_id,
         )
-        VALUES (
-            extensions.uuid_generate_v4(), $1, $2, $3, $4, NULL, $8,
-            $5, 'pending', $6, now(), now() + make_interval(days => $7)
-        )
-        RETURNING id, org_id, email, full_name, role, profile_id,
-                  invite_token, invite_status,
-                  invited_by, invited_at, invite_expires_at
-        """,
-        org_id, email, full_name, role, token, invited_by, ttl_days, profile_id,
-    )
+        if role == ORG_ADMIN_ROLE:
+            await grant_org_admin(conn, row["id"], org_id)
     # The returned link is built HERE, from the creating org's own stored
     # enroll_url — so the value the admin copies is always fully qualified and
     # always points at that org's real subdomain. `org_id` is the one the caller
