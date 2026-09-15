@@ -153,6 +153,21 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # same as mini-bedrock's ai.model.fallback_chain default), while letting an
     # org_admin add same-dimension backup deployments without a code change.
     "ai.embedding.fallback_chain": ["voyage-3.5"],
+    # LiteLLM Phase D1a — which credential a provider's calls use for this org:
+    # 'platform' (Hollisworks' own key, the status quo) or 'org' (the org's own
+    # key, in a dedicated LiteLLM deployment — services.litellm_credentials).
+    # Defaulting BOTH to 'platform' here is what makes "every existing org's
+    # behaviour is unchanged" true for free: no org has a row for either key
+    # yet, so every org resolves to 'platform' via the same DEFAULT_SETTINGS
+    # fallback every other key in this dict uses. The canonical way to change
+    # either value is PUT/DELETE /orgs/{org_id}/settings/ai-credentials/
+    # {provider} (services.litellm_credentials.set_org_provider_credential /
+    # clear_org_provider_credential), which keeps this flag and the real
+    # LiteLLM deployment in lockstep — a direct PUT to this key alone changes
+    # only the flag, not any deployment, so it is validated but not the
+    # recommended path.
+    "ai.credential_source.anthropic": "platform",
+    "ai.credential_source.voyage": "platform",
     # Portfolio Phase B — the ORDERED list of `positions.source_system` values,
     # most-trusted first, deciding which of several sources reporting the same
     # holding is the portfolio's answer (design V6 §1.1). Same shape as
@@ -323,6 +338,23 @@ def _validate_setting(key: str, value) -> None:
         if value < 1 or value > MAX_SETTING_DAYS:
             raise SettingsValidationError(
                 f"{key} must be between 1 and {MAX_SETTING_DAYS} days, got {value}"
+            )
+
+    if key.startswith("ai.credential_source.") and value is not None:
+        # Lazy import — services.litellm_credentials imports set_setting from
+        # this module, so a top-level import here would be a cycle (same
+        # shape as the embedding-provider and precedence-order lazy imports
+        # below).
+        from services.litellm_credentials import (
+            PROVIDER_PLATFORM_DEPLOYMENT,
+            VALID_CREDENTIAL_SOURCES,
+        )
+        provider = key.rsplit(".", 1)[-1]
+        if provider not in PROVIDER_PLATFORM_DEPLOYMENT:
+            raise SettingsValidationError(f"Unknown provider in {key!r}: {provider!r}")
+        if value not in VALID_CREDENTIAL_SOURCES:
+            raise SettingsValidationError(
+                f"{key} must be one of {VALID_CREDENTIAL_SOURCES!r}, got {value!r}"
             )
 
     if key == "portfolio.precedence.source_order" and value is not None:

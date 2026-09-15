@@ -1,15 +1,24 @@
 """Org (white-label) settings endpoints — Sprint 24.
 
-    GET    /orgs                            list orgs (super_admin only)
-    POST   /orgs                            create an org (super_admin only)
-    GET    /orgs/{org_id}/settings          resolved settings for one org
-    PUT    /orgs/{org_id}/settings          bulk upsert
-    PUT    /orgs/{org_id}/settings/{key}    upsert one key
-    GET    /theme                           the caller's own org theme
+    GET    /orgs                                        list orgs (super_admin only)
+    POST   /orgs                                        create an org (super_admin only)
+    GET    /orgs/{org_id}/settings                      resolved settings for one org
+    PUT    /orgs/{org_id}/settings                      bulk upsert
+    PUT    /orgs/{org_id}/settings/{key}                upsert one key
+    GET    /orgs/{org_id}/settings/ai-credentials        per-provider credential status
+    PUT    /orgs/{org_id}/settings/ai-credentials/{provider}     supply the org's own key
+    DELETE /orgs/{org_id}/settings/ai-credentials/{provider}     revert to the platform key
+    GET    /theme                                        the caller's own org theme
 
 Reads are open to any authenticated user of the org (the app cannot render its
 theme otherwise); reading *another* org requires super_admin. Writes go through
 ``can_manage_org_settings``.
+
+The ai-credentials routes (LiteLLM Phase D1a) are deliberately separate from
+the generic settings PUT: they provision/deprovision a real LiteLLM model
+deployment as part of the same call (services.litellm_credentials), which the
+generic key/value settings path has no business doing. Their responses never
+include a deployment name or id — that is LiteLLM-internal, never org-facing.
 """
 
 from fastapi import APIRouter, HTTPException, Request
@@ -17,6 +26,13 @@ from pydantic import BaseModel
 
 from routers.entities import DEFAULT_ORG_ID, get_org_id
 from services.database import get_pool
+from services.litellm_credentials import (
+    PROVIDER_PLATFORM_DEPLOYMENT,
+    CredentialProvisionError,
+    clear_org_provider_credential,
+    get_credential_status,
+    set_org_provider_credential,
+)
 from services.org_settings import (
     DEFAULT_SETTINGS,
     SettingsPermissionError,
@@ -27,7 +43,7 @@ from services.org_settings import (
     set_setting,
     set_settings,
 )
-from services.rbac import is_super_admin, load_principal
+from services.rbac import can_manage_org_settings, is_super_admin, load_principal
 from services.tenant import SlugValidationError, validate_slug
 from services.users import ensure_user
 
@@ -40,6 +56,13 @@ class SettingValue(BaseModel):
 
 class SettingsBulk(BaseModel):
     values: dict
+
+
+class ProviderCredential(BaseModel):
+    api_key: str
+
+    class Config:
+        extra = "forbid"
 
 
 class OrgCreate(BaseModel):
@@ -195,6 +218,81 @@ async def write_org_setting(
         except SettingsValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"org_id": org_id, "key": key, "value": value}
+
+
+async def _require_write_access(pool, principal: dict, org_id: str) -> None:
+    """Same gate services.org_settings.set_setting enforces internally —
+    duplicated here (not imported) only because these two endpoints need to
+    check it BEFORE calling out to LiteLLM's admin API, whereas set_setting
+    checks it as its own first step. Both call the identical
+    can_manage_org_settings helper, so a 403 here means the same thing a
+    settings 403 always means."""
+    if not await can_manage_org_settings(pool, principal, org_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not permitted to manage settings for org {org_id}",
+        )
+
+
+@router.get("/orgs/{org_id}/settings/ai-credentials")
+async def read_ai_credential_status(request: Request, org_id: str):
+    """Per-provider credential source for this org — 'org' or 'platform'.
+
+    Never returns a deployment name or id (Task 4's proof for LiteLLM Phase
+    D1a) — that is LiteLLM-internal plumbing, not something an org sees.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        _require_read_access(principal, org_id)
+        statuses = [
+            await get_credential_status(conn, org_id, provider)
+            for provider in PROVIDER_PLATFORM_DEPLOYMENT
+        ]
+    return {"org_id": org_id, "credentials": statuses}
+
+
+@router.put("/orgs/{org_id}/settings/ai-credentials/{provider}")
+async def write_ai_credential(
+    request: Request, org_id: str, provider: str, body: ProviderCredential
+):
+    """Supply the org's own provider key. Provisions a dedicated LiteLLM
+    deployment and flips ai.credential_source.{provider} to 'org' — see
+    services.litellm_credentials.set_org_provider_credential."""
+    if provider not in PROVIDER_PLATFORM_DEPLOYMENT:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        await _require_write_access(pool, principal, org_id)
+        try:
+            status = await set_org_provider_credential(
+                conn, pool, org_id, provider, body.api_key, principal["id"],
+                principal=principal,
+            )
+        except CredentialProvisionError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"org_id": org_id, **status}
+
+
+@router.delete("/orgs/{org_id}/settings/ai-credentials/{provider}")
+async def delete_ai_credential(request: Request, org_id: str, provider: str):
+    """Remove the org's own provider key. Deprovisions its dedicated LiteLLM
+    deployment and reverts ai.credential_source.{provider} to 'platform' —
+    see services.litellm_credentials.clear_org_provider_credential."""
+    if provider not in PROVIDER_PLATFORM_DEPLOYMENT:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        await _require_write_access(pool, principal, org_id)
+        try:
+            status = await clear_org_provider_credential(
+                conn, pool, org_id, provider, principal["id"], principal=principal,
+            )
+        except CredentialProvisionError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"org_id": org_id, **status}
 
 
 @router.get("/theme/public")

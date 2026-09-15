@@ -219,7 +219,7 @@ separation entirely rather than punching a hole in it.
 | **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE.** The proxy is live and the `litellm` schema is migrated (77 tables). **A real model deployment now exists** (`claude-sonnet` → `anthropic/claude-sonnet-4-6`) and the proxy has routed its first successful, billed call (2026-09-14) — see §14.1. The `render.yaml` service-adoption gap is still open. |
 | **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **FULLY COMPLETE (2026-09-14)** — routing built 68/68 (2026-08-26), all 5 previously-BLOCKED assertions now PASS, 25/25, `verify_litellmphasebproof.py`. See §14.1. |
 | **C** | ~~Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism.~~ **DONE (2026-09-14)** — 34/34, 0 BLOCKED, `verify_litellmphasec.py`. See §14.2. |
-| **D** | **NEXT.** Model pick-list screen (org-scoped, filterable, LiteLLM metadata-driven). |
+| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **NEXT: D1b+** — the model pick-list screen itself (org-scoped, filterable, LiteLLM metadata-driven), plus routing an org's own calls to its own deployment (not built in D1a — see §14.3's scope note). |
 | **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
 | **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
 | **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data. |
@@ -458,3 +458,121 @@ constraints.** Confirmed: zero `FOREIGN KEY` occurrences in the entire file.
 `REFERENCES documents(id) ON DELETE CASCADE` the snapshot never recorded —
 found building this sprint's verify fixtures. A generator gap worth fixing;
 out of scope for this sprint.
+
+---
+
+## 14.3 · Phase D1a — per-org AI provider credential storage (2026-09-15)
+
+`apps/api/scripts/verify_litellmphased1a.py` — **58/58 PASS, 0 FAIL, 3 FIND**,
+re-run clean three consecutive times. Backend only. Scope was deliberately
+narrow: can an org store its own provider key, and does a dedicated LiteLLM
+deployment get created for it? **Not built here, on purpose: routing an
+org's own AI calls to its own deployment, spend attribution, and
+credential-failure alerting.** `ai.credential_source.{provider}` is written
+and readable today but nothing in `services/extraction.py`'s resolution
+path reads it yet — every call, for every org, still resolves to the
+platform's `claude-sonnet` / `voyage-3.5` deployments exactly as before this
+sprint. That wiring is the real remaining work for D1b+.
+
+### 1a — THE finding every later phase depends on, proved live
+
+`POST /model/new`'s `litellm_params.api_key` accepts a **literal** credential
+value, not only `os.environ/<NAME>` indirection. Proved directly against the
+live proxy: a deployment was created with a literal `ANTHROPIC_API_KEY`
+value, a real call through it returned genuine model output (HTTP 200,
+"OK"), and the deployment was deleted. LiteLLM encrypts the literal value at
+rest with `LITELLM_SALT_KEY` (§10) and **never echoes `api_key` back through
+`GET /model/info`** — confirmed for the two pre-existing platform
+deployments (`claude-sonnet`, `voyage-3.5`) and for the literal-key probe
+deployment alike, regardless of which mechanism supplied the credential.
+This is what makes the whole feature safe to build from application code at
+all: an org's own key crosses the wire to LiteLLM exactly once and is never
+stored, logged, or readable back out of our own database or LiteLLM's own
+admin API.
+
+### The mechanism
+
+`services/litellm_credentials.py` (new). `PROVIDER_PLATFORM_DEPLOYMENT`
+(code constant, same "no owner_scope row mechanism exists" reasoning §4c
+already established) maps `{"anthropic": "claude-sonnet", "voyage":
+"voyage-3.5"}` — the platform deployment each provider's org-key deployment
+mirrors. An org's own deployment gets a deterministic, purely INTERNAL name
+(`org-{provider}-{org_id}`) — never the platform's logical name, because
+same-`model_name` deployments load-balance rather than route deterministically
+by owner (the structural consequence the Phase D discovery doc already
+named). `provision_org_deployment` reads the platform deployment's *live*
+`litellm_params.model` (never hardcoded) and re-registers it under the org's
+own name with the org's own literal key; `deprovision_org_deployment`
+deletes it. Both are idempotent — provisioning again (key rotation) deletes
+any pre-existing deployment for that (provider, org) pair first, so a retry
+or a rotation can never leave two same-owner deployments answering to the
+same internal name.
+
+**No new table.** The org↔deployment mapping is deliberately NOT persisted
+in our own schema — `app_service` cannot read the `litellm` schema anyway
+(CLAUDE.md, confirmed again live via `InsufficientPrivilegeError` if
+attempted), so any code needing "does org X have a deployment for provider
+Y" has to ask LiteLLM's own admin API regardless. Storing a second copy of
+that fact in our DB would just be a second place for it to drift out of
+sync with what the proxy actually has; the deterministic name plus
+`GET /model/info` is the single source of truth instead.
+
+`org_settings.ai.credential_source.{provider}` (`'org'` | `'platform'`,
+`DEFAULT_SETTINGS` both `'platform'`) is the one new piece of state on our
+side — no schema change, validated with the same enum-precedent shape
+`ai.embedding.provider` already uses. `set_org_provider_credential` /
+`clear_org_provider_credential` keep the flag and the real deployment in
+lockstep, in a specific, deliberate order:
+
+- **Set**: provision the real deployment FIRST, flip the flag to `'org'`
+  SECOND — never claim `'org'` with no real deployment behind it.
+- **Clear**: deprovision the real deployment FIRST, revert the flag to
+  `'platform'` SECOND — the sprint's own named hazard ("a stale deployment
+  holding a revoked key") means the flag must never claim `'platform'` while
+  a still-keyed deployment could still be sitting on the proxy.
+
+New routes, `apps/api/routers/org_settings.py`: `GET` / `PUT` / `DELETE
+/orgs/{org_id}/settings/ai-credentials[/{provider}]`. Writes use the
+identical `can_manage_org_settings` gate every other settings write already
+uses (super_admin anywhere, org_admin at home); reads are open to any org
+member, matching the rest of this router (`GET /orgs/{id}/settings`) — the
+credential SOURCE is not itself sensitive, only the raw key value is, and
+the raw key value is never stored or returned by anything on our side.
+
+### Real proof, all against the live proxy and database
+
+A test org's own key creates a genuinely distinct deployment — confirmed by
+reading the proxy's own `GET /model/info` back, not by trusting the
+creation call's own response — whose `litellm_params.model` mirrors the
+live platform `claude-sonnet` string and whose `model_info.id` differs from
+the platform deployment's own id. Removing it deletes that exact
+deployment, confirmed the same way. Every response body across the full
+lifecycle (`PUT`, `DELETE`, the final `GET`, and the general `GET
+/orgs/{id}/settings?detail=true`) was grepped as raw text for the internal
+deployment name — zero matches, every time; an org never sees one. Two
+orgs' own deployments coexist independently, with distinct names and ids;
+org B's admin is refused (403) on the identical read/write/delete requests
+org A's own admin succeeds on; a real, role-holding (not zero-role)
+non-admin member of org A is refused (403) on the identical write request
+org A's admin succeeds on.
+
+**[FIND]** `GET /model/info` showed brief eventual-consistency lag
+immediately after a `POST /model/new` / `POST /model/delete` during ad hoc
+repeated runs — the same class of propagation lag already documented for
+`LiteLLM_SpendLogs` (§14.1), just metadata-only and on a much shorter
+timescale (seconds, not the spend log's tens of seconds). The verify
+script polls (up to 12s) on every existence-transition assertion rather
+than trusting a single immediate read.
+
+**[FIND]** A fixture user with zero `user_roles` grants default-ALLOWS every
+permission check (`has_permission`'s documented single-admin bootstrap
+posture — see the org_admin role reconciliation entries in
+`docs/PROJECT_STATUS.md`). The non-admin fixture needed a real, granted role
+that specifically excludes `manage_org_settings`, not merely an ungranted
+user, for the refusal-path assertion to prove anything — the same lesson
+`verify_orgadminrole.py` already learned building its own non-admin
+fixture.
+
+Teardown: zero leftover fixture rows and the live proxy confirmed back at
+exactly its pre-sprint deployment set (`claude-sonnet`, `voyage-3.5` only)
+— re-verified after every run, three consecutive clean runs.
