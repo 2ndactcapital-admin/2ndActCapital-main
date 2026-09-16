@@ -733,11 +733,11 @@ async def call_claude_json(
     except AIChainExhausted as exc:
         print(f"call_claude_json exhausted: {exc}")
         return None
-    except (AILiteLLMAuthError, AIOrgCredentialError):
+    except (AILiteLLMAuthError, AIOrgCredentialError, AIModelNotAuthorizedError):
         # MUST come before the bare `except Exception` below, which would
-        # otherwise flatten a platform-wide auth misconfiguration — or an
-        # org's own broken credential (D1c) — into the same silent None as a
-        # single malformed JSON response.
+        # otherwise flatten a platform-wide auth misconfiguration, an org's
+        # own broken credential (D1c), or a Phase-D2 policy refusal into the
+        # same silent None as a single malformed JSON response.
         raise
     except Exception as exc:  # unparseable response — preserve None contract
         print(f"call_claude_json failed: {exc}")

@@ -224,6 +224,55 @@ async def embedding_reindex_estimate(request: Request, org_id: str, new_model: s
     return estimate
 
 
+@router.get("/orgs/{org_id}/settings/model-selections")
+async def read_org_model_selections(request: Request, org_id: str):
+    """This org's authorised subset of the curated list, plus the vocabulary
+    of what it may pick from — never the raw LiteLLM catalogue (Rule 1's
+    permission-envelope pattern: editable comes from the server, always).
+
+    MUST be registered before the generic ``PUT /orgs/{org_id}/settings/{key}``
+    route below — Starlette matches path routes in REGISTRATION order, and
+    ``{key}`` would otherwise swallow a literal ``model-selections`` segment
+    (confirmed live: this collision silently routed every model-selections
+    write into the generic settings key/value store instead).
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        _require_read_access(principal, org_id)
+        selected = await list_org_selections(conn, org_id)
+        catalog = await list_catalog(conn)
+    can_write = await can_manage_org_settings(pool, principal, org_id)
+    return {
+        "org_id": org_id,
+        "selected_model_ids": selected,
+        "permissions": {
+            "can_read": True,
+            "can_write": can_write,
+            "is_super_admin": is_super_admin(principal),
+        },
+        "vocabularies": {
+            "editable": [m["model_id"] for m in catalog] if can_write else [],
+            "catalog": catalog,
+        },
+    }
+
+
+@router.put("/orgs/{org_id}/settings/model-selections")
+async def write_org_model_selections(request: Request, org_id: str, body: ModelSelectionsBody):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        await _require_write_access(pool, principal, org_id)
+        try:
+            selected = await set_org_selections(
+                conn, org_id, body.model_ids, updated_by=principal["id"],
+            )
+        except ModelCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"org_id": org_id, "selected_model_ids": selected}
+
+
 @router.put("/orgs/{org_id}/settings")
 async def write_org_settings(request: Request, org_id: str, body: SettingsBulk):
     pool = await get_pool()
@@ -387,48 +436,6 @@ async def delete_model_catalog_entry(request: Request, model_id: str):
     if not removed:
         raise HTTPException(status_code=404, detail=f"'{model_id}' is not on the platform catalog")
     return {"model_id": model_id, "removed": True}
-
-
-@router.get("/orgs/{org_id}/settings/model-selections")
-async def read_org_model_selections(request: Request, org_id: str):
-    """This org's authorised subset of the curated list, plus the vocabulary
-    of what it may pick from — never the raw LiteLLM catalogue (Rule 1's
-    permission-envelope pattern: editable comes from the server, always)."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        principal = await _principal(conn, request)
-        _require_read_access(principal, org_id)
-        selected = await list_org_selections(conn, org_id)
-        catalog = await list_catalog(conn)
-    can_write = await can_manage_org_settings(pool, principal, org_id)
-    return {
-        "org_id": org_id,
-        "selected_model_ids": selected,
-        "permissions": {
-            "can_read": True,
-            "can_write": can_write,
-            "is_super_admin": is_super_admin(principal),
-        },
-        "vocabularies": {
-            "editable": [m["model_id"] for m in catalog] if can_write else [],
-            "catalog": catalog,
-        },
-    }
-
-
-@router.put("/orgs/{org_id}/settings/model-selections")
-async def write_org_model_selections(request: Request, org_id: str, body: ModelSelectionsBody):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        principal = await _principal(conn, request)
-        await _require_write_access(pool, principal, org_id)
-        try:
-            selected = await set_org_selections(
-                conn, org_id, body.model_ids, updated_by=principal["id"],
-            )
-        except ModelCatalogError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"org_id": org_id, "selected_model_ids": selected}
 
 
 @router.get("/theme/public")

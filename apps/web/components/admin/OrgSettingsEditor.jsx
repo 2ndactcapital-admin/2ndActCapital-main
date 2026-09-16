@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import OrgModelSelector from "@/components/admin/OrgModelSelector";
 import { COLOR_LABELS, COLOR_VARS } from "@/lib/theme";
 
 /**
@@ -348,6 +349,8 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
           </div>
         </section>
       ))}
+
+      {orgId && <OrgModelSelector orgId={orgId} />}
 
       {reindexDialog && (
         <ReindexConfirmDialog
