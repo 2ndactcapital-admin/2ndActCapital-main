@@ -102,6 +102,98 @@ DOCUMENT_CLASSIFIER_MODEL_KEY = "ai.model.document_classifier"
 # Sprint 27 — the ordered fallback chain key. A JSON array of model strings.
 FALLBACK_CHAIN_KEY = "ai.model.fallback_chain"
 
+# ---------------------------------------------------------------------------
+# LiteLLM Phase E — per-task model assignment + effort
+# ---------------------------------------------------------------------------
+# Task 1a/1b's discovery finding, made structural: the platform has ~18 real
+# task_type strings (grepped live — every distinct value passed as task_type=
+# to call_claude_json/call_claude_text/call_claude_with_tools) but only THREE
+# assignable dials, because that is the real granularity resolve_model has
+# ever supported. A task with no dedicated key shares whichever dial its
+# call site's model_key defaults to (DEFAULT_MODEL_KEY for call_claude_json/
+# call_claude_text, ASSISTANT_MODEL_KEY for call_claude_with_tools).
+#
+# MODEL_TASK_REGISTRY is the ONE list an org-admin-facing "assign a model per
+# task" screen reads — services/org_settings.py's read endpoint and the
+# frontend both iterate this, never a second, hand-maintained copy of "which
+# dials exist." A genuinely NEW dial (a fourth ai.model.* key) still needs a
+# code change here (constant + entry below) and at whichever call site(s)
+# pass its model_key — that part is NOT automatic and this sprint does not
+# pretend otherwise (Task 1b). What IS automatic: once a key is in this list,
+# the settings API, the settings UI, and permission/validation all pick it up
+# with zero further edits — one registration point, not four.
+#
+# task_types listed per entry are DOCUMENTATION (what Task 1a found, so the
+# UI can show an admin "this covers: extraction, briefs, summaries..." next
+# to the dial) — resolution itself is driven entirely by which model_key a
+# call site passes, never by this list.
+EFFORT_KEY_BY_MODEL_KEY: dict[str, str] = {
+    DEFAULT_MODEL_KEY: "ai.effort.default",
+    ASSISTANT_MODEL_KEY: "ai.effort.assistant",
+    DOCUMENT_CLASSIFIER_MODEL_KEY: "ai.effort.document_classifier",
+}
+
+MODEL_TASK_REGISTRY: list[dict] = [
+    {
+        "key": DEFAULT_MODEL_KEY,
+        "effort_key": EFFORT_KEY_BY_MODEL_KEY[DEFAULT_MODEL_KEY],
+        "label": "Extraction, Briefs & Summaries",
+        "description": (
+            "Every AI task with no dedicated dial of its own — Foundation "
+            "answer extraction, CRM note extraction, client/deal briefs, "
+            "fee narratives, note-terms extraction, VDR analysis, workflow "
+            "narrative generation, and more."
+        ),
+        "task_types": [
+            "extraction", "profile_extraction", "crm_extraction",
+            "foundation_reply", "client_brief", "brief_themes",
+            "deal_summary", "fee_narrative_polish", "narrative_extraction",
+            "fee_schedule_spec", "note_terms_extraction",
+            "note_terms_underlyings", "vdr_analysis", "workflow_generation",
+            "crm_draft_note", "text_generation",
+        ],
+    },
+    {
+        "key": ASSISTANT_MODEL_KEY,
+        "effort_key": EFFORT_KEY_BY_MODEL_KEY[ASSISTANT_MODEL_KEY],
+        "label": "Assistant",
+        "description": (
+            "The tool-using member assistant, the dashboard member-brief "
+            "narration, and the note-terms hazard-ensemble cross-check."
+        ),
+        "task_types": ["assistant", "member_brief", "note_terms_hazard_ensemble"],
+    },
+    {
+        "key": DOCUMENT_CLASSIFIER_MODEL_KEY,
+        "effort_key": EFFORT_KEY_BY_MODEL_KEY[DOCUMENT_CLASSIFIER_MODEL_KEY],
+        "label": "Document Classifier",
+        "description": "Open-set document-type classification on upload.",
+        "task_types": ["document_classifier"],
+    },
+]
+
+# Effort VALUES are not metadata LiteLLM reports (design doc §4) — it names
+# the parameter (`thinking`/`reasoning_effort` in supported_openai_params),
+# not its legal range. This is the small, local mapping that supplies it.
+# Values are Anthropic `thinking.budget_tokens` (Task 1c, probed live: the
+# Anthropic-shaped call this module already makes accepts a native
+# `thinking={"type": "enabled", "budget_tokens": N}` kwarg, confirmed by a
+# real call returning a genuine `thinking` content block plus
+# `usage.output_tokens_details.thinking_tokens` — never OpenAI's
+# `reasoning_effort` string enum, which is a DIFFERENT provider convention
+# that only applies over LiteLLM's OpenAI-shaped route, not the
+# Anthropic-shaped `/v1/messages` route this module calls). 1024 is
+# Anthropic's own minimum budget_tokens.
+EFFORT_LEVELS: dict[str, int] = {
+    "low": 1024,
+    "medium": 4096,
+    "high": 12000,
+}
+# max_tokens must exceed thinking.budget_tokens for Anthropic to accept the
+# request; this is how much room _apply_effort leaves for the actual answer
+# on top of the thinking budget when a caller's own max_tokens is too small.
+_EFFORT_MAX_TOKENS_HEADROOM = 512
+
 # org_id is NOT NULL on ai_decision_log. Platform calls made with no org context
 # (resolve_model(None)) are attributed to the default org for logging purposes.
 DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
@@ -357,6 +449,34 @@ async def resolve_fallback_chain(
     return [m for m in (chain or []) if isinstance(m, str) and m]
 
 
+async def resolve_effort(org_id, model_key: str) -> str | None:
+    """This org's effort level for the task dial ``model_key`` resolves
+    through, or ``None`` if unset/unknown — mirrors resolve_model's own
+    fail-to-default (here, fail-to-None, i.e. "no effort control engaged")
+    discipline. ``None`` is a real, common state: it means neither Hollisworks
+    nor the org has ever set this task's effort, and no `thinking` parameter
+    is sent — byte-for-byte pre-Phase-E behaviour.
+    """
+    effort_key = EFFORT_KEY_BY_MODEL_KEY.get(model_key)
+    if effort_key is None:
+        return None
+    from services.org_settings import DEFAULT_SETTINGS, get_setting
+
+    default = DEFAULT_SETTINGS.get(effort_key)
+    value = default
+    if org_id is not None:
+        try:
+            from services.database import get_pool
+
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                value = await get_setting(conn, org_id, effort_key)
+        except Exception as exc:
+            print(f"resolve_effort failed for {effort_key}, using default: {exc}")
+            value = default
+    return value if value in EFFORT_LEVELS else None
+
+
 def _dedupe(items) -> list[str]:
     """Order-preserving de-dup — a model already tried is not retried."""
     seen: set[str] = set()
@@ -410,8 +530,21 @@ def _compute_cost(model_id: str, usage) -> Decimal | None:
 async def _write_ai_decision(
     *, org_id, task_type, model_requested, model_used, fallback_used,
     fallback_reason, cost_usd, latency_ms, success, error_detail,
+    effort_requested=None, effort_used=None,
 ) -> None:
-    """Insert one ai_decision_log row. May raise — always call via _safe_log."""
+    """Insert one ai_decision_log row. May raise — always call via _safe_log.
+
+    ``effort_requested``/``effort_used`` default to None so every pre-Phase-E
+    caller (document_embedding.py's own chain executor reuses this via
+    ``ex._safe_log`` and never carries effort — embeddings are always
+    ``supports_reasoning: false``) keeps working unchanged. The Task 3
+    fallback decision (drop effort silently, log it) is what makes the two
+    genuinely differ on a chat-task row: ``effort_requested`` is set whenever
+    the org asked for one, regardless of outcome; ``effort_used`` is set only
+    when it was actually sent to the provider on THIS attempt. A row with
+    ``effort_requested`` set and ``effort_used`` NULL is exactly the dropped
+    case, queryable directly.
+    """
     from services.database import get_pool
 
     pool = await get_pool()
@@ -420,12 +553,13 @@ async def _write_ai_decision(
             """
             INSERT INTO ai_decision_log
                 (org_id, task_type, model_requested, model_used, fallback_used,
-                 fallback_reason, cost_usd, latency_ms, success, error_detail)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 fallback_reason, cost_usd, latency_ms, success, error_detail,
+                 effort_requested, effort_used)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             """,
             org_id or DEFAULT_ORG_ID, task_type, model_requested, model_used,
             fallback_used, fallback_reason, cost_usd, latency_ms, success,
-            error_detail,
+            error_detail, effort_requested, effort_used,
         )
 
 
@@ -477,11 +611,13 @@ async def _execute_chain(
 ):
     """Walk the org's model chain: time, cost, and log every call.
 
-    ``make_call(client, model_id, attribution)`` performs the actual Anthropic
-    request and returns the raw message (``attribution`` is the Phase-D1b
-    metadata dict, or ``None`` on the direct-Anthropic transport, where
-    routing/attribution do not apply); ``extract(message)`` shapes the public
-    return value. Tries the primary (``model_override`` or resolve_model(org_id,
+    ``make_call(client, model_id, attribution, effort_budget)`` performs the
+    actual Anthropic request and returns the raw message (``attribution`` is
+    the Phase-D1b metadata dict, or ``None`` on the direct-Anthropic
+    transport, where routing/attribution do not apply; ``effort_budget`` is a
+    Phase-E ``thinking.budget_tokens`` int, or ``None`` when no effort
+    applies to this attempt); ``extract(message)`` shapes the public return
+    value. Tries the primary (``model_override`` or resolve_model(org_id,
     model_key)) first, then each model in the org's fallback chain, until one
     responds. Writes exactly one ai_decision_log row per call (the outcome).
     Returns ``extract(message)`` on success; returns None when no API key is
@@ -528,8 +664,23 @@ async def _execute_chain(
                 org_id=org_id, task_type=task_type, model_requested=primary,
                 model_used=primary, fallback_used=False, fallback_reason=None,
                 cost_usd=None, latency_ms=1, success=False, error_detail=detail,
+                effort_requested=await resolve_effort(org_id, model_key),
             )
             raise AIModelNotAuthorizedError(detail)
+
+    # LiteLLM Phase E — per-task effort. resolve_effort returns None for the
+    # vast majority of tasks (no dedicated effort_key, or one that exists but
+    # has never been set), and when it does this block costs nothing further
+    # below: reasoning_map stays empty and every attempt's effort_budget is
+    # None — byte-for-byte pre-Phase-E behaviour. Only a genuinely SET effort
+    # pays for the one extra live /model_group/info call, and only once per
+    # chain walk (not once per attempt).
+    selected_effort = await resolve_effort(org_id, model_key)
+    reasoning_map: dict[str, bool] = {}
+    if selected_effort is not None:
+        from services.litellm_credentials import reasoning_support_by_model
+
+        reasoning_map = reasoning_support_by_model()
 
     # LiteLLM Phase D1b — routing + attribution. Both are LiteLLM-only
     # concepts: the rollback (direct-Anthropic) path never touches either, so
@@ -560,8 +711,31 @@ async def _execute_chain(
             call_model_id = resolve_deployment_model(
                 model_id, org_id or DEFAULT_ORG_ID, _CALL_PROVIDER, credential_source
             )
+
+        # Task 3's settled decision: gate per ATTEMPT, on the logical model_id
+        # (pre deployment-name translation — an org's own mirrored deployment
+        # carries the identical upstream model and so the identical reasoning
+        # capability; reasoning_map is keyed by the platform's logical
+        # model_group names, not an org's synthetic deployment name). A task
+        # whose primary supports reasoning but whose fallback chain lands on
+        # one that does not gets effort on the first attempt and silently
+        # none on the second — never a raised error either way.
+        effort_budget = None
+        effort_this_attempt = None
+        if selected_effort is not None:
+            if reasoning_map.get(model_id):
+                effort_budget = EFFORT_LEVELS[selected_effort]
+                effort_this_attempt = selected_effort
+            else:
+                print(
+                    f"[ai_router] effort '{selected_effort}' requested for task "
+                    f"'{task_type}' but model '{model_id}' does not report "
+                    f"supports_reasoning — dropped silently, call proceeds "
+                    f"without it (Phase E fallback decision)."
+                )
+
         try:
-            message = await make_call(client, call_model_id, attribution)
+            message = await make_call(client, call_model_id, attribution, effort_budget)
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if transport == TRANSPORT_LITELLM and _is_auth_failure(exc):
@@ -597,6 +771,7 @@ async def _execute_chain(
                         cost_usd=None,
                         latency_ms=max(1, int((time.monotonic() - t0) * 1000)),
                         success=False, error_detail=detail,
+                        effort_requested=selected_effort,
                     )
                     await _alert_org_credential_failure(org_id, _CALL_PROVIDER, detail)
                     raise AIOrgCredentialError(detail) from exc
@@ -623,6 +798,7 @@ async def _execute_chain(
                     fallback_reason=None, cost_usd=None,
                     latency_ms=max(1, int((time.monotonic() - t0) * 1000)),
                     success=False, error_detail=detail,
+                    effort_requested=selected_effort,
                 )
                 raise AILiteLLMAuthError(detail) from exc
             print(
@@ -642,6 +818,7 @@ async def _execute_chain(
             fallback_reason=reason,
             cost_usd=_compute_cost(model_id, getattr(message, "usage", None)),
             latency_ms=latency_ms, success=True, error_detail=None,
+            effort_requested=selected_effort, effort_used=effort_this_attempt,
         )
         return extract(message)
 
@@ -657,7 +834,7 @@ async def _execute_chain(
             if fallback_used else None
         ),
         cost_usd=None, latency_ms=latency_ms, success=False,
-        error_detail=last_error,
+        error_detail=last_error, effort_requested=selected_effort,
     )
     raise AIChainExhausted(
         f"All models failed for task '{task_type}' (chain={attempts}): "
@@ -680,6 +857,51 @@ def _apply_attribution(kwargs: dict, attribution: dict | None) -> dict:
         kwargs["metadata"] = {"tags": attribution["tags"]}
         kwargs["extra_body"] = {"user": attribution["end_user"]}
     return kwargs
+
+
+def _apply_effort(kwargs: dict, effort_budget: int | None) -> dict:
+    """Merge Phase-E effort into a messages.create() kwargs dict.
+
+    ``effort_budget`` is a ``thinking.budget_tokens`` int (already resolved
+    to a real number by ``_execute_chain`` — only for an attempt whose model
+    reports ``supports_reasoning: true``) or ``None``. A no-op when None, so
+    a task with no effort assigned, or one whose current attempt does not
+    support reasoning, sends byte-for-byte the same request it always has —
+    no ``thinking`` key at all, never an empty/disabled one.
+
+    Anthropic requires ``max_tokens`` to exceed ``thinking.budget_tokens``;
+    every call site here picks its own ``max_tokens`` for its own reasons
+    (a 300-token classification prompt, a 2000-token assistant turn), most
+    of which are smaller than a real thinking budget. Rather than reject a
+    task's effort setting for being "too small" for its own max_tokens, this
+    raises max_tokens just enough to fit the budget plus headroom for the
+    actual answer — never lowers a caller's own larger value.
+    """
+    if effort_budget is None:
+        return kwargs
+    kwargs["thinking"] = {"type": "enabled", "budget_tokens": effort_budget}
+    floor = effort_budget + _EFFORT_MAX_TOKENS_HEADROOM
+    if kwargs.get("max_tokens", 0) < floor:
+        kwargs["max_tokens"] = floor
+    return kwargs
+
+
+def _response_text(message) -> str:
+    """The response's real text block, tolerant of a leading ``thinking``
+    block.
+
+    Phase E bug, caught before it shipped: with effort enabled, Anthropic's
+    real content order is ``[thinking, text]`` (confirmed live — Task 1c's
+    probe), so the pre-Phase-E ``message.content[0].text`` would have raised
+    AttributeError on a thinking block (which has ``.thinking``, not
+    ``.text``) the moment any task's effort was ever set. Every
+    ``call_claude_json``/``call_claude_text`` caller goes through this
+    instead of indexing ``content[0]`` directly.
+    """
+    for block in message.content:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    return message.content[0].text  # no typed block at all — surface the same error as before
 
 
 def _strip_fences(text: str) -> str:
@@ -713,17 +935,18 @@ async def call_claude_json(
     is unparseable — every one of those is printed and, for chain outcomes, also
     written to ai_decision_log.
     """
-    async def make_call(client, model_id, attribution):
+    async def make_call(client, model_id, attribution, effort_budget):
         kwargs = _apply_attribution(dict(
             model=model_id,
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
         ), attribution)
+        kwargs = _apply_effort(kwargs, effort_budget)
         return await client.messages.create(**kwargs)
 
     def extract(message):
-        return json.loads(_strip_fences(message.content[0].text))
+        return json.loads(_strip_fences(_response_text(message)))
 
     try:
         return await _execute_chain(
@@ -759,17 +982,18 @@ async def call_claude_text(
     Routes through the Sprint-27 chain executor (per-org fallback chain +
     ai_decision_log). Returns None on no key / exhausted chain, as before.
     """
-    async def make_call(client, model_id, attribution):
+    async def make_call(client, model_id, attribution, effort_budget):
         kwargs = _apply_attribution(dict(
             model=model_id,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
         ), attribution)
+        kwargs = _apply_effort(kwargs, effort_budget)
         return await client.messages.create(**kwargs)
 
     def extract(message):
-        return message.content[0].text
+        return _response_text(message)
 
     try:
         return await _execute_chain(
@@ -800,7 +1024,7 @@ async def call_claude_with_tools(
     chain fails. Routes through the Sprint-27 chain executor (per-org fallback
     chain + ai_decision_log).
     """
-    async def make_call(client, model_id, attribution):
+    async def make_call(client, model_id, attribution, effort_budget):
         kwargs: dict = dict(
             model=model_id,
             max_tokens=max_tokens,
@@ -810,6 +1034,7 @@ async def call_claude_with_tools(
         if tools:
             kwargs["tools"] = tools
         kwargs = _apply_attribution(kwargs, attribution)
+        kwargs = _apply_effort(kwargs, effort_budget)
         return await client.messages.create(**kwargs)
 
     def extract(message):

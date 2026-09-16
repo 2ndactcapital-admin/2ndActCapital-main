@@ -159,6 +159,110 @@ async def resolve_authorized_models(org_id) -> set[str] | None:
         return None
 
 
+async def validate_assignable_model(conn, org_id, model_id: str) -> None:
+    """Raise ModelCatalogError unless ``model_id`` is a real platform-catalog
+    entry this org is actually authorised to use (LiteLLM Phase E task
+    assignment). Shared by services.org_settings._validate_setting (the
+    generic settings PUT) and the dedicated task-assignment endpoint — ONE
+    check, not two independently-maintained copies of "is this allowed."
+
+    An org with no explicit ``org_model_selections`` row is unrestricted
+    (``resolve_authorized_models`` returns ``None``, the pre-D2 status quo),
+    so any real catalog entry is assignable — matching exactly what
+    ``_execute_chain`` would actually let this attempt run as.
+    """
+    exists = await conn.fetchval(
+        "SELECT 1 FROM platform_model_catalog WHERE model_id = $1", model_id
+    )
+    if not exists:
+        raise ModelCatalogError(f"'{model_id}' is not on the platform catalog")
+
+    from services.litellm_credentials import chat_capable_models
+
+    if model_id not in chat_capable_models():
+        raise ModelCatalogError(
+            f"'{model_id}' does not report mode: 'chat' on the live proxy — "
+            f"not assignable to a chat task (this dial calls /v1/messages; "
+            f"an embedding model like 'voyage-3.5' cannot serve it)."
+        )
+
+    authorized = await resolve_authorized_models(org_id)
+    if authorized is not None and model_id not in authorized:
+        raise ModelCatalogError(
+            f"'{model_id}' is not authorised for this organization — "
+            f"authorise it first under the org's model selections."
+        )
+
+
+async def get_task_assignments(conn, org_id) -> list[dict]:
+    """LiteLLM Phase E — one row per services.extraction.MODEL_TASK_REGISTRY
+    entry: which model this org has assigned (or the platform default, when
+    unset) plus its assigned effort, and the live ``supports_reasoning`` for
+    whichever model is actually in effect right now. This is what gates the
+    UI's effort control — never a client-side guess."""
+    from services.extraction import MODEL_TASK_REGISTRY
+    from services.litellm_credentials import reasoning_support_by_model
+    from services.org_settings import get_setting_with_origin
+
+    reasoning_map = reasoning_support_by_model()
+    rows = []
+    for entry in MODEL_TASK_REGISTRY:
+        model_value, model_is_default = await get_setting_with_origin(
+            conn, org_id, entry["key"]
+        )
+        effort_value, effort_is_default = await get_setting_with_origin(
+            conn, org_id, entry["effort_key"]
+        )
+        rows.append({
+            "key": entry["key"],
+            "effort_key": entry["effort_key"],
+            "label": entry["label"],
+            "description": entry["description"],
+            "task_types": entry["task_types"],
+            "assigned_model": model_value,
+            "is_default_model": model_is_default,
+            "assigned_effort": effort_value,
+            "is_default_effort": effort_is_default,
+            "supports_reasoning": bool(reasoning_map.get(model_value)) if model_value else False,
+        })
+    return rows
+
+
+async def set_task_assignment(
+    conn, pool, org_id, task_key: str, *, model_id, effort, updated_by, principal
+) -> dict:
+    """Assign a model (and optionally an effort level) to one
+    MODEL_TASK_REGISTRY dial. ``model_id``/``effort`` of ``None`` resets that
+    half back to the platform default.
+
+    Reuses ``services.org_settings.set_setting`` for BOTH writes rather than
+    inserting directly — that is the one function that already enforces
+    ``manage_org_settings`` and runs ``_validate_setting`` (which calls this
+    module's own ``validate_assignable_model`` for the model, and checks the
+    effort enum), so this endpoint and the generic settings PUT can never
+    disagree about what is allowed. Both writes share one transaction: a
+    rejected effort must not leave the model half written alone.
+    """
+    from services.extraction import EFFORT_KEY_BY_MODEL_KEY, MODEL_TASK_REGISTRY
+    from services.org_settings import set_setting
+
+    registry_keys = {e["key"] for e in MODEL_TASK_REGISTRY}
+    if task_key not in registry_keys:
+        raise ModelCatalogError(f"'{task_key}' is not an assignable AI task")
+    effort_key = EFFORT_KEY_BY_MODEL_KEY[task_key]
+
+    async with conn.transaction():
+        await set_setting(
+            conn, org_id, task_key, model_id, updated_by,
+            principal=principal, pool=pool,
+        )
+        await set_setting(
+            conn, org_id, effort_key, effort, updated_by,
+            principal=principal, pool=pool,
+        )
+    return {"key": task_key, "model_id": model_id, "effort_key": effort_key, "effort": effort}
+
+
 def _provider_from_upstream(upstream_model: str | None) -> str | None:
     if not upstream_model or "/" not in upstream_model:
         return None

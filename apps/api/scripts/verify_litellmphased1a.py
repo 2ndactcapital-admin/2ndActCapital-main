@@ -331,7 +331,7 @@ async def main() -> int:
                   org_settings_mod.DEFAULT_SETTINGS.get(key) == "platform")
 
         try:
-            org_settings_mod._validate_setting("ai.credential_source.anthropic", "bogus-value")
+            await org_settings_mod._validate_setting(None, None, "ai.credential_source.anthropic", "bogus-value")
             check("1b. _validate_setting rejects an invalid credential source "
                   "value", False, "did not raise")
         except org_settings_mod.SettingsValidationError:
@@ -339,14 +339,14 @@ async def main() -> int:
                   "value ('bogus-value')", True)
 
         try:
-            org_settings_mod._validate_setting("ai.credential_source.openai", "org")
+            await org_settings_mod._validate_setting(None, None, "ai.credential_source.openai", "org")
             check("1b. _validate_setting rejects an unsupported provider", False,
                   "did not raise")
         except org_settings_mod.SettingsValidationError:
             check("1b. _validate_setting rejects an unsupported provider "
                   "('openai' has no platform deployment to mirror)", True)
 
-        org_settings_mod._validate_setting("ai.credential_source.anthropic", "org")
+        await org_settings_mod._validate_setting(None, None, "ai.credential_source.anthropic", "org")
         check("1b. _validate_setting accepts a genuinely valid value ('org') "
               "for a genuinely known provider — the negative checks above "
               "prove something real", True)

@@ -173,6 +173,64 @@ def list_deployments() -> list[dict]:
     return _model_info()
 
 
+def _model_group_info() -> list[dict]:
+    status, body = _http("/model_group/info")
+    if status != 200:
+        raise CredentialProvisionError(
+            f"GET /model_group/info -> HTTP {status}: {body[:300]}"
+        )
+    return json.loads(body).get("data", [])
+
+
+def list_model_group_info() -> list[dict]:
+    """Public wrapper — LiteLLM Phase E. ``GET /model_group/info`` is the
+    endpoint that actually reports ``supports_reasoning`` and
+    ``supported_openai_params`` per registered model_name (probed live,
+    Task 1c) — ``/model/info``'s per-deployment payload does carry
+    ``supports_reasoning`` too, but ``/model_group/info`` is keyed on
+    ``model_group`` (== our ``model_name``/model_id), a simpler match than
+    ``/model/info``'s nested ``model_info``. Never a second, parallel
+    caller — services.extraction and services.model_catalog both call this
+    one wrapper."""
+    return _model_group_info()
+
+
+def reasoning_support_by_model() -> dict[str, bool]:
+    """``{model_id: supports_reasoning}`` for every registered model_name,
+    live. Best-effort: an unreachable proxy yields an empty dict rather than
+    raising, so a caller gating an effort control fails CLOSED (no entry ->
+    treated as unsupported -> no control, no parameter) rather than raising
+    into an unrelated read path."""
+    try:
+        return {
+            entry["model_group"]: bool(entry.get("supports_reasoning"))
+            for entry in _model_group_info()
+            if entry.get("model_group")
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"litellm_credentials: /model_group/info unavailable: {exc}")
+        return {}
+
+
+def chat_capable_models() -> set[str]:
+    """model_group names with ``mode == "chat"`` — LiteLLM Phase E task
+    assignment must refuse an embedding-only model (``voyage-3.5``) for a
+    chat task dial (``ai.model.*``); the two axes (which models exist at
+    all, and which of those speak the ``/v1/messages`` shape this module
+    calls) are otherwise unrelated in platform_model_catalog, which has no
+    ``mode`` column of its own. Best-effort: an unreachable proxy yields an
+    empty set, same fail-closed discipline as ``reasoning_support_by_model``
+    (an unknown model is simply not assignable rather than assumed chat)."""
+    try:
+        return {
+            entry["model_group"] for entry in _model_group_info()
+            if entry.get("model_group") and entry.get("mode") == "chat"
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"litellm_credentials: /model_group/info unavailable: {exc}")
+        return set()
+
+
 def _find_deployment(model_name: str) -> dict | None:
     for entry in _model_info():
         if entry.get("model_name") == model_name:

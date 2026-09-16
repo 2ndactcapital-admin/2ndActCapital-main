@@ -146,6 +146,8 @@
 --   success                                  boolean NOT NULL
 --   error_detail                             text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   effort_requested                         text
+--   effort_used                              text
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
 -- ===== altruist_connections =====

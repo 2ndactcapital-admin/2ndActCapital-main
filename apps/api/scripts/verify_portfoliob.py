@@ -671,7 +671,7 @@ async def check_precedence_config(conn) -> None:
     rejected = []
     for label, value in bad_cases:
         try:
-            _validate_setting(PRECEDENCE_SETTING_KEY, value)
+            await _validate_setting(None, None, PRECEDENCE_SETTING_KEY, value)
             rejected.append(f"{label}: ACCEPTED")
         except SettingsValidationError:
             pass

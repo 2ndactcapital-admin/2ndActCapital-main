@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import ModelTaskAssignment from "@/components/admin/ModelTaskAssignment";
 import OrgModelSelector from "@/components/admin/OrgModelSelector";
 import { COLOR_LABELS, COLOR_VARS } from "@/lib/theme";
 
@@ -70,6 +71,21 @@ const EMBEDDING_PROVIDER_OPTIONS = [
 // "are you sure?" — friction, not a lock; an admin who confirms may proceed.
 const EMBEDDING_MODEL_KEY = "ai.embedding.model";
 
+// LiteLLM Phase E — these six keys now have a dedicated widget
+// (ModelTaskAssignment, below) with real per-org-catalog dropdowns and
+// live supports_reasoning gating. Hidden from the generic free-text loop so
+// there is exactly one place to edit them, not two that can disagree — the
+// generic PUT still accepts them (defense in depth, services/org_settings.py
+// _validate_setting), this is purely which widget renders.
+const TASK_ASSIGNMENT_KEYS = new Set([
+  "ai.model.default",
+  "ai.model.assistant",
+  "ai.model.document_classifier",
+  "ai.effort.default",
+  "ai.effort.assistant",
+  "ai.effort.document_classifier",
+]);
+
 export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
   const [rows, setRows] = useState(null);
   const [draft, setDraft] = useState({});
@@ -109,6 +125,7 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
   const grouped = useMemo(() => {
     const byCategory = {};
     for (const row of rows || []) {
+      if (TASK_ASSIGNMENT_KEYS.has(row.key)) continue;
       (byCategory[row.category] ||= []).push(row);
     }
     return byCategory;
@@ -351,6 +368,7 @@ export default function OrgSettingsEditor({ orgId, orgName, canEdit = true }) {
       ))}
 
       {orgId && <OrgModelSelector orgId={orgId} />}
+      {orgId && <ModelTaskAssignment orgId={orgId} />}
 
       {reindexDialog && (
         <ReindexConfirmDialog

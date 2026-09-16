@@ -262,7 +262,7 @@ async def main() -> int:
 
         # 1c — real consumers of the ai.model.* keys, live-grepped (never
         # assumed from a prior sprint's doc).
-        repo_root = HERE.parents[2]
+        repo_root = HERE.parents[3]
 
         def _grep(pattern, *, paths):
             result = subprocess.run(
@@ -565,9 +565,17 @@ async def main() -> int:
         # .py's own naming-convention note; extraction.py's cost-model
         # comment) — never a value actually passed to a call. Any hit
         # OUTSIDE these two exact lines is a real, unexpected regression.
+        #
+        # Line numbers, not just file+text, are pinned here on purpose (the
+        # whole point of this check), which makes them brittle to any later
+        # sprint that adds/removes lines earlier in either file — re-pin to
+        # the comment's real new line rather than loosen the match; Phase E
+        # (litellmphasee.structural) moved extraction.py's line 376 -> 496 by
+        # inserting the MODEL_TASK_REGISTRY/EFFORT_LEVELS block above it. The
+        # comment text itself is byte-for-byte unchanged.
         ALLOWED_STALE_LINES = {
             "apps/api/services/org_settings.py:130:    # deployment) forwards to upstream 'anthropic/claude-sonnet-4-6' — and",
-            "apps/api/services/extraction.py:376:# (claude-haiku-4-5-20251001) so the family prefix is a stable pricing key.",
+            "apps/api/services/extraction.py:496:# (claude-haiku-4-5-20251001) so the family prefix is a stable pricing key.",
         }
         unexpected_stale = [ln for ln in stale_hit_lines if ln not in ALLOWED_STALE_LINES]
         check(

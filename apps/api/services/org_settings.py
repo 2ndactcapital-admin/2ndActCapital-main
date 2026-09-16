@@ -198,6 +198,15 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # recommended path.
     "ai.credential_source.anthropic": "platform",
     "ai.credential_source.voyage": "platform",
+    # LiteLLM Phase E — per-task effort, one key per assignable dial
+    # (services.extraction.MODEL_TASK_REGISTRY / EFFORT_KEY_BY_MODEL_KEY).
+    # None everywhere by default: no effort control is engaged and no
+    # `thinking` parameter is ever sent unless an org (or Hollisworks, via
+    # this same default) deliberately sets one — existing behaviour for
+    # every task is unchanged until someone opts in.
+    "ai.effort.default": None,
+    "ai.effort.assistant": None,
+    "ai.effort.document_classifier": None,
     # Portfolio Phase B — the ORDERED list of `positions.source_system` values,
     # most-trusted first, deciding which of several sources reporting the same
     # holding is the portfolio's answer (design V6 §1.1). Same shape as
@@ -337,7 +346,7 @@ def _coerce_setting(key: str, value):
     return value
 
 
-def _validate_setting(key: str, value) -> None:
+async def _validate_setting(conn, org_id, key: str, value) -> None:
     """Reject values that are not allowed for a given key.
 
     This is the SOURCE-OF-TRUTH backend enforcement (Chancery Phase 11b): an org
@@ -346,6 +355,15 @@ def _validate_setting(key: str, value) -> None:
     here — not merely hidden in the client, which could be bypassed by calling
     the API directly. Clearing the key (value None) resets it to the default
     (Voyage) and is allowed.
+
+    ASYNC, and takes ``conn``/``org_id`` (LiteLLM Phase E) — the catalog
+    authorization check below needs a real DB read (an org's
+    org_model_selections), which none of the earlier, purely-shape
+    validations below it needed. This is the SAME defense-in-depth reason the
+    dedicated ai-credentials/model-selections endpoints exist alongside this
+    generic path: a caller must not be able to bypass Phase D2 authorization
+    by writing ``ai.model.*`` through the plain settings PUT instead of the
+    dedicated task-assignment endpoint.
     """
     if key == "ai.embedding.provider" and value is not None:
         # Lazy import avoids a module-load cycle (document_embedding imports
@@ -405,6 +423,38 @@ def _validate_setting(key: str, value) -> None:
             validate_source_order(value)
         except PrecedenceConfigError as exc:
             raise SettingsValidationError(str(exc)) from exc
+
+    # LiteLLM Phase E — task-model assignment. Lazy import: services.extraction
+    # imports get_setting/DEFAULT_SETTINGS from this module (a cycle at
+    # top-level), same shape as every other lazy import in this function.
+    from services.extraction import EFFORT_KEY_BY_MODEL_KEY, EFFORT_LEVELS
+
+    if key in EFFORT_KEY_BY_MODEL_KEY and value is not None:
+        # ai.model.<task> — the value must be a real, org-authorised catalog
+        # model_id. None (reset to the platform default) is always allowed.
+        # Real enforcement at the call path (services.extraction._execute_chain
+        # -> resolve_authorized_models) already refuses an unauthorised model
+        # regardless of what is stored here — this is the fail-fast 400 on
+        # save, not the only gate.
+        from services.model_catalog import ModelCatalogError, validate_assignable_model
+
+        try:
+            await validate_assignable_model(conn, org_id, str(value))
+        except ModelCatalogError as exc:
+            raise SettingsValidationError(str(exc)) from exc
+
+    if key in EFFORT_KEY_BY_MODEL_KEY.values() and value is not None:
+        # ai.effort.<task> — must be one of the small local enum. Whether the
+        # task's CURRENT model actually supports_reasoning is deliberately
+        # NOT checked here: services.extraction._execute_chain gates that
+        # live, per real attempt (Task 3) — the one mechanism that correctly
+        # handles both "assigned a non-reasoning model" and "fell back to
+        # one" without a second, write-time copy of the same rule that could
+        # drift from it.
+        if value not in EFFORT_LEVELS:
+            raise SettingsValidationError(
+                f"{key} must be one of {sorted(EFFORT_LEVELS)!r}, got {value!r}"
+            )
 
 
 def _decode(value):
@@ -584,7 +634,7 @@ async def set_setting(conn, org_id, key: str, value, updated_by, *, principal=No
     # SettingsValidationError → HTTP 400, and runs AFTER the permission check so
     # a forbidden caller learns 403, not 400.
     value = _coerce_setting(key, value)
-    _validate_setting(key, value)
+    await _validate_setting(conn, org_id, key, value)
 
     # json.dumps handles every scalar correctly: "USD" -> '"USD"', None ->
     # 'null', True -> 'true'. Passing the raw scalar would violate the jsonb

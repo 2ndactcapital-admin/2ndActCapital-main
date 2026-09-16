@@ -1,5 +1,16 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-16 (litellmphased2.structural — LiteLLM Phase D2, the
+Last updated: 2026-09-16 (litellmphasee.structural — LiteLLM Phase E,
+per-task model assignment + effort: an org_admin now assigns a model (from
+the org's D2-authorised set) to each of the platform's three real AI-task
+dials, and an effort level where the assigned model reports
+`supports_reasoning: true`; `54/54 PASS, 0 FAIL, 4 FIND` via
+`apps/api/scripts/verify_litellmphasee.py`; see the entry below); previously
+2026-09-16 (litellmseedfix.structural — claude-haiku deployment registered,
+naming convention aligned across settings/catalog/proxy, `31/31 PASS` via
+`apps/api/scripts/verify_litellmseedfix.py` — this file never got its own
+entry when that sprint shipped; two real, unrelated bugs in that same
+script were found and fixed live during Phase E, see the entry below);
+previously 2026-09-16 (litellmphased2.structural — LiteLLM Phase D2, the
 model pick-list UI: a Hollisworks super_admin curates which models are
 platform-supportable (`platform_model_catalog`, two new tables — the real
 org_settings-can't-hold-platform-scope finding forced this, not a design
@@ -68,6 +79,85 @@ This file starts with the email item below.
 
 ---
 
+## 0000000000000000000000. LiteLLM Phase E — per-task model assignment + effort (2026-09-16)
+
+`54/54 PASS, 0 FAIL, 4 FIND` — `apps/api/scripts/verify_litellmphasee.py`.
+D2 built the curated/authorised model lists; nothing yet decided WHICH task
+uses WHICH of an org's authorised models, or how hard it thinks. This
+sprint adds that layer. Full accounting in
+`docs/LITELLM_INTEGRATION_DESIGN_V1.md` §14.6 and
+`docs/LITELLM_D2_E_SPEC.md` — summary:
+
+- **Task 1 finding — granularity mismatch.** 19 real `task_type` values
+  exist across the platform's `call_claude_json`/`call_claude_text`/
+  `call_claude_with_tools` call sites (grepped live, not assumed), but only
+  THREE assignable dials have ever existed
+  (`ai.model.default`/`ai.model.assistant`/`ai.model.document_classifier`)
+  — a task with no dedicated key shares whichever dial its call site's
+  `model_key` defaults to. This sprint assigns at the REAL granularity
+  (the three dials), not an invented per-task-type one — see the spec's §7
+  for why. `services.extraction.MODEL_TASK_REGISTRY` is now the one list
+  the settings API and the frontend both read; a NEW dial still needs a
+  code change (constant + registry entry + `model_key=` threaded at its
+  call site) — reported honestly, not automatic.
+- **Effort is `thinking.budget_tokens`, not `reasoning_effort`.** Probed
+  live: this module's calls are Anthropic-shaped (`/v1/messages`), so the
+  real, accepted parameter is the native `thinking={"type":"enabled",
+  "budget_tokens":N}` int, confirmed by a real call returning a genuine
+  `thinking` content block plus `usage.output_tokens_details.
+  thinking_tokens > 0`. LiteLLM's `/model_group/info` also lists OpenAI's
+  `reasoning_effort` string enum under `supported_openai_params`, but that
+  describes LiteLLM's OpenAI-shaped route, which this module never calls.
+  A small local `EFFORT_LEVELS` map (`low`=1024, `medium`=4096,
+  `high`=12000 budget tokens) supplies the values LiteLLM doesn't report.
+- **THE SETTLED DECISION (design doc §4's open question): fallback drops
+  effort silently, and logs it.** When a task with an effort setting falls
+  back to a model that does NOT report `supports_reasoning: true`,
+  `_execute_chain` sends the call WITHOUT the `thinking` parameter rather
+  than failing it — gated per ATTEMPT (not once for the whole chain), so a
+  primary that supports reasoning and a fallback that doesn't behave
+  correctly in the same call. Two new nullable columns,
+  `ai_decision_log.effort_requested`/`effort_used`
+  (`migrations/litellmphasee_effort_columns.sql`), make the choice
+  queryable after the fact: `effort_requested` set + `effort_used` NULL on
+  a `success=true` row is exactly the dropped case. Proven live with a
+  forced-failure primary + real fallback call (the reasoning-support
+  *lookup* was patched for one assertion only, since no real non-reasoning
+  CHAT deployment exists on the live proxy today — the provider call itself
+  was 100% real and unpatched).
+- **A real, pre-existing bug found and fixed before it shipped**:
+  `call_claude_json`/`call_claude_text` both extracted the response as
+  `message.content[0].text`, which would have raised `AttributeError` the
+  moment ANY task's effort was ever set — Anthropic's real content order
+  with thinking enabled is `[thinking, text]`, and a thinking block has
+  `.thinking`, not `.text`. Fixed with a shared `_response_text()` helper
+  that finds the real text block regardless of position.
+- **A guard D2 didn't need but Phase E does**: `platform_model_catalog` has
+  no `mode` column, so nothing previously stopped assigning an
+  embedding-only model (`voyage-3.5`) to a chat dial. New
+  `services.litellm_credentials.chat_capable_models()` (live
+  `/model_group/info`, `mode == "chat"`) gates
+  `services.model_catalog.validate_assignable_model` — proven refused
+  (400) live.
+- **Two real, unrelated bugs found and fixed in `verify_litellmseedfix.py`**
+  while re-running it for regression: an off-by-one in its own
+  `repo_root = HERE.parents[2]` (should be `[3]`) silently turned three of
+  its grep-based checks into false failures against empty search paths;
+  and a line-number-pinned allowlist entry went stale because this
+  sprint's own edits to `extraction.py` shifted an unrelated comment's line
+  number. Both were pre-existing, confirmed via `git diff` to predate this
+  sprint's own changes, and both are now fixed (`31/31 PASS`).
+- New endpoints: `GET`/`PUT /orgs/{org_id}/settings/ai-tasks[/{task_key}]`
+  (reads open to any org member, writes gated on `manage_org_settings` —
+  the identical envelope D1a/D2 established). New frontend:
+  `ModelTaskAssignment.jsx`, embedded in the existing `/admin/settings`
+  screen; the six `ai.model.*`/`ai.effort.*` keys are hidden from the
+  generic free-text settings editor (one widget, not two that can
+  disagree). `npm run build` exits 0.
+- Cross-org isolation, org-admin-vs-member 403, and an unassigned task's
+  byte-for-byte no-regression are all proven live — see the verify script's
+  own docstring for the full accounting.
+
 ## 000000000000000000000. LiteLLM Phase D2 — the model pick-list UI (2026-09-16)
 
 `47/47 PASS, 0 FAIL, 4 FIND` — `apps/api/scripts/verify_litellmphased2.py`.
@@ -111,8 +201,8 @@ Full accounting in `docs/LITELLM_INTEGRATION_DESIGN_V1.md` §14.5 — summary:
   `/admin/settings` screen (`manage_org_settings`, reusing the ai-credentials
   envelope shape). `npm run build` exits 0.
 
-**Next: Phase E — per-task model assignment**, on top of D2's curated/
-authorised lists.
+**Phase E — per-task model assignment + effort — shipped**, see the entry
+above.
 
 ## 00000000000000000000. LiteLLM Phase D1b — routing + spend attribution (2026-09-15)
 

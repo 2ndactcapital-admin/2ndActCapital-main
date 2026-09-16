@@ -50,10 +50,12 @@ from services.model_catalog import (
     ModelCatalogError,
     add_catalog_model,
     enrich_with_live_info,
+    get_task_assignments,
     list_catalog,
     list_org_selections,
     remove_catalog_model,
     set_org_selections,
+    set_task_assignment,
 )
 from services.org_settings import (
     DEFAULT_SETTINGS,
@@ -103,6 +105,14 @@ class CatalogModelCreate(BaseModel):
 
 class ModelSelectionsBody(BaseModel):
     model_ids: list[str]
+
+    class Config:
+        extra = "forbid"
+
+
+class TaskAssignmentBody(BaseModel):
+    model_id: str | None = None
+    effort: str | None = None
 
     class Config:
         extra = "forbid"
@@ -271,6 +281,84 @@ async def write_org_model_selections(request: Request, org_id: str, body: ModelS
         except ModelCatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"org_id": org_id, "selected_model_ids": selected}
+
+
+@router.get("/orgs/{org_id}/settings/ai-tasks")
+async def read_task_assignments(request: Request, org_id: str):
+    """LiteLLM Phase E — per-task model + effort assignment.
+
+    MUST be registered before the generic ``PUT /orgs/{org_id}/settings/{key}``
+    route below, same reason model-selections is (Starlette matches path
+    routes in registration order; a single-segment literal can otherwise be
+    swallowed by a later ``{key}`` route of the same method) — this GET has
+    no colliding generic GET/{key} route today, but keeping every settings
+    sub-route registered together, ahead of the generic PUT, is the
+    established convention rather than something to re-verify per route.
+
+    Rule 1's permission-envelope pattern: ``vocabularies.editable`` (the
+    catalog models this org may actually pick) is an EMPTY array for a
+    view-only caller, never omitted — the frontend's task-assignment
+    dropdowns render read-only from ``tasks`` alone when ``can_write`` is
+    false.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        _require_read_access(principal, org_id)
+        tasks = await get_task_assignments(conn, org_id)
+        catalog = await list_catalog(conn)
+        selected = await list_org_selections(conn, org_id)
+    can_write = await can_manage_org_settings(pool, principal, org_id)
+    # Unrestricted (no explicit org_model_selections row) means every catalog
+    # entry is assignable — the same set _execute_chain would actually try.
+    assignable = catalog if not selected else [m for m in catalog if m["model_id"] in selected]
+    return {
+        "org_id": org_id,
+        "tasks": tasks,
+        "permissions": {
+            "can_read": True,
+            "can_write": can_write,
+            "is_super_admin": is_super_admin(principal),
+        },
+        "vocabularies": {
+            "editable": [m["model_id"] for m in assignable] if can_write else [],
+            "assignable_models": assignable if can_write else [],
+            "effort_levels": [
+                {"value": "low", "label": "Low"},
+                {"value": "medium", "label": "Medium"},
+                {"value": "high", "label": "High"},
+            ] if can_write else [],
+        },
+    }
+
+
+@router.put("/orgs/{org_id}/settings/ai-tasks/{task_key:path}")
+async def write_task_assignment(
+    request: Request, org_id: str, task_key: str, body: TaskAssignmentBody
+):
+    """Assign a model (and optional effort) to one task dial.
+
+    ``task_key`` carries dots (``ai.model.default``) — ``:path`` so Starlette
+    does not treat them as separate segments. Validation (catalog
+    authorization + effort enum) and the ``manage_org_settings`` permission
+    check both happen inside ``set_task_assignment`` via the shared
+    ``services.org_settings.set_setting`` — the identical gate every other
+    settings write in this router uses, never a second, bespoke one.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        try:
+            result = await set_task_assignment(
+                conn, pool, org_id, task_key,
+                model_id=body.model_id, effort=body.effort,
+                updated_by=principal["id"], principal=principal,
+            )
+        except SettingsPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (SettingsValidationError, ModelCatalogError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"org_id": org_id, **result}
 
 
 @router.put("/orgs/{org_id}/settings")

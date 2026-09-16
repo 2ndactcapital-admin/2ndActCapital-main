@@ -219,8 +219,8 @@ separation entirely rather than punching a hole in it.
 | **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE.** The proxy is live and the `litellm` schema is migrated (77 tables). **A real model deployment now exists** (`claude-sonnet` → `anthropic/claude-sonnet-4-6`) and the proxy has routed its first successful, billed call (2026-09-14) — see §14.1. The `render.yaml` service-adoption gap is still open. |
 | **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **FULLY COMPLETE (2026-09-14)** — routing built 68/68 (2026-08-26), all 5 previously-BLOCKED assertions now PASS, 25/25, `verify_litellmphasebproof.py`. See §14.1. |
 | **C** | ~~Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism.~~ **DONE (2026-09-14)** — 34/34, 0 BLOCKED, `verify_litellmphasec.py`. See §14.2. |
-| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **D1b — routing + spend attribution: DONE (2026-09-15)** — 54/54, 0 FAIL, `verify_litellmphased1b.py`. See §14.4. **D1c — credential-failure alerting: DONE (2026-09-15).** **D2 — the model pick-list UI: DONE (2026-09-16)** — 47/47 PASS, 0 FAIL, 4 FIND, `verify_litellmphased2.py`. See §14.5. **NEXT: Phase E** — per-task model assignment, building ON TOP of D2's curated/authorised lists rather than replacing them. |
-| **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
+| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **D1b — routing + spend attribution: DONE (2026-09-15)** — 54/54, 0 FAIL, `verify_litellmphased1b.py`. See §14.4. **D1c — credential-failure alerting: DONE (2026-09-15).** **D2 — the model pick-list UI: DONE (2026-09-16)** — 47/47 PASS, 0 FAIL, 4 FIND, `verify_litellmphased2.py`. See §14.5. **D2's own §3 (three-state availability) is still open — not built.** |
+| **E** | ~~Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings.~~ **DONE (2026-09-16)** — per-task model assignment (at the real 3-dial granularity, not per raw `task_type`) + effort, gated live on `supports_reasoning`, fallback-with-effort settled (drop silently, log it) — 54/54 PASS, 0 FAIL, 4 FIND, `verify_litellmphasee.py`. See §14.7. The two-tier safe-model hierarchy (task model → org safe → Hollis safe) stays exactly as built; change-warning UX was not in scope. |
 | **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
 | **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data. |
 | **H** | The recommendation tool (§9). |
@@ -912,3 +912,138 @@ catalog/settings/proxy naming agreement proven by live three-way set
 comparison; no regression on the two real production orgs — is in
 `apps/api/scripts/verify_litellmseedfix.py` and recorded in
 `docs/PROJECT_STATUS.md`.
+
+---
+
+## 14.7 · Phase E — per-task model assignment + effort (2026-09-16)
+
+`54/54 PASS, 0 FAIL, 4 FIND` — `apps/api/scripts/verify_litellmphasee.py`.
+D2 built the curated/authorised model lists; nothing yet decided WHICH task
+uses WHICH of an org's authorised models, or how hard it thinks. See
+`docs/LITELLM_D2_E_SPEC.md` §4 and §7 for the settled spec this sprint
+implements.
+
+### Task 1 findings
+
+**1a — granularity mismatch, the central finding.** 19 real `task_type`
+values are passed across the platform's `call_claude_json`/
+`call_claude_text`/`call_claude_with_tools` call sites (grepped live), but
+only THREE assignable dials have ever existed:
+`ai.model.default`/`ai.model.assistant`/`ai.model.document_classifier`. A
+task with no dedicated key shares whichever dial its call site's
+`model_key` defaults to (`DEFAULT_MODEL_KEY` for `call_claude_json`/
+`call_claude_text`, `ASSISTANT_MODEL_KEY` for `call_claude_with_tools`).
+Two embedding task_types (`embedding_document`/`embedding_query`) resolve
+through a wholly separate `ai.embedding.model` axis and are always
+`supports_reasoning: false` — never part of this registry. This sprint
+assigns at the real, existing granularity (the three dials), not an
+invented per-`task_type` one.
+
+**1b — the registry mechanism.** `services.extraction.MODEL_TASK_REGISTRY`
+is now the single list both the settings API
+(`services.model_catalog.get_task_assignments`) and the frontend
+(`ModelTaskAssignment.jsx`, iterating the server's own `tasks` array) read
+— no second, hand-maintained copy of "which dials exist" anywhere. Honest
+limit: a genuinely NEW dial is not fully automatic. It needs a real code
+change (a new `MODEL_KEY` constant, a `MODEL_TASK_REGISTRY` entry, and
+`model_key=` threaded at whichever call site(s) should use it) — but once
+that one registration lands, the settings API, permission/validation, and
+the frontend all pick it up with zero further edits.
+
+**1c — live parameter shape, probed, not assumed.** `GET
+/model_group/info` reports `supports_reasoning: true` for `claude-sonnet`
+and `claude-haiku`, `false` for `voyage-3.5`; `supported_openai_params`
+lists both `thinking` and `reasoning_effort` for the two chat models. A
+real, wrapper-free call (`anthropic.Anthropic` pointed directly at the
+LiteLLM base URL, bypassing every helper in this codebase) with
+`thinking={"type": "enabled", "budget_tokens": 1024}` returned a genuine
+`thinking` content block plus `usage.output_tokens_details.
+thinking_tokens > 0` — proving the REAL accepted parameter shape is
+Anthropic's native `thinking.budget_tokens` int, sent over this module's
+Anthropic-shaped `/v1/messages` route. OpenAI's `reasoning_effort` string
+enum, also listed in `supported_openai_params`, describes LiteLLM's
+OpenAI-shaped route, which this module never calls, and was not what was
+implemented.
+
+### Task 2 — per-task assignment
+
+`GET`/`PUT /orgs/{org_id}/settings/ai-tasks[/{task_key}]`
+(`apps/api/routers/org_settings.py`) — reads open to any org member,
+writes gated on `manage_org_settings`, the identical envelope D1a/D2
+established. A write is validated by
+`services.model_catalog.validate_assignable_model`: the model must be a
+real platform-catalog entry, must be in the org's authorised set (D2) when
+the org has an explicit one, and — a guard D2 never needed — must report
+`mode: "chat"` live (`services.litellm_credentials.chat_capable_models()`),
+since `platform_model_catalog` has no `mode` column of its own and nothing
+previously stopped assigning the embedding-only `voyage-3.5` to a chat
+dial. An unassigned task keeps resolving exactly as before this sprint —
+proven live (Task 2 of the verify script): `ai_decision_log.model_used`
+for a brand-new org matches the real seeded platform default byte for
+byte, and `effort_requested`/`effort_used` are both NULL.
+
+### Task 3 — effort
+
+Per task, where the resolved model reports `supports_reasoning: true`, an
+effort level (`low`/`medium`/`high` → `EFFORT_LEVELS`' local
+`thinking.budget_tokens` mapping — `1024`/`4096`/`12000`, Anthropic's own
+budget-token minimum is 1024). `_apply_effort` (services/extraction.py)
+merges the `thinking` parameter into the outgoing call and raises
+`max_tokens` when a caller's own value is smaller than the budget plus
+headroom — never lowers it. Where `supports_reasoning` is `false`, no
+control renders (`ModelTaskAssignment.jsx` gates the effort `<select>` on
+the live `supports_reasoning` of whichever model is selected) and no
+parameter is ever sent.
+
+**The fallback-with-effort decision, settled: drop silently, log it.**
+`_execute_chain` gates effort per ATTEMPT (not once for the whole chain):
+immediately before each attempt, the resolved model is checked against a
+live `reasoning_support_by_model()` lookup; if it doesn't report
+`supports_reasoning: true`, the `thinking` parameter is simply omitted
+from that one request — the call proceeds, never raises, never retries
+with a different shape. Two new nullable `ai_decision_log` columns
+(`migrations/litellmphasee_effort_columns.sql`) make this visible after
+the fact: `effort_requested` (the org's setting, regardless of outcome)
+and `effort_used` (the level actually sent on the attempt that succeeded,
+or NULL). `effort_requested` set + `effort_used` NULL on a `success=true`
+row is exactly the dropped case, directly queryable. Rationale: a task's
+effort setting is a quality knob, not a correctness requirement — failing
+an otherwise-working call because a fallback model can't take a
+`thinking` budget would turn the existing, unrelated fallback-chain
+mechanism into a source of hard outages for a much worse trade than a
+slightly-shallower answer.
+
+### A real bug found and fixed before it shipped
+
+`call_claude_json`/`call_claude_text` both extracted the response as
+`message.content[0].text`. With effort enabled, Anthropic's real content
+order is `[thinking, text]` — a thinking block has `.thinking`, not
+`.text`, so this would have raised `AttributeError` the moment ANY task's
+effort was ever set. Fixed with a shared `_response_text()` helper that
+finds the actual text block regardless of position, before any real
+caller could hit it.
+
+### Task 4 — proof, all live
+
+Cross-org isolation; org-admin-vs-plain-member 403 on the identical
+request, proven unchanged in the DB afterward; an unauthorised model
+(real-but-not-authorised, uncatalogued, and real-but-non-chat-capable)
+each refused with 400 and proven unchanged afterward; an assigned task's
+`ai_decision_log.model_used` proving genuine routing, not merely stored
+config; effort genuinely reaching the provider (cross-checked against
+Task 1c's independent, wrapper-free probe of the identical mechanism);
+the fallback-with-effort case proven with a forced-failure primary and a
+real fallback call (the live reasoning-support *lookup* was patched for
+that one assertion only, since no real non-reasoning CHAT deployment
+exists on the platform's proxy today — the provider call itself was
+completely real and unpatched); `npm run build` exits 0; teardown leaves
+zero fixture rows and the proxy's deployment set byte-for-byte unchanged.
+
+Two real, pre-existing, unrelated bugs were also found and fixed in
+`verify_litellmseedfix.py` while re-running it for regression (both
+confirmed via `git diff` to predate this sprint): an off-by-one in its own
+`repo_root` computation that silently turned three checks into false
+failures against empty search paths, and a line-number-pinned allowlist
+entry that went stale because this sprint's own additions to
+`extraction.py` shifted an unrelated comment's line number. Fixed;
+`verify_litellmseedfix.py` is back to `31/31 PASS`.
