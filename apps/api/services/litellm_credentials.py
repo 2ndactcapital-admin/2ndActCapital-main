@@ -166,6 +166,13 @@ def _model_info() -> list[dict]:
     return json.loads(body).get("data", [])
 
 
+def list_deployments() -> list[dict]:
+    """Public wrapper — every real LiteLLM deployment (Phase D2's
+    services.model_catalog uses this for opportunistic context/pricing
+    enrichment; never a second, parallel /model/info caller)."""
+    return _model_info()
+
+
 def _find_deployment(model_name: str) -> dict | None:
     for entry in _model_info():
         if entry.get("model_name") == model_name:

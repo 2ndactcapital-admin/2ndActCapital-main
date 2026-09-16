@@ -8,6 +8,11 @@
     GET    /orgs/{org_id}/settings/ai-credentials        per-provider credential status
     PUT    /orgs/{org_id}/settings/ai-credentials/{provider}     supply the org's own key
     DELETE /orgs/{org_id}/settings/ai-credentials/{provider}     revert to the platform key
+    GET    /admin/model-catalog                          curated platform model list
+    POST   /admin/model-catalog                           add a model (super_admin only)
+    DELETE /admin/model-catalog/{model_id}                remove a model (super_admin only)
+    GET    /orgs/{org_id}/settings/model-selections       this org's authorised models
+    PUT    /orgs/{org_id}/settings/model-selections       replace this org's selection
     GET    /theme                                        the caller's own org theme
 
 Reads are open to any authenticated user of the org (the app cannot render its
@@ -19,6 +24,14 @@ the generic settings PUT: they provision/deprovision a real LiteLLM model
 deployment as part of the same call (services.litellm_credentials), which the
 generic key/value settings path has no business doing. Their responses never
 include a deployment name or id — that is LiteLLM-internal, never org-facing.
+
+The model-catalog / model-selections routes (LiteLLM Phase D2) are a
+DIFFERENT, higher layer than ai-credentials: which models are supportable at
+all (Hollisworks, platform-wide, services.model_catalog.platform_model_catalog)
+and which of those one org may actually use
+(services.model_catalog.org_model_selections) — orthogonal to which provider
+KEY serves a call. /admin/model-catalog is not org-scoped in its URL on
+purpose: the curated list is the same for every org.
 """
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,6 +45,15 @@ from services.litellm_credentials import (
     clear_org_provider_credential,
     get_credential_status,
     set_org_provider_credential,
+)
+from services.model_catalog import (
+    ModelCatalogError,
+    add_catalog_model,
+    enrich_with_live_info,
+    list_catalog,
+    list_org_selections,
+    remove_catalog_model,
+    set_org_selections,
 )
 from services.org_settings import (
     DEFAULT_SETTINGS,
@@ -68,6 +90,22 @@ class ProviderCredential(BaseModel):
 class OrgCreate(BaseModel):
     name: str
     slug: str
+
+
+class CatalogModelCreate(BaseModel):
+    model_id: str
+    display_name: str
+    provider: str
+
+    class Config:
+        extra = "forbid"
+
+
+class ModelSelectionsBody(BaseModel):
+    model_ids: list[str]
+
+    class Config:
+        extra = "forbid"
 
 
 async def _principal(conn, request: Request) -> dict:
@@ -293,6 +331,104 @@ async def delete_ai_credential(request: Request, org_id: str, provider: str):
         except CredentialProvisionError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"org_id": org_id, **status}
+
+
+# ── LiteLLM Phase D2 — model pick-list ──────────────────────────────────────
+# TWO TIERS (see services.model_catalog's module docstring): Hollisworks
+# curates /admin/model-catalog (super_admin only writes); an org picks its own
+# subset via /orgs/{org_id}/settings/model-selections (manage_org_settings
+# writes — the identical envelope the ai-credentials endpoints above use).
+
+
+@router.get("/admin/model-catalog")
+async def read_model_catalog(request: Request):
+    """The curated platform list. Read by any authenticated user (an org
+    member's picker screen needs it too) — only writes are super_admin only."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        rows = await list_catalog(conn)
+    enriched = await enrich_with_live_info(rows)
+    return {
+        "models": enriched,
+        "permissions": {
+            "can_read": True,
+            "can_write": is_super_admin(principal),
+            "is_super_admin": is_super_admin(principal),
+        },
+    }
+
+
+@router.post("/admin/model-catalog", status_code=201)
+async def create_model_catalog_entry(request: Request, body: CatalogModelCreate):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        try:
+            row = await add_catalog_model(
+                conn, model_id=body.model_id, display_name=body.display_name,
+                provider=body.provider, created_by=principal["id"],
+            )
+        except ModelCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return row
+
+
+@router.delete("/admin/model-catalog/{model_id}")
+async def delete_model_catalog_entry(request: Request, model_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        removed = await remove_catalog_model(conn, model_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"'{model_id}' is not on the platform catalog")
+    return {"model_id": model_id, "removed": True}
+
+
+@router.get("/orgs/{org_id}/settings/model-selections")
+async def read_org_model_selections(request: Request, org_id: str):
+    """This org's authorised subset of the curated list, plus the vocabulary
+    of what it may pick from — never the raw LiteLLM catalogue (Rule 1's
+    permission-envelope pattern: editable comes from the server, always)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        _require_read_access(principal, org_id)
+        selected = await list_org_selections(conn, org_id)
+        catalog = await list_catalog(conn)
+    can_write = await can_manage_org_settings(pool, principal, org_id)
+    return {
+        "org_id": org_id,
+        "selected_model_ids": selected,
+        "permissions": {
+            "can_read": True,
+            "can_write": can_write,
+            "is_super_admin": is_super_admin(principal),
+        },
+        "vocabularies": {
+            "editable": [m["model_id"] for m in catalog] if can_write else [],
+            "catalog": catalog,
+        },
+    }
+
+
+@router.put("/orgs/{org_id}/settings/model-selections")
+async def write_org_model_selections(request: Request, org_id: str, body: ModelSelectionsBody):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        await _require_write_access(pool, principal, org_id)
+        try:
+            selected = await set_org_selections(
+                conn, org_id, body.model_ids, updated_by=principal["id"],
+            )
+        except ModelCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"org_id": org_id, "selected_model_ids": selected}
 
 
 @router.get("/theme/public")

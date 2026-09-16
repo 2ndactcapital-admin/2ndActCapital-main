@@ -1572,6 +1572,15 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY notifications_pkey: (id)
 
+-- ===== org_model_selections =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   UNIQUE org_model_selections_org_id_model_id_key: (org_id, model_id)
+--   PRIMARY KEY org_model_selections_pkey: (id)
+
 -- ===== org_settings =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -1640,6 +1649,16 @@
 --   UNIQUE permissions_name_key: (name)
 --   PRIMARY KEY permissions_pkey: (id)
 --   UNIQUE permissions_resource_action_key: (resource, action)
+
+-- ===== platform_model_catalog =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   model_id                                 text NOT NULL
+--   display_name                             text NOT NULL
+--   provider                                 text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   created_by                               uuid
+--   UNIQUE platform_model_catalog_model_id_key: (model_id)
+--   PRIMARY KEY platform_model_catalog_pkey: (id)
 
 -- ===== portfolio_precedence_household_overrides =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

@@ -137,6 +137,12 @@ export const MENU_ITEMS = [
     gate: GATE_SUPER_ADMIN,
     adminIndex: true,
   },
+  {
+    href: "/admin/model-catalog",
+    label: "Model Catalog",
+    gate: GATE_SUPER_ADMIN,
+    adminIndex: true,
+  },
 ];
 
 /** The raw `users.role` on the /users/me payload (NOT the granted user_roles name). */

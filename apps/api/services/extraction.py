@@ -61,6 +61,19 @@ create_held_run_alerts already established, never a second notification
 path). A genuine model-unavailable failure (no auth error at all — LiteLLM
 returns 400, not 401/403) is unaffected and keeps walking the fallback chain
 exactly as it always has.
+
+LiteLLM Phase D2 (litellmphased2.structural) — MODEL PICK-LIST ENFORCEMENT.
+services.model_catalog owns two new tables: platform_model_catalog
+(Hollisworks-curated, platform-wide) and org_model_selections (which curated
+models one org has authorised). ``_execute_chain`` now filters the resolved
+``attempts`` list down to the org's authorised set BEFORE any provider call —
+a model the org has not authorised is dropped from the chain entirely, never
+merely hidden by a UI. An org with NO explicit selection resolves to
+unrestricted (``resolve_authorized_models`` returns ``None``), which is
+byte-for-byte the pre-D2 behaviour — every org today is in that state. If
+filtering empties the chain, ``AIModelNotAuthorizedError`` is raised before
+any attempt (a policy refusal, not a provider failure) — logged to
+ai_decision_log like every other terminal outcome, never silently swallowed.
 """
 
 import json
@@ -119,6 +132,19 @@ class AILiteLLMAuthError(RuntimeError):
     once, and every model in the chain shares that one key, so walking the chain
     cannot rescue it. Degrading it to the ordinary "returned None" path would
     make a total AI outage look exactly like a single unparseable response.
+    """
+
+
+class AIModelNotAuthorizedError(RuntimeError):
+    """None of the models this call would have tried are on the org's
+    authorised list (LiteLLM Phase D2 — services.model_catalog).
+
+    Raised BEFORE any provider call is attempted — this is a policy refusal,
+    not a provider failure, so it must never be confused with
+    ``AIChainExhausted`` (every model failing AT the provider) or either auth
+    error above. An org with NO explicit selection is unrestricted (Phase D2's
+    own no-regression requirement), so this can only fire for an org that has
+    authorised at least one model, none of which the resolved chain named.
     """
 
 
@@ -478,6 +504,32 @@ async def _execute_chain(
     primary = model_override or await resolve_model(org_id, key=model_key)
     chain = await resolve_fallback_chain(org_id, primary_key=model_key)
     attempts = _dedupe([primary, *chain])
+
+    # LiteLLM Phase D2 — the org's authorised model list (services.model_catalog).
+    # None means "no explicit selection" -> unrestricted, byte-for-byte the
+    # pre-D2 behaviour (every existing org's real state today). A non-None set
+    # is a genuine allow-list: any attempt not in it is dropped BEFORE the
+    # provider is ever called, never merely hidden in the UI.
+    from services.model_catalog import resolve_authorized_models
+
+    authorized = await resolve_authorized_models(org_id)
+    if authorized is not None:
+        attempts = [m for m in attempts if m in authorized]
+        if not attempts:
+            detail = (
+                f"None of the models task '{task_type}' would try "
+                f"({_dedupe([primary, *chain])}) are on org {org_id}'s "
+                f"authorised model list ({sorted(authorized)}). Add one of "
+                f"them in the org's AI model settings, or authorise the "
+                f"model this task actually resolves to."
+            )
+            print(f"[ai_router] {detail}")
+            await _safe_log(
+                org_id=org_id, task_type=task_type, model_requested=primary,
+                model_used=primary, fallback_used=False, fallback_reason=None,
+                cost_usd=None, latency_ms=1, success=False, error_detail=detail,
+            )
+            raise AIModelNotAuthorizedError(detail)
 
     # LiteLLM Phase D1b — routing + attribution. Both are LiteLLM-only
     # concepts: the rollback (direct-Anthropic) path never touches either, so
