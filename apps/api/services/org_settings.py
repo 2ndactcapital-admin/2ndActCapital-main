@@ -120,22 +120,52 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # platform, e.g. a future AWS Bedrock move) to another model or provider is
     # a settings change, not a code change. These string literals are the ONE
     # allowed home for a model name in application code.
-    "ai.model.default": "claude-haiku-4-5-20251001",
-    "ai.model.provider": "anthropic",
-    "ai.model.fallback": "claude-haiku-4-5-20251001",
+    #
+    # NAMING CONVENTION (litellmseedfix, fixing a real latent-failure gap —
+    # see docs/LITELLM_INTEGRATION_DESIGN_V1.md §13.5): every value here is the
+    # live hollisworks-litellm proxy's REGISTERED DEPLOYMENT `model_name`
+    # (what GET /model/info lists, and the only string genuinely callable at
+    # `POST /v1/messages`), never the upstream provider's dated/versioned
+    # model id. The two are different things — 'claude-sonnet' (this proxy's
+    # deployment) forwards to upstream 'anthropic/claude-sonnet-4-6' — and
+    # every consumer of these keys (services.extraction, the D2 platform
+    # model catalog, D1b's resolve_deployment_model) must agree on which one
+    # they hold. Prior to this fix, these values held the versioned upstream
+    # id directly, which the proxy has never registered as a deployment name
+    # — every call that fell through to these seeded defaults (none ever
+    # did; every real call site passed an explicit model= override) would
+    # have gotten LiteLLM's own "Invalid model name" HTTP 400. A future
+    # provider/model addition must register a proxy deployment FIRST, then
+    # point a settings key at that deployment's `model_name` — never the raw
+    # provider model string.
+    #
+    # ai.model.provider and ai.model.fallback (a single, never-consumed
+    # scalar predating the ordered fallback_chain below) were REMOVED here,
+    # not merely left stale — confirmed zero consumers in application code
+    # (docs/LITELLM_DISCOVERY_FINDINGS.md), and keeping them around post-fix
+    # would have been actively misleading: they would have looked like part
+    # of the naming fix while silently still holding a dead value.
+    "ai.model.default": "claude-haiku",
     # Sprint 27 (TaskRouter) — the ORDERED fallback CHAIN the central resolver
-    # actually walks (services/extraction.resolve_fallback_chain). Replaces the
-    # single, never-consumed ai.model.fallback above. A one-item array here
-    # preserves mini-bedrock behaviour exactly: primary (haiku) + [haiku]
-    # dedupes to a single haiku call. An org_admin may configure a longer,
-    # per-org chain (e.g. [primary, cheaper-backup]) without any code change.
-    "ai.model.fallback_chain": ["claude-haiku-4-5-20251001"],
-    "ai.model.assistant": "claude-sonnet-4-6",
+    # actually walks (services/extraction.resolve_fallback_chain). A one-item
+    # array here preserves mini-bedrock behaviour exactly: primary (haiku) +
+    # [haiku] dedupes to a single haiku call. An org_admin may configure a
+    # longer, per-org chain (e.g. [primary, cheaper-backup]) without any code
+    # change.
+    "ai.model.fallback_chain": ["claude-haiku"],
+    "ai.model.assistant": "claude-sonnet",
     # Task-specific override for the S25 document-type classifier. Defaults to
-    # the same Haiku model as ai.model.default; an org_admin may raise it to a
-    # stronger model per-org. Resolved via extraction.resolve_model with
-    # key=DOCUMENT_CLASSIFIER_MODEL_KEY (falls back to ai.model.default).
-    "ai.model.document_classifier": "claude-haiku-4-5-20251001",
+    # the same Haiku deployment as ai.model.default — deliberately KEPT on
+    # Haiku rather than collapsed onto Sonnet to make it callable: Haiku is
+    # roughly 20x cheaper per token, and classification is a high-volume call
+    # path, so silently promoting every classification call to Sonnet would
+    # have quietly multiplied that path's real cost rather than merely fixing
+    # a naming bug. Registering a real 'claude-haiku' proxy deployment (this
+    # sprint) is what makes keeping the cheaper model here possible. An
+    # org_admin may still raise it to a stronger model per-org. Resolved via
+    # extraction.resolve_model with key=DOCUMENT_CLASSIFIER_MODEL_KEY (falls
+    # back to ai.model.default).
+    "ai.model.document_classifier": "claude-haiku",
     # Chancery Phase 11b — the org's semantic-embedding provider + model. Same
     # dotted ai.* namespace / auto-categorization as ai.model.* above. Every org
     # defaults to Voyage, which is the ONLY functionally-enabled provider right

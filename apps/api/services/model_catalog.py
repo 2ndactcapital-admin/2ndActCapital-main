@@ -22,18 +22,19 @@ so an org that has never touched this screen is byte-for-byte unaffected —
 Phase D2's own explicit no-regression requirement.
 
 Task 1b (GET /model/info probe, live): the proxy's model catalogue only lists
-REGISTERED DEPLOYMENTS (2 today — the platform's own claude-sonnet and
-voyage-3.5 mirrors), not a broad provider catalogue. Where a curated model's
-``model_id`` happens to match a registered deployment's real upstream model
-string, ``enrich_with_live_info`` opportunistically attaches real
+REGISTERED DEPLOYMENTS (3 today — the platform's claude-sonnet, claude-haiku
+and voyage-3.5), not a broad provider catalogue. A curated model's
+``model_id`` IS that deployment's ``model_name`` (litellmseedfix's naming
+convention — see org_settings.py DEFAULT_SETTINGS), so
+``enrich_with_live_info`` attaches real
 ``max_input_tokens``/``max_output_tokens``/``input_cost_per_token``/
 ``output_cost_per_token`` from LiteLLM's own admin API for display. There is
-no "provider" field on a model_info entry — it is derived here from the
-``litellm_params.model`` "provider/model" prefix, never guessed from the
-model_id string alone. A curated model with no matching live deployment
-(true for most of the catalog, since Phase D1's deployments are per-PROVIDER,
-not per-model) simply gets no enrichment — a real, honestly-reported gap, not
-a bug to paper over with invented numbers.
+no "provider" field on a model_info entry — the catalog's own ``provider``
+column is the source of truth for that, never derived from LiteLLM's
+response. A curated model_id with no matching registered deployment (a
+future curated entry with no live proxy deployment behind it yet) simply
+gets no enrichment — a real, honestly-reported gap, not a bug to paper over
+with invented numbers.
 """
 from __future__ import annotations
 
@@ -177,25 +178,26 @@ async def enrich_with_live_info(catalog_rows: list[dict]) -> list[dict]:
         print(f"model_catalog: live /model/info enrichment unavailable: {exc}")
         deployments = []
 
-    by_upstream: dict[str, dict] = {}
-    for entry in deployments:
-        upstream = (entry.get("litellm_params") or {}).get("model")
-        if upstream:
-            by_upstream[upstream] = entry
+    # litellmseedfix's naming convention (org_settings.py DEFAULT_SETTINGS'
+    # own comment) makes a curated model_id THE SAME string as the proxy's
+    # registered deployment `model_name` — 'claude-sonnet', 'claude-haiku',
+    # 'voyage-3.5'. Matching on model_name directly (rather than parsing
+    # litellm_params.model's "provider/real-model-id" upstream string) is
+    # what a same-identifier-space design makes possible, and is exact where
+    # the old upstream-substring match was only a heuristic. This is
+    # unrelated to litellm_credentials.py's own "never match/leak an org's
+    # own BYOK deployment name" rule — that rule protects the PER-ORG
+    # synthetic `org-<provider>-<org_id>` name, a different, genuinely
+    # internal identifier space; the platform's shared deployment names are
+    # already the catalog's own public identifier.
+    by_model_name: dict[str, dict] = {
+        entry["model_name"]: entry for entry in deployments if entry.get("model_name")
+    }
 
     out = []
     for row in catalog_rows:
         row = dict(row)
-        match = None
-        for upstream, entry in by_upstream.items():
-            # The upstream string is "provider/real-model-id" (e.g.
-            # "anthropic/claude-sonnet-4-6"); a curated model_id matches when
-            # it IS that real model id — never matched on the LiteLLM
-            # deployment's own model_name, which is internal (Task 4's proof
-            # in litellm_credentials.py applies here too).
-            if upstream.endswith(f"/{row['model_id']}") or upstream == row["model_id"]:
-                match = entry
-                break
+        match = by_model_name.get(row["model_id"])
         if match:
             info = match.get("model_info") or {}
             row["context_window"] = info.get("max_input_tokens")

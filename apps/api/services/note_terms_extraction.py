@@ -936,7 +936,7 @@ async def _last_ensemble_model_used(pool) -> str | None:
     """Which model the most recent hazard-ensemble call actually ran on.
 
     THIS GUARD EXISTS BECAUSE THE ENSEMBLE CAN SILENTLY COLLAPSE. The platform
-    fallback chain is ``["claude-haiku-4-5-20251001"]`` — the same model as the
+    fallback chain is ``["claude-haiku"]`` — the same model as the
     primary. So if Sonnet is unreachable, ``call_claude_json`` transparently
     retries on Haiku and returns a perfectly good answer, and the "two model"
     ensemble becomes one model agreeing with itself. It would report 100%

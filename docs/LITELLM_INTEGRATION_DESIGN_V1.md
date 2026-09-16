@@ -816,3 +816,99 @@ calls of any kind).
 **Next: Phase E — per-task model assignment**, building on D2's curated
 list and org authorisation as the safe-model universe a task-level picker
 selects from — not a replacement for either.
+
+## 14.6 · litellmseedfix — the seeded-chain mismatch, fixed (2026-09-16)
+
+D2's own `[FIND]` above (§14.5) turned out to be a real, live latent
+failure, not a cosmetic naming quirk: the seeded default chain was never
+actually callable. This sprint fixes it and establishes the naming
+convention every future provider/model addition must follow.
+
+### THE NAMING CONVENTION — read this before adding any model or provider
+
+**Every `ai.model.*` value in `org_settings.DEFAULT_SETTINGS`, and every
+`platform_model_catalog.model_id`, MUST be the live hollisworks-litellm
+proxy's REGISTERED DEPLOYMENT `model_name` (what `GET /model/info` lists,
+and the only string genuinely accepted at `POST /v1/messages`'s `model`
+field) — NEVER the upstream provider's dated/versioned model id.**
+
+The two are different strings for a reason: `claude-sonnet` (the proxy's
+deployment) forwards to upstream `anthropic/claude-sonnet-4-6`
+(`litellm_params.model`). Confusing the two — storing the upstream id where
+a deployment name belongs — is exactly the bug this sprint fixes. The rule,
+concretely:
+
+1. To add a new model, first `POST /model/new` on the live proxy to
+   register a deployment (pick a short, stable `model_name` — no dates, no
+   provider prefix — pointing `litellm_params.model` at the real upstream
+   provider/model string, with `api_key: "os.environ/<PROVIDER>_API_KEY"`
+   for a platform-wide deployment, never a literal key).
+2. Only THEN point an `org_settings.DEFAULT_SETTINGS` `ai.model.*` key (or
+   `ai.embedding.*`) and a `platform_model_catalog` row at that deployment's
+   `model_name` — the exact same string in both places.
+3. `services.model_catalog.enrich_with_live_info` matches a catalog row to
+   its live deployment by `model_name` equality now (not an upstream-string
+   heuristic) — this is what makes step 2's exact-match requirement
+   mechanically necessary, not just tidy.
+
+**Why this direction and not the other two options considered:**
+D1b's `resolve_deployment_model` could instead have grown a
+version-string-aware translation layer, or the proxy could have been left
+alone and every settings/catalog value translated at call time. Both were
+rejected: `resolve_deployment_model` already assumes its `model_id` input
+IS a deployment name (it compares `model_id` against
+`PROVIDER_PLATFORM_DEPLOYMENT[provider]` for equality, to decide whether to
+redirect an org's own BYOK-sourced call to its own dedicated deployment) —
+before this fix, that comparison could never succeed for a platform-sourced
+call, since the seeded value was never actually the deployment name. Naming
+convention alignment fixes BOTH the direct-callability bug AND makes
+D1b's own BYOK-routing equality check reachable for the first time, with
+zero code changes to the resolver — a translation layer would have fixed
+only the first problem and left the second silently broken.
+
+### The fix
+
+- **A new `claude-haiku` deployment was registered live** (`litellm_params.
+  model = "anthropic/claude-haiku-4-5-20251001"`, `api_key =
+  "os.environ/ANTHROPIC_API_KEY"` — the same env-var-indirection shape the
+  pre-existing `claude-sonnet` deployment uses). The proxy now has exactly
+  three registered deployments: `claude-sonnet`, `claude-haiku`,
+  `voyage-3.5`.
+- **Cost decision, explicit:** `ai.model.default` and
+  `ai.model.document_classifier` STAY on Haiku, not collapsed onto Sonnet.
+  Per this repo's own live cost model (`services.extraction._MODEL_PRICING`:
+  Haiku $1/$5, Sonnet $3/$15 per 1M input/output tokens), Sonnet is 3x the
+  price of Haiku on both axes. `document_classifier` runs on every ingested
+  document — a high-volume path — so silently promoting it to Sonnet to
+  "fix" a naming bug would have quietly multiplied that path's real dollar
+  cost for no quality reason. Registering a real Haiku deployment is what
+  makes keeping the cheaper tier possible instead.
+- **`org_settings.DEFAULT_SETTINGS` realigned**: `ai.model.default` /
+  `ai.model.document_classifier` / `ai.model.fallback_chain` →
+  `"claude-haiku"` / `["claude-haiku"]`; `ai.model.assistant` →
+  `"claude-sonnet"`. `ai.embedding.model` (`"voyage-3.5"`) was already
+  correct — it happened to already equal its own deployment name.
+- **`ai.model.provider` and `ai.model.fallback` — the two dead keys D2's
+  own `[FIND]` already flagged (zero consumers) — were DELETED**, not left
+  stale: post-rename, leaving them around holding an old value would have
+  looked like part of the fix while silently still being unused.
+- **`platform_model_catalog`'s two Anthropic rows renamed** (data
+  migration, `migrations/litellmseedfix_catalog_naming.sql`) from
+  `claude-sonnet-4-6`/`claude-haiku-4-5-20251001` to
+  `claude-sonnet`/`claude-haiku`. `org_model_selections` had zero rows at
+  the time (confirmed live), so no cascade/orphan risk.
+- **`verify_litellmphased2.py` fixed**: it now prints a `TOTAL: N PASS, M
+  FAIL, K FIND` line (matching the repo-wide convention every other verify
+  script uses) and exits non-zero on a real failure — proven by a dedicated
+  `VERIFY_FORCE_FAIL=1` self-test hook, added for exactly this proof, that
+  exits before any DB/network call. Its own `LIVE_MODEL_ID` workaround
+  (added because the seeded chain didn't work) is gone — Task 4 now calls
+  through the real seeded default chain directly.
+
+Full proof — a real call through the seeded default chain with NO `model=`
+override; the fallback chain genuinely walking on a forced first-model
+failure; `document_classifier` resolving to a genuinely callable model;
+catalog/settings/proxy naming agreement proven by live three-way set
+comparison; no regression on the two real production orgs — is in
+`apps/api/scripts/verify_litellmseedfix.py` and recorded in
+`docs/PROJECT_STATUS.md`.

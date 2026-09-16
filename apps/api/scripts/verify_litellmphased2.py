@@ -83,23 +83,22 @@ FIXTURE_SUPERADMIN_SUB = "auth0|verify_d2_superadmin"
 
 FIXTURE_MODEL_ID = "verify-d2-fixture-model"
 
-REAL_HAIKU = "claude-haiku-4-5-20251001"    # org_settings' real default-chain value (seeded row)
-REAL_SONNET = "claude-sonnet-4-6"           # org_settings' real assistant-key value (seeded row)
-
-# [FIND, discovered building this script, confirmed live]: neither REAL_HAIKU
-# nor REAL_SONNET — org_settings' OWN real, currently-stored DEFAULT_SETTINGS
-# values — is a callable model string against the live hollisworks-litellm
-# proxy today. `POST /v1/messages {"model": "claude-sonnet-4-6", ...}` and
-# the haiku equivalent both return LiteLLM's own "Invalid model name" HTTP
-# 400 (probed live while writing this script). Only the proxy's actual
-# REGISTERED model_name, "claude-sonnet", is callable — every prior sprint's
-# real successful call (D1c's bad-credential probe included) used an
-# EXPLICIT ``model="claude-sonnet"`` override for exactly this reason, never
-# the default resolution chain. This is a real, pre-existing gap in a
-# DIFFERENT layer (D1b's model resolution / the org_settings seed values),
-# orthogonal to D2's own scope — not fixed here, but Task 4 below is written
-# around it explicitly rather than silently assuming the default chain works.
-LIVE_MODEL_ID = "claude-sonnet"             # the one string genuinely callable live, used ONLY where Task 4 needs a real successful call
+# [HISTORICAL — fixed by litellmseedfix.structural, see
+# verify_litellmseedfix.py]: this script originally found, live, that
+# neither org_settings' real DEFAULT_SETTINGS default-chain value
+# ('claude-haiku-4-5-20251001') nor its assistant value
+# ('claude-sonnet-4-6') was a callable model string against the live
+# hollisworks-litellm proxy — only the proxy's actual REGISTERED
+# `model_name`, 'claude-sonnet', was. litellmseedfix realigned org_settings
+# (and this catalog) onto the proxy's registered deployment names, and
+# registered a real 'claude-haiku' deployment so the classifier/default path
+# could stay on the cheaper model rather than silently collapsing onto
+# Sonnet. REAL_HAIKU/REAL_SONNET below are now genuinely callable AND are
+# what org_settings.DEFAULT_SETTINGS actually stores — no separate
+# "LIVE_MODEL_ID" workaround is needed any more; Task 4 below calls through
+# the real seeded default chain directly.
+REAL_HAIKU = "claude-haiku"     # org_settings' real default-chain value (seeded row) — genuinely callable
+REAL_SONNET = "claude-sonnet"   # org_settings' real assistant-key value (seeded row) — genuinely callable
 
 _ok = True
 _n_pass = 0
@@ -218,8 +217,8 @@ async def teardown_fixtures(pool):
                 [FIXTURE_ORG_A_ID, FIXTURE_ORG_B_ID],
             )
             await conn.execute(
-                "DELETE FROM platform_model_catalog WHERE model_id = ANY($1::text[])",
-                [FIXTURE_MODEL_ID, LIVE_MODEL_ID],
+                "DELETE FROM platform_model_catalog WHERE model_id = $1",
+                FIXTURE_MODEL_ID,
             )
             for org_id in (FIXTURE_ORG_A_ID, FIXTURE_ORG_B_ID):
                 await conn.execute(
@@ -272,6 +271,19 @@ def _model_info():
 
 
 async def main() -> int:
+    import os as _os
+    if _os.environ.get("VERIFY_FORCE_FAIL") == "1":
+        # Self-test hook ONLY — proves the TOTAL line + non-zero-exit fix
+        # (litellmseedfix.structural, verify_litellmseedfix.py) without
+        # paying for the full suite's real HTTP/DB/npm-build cost. Exits
+        # before any Doppler hydration, DB connection, or fixture write —
+        # touches nothing.
+        check("[self-test] deliberately forced failure — proves the TOTAL "
+              "line and non-zero exit code on a real failure", False,
+              "VERIFY_FORCE_FAIL=1 was set")
+        print(f"\n{'=' * 70}\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL, {len(_finds)} FIND\n{'=' * 70}")
+        return 0 if _ok else 1
+
     db_url = await bootstrap_async(quiet=True)
     if not db_url:
         print("FATAL: no working DATABASE_URL from Doppler.")
@@ -525,18 +537,14 @@ async def main() -> int:
 
         # ══════════════════════════════════════════════════════════════
         print("\n=== TASK 4: enforcement at the REAL call path ===\n")
-        find("org_settings' OWN real, currently-stored default-chain model "
-             "strings (REAL_HAIKU='claude-haiku-4-5-20251001', "
-             "REAL_SONNET='claude-sonnet-4-6') are NOT callable against the "
-             "live hollisworks-litellm proxy today — probed live while "
-             "building this script: both return LiteLLM's own 'Invalid "
-             "model name' HTTP 400. Only the proxy's actual registered "
-             "model_name, 'claude-sonnet', is callable. This is a real, "
-             "pre-existing gap in a DIFFERENT layer (D1b's model "
-             "resolution / the org_settings seed values), orthogonal to "
-             "D2's own scope, NOT fixed by this sprint — Task 4 below is "
-             "written around it with an explicit model= override rather "
-             "than silently assuming the default chain works.")
+        find("[HISTORICAL] this section originally found org_settings' real "
+             "default-chain model strings were NOT callable against the "
+             "live proxy and worked around it with a separate "
+             "'LIVE_MODEL_ID' fixture. litellmseedfix.structural fixed the "
+             "underlying naming mismatch (see verify_litellmseedfix.py) — "
+             "REAL_HAIKU/REAL_SONNET are now the actual seeded values AND "
+             "genuinely callable, so this section now calls through the "
+             "real default chain directly, no workaround.")
         # CLAUDE.md's RLS section, verbatim: a script calling into a chain
         # executor / reading an RLS-protected table directly (not through a
         # real HTTP request, where the middleware already set the ContextVars
@@ -568,18 +576,6 @@ async def main() -> int:
         async def _write_selections(org_id, model_ids):
             async with pool.acquire() as conn:
                 return await mc.set_org_selections(conn, org_id, model_ids)
-
-        async def _add_catalog_row(model_id, display_name, provider):
-            async with pool.acquire() as conn:
-                return await mc.add_catalog_model(
-                    conn, model_id=model_id, display_name=display_name, provider=provider,
-                )
-
-        # LIVE_MODEL_ID ("claude-sonnet") is added as its own extra catalog
-        # row here — see its module-level comment: it's the one model string
-        # genuinely callable through the live proxy today, used ONLY for the
-        # two calls below that need a REAL successful response (4b, 4c).
-        await _as_super(_add_catalog_row, LIVE_MODEL_ID, "Verify D2 Live-Callable Fixture", "anthropic")
 
         # 4a — authorise org A for a model its resolved default chain never
         # names (FIXTURE_MODEL_ID isn't even a real model — irrelevant here,
@@ -628,17 +624,17 @@ async def main() -> int:
               "call was ever made)",
               all(not r["success"] for r in log_rows))
 
-        # 4b — authorise org A for LIVE_MODEL_ID and pass it as an explicit
-        # override (see LIVE_MODEL_ID's module comment: org_settings' own
-        # real default-chain string is not callable live — orthogonal to
-        # D2). The IDENTICAL enforcement path (attempts filtered against the
+        # 4b — authorise org A for REAL_HAIKU (org_settings' own real
+        # default-chain value, genuinely callable live since
+        # litellmseedfix.structural) and pass it as an explicit override. The
+        # IDENTICAL enforcement path (attempts filtered against the
         # authorised set) now lets the call through for REAL, proving
         # enforcement is genuinely bidirectional, not merely a one-way gate.
-        await _as_super(_write_selections, FIXTURE_ORG_A_ID, [LIVE_MODEL_ID])
+        await _as_super(_write_selections, FIXTURE_ORG_A_ID, [REAL_HAIKU])
 
         result = await _as_org(FIXTURE_ORG_A_ID, _call_text,
                                 org_id=FIXTURE_ORG_A_ID, task_type="verify_d2_authorized_a",
-                                model=LIVE_MODEL_ID)
+                                model=REAL_HAIKU)
         check("4b. once the org authorises the exact model requested, the "
               "identical call path now succeeds for real (real response, "
               "not None) — enforcement is genuinely bidirectional",
@@ -658,7 +654,7 @@ async def main() -> int:
 
         result_b = await _as_org(FIXTURE_ORG_B_ID, _call_text,
                                   org_id=FIXTURE_ORG_B_ID, task_type="verify_d2_noselection_b",
-                                  model=LIVE_MODEL_ID)
+                                  model=REAL_HAIKU)
         check("4c. an unrestricted org's real call succeeds exactly as it "
               "did before this sprint existed — D2's filter never engages "
               "when there is no explicit selection",
@@ -750,7 +746,7 @@ async def main() -> int:
 
         await pool.close()
 
-    print(f"\n{'=' * 60}\n{_n_pass} PASS, {_n_fail} FAIL, {len(_finds)} FIND\n{'=' * 60}")
+    print(f"\n{'=' * 70}\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL, {len(_finds)} FIND\n{'=' * 70}")
     return 0 if _ok else 1
 
 
