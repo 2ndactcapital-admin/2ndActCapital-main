@@ -219,7 +219,7 @@ separation entirely rather than punching a hole in it.
 | **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE.** The proxy is live and the `litellm` schema is migrated (77 tables). **A real model deployment now exists** (`claude-sonnet` → `anthropic/claude-sonnet-4-6`) and the proxy has routed its first successful, billed call (2026-09-14) — see §14.1. The `render.yaml` service-adoption gap is still open. |
 | **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **FULLY COMPLETE (2026-09-14)** — routing built 68/68 (2026-08-26), all 5 previously-BLOCKED assertions now PASS, 25/25, `verify_litellmphasebproof.py`. See §14.1. |
 | **C** | ~~Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism.~~ **DONE (2026-09-14)** — 34/34, 0 BLOCKED, `verify_litellmphasec.py`. See §14.2. |
-| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **D1b — routing + spend attribution: DONE (2026-09-15)** — 54/54, 0 FAIL, `verify_litellmphased1b.py`. See §14.4. **NEXT: D1c** — credential-failure alerting (deliberately out of scope for D1b), then the model pick-list screen itself (org-scoped, filterable, LiteLLM metadata-driven). |
+| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **D1b — routing + spend attribution: DONE (2026-09-15)** — 54/54, 0 FAIL, `verify_litellmphased1b.py`. See §14.4. **D1c — credential-failure alerting: DONE (2026-09-15).** **D2 — the model pick-list UI: DONE (2026-09-16)** — 47/47 PASS, 0 FAIL, 4 FIND, `verify_litellmphased2.py`. See §14.5. **NEXT: Phase E** — per-task model assignment, building ON TOP of D2's curated/authorised lists rather than replacing them. |
 | **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
 | **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
 | **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data. |
@@ -694,3 +694,125 @@ its pre-run deployment set (`claude-sonnet`, `voyage-3.5` only).
 **Next: D1c — credential-failure alerting** (an org's own key going bad
 must surface somewhere; deliberately out of scope here, per the sprint
 prompt).
+
+## 14.5 · Phase D2 — the model pick-list UI (2026-09-16)
+
+`47/47 PASS, 0 FAIL, 4 FIND` — `apps/api/scripts/verify_litellmphased2.py`.
+D1a-c built the credential SOURCE flag ('org'/'platform') per provider; none
+of it decided WHICH models exist at all, or which of them an org may use.
+This sprint adds that layer, above D1's routing, not replacing it.
+
+### Task 1 findings
+
+- **1a — org_settings genuinely cannot hold a platform-scoped row.**
+  Re-confirmed live (not assumed from the Phase D discovery doc): `org_id`
+  is `NOT NULL` and there is no `owner_scope` column. Two new tables were
+  built instead: `platform_model_catalog` (Hollisworks-curated, NO org_id
+  column at all — every row is unconditionally platform-wide) and
+  `org_model_selections` (which curated models one org has authorised, row
+  PRESENCE = authorised, `UNIQUE(org_id, model_id)`). This mirrors the SAME
+  live convention `public.reference_data`/`reference_data_lists` already use
+  for their own global-vs-org split (`org_id IS NULL OR org_id = current_org
+  OR is_super_admin`) — re-used, not reinvented. RLS on both new tables:
+  reads open (`platform_model_catalog`) or org-scoped-or-super
+  (`org_model_selections`); writes to `platform_model_catalog` restricted to
+  `is_super_admin` at the RLS layer AND the app layer (defense in depth).
+- **1b — `GET /model/info`, probed live.** Genuinely available per
+  REGISTERED deployment: `model_info.max_input_tokens`/`max_output_tokens`
+  (context window), `input_cost_per_token`/`output_cost_per_token`
+  (pricing). Genuinely absent: no `provider` field (derived here from
+  `litellm_params.model`'s `"provider/model"` prefix) and no broad
+  catalogue — only the proxy's own registered deployments appear (2-3
+  entries today), never a general model list. `services.model_catalog.
+  enrich_with_live_info` attaches this opportunistically where a curated
+  `model_id` happens to match a registered deployment's real upstream
+  string; most curated models get no live enrichment, by design, not by
+  omission.
+- **1c — the real existing settings screen.** `OrgSettingsEditor.jsx`
+  (`/admin/settings`)'s "AI Models" category already established the
+  envelope shape ai-credentials (D1a) uses: reads open to any org member,
+  writes gated on `manage_org_settings`. `OrgModelSelector.jsx` (a new,
+  small checkbox-list component embedded in that same screen) reuses the
+  IDENTICAL envelope shape — never a second one. The platform catalog is a
+  DIFFERENT, higher-privilege screen (`/admin/model-catalog`, a new
+  `ModelCatalogManager.jsx` built on `components/ui/DataGrid` + a
+  right-pane, the same pattern the Triggers screen established), gated
+  `super_admin` only, mirroring `/admin/platform`'s existing gate — not the
+  org settings screen's gate.
+
+### Task 2 — the curated platform list
+
+`POST/DELETE /admin/model-catalog` (super_admin only, proven both ways: an
+org_admin gets 403 on the identical request, and the refused write
+genuinely left the row unchanged — before/after DB read, not just an HTTP
+status). `platform_model_catalog` seeded with the three real, currently-
+in-use model strings from `org_settings.DEFAULT_SETTINGS`
+(`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `voyage-3.5`) — never a
+fictitious model.
+
+### Task 3 — the org picker
+
+`GET/PUT /orgs/{org_id}/settings/model-selections`. Reads open to any org
+member (envelope always includes the full catalog for display, even when
+`vocabularies.editable` is `[]` for a view-only caller); writes gated on
+`manage_org_settings`, proven the same before/after way a plain member is
+refused. **A real routing bug found and fixed while proving this**: the
+generic `PUT /orgs/{org_id}/settings/{key}` route (registered earlier in
+`routers/org_settings.py`) silently swallowed `PUT .../model-selections`
+— Starlette matches routes in REGISTRATION order and `{key}` matches any
+single path segment, including the literal string `"model-selections"`.
+The new routes were moved ahead of the generic one; this is now called out
+in the route's own docstring so it cannot regress silently.
+
+### Task 4 — enforcement is real, at the call path
+
+`services.model_catalog.resolve_authorized_models(org_id)` returns `None`
+for "no explicit selection" (unrestricted — every existing org's real state
+today) or the real authorised set otherwise.
+`services.extraction._execute_chain` filters its resolved `attempts` list
+against that set BEFORE any provider call; an empty result raises
+`AIModelNotAuthorizedError` (a NEW exception, deliberately not converted to
+`None` by any `call_claude_*` wrapper — including `call_claude_json`, whose
+existing bare `except Exception` would otherwise have silently swallowed it
+exactly the way it already protects `AIOrgCredentialError`/
+`AILiteLLMAuthError`, a real bug caught and fixed while wiring this in).
+Proven bidirectionally, live: an org authorised for a model its chain never
+resolves to is refused BEFORE any provider call (zero new `ai_decision_log`
+success rows); the identical org, once authorised for the model its chain
+actually resolves to, gets a real, successful response. An org that never
+touched model-selections is genuinely unaffected — proven for a fresh
+fixture org AND read-only for both real production orgs (2nd Act,
+Hollisworks — neither has ever explicitly selected anything, confirmed
+live, nothing written to either).
+
+**[FIND] — a real, pre-existing gap in a different layer, orthogonal to D2,
+not fixed here.** Neither of `org_settings`' own real, currently-stored
+default-chain values (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) is
+actually callable against the live proxy today — both return LiteLLM's own
+"Invalid model name" HTTP 400. Only the proxy's REGISTERED `model_name`,
+`claude-sonnet`, is callable. Re-checking prior sprints' own real
+successful calls confirms this was already true: D1c's real call used an
+explicit `model="claude-sonnet"` override, never the default resolution
+chain. This is a D1b/model-resolution gap, not a D2 one — Task 4's own
+proof above uses an explicit override for exactly this reason, and this
+finding is recorded here rather than silently worked around.
+
+Cross-org isolation on selections proven both directions (org A's write
+does not touch org B's list and vice versa). No deployment name (the
+`org-<provider>-<org_id>` shape) and no internal LiteLLM field name
+(`model_name`, `litellm_params`) appears in any org-facing response body —
+grepped raw response text. View-only proven two ways independently: the
+server envelope (`can_write=false`, `editable=[]`) AND the frontend source
+(`ModelCatalogManager.jsx`/`OrgModelSelector.jsx` both gate their write
+control on `canWrite` with no truthy fallback). `npm run build` exits 0.
+
+Teardown: zero leftover fixture rows across every touched table
+(organizations/users/roles/`platform_model_catalog`/
+`org_model_selections`/`ai_decision_log`), the three real seeded catalog
+models still exactly present and untouched, and the live proxy's
+deployment set byte-for-byte unchanged (D2 makes zero LiteLLM admin-API
+calls of any kind).
+
+**Next: Phase E — per-task model assignment**, building on D2's curated
+list and org authorisation as the safe-model universe a task-level picker
+selects from — not a replacement for either.

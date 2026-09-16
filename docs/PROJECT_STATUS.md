@@ -1,5 +1,17 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-15 (litellmphased1b.structural — LiteLLM Phase D1b,
+Last updated: 2026-09-16 (litellmphased2.structural — LiteLLM Phase D2, the
+model pick-list UI: a Hollisworks super_admin curates which models are
+platform-supportable (`platform_model_catalog`, two new tables — the real
+org_settings-can't-hold-platform-scope finding forced this, not a design
+preference); an org_admin picks which of those its own org may use
+(`org_model_selections`); enforcement is real at `services.extraction`'s
+call path (`AIModelNotAuthorizedError`, raised before any provider call,
+never silently swallowed — including a real pre-existing bug in
+`call_claude_json`'s exception handling, found and fixed in this pass); a
+real Starlette route-registration-order bug (`{key}` swallowing the literal
+`model-selections` segment) found and fixed live; `47/47 PASS, 0 FAIL, 4
+FIND` via `apps/api/scripts/verify_litellmphased2.py`; see the entry below);
+previously 2026-09-15 (litellmphased1b.structural — LiteLLM Phase D1b,
 routing + spend attribution: an org's own AI calls now actually route to its
 own LiteLLM deployment when `ai.credential_source.{provider}` is `'org'`
 (D1a stored the credential but nothing read the flag at call time — this
@@ -55,6 +67,52 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000. LiteLLM Phase D2 — the model pick-list UI (2026-09-16)
+
+`47/47 PASS, 0 FAIL, 4 FIND` — `apps/api/scripts/verify_litellmphased2.py`.
+D1a-c built per-provider BYO credentials; nothing yet decided WHICH models
+exist at all or which of them an org may use. This sprint adds that layer.
+Full accounting in `docs/LITELLM_INTEGRATION_DESIGN_V1.md` §14.5 — summary:
+
+- **Two new tables**, not an org_settings key: `platform_model_catalog`
+  (Hollisworks-curated, no org_id column — genuinely platform-wide) and
+  `org_model_selections` (an org's authorised subset, row presence =
+  authorised). Forced by a real finding: `org_settings.org_id` is `NOT
+  NULL` with no `owner_scope` column, re-confirmed live — a platform-scoped
+  row is not possible there. Mirrors the SAME live global-vs-org split
+  `public.reference_data` already uses, not a new pattern.
+- **Enforcement is real**, not merely recorded: `services.extraction.
+  _execute_chain` filters its resolved model chain against the org's
+  authorised set BEFORE any provider call; empty result raises the new
+  `AIModelNotAuthorizedError`. Proven bidirectionally with real live calls
+  (refused before any network call; then succeeds once authorised) and for
+  cross-org isolation and the real production orgs (both still genuinely
+  unrestricted, read-only checked, untouched).
+- **Two real bugs found and fixed in this pass**: `call_claude_json`'s
+  exception handling would have silently swallowed the new refusal into its
+  generic `None` contract (fixed — added to the same re-raise tuple
+  `AIOrgCredentialError`/`AILiteLLMAuthError` already use); and a Starlette
+  route-registration-order bug where the generic
+  `PUT /orgs/{org_id}/settings/{key}` route silently absorbed
+  `PUT .../model-selections` (fixed — the specific route now registers
+  first, with a docstring warning against regressing it).
+- **[FIND]**, orthogonal to this sprint, not fixed here: neither of
+  `org_settings`' own real default-chain model strings
+  (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) is actually callable
+  against the live LiteLLM proxy today (`Invalid model name`, HTTP 400) —
+  only the registered deployment name `claude-sonnet` is. Every prior
+  sprint's real successful call already used an explicit override for this
+  reason; this sprint's own Task 4 proof does too, and records the gap
+  rather than silently routing around it.
+- Frontend: `/admin/model-catalog` (new `ModelCatalogManager.jsx`,
+  `components/ui/DataGrid` + right-pane, super_admin only) and a new
+  `OrgModelSelector.jsx` checkbox-list section embedded in the existing
+  `/admin/settings` screen (`manage_org_settings`, reusing the ai-credentials
+  envelope shape). `npm run build` exits 0.
+
+**Next: Phase E — per-task model assignment**, on top of D2's curated/
+authorised lists.
 
 ## 00000000000000000000. LiteLLM Phase D1b — routing + spend attribution (2026-09-15)
 
