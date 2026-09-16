@@ -1659,6 +1659,7 @@
 --   provider                                 text NOT NULL
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   created_by                               uuid
+--   availability                             text NOT NULL DEFAULT 'available'::text
 --   UNIQUE platform_model_catalog_model_id_key: (model_id)
 --   PRIMARY KEY platform_model_catalog_pkey: (id)
 
