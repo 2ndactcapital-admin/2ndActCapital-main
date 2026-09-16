@@ -29,6 +29,21 @@ says what actually EXECUTED and cost what.
 
 ``LITELLM_ROUTING_DISABLED=1`` is the ops rollback switch — see
 LITELLM_DISABLE_VAR below.
+
+LiteLLM Phase D1b (litellmphased1b.structural) — ROUTING + ATTRIBUTION. Every
+call from this module is Anthropic (``_CALL_PROVIDER``). When the transport is
+LiteLLM, ``_execute_chain`` now: (1) resolves this org's
+``ai.credential_source.anthropic`` (services.litellm_credentials
+.resolve_credential_source); (2) translates the model_id actually SENT to
+LiteLLM via ``resolve_deployment_model`` — 'claude-sonnet' routes to the org's
+own deployment when that org is 'org'-sourced, to the shared platform
+deployment otherwise, and every other model_id is untouched, so the
+caller-facing logical model name (what ai_decision_log records as
+model_requested/model_used) never changes; (3) attaches real attribution
+metadata (services.litellm_credentials.build_attribution) to the outgoing
+request so LiteLLM's own spend log can answer "which org, against whose key" —
+never a new ai_decision_log column. None of this touches the rollback
+(direct-Anthropic) path: routing/attribution are LiteLLM-only concepts.
 """
 
 import json
@@ -60,6 +75,11 @@ FALLBACK_CHAIN_KEY = "ai.model.fallback_chain"
 # org_id is NOT NULL on ai_decision_log. Platform calls made with no org context
 # (resolve_model(None)) are attributed to the default org for logging purposes.
 DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001"
+
+# LiteLLM Phase D1b — every call this module makes is Anthropic. Used to
+# resolve this org's ai.credential_source.anthropic and to build attribution
+# metadata; see services.litellm_credentials.
+_CALL_PROVIDER = "anthropic"
 
 
 class AIChainExhausted(Exception):
@@ -368,9 +388,11 @@ async def _execute_chain(
 ):
     """Walk the org's model chain: time, cost, and log every call.
 
-    ``make_call(client, model_id)`` performs the actual Anthropic request and
-    returns the raw message; ``extract(message)`` shapes the public return
-    value. Tries the primary (``model_override`` or resolve_model(org_id,
+    ``make_call(client, model_id, attribution)`` performs the actual Anthropic
+    request and returns the raw message (``attribution`` is the Phase-D1b
+    metadata dict, or ``None`` on the direct-Anthropic transport, where
+    routing/attribution do not apply); ``extract(message)`` shapes the public
+    return value. Tries the primary (``model_override`` or resolve_model(org_id,
     model_key)) first, then each model in the org's fallback chain, until one
     responds. Writes exactly one ai_decision_log row per call (the outcome).
     Returns ``extract(message)`` on success; returns None when no API key is
@@ -394,11 +416,36 @@ async def _execute_chain(
     chain = await resolve_fallback_chain(org_id, primary_key=model_key)
     attempts = _dedupe([primary, *chain])
 
+    # LiteLLM Phase D1b — routing + attribution. Both are LiteLLM-only
+    # concepts: the rollback (direct-Anthropic) path never touches either, so
+    # a platform-key call's behaviour is byte-for-byte what it was before
+    # this sprint. "platform" is litellm_credentials.CREDENTIAL_SOURCE_PLATFORM's
+    # literal value — the value every org resolves to when unconfigured.
+    credential_source = "platform"
+    attribution = None
+    if transport == TRANSPORT_LITELLM:
+        from services.litellm_credentials import (
+            build_attribution,
+            resolve_credential_source,
+        )
+
+        credential_source = await resolve_credential_source(org_id, _CALL_PROVIDER)
+        attribution = build_attribution(
+            org_id or DEFAULT_ORG_ID, _CALL_PROVIDER, credential_source
+        )
+
     t0 = time.monotonic()
     last_error = None
     for model_id in attempts:
+        call_model_id = model_id
+        if transport == TRANSPORT_LITELLM:
+            from services.litellm_credentials import resolve_deployment_model
+
+            call_model_id = resolve_deployment_model(
+                model_id, org_id or DEFAULT_ORG_ID, _CALL_PROVIDER, credential_source
+            )
         try:
-            message = await make_call(client, model_id)
+            message = await make_call(client, call_model_id, attribution)
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if transport == TRANSPORT_LITELLM and _is_auth_failure(exc):
@@ -467,6 +514,23 @@ async def _execute_chain(
     )
 
 
+def _apply_attribution(kwargs: dict, attribution: dict | None) -> dict:
+    """Merge Phase-D1b attribution into a messages.create() kwargs dict.
+
+    ``metadata.tags`` is a native Anthropic SDK param name (the SDK sends it
+    straight through as JSON) that LiteLLM's Anthropic-shaped route reads
+    into LiteLLM_SpendLogs.request_tags (probed live — Task 1b). The
+    top-level ``user`` field is NOT part of the SDK's typed surface, so it
+    goes through ``extra_body``; LiteLLM reads it into
+    LiteLLM_SpendLogs.end_user. A no-op when ``attribution`` is None (the
+    direct-Anthropic transport, where this concept does not apply).
+    """
+    if attribution:
+        kwargs["metadata"] = {"tags": attribution["tags"]}
+        kwargs["extra_body"] = {"user": attribution["end_user"]}
+    return kwargs
+
+
 def _strip_fences(text: str) -> str:
     t = (text or "").strip()
     if t.startswith("```"):
@@ -498,13 +562,14 @@ async def call_claude_json(
     is unparseable — every one of those is printed and, for chain outcomes, also
     written to ai_decision_log.
     """
-    async def make_call(client, model_id):
-        return await client.messages.create(
+    async def make_call(client, model_id, attribution):
+        kwargs = _apply_attribution(dict(
             model=model_id,
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
-        )
+        ), attribution)
+        return await client.messages.create(**kwargs)
 
     def extract(message):
         return json.loads(_strip_fences(message.content[0].text))
@@ -542,13 +607,14 @@ async def call_claude_text(
     Routes through the Sprint-27 chain executor (per-org fallback chain +
     ai_decision_log). Returns None on no key / exhausted chain, as before.
     """
-    async def make_call(client, model_id):
-        return await client.messages.create(
+    async def make_call(client, model_id, attribution):
+        kwargs = _apply_attribution(dict(
             model=model_id,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
-        )
+        ), attribution)
+        return await client.messages.create(**kwargs)
 
     def extract(message):
         return message.content[0].text
@@ -582,7 +648,7 @@ async def call_claude_with_tools(
     chain fails. Routes through the Sprint-27 chain executor (per-org fallback
     chain + ai_decision_log).
     """
-    async def make_call(client, model_id):
+    async def make_call(client, model_id, attribution):
         kwargs: dict = dict(
             model=model_id,
             max_tokens=max_tokens,
@@ -591,6 +657,7 @@ async def call_claude_with_tools(
         )
         if tools:
             kwargs["tools"] = tools
+        kwargs = _apply_attribution(kwargs, attribution)
         return await client.messages.create(**kwargs)
 
     def extract(message):

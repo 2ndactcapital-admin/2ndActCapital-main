@@ -53,6 +53,16 @@ module docstring's dimension note above. A model swap mid-chain that returned a
 different dimensionality would silently corrupt vector search, so a per-attempt
 dimension check (against the org's configured ``ai.embedding.dimensions``) gates
 every candidate in the chain, not just the one ultimately stored.
+
+LiteLLM Phase D1b (litellmphased1b.structural) — ROUTING + ATTRIBUTION, the
+embedding-side twin of extraction.py's own D1b block. When the transport is
+LiteLLM, ``_execute_embedding_chain`` resolves this org's
+``ai.credential_source.voyage``, translates 'voyage-3.5' to the org's own
+deployment when 'org'-sourced, and attaches attribution metadata to the
+outgoing request. Probed live: the embedding path can carry ``metadata.tags``
+exactly like the text path, but NOT the top-level ``user`` field — Voyage
+rejects it outright (a real, provider-specific difference, not an oversight;
+see ``_embed_litellm``'s own docstring).
 """
 
 import asyncio
@@ -108,6 +118,11 @@ _EMBEDDING_PRICING: dict[str, Decimal] = {
 DEFAULT_EMBEDDING_PROVIDER = "voyage"
 DEFAULT_EMBEDDING_MODEL = "voyage-3.5"
 EMBEDDING_DIMENSIONS = 1024
+
+# LiteLLM Phase D1b — every embedding call this module makes is Voyage. Used
+# to resolve this org's ai.credential_source.voyage and to build attribution
+# metadata; see services.litellm_credentials.
+_CALL_PROVIDER = "voyage"
 
 VOYAGE_ENDPOINT = "https://api.voyageai.com/v1/embeddings"
 _VOYAGE_KEY_NAMES = ("VOYAGE_API_KEY", "VOYAGEAI_API_KEY", "VOYAGE_KEY")
@@ -220,7 +235,9 @@ async def _embed_stub(provider):
 
 
 # ── LiteLLM transport (Phase C) ───────────────────────────────────────────────
-async def _embed_litellm(texts, model, *, input_type=None) -> tuple[list[list[float]], dict | None]:
+async def _embed_litellm(
+    texts, model, *, input_type=None, attribution=None
+) -> tuple[list[list[float]], dict | None]:
     """REAL embeddings call through the LiteLLM proxy's OpenAI-shaped route.
 
     Confirmed live against hollisworks-litellm: both ``/v1/embeddings`` and
@@ -228,6 +245,15 @@ async def _embed_litellm(texts, model, *, input_type=None) -> tuple[list[list[fl
     documented OpenAI-compatible surface. Returns ``(vectors, usage)`` — usage
     (token counts) feeds the cost estimate written to ai_decision_log, mirroring
     how extraction.py computes cost from Anthropic's usage object.
+
+    LiteLLM Phase D1b — ``attribution`` (services.litellm_credentials
+    .build_attribution) is attached as ``metadata.tags`` (probed live — Task
+    1b — this is the SAME field name the text path uses, landing in the same
+    LiteLLM_SpendLogs.request_tags column). Deliberately NOT the top-level
+    ``user`` field the text path also sends: probed live and Voyage rejects it
+    outright (``litellm.UnsupportedParamsError: voyage does not support
+    parameters: {'user': ...}``) — a real, provider-specific difference
+    between the text and embedding paths (Task 1c), not an oversight.
     """
     from services import extraction as ex
 
@@ -236,6 +262,8 @@ async def _embed_litellm(texts, model, *, input_type=None) -> tuple[list[list[fl
     payload = {"model": model, "input": texts}
     if input_type:
         payload["input_type"] = input_type
+    if attribution:
+        payload["metadata"] = {"tags": attribution["tags"]}
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -323,6 +351,11 @@ async def _execute_embedding_chain(
     extraction.py's own _safe_log, so embeddings land in the SAME table with
     the SAME shape text calls use. Raises EmbeddingUnavailable when the whole
     chain is exhausted.
+
+    LiteLLM Phase D1b — routing + attribution, the embedding-side twin of
+    extraction.py._execute_chain's own D1b block. Voyage is the only
+    provider that ever reaches this point (_CALL_PROVIDER), so credential
+    source and attribution are resolved once per chain, not per attempt.
     """
     from services import extraction as ex
 
@@ -330,13 +363,35 @@ async def _execute_embedding_chain(
     if transport_reason:
         print(f"[embedding_router] transport={transport}: {transport_reason}")
 
+    credential_source = "platform"
+    attribution = None
+    if transport == ex.TRANSPORT_LITELLM:
+        from services.litellm_credentials import (
+            build_attribution,
+            resolve_credential_source,
+        )
+
+        credential_source = await resolve_credential_source(org_id, _CALL_PROVIDER)
+        attribution = build_attribution(
+            org_id or ex.DEFAULT_ORG_ID, _CALL_PROVIDER, credential_source
+        )
+
     attempts = list(dict.fromkeys([m for m in [model, *(chain or [])] if m]))
     t0 = time.monotonic()
     last_error = None
     for model_id in attempts:
+        call_model_id = model_id
+        if transport == ex.TRANSPORT_LITELLM:
+            from services.litellm_credentials import resolve_deployment_model
+
+            call_model_id = resolve_deployment_model(
+                model_id, org_id or ex.DEFAULT_ORG_ID, _CALL_PROVIDER, credential_source
+            )
         try:
             if transport == ex.TRANSPORT_LITELLM:
-                vectors, usage = await _embed_litellm(texts, model_id, input_type=input_type)
+                vectors, usage = await _embed_litellm(
+                    texts, call_model_id, input_type=input_type, attribution=attribution
+                )
             else:
                 vectors = await _embed_voyage(texts, model_id, input_type=input_type)
                 usage = None

@@ -41,6 +41,39 @@ independently routable options. An org's own deployment therefore MUST use a
 distinct ``model_name`` from the platform's logical name it mirrors — never
 the same one, or a call meant to use the org's key could route to the
 platform's deployment (or vice versa) nondeterministically.
+
+LiteLLM Phase D1b (litellmphased1b.structural) — ROUTING + ATTRIBUTION.
+D1a stopped at "can an org store its own key and get a deployment"; nothing
+read ``ai.credential_source.*`` at call time. This sprint adds the two
+functions below that ``services/extraction.py`` and
+``services/document_embedding.py`` both call from their chain executors:
+
+  * ``resolve_credential_source`` — this org's 'org'/'platform' flag for one
+    provider, read fresh from org_settings (mirrors
+    ``services.extraction.resolve_model``'s own fallback-to-default-on-error
+    discipline, so a lookup failure can never silently grant org-key
+    routing).
+  * ``resolve_deployment_model`` — translates a logical model_id into the
+    deployment that should actually serve the call. Translates ONLY when
+    ``model_id`` is EXACTLY the platform deployment name this provider
+    mirrors (``PROVIDER_PLATFORM_DEPLOYMENT[provider]``) AND the org's
+    source is 'org' — every other model_id (an unregistered/dated string,
+    or a provider still on 'platform') passes through unchanged. This is
+    what keeps the caller-facing logical model name identical regardless of
+    which deployment actually serves the call (the sprint's own stated
+    requirement) — the caller never learns whether 'claude-sonnet' resolved
+    to the platform deployment or the org's own mirror of it.
+  * ``build_attribution`` — real metadata (Task 1b's probed field names:
+    ``metadata.tags`` -> ``request_tags``, top-level ``user`` ->
+    ``end_user``) so LiteLLM's own spend log can answer "which org, against
+    whose key" — never a new ai_decision_log column, per the sprint's own
+    "keep both logs, don't conflate them" precedent (§14.1 of the design
+    doc). Platform-key-on-behalf-of-an-org is tagged distinctly from
+    Hollisworks' own platform-key usage (``usage:platform_on_behalf_of_org``
+    vs ``usage:hollisworks_platform``), and an org's own key gets its own
+    tag (``usage:org_owned_key``) — three, not two, because "the org owns
+    the key" and "Hollisworks' own usage" are both distinct from "platform
+    key, but on someone else's behalf".
 """
 from __future__ import annotations
 
@@ -65,6 +98,20 @@ PROVIDER_PLATFORM_DEPLOYMENT: dict[str, str] = {
 CREDENTIAL_SOURCE_ORG = "org"
 CREDENTIAL_SOURCE_PLATFORM = "platform"
 VALID_CREDENTIAL_SOURCES = (CREDENTIAL_SOURCE_ORG, CREDENTIAL_SOURCE_PLATFORM)
+
+# Reverse of PROVIDER_PLATFORM_DEPLOYMENT — the deployment-name -> provider
+# lookup ``resolve_deployment_model`` needs. Built once at import time; the
+# forward map above is still the one source of truth (adding a provider
+# there is all a future sprint needs to do).
+PLATFORM_DEPLOYMENT_PROVIDER: dict[str, str] = {
+    v: k for k, v in PROVIDER_PLATFORM_DEPLOYMENT.items()
+}
+
+# Hollisworks' own platform org (CLAUDE.md Rule 6) — the one org_id whose
+# 'platform'-sourced calls are Hollisworks' OWN usage, not usage on behalf of
+# a client org. A fixed, well-known constant, same convention
+# routers/entities.py's own copy already uses.
+HOLLISWORKS_ORG_ID = "bb347258-8f28-4f49-8cc9-e29ccad82884"
 
 
 def credential_source_key(provider: str) -> str:
@@ -201,6 +248,85 @@ def deprovision_org_deployment(provider: str, org_id) -> bool:
 
 def org_deployment_exists(provider: str, org_id) -> bool:
     return _find_deployment(_org_deployment_name(provider, org_id)) is not None
+
+
+# ── D1b: routing + attribution ──────────────────────────────────────────────
+
+
+async def resolve_credential_source(org_id, provider: str) -> str:
+    """This org's ``ai.credential_source.<provider>`` value, read fresh from
+    org_settings. Falls back to CREDENTIAL_SOURCE_PLATFORM — the status quo —
+    on a missing org_id, an unknown provider, or any lookup error, mirroring
+    services.extraction.resolve_model's own fail-to-default discipline. A
+    lookup failure must never silently grant org-key routing."""
+    if org_id is None or provider not in PROVIDER_PLATFORM_DEPLOYMENT:
+        return CREDENTIAL_SOURCE_PLATFORM
+    try:
+        from services.database import get_pool
+        from services.org_settings import get_setting
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            value = await get_setting(conn, org_id, credential_source_key(provider))
+        return value or CREDENTIAL_SOURCE_PLATFORM
+    except Exception as exc:
+        print(f"resolve_credential_source failed for {provider!r}, using "
+              f"platform: {exc}")
+        return CREDENTIAL_SOURCE_PLATFORM
+
+
+def resolve_deployment_model(model_id: str, org_id, provider: str,
+                              credential_source: str) -> str:
+    """Which deployment should actually serve a call requesting ``model_id``.
+
+    Translates ONLY when ``model_id`` is exactly the platform deployment
+    ``provider`` mirrors (``PROVIDER_PLATFORM_DEPLOYMENT[provider]``) AND
+    ``credential_source == 'org'`` — every other model_id (an
+    unregistered/dated string never registered as its own deployment, or a
+    provider still on 'platform') passes through completely unchanged. This
+    is what keeps the caller-facing logical model name identical regardless
+    of which deployment actually serves the call: a caller that asked for
+    'claude-sonnet' never learns whether the platform deployment or the
+    org's own mirror of it answered.
+    """
+    if credential_source != CREDENTIAL_SOURCE_ORG:
+        return model_id
+    if PROVIDER_PLATFORM_DEPLOYMENT.get(provider) != model_id:
+        return model_id
+    return _org_deployment_name(provider, org_id)
+
+
+def build_attribution(org_id, provider: str, credential_source: str) -> dict:
+    """Real, queryable metadata for LiteLLM's own spend log (Task 1b's
+    probed field names — see module docstring): ``tags`` lands in the spend
+    log's ``request_tags`` column, ``end_user`` is what the caller should
+    send as the top-level ``user`` request field (lands in ``end_user``).
+
+    ``usage`` is one of three labels, not two, because "the org owns the
+    key", "Hollisworks is using the platform key for itself", and "the
+    platform key is being used on behalf of some OTHER org" are three
+    genuinely distinct things a spend-log reader needs to tell apart:
+
+      * 'org_owned_key'            — this org supplied its own provider key.
+      * 'hollisworks_platform'     — the platform key, used for Hollisworks'
+                                      own org (HOLLISWORKS_ORG_ID).
+      * 'platform_on_behalf_of_org' — the platform key, used for some OTHER
+                                      org that has not (yet) supplied its own.
+    """
+    org_str = str(org_id)
+    if credential_source == CREDENTIAL_SOURCE_ORG:
+        usage = "org_owned_key"
+    elif org_str == HOLLISWORKS_ORG_ID:
+        usage = "hollisworks_platform"
+    else:
+        usage = "platform_on_behalf_of_org"
+    tags = [
+        f"org:{org_str}",
+        f"provider:{provider}",
+        f"credential_source:{credential_source}",
+        f"usage:{usage}",
+    ]
+    return {"tags": tags, "end_user": f"org:{org_str}", "usage": usage}
 
 
 # ── org_settings-facing surface ─────────────────────────────────────────────

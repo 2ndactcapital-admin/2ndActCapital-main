@@ -219,7 +219,7 @@ separation entirely rather than punching a hole in it.
 | **A** | ~~LiteLLM proxy deployed on Render, own Supabase schema, `render.yaml` gap fixed.~~ **DONE.** The proxy is live and the `litellm` schema is migrated (77 tables). **A real model deployment now exists** (`claude-sonnet` → `anthropic/claude-sonnet-4-6`) and the proxy has routed its first successful, billed call (2026-09-14) — see §14.1. The `render.yaml` service-adoption gap is still open. |
 | **B** | ~~The 16 `extraction.py` call sites routed through LiteLLM instead of the Anthropic SDK directly. `ai.model.fallback_chain` now executes via LiteLLM.~~ **FULLY COMPLETE (2026-09-14)** — routing built 68/68 (2026-08-26), all 5 previously-BLOCKED assertions now PASS, 25/25, `verify_litellmphasebproof.py`. See §14.1. |
 | **C** | ~~Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism.~~ **DONE (2026-09-14)** — 34/34, 0 BLOCKED, `verify_litellmphasec.py`. See §14.2. |
-| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **NEXT: D1b+** — the model pick-list screen itself (org-scoped, filterable, LiteLLM metadata-driven), plus routing an org's own calls to its own deployment (not built in D1a — see §14.3's scope note). |
+| **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **D1b — routing + spend attribution: DONE (2026-09-15)** — 54/54, 0 FAIL, `verify_litellmphased1b.py`. See §14.4. **NEXT: D1c** — credential-failure alerting (deliberately out of scope for D1b), then the model pick-list screen itself (org-scoped, filterable, LiteLLM metadata-driven). |
 | **E** | Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings. |
 | **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
 | **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data. |
@@ -576,3 +576,121 @@ fixture.
 Teardown: zero leftover fixture rows and the live proxy confirmed back at
 exactly its pre-sprint deployment set (`claude-sonnet`, `voyage-3.5` only)
 — re-verified after every run, three consecutive clean runs.
+
+---
+
+## 14.4 · Phase D1b — routing + spend attribution (2026-09-15)
+
+`apps/api/scripts/verify_litellmphased1b.py` — **54/54 PASS, 0 FAIL, 3
+FIND.** D1a stopped at "can an org store its own key and get a deployment";
+nothing read `ai.credential_source.*` at call time, and no call sent
+LiteLLM any metadata at all — every real call landed in `LiteLLM_SpendLogs`
+attributed to the master key with a null team. This sprint closes both
+gaps: calls now actually use the right deployment, and spend is
+attributable.
+
+### Task 1 — discovery, re-probed live
+
+**1a — where the resolver slots in.** `services/extraction.py`'s
+`_execute_chain` and `services/document_embedding.py`'s
+`_execute_embedding_chain` are the two real chain executors (unchanged
+choke points from Phase B/C). D1b's per-org resolution slots into the SAME
+point in both: right after the model/fallback chain is computed, right
+before the outbound call is made, per attempt — never touching
+`resolve_model`/`resolve_fallback_chain` (still the LOGICAL model name from
+`org_settings`), only deciding which DEPLOYMENT actually answers that name.
+Gated on `transport == TRANSPORT_LITELLM`, so the direct-Anthropic rollback
+path is provably byte-for-byte unchanged.
+
+**1b — real metadata fields, probed live, not assumed.** Sending
+`metadata.tags` (a native Anthropic-SDK field the LiteLLM proxy reads
+through) lands in `LiteLLM_SpendLogs.request_tags`. Sending a top-level
+`user` field (not part of the SDK's typed surface — sent via `extra_body`)
+lands in `LiteLLM_SpendLogs.end_user` — a DIFFERENT column from `user`,
+which stays the fixed string `'default_user_id'` for a master-key call
+regardless of request content. **[FIND]** `metadata.user_id` and
+`metadata.spend_logs_metadata` — despite looking like the obvious
+mechanism from LiteLLM's own field name — do NOT land anywhere readable
+back via `GET /spend/logs` for a master-key-authenticated call; a real dead
+end, probed and discarded rather than assumed to work.
+
+**1c — text and embeddings need SEPARATE work, confirmed live.**
+`metadata.tags` behaves identically on both `/v1/messages` and
+`/v1/embeddings` (same field, same spend-log column — one mechanism,
+shared). The top-level `user` field does NOT: Voyage's embeddings route
+rejects it outright — `litellm.UnsupportedParamsError: voyage does not
+support parameters: {'user': ...}`, HTTP 400, probed live — a genuine,
+provider-specific incompatibility, not an oversight. This is why
+`_embed_litellm` sends only `metadata.tags` while every `call_claude_*`
+wrapper in `extraction.py` sends both `metadata.tags` and `user`.
+
+### Task 2 — routing
+
+`services/litellm_credentials.py` gained `resolve_deployment_model(model_id,
+org_id, provider, credential_source)`: translates `model_id` to the org's
+own deployment (`_org_deployment_name(provider, org_id)`, D1a's existing
+naming scheme) ONLY when `model_id` is EXACTLY the platform deployment that
+provider mirrors (`claude-sonnet` for anthropic, `voyage-3.5` for voyage)
+AND `credential_source == 'org'`. Every other `model_id` — an
+unregistered/dated string never registered as its own deployment, or a
+provider still on `'platform'` — passes through completely unchanged. This
+is the sprint's own stated requirement made concrete: the caller-facing
+logical model name never changes. Proven live: `ai_decision_log.model_used`
+/ `model_requested` record `'claude-sonnet'` for an org-routed call exactly
+as for a platform-routed one, and the internal deployment name was grepped
+out of both the DB log and every org-facing HTTP response — zero matches.
+
+### Task 3 — attribution
+
+`resolve_credential_source(org_id, provider)` (mirrors
+`services.extraction.resolve_model`'s fail-to-`'platform'`-on-any-error
+discipline — a lookup failure can never silently grant org-key routing) and
+`build_attribution(org_id, provider, credential_source)` — returns `{tags,
+end_user, usage}`. `usage` is one of THREE labels: `'org_owned_key'` (this
+org supplied its own key), `'hollisworks_platform'` (the shared platform
+key, used for Hollisworks' OWN org), or `'platform_on_behalf_of_org'` (the
+shared platform key, used for any OTHER org). Three, not two, because
+conflating Hollisworks' own usage with "platform key on someone else's
+behalf" would make Hollisworks' own AI spend invisible in its own log —
+exactly the distinguishability the sprint prompt asked for. Attached by all
+three `call_claude_*` wrappers in `extraction.py` and by
+`document_embedding.py`'s `_embed_litellm` — never a new `ai_decision_log`
+column, per Phase B's own established "keep the two logs, don't conflate
+them" precedent (§14.1).
+
+### Task 4 — proof, all live, all by deployment IDENTITY
+
+- **No regression:** 2nd Act's real call (`'platform'`) lands on the
+  platform deployment's own `model_info.id`, exactly as before this
+  sprint — the state every real, existing org is in today.
+- **Before/after, in the same run:** an unattributed raw call (bypassing
+  this sprint's code entirely) shows an empty `end_user` and no `org:` tag;
+  the identical call shape through the real, fixed code path shows both,
+  populated — the genuine null-to-populated proof, not just presence.
+- **Hollisworks vs. on-behalf-of:** Hollisworks' own real call tags
+  `usage:hollisworks_platform`; 2nd Act's tags
+  `usage:platform_on_behalf_of_org` — same shared platform key, two
+  genuinely different, queryable labels.
+- **Org-routing + cross-org, real deployments, real key:** two fixture
+  orgs each provisioned a REAL Anthropic deployment (D1a's own mechanism).
+  Three real calls (platform, org A, org B) produced three mutually
+  distinct `model_info.id` values in the spend log — org A's call never
+  carries org B's or the platform's deployment id, and vice versa. This is
+  cross-org isolation proven by the proxy's own record of which deployment
+  executed the call, not inferred from which org_settings row says what.
+- **Embeddings carry attribution too:** the same before/after proof,
+  re-run on the embedding path (2nd Act, platform-routed), correctly
+  missing `end_user` per Task 1c. Org-routing for embeddings is proven only
+  at the function level (`resolve_deployment_model` correctly computes the
+  org's deployment name for `voyage-3.5`) — a second live `'org'`-routed
+  Voyage call was deliberately skipped to respect the documented free-tier
+  pacing budget (3 req/min, 25s previously proven insufficient; this sprint
+  paced 68s between its two real Voyage calls).
+
+Teardown: zero leftover fixture rows (organizations/users/org_settings),
+zero leftover `ai_decision_log` rows, and the live proxy back to exactly
+its pre-run deployment set (`claude-sonnet`, `voyage-3.5` only).
+
+**Next: D1c — credential-failure alerting** (an org's own key going bad
+must surface somewhere; deliberately out of scope here, per the sprint
+prompt).
