@@ -44,6 +44,23 @@ metadata (services.litellm_credentials.build_attribution) to the outgoing
 request so LiteLLM's own spend log can answer "which org, against whose key" —
 never a new ai_decision_log column. None of this touches the rollback
 (direct-Anthropic) path: routing/attribution are LiteLLM-only concepts.
+
+LiteLLM Phase D1c (litellmphased1c.structural) — CREDENTIAL-FAILURE
+ALERTING. Scoped narrowly to what happens when an ORG'S OWN credential (as
+opposed to LITELLM_MASTER_KEY, or a model simply being unavailable) is bad.
+``_execute_chain`` now tells the two auth-failure causes apart by which
+deployment the failed attempt actually used (positively, from routing state
+already computed — see AIOrgCredentialError's docstring), never by parsing
+LiteLLM's error text: an org-credential failure raises AIOrgCredentialError
+(naming the provider, never converted to None) and STOPS the chain walk dead
+— it never proceeds to a platform deployment, because that would silently
+turn the org's own config problem into Hollisworks' bill. It also fires a
+member_todos alert to the org's manage_org_settings holders (services.
+workflow_todos.create_credential_failure_alerts — the same reused mechanism
+create_held_run_alerts already established, never a second notification
+path). A genuine model-unavailable failure (no auth error at all — LiteLLM
+returns 400, not 401/403) is unaffected and keeps walking the fallback chain
+exactly as it always has.
 """
 
 import json
@@ -102,6 +119,27 @@ class AILiteLLMAuthError(RuntimeError):
     once, and every model in the chain shares that one key, so walking the chain
     cannot rescue it. Degrading it to the ordinary "returned None" path would
     make a total AI outage look exactly like a single unparseable response.
+    """
+
+
+class AIOrgCredentialError(RuntimeError):
+    """This ORG'S OWN provider credential was rejected by the provider.
+
+    LiteLLM Phase D1c. DELIBERATELY a sibling of ``AILiteLLMAuthError``, not a
+    subclass of it (and not of ``AIChainExhausted`` either, for the same
+    reason ``AILiteLLMAuthError`` isn't): the two auth failures share an HTTP
+    401/403 symptom but are structurally different events. A bad
+    ``LITELLM_MASTER_KEY`` is a platform-wide outage that no fallback can
+    rescue. A bad ORG credential is that one org's own config problem — every
+    OTHER org, and the platform key itself, are fine. Conflating the two
+    would either bury an org-specific problem as a platform outage, or (worse)
+    let the chain walk onto a platform deployment to "fix" what is actually a
+    config problem the org needs to resolve — silently turning the org's
+    broken credential into Hollisworks' bill. So this is raised instead,
+    never converted to ``None``, and never followed by a further attempt in
+    the chain. See ``_execute_chain`` for how it is told apart from
+    ``AILiteLLMAuthError`` (by which deployment the failed attempt actually
+    used, not by guessing at LiteLLM's error text).
     """
 
 
@@ -380,6 +418,31 @@ async def _safe_log(**fields) -> None:
         print(f"[ai_router] decision log write failed (non-blocking): {exc}")
 
 
+async def _alert_org_credential_failure(org_id, provider: str, detail: str) -> None:
+    """Best-effort: tell the org's manage_org_settings holders their own
+    provider credential is broken (LiteLLM Phase D1c). Reuses the existing
+    member_todos path (services.workflow_todos) — never a second
+    notification mechanism.
+
+    Non-blocking by the same discipline as ``_safe_log``: this function is
+    called from inside the exception handler that is about to raise
+    ``AIOrgCredentialError`` regardless, so a failure writing the alert must
+    never replace or mask that already-loud failure with a DIFFERENT,
+    unrelated exception.
+    """
+    try:
+        from services.database import get_pool
+        from services.workflow_todos import create_credential_failure_alerts
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await create_credential_failure_alerts(
+                conn, org_id=org_id, provider=provider, error_detail=detail,
+            )
+    except Exception as exc:
+        print(f"[ai_router] credential-failure alert write failed (non-blocking): {exc}")
+
+
 # ---------------------------------------------------------------------------
 # The chain executor (Sprint 27) — every call_claude_* helper routes through it
 # ---------------------------------------------------------------------------
@@ -425,6 +488,7 @@ async def _execute_chain(
     attribution = None
     if transport == TRANSPORT_LITELLM:
         from services.litellm_credentials import (
+            CREDENTIAL_SOURCE_ORG,
             build_attribution,
             resolve_credential_source,
         )
@@ -449,6 +513,41 @@ async def _execute_chain(
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if transport == TRANSPORT_LITELLM and _is_auth_failure(exc):
+                # D1c — a 401/403 here means one of two structurally different
+                # things, and they must never be treated alike (see
+                # AIOrgCredentialError's docstring). `call_model_id` only
+                # differs from the logical `model_id` when
+                # resolve_deployment_model just translated THIS attempt onto
+                # the org's own dedicated deployment (its own docstring: it
+                # translates ONLY for an 'org'-sourced credential, and ONLY
+                # for the exact model_id it mirrors) — so if that translation
+                # happened and the call then failed auth, the ORG's own
+                # credential is what failed, not our shared master key. This
+                # is a positive identification from routing state we already
+                # computed, not a guess parsed out of LiteLLM's error text.
+                if credential_source == CREDENTIAL_SOURCE_ORG and call_model_id != model_id:
+                    detail = (
+                        f"Org {org_id}'s own {_CALL_PROVIDER} credential was "
+                        f"rejected by the provider (HTTP "
+                        f"{getattr(exc, 'status_code', '?')}). This is a "
+                        f"configuration problem for the org to fix — re-enter "
+                        f"or clear the stored {_CALL_PROVIDER} credential in "
+                        f"org settings. NEVER falling back to the "
+                        f"Hollisworks platform key for this attempt: a "
+                        f"broken org credential must not quietly become "
+                        f"Hollisworks' bill. Underlying error: {last_error}"
+                    )
+                    print(f"[ai_router] {detail}")
+                    await _safe_log(
+                        org_id=org_id, task_type=task_type,
+                        model_requested=primary, model_used=model_id,
+                        fallback_used=False, fallback_reason=None,
+                        cost_usd=None,
+                        latency_ms=max(1, int((time.monotonic() - t0) * 1000)),
+                        success=False, error_detail=detail,
+                    )
+                    await _alert_org_credential_failure(org_id, _CALL_PROVIDER, detail)
+                    raise AIOrgCredentialError(detail) from exc
                 # Every model in the chain authenticates with the SAME master
                 # key, so continuing the walk would just replay the identical
                 # 401 once per model and then report the generic "all models
@@ -582,10 +681,11 @@ async def call_claude_json(
     except AIChainExhausted as exc:
         print(f"call_claude_json exhausted: {exc}")
         return None
-    except AILiteLLMAuthError:
+    except (AILiteLLMAuthError, AIOrgCredentialError):
         # MUST come before the bare `except Exception` below, which would
-        # otherwise flatten a platform-wide auth misconfiguration into the same
-        # silent None as a single malformed JSON response.
+        # otherwise flatten a platform-wide auth misconfiguration — or an
+        # org's own broken credential (D1c) — into the same silent None as a
+        # single malformed JSON response.
         raise
     except Exception as exc:  # unparseable response — preserve None contract
         print(f"call_claude_json failed: {exc}")

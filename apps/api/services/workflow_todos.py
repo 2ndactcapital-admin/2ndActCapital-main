@@ -37,6 +37,13 @@ case: the Hollisworks org, which currently has zero org_admin holders and
 would have zero recipients for any run/trigger with no ``started_by`` /
 ``created_by``). ``_alert_recipients_or_record_failure`` below now writes a
 findable ``audit_log`` row instead — see its docstring.
+
+LiteLLM Phase D1c (litellmphased1c.structural): a THIRD alert kind,
+``create_credential_failure_alerts``, reuses this same module and the same
+``_upsert_todo`` / ``_record_undelivered_alert`` machinery for an org's own
+AI provider credential going bad — proof that this module's mechanism
+generalizes to a subject with no natural "who started it" recipient, not
+just to workflow runs/triggers.
 """
 from __future__ import annotations
 
@@ -67,7 +74,8 @@ async def _org_admin_recipients(org_id) -> set[str]:
 
 
 async def _record_undelivered_alert(
-    conn, *, org_id, source: str, related_type: str, related_id, reason: str
+    conn, *, org_id, source: str, related_type: str, related_id, reason: str,
+    action: str = ALERT_UNDELIVERED_ACTION,
 ) -> None:
     """Task 5: a recipient set that resolved to EMPTY used to write nothing
     and fail silently — this is the loud, findable replacement.
@@ -79,10 +87,15 @@ async def _record_undelivered_alert(
     ``write_audit_log`` never raises, so a failure here cannot itself break
     the caller's hold/expiry transaction — the finding is the audit row
     existing at all, not an exception propagating.
+
+    ``action`` defaults to the workflow-alert value every existing caller
+    already relies on; D1c's credential-failure alert passes its own distinct
+    action name (CREDENTIAL_ALERT_UNDELIVERED_ACTION) so the two event kinds
+    stay independently queryable rather than colliding under one string.
     """
     await write_audit_log(
         org_id=org_id,
-        action=ALERT_UNDELIVERED_ACTION,
+        action=action,
         table_name=related_type,
         record_id=related_id,
         new={"source": source, "reason": reason},
@@ -235,6 +248,77 @@ async def create_held_run_alerts(
                 detail=detail,
                 priority=5,
                 action_key=_RUN_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+
+# ── D1c: AI credential-failure alerting ─────────────────────────────────────
+#
+# services.extraction._execute_chain (LiteLLM Phase D1c) reuses this SAME
+# member_todos path when an org's OWN AI provider credential fails — not a
+# second notification mechanism. Unlike a held run or an expiring trigger,
+# there is no natural "who did this" recipient (a bad credential is not tied
+# to any one run or trigger a person started), so the recipient set is
+# manage_org_settings holders only.
+
+TODO_SOURCE_CREDENTIAL_FAILURE = "ai_credential_failure"
+CREDENTIAL_ALERT_UNDELIVERED_ACTION = "ai_credential_alert_undelivered"
+_CREDENTIAL_CONSOLE_PATH = "/admin/settings"
+
+
+async def create_credential_failure_alerts(
+    conn, *, org_id, provider: str, error_detail: str
+) -> list:
+    """Alert every manage_org_settings holder that this org's OWN
+    ``provider`` credential is failing.
+
+    Keyed on (source=f'ai_credential_failure:{provider}',
+    related_type='org_settings', related_id=org_id) so a repeated failure for
+    the SAME org+provider refreshes (re-opens) one todo rather than stacking
+    duplicates — the same idempotency discipline every other ``_upsert_todo``
+    caller in this module follows.
+
+    Zero resolvable recipients (the live Hollisworks org is a real, current
+    case — it holds zero manage_org_settings grants) writes a findable
+    audit_log row instead of failing silently, via the same
+    ``_record_undelivered_alert`` helper ``create_held_run_alerts`` uses, with
+    its own distinct action name so the two event kinds never collide.
+    """
+    recipients = await _org_admin_recipients(org_id)
+    source = f"{TODO_SOURCE_CREDENTIAL_FAILURE}:{provider}"
+    detail = (error_detail or f"This org's {provider} credential is failing.")[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn,
+            org_id=org_id,
+            source=source,
+            related_type="org_settings",
+            related_id=org_id,
+            reason=(
+                f"{provider} credential failure with no resolvable "
+                "recipient: the org has no manage_org_settings holder"
+            ),
+            action=CREDENTIAL_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn,
+                org_id=org_id,
+                user_id=uid,
+                source=source,
+                related_type="org_settings",
+                related_id=org_id,
+                title=f"AI provider credential failing — {provider}",
+                detail=detail,
+                priority=5,
+                action_key=_CREDENTIAL_CONSOLE_PATH,
             )
         )
     return ids
