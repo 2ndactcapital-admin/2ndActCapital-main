@@ -110,6 +110,28 @@ Same `owner_scope: platform | org` shape as UDFs.
 
 ---
 
+## 7.5 · `force_anthropic` — the Hollisworks emergency bypass — **DONE (2026-09-17)**
+
+**Naming note, to avoid confusion with the roadmap table's letter-phase "Phase F" (§8, budget-threshold UX, still unbuilt):** the sprint that built this was internally called `litellmphasef.structural`, but it implements THIS section (§7.5), not roadmap row **F**. The two "F"s are unrelated; roadmap row F is untouched by this work.
+
+**What it is**: a Hollisworks-only, platform-scoped (`owner_scope`-style — no `org_id` axis at all, CLAUDE.md Rule 6), super_admin-toggle-only control. When engaged, every TEXT AI call on the platform bypasses LiteLLM entirely and goes straight to a single, fixed, real Anthropic model — a deliberate blunt instrument for when the LiteLLM proxy itself is the thing that's degraded, not a per-task or per-org setting.
+
+**It reuses, not duplicates, the existing rollback.** `LITELLM_ROUTING_DISABLED=1` (§13.5, litellmphaseb 25/25) already is the direct-Anthropic branch of `services.extraction._build_ai_client`. This sprint adds a second DRIVER of that exact same branch — `services.platform_ai_controls` (a new table, `platform_ai_controls`, one row: `force_anthropic_bypass`) plus `services.extraction.resolve_text_transport` / `_build_text_ai_client` — checked only when the env var did not already force Anthropic. The env var stays the DB-independent, highest-priority escape hatch for when the database itself is unhappy; the new toggle is the DB-backed, admin-facing one for every other kind of incident.
+
+**Why a new table, not an `org_settings` key**: `org_settings` has no `owner_scope` column and cannot hold a genuine platform-scope row (the same real gap D2's own discovery found and solved with `platform_model_catalog`). `platform_ai_controls` follows the identical, now-established convention — no `org_id` column at all is what makes a row genuinely platform-wide, not the default org standing in for "platform."
+
+**Blunt, deliberately.** When engaged, `_execute_chain` skips per-task model resolution, the org's fallback chain, D2 authorization/disabled-model filtering, and Phase-E effort entirely, and hardcodes the single attempt to `FORCE_ANTHROPIC_BYPASS_MODEL` (`claude-haiku-4-5-20251001` — the real, dated upstream id behind the platform's own existing default-safe model). A caller's own `model_override` is deliberately ignored while the bypass is active — proven live (a call requesting `claude-sonnet` still resolves to the fixed model).
+
+**Non-obvious finding that shaped the fixed-model choice**: the pre-existing rollback branch applies ZERO deployment-name translation — whatever `resolve_model()` returns (an org_settings value like `'claude-haiku'`, which is a PROXY DEPLOYMENT name, not a real Anthropic model id) gets sent to `api.anthropic.com` literally. `verify_litellmphasebproof.py` only ever proved the rollback path by hand-passing a real dated id via `model_override`; the ordinary code path (an org's real default model string) would 404 against real Anthropic. Phase F's fixed constant is what makes the new admin-facing toggle safe to flip without an operator also having to remember a real model id.
+
+**THE EMBEDDING DECISION** (the genuinely non-obvious part of this feature, stated plainly): **embeddings keep routing through LiteLLM, completely unaffected, even while the bypass is engaged.** Voyage is not Anthropic — there is no direct-Anthropic equivalent for an embedding call — and the toggle exists for an Anthropic-specific incident; degrading a healthy embedding path along with it would be an unrelated, unrequested blast-radius increase. Mechanically this needed no extra guard: `services.document_embedding` calls the ORIGINAL `resolve_transport()` directly and never calls `resolve_text_transport()`/`_build_text_ai_client()` (the two new, text-only entry points), so the platform toggle is structurally unreachable from the embedding path. Proven live: a real Voyage call succeeds, and its own `ai_decision_log` row shows `litellm_bypassed=false`, while a concurrent text call's row shows `litellm_bypassed=true` — same moment, two different outcomes, by design. (The pre-existing `LITELLM_ROUTING_DISABLED` env var is unaffected by this distinction — it still degrades embeddings to direct Voyage exactly as it always has, per §14.2; only the NEW platform toggle is text-only.)
+
+**Observability while dark.** Bypassed calls never touch `LiteLLM_SpendLogs`. Two new `ai_decision_log` columns (`litellm_bypassed boolean`, `bypass_reason text`, both defaulting to the pre-Phase-F value so every existing row and every un-migrated caller is unaffected) mean an incident still leaves a queryable record independent of LiteLLM — set on every non-LiteLLM call, not only the ones this toggle causes (the pre-existing env-var rollback and an unconfigured proxy get marked too, for free).
+
+**Proof**: `apps/api/scripts/verify_litellmphasef.py` — OFF lands in LiteLLM's spend log unchanged; ON succeeds via direct Anthropic with proven-by-absence zero new spend-log rows after the full flush window, and a marked `ai_decision_log` row; the embedding path is proven unaffected while ON; `org_admin` gets 403 (on both GET and PUT — this is Hollisworks-only, not merely write-gated) where `super_admin` gets 200 on the identical request; RLS itself (not just the app-layer check) is proven to block a non-super-admin write at the database layer; turning it back OFF is proven to restore LiteLLM routing with a real spend-log row.
+
+---
+
 ## 8 · Budget-threshold UX — in scope now, not deferred to guardrails
 
 A hard stop with no warning is a bad client experience and undermines the "full autonomy" pitch this whole project is meant to support.
@@ -276,9 +298,10 @@ the established external-service convention (`portfolio_altruist.py`,
 `LITELLM_ENV_VARS` in `litellm_ops.py`), it is platform-wide rather than
 per-org, and it must keep working when the database is the unhappy thing; an
 `org_settings` read would need a working DB to report that the DB-independent
-fallback is on. **This is not §7.5's `force_anthropic`** — that remains a future,
-per-org, UI-driven, Hollis-admin-facing capability. Different audience, lifetime
-and mechanism.
+fallback is on. **This is not §7.5's `force_anthropic`** — that is now built
+(2026-09-17) as a platform-scoped (not per-org), UI-driven, Hollis-admin-facing
+capability, checked only when THIS env var did not already force Anthropic.
+Different audience, lifetime and mechanism, and it never supersedes this one.
 
 Deliberately absent: any "LiteLLM is configured but the call failed → quietly
 retry against Anthropic" path. An *unconfigured* proxy degrades to direct

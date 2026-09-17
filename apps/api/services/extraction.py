@@ -305,10 +305,76 @@ TRANSPORT_ANTHROPIC = "anthropic"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
+# ---------------------------------------------------------------------------
+# LiteLLM Phase F — the Hollisworks-only force-Anthropic emergency bypass
+# ---------------------------------------------------------------------------
+# This IS design-doc §7.5's ``force_anthropic``: the platform-scoped,
+# super_admin-only, UI-driven control the LITELLM_DISABLE_VAR docstring above
+# forward-referenced as "a future capability, different audience/lifetime/
+# mechanism." It is now built, but it does NOT introduce a second way to call
+# Anthropic directly — it is a second DRIVER of the exact same
+# TRANSPORT_ANTHROPIC branch _build_ai_client already has. See
+# resolve_text_transport below for how the two drivers combine.
+#
+# "Blunt instrument, deliberately" (the sprint's own framing): while engaged,
+# EVERY text call goes to this ONE fixed, real, upstream Anthropic model id —
+# never a proxy deployment name like 'claude-haiku' (Task 1c's finding: the
+# TRANSPORT_ANTHROPIC branch applies zero deployment-name translation, so a
+# bare 'claude-haiku' sent straight to api.anthropic.com would 404 — only a
+# real dated id like this one works). No per-task model, no fallback chain,
+# no D2 authorization/disabled filtering, no Phase-E effort — all of that is
+# per-org/per-task POLICY, and the whole point of an emergency bypass is to
+# skip policy and get one predictable path to a working model. Picked to be
+# the real upstream id behind the platform's own existing safe/default model
+# (ai.model.default -> 'claude-haiku' -> this id, per the seed row in
+# migrations/litellmphased2_model_catalog.sql) so an incident's behaviour
+# stays as close to "normal default" as a single fixed model can be.
+FORCE_ANTHROPIC_BYPASS_MODEL = "claude-haiku-4-5-20251001"
+
+# Embeddings are OUT OF SCOPE for this switch — Voyage is not Anthropic, there
+# is no direct-Anthropic path for an embedding call. Settled decision (module
+# docstring of services.document_embedding has the full reasoning): embeddings
+# KEEP ROUTING THROUGH LITELLM regardless of this flag. Mechanically this is
+# automatic, not an extra check: services.document_embedding calls
+# resolve_transport() directly (the original, LITELLM_DISABLE_VAR-only
+# resolver) and never calls resolve_text_transport() below, so this table is
+# never even read from the embedding path.
+
 
 def litellm_routing_disabled() -> bool:
     """True when the Task-4 ops rollback switch is engaged."""
     return (os.environ.get(LITELLM_DISABLE_VAR) or "").strip().lower() in _TRUTHY
+
+
+async def resolve_text_transport() -> tuple[str, str, bool]:
+    """Transport selection for TEXT calls only — ``(transport, reason,
+    forced_bypass)``. ``forced_bypass`` is True only when THIS Phase-F
+    platform toggle (not the env var, not a misconfigured proxy) is what
+    picked Anthropic; ``_execute_chain`` uses it to decide whether to
+    override the whole attempt list to ``FORCE_ANTHROPIC_BYPASS_MODEL``.
+
+    The env var always wins first, unchanged: it must keep working when the
+    database itself is unhappy (its own docstring), so a DB-backed toggle can
+    never be checked before it. This platform toggle is the SECOND thing
+    checked, only when the env var did not already force Anthropic.
+    """
+    transport, reason = resolve_transport()
+    if transport == TRANSPORT_ANTHROPIC:
+        return transport, reason, False
+
+    from services.platform_ai_controls import is_force_anthropic_bypass_enabled
+
+    if await is_force_anthropic_bypass_enabled():
+        return TRANSPORT_ANTHROPIC, (
+            "a Hollisworks super-admin has engaged the platform force-Anthropic "
+            "bypass (platform_ai_controls.force_anthropic_bypass=true) — this "
+            f"text call goes straight to Anthropic's '{FORCE_ANTHROPIC_BYPASS_MODEL}', "
+            "bypassing LiteLLM and this task's normal model/fallback/"
+            "authorization policy entirely (deliberately, per the design's "
+            "blunt-instrument decision). Embeddings are UNAFFECTED and keep "
+            "routing through LiteLLM — Voyage has no direct-Anthropic path."
+        ), True
+    return transport, reason, False
 
 
 def resolve_transport() -> tuple[str, str]:
@@ -349,12 +415,33 @@ def resolve_transport() -> tuple[str, str]:
     return TRANSPORT_LITELLM, ""
 
 
+def _direct_anthropic_client(reason: str) -> tuple[object | None, str, str, str]:
+    """Build (or fail to build) the direct-Anthropic client, given a
+    caller-supplied ``reason``. Factored out of ``_build_ai_client`` so
+    ``_build_text_ai_client`` (LiteLLM Phase F) can reach the identical
+    direct-Anthropic branch with ITS OWN reason text, without duplicating
+    the client-construction call.
+    """
+    import anthropic as _anthropic
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None, TRANSPORT_ANTHROPIC, reason, "https://api.anthropic.com/v1/messages"
+    return (_anthropic.AsyncAnthropic(api_key=api_key), TRANSPORT_ANTHROPIC, reason,
+            "https://api.anthropic.com/v1/messages")
+
+
 def _build_ai_client() -> tuple[object | None, str, str, str]:
     """``(client, transport, reason, endpoint)``; client is None with no credential.
 
     A ``None`` client preserves this module's long-standing no-API-key contract:
     ``_execute_chain`` returns None and callers that already branch on a None
     result behave exactly as they did before Phase B.
+
+    Unchanged by LiteLLM Phase F on purpose — this stays the sync,
+    env-var-only resolver every existing caller (including older verify
+    scripts calling it directly) already relies on. See
+    ``_build_text_ai_client`` for the Phase F platform-toggle wrapper.
     """
     transport, reason = resolve_transport()
 
@@ -374,11 +461,26 @@ def _build_ai_client() -> tuple[object | None, str, str, str]:
         )
         return client, transport, reason, f"{base_url}/v1/messages"
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None, transport, reason, "https://api.anthropic.com/v1/messages"
-    return (_anthropic.AsyncAnthropic(api_key=api_key), transport, reason,
-            "https://api.anthropic.com/v1/messages")
+    return _direct_anthropic_client(reason)
+
+
+async def _build_text_ai_client() -> tuple[object | None, str, str, str, bool]:
+    """``(client, transport, reason, endpoint, forced_bypass)`` — the TEXT
+    call path's client builder (LiteLLM Phase F).
+
+    Defers entirely to the unchanged, sync ``_build_ai_client`` UNLESS
+    ``resolve_text_transport`` says the platform toggle itself is what forced
+    Anthropic (``forced_bypass=True``), in which case it builds the direct
+    client with the Phase F reason text instead. This is the only place the
+    platform toggle can change behaviour — the env var / misconfigured-proxy
+    outcomes flow through byte-for-byte unchanged.
+    """
+    transport, reason, forced_bypass = await resolve_text_transport()
+    if forced_bypass:
+        client, transport, reason, endpoint = _direct_anthropic_client(reason)
+        return client, transport, reason, endpoint, True
+    client, transport, reason, endpoint = _build_ai_client()
+    return client, transport, reason, endpoint, False
 
 
 def _is_auth_failure(exc: Exception) -> bool:
@@ -531,6 +633,7 @@ async def _write_ai_decision(
     *, org_id, task_type, model_requested, model_used, fallback_used,
     fallback_reason, cost_usd, latency_ms, success, error_detail,
     effort_requested=None, effort_used=None,
+    litellm_bypassed=False, bypass_reason=None,
 ) -> None:
     """Insert one ai_decision_log row. May raise — always call via _safe_log.
 
@@ -544,6 +647,13 @@ async def _write_ai_decision(
     when it was actually sent to the provider on THIS attempt. A row with
     ``effort_requested`` set and ``effort_used`` NULL is exactly the dropped
     case, queryable directly.
+
+    ``litellm_bypassed``/``bypass_reason`` (LiteLLM Phase F) default to
+    False/None so every pre-Phase-F caller keeps working unchanged. True for
+    ANY call that did not go through LiteLLM (the env var rollback, an
+    unconfigured proxy, or the Phase F platform toggle) — this is what makes
+    ai_decision_log survive as a queryable, independent record during an
+    incident where LiteLLM's own spend log stays completely dark.
     """
     from services.database import get_pool
 
@@ -554,12 +664,13 @@ async def _write_ai_decision(
             INSERT INTO ai_decision_log
                 (org_id, task_type, model_requested, model_used, fallback_used,
                  fallback_reason, cost_usd, latency_ms, success, error_detail,
-                 effort_requested, effort_used)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 effort_requested, effort_used, litellm_bypassed, bypass_reason)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             """,
             org_id or DEFAULT_ORG_ID, task_type, model_requested, model_used,
             fallback_used, fallback_reason, cost_usd, latency_ms, success,
             error_detail, effort_requested, effort_used,
+            litellm_bypassed, bypass_reason,
         )
 
 
@@ -627,7 +738,7 @@ async def _execute_chain(
     # Phase B: the ONLY change here is where `client` points. Everything below
     # this block — the chain walk, timing, cost, logging, exhaustion — is the
     # pre-Phase-B code, unmodified.
-    client, transport, transport_reason, endpoint = _build_ai_client()
+    client, transport, transport_reason, endpoint, forced_bypass = await _build_text_ai_client()
     if client is None:
         print(
             f"[ai_router] no usable credential for transport '{transport}' "
@@ -637,74 +748,87 @@ async def _execute_chain(
     if transport_reason:
         print(f"[ai_router] transport={transport}: {transport_reason}")
 
-    primary = model_override or await resolve_model(org_id, key=model_key)
-    chain = await resolve_fallback_chain(org_id, primary_key=model_key)
-    attempts = _dedupe([primary, *chain])
+    if forced_bypass:
+        # LiteLLM Phase F — the platform force-Anthropic bypass fired. Skip
+        # ALL per-org/per-task policy (model resolution, fallback chain, D2
+        # authorization/disabled filtering, Phase-E effort) entirely: this is
+        # the "blunt instrument, deliberately" decision — one fixed model,
+        # full stop, never conditional on task or org.
+        primary = FORCE_ANTHROPIC_BYPASS_MODEL
+        attempts = [primary]
+        selected_effort = None
+        reasoning_map: dict[str, bool] = {}
+    else:
+        primary = model_override or await resolve_model(org_id, key=model_key)
+        chain = await resolve_fallback_chain(org_id, primary_key=model_key)
+        attempts = _dedupe([primary, *chain])
 
-    # LiteLLM Phase D2 — the org's authorised model list (services.model_catalog).
-    # None means "no explicit selection" -> unrestricted, byte-for-byte the
-    # pre-D2 behaviour (every existing org's real state today). A non-None set
-    # is a genuine allow-list: any attempt not in it is dropped BEFORE the
-    # provider is ever called, never merely hidden in the UI.
-    from services.model_catalog import resolve_authorized_models
+        # LiteLLM Phase D2 — the org's authorised model list (services.model_catalog).
+        # None means "no explicit selection" -> unrestricted, byte-for-byte the
+        # pre-D2 behaviour (every existing org's real state today). A non-None set
+        # is a genuine allow-list: any attempt not in it is dropped BEFORE the
+        # provider is ever called, never merely hidden in the UI.
+        from services.model_catalog import resolve_authorized_models
 
-    authorized = await resolve_authorized_models(org_id)
-    if authorized is not None:
-        attempts = [m for m in attempts if m in authorized]
-        if not attempts:
-            detail = (
-                f"None of the models task '{task_type}' would try "
-                f"({_dedupe([primary, *chain])}) are on org {org_id}'s "
-                f"authorised model list ({sorted(authorized)}). Add one of "
-                f"them in the org's AI model settings, or authorise the "
-                f"model this task actually resolves to."
-            )
-            print(f"[ai_router] {detail}")
-            await _safe_log(
-                org_id=org_id, task_type=task_type, model_requested=primary,
-                model_used=primary, fallback_used=False, fallback_reason=None,
-                cost_usd=None, latency_ms=1, success=False, error_detail=detail,
-                effort_requested=await resolve_effort(org_id, model_key),
-            )
-            raise AIModelNotAuthorizedError(detail)
+        authorized = await resolve_authorized_models(org_id)
+        if authorized is not None:
+            attempts = [m for m in attempts if m in authorized]
+            if not attempts:
+                detail = (
+                    f"None of the models task '{task_type}' would try "
+                    f"({_dedupe([primary, *chain])}) are on org {org_id}'s "
+                    f"authorised model list ({sorted(authorized)}). Add one of "
+                    f"them in the org's AI model settings, or authorise the "
+                    f"model this task actually resolves to."
+                )
+                print(f"[ai_router] {detail}")
+                await _safe_log(
+                    org_id=org_id, task_type=task_type, model_requested=primary,
+                    model_used=primary, fallback_used=False, fallback_reason=None,
+                    cost_usd=None, latency_ms=1, success=False, error_detail=detail,
+                    effort_requested=await resolve_effort(org_id, model_key),
+                    litellm_bypassed=(transport != TRANSPORT_LITELLM),
+                    bypass_reason=(transport_reason or None),
+                )
+                raise AIModelNotAuthorizedError(detail)
 
-    # litellmavailability follow-up — a 'disabled' catalog model never
-    # resolves, unconditionally, regardless of org authorization (an org
-    # could have authorised or even still have it assigned to this exact
-    # task; that is fine for 'deprecated', never for 'disabled'). Task 3's
-    # settled behaviour is a FALLBACK, not a hard failure: when disabling
-    # empties the attempt list, the org's own safe model (ai.model.default)
-    # is appended as the last resort, subject to the SAME authorization and
-    # disabled checks every other attempt already went through — a fallback
-    # must never bypass either guarantee.
-    from services.model_catalog import disabled_model_ids
+        # litellmavailability follow-up — a 'disabled' catalog model never
+        # resolves, unconditionally, regardless of org authorization (an org
+        # could have authorised or even still have it assigned to this exact
+        # task; that is fine for 'deprecated', never for 'disabled'). Task 3's
+        # settled behaviour is a FALLBACK, not a hard failure: when disabling
+        # empties the attempt list, the org's own safe model (ai.model.default)
+        # is appended as the last resort, subject to the SAME authorization and
+        # disabled checks every other attempt already went through — a fallback
+        # must never bypass either guarantee.
+        from services.model_catalog import disabled_model_ids
 
-    disabled = await disabled_model_ids()
-    if disabled:
-        surviving = [m for m in attempts if m not in disabled]
-        if not surviving:
-            safe_model = await resolve_model(org_id, key=DEFAULT_MODEL_KEY)
-            if (
-                safe_model
-                and safe_model not in disabled
-                and (authorized is None or safe_model in authorized)
-            ):
-                surviving = [safe_model]
-        attempts = surviving
+        disabled = await disabled_model_ids()
+        if disabled:
+            surviving = [m for m in attempts if m not in disabled]
+            if not surviving:
+                safe_model = await resolve_model(org_id, key=DEFAULT_MODEL_KEY)
+                if (
+                    safe_model
+                    and safe_model not in disabled
+                    and (authorized is None or safe_model in authorized)
+                ):
+                    surviving = [safe_model]
+            attempts = surviving
 
-    # LiteLLM Phase E — per-task effort. resolve_effort returns None for the
-    # vast majority of tasks (no dedicated effort_key, or one that exists but
-    # has never been set), and when it does this block costs nothing further
-    # below: reasoning_map stays empty and every attempt's effort_budget is
-    # None — byte-for-byte pre-Phase-E behaviour. Only a genuinely SET effort
-    # pays for the one extra live /model_group/info call, and only once per
-    # chain walk (not once per attempt).
-    selected_effort = await resolve_effort(org_id, model_key)
-    reasoning_map: dict[str, bool] = {}
-    if selected_effort is not None:
-        from services.litellm_credentials import reasoning_support_by_model
+        # LiteLLM Phase E — per-task effort. resolve_effort returns None for the
+        # vast majority of tasks (no dedicated effort_key, or one that exists but
+        # has never been set), and when it does this block costs nothing further
+        # below: reasoning_map stays empty and every attempt's effort_budget is
+        # None — byte-for-byte pre-Phase-E behaviour. Only a genuinely SET effort
+        # pays for the one extra live /model_group/info call, and only once per
+        # chain walk (not once per attempt).
+        selected_effort = await resolve_effort(org_id, model_key)
+        reasoning_map: dict[str, bool] = {}
+        if selected_effort is not None:
+            from services.litellm_credentials import reasoning_support_by_model
 
-        reasoning_map = reasoning_support_by_model()
+            reasoning_map = reasoning_support_by_model()
 
     # LiteLLM Phase D1b — routing + attribution. Both are LiteLLM-only
     # concepts: the rollback (direct-Anthropic) path never touches either, so
@@ -796,6 +920,8 @@ async def _execute_chain(
                         latency_ms=max(1, int((time.monotonic() - t0) * 1000)),
                         success=False, error_detail=detail,
                         effort_requested=selected_effort,
+                        litellm_bypassed=(transport != TRANSPORT_LITELLM),
+                        bypass_reason=(transport_reason or None),
                     )
                     await _alert_org_credential_failure(org_id, _CALL_PROVIDER, detail)
                     raise AIOrgCredentialError(detail) from exc
@@ -823,6 +949,8 @@ async def _execute_chain(
                     latency_ms=max(1, int((time.monotonic() - t0) * 1000)),
                     success=False, error_detail=detail,
                     effort_requested=selected_effort,
+                    litellm_bypassed=(transport != TRANSPORT_LITELLM),
+                    bypass_reason=(transport_reason or None),
                 )
                 raise AILiteLLMAuthError(detail) from exc
             print(
@@ -843,6 +971,8 @@ async def _execute_chain(
             cost_usd=_compute_cost(model_id, getattr(message, "usage", None)),
             latency_ms=latency_ms, success=True, error_detail=None,
             effort_requested=selected_effort, effort_used=effort_this_attempt,
+            litellm_bypassed=(transport != TRANSPORT_LITELLM),
+            bypass_reason=(transport_reason or None),
         )
         return extract(message)
 
@@ -859,6 +989,8 @@ async def _execute_chain(
         ),
         cost_usd=None, latency_ms=latency_ms, success=False,
         error_detail=last_error, effort_requested=selected_effort,
+        litellm_bypassed=(transport != TRANSPORT_LITELLM),
+        bypass_reason=(transport_reason or None),
     )
     raise AIChainExhausted(
         f"All models failed for task '{task_type}' (chain={attempts}): "

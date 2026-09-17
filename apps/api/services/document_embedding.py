@@ -63,6 +63,28 @@ outgoing request. Probed live: the embedding path can carry ``metadata.tags``
 exactly like the text path, but NOT the top-level ``user`` field — Voyage
 rejects it outright (a real, provider-specific difference, not an oversight;
 see ``_embed_litellm``'s own docstring).
+
+LiteLLM Phase F (litellmphasef.structural) — THE EMBEDDING DECISION. Phase F
+adds a Hollisworks-only, platform-scoped toggle
+(``services.platform_ai_controls`` / ``platform_ai_controls.
+force_anthropic_bypass``) that forces TEXT calls straight to Anthropic,
+bypassing LiteLLM entirely. Embeddings are DELIBERATELY OUT OF SCOPE:
+Voyage is not Anthropic, so there is no "direct" equivalent to fail over to
+for an embedding call the way there is for text. The settled decision —
+**embeddings keep routing through LiteLLM, unaffected, even while the
+platform toggle is engaged** — because the toggle exists for when Anthropic
+(reached via LiteLLM) is degraded; it says nothing about Voyage or the proxy
+itself, so silently degrading a healthy embedding path along with it would
+be an unrelated, unrequested blast-radius increase, not a narrower incident
+response. Mechanically this needs no extra check here: this module calls
+``services.extraction.resolve_transport`` directly (the original, env-var-
+only resolver), never ``resolve_text_transport``/``_build_text_ai_client``
+(the two new Phase F entry points, both text-only and both defined in
+extraction.py) — the platform toggle is a table this module never reads.
+The PRE-EXISTING ``LITELLM_ROUTING_DISABLED`` env var still applies to
+embeddings exactly as it always has (falls back to direct Voyage, per the
+Phase C paragraph above) — Phase F changes nothing about that switch; it
+only adds a second, narrower, text-only switch alongside it.
 """
 
 import asyncio
@@ -417,6 +439,15 @@ async def _execute_embedding_chain(
             ),
             cost_usd=_compute_embedding_cost(usage),
             latency_ms=latency_ms, success=True, error_detail=None,
+            # LiteLLM Phase F observability (extraction.py's own docstring):
+            # a general "was THIS call litellm-routed" signal. Never driven by
+            # the Phase F platform toggle itself — that flag is text-only and
+            # is never read from this module (see extraction.py's
+            # FORCE_ANTHROPIC_BYPASS_MODEL docstring) — only by the
+            # pre-existing env var / unconfigured-proxy transport already
+            # resolved above.
+            litellm_bypassed=(transport != ex.TRANSPORT_LITELLM),
+            bypass_reason=(transport_reason or None),
         )
         return vectors
 
@@ -430,6 +461,8 @@ async def _execute_embedding_chain(
             f"all {len(attempts)} model(s) in chain failed" if fallback_used else None
         ),
         cost_usd=None, latency_ms=latency_ms, success=False, error_detail=last_error,
+        litellm_bypassed=(transport != ex.TRANSPORT_LITELLM),
+        bypass_reason=(transport_reason or None),
     )
     raise EmbeddingUnavailable(
         f"All models failed for embedding task '{task_type}' (chain={attempts}): "

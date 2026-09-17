@@ -1,5 +1,20 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-16 (litellmphasee.structural — LiteLLM Phase E,
+Last updated: 2026-09-17 (litellmphasef.structural — LiteLLM design-doc §7.5,
+the Hollisworks-only force-Anthropic emergency bypass: a super_admin-only,
+genuinely platform-scoped (`platform_ai_controls`, no `org_id` column at all —
+same convention as `platform_model_catalog`) toggle that forces every TEXT AI
+call straight to a single fixed Anthropic model, bypassing LiteLLM entirely,
+reusing the existing `LITELLM_ROUTING_DISABLED` rollback's own direct-Anthropic
+branch as a second driver rather than building a second mechanism. Embeddings
+are explicitly OUT OF SCOPE and keep routing through LiteLLM unaffected while
+engaged — Voyage has no direct-Anthropic equivalent, proven live by a real
+Voyage call succeeding, unmarked, while a concurrent text call is proven
+bypassed. `ai_decision_log` gained two columns (`litellm_bypassed`,
+`bypass_reason`) so an incident leaves a queryable record even though
+LiteLLM's own spend log stays dark. No blockers — `62/62 PASS, 0 FAIL, 1 FIND`
+via `apps/api/scripts/verify_litellmphasef.py`. See
+`docs/LITELLM_INTEGRATION_DESIGN_V1.md` §7.5 for the full design and proof
+summary); previously 2026-09-16 (litellmphasee.structural — LiteLLM Phase E,
 per-task model assignment + effort: an org_admin now assigns a model (from
 the org's D2-authorised set) to each of the platform's three real AI-task
 dials, and an effort level where the assigned model reports
@@ -78,6 +93,71 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000. LiteLLM design-doc §7.5 — Hollisworks force-Anthropic emergency bypass (2026-09-17)
+
+`apps/api/scripts/verify_litellmphasef.py` (results below reflect the actual
+run). Full design and proof summary in
+`docs/LITELLM_INTEGRATION_DESIGN_V1.md` §7.5. Note: internally sprint-named
+`litellmphasef.structural`, but this is design-doc section **§7.5**, not
+roadmap-table row **F** (§8, budget-threshold UX — still unbuilt and
+untouched by this work; the two "F"s are an unfortunate but harmless naming
+collision).
+
+- **Reuses, does not duplicate, the existing rollback.**
+  `LITELLM_ROUTING_DISABLED=1` (litellmphaseb, 25/25) already is the
+  direct-Anthropic branch of `services.extraction._build_ai_client`. This
+  sprint adds a SECOND driver of that exact same branch — a new table,
+  `platform_ai_controls` (one row, `force_anthropic_bypass`), read via the
+  new `services.extraction.resolve_text_transport` /
+  `_build_text_ai_client` — checked only when the pre-existing env var did
+  NOT already force Anthropic. `_build_ai_client` itself is untouched
+  (still sync, still env-var-only), so every older verify script that calls
+  it directly keeps working byte-for-byte.
+- **Genuinely platform-scoped.** `org_settings` has no `owner_scope` column
+  and cannot hold a platform-scope row (the same real gap D2 found and
+  solved with `platform_model_catalog`) — confirmed live again this sprint.
+  `platform_ai_controls` follows the identical convention: no `org_id`
+  column at all. Read is open to any caller (every real AI call site needs
+  it regardless of who's calling); write is `super_admin` only, enforced at
+  BOTH the RLS layer (a policy for all four operations, per the
+  platform_model_catalog missing-UPDATE lesson) and the router — and this
+  sprint proved the RLS layer independently, not just the app-level 403: a
+  non-super-admin RLS context updates zero rows at the database layer.
+- **Blunt, deliberately.** Engaging the bypass makes `_execute_chain` skip
+  per-task model resolution, the org's fallback chain, D2
+  authorization/disabled-model filtering, and Phase-E effort entirely, and
+  hardcodes the single attempt to `FORCE_ANTHROPIC_BYPASS_MODEL`
+  (`claude-haiku-4-5-20251001`). Proven live: a call explicitly requesting
+  `claude-sonnet` via `model_override` still resolves to the fixed model —
+  the override is genuinely ignored while the bypass is on.
+- **Real finding that shaped the fixed-model choice**: the pre-existing
+  rollback branch does ZERO deployment-name translation — an org's real
+  default model string (`'claude-haiku'`, a PROXY deployment name) sent
+  straight to `api.anthropic.com` would 404. Every prior rollback proof
+  (`verify_litellmphasebproof.py`) only worked because it hand-passed a
+  real dated id via `model_override`. The fixed constant is what makes this
+  new admin-facing toggle safe without an operator also remembering a real
+  model id.
+- **THE EMBEDDING DECISION (the non-obvious part)**: embeddings KEEP
+  ROUTING THROUGH LITELLM, completely unaffected, even while the bypass is
+  engaged. Voyage has no direct-Anthropic equivalent, and the toggle exists
+  for an Anthropic-specific incident — degrading a healthy embedding path
+  too would be an unrelated blast-radius increase. `services.
+  document_embedding` calls the ORIGINAL `resolve_transport()` only; the
+  two new Phase F entry points are structurally absent from that module.
+  Proven live: a real Voyage call succeeds while the text bypass is
+  engaged, and its own `ai_decision_log` row shows `litellm_bypassed=false`
+  — the opposite of the concurrent text call's row.
+- **Observability while dark.** Two new nullable/defaulted `ai_decision_log`
+  columns, `litellm_bypassed boolean` and `bypass_reason text`
+  (`migrations/litellmphasef_force_anthropic_bypass.sql`), mark every call
+  that did not go through LiteLLM (for any of the three reasons — the env
+  var, an unconfigured proxy, or this new toggle), so an incident leaves a
+  queryable record independent of LiteLLM's own spend log, which stays
+  completely dark while bypassed (proven by absence after the full flush
+  window).
+- No blockers.
 
 ## 0000000000000000000000. LiteLLM Phase E — per-task model assignment + effort (2026-09-16)
 

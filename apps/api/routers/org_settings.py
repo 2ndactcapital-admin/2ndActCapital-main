@@ -13,6 +13,8 @@
     DELETE /admin/model-catalog/{model_id}                remove a model (super_admin only)
     GET    /orgs/{org_id}/settings/model-selections       this org's authorised models
     PUT    /orgs/{org_id}/settings/model-selections       replace this org's selection
+    GET    /admin/ai/force-anthropic-bypass               the platform bypass's current state (super_admin only)
+    PUT    /admin/ai/force-anthropic-bypass               toggle it (super_admin only)
     GET    /theme                                        the caller's own org theme
 
 Reads are open to any authenticated user of the org (the app cannot render its
@@ -71,6 +73,11 @@ from services.org_settings import (
     set_setting,
     set_settings,
 )
+from services.platform_ai_controls import (
+    PlatformAIControlError,
+    get_force_anthropic_bypass,
+    set_force_anthropic_bypass,
+)
 from services.rbac import can_manage_org_settings, is_super_admin, load_principal
 from services.tenant import SlugValidationError, validate_slug
 from services.users import ensure_user
@@ -124,6 +131,13 @@ class CatalogAvailabilityBody(BaseModel):
 class TaskAssignmentBody(BaseModel):
     model_id: str | None = None
     effort: str | None = None
+
+    class Config:
+        extra = "forbid"
+
+
+class ForceAnthropicBypassBody(BaseModel):
+    enabled: bool
 
     class Config:
         extra = "forbid"
@@ -580,6 +594,57 @@ async def set_model_catalog_availability(
                     availability=result["availability"],
                 )
     return result
+
+
+# LiteLLM Phase F — the Hollisworks-only force-Anthropic emergency bypass
+# (services.platform_ai_controls). Genuinely platform-scoped (no org_id
+# anywhere in these routes' URL or body — CLAUDE.md Rule 6) and super_admin
+# only on BOTH read and write: unlike the model-catalog's curated list, an
+# ordinary org member/org_admin has no legitimate reason to see whether
+# Hollisworks currently has this emergency switch engaged.
+
+
+@router.get("/admin/ai/force-anthropic-bypass")
+async def read_force_anthropic_bypass(request: Request):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        try:
+            row = await get_force_anthropic_bypass(conn)
+        except PlatformAIControlError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "enabled": row["enabled"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "updated_by": str(row["updated_by"]) if row["updated_by"] else None,
+        "permissions": {
+            "can_read": True,
+            "can_write": True,
+            "is_super_admin": True,
+        },
+    }
+
+
+@router.put("/admin/ai/force-anthropic-bypass")
+async def write_force_anthropic_bypass(request: Request, body: ForceAnthropicBypassBody):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        try:
+            row = await set_force_anthropic_bypass(
+                conn, enabled=body.enabled, updated_by=principal["id"],
+            )
+        except PlatformAIControlError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "enabled": row["enabled"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "updated_by": str(row["updated_by"]) if row["updated_by"] else None,
+    }
 
 
 @router.get("/theme/public")
