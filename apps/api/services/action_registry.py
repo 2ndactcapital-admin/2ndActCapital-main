@@ -19,7 +19,28 @@ class AssistantAction:
     description: str
     access_type: Literal["read", "write"]
     required_permission: str | None  # None → no gating
-    default_autonomy: Literal["suggest", "confirm", "auto"]
+    # Stakes class, per the three-test rule (does it move money or create an
+    # obligation; does it produce an artifact a third party relies on; does it
+    # mutate ownership, economic terms, or a posted ledger line):
+    #   1 = highest stakes (capital commitments, ownership/economic mutations)
+    #   2 = write, but none of the three tests fire on money/ownership terms
+    #   3 = lowest stakes (all reads, plus writes whose only real gate is a
+    #       downstream human review step, e.g. propose())
+    # COUNTERINTUITIVE ON PURPOSE: 1 is the DANGEROUS end, not the safe one.
+    # A future agent-side ``max_tier`` column names the deepest (numerically
+    # LOWEST) tier that agent may reach — max_tier=1 is the MOST permissive
+    # agent (can reach Tier 1), max_tier=3 is the LEAST permissive (reads
+    # only). Read "ceiling" as "how far down toward 1 this agent may go," not
+    # as a small number meaning a small allowance — that reading is backwards
+    # and will grant a low-trust agent the highest-stakes actions. Eligibility
+    # is therefore ``action.tier >= agent.max_tier``, never ``<=``.
+    tier: int
+    # Only ever read for WRITE actions (routers/assistant.py's confirm_action
+    # and undo_activity — both 400 before this field matters if
+    # access_type != "write"). Meaningless on a READ action; every read
+    # carries reversible=False for schema-level consistency, not because
+    # anything decided it applies. Confirmed by grep, not assumed — see
+    # docs/PROJECT_STATUS.md's actionregistryfix entry before changing this.
     reversible: bool
     render_target: Literal["inline", "screen", "auto"]
     handler: Callable    # async callable; for WRITE → confirm phase handler
@@ -78,6 +99,7 @@ class ActionRegistry:
         Column mapping (deployed schema):
           AssistantAction.key  → action_key
           .required_permission → required_permission (may be NULL)
+          .tier                → tier
           is_active            → always True on upsert
           registered_at        → now() on insert, preserved on update
         """
@@ -87,7 +109,7 @@ class ActionRegistry:
                     """
                     INSERT INTO assistant_action_catalog
                         (org_id, action_key, module, description, access_type,
-                         required_permission, default_autonomy, reversible,
+                         required_permission, tier, reversible,
                          render_target, is_active)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
                     ON CONFLICT (org_id, action_key) DO UPDATE SET
@@ -95,7 +117,7 @@ class ActionRegistry:
                         description         = EXCLUDED.description,
                         access_type         = EXCLUDED.access_type,
                         required_permission = EXCLUDED.required_permission,
-                        default_autonomy    = EXCLUDED.default_autonomy,
+                        tier                = EXCLUDED.tier,
                         reversible          = EXCLUDED.reversible,
                         render_target       = EXCLUDED.render_target,
                         is_active           = true
@@ -106,7 +128,7 @@ class ActionRegistry:
                     a.description,
                     a.access_type,
                     a.required_permission,
-                    a.default_autonomy,
+                    a.tier,
                     a.reversible,
                     a.render_target,
                 )

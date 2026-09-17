@@ -54,7 +54,7 @@ def register_actions() -> None:
             description="Browse recent and interest-matched deals in the marketplace.",
             access_type="read",
             required_permission=None,
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="auto",
             handler=_show_new_deals,

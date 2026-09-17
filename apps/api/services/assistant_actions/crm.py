@@ -70,7 +70,7 @@ def register_actions() -> None:
             ),
             access_type="write",
             required_permission=None,
-            default_autonomy="confirm",
+            tier=2,
             reversible=False,  # hollow undo: no undo_token stored, entity_notes has no soft-delete. Revert to True only when both exist.
             render_target="inline",
             handler=_save_note,

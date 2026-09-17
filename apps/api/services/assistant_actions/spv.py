@@ -388,7 +388,7 @@ def register_actions() -> None:
             description="Browse open SPVs available for member co-investment.",
             access_type="read",
             required_permission=None,
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="inline",
             handler=_list_open_spvs,
@@ -406,8 +406,12 @@ def register_actions() -> None:
             module="spv",
             description="Show the cap table for a specific SPV. Staff only.",
             access_type="read",
+            # Mirrors the real endpoint's own gate exactly (routers/spv.py
+            # GET /spvs/{spv_id}/captable → require_permission(request,
+            # "manage_deals")) — not itself a defect; checked as part of
+            # actionregistryfix Task 1b and left unchanged.
             required_permission="manage_deals",
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="inline",
             handler=_show_captable,
@@ -433,8 +437,17 @@ def register_actions() -> None:
                 "The member reviews the commitment before it is recorded."
             ),
             access_type="write",
-            required_permission=None,
-            default_autonomy="confirm",
+            # The ONLY write in the registry that commits capital and had NO
+            # gate at all. indicate_interest is the real, seeded permission
+            # for a member's own self-directed capital commitment (held by
+            # `member` and `investment_staff` for org 1) — matching the real
+            # HTTP endpoint (POST /spvs/{spv_id}/subscriptions), which also
+            # never required manage_deals: this is deliberately a
+            # member-initiated action, not a staff-only one, so the fix
+            # widens the assistant path's honesty (a real, named permission
+            # instead of no gate) without narrowing who may still use it.
+            required_permission="indicate_interest",
+            tier=1,
             reversible=True,
             render_target="inline",
             handler=_execute_subscribe,
@@ -471,7 +484,7 @@ def register_actions() -> None:
             description="Show the transaction ledger summary for a specific SPV. Staff only.",
             access_type="read",
             required_permission="manage_deals",
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="screen",
             handler=_show_ledger_handler,
@@ -499,7 +512,7 @@ def register_actions() -> None:
             ),
             access_type="write",
             required_permission="manage_deals",
-            default_autonomy="confirm",
+            tier=1,
             reversible=True,
             render_target="screen",
             handler=_record_txn_confirm,

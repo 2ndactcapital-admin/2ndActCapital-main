@@ -4,7 +4,8 @@ Import and call each module's register_actions() at app startup so they load
 into the global REGISTRY before any request is served.
 """
 from services.assistant_actions import (
-    crm, entity_graph, litellm_ops, marketplace, portfolio, queries, spv, tasks,
+    crm, entity_graph, litellm_ops, marketplace, portfolio, propose, queries,
+    spv, tasks,
 )
 # fee42b's carry proposer lives beside the rest of the fee/SPV services rather
 # than in this package, because it is a service module that happens to expose
@@ -22,4 +23,5 @@ def register_all() -> None:
     entity_graph.register_actions()
     queries.register_actions()
     litellm_ops.register_actions()
+    propose.register_actions()
     spv_carry_runs.register_actions()

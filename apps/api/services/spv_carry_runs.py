@@ -1072,7 +1072,7 @@ def register_actions() -> None:
             # a lie encoded in the catalogue.
             access_type="write",
             required_permission=ACTION_PERMISSION,
-            default_autonomy="confirm",
+            tier=1,  # proposes, but carry economics are test 3 — the GP relies on this proposal
             reversible=False,  # a DRAFT is discarded, not undone
             render_target="inline",
             handler=_propose_handler,

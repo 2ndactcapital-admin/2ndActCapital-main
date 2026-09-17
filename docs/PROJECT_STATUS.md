@@ -1,5 +1,49 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-17 (agenticmakerchecker.structural — agentic substrate:
+Last updated: 2026-09-17 (actionregistryfix.structural — the action registry's
+16-verb ceiling means `required_permission` already IS the capability
+vocabulary; the long-open "#3 capability annotation" item from
+`agenticmakerchecker.structural` (below) is DISSOLVED, not solved — no
+capability column added, `required_permission`'s own defects fixed instead:
+`spv.subscribe` (commits capital, had NO gate at all) now requires the real,
+seeded `indicate_interest` permission, matching the real HTTP endpoint's own
+member-initiated (not staff-gated) design; `entity.link_ownership` moved off
+the role string `'staff'` (which silently refused every caller, forever,
+since `rbac.get_user_permissions` never returns role names) onto
+`manage_deals`, this registry's existing de facto staff gate. Added `tier`
+(int, 1/2/3) per a three-test rule (moves money/creates an obligation;
+produces an artifact a third party relies on; mutates ownership/economic
+terms/a posted ledger line) and dropped `default_autonomy` (correlated 1:1
+with `access_type` across all 16 rows, never encoded a real decision).
+**Tier direction is counterintuitive and now written down where it can't be
+missed** (`services/action_registry.py`'s `AssistantAction.tier` docstring):
+Tier 1 is the HIGHEST-stakes class, not the smallest allowance — a future
+agent-side `max_tier` column names the DEEPEST (numerically LOWEST) tier an
+agent may reach, so `max_tier=1` is the MOST permissive agent and `max_tier=3`
+the LEAST, with eligibility as `action.tier >= agent.max_tier`, never `<=`.
+Collapsed the `entities`/`entity`/`entity_graph` module split into one
+`entity` domain (module is write-only metadata with zero code readers other
+than `sync_catalog`'s own upsert — action_key never changes, so there is no
+rename blast radius). Added `propose(agent_key, object_type, payload,
+rationale)` — the one new, universal write surface every agent depends on,
+landing as an `agent_proposals` row; deliberately ungated
+(`required_permission=None`) because the real safety gate is the maker-checker
+review step `agenticmakerchecker.structural` already built, not the propose
+call itself. `crm.draft_note.reversible` was reported, not changed — already
+correctly `False` since 72ba8c0, reverting 2999846's earlier flip; the
+`/undo` path is still hollow (no `undo_token` stored, `entity_notes` has no
+soft-delete column). `reversible` confirmed meaningless on all 10 reads (its
+only two live readers, both in `routers/assistant.py`, are unreachable unless
+`access_type == "write"`) — left `False` rather than made nullable.
+Migration `apps/api/migrations/actionregistryfix_tier.sql` applied live via
+the supabase-2ndact-dev MCP `apply_migration` tool; `docs/schema_snapshot.sql`
+refreshed. `apps/api/scripts/verify_actionregistryfix.py` is WRITTEN, not yet
+run by the operator — per SPRINT_WORKFLOW_STANDARD.md's "sprint writes,
+operator runs" rule, this entry does not claim a PASS/FAIL count. The
+registry is still thin against five of the seven named agents (Document &
+Custodial Ops and Compliance Analyst have zero verbs; only Deal & SPV,
+Portfolio & Suitability, and Fund Admin & Billing have any) — by design, per
+this sprint's own instruction: verbs get added when the agent that needs them
+is built, not spec'd speculatively ahead of it); previously 2026-09-17 (agenticmakerchecker.structural — agentic substrate:
 a real `review_agent_proposals` permission plus a generic `agent_proposals`
 table make maker-checker eligibility COMPUTED rather than stored (holds the
 permission AND is not the row's own maker), correcting the original design's
@@ -108,6 +152,123 @@ This file starts with the email item below.
 
 ---
 
+## 0000000000000000000000000. Action registry defects, tiers, propose() — verify WRITTEN, not yet run (2026-09-17)
+
+**Not blocked on anything external.** Schema + code shipped and confirmed
+live against the dev database in this session; recorded here (like the
+`agenticmakerchecker.structural` entry immediately below) because the
+verify script is written but not yet run by the operator, per
+SPRINT_WORKFLOW_STANDARD.md's "sprint writes, operator runs" rule — this
+entry makes no PASS/FAIL claim.
+
+**Scope: `apps/api/services/action_registry.py` +
+`apps/api/services/assistant_actions/*.py` + `spv_carry_runs.py`'s one
+registration.** Four real defects, a new `tier` column, a module collapse,
+and one new verb.
+
+**Task 1 findings (also printed live by the verify script, not just
+asserted here):**
+
+- **1a — module collapse blast radius.** `entities`/`entity`/`entity_graph`
+  collapse to one `module="entity"` value. Only the `module` field changes;
+  every `action_key` is untouched, so there is no rename blast radius at
+  all — the one live `workflow_steps.action_registry_key` row
+  (`marketplace.show_new_deals`) was never in the collapsed set anyway.
+  `module` re-confirmed write-only metadata (zero readers outside
+  `ActionRegistry.sync_catalog`'s own upsert — the finding the prior
+  `registryfix.structural` sprint already made still holds).
+- **1b — `spv.subscribe`'s permission.** Had `required_permission=None` —
+  the only write in the registry that commits capital with no gate at all.
+  The real HTTP endpoint (`POST /spvs/{spv_id}/subscriptions`,
+  `routers/spv.py`) never required `manage_deals` either — every OTHER
+  route in that file does; this one deliberately doesn't, because
+  subscribing is member-initiated, not staff-only. Fixed to
+  `indicate_interest` (resource `deals`, action `interest`) — the real,
+  seeded permission for exactly this, held by `member` and
+  `investment_staff` in org 1. `spv.show_captable`'s `manage_deals` gate
+  was checked and is CORRECT, not a second defect: it mirrors the real
+  `GET /spvs/{spv_id}/captable` endpoint's own gate exactly.
+- **1c — `reversible` on reads.** Grepped every real reader: exactly two,
+  both in `routers/assistant.py` (`confirm_action`, `undo_activity`), both
+  unreachable unless `access_type == "write"` (reads execute inline in the
+  LLM loop and never produce an `assistant_activities` row). Confirmed
+  meaningless on all 10 reads — left `False` (schema-level consistency,
+  not a decision) rather than made nullable, since a three-state column
+  would make both real consumers handle a case that can never occur for
+  them. `crm.draft_note.reversible`: reported, not changed — already
+  correctly `False` since commit `72ba8c0` (reverting `2999846`'s earlier
+  flip to `True`), because the `/undo` path stays hollow (no `undo_token`
+  stored by `_save_note`, `entity_notes` has no soft-delete column —
+  reconfirmed against the current schema snapshot).
+- **1d — module is still write-only metadata.** Re-confirmed live, not
+  assumed carried over from the prior sprint.
+
+**The four data defects, fixed:**
+1. `spv.subscribe.required_permission`: `None` → `'indicate_interest'`.
+2. `crm.draft_note.reversible`: already `False` (see 1c) — no change made;
+   the sprint prompt's own instruction was to report the conflict rather
+   than silently re-flip it, since the underlying `/undo` gap is unclosed.
+3. `entity.link_ownership.required_permission`: `'staff'` (a ROLE string —
+   never returned by `rbac.get_user_permissions`, so this action was
+   silently unreachable via `/assistant/confirm` for EVERY caller, forever)
+   → `'manage_deals'` (this registry's existing de facto staff gate, used
+   by `spv.show_captable`/`show_ledger`/`record_transaction`).
+4. Module collapse: `entities`/`entity`/`entity_graph` → `entity`.
+
+**`tier` (int, 1/2/3) replaces `default_autonomy`.** `default_autonomy`
+correlated 1:1 with `access_type` across all 16 pre-existing rows (every
+read `'auto'`, every write `'confirm'`) and never encoded a real decision —
+dropped from the dataclass, every registration site, and the DB column
+(`apps/api/migrations/actionregistryfix_tier.sql`, applied live via the
+supabase-2ndact-dev MCP `apply_migration` tool — `app_service` has no
+`ALTER` on `public`). `tier` assigned by the three-test rule (does it move
+money or create an obligation; does it produce an artifact a third party
+relies on; does it mutate ownership, economic terms, or a posted ledger
+line): **Tier 1** (highest stakes) = `spv.subscribe`,
+`spv.record_transaction`, `entity.link_ownership`,
+`spv_carry.propose_from_realization` (proposes rather than posts, but carry
+economics ARE test three and the proposal is the artifact the GP relies
+on); **Tier 2** = `crm.draft_note`, `litellm.reload_model_cost_map`,
+`propose()`; **Tier 3** (lowest stakes) = all 10 reads.
+
+**Tier direction is counterintuitive on purpose, and is now written down
+where a future reader will actually see it** — `AssistantAction.tier`'s
+docstring in `services/action_registry.py`. Tier 1 is the HIGHEST-stakes
+class, not a small allowance. A future agent-side `max_tier` column names
+the DEEPEST (numerically LOWEST) tier that agent may reach: `max_tier=1` is
+the MOST permissive agent (can reach Tier 1), `max_tier=3` the LEAST
+(reads only). Eligibility is `action.tier >= agent.max_tier`, never `<=` —
+reading "ceiling" as "a small number means a small allowance" is backwards
+and would hand a low-trust agent the highest-stakes actions.
+
+**`propose(agent_key, object_type, payload, rationale)`** —
+`apps/api/services/assistant_actions/propose.py`, the one new verb this
+sprint adds, and the only one: the universal write surface every agent
+depends on instead of a domain-specific action. Lands as a row in
+`agent_proposals` (built by `agenticmakerchecker.structural`, above).
+Deliberately `required_permission=None` and Tier 2 — the real safety gate
+is the maker-checker REVIEW step that table already enforces
+(`review_agent_proposals` + not-the-maker, both in Python and via a
+database CHECK constraint), not the propose call itself; gating who may
+propose would just re-litigate access control that already lives,
+correctly, on the approve/reject side. Still goes through the standard
+draft → confirm flow every other registry write uses — a wrong proposal is
+low-stakes and easily discarded, but should still be a deliberate action,
+not a silent side effect of a conversation. No other verb added: the
+registry stays thin against five of the seven named agents (Document &
+Custodial Ops and Compliance Analyst have zero verbs today) — by design,
+per this sprint's own instruction, verbs arrive with the agent that needs
+them, not ahead of it as a speculative menu.
+
+**Files:** `apps/api/services/action_registry.py` (`AssistantAction.tier`,
+`sync_catalog`); `apps/api/services/assistant_actions/{crm,entity_graph,
+litellm_ops,marketplace,portfolio,propose,queries,spv,tasks}.py`;
+`apps/api/services/spv_carry_runs.py` (one registration); `apps/api/
+migrations/actionregistryfix_tier.sql`; `docs/schema_snapshot.sql`
+(refreshed); `apps/api/scripts/verify_actionregistryfix.py`.
+
+---
+
 ## 000000000000000000000000. Agentic substrate — maker-checker rule + escalation enum wiring; verify WRITTEN, not yet run (2026-09-17)
 
 Builds the two genuinely-unblocked items from the 15-item agentic design
@@ -210,11 +371,18 @@ routers/marketplace.py` and `apps/web/components/assistant/
 AssistantPanel.jsx` (both `compliance_sr`/`compliance_jr` references
 repointed); `docs/reference.md` (role UUID list + hierarchy line).
 
-**#3 capability annotation on the action registry remains blocked** on an
-undefined vocabulary — `docs/AGENTIC_SUBSTRATE_DISCOVERY.md` Task 1 already
-found none of the three candidate vocabularies (`profiles.name`,
-`permissions`, `trading_authority_grants.authority_tier`) is a ready-made
-fit, and this sprint does not attempt to define a fourth.
+**#3 capability annotation on the action registry — DISSOLVED, not solved**
+(`actionregistryfix.structural`, above, 2026-09-17). At 16 registered verbs,
+none of the three candidate vocabularies this discovery ruled out
+(`profiles.name`, `permissions`, `trading_authority_grants.authority_tier`)
+was ever going to be the fix — a dedicated capability column against a
+16-row table would just be a SECOND parallel vocabulary next to
+`required_permission`, which is exactly the registry-duplication problem
+this codebase already suffers from elsewhere. `required_permission` IS the
+capability vocabulary at this scale; the sprint fixed its two real defects
+(`spv.subscribe`'s missing gate, `entity.link_ownership`'s role-not-a-
+permission gate) directly instead. Revisit only if verb count genuinely
+outgrows what `required_permission` can express — not before.
 
 ---
 

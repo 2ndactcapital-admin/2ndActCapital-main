@@ -144,14 +144,18 @@ def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
             key="entity_graph.show_hierarchy",
-            module="entity_graph",
+            # module collapses entities/entity/entity_graph into one domain —
+            # module is write-only metadata (upserted into the catalog and
+            # read by nothing else, confirmed by grep); the action_key is
+            # untouched, so no workflow_steps or fixture reference breaks.
+            module="entity",
             description=(
                 "Show the ownership hierarchy for an entity, including its "
                 "full subtree and lookthrough effective percentages."
             ),
             access_type="read",
             required_permission=None,
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="screen",
             handler=_show_hierarchy_handler,
@@ -177,8 +181,17 @@ def register_actions() -> None:
                 "specifying the ownership percentage."
             ),
             access_type="write",
-            required_permission="staff",
-            default_autonomy="confirm",
+            # "staff" was a ROLE (services.permissions.STAFF_ROLES), not a row
+            # in the `permissions` table rbac.get_user_permissions actually
+            # returns — so this gate silently denied EVERY caller, forever.
+            # manage_deals is this registry's existing de facto staff gate
+            # (already used for spv.show_captable/show_ledger/
+            # record_transaction) and, of the real seeded permissions, its
+            # role grant set (admin, investment_staff, super_admin) is the
+            # closest match to STAFF_ROLES for org 1 — reused rather than
+            # inventing a new permission for one action.
+            required_permission="manage_deals",
+            tier=1,
             reversible=True,
             render_target="inline",
             handler=_link_ownership_handler,

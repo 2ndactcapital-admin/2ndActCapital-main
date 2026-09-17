@@ -235,7 +235,10 @@ def register_actions() -> None:
     REGISTRY.register(
         AssistantAction(
             key="entities.count",
-            module="entities",
+            # module collapses entities/entity/entity_graph into one domain —
+            # see entity_graph.py for the full rationale (module is
+            # write-only metadata; action_key is untouched).
+            module="entity",
             description=(
                 "Count how many entities match a filter, and return a short "
                 "sample. Use this for aggregate questions like 'how many "
@@ -246,7 +249,7 @@ def register_actions() -> None:
             ),
             access_type="read",
             required_permission=None,
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="inline",
             handler=_count_entities,
@@ -288,7 +291,7 @@ def register_actions() -> None:
             ),
             access_type="read",
             required_permission=None,
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="inline",
             handler=_count_investments,

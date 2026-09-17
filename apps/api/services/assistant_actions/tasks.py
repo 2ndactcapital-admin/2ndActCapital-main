@@ -75,7 +75,7 @@ def register_actions() -> None:
             ),
             access_type="read",
             required_permission=None,
-            default_autonomy="auto",
+            tier=3,
             reversible=False,
             render_target="inline",
             handler=_my_todos,

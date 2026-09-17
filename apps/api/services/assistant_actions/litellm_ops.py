@@ -174,7 +174,7 @@ def register_actions() -> None:
             # author workflows are exactly the people who should be able to fire a
             # cost-map reload. It is granted to no seeded Profile by default.
             required_permission="author_workflows",
-            default_autonomy="confirm",
+            tier=2,
             reversible=False,  # nothing to undo; re-running is the remedy
             render_target="inline",
             handler=_reload_handler,
