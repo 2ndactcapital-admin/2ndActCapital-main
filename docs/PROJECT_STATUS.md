@@ -1,5 +1,19 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-17 (litellmphasef.structural — LiteLLM design-doc §7.5,
+Last updated: 2026-09-17 (agenticmakerchecker.structural — agentic substrate:
+a real `review_agent_proposals` permission plus a generic `agent_proposals`
+table make maker-checker eligibility COMPUTED rather than stored (holds the
+permission AND is not the row's own maker), correcting the original design's
+"boundary = tool allowlist × reviewer role" to allowlist-alone since reviewer
+is not fixed per agent; compliance_sr/compliance_jr (confirmed live to hold
+zero permissions and zero holders) collapsed into one `compliance` role;
+escalation_reason (created earlier, unwired) now lives on a real, nullable
+column. Schema + code shipped and confirmed live against the dev database;
+`apps/api/scripts/verify_agenticmakerchecker.py` is WRITTEN, not yet run by
+the operator — per SPRINT_WORKFLOW_STANDARD.md's "sprint writes, operator
+runs" rule, this entry does not claim a PASS/FAIL count. See the entry below
+for the full accounting, including the two real code references found and
+fixed (one live endpoint, one dead role-keyed lookup) and why #3 capability
+annotation remains out of scope); previously 2026-09-17 (litellmphasef.structural — LiteLLM design-doc §7.5,
 the Hollisworks-only force-Anthropic emergency bypass: a super_admin-only,
 genuinely platform-scoped (`platform_ai_controls`, no `org_id` column at all —
 same convention as `platform_model_catalog`) toggle that forces every TEXT AI
@@ -91,6 +105,116 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000. Agentic substrate — maker-checker rule + escalation enum wiring; verify WRITTEN, not yet run (2026-09-17)
+
+Builds the two genuinely-unblocked items from the 15-item agentic design
+(`docs/CROSS_PROJECT_STATUS_CONSOLIDATED.md` §5.1, and see
+`docs/AGENTIC_SUBSTRATE_DISCOVERY.md` for the prior discovery pass this
+sprint builds on). Item #3 (capability annotation on the action registry)
+remains explicitly OUT OF SCOPE — its vocabulary was never defined, and the
+assumption that SOC's three partial vocabularies would serve was disproven
+by that discovery pass.
+
+**Per SPRINT_WORKFLOW_STANDARD.md's "sprint writes, operator runs" rule,
+this sprint is NOT reporting a PASS/FAIL count.** `apps/api/scripts/
+verify_agenticmakerchecker.py` is written and ready; the schema and code
+changes below are confirmed live against the dev database by direct query
+during this sprint, but the sprint itself never executes its own verify
+script. Run it via:
+
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_agenticmakerchecker.py 2>&1 | grep -E "^\[FAIL\]|^TOTAL"
+
+**Task 1 findings:**
+- **1a.** `permissions.name` convention is `verb_resource`, backed by a real
+  `(resource, action)` pair — confirmed against all 32 pre-existing rows.
+  No existing permission covered "may check an agent's proposal";
+  `review_agent_proposals` (`resource='agent_proposals', action='review'`)
+  is new.
+- **1b.** No generic agent-proposal table existed. The prior
+  `agenticdiscovery.lowrisk` sprint had already ruled out the three real
+  candidates: `assistant_activities` (the right shape — `proposed_by`/
+  `approved_by` plus a real maker-checker CHECK constraint — but zero live
+  rows, HELD/unwired, purpose-built for a member confirming their OWN
+  assistant's action rather than a permission-gated third party),
+  `member_todos` (the only one with real data, but a flat per-user queue
+  with no reviewer-eligibility concept), `workflow_run_steps` (same shape
+  as `assistant_activities`, zero rows). `agent_proposals` is new, reusing
+  `assistant_activities`' proven `proposed_by`/CHECK-constraint shape
+  rather than inventing a new one.
+- **1c.** `compliance_sr`/`compliance_jr` had exactly one real code
+  reference (`routers/marketplace.py`'s `_safe_notify_roles` compliance-
+  override notification list) — confirmed live to hold **zero**
+  `role_permissions` grants and **zero** `user_roles` holders on both
+  before deletion. A SECOND reference was found DURING this sprint, not by
+  the prior discovery pass: `apps/web/components/assistant/
+  AssistantPanel.jsx`'s `ROLE_POSTURE` map keyed both literals to
+  `"collapsed"` — genuinely dead code, since `users.role` (a free-text
+  column, confirmed live to hold only `member`/`org_admin`/`super_admin`)
+  never actually carried either literal, but repointed at `compliance`
+  anyway for honesty going forward.
+
+**Decisions implemented exactly as specified, not re-litigated:**
+- **Boundary-rule correction.** The original agentic design said agent
+  boundary = tool allowlist × reviewer role. Reviewer is NOT fixed per
+  agent (see below), so it defines nothing — the boundary is the TOOL
+  ALLOWLIST alone. No table in this sprint encodes reviewer as a boundary.
+- **Seven-agent merge.** Chancery and Custodial Ops are one "Document &
+  Custodial Ops" agent (shared reviewer, adjacent verbs) — not built as a
+  row anywhere yet (no agent-definition table exists), but recorded here
+  and in `services/agent_proposals.py`'s `AGENT_KEYS` for when one does.
+- **Maker-checker is COMPUTED, never stored.** No `review_role` column
+  anywhere. `agent_proposals` records `proposed_by` (the maker); eligibility
+  to check is computed by `services.agent_proposals.is_eligible_reviewer`
+  as: holds `review_agent_proposals` (or is `super_admin`) AND is not the
+  maker AND is in the proposal's own org. The database backstops the
+  self-check half independently via `agent_proposals_maker_checker_chk`
+  (`reviewed_by IS NULL OR reviewed_by <> proposed_by`, mirroring the
+  existing `assistant_activities_maker_checker_chk` pattern) — bypassing
+  `services.agent_proposals` does not bypass the rule.
+- **compliance_sr/compliance_jr → `compliance`.** Additive-then-remove
+  (both were empty), not a grants migration. `docs/reference.md` updated;
+  the real role hierarchy line collapsed accordingly.
+- **The review permission's real grants**, six roles exactly (Hollis maps
+  to no role — it never proposes, so it never checks either): `support_staff`,
+  `advisor`, `investment_committee`, `fund_finance`, `compliance`,
+  `org_admin`. Deal & SPV and Fund Admin & Billing both route to
+  `fund_finance` by design (a routing default, not a boundary) — granting
+  once covers both.
+- **escalation_reason wired for real.** The pre-existing enum
+  (`budget|max_steps|tool_error|low_confidence|refused|ambiguous`, created
+  earlier and confirmed still unwired as of the `registryfix.structural`
+  sprint) now lives on `agent_proposals.escalation_reason` — nullable,
+  since the ordinary propose-then-check flow is not itself an escalation.
+
+**Honest state of the mechanism, restated per the sprint prompt's own
+instruction not to overstate this:** NO agent runs exist yet — Workflow
+Manager Wave 2 (which would give an agent a workflow instance to execute
+as) is unbuilt, so nothing calls `services.agent_proposals.create_proposal`
+from real agent traffic today. This sprint is substrate — the table, the
+permission, and the rule — not a running agent. The reviewer roles
+themselves are mostly empty: `advisor` (11 perms), `support_staff` (7), and
+`org_admin` (1, now 2) have real holders; `investment_committee`,
+`fund_finance`, and the new `compliance` role have **zero** holders across
+the board. The maker-checker rule is therefore UNEXERCISED in production
+until staffing catches up — every proof in the verify script runs against
+fixtures, not real traffic.
+
+**Files:** `apps/api/migrations/agenticmakerchecker_substrate.sql` (applied
+live via the supabase-2ndact-dev MCP `apply_migration` tool — `app_service`
+has no `CREATE` on `public`); `apps/api/services/agent_proposals.py`
+(`create_proposal`, `is_eligible_reviewer`, `review_proposal`); `apps/api/
+routers/marketplace.py` and `apps/web/components/assistant/
+AssistantPanel.jsx` (both `compliance_sr`/`compliance_jr` references
+repointed); `docs/reference.md` (role UUID list + hierarchy line).
+
+**#3 capability annotation on the action registry remains blocked** on an
+undefined vocabulary — `docs/AGENTIC_SUBSTRATE_DISCOVERY.md` Task 1 already
+found none of the three candidate vocabularies (`profiles.name`,
+`permissions`, `trading_authority_grants.authority_tier`) is a ready-made
+fit, and this sprint does not attempt to define a fourth.
 
 ---
 

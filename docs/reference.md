@@ -18,11 +18,12 @@ next_gen:             00000000-0000-0000-0000-000000000014
 member_manager:       00000000-0000-0000-0000-000000000015
 investment_staff:     00000000-0000-0000-0000-000000000016
 support_staff:        00000000-0000-0000-0000-000000000017
-compliance_jr:        00000000-0000-0000-0000-000000000018
-compliance_sr:        00000000-0000-0000-0000-000000000019
 fund_finance:         00000000-0000-0000-0000-000000000020
 ir_member_relations:  00000000-0000-0000-0000-000000000021
 investment_committee: 00000000-0000-0000-0000-000000000022
+compliance:           d91c4abf-5c9c-41e9-8e5b-eff919c0cef1
+  (agenticmakerchecker.structural: replaces compliance_sr/compliance_jr,
+  both confirmed live to hold zero permissions and zero holders)
 
 ### Seed Entities
 Hargrove Family Trust: 10000000-0000-0000-0000-000000000001
@@ -39,8 +40,8 @@ family_office, household, foundation, other
 
 ## Role Hierarchy (highest to lowest)
 super_admin > admin > investment_committee >
-investment_staff > compliance_sr > advisor >
-compliance_jr > member_manager >
+investment_staff > compliance > advisor >
+member_manager >
 ir_member_relations > fund_finance >
 support_staff > member > next_gen
 

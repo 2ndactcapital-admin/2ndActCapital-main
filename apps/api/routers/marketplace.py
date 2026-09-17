@@ -1372,7 +1372,7 @@ async def create_compliance_request(
 
     # Notify reviewers (investment_staff + senior compliance).
     await _safe_notify_roles(
-        pool, org_id, ["investment_staff", "compliance_sr"],
+        pool, org_id, ["investment_staff", "compliance"],
         event_type="compliance_override_requested",
         title="Compliance Review Requested",
         body=f"A member requested compliance review for {deal['name']}",

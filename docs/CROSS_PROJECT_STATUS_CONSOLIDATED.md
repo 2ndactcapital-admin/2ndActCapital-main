@@ -103,13 +103,17 @@ The Altruist thread already folded its own findings in. These are from **other**
 
 ## 5 · Untracked specs, by weight
 
-### 5.1 Agentic architecture — 15 items, zero built
+### 5.1 Agentic architecture — 2 of 15 items now built (substrate only), 13 still untracked
 
 Custody cliff (**settled, permanent**: trade execution, money movement, filing submission, GL posting never get an agent — now in `CLAUDE.md`). Compliance Analyst ≠ Compliance Officer (**settled**).
 
-Highest urgency per that thread's own sequencing: **#3 capability annotation on the action registry** (cheap now, expensive to retrofit across S26–S29a) and **#5 `review_role` on the proposal queue**. **#2 and #10 (`entity_context` shared assembler) are the substance of S27.** #13 (fixed escalation-reason enum) is an afternoon. Full list in the prior reconciliation doc.
+**[RESOLVED THIS SESSION, agenticmakerchecker.structural, 2026-09-17]** — #5 (`review_role` on the proposal queue) is built, but NOT as originally specified: discovery found reviewer is not fixed per agent, so a stored `review_role` column would have been the wrong shape entirely. Built instead: a real `review_agent_proposals` permission (granted to six real roles — `support_staff`, `advisor`, `investment_committee`, `fund_finance`, the newly-consolidated `compliance`, `org_admin`; never Hollis, which has no role and never proposes) plus a generic `agent_proposals` table recording only who MADE a proposal (`proposed_by`). Eligibility to CHECK is COMPUTED at call time (`services.agent_proposals.is_eligible_reviewer`: holds the permission AND is not the maker AND is in the proposal's own org) — never stored. **This also corrects item #4's boundary rule**: "tool allowlist × reviewer role" is wrong once reviewer isn't fixed per agent — the boundary is the tool allowlist alone. #13 (fixed escalation-reason enum) was already done in an earlier sprint and is now genuinely wired: `agent_proposals.escalation_reason` uses the pre-existing enum. See `docs/PROJECT_STATUS.md`'s agenticmakerchecker.structural entry for the full accounting, including `compliance_sr`/`compliance_jr` (both confirmed empty) collapsing into one `compliance` role, and a second stale-role-name reference found mid-sprint (`apps/web` `AssistantPanel.jsx`, dead code — `users.role` never actually carried either literal).
 
-**New from this pass — #15 cadence finding**: six of eight agents are cron-driven, not chat-driven. This **raises the Workflow Scheduler's priority** (now built) and puts most token spend on the Batch API at 50% off. Not reflected in any roadmap ordering.
+**Still substrate, not a running agent.** No agent-run table exists — Workflow Manager Wave 2 (which would give an agent a workflow instance to execute as) is unbuilt, so `create_proposal` is called by nothing in production. Most of the six reviewer roles above are themselves still empty of holders (`investment_committee`, `fund_finance`, `compliance` all have zero; only `advisor`/`support_staff`/`org_admin` have real people) — the mechanism is UNEXERCISED until staffing catches up.
+
+**#3 capability annotation on the action registry remains NOT in scope** — explicitly excluded from agenticmakerchecker.structural because its vocabulary was never defined, and the prior discovery pass (`docs/AGENTIC_SUBSTRATE_DISCOVERY.md`) already found none of the three candidate vocabularies in this codebase (`profiles.name`, `permissions`, `trading_authority_grants.authority_tier`) is a ready-made fit. Still the highest-urgency remaining item — cheap now, expensive to retrofit across S26–S29a. **#2 and #10 (`entity_context` shared assembler) are the substance of S27.** Full list in the prior reconciliation doc.
+
+**#15 cadence finding (unchanged)**: six of eight agents are cron-driven, not chat-driven. This **raises the Workflow Scheduler's priority** (now built) and puts most token spend on the Batch API at 50% off. Not reflected in any roadmap ordering.
 
 ### 5.2 Cash & Liability Matching — designed, fully blocked
 
