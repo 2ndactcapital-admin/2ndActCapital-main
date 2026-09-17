@@ -668,6 +668,30 @@ async def _execute_chain(
             )
             raise AIModelNotAuthorizedError(detail)
 
+    # litellmavailability follow-up — a 'disabled' catalog model never
+    # resolves, unconditionally, regardless of org authorization (an org
+    # could have authorised or even still have it assigned to this exact
+    # task; that is fine for 'deprecated', never for 'disabled'). Task 3's
+    # settled behaviour is a FALLBACK, not a hard failure: when disabling
+    # empties the attempt list, the org's own safe model (ai.model.default)
+    # is appended as the last resort, subject to the SAME authorization and
+    # disabled checks every other attempt already went through — a fallback
+    # must never bypass either guarantee.
+    from services.model_catalog import disabled_model_ids
+
+    disabled = await disabled_model_ids()
+    if disabled:
+        surviving = [m for m in attempts if m not in disabled]
+        if not surviving:
+            safe_model = await resolve_model(org_id, key=DEFAULT_MODEL_KEY)
+            if (
+                safe_model
+                and safe_model not in disabled
+                and (authorized is None or safe_model in authorized)
+            ):
+                surviving = [safe_model]
+        attempts = surviving
+
     # LiteLLM Phase E — per-task effort. resolve_effort returns None for the
     # vast majority of tasks (no dedicated effort_key, or one that exists but
     # has never been set), and when it does this block costs nothing further

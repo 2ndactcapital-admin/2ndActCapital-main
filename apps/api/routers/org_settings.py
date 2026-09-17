@@ -34,6 +34,7 @@ KEY serves a call. /admin/model-catalog is not org-scoped in its URL on
 purpose: the curated list is the same for every org.
 """
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -50,10 +51,13 @@ from services.model_catalog import (
     ModelCatalogError,
     add_catalog_model,
     enrich_with_live_info,
+    get_orgs_selecting,
     get_task_assignments,
     list_catalog,
+    list_catalog_for_org,
     list_org_selections,
     remove_catalog_model,
+    set_catalog_availability,
     set_org_selections,
     set_task_assignment,
 )
@@ -105,6 +109,13 @@ class CatalogModelCreate(BaseModel):
 
 class ModelSelectionsBody(BaseModel):
     model_ids: list[str]
+
+    class Config:
+        extra = "forbid"
+
+
+class CatalogAvailabilityBody(BaseModel):
+    availability: str
 
     class Config:
         extra = "forbid"
@@ -251,7 +262,7 @@ async def read_org_model_selections(request: Request, org_id: str):
         principal = await _principal(conn, request)
         _require_read_access(principal, org_id)
         selected = await list_org_selections(conn, org_id)
-        catalog = await list_catalog(conn)
+        catalog = await list_catalog_for_org(conn, org_id)
     can_write = await can_manage_org_settings(pool, principal, org_id)
     return {
         "org_id": org_id,
@@ -306,7 +317,7 @@ async def read_task_assignments(request: Request, org_id: str):
         principal = await _principal(conn, request)
         _require_read_access(principal, org_id)
         tasks = await get_task_assignments(conn, org_id)
-        catalog = await list_catalog(conn)
+        catalog = await list_catalog_for_org(conn, org_id)
         selected = await list_org_selections(conn, org_id)
     can_write = await can_manage_org_settings(pool, principal, org_id)
     # Unrestricted (no explicit org_model_selections row) means every catalog
@@ -520,10 +531,55 @@ async def delete_model_catalog_entry(request: Request, model_id: str):
         principal = await _principal(conn, request)
         if not is_super_admin(principal):
             raise HTTPException(status_code=403, detail="Super Admin access required")
-        removed = await remove_catalog_model(conn, model_id)
+        try:
+            removed = await remove_catalog_model(conn, model_id)
+        except ModelCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not removed:
         raise HTTPException(status_code=404, detail=f"'{model_id}' is not on the platform catalog")
     return {"model_id": model_id, "removed": True}
+
+
+@router.put("/admin/model-catalog/{model_id}/availability")
+async def set_model_catalog_availability(
+    request: Request, model_id: str, body: CatalogAvailabilityBody
+):
+    """LiteLLM D2 §3 — Hollisworks super-admin transitions one catalog
+    model's availability. Setting 'deprecated' or 'disabled' alerts every
+    org that currently has ``model_id`` selected (never every org) —
+    ``services.workflow_todos.create_model_availability_alerts``, the same
+    ``manage_org_settings`` recipient rule and ``_upsert_todo`` /
+    ``_record_undelivered_alert`` machinery D1c's credential-failure alert
+    already established. An invalid ``availability`` value is refused by the
+    real DB CHECK constraint, not a duplicated app-side enum.
+    """
+    from services.workflow_todos import create_model_availability_alerts
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        try:
+            result = await set_catalog_availability(
+                conn, model_id=model_id, availability=body.availability,
+            )
+        except ModelCatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except asyncpg.CheckViolationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{body.availability}' is not a valid availability value",
+            ) from exc
+
+        if result["availability"] in ("deprecated", "disabled"):
+            affected_org_ids = await get_orgs_selecting(conn, model_id)
+            for affected_org_id in affected_org_ids:
+                await create_model_availability_alerts(
+                    conn, org_id=affected_org_id, model_id=model_id,
+                    availability=result["availability"],
+                )
+    return result
 
 
 @router.get("/theme/public")

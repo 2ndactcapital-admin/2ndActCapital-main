@@ -44,6 +44,13 @@ LiteLLM Phase D1c (litellmphased1c.structural): a THIRD alert kind,
 AI provider credential going bad — proof that this module's mechanism
 generalizes to a subject with no natural "who started it" recipient, not
 just to workflow runs/triggers.
+
+LiteLLM D2 §3 follow-up (litellmavailability.structural): a FOURTH alert
+kind, ``create_model_availability_alerts``, reuses the same mechanism again
+for a Hollisworks super-admin deprecating/disabling a platform catalog
+model that one or more orgs have selected — same manage_org_settings
+recipient rule, same non-uuid-subject-folded-into-``source`` encoding
+``create_credential_failure_alerts`` already established.
 """
 from __future__ import annotations
 
@@ -319,6 +326,95 @@ async def create_credential_failure_alerts(
                 detail=detail,
                 priority=5,
                 action_key=_CREDENTIAL_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+# ── litellmavailability: model catalog availability alerting ───────────────
+#
+# routers/org_settings.py's PUT /admin/model-catalog/{model_id}/availability
+# (LiteLLM D2 §3) reuses this SAME module and mechanism for a FOURTH alert
+# kind: a Hollisworks super-admin moving a catalog model to 'deprecated' or
+# 'disabled'. Recipients are manage_org_settings holders, same as the
+# credential-failure alert above — there is no natural "who picked this
+# model" individual, only the org's settings owners. The router computes the
+# AFFECTED org set itself (services.model_catalog.get_orgs_selecting) and
+# calls this once per affected org — never every org on the platform.
+
+TODO_SOURCE_MODEL_AVAILABILITY = "ai_model_availability"
+MODEL_AVAILABILITY_ALERT_UNDELIVERED_ACTION = "ai_model_availability_alert_undelivered"
+_MODEL_CATALOG_CONSOLE_PATH = "/admin/settings"
+
+
+async def create_model_availability_alerts(
+    conn, *, org_id, model_id: str, availability: str
+) -> list:
+    """Alert every manage_org_settings holder of ``org_id`` that
+    ``model_id`` — a model this org has selected — just moved to
+    ``availability`` ('deprecated' or 'disabled').
+
+    Keyed on (source=f'ai_model_availability:{model_id}',
+    related_type='org_settings', related_id=org_id) — the identical
+    encoding ``create_credential_failure_alerts`` uses for a subject
+    (``provider``, here ``model_id``) that has no uuid of its own:
+    ``related_id`` on both ``member_todos`` and ``audit_log`` is a real
+    uuid column, so the non-uuid identifier is folded into ``source``
+    instead, and ``org_id`` (a real uuid) is the actual related resource.
+    A repeated transition for the SAME org+model refreshes one todo rather
+    than stacking duplicates.
+
+    Zero resolvable recipients (the live Hollisworks org is a real, current
+    case) writes a findable audit_log row via the same
+    ``_record_undelivered_alert`` helper every other alert kind in this
+    module uses, with its own distinct action name.
+    """
+    recipients = await _org_admin_recipients(org_id)
+    source = f"{TODO_SOURCE_MODEL_AVAILABILITY}:{model_id}"
+    if availability == "disabled":
+        detail = (
+            f"The '{model_id}' model your organization uses is now "
+            f"disabled on the Hollisworks platform. Calls that would have "
+            f"used it now fall back to your organization's safe model."
+        )
+    else:
+        detail = (
+            f"The '{model_id}' model your organization uses has been "
+            f"deprecated on the Hollisworks platform. It still works today, "
+            f"but Hollisworks recommends migrating to another model."
+        )
+    detail = detail[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn,
+            org_id=org_id,
+            source=source,
+            related_type="org_settings",
+            related_id=org_id,
+            reason=(
+                f"model '{model_id}' set to {availability!r} with no "
+                "resolvable recipient: the org has no manage_org_settings "
+                "holder"
+            ),
+            action=MODEL_AVAILABILITY_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn,
+                org_id=org_id,
+                user_id=uid,
+                source=source,
+                related_type="org_settings",
+                related_id=org_id,
+                title=f"AI model {availability} — {model_id}",
+                detail=detail,
+                priority=5,
+                action_key=_MODEL_CATALOG_CONSOLE_PATH,
             )
         )
     return ids
