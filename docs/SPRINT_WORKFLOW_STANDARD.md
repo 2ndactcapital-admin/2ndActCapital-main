@@ -8,6 +8,39 @@ This is the single, canonical process. Every chat in this Project should follow 
 
 A "sprint" is for real, structural work: schema changes, new endpoints, new UI screens, permission changes, anything touching money/auth/tenant boundaries. Not every task needs one — a quick question, a one-line fix, or a discovery-only check can just be answered directly.
 
+## The sprint does NOT run its own verify script
+
+**The sprint writes `apps/api/scripts/verify_<name>.py` and then STOPS. The
+operator runs it.** This is not a style preference — it removes the single
+most persistent failure mode in this workflow.
+
+A `-p` session fabricates an "I'll wait for the background process / watcher /
+monitor to report back" completion roughly every other invocation. It happened
+seven times in one session, inventing a different non-existent artifact each
+time (a task id, a "monitor", a "watcher task"), and consumed three full sprint
+runs. The rule against it is in STANDING RULES, in the prompt skeleton, and was
+restated in three phrasings in follow-up instructions — and it still happened.
+Prevention has not worked.
+
+So do not ask a sprint to run anything long. Ask it to write the script and
+stop. Then run it yourself:
+
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_<name>.py 2>&1 | grep -E "^\[FAIL\]|^TOTAL"
+
+That gives you the failures and the total in one line. It is faster than a
+resume round-trip and it cannot fabricate a result.
+
+**If a session does fabricate a wait**, the only reliable recovery is a resume
+that contradicts the SPECIFIC invented artifact by name — "there is no task
+b4ozbcrah", "there is no watcher task" — not a general restatement of the rule.
+A general restatement has never worked; naming the invention has worked every
+time.
+
+**Consequence for the prompt skeleton**: the VERIFICATION section should say the
+script must be written and runnable, not that the sprint must execute it. The
+completion rule below still holds — a sprint is not DONE until its verify has
+run green; it is just the operator who runs it.
+
 ## The non-negotiable completion rule
 
 **A sprint is not complete until its own verify script has actually executed, against the real database, with real output.** Not "the code is written." Not "the schema snapshot says this should work." Executed, with output.
