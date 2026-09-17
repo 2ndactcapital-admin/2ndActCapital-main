@@ -659,14 +659,27 @@ async def main() -> int:
         from starlette.testclient import TestClient
         import main as main_module
 
-        low_ceiling = round(platform_total * 0.5, 6)
+        # platform_ai_controls.numeric_value is numeric(12,2) — real
+        # dollars-and-cents precision for a real budget, deliberately NOT
+        # widened for this test's convenience. A sub-cent ceiling
+        # (round(platform_total * 0.5, 6), platform_total being a few
+        # hundredths of a cent) would silently truncate to 0.00 in that
+        # column. Rather than fight the precision, use ceiling_usd=0.00
+        # directly: a REAL, legitimate "spend nothing" ceiling (enabled=true,
+        # numeric_value=0), which the fixed is_platform_over_ceiling/
+        # get_platform_ceiling_status now correctly treat as SET, not
+        # unset — any real spend at all (platform_total, already proven >0
+        # above) is immediately over a $0 ceiling. This exercises the exact
+        # 0.00-is-not-unset edge case directly, deterministically, with no
+        # dependency on the exact tiny dollar amount measured.
+        zero_ceiling = 0.0
         client = TestClient(main_module.app, raise_server_exceptions=False)
         client.__enter__()
         try:
             superadmin = _Principal(client, FIXTURE_SUPERADMIN_SUB, FIXTURE_ORG_A_ID)
             orgadmin_a = _Principal(client, FIXTURE_ORGADMIN_A_SUB, FIXTURE_ORG_A_ID)
 
-            body = {"ceiling_usd": low_ceiling, "warning_pct": 50}
+            body = {"ceiling_usd": zero_ceiling, "warning_pct": 50}
             r_org = orgadmin_a.call("put", "/api/v1/admin/ai/spend-ceiling", body=body)
             check(r_org.status_code == 403,
                   f"org_admin PUT /admin/ai/spend-ceiling refused: HTTP {r_org.status_code}")
@@ -679,9 +692,11 @@ async def main() -> int:
 
             r_super = superadmin.call("put", "/api/v1/admin/ai/spend-ceiling", body=body)
             check(r_super.status_code == 200 and r_super.json()["enabled"] is True
-                  and r_super.json()["ceiling_usd"] == low_ceiling,
-                  f"super_admin PUT the IDENTICAL request body succeeds: "
-                  f"HTTP {r_super.status_code} {r_super.json()}")
+                  and r_super.json()["ceiling_usd"] == zero_ceiling,
+                  f"super_admin PUT the IDENTICAL request body succeeds, and "
+                  f"a $0.00 ceiling round-trips as SET (enabled=true, "
+                  f"ceiling_usd=0.0), never as 'unset': HTTP "
+                  f"{r_super.status_code} {r_super.json()}")
 
             r_get_org = orgadmin_a.call("get", "/api/v1/admin/ai/spend-ceiling")
             check(r_get_org.status_code == 403,

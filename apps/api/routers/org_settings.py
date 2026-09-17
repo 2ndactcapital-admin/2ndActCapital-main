@@ -722,8 +722,12 @@ async def read_platform_spend_ceiling(request: Request):
 async def write_platform_spend_ceiling(request: Request, body: PlatformCeilingBody):
     from services.ai_budgets import AIBudgetError, set_platform_ceiling
 
-    if body.ceiling_usd is not None and body.ceiling_usd <= 0:
-        raise HTTPException(status_code=400, detail="ceiling_usd must be a positive number")
+    if body.ceiling_usd is not None and body.ceiling_usd < 0:
+        # 0.00 is a REAL, legitimate ceiling ("spend nothing against the
+        # shared platform key") — services.ai_budgets treats it as SET, not
+        # unset (unset is numeric_value IS NULL). Only a negative number is
+        # nonsensical.
+        raise HTTPException(status_code=400, detail="ceiling_usd must not be negative")
     if body.warning_pct is not None and not (0 < body.warning_pct < 100):
         raise HTTPException(status_code=400, detail="warning_pct must be between 0 and 100")
 

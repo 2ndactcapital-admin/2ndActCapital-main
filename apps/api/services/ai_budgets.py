@@ -98,6 +98,25 @@ def _org_tag(org_id) -> str:
     return f"org:{org_id}"
 
 
+def _pct_used(spend: float, budget: float | None) -> float | None:
+    """Percentage of ``budget`` consumed by ``spend``, or ``None`` when no
+    budget is configured at all (``budget is None``).
+
+    A budget of exactly $0.00 is a REAL, legitimate "spend nothing" setting
+    (``enabled=true``, ``numeric_value=0``) — NOT "unset". Unset is
+    ``numeric_value IS NULL`` (or, for a per-org budget,
+    ``ai.budget.monthly_usd`` being ``None``), never a falsy check on the
+    number itself: 0.00 is falsy in Python but is a legitimate value, not a
+    missing one. Division by a zero budget would raise, so it is handled
+    explicitly — any spend at all against a $0 budget is already 100%+ over.
+    """
+    if budget is None:
+        return None
+    if budget == 0:
+        return 100.0 if spend > 0 else 0.0
+    return spend / budget * 100.0
+
+
 # ── per-org budget ───────────────────────────────────────────────────────
 
 
@@ -126,15 +145,18 @@ async def get_org_spend_status(conn, org_id) -> dict:
         spend, cache_updated_at = float(row["spend_usd"]), row["cache_updated_at"]
 
     monthly_usd = config["monthly_usd"]
-    pct_used = (spend / monthly_usd * 100.0) if monthly_usd else None
+    pct_used = _pct_used(spend, monthly_usd)
+    warning_threshold = (
+        monthly_usd * config["warning_pct"] / 100.0 if monthly_usd is not None else None
+    )
     return {
         "period_start": period.isoformat(),
         "spend_usd": spend,
         "monthly_usd": monthly_usd,
         "warning_pct": config["warning_pct"],
         "pct_used": pct_used,
-        "over_warning": bool(monthly_usd and pct_used is not None and pct_used >= config["warning_pct"]),
-        "over_cap": bool(monthly_usd and spend >= monthly_usd),
+        "over_warning": bool(warning_threshold is not None and spend >= warning_threshold),
+        "over_cap": bool(monthly_usd is not None and spend >= monthly_usd),
         "cache_updated_at": cache_updated_at.isoformat() if cache_updated_at else None,
     }
 
@@ -183,7 +205,7 @@ async def sync_org_spend(conn, org_id) -> dict:
 
     config = await get_org_budget_config(conn, org_id)
     monthly_usd = config["monthly_usd"]
-    if monthly_usd:
+    if monthly_usd is not None:
         warning_threshold = monthly_usd * config["warning_pct"] / 100.0
         if spend >= monthly_usd and cap_alerted_at is None:
             await create_budget_cap_alert(conn, org_id=org_id, spend_usd=spend, budget_usd=monthly_usd)
@@ -217,7 +239,7 @@ async def is_org_over_cap(org_id) -> bool:
         pool = await get_pool()
         async with pool.acquire() as conn:
             monthly_usd = await get_setting(conn, org_id, BUDGET_MONTHLY_USD_KEY)
-            if not monthly_usd:
+            if monthly_usd is None:
                 return False
             row = await conn.fetchrow(
                 "SELECT spend_usd, period_start FROM org_ai_spend_cache WHERE org_id = $1",
@@ -256,7 +278,8 @@ async def get_platform_ceiling_status(conn) -> dict:
 
     ceiling = float(row["numeric_value"]) if row["numeric_value"] is not None else None
     warning_pct = float(row["warning_pct"]) if row["warning_pct"] is not None else DEFAULT_WARNING_PCT
-    pct_used = (spend / ceiling * 100.0) if ceiling else None
+    pct_used = _pct_used(spend, ceiling)
+    warning_threshold = ceiling * warning_pct / 100.0 if ceiling is not None else None
     return {
         "enabled": row["enabled"],
         "ceiling_usd": ceiling,
@@ -264,8 +287,8 @@ async def get_platform_ceiling_status(conn) -> dict:
         "period_start": period.isoformat(),
         "spend_usd": spend,
         "pct_used": pct_used,
-        "over_warning": bool(ceiling and pct_used is not None and pct_used >= warning_pct),
-        "over_cap": bool(ceiling and spend >= ceiling),
+        "over_warning": bool(warning_threshold is not None and spend >= warning_threshold),
+        "over_cap": bool(ceiling is not None and spend >= ceiling),
         "cache_updated_at": cache_updated_at.isoformat() if cache_updated_at else None,
     }
 
@@ -345,7 +368,7 @@ async def sync_platform_spend(conn) -> dict:
 
     ceiling_usd = float(existing["numeric_value"]) if existing["numeric_value"] is not None else None
     warning_pct = float(existing["warning_pct"]) if existing["warning_pct"] is not None else DEFAULT_WARNING_PCT
-    if existing["enabled"] and ceiling_usd:
+    if existing["enabled"] and ceiling_usd is not None:
         warning_threshold = ceiling_usd * warning_pct / 100.0
         if spend >= ceiling_usd and cap_alerted_at is None:
             await create_platform_ceiling_cap_alert(conn, spend_usd=spend, ceiling_usd=ceiling_usd)

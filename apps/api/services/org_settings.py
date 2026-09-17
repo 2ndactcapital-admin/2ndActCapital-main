@@ -457,10 +457,14 @@ async def _validate_setting(conn, org_id, key: str, value) -> None:
     if key == "ai.budget.monthly_usd" and value is not None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise SettingsValidationError(
-                f"{key} must be a positive number of US dollars, got {value!r}"
+                f"{key} must be a non-negative number of US dollars, got {value!r}"
             )
-        if value <= 0:
-            raise SettingsValidationError(f"{key} must be greater than 0, got {value}")
+        # 0 is a REAL, legitimate "spend nothing on AI this period" budget —
+        # services.ai_budgets treats it as SET (enforced from the first
+        # dollar), never as "unset" (unset is the key being None entirely,
+        # handled above). Only a negative number is nonsensical.
+        if value < 0:
+            raise SettingsValidationError(f"{key} must not be negative, got {value}")
 
     if key == "ai.budget.warning_pct" and value is not None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
