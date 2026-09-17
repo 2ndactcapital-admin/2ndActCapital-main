@@ -455,3 +455,17 @@ discretion*, never *users / unlock / supercharge*. No emoji.
 ### Avoid
 Fintech aesthetics, gradients, heavy law-firm serifs, dollar-sign/bar-chart
 iconography, dark mode.
+
+## RLS policies are per-OPERATION, not per-table
+
+A table with policies for SELECT, INSERT and DELETE but none for UPDATE will
+silently match zero rows on any UPDATE. The failure does NOT look like a
+permission error — an `UPDATE ... RETURNING` returns None, and application
+code typically reports "row not found." Confirmed live: platform_model_catalog
+shipped with three policies (D2 never needed UPDATE), and the first real
+UPDATE failed as "'claude-sonnet' is not on the platform catalog" for a row
+that plainly existed and was readable by two other endpoints in the same run.
+
+When adding a table, write a policy for every operation the table will ever
+take, not just the ones the current sprint uses. When debugging a "row not
+found" on a row you can SELECT, check pg_policies for that operation first.
