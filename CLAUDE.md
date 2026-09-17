@@ -489,3 +489,23 @@ about what does or does not exist.
 distinguish a missing row from an RLS-blocked write. An error naming one
 specific cause will send someone to fix the wrong thing — here, it sent a
 reviewer to re-apply a migration that was already live.
+
+## Never copy a doc from Downloads over a newer repo version
+
+Three times in one session, a file generated in chat, saved to Downloads, then
+later re-copied into the repo silently destroyed newer content a sprint had
+written to the same path. Lost this way: the full sprint standard (five
+sections of hard-won gotchas), and LITELLM_D2_E_SPEC.md twice — including a
+settled design decision with its implementation record, and five documented
+build outcomes reverted to the aspirational bullets they replaced.
+
+The pattern is always the same: chat generates v1 → v1 lands in Downloads → a
+sprint updates the repo copy to v2 → someone re-copies v1 over v2.
+
+Before `cp`-ing any doc from Downloads into the repo, check whether the repo
+version is newer:
+
+    git log -1 --format=%cd -- docs/THE_FILE.md
+
+If the repo's last commit to that path is newer than the Downloads file, do
+NOT copy. Open both and merge by hand, or edit the repo copy directly.
