@@ -133,6 +133,21 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY accounts_pkey: (id)
 
+-- ===== agent_proposals =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   agent_key                                text NOT NULL
+--   object_type                              text NOT NULL
+--   payload                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   proposed_by                              uuid NOT NULL
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   review_notes                             text
+--   escalation_reason                        USER-DEFINED
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY agent_proposals_pkey: (id)
+
 -- ===== ai_decision_log =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
