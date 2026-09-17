@@ -456,16 +456,36 @@ discretion*, never *users / unlock / supercharge*. No emoji.
 Fintech aesthetics, gradients, heavy law-firm serifs, dollar-sign/bar-chart
 iconography, dark mode.
 
-## RLS policies are per-OPERATION, not per-table
+## RLS: "row not found" is the symptom of TWO different bugs
 
 A table with policies for SELECT, INSERT and DELETE but none for UPDATE will
-silently match zero rows on any UPDATE. The failure does NOT look like a
-permission error — an `UPDATE ... RETURNING` returns None, and application
-code typically reports "row not found." Confirmed live: platform_model_catalog
-shipped with three policies (D2 never needed UPDATE), and the first real
-UPDATE failed as "'claude-sonnet' is not on the platform catalog" for a row
-that plainly existed and was readable by two other endpoints in the same run.
+silently match zero rows on any UPDATE. So will a table that HAS an UPDATE
+policy when the connection never set the context that policy checks. Neither
+looks like a permission error: `UPDATE ... RETURNING` returns None, and
+application code typically reports "row not found."
 
-When adding a table, write a policy for every operation the table will ever
-take, not just the ones the current sprint uses. When debugging a "row not
-found" on a row you can SELECT, check pg_policies for that operation first.
+Both were hit in a single session, on adjacent tables:
+
+- **Missing policy.** `platform_model_catalog` shipped with three policies
+  (the sprint that created it never needed UPDATE). The first real UPDATE
+  failed as "'claude-sonnet' is not on the platform catalog" — for a row that
+  plainly existed and was readable by two other endpoints in the same run.
+- **Missing context.** `platform_ai_controls` had all four policies, with the
+  UPDATE policy requiring `current_setting('app.is_super_admin', true) =
+  'true'`. A script called the update on a connection that never set it. The
+  code raised "the litellmphasef migration has not been applied to this
+  database" — a confident, specific, and completely false diagnosis of a
+  migration that had in fact been applied an hour earlier.
+
+**When adding a table**, write a policy for every operation the table will
+ever take, not just the ones the current sprint uses.
+
+**When debugging a "row not found" on a row you can SELECT**, check
+`pg_policies` for that operation, then check whether the connection sets the
+context that policy requires. Do this before believing any error message
+about what does or does not exist.
+
+**Never let code assert a cause it cannot know.** Zero affected rows does not
+distinguish a missing row from an RLS-blocked write. An error naming one
+specific cause will send someone to fix the wrong thing — here, it sent a
+reviewer to re-apply a migration that was already live.
