@@ -207,6 +207,13 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "ai.effort.default": None,
     "ai.effort.assistant": None,
     "ai.effort.document_classifier": None,
+    # LiteLLM Phase G — per-org monthly AI spend budget. None (no budget) is
+    # the default for every existing org — nothing changes for anyone until
+    # an org_admin deliberately sets a real number (services.ai_budgets).
+    # warning_pct defaults to 80 but is only ever consulted once a budget is
+    # actually set, so the default is harmless either way.
+    "ai.budget.monthly_usd": None,
+    "ai.budget.warning_pct": 80,
     # Portfolio Phase B — the ORDERED list of `positions.source_system` values,
     # most-trusted first, deciding which of several sources reporting the same
     # holding is the portfolio's answer (design V6 §1.1). Same shape as
@@ -442,6 +449,26 @@ async def _validate_setting(conn, org_id, key: str, value) -> None:
             await validate_assignable_model(conn, org_id, str(value))
         except ModelCatalogError as exc:
             raise SettingsValidationError(str(exc)) from exc
+
+    # LiteLLM Phase G — spend budgets. None always allowed (clears the
+    # budget / resets warning_pct to the DEFAULT_SETTINGS value 80) — an
+    # org_admin un-configuring a budget must work exactly like every other
+    # key in this module.
+    if key == "ai.budget.monthly_usd" and value is not None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise SettingsValidationError(
+                f"{key} must be a positive number of US dollars, got {value!r}"
+            )
+        if value <= 0:
+            raise SettingsValidationError(f"{key} must be greater than 0, got {value}")
+
+    if key == "ai.budget.warning_pct" and value is not None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise SettingsValidationError(f"{key} must be a number, got {value!r}")
+        if not (0 < value < 100):
+            raise SettingsValidationError(
+                f"{key} must be between 0 and 100 (exclusive), got {value}"
+            )
 
     if key in EFFORT_KEY_BY_MODEL_KEY.values() and value is not None:
         # ai.effort.<task> — must be one of the small local enum. Whether the

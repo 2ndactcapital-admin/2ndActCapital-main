@@ -481,6 +481,192 @@ async def create_trigger_expiring_alerts(
     return ids
 
 
+# ── litellmphaseg: AI spend budget alerting ─────────────────────────────────
+#
+# A FIFTH and SIXTH alert kind, reusing the SAME mechanism yet again:
+# services.ai_budgets.sync_org_spend / sync_platform_spend call these when
+# an org's own monthly AI budget, or the separate Hollisworks-wide ceiling,
+# crosses its warning threshold or its cap — never a new notification path.
+# Recipients are manage_org_settings holders, the same rule every AI-alert
+# kind in this module already uses. The Hollisworks-wide ceiling's alerts
+# always target HOLLISWORKS_ORG_ID's manage_org_settings holders
+# specifically (the ceiling protects HOLLISWORKS' bill, regardless of which
+# org's marginal spend tipped it over) — the real Hollisworks org currently
+# has ZERO of them, the same live, current case D1c's credential-failure
+# alert already documented, and a real instance of the zero-recipient path
+# below every single time the ceiling is exercised.
+
+from services.litellm_credentials import HOLLISWORKS_ORG_ID
+
+TODO_SOURCE_BUDGET_WARNING = "ai_budget_warning"
+TODO_SOURCE_BUDGET_CAP = "ai_budget_cap"
+BUDGET_WARNING_ALERT_UNDELIVERED_ACTION = "ai_budget_warning_alert_undelivered"
+BUDGET_CAP_ALERT_UNDELIVERED_ACTION = "ai_budget_cap_alert_undelivered"
+
+TODO_SOURCE_PLATFORM_CEILING_WARNING = "ai_platform_ceiling_warning"
+TODO_SOURCE_PLATFORM_CEILING_CAP = "ai_platform_ceiling_cap"
+PLATFORM_CEILING_WARNING_ALERT_UNDELIVERED_ACTION = "ai_platform_ceiling_warning_alert_undelivered"
+PLATFORM_CEILING_CAP_ALERT_UNDELIVERED_ACTION = "ai_platform_ceiling_cap_alert_undelivered"
+
+_BUDGET_CONSOLE_PATH = "/admin/settings"
+
+
+async def create_budget_warning_alert(
+    conn, *, org_id, spend_usd: float, budget_usd: float, warning_pct: float
+) -> list:
+    """Alert every manage_org_settings holder of ``org_id`` that this org's
+    OWN monthly AI budget just crossed its warning threshold. Called by
+    services.ai_budgets.sync_org_spend AT MOST ONCE PER PERIOD (guarded by
+    org_ai_spend_cache.warning_alerted_at, not by this function) — repeated
+    syncs after the crossing are expected to skip calling this entirely."""
+    recipients = await _org_admin_recipients(org_id)
+    detail = (
+        f"This organization has used ${spend_usd:,.2f} of its ${budget_usd:,.2f} "
+        f"monthly AI budget ({warning_pct:.0f}% threshold reached). No action "
+        f"is required yet — at the full budget, AI calls automatically switch "
+        f"to the organization's safe model rather than stopping."
+    )[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn, org_id=org_id, source=TODO_SOURCE_BUDGET_WARNING,
+            related_type="org_settings", related_id=org_id,
+            reason=(
+                "budget warning threshold crossed with no resolvable "
+                "recipient: the org has no manage_org_settings holder"
+            ),
+            action=BUDGET_WARNING_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn, org_id=org_id, user_id=uid, source=TODO_SOURCE_BUDGET_WARNING,
+                related_type="org_settings", related_id=org_id,
+                title="AI budget warning threshold reached",
+                detail=detail, priority=6, action_key=_BUDGET_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+async def create_budget_cap_alert(conn, *, org_id, spend_usd: float, budget_usd: float) -> list:
+    """Alert every manage_org_settings holder of ``org_id`` that this org's
+    OWN monthly AI budget cap was reached and calls have degraded to the
+    safe model — NOT that AI has stopped working."""
+    recipients = await _org_admin_recipients(org_id)
+    detail = (
+        f"This organization reached its ${budget_usd:,.2f} monthly AI budget "
+        f"(${spend_usd:,.2f} spent). AI calls have automatically switched to "
+        f"the organization's safe model for the remainder of the period — "
+        f"they are NOT disabled."
+    )[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn, org_id=org_id, source=TODO_SOURCE_BUDGET_CAP,
+            related_type="org_settings", related_id=org_id,
+            reason=(
+                "budget cap crossed with no resolvable recipient: the org "
+                "has no manage_org_settings holder"
+            ),
+            action=BUDGET_CAP_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn, org_id=org_id, user_id=uid, source=TODO_SOURCE_BUDGET_CAP,
+                related_type="org_settings", related_id=org_id,
+                title="AI budget cap reached — degraded to safe model",
+                detail=detail, priority=5, action_key=_BUDGET_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+async def create_platform_ceiling_warning_alert(
+    conn, *, spend_usd: float, ceiling_usd: float, warning_pct: float
+) -> list:
+    """Alert every manage_org_settings holder of HOLLISWORKS_ORG_ID that the
+    platform-wide (shared-key) spend ceiling crossed its warning threshold."""
+    recipients = await _org_admin_recipients(HOLLISWORKS_ORG_ID)
+    detail = (
+        f"Platform-wide AI spend (the shared Hollisworks key) has reached "
+        f"${spend_usd:,.2f} of the ${ceiling_usd:,.2f} monthly ceiling "
+        f"({warning_pct:.0f}% threshold)."
+    )[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn, org_id=HOLLISWORKS_ORG_ID, source=TODO_SOURCE_PLATFORM_CEILING_WARNING,
+            related_type="org_settings", related_id=HOLLISWORKS_ORG_ID,
+            reason=(
+                "platform ceiling warning threshold crossed with no "
+                "resolvable recipient: the Hollisworks org has no "
+                "manage_org_settings holder"
+            ),
+            action=PLATFORM_CEILING_WARNING_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn, org_id=HOLLISWORKS_ORG_ID, user_id=uid,
+                source=TODO_SOURCE_PLATFORM_CEILING_WARNING,
+                related_type="org_settings", related_id=HOLLISWORKS_ORG_ID,
+                title="Platform AI spend ceiling warning",
+                detail=detail, priority=6, action_key=_BUDGET_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+async def create_platform_ceiling_cap_alert(conn, *, spend_usd: float, ceiling_usd: float) -> list:
+    """Alert every manage_org_settings holder of HOLLISWORKS_ORG_ID that the
+    platform-wide ceiling was reached — every org still on the shared
+    platform key now degrades to its own safe model, independent of any
+    org's own budget."""
+    recipients = await _org_admin_recipients(HOLLISWORKS_ORG_ID)
+    detail = (
+        f"Platform-wide AI spend (the shared Hollisworks key) reached its "
+        f"${ceiling_usd:,.2f} monthly ceiling (${spend_usd:,.2f} spent). "
+        f"Every organization still on the shared platform key now degrades "
+        f"to its own safe model for the remainder of the period."
+    )[:2000]
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn, org_id=HOLLISWORKS_ORG_ID, source=TODO_SOURCE_PLATFORM_CEILING_CAP,
+            related_type="org_settings", related_id=HOLLISWORKS_ORG_ID,
+            reason=(
+                "platform ceiling cap crossed with no resolvable recipient: "
+                "the Hollisworks org has no manage_org_settings holder"
+            ),
+            action=PLATFORM_CEILING_CAP_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn, org_id=HOLLISWORKS_ORG_ID, user_id=uid,
+                source=TODO_SOURCE_PLATFORM_CEILING_CAP,
+                related_type="org_settings", related_id=HOLLISWORKS_ORG_ID,
+                title="Platform AI spend ceiling reached",
+                detail=detail, priority=5, action_key=_BUDGET_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
 async def dismiss_orphaned_run_alerts(conn, *, org_id=None) -> int:
     """Close held-run alerts whose run no longer exists. Returns how many.
 

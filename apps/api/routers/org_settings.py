@@ -15,6 +15,9 @@
     PUT    /orgs/{org_id}/settings/model-selections       replace this org's selection
     GET    /admin/ai/force-anthropic-bypass               the platform bypass's current state (super_admin only)
     PUT    /admin/ai/force-anthropic-bypass               toggle it (super_admin only)
+    GET    /orgs/{org_id}/settings/ai-spend               this org's AI budget config + cached spend status
+    GET    /admin/ai/spend-ceiling                        the Hollisworks-wide ceiling's status (super_admin only)
+    PUT    /admin/ai/spend-ceiling                        set/clear the ceiling (super_admin only)
     GET    /theme                                        the caller's own org theme
 
 Reads are open to any authenticated user of the org (the app cannot render its
@@ -138,6 +141,14 @@ class TaskAssignmentBody(BaseModel):
 
 class ForceAnthropicBypassBody(BaseModel):
     enabled: bool
+
+    class Config:
+        extra = "forbid"
+
+
+class PlatformCeilingBody(BaseModel):
+    ceiling_usd: float | None = None
+    warning_pct: float | None = None
 
     class Config:
         extra = "forbid"
@@ -384,6 +395,38 @@ async def write_task_assignment(
         except (SettingsValidationError, ModelCatalogError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"org_id": org_id, **result}
+
+
+@router.get("/orgs/{org_id}/settings/ai-spend")
+async def read_org_ai_spend(request: Request, org_id: str):
+    """LiteLLM Phase G — this org's AI spend budget config + cached
+    current-period spend status.
+
+    Read-only: the CONFIG half (``ai.budget.monthly_usd`` /
+    ``ai.budget.warning_pct``) is written through the existing generic
+    ``PUT /orgs/{org_id}/settings/{key}`` — the same ``manage_org_settings``
+    gate and envelope every other ``ai.*`` setting already uses, so no new
+    write endpoint is needed. This endpoint only adds the piece the generic
+    settings read cannot: the cached SPEND number, refreshed by the
+    periodic sync job (services.ai_budgets), never by this read.
+    """
+    from services.ai_budgets import get_org_spend_status
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        _require_read_access(principal, org_id)
+        status = await get_org_spend_status(conn, org_id)
+    can_write = await can_manage_org_settings(pool, principal, org_id)
+    return {
+        "org_id": org_id,
+        **status,
+        "permissions": {
+            "can_read": True,
+            "can_write": can_write,
+            "is_super_admin": is_super_admin(principal),
+        },
+    }
 
 
 @router.put("/orgs/{org_id}/settings")
@@ -642,6 +685,64 @@ async def write_force_anthropic_bypass(request: Request, body: ForceAnthropicByp
             raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
         "enabled": row["enabled"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "updated_by": str(row["updated_by"]) if row["updated_by"] else None,
+    }
+
+
+# ── LiteLLM Phase G — the Hollisworks-wide spend ceiling ────────────────────
+# Genuinely platform-scoped (services.ai_budgets / platform_ai_controls),
+# same super_admin-both-ways gate as force-anthropic-bypass above — an org
+# has no legitimate reason to see or influence the platform's own ceiling.
+# Per-org budgets are NOT here — they go through the generic settings PUT
+# (ai.budget.monthly_usd / ai.budget.warning_pct), since they are ordinary
+# per-org config, not a platform-scoped control.
+
+
+@router.get("/admin/ai/spend-ceiling")
+async def read_platform_spend_ceiling(request: Request):
+    from services.ai_budgets import AIBudgetError, get_platform_ceiling_status
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        try:
+            status = await get_platform_ceiling_status(conn)
+        except AIBudgetError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        **status,
+        "permissions": {"can_read": True, "can_write": True, "is_super_admin": True},
+    }
+
+
+@router.put("/admin/ai/spend-ceiling")
+async def write_platform_spend_ceiling(request: Request, body: PlatformCeilingBody):
+    from services.ai_budgets import AIBudgetError, set_platform_ceiling
+
+    if body.ceiling_usd is not None and body.ceiling_usd <= 0:
+        raise HTTPException(status_code=400, detail="ceiling_usd must be a positive number")
+    if body.warning_pct is not None and not (0 < body.warning_pct < 100):
+        raise HTTPException(status_code=400, detail="warning_pct must be between 0 and 100")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _principal(conn, request)
+        if not is_super_admin(principal):
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        try:
+            row = await set_platform_ceiling(
+                conn, ceiling_usd=body.ceiling_usd, warning_pct=body.warning_pct,
+                updated_by=principal["id"],
+            )
+        except AIBudgetError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "enabled": row["enabled"],
+        "ceiling_usd": float(row["numeric_value"]) if row["numeric_value"] is not None else None,
+        "warning_pct": float(row["warning_pct"]) if row["warning_pct"] is not None else None,
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         "updated_by": str(row["updated_by"]) if row["updated_by"] else None,
     }

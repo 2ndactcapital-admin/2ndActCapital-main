@@ -74,6 +74,19 @@ byte-for-byte the pre-D2 behaviour — every org today is in that state. If
 filtering empties the chain, ``AIModelNotAuthorizedError`` is raised before
 any attempt (a policy refusal, not a provider failure) — logged to
 ai_decision_log like every other terminal outcome, never silently swallowed.
+
+LiteLLM Phase G (litellmphaseg.structural) — SPEND BUDGETS. A per-org
+monthly budget with a warning threshold, plus a separate Hollisworks-wide
+ceiling (services.ai_budgets). ``_execute_chain`` now checks two cache-only,
+fail-open reads (``is_org_over_cap`` / ``is_platform_over_ceiling`` — zero
+HTTP calls to LiteLLM's admin API on this path) and, if either is true,
+forces the attempt list onto the org's own safe model
+(``ai.model.default``) — DEGRADE, never hard-stop, per the design doc §8.
+An org with no budget configured (every existing org, today) is completely
+unaffected. See services.ai_budgets' module docstring for the full Task 1
+findings (native LiteLLM budgets don't map onto this architecture; the real
+staleness window this cache-based design accepts; the aggregate spend
+endpoint this relies on).
 """
 
 import json
@@ -815,6 +828,43 @@ async def _execute_chain(
                 ):
                     surviving = [safe_model]
             attempts = surviving
+
+        # LiteLLM Phase G — spend budgets. DEGRADE, never hard-stop: an org
+        # over its OWN monthly budget, or the platform over the separate
+        # Hollisworks-wide ceiling, forces the attempt list onto the org's
+        # safe model (ai.model.default) — the exact same fallback-to-safe-
+        # model shape the 'disabled' block above already established, not a
+        # second mechanism. Both checks are cache-only reads (services.
+        # ai_budgets — zero HTTP calls to LiteLLM's admin API on this hot
+        # path; see that module's docstring for the staleness this implies)
+        # and both fail OPEN on any error, so a broken budget lookup can
+        # never itself degrade or block a call. Checked unconditionally
+        # (not just when attempts would otherwise be empty) because the
+        # point is cost containment, not failure recovery — an org over
+        # budget must degrade even when its primary model would have
+        # succeeded.
+        from services.ai_budgets import is_org_over_cap, is_platform_over_ceiling
+
+        org_over_cap = org_id is not None and await is_org_over_cap(org_id)
+        platform_over_ceiling = await is_platform_over_ceiling()
+        if org_over_cap or platform_over_ceiling:
+            safe_model = await resolve_model(org_id, key=DEFAULT_MODEL_KEY)
+            if (
+                safe_model
+                and safe_model not in disabled
+                and (authorized is None or safe_model in authorized)
+            ):
+                print(
+                    f"[ai_router] org {org_id} degraded to safe model "
+                    f"{safe_model!r} for task '{task_type}' "
+                    f"(org_over_cap={org_over_cap}, "
+                    f"platform_over_ceiling={platform_over_ceiling})"
+                )
+                attempts = [safe_model]
+            # else: no safe model is usable/authorised — fall through with
+            # attempts UNCHANGED rather than emptying the chain. A billing
+            # control must never manufacture a harder failure than "no
+            # budget control existed at all".
 
         # LiteLLM Phase E — per-task effort. resolve_effort returns None for the
         # vast majority of tasks (no dedicated effort_key, or one that exists but

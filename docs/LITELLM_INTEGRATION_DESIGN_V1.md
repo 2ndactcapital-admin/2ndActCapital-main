@@ -132,7 +132,7 @@ Same `owner_scope: platform | org` shape as UDFs.
 
 ---
 
-## 8 · Budget-threshold UX — in scope now, not deferred to guardrails
+## 8 · Budget-threshold UX — **DONE (2026-09-17)**
 
 A hard stop with no warning is a bad client experience and undermines the "full autonomy" pitch this whole project is meant to support.
 
@@ -141,6 +141,17 @@ A hard stop with no warning is a bad client experience and undermines the "full 
 - **A separate, platform-wide Hollis ceiling**, with its own distinct alert path when approached — protects the platform even if a single org's own budget is generous
 
 **"Guardrails" (content filtering, prompt-injection defense, jailbreak detection) stays a separate, later topic**, explicitly deferred per direction.
+
+> **Built as litellmphaseg.structural — see §14.8 for the full design and
+> proof.** All three bullets above shipped exactly as scoped: a per-org
+> monthly budget with a warning threshold (`org_settings`), graceful
+> degradation to the safe model at the cap (`services.extraction.
+> _execute_chain`), and a separate Hollisworks-wide ceiling
+> (`platform_ai_controls`) with its own independent alert path. **The
+> load-bearing compromise, stated here because it matters more than any
+> implementation detail below**: budget enforcement at call time is a
+> CACHE-ONLY read with zero HTTP calls to LiteLLM's admin API — see §14.8's
+> staleness discussion before assuming this is real-time.
 
 ---
 
@@ -243,8 +254,8 @@ separation entirely rather than punching a hole in it.
 | **C** | ~~Voyage routed through LiteLLM (§6), including the re-indexing confirmation mechanism.~~ **DONE (2026-09-14)** — 34/34, 0 BLOCKED, `verify_litellmphasec.py`. See §14.2. |
 | **D** | Discovery **DONE** (`docs/LITELLM_PHASE_D_DISCOVERY.md`). **D1a — per-org BYO provider credential storage: DONE (2026-09-15)** — 58/58, 0 FAIL, `verify_litellmphased1a.py`. See §14.3. **D1b — routing + spend attribution: DONE (2026-09-15)** — 54/54, 0 FAIL, `verify_litellmphased1b.py`. See §14.4. **D1c — credential-failure alerting: DONE (2026-09-15).** **D2 — the model pick-list UI: DONE (2026-09-16)** — 47/47 PASS, 0 FAIL, 4 FIND, `verify_litellmphased2.py`. See §14.5. **D2's own §3 (three-state availability) is still open — not built.** |
 | **E** | ~~Task-assignment screen, including the two-tier safe-model hierarchy (§7) and change warnings.~~ **DONE (2026-09-16)** — per-task model assignment (at the real 3-dial granularity, not per raw `task_type`) + effort, gated live on `supports_reasoning`, fallback-with-effort settled (drop silently, log it) — 54/54 PASS, 0 FAIL, 4 FIND, `verify_litellmphasee.py`. See §14.7. The two-tier safe-model hierarchy (task model → org safe → Hollis safe) stays exactly as built; change-warning UX was not in scope. |
-| **F** | Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling. |
-| **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data. |
+| **F** | ~~Budget-threshold UX (§8) — warnings, graceful degradation, the Hollis-wide ceiling.~~ **DONE (2026-09-17)** — see §8 and §14.8. Naming collision, same shape as §7.5's own note: the sprint that built this was internally called `litellmphaseg.structural`, not `litellmphasef` — roadmap row **F**'s content shipped under the `...g` sprint name because `litellmphasef.structural` had already been used for §7.5's unrelated force-Anthropic bypass. `68/68 PASS, 0 FAIL` via `apps/api/scripts/verify_litellmphaseg.py`. |
+| **G** | Reporting/billing surfaces, Hollis-level and org-level, reading LiteLLM's real spend data — STILL UNBUILT. Roadmap row **G**'s own content is untouched by the `litellmphaseg.structural` sprint (which built roadmap row **F**'s content instead, per the naming-collision note above) — do not assume "Phase G" the sprint name and roadmap row **G** are the same scope; they are not. `services.ai_budgets.spend_by_tag`/`sync_org_spend` (built for budget enforcement) are a real, reusable head start for this row's own future work, but no reporting UI exists yet. |
 | **H** | The recommendation tool (§9). |
 | **I** | Voice, as its own build (§12). |
 | **Later** | Guardrails proper (§8, §11) — content filtering, prompt-injection defense, DeepEval floors. |

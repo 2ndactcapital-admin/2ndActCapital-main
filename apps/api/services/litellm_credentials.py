@@ -231,6 +231,27 @@ def chat_capable_models() -> set[str]:
         return set()
 
 
+def spend_by_tag(start_date: str, end_date: str) -> dict[str, dict]:
+    """``{tag_name: {"spend": float, "log_count": int}}`` for the given date
+    range (LiteLLM Phase G budgets) — ``GET /global/spend/tags``, a real,
+    CORE (non-Enterprise) LiteLLM endpoint confirmed live on this
+    self-hosted instance. ``/global/spend/report`` (LiteLLM's other
+    aggregation endpoint) is Enterprise-gated — confirmed live, HTTP 400
+    "You must be a LiteLLM Enterprise user" — so this is the one real
+    aggregation surface this deployment has. D1b's attribution tags
+    (``org:<uuid>``, ``usage:hollisworks_platform``,
+    ``usage:platform_on_behalf_of_org``) are genuine entries in this
+    response, not merely present per-row in ``/spend/logs``."""
+    status, body = _http(f"/global/spend/tags?start_date={start_date}&end_date={end_date}")
+    if status != 200:
+        raise CredentialProvisionError(f"GET /global/spend/tags -> HTTP {status}: {body[:300]}")
+    data = json.loads(body).get("spend_per_tag", [])
+    return {
+        e["name"]: {"spend": e.get("spend", 0.0), "log_count": e.get("log_count", 0)}
+        for e in data if e.get("name")
+    }
+
+
 def _find_deployment(model_name: str) -> dict | None:
     for entry in _model_info():
         if entry.get("model_name") == model_name:
