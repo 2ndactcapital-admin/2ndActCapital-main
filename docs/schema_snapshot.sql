@@ -1576,6 +1576,15 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY notifications_pkey: (id)
 
+-- ===== org_ai_spend_cache =====
+--   org_id                                   uuid NOT NULL
+--   period_start                             date NOT NULL
+--   spend_usd                                numeric NOT NULL DEFAULT 0
+--   cache_updated_at                         timestamp with time zone NOT NULL DEFAULT now()
+--   warning_alerted_at                       timestamp with time zone
+--   cap_alerted_at                           timestamp with time zone
+--   PRIMARY KEY org_ai_spend_cache_pkey: (org_id)
+
 -- ===== org_model_selections =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -1659,6 +1668,13 @@
 --   enabled                                  boolean NOT NULL DEFAULT false
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_by                               uuid
+--   numeric_value                            numeric
+--   warning_pct                              numeric
+--   period_start                             date
+--   cached_spend_usd                         numeric
+--   cache_updated_at                         timestamp with time zone
+--   warning_alerted_at                       timestamp with time zone
+--   cap_alerted_at                           timestamp with time zone
 --   PRIMARY KEY platform_ai_controls_pkey: (key)
 
 -- ===== platform_model_catalog =====
