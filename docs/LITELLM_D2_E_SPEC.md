@@ -1,14 +1,6 @@
 # LiteLLM Phases D2 & E — Model Catalog and Task Assignment Specification
 
-**Status**: D2 and E are both BUILT and HELD. D2 shipped via
-`litellmphased2.structural` (`47/47 PASS, 0 FAIL, 4 FIND`); its own §3
-(three-state availability) was NOT built and remains open, see below. E
-shipped via `litellmphasee.structural` (`54/54 PASS, 0 FAIL, 4 FIND`,
-`apps/api/scripts/verify_litellmphasee.py`) — per-task model assignment at
-the real granularity (the three `ai.model.*` dials, not an invented
-per-`task_type` one, see §7's revision below) plus effort, gated live on
-`supports_reasoning`. Supersedes the looser "model pick-list UI" line in
-the phasing table.
+**Status**: specification, agreed. D2 partially in flight (see §6 for what the running sprint does and does not cover). Supersedes the looser "model pick-list UI" line in the phasing table.
 
 ---
 
@@ -76,8 +68,6 @@ This follows the precedent set in Phase C, where the re-indexing confirmation di
 
 **Open question, to settle in Phase E**: when a high-effort task falls back to the org safe model, does the effort setting carry? The fallback model may not support it at all. Recommend: drop effort silently on fallback and record it in `ai_decision_log`, rather than failing the call.
 
-**SETTLED (litellmphasee.structural): drop silently, log it — the recommendation above, implemented as-is.** `services.extraction._execute_chain` gates effort per ATTEMPT, not once for the whole chain walk: each model in the resolved chain (primary, then fallbacks) is checked against a live `supports_reasoning` lookup (`services.litellm_credentials.reasoning_support_by_model`, `GET /model_group/info`) immediately before that attempt's call. If the attempt's model doesn't report `supports_reasoning: true`, the `thinking` parameter is simply omitted from that one request — the call proceeds normally, never raises, never retries with a different shape. `ai_decision_log` gained two nullable columns for exactly this (`migrations/litellmphasee_effort_columns.sql`): `effort_requested` (the org's setting, regardless of outcome) and `effort_used` (the level actually sent on the attempt that succeeded, or NULL). A `success=true` row with `effort_requested` set and `effort_used` NULL is the dropped case, directly queryable — no separate flag, no second log line. Why drop rather than fail: a task's effort setting is a quality knob, not a correctness requirement — failing an otherwise-working call because a fallback model can't take a `thinking` budget would turn a graceful degradation (the existing fallback-chain mechanism, unrelated to effort) into a hard outage, for a much worse trade than a slightly-less-deep answer. Proven live in `verify_litellmphasee.py` Task 7 with a forced-failure primary + a real fallback call (the live reasoning-support *lookup* was patched for that one assertion, since no real non-reasoning CHAT deployment exists on the platform's proxy today to reproduce the case with zero mocking — the provider call itself was completely real and unpatched).
-
 ---
 
 ## 5 · Credentials stay per-provider — deliberately
@@ -104,10 +94,10 @@ The running `litellmphased2.structural` sprint was scoped before this specificat
 
 ---
 
-## 7 · Phase E scope, consolidated — BUILT (litellmphasee.structural)
+## 7 · Phase E scope, consolidated
 
-- Per-task model assignment from the org's authorised list — **built**, at the real granularity: `services.extraction.MODEL_TASK_REGISTRY` lists the THREE dials that have ever actually existed (`ai.model.default`/`ai.model.assistant`/`ai.model.document_classifier`), not one entry per real `task_type` (19 of those exist — see Task 1's discovery in `verify_litellmphasee.py` — and most share a dial). Inventing finer-grained keys per `task_type` was considered and rejected for this sprint: it would multiply the assignable-dial count 6x for no resolution the platform's call sites are actually wired to honour yet, and every one of those 19 task_types genuinely does resolve through one of the three dials today, so assigning at dial granularity is not a simplification of the spec, it is the spec's own real state.
-- Per-task effort, gated on `supports_reasoning`, valued from the local mapping (§4) — **built**, `EFFORT_LEVELS` in `services/extraction.py` (`low`/`medium`/`high` → `thinking.budget_tokens`).
-- New AI tasks appear automatically as they are added — **partially true, reported honestly (not the original framing).** A new dial (a 4th `ai.model.*` key) is NOT automatic — it needs a code change: a new `MODEL_KEY` constant, a `MODEL_TASK_REGISTRY` entry, and `model_key=` threaded at whichever call site(s) should resolve through it. What IS automatic once that one registration lands: the settings API (`GET`/`PUT /orgs/{org_id}/settings/ai-tasks[/{key}]`), permission/validation (`validate_assignable_model`, the effort enum), and the frontend (`ModelTaskAssignment.jsx` iterates the server's own `tasks` array) all pick it up with zero further edits — one registration point, not four.
-- The two-tier safe-model hierarchy (task model → org safe → Hollis safe) stays as built — **confirmed unchanged**: an unassigned task still resolves dedicated-key-then-`ai.model.default`, byte-for-byte, proven live (Task 2 of the verify script).
-- Settle the effort-on-fallback question (§4) — **settled and built**, see §4's update above.
+- Per-task model assignment from the org's authorised list
+- Per-task effort, gated on `supports_reasoning`, valued from the local mapping (§4)
+- New AI tasks appear automatically as they are added
+- The two-tier safe-model hierarchy (task model → org safe → Hollis safe) stays as built
+- Settle the effort-on-fallback question (§4)
