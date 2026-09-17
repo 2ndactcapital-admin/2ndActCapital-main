@@ -1,5 +1,23 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-17 (actionregistryfix.structural — the action registry's
+Last updated: 2026-09-17 (selfapproval.structural — the maker-checker rule
+`agenticmakerchecker.structural` built (below) made a single-privileged-user
+org unable to ever approve its own proposals: excluding the maker from
+`review_agent_proposals` holders can leave the eligible-checker set EMPTY,
+and 2nd Act's real data confirms this is not hypothetical (`org_admin` is
+the only one of six granted roles with a real holder, one user). Fixed by
+ALLOW WITH DISCLOSURE, not escalation (rejected — in a lean org that target
+is frequently the same human wearing a second hat) and not an outright
+block (rejected — unusable for a single-advisor tenant). `agent_proposals_
+maker_checker_chk` is now conditional — a raw UPDATE setting `reviewed_by =
+proposed_by` still fails unless the row also carries `self_approved = true`
+and a non-null `self_approval_reason` — and the emptiness gate itself
+(`services.agent_proposals.has_other_eligible_checker`) is COMPUTED and
+org-scoped, never a caller-supplied flag: a maker with an available
+reviewer is still refused. See the `selfapproval.structural` entry below
+for the full accounting, including why the gate deliberately excludes
+`is_super_admin` (unlike `is_eligible_reviewer`'s own per-candidate check)
+and why self-approval is currently the NORMAL path for 2nd Act's one
+real `org_admin`-holding user, not an edge case; previously 2026-09-17 (actionregistryfix.structural — the action registry's
 16-verb ceiling means `required_permission` already IS the capability
 vocabulary; the long-open "#3 capability annotation" item from
 `agenticmakerchecker.structural` (below) is DISSOLVED, not solved — no
@@ -149,6 +167,115 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000000000000000000. Self-approval under a genuinely empty checker set; verify WRITTEN, not yet run (2026-09-17)
+
+**The problem.** `agenticmakerchecker.structural`'s maker-checker rule (a
+user may check a proposal iff they hold `review_agent_proposals` AND are
+not its own maker) is correct on its own terms, but it makes a
+single-privileged-user org UNABLE TO EVER APPROVE ANYTHING once the maker
+IS that org's only holder of `review_agent_proposals` — excluding the maker
+leaves zero eligible checkers, and the proposal can never be routed. This
+is not hypothetical: confirmed live against the real org (queried fresh by
+this sprint, not assumed carried over), `review_agent_proposals` is granted
+to six roles and exactly one of them (`org_admin`) has a real holder (one
+user); the other five (`advisor`, `compliance`, `fund_finance`,
+`investment_committee`, `support_staff`) have zero. A proposal made by that
+one `org_admin` user has, today, a genuinely empty checker set.
+
+**Per SPRINT_WORKFLOW_STANDARD.md's "sprint writes, operator runs" rule,
+this sprint is NOT reporting a PASS/FAIL count.** `apps/api/scripts/
+verify_selfapproval.py` is written and ready; the schema and code changes
+below are confirmed live against the dev database by direct query during
+this sprint, but the sprint itself never executes its own verify script.
+Run it via:
+
+    doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_selfapproval.py 2>&1 | grep -E "^\[FAIL\]|^TOTAL"
+
+**Task 1 findings:**
+- **1a.** The real, live CHECK constraint (`agent_proposals_maker_checker_chk`)
+  was unconditional: `reviewed_by IS NULL OR reviewed_by <> proposed_by`.
+  The real eligibility function (`services.agent_proposals.
+  is_eligible_reviewer`) is: holds `review_agent_proposals` (or is
+  `super_admin`) AND is not the maker — unchanged by this sprint.
+- **1b.** `review_agent_proposals` holder counts in the real org, queried
+  live: `org_admin` = 1, every other granted role (`advisor`, `compliance`,
+  `fund_finance`, `investment_committee`, `support_staff`) = 0. **Two real
+  `super_admin` accounts also exist**, both in the same org as most real
+  proposals — `is_eligible_reviewer` treats them as universally eligible,
+  but the new emptiness gate (Task 3) deliberately does NOT count them (see
+  below), so their existence does not make the gate unreachable. The
+  non-empty path is genuinely reachable today for anyone other than the one
+  `org_admin` holder; the genuinely-empty path is reachable for that one
+  user's own proposals specifically — the real, current single-privileged-
+  user case the sprint prompt describes, not an edge case.
+- **1c.** `agent_proposals.proposed_by` is still a real, `NOT NULL` FK to
+  `users(id)` — confirmed against the live constraint definition — and
+  `services/assistant_actions/propose.py`'s `create_proposal` call still
+  passes `proposed_by=user_id`, the real authenticated human principal an
+  agent runs as. Unchanged; an agent never writes its own name here.
+
+**Decision implemented exactly as specified, not re-litigated:** ALLOW WITH
+DISCLOSURE. Escalating to `org_admin` was rejected — in a lean org that
+target is frequently the same human wearing a second hat, which looks like
+separation of duties while providing none. Blocking outright was rejected
+as unusable for a single-advisor tenant.
+
+**The conditional constraint.** `agent_proposals_maker_checker_chk` is now:
+
+    reviewed_by IS NULL
+    OR reviewed_by <> proposed_by
+    OR (self_approved = true AND self_approval_reason IS NOT NULL)
+
+Two new columns: `self_approved boolean NOT NULL DEFAULT false`,
+`self_approval_reason text` (nullable). A raw UPDATE setting `reviewed_by =
+proposed_by` still fails unless the row ALSO carries both — the guarantee
+that a self-check can never slip through silently, even bypassing
+`services.agent_proposals` entirely, survives; only the deliberate,
+disclosed case opens. Proven at the database level, independent of
+application code, by both a negative raw UPDATE (still fails without the
+flag/reason) and a positive one (succeeds with both).
+
+**The emptiness gate — computed, not a caller-supplied flag.** A new
+`services.agent_proposals.has_other_eligible_checker(pool, org_id,
+maker_id)` returns whether any OTHER user holds `review_agent_proposals`
+within that org. `review_proposal`'s self-review branch now: (1) requires
+the reviewer hold `review_agent_proposals` themselves — a non-holder is
+refused regardless of how empty the org's checker set is; (2) requires
+`has_other_eligible_checker` to be `False` — a maker with an available
+reviewer is refused exactly as before, even if they supply a reason;
+(3) only then requires a non-empty `self_approval_reason`, raising a new
+`SelfApprovalReasonRequiredError` if it's missing. `self_approval_reason`
+being present in the call is never itself sufficient — emptiness is
+checked independently of it.
+
+**Deliberately excludes `is_super_admin`** — unlike `is_eligible_reviewer`'s
+own per-candidate check, which is unchanged. Both real `super_admin`
+accounts sit in the same org as most real proposals; counting them in the
+emptiness gate would make "genuinely empty" almost unreachable in the one
+org that actually needs this mechanism, and would conflate a platform
+operator's standing bypass with an org's own fiduciary staffing question —
+the two are properly answered by different people. See
+`services/agent_proposals.py`'s `has_other_eligible_checker` docstring for
+the full reasoning.
+
+**Honest state, staffing not design intent.** With today's real holder
+counts, self-approval is the NORMAL path for the one `org_admin` user's own
+proposals — not a rare accommodation. It stops being normal the moment a
+second person is granted `review_agent_proposals` in that org; nothing
+about the mechanism assumes it stays this way.
+
+**Files:** `apps/api/migrations/selfapproval_conditional_maker_checker.sql`
+(applied live via the supabase-2ndact-dev MCP `apply_migration` tool —
+`app_service` has no `CREATE` on `public`); `apps/api/services/
+agent_proposals.py` (`_holds_review_permission`, `has_other_eligible_checker`,
+`review_proposal`, `SelfApprovalReasonRequiredError`);
+`docs/SPRINT_WORKFLOW_STANDARD.md` (new teardown gotcha: `audit_log` is a
+child of `users`, clear it — and `assistant_activities`/`agent_proposals` —
+before deleting fixture users); `docs/schema_snapshot.sql` (refreshed);
+`apps/api/scripts/verify_selfapproval.py`.
 
 ---
 

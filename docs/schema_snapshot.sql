@@ -146,6 +146,8 @@
 --   review_notes                             text
 --   escalation_reason                        USER-DEFINED
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   self_approved                            boolean NOT NULL DEFAULT false
+--   self_approval_reason                     text
 --   PRIMARY KEY agent_proposals_pkey: (id)
 
 -- ===== ai_decision_log =====
