@@ -241,11 +241,11 @@
 --   description                              text
 --   access_type                              text NOT NULL
 --   required_permission                      text
---   default_autonomy                         text NOT NULL DEFAULT 'confirm'::text
 --   reversible                               boolean NOT NULL DEFAULT false
 --   render_target                            text NOT NULL DEFAULT 'auto'::text
 --   is_active                                boolean NOT NULL DEFAULT true
 --   registered_at                            timestamp with time zone NOT NULL DEFAULT now()
+--   tier                                     integer NOT NULL
 --   UNIQUE assistant_action_catalog_org_id_action_key_key: (org_id, action_key)
 --   PRIMARY KEY assistant_action_catalog_pkey: (id)
 
