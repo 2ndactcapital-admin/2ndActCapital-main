@@ -148,6 +148,8 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   effort_requested                         text
 --   effort_used                              text
+--   litellm_bypassed                         boolean NOT NULL DEFAULT false
+--   bypass_reason                            text
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
 -- ===== altruist_connections =====
@@ -1651,6 +1653,13 @@
 --   UNIQUE permissions_name_key: (name)
 --   PRIMARY KEY permissions_pkey: (id)
 --   UNIQUE permissions_resource_action_key: (resource, action)
+
+-- ===== platform_ai_controls =====
+--   key                                      text NOT NULL
+--   enabled                                  boolean NOT NULL DEFAULT false
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_by                               uuid
+--   PRIMARY KEY platform_ai_controls_pkey: (key)
 
 -- ===== platform_model_catalog =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
