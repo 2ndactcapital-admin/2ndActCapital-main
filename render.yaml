@@ -259,28 +259,6 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
-  # Refreshes cached AI spend from LiteLLM's admin API. The AI call path
-  # (services/extraction.py) NEVER calls that API synchronously — it reads
-  # only the cached totals in platform_ai_controls / the org budget tables,
-  # because app_service cannot read the litellm schema at all. So budget
-  # enforcement is only ever as fresh as this job's last successful run.
-  # Without it wired, cached spend never refreshes and budgets would enforce
-  # against permanently stale numbers.
-  - type: cron
-    name: 2ndactcapital-ai-spend-sync
-    runtime: python
-    plan: starter
-    rootDir: apps/api
-    schedule: "*/5 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python scripts/sync_ai_spend.py
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: LITELLM_BASE_URL
-        sync: false
-      - key: LITELLM_MASTER_KEY
-        sync: false 
       # Textract / Voyage / EDGAR are reachable from a Service Task the same way
       # they are from a request, so a scheduled run must not lose them.
       - key: AWS_ACCESS_KEY_ID
@@ -306,4 +284,25 @@ services:
       - key: R2_SECRET_ACCESS_KEY
         sync: false
       - key: R2_BUCKET_NAME
+        sync: false
+
+  # Refreshes cached AI spend from LiteLLM's admin API. The AI call path
+  # (services/extraction.py) NEVER calls that API synchronously — it reads only
+  # the cached totals, because app_service cannot read the litellm schema at
+  # all. Budget enforcement is therefore only ever as fresh as this job's last
+  # successful run; unwired, budgets enforce against permanently stale numbers.
+  - type: cron
+    name: 2ndactcapital-ai-spend-sync
+    runtime: python
+    plan: starter
+    rootDir: apps/api
+    schedule: "*/5 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/sync_ai_spend.py
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: LITELLM_BASE_URL
+        sync: false
+      - key: LITELLM_MASTER_KEY
         sync: false
