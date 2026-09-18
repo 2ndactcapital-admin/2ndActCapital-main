@@ -248,7 +248,33 @@ export default function WorkflowDiagramEditor({ workflow }) {
       });
       modelerRef.current = modeler;
 
+      // Script Tasks are refused server-side, unconditionally (any BPMN
+      // containing one is rejected on save, naming the element — see
+      // services/workflow_nl_generator.py's shared `_validate`). This listener
+      // is USABILITY ONLY: it keeps an author from placing one just to have it
+      // rejected later, by undoing the create/replace the instant it lands and
+      // saying so inline. It is not, and must never be treated as, enforcement
+      // — a hand-crafted XML POST bypasses it entirely and is still refused by
+      // the server.
+      function guardAgainstScriptTasks() {
+        const isScriptTask = (el) => el?.businessObject?.$type === "bpmn:ScriptTask";
+        const block = () => {
+          if (cancelled) return;
+          modeler.get("commandStack").undo();
+          setError(
+            "Script tasks are not permitted — model this step as a Service Task calling a registered action instead. (The server refuses these regardless of this check.)",
+          );
+        };
+        modeler.on("commandStack.shape.create.postExecute", (event) => {
+          if (isScriptTask(event?.context?.shape)) block();
+        });
+        modeler.on("commandStack.shape.replace.postExecute", (event) => {
+          if (isScriptTask(event?.context?.newShape)) block();
+        });
+      }
+
       try {
+        guardAgainstScriptTasks();
         await modeler.importXML(workflow.current_version.bpmn_xml);
         modeler.get("canvas").zoom("fit-viewport");
         if (!cancelled) setReady(true);

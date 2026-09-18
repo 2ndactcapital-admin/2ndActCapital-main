@@ -29,7 +29,7 @@ import re
 from services.action_registry import REGISTRY
 from services.bpmn_xml import is_complete_document, sanitize_model_bpmn
 from services.extraction import call_claude_text
-from services.workflow_steps_deriver import derive_steps, derive_and_store_steps
+from services.workflow_steps_deriver import derive_steps, derive_and_store_steps, find_script_tasks
 
 # Keep the generator's extension convention identical to the deriver's.
 from services.workflow_steps_deriver import EXT_NS
@@ -65,6 +65,24 @@ _INCOMPLETE = (
     "</bpmn:definitions> tag"
 )
 _TRUNCATED = _INCOMPLETE + " (the model's response hit the output-token limit)"
+
+# Script Tasks are refused outright, never sandboxed. SpiffWorkflow's stock
+# PythonScriptEngine runs a Script Task's body via bare eval()/exec() in
+# process, with this application's own database credentials, outside the
+# action registry, outside every permission check, outside audit, and outside
+# the custody cliff (see CLAUDE.md). A workflow step that needs logic belongs
+# on a Service Task calling a registered, permission-checked, audited verb —
+# that is the entire point of the action registry. RestrictedPython or any
+# other sandbox was considered and rejected: a sandbox is a weaker guarantee
+# than a refusal and costs materially more to build and maintain.
+def _script_task_error(element_id: str) -> str:
+    return (
+        f"Script Task '{element_id}' is not permitted: script tasks run "
+        "arbitrary Python in-process via SpiffWorkflow's unsandboxed "
+        "PythonScriptEngine, bypassing the action registry, permission "
+        "checks, and audit log. Model this step as a Service Task calling a "
+        "registered action instead."
+    )
 
 
 class WorkflowGenerationError(Exception):
@@ -205,6 +223,11 @@ def _validate(xml: str | None, valid_action_keys: set[str], valid_profile_ids: s
         # syntax error pointing at wherever the text stopped, which reads like a
         # defect in the document and sends the reader looking in the wrong place.
         return [_INCOMPLETE]
+    # Refuse Script Tasks BEFORE the SpiffWorkflow parse — loud and specific,
+    # naming every offending element, not folded into a generic parse error.
+    script_task_ids = find_script_tasks(xml)
+    if script_task_ids:
+        return [_script_task_error(eid) for eid in script_task_ids]
     try:
         steps = derive_steps(xml)  # runs Phase-1 parse_bpmn + derives steps
     except Exception as exc:  # parse or structural failure
@@ -230,7 +253,8 @@ async def validate_workflow_bpmn(conn, org_id, xml: str | None) -> list[str]:
     it as a new version. That save MUST be validated exactly the way generation
     is — same SpiffWorkflow parse (via ``derive_steps``) and the same closed-list
     check that every ``actionRegistryKey`` / ``assignedRoleProfileId`` resolves to
-    a REAL action-registry entry / real org Profile. Returns ``[]`` when valid, a
+    a REAL action-registry entry / real org Profile — and the same outright
+    refusal of any ``bpmn:scriptTask`` element. Returns ``[]`` when valid, a
     list of human-readable errors otherwise. Never stores anything.
     """
     profiles = await _fetch_profiles(conn, org_id)

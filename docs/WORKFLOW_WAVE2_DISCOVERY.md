@@ -1,5 +1,38 @@
 # Workflow Manager Wave 2 — Discovery Findings
 
+**[RESOLVED, scripttaskrefusal.structural, 2026-09-18]** — Task 3's finding
+below (SpiffWorkflow's unsandboxed `PythonScriptEngine` runs a hand-authored
+`bpmn:scriptTask` unrestricted, with no rejection anywhere in this codebase)
+is now closed. Decision made and implemented: **refuse Script Tasks
+outright at validation, never sandbox.** RestrictedPython — named as the
+presumed fix in `docs/CROSS_PROJECT_STATUS_CONSOLIDATED.md` §5.3 — is
+SUPERSEDED: a sandbox is a weaker guarantee than a refusal and costs
+materially more to build/maintain, and any escape hatch that runs
+author-supplied code, however sandboxed, reintroduces exactly the bypass
+the action registry exists to prevent. Both writers of
+`workflow_versions.bpmn_xml` (confirmed to share one validator — see Task
+3's own text below, unchanged) now refuse any BPMN containing a
+`bpmn:scriptTask`, naming the offending element, before either writer
+stores anything (`services/workflow_nl_generator.py::_validate`, via
+`services/workflow_steps_deriver.py::find_script_tasks`).
+`services/workflow_engine.py`'s BPMN parser also refuses the element type
+at the SpiffWorkflow parse layer itself, via the SAME
+`OVERRIDE_PARSER_CLASSES` mechanism this doc's own 1b/3a already describes
+for `_BusinessRuleTaskParser` — a new `_ScriptTaskParser` registered for
+`full_tag("scriptTask")`, defense in depth for any future caller of
+`parse_bpmn` that bypasses `_validate`. The bpmn-js diagram editor
+(`WorkflowDiagramEditor.jsx`) got a best-effort, non-enforcing client-side
+guard that undoes a Script Task the instant it lands on the canvas — Task
+2a's finding below ("not palette-restricted... no UI-level warning") is
+resolved in the sense that a warning now exists, but the enforcement is,
+and must remain, server-side. A live-database check at fix time
+re-confirmed Task 1a below's window: `workflow_versions` held zero rows, so
+this was a preventive fix, not a remediation of an already-exploited gap.
+See `apps/api/scripts/verify_scripttaskrefusal.py` and
+`docs/PROJECT_STATUS.md`'s `scripttaskrefusal.structural` entry for the full
+accounting. Everything below this notice is the original, unedited
+discovery record.
+
 **Sprint**: wave2discovery.lowrisk — read-only, no code/schema changes.
 **Reconciled against**: live source at HEAD of `wave2discovery-work` (branched
 from `main`), which includes `workflowmgr1`–`workflowmgr5.structural` and

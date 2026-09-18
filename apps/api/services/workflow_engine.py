@@ -59,6 +59,17 @@ class WorkflowEngineError(Exception):
     """Raised for structural problems executing a run (bad XML, missing step)."""
 
 
+class ScriptTaskRefusedError(WorkflowEngineError):
+    """Raised when BPMN XML being parsed contains a ``bpmn:scriptTask``.
+
+    scripttaskrefusal.structural: the real, primary refusal lives at
+    validation (``services.workflow_nl_generator._validate``, shared by both
+    writers of ``workflow_versions.bpmn_xml``) — nothing containing a Script
+    Task is ever stored. This is defense in depth for any future or existing
+    code path that calls ``parse_bpmn`` on BPMN XML that bypassed that
+    validation (e.g. a row written directly to the database)."""
+
+
 # ── SpiffWorkflow serializer ────────────────────────────────────────────────
 # The base BPMN serializer config deliberately omits ServiceTask (the vanilla
 # service task carries no extra attributes), so register it against the same
@@ -92,8 +103,30 @@ class _BusinessRuleTaskParser(TaskParser):
         return NoneTask(self.spec, self.bpmn_id, **self.bpmn_attributes)
 
 
+class _ScriptTaskParser(TaskParser):
+    """Refuse ``bpmn:scriptTask`` at parse time — same mechanism as
+    ``_BusinessRuleTaskParser`` above, opposite outcome.
+
+    SpiffWorkflow's base parser maps ``scriptTask`` to its own ``ScriptTask``
+    spec, which executes the element's body with an unsandboxed
+    ``PythonScriptEngine`` (bare ``eval``/``exec``) — arbitrary in-process code
+    execution with this application's own database credentials, outside the
+    action registry, outside every permission check, outside audit, and
+    outside the custody cliff. Loud refusal, never a sandboxed execution.
+    """
+
+    def create_task(self):
+        raise ScriptTaskRefusedError(
+            f"Script Task {self.bpmn_id!r} is not permitted: script tasks run "
+            "arbitrary Python in-process, bypassing the action registry, "
+            "permission checks, and audit log. Model this step as a Service "
+            "Task calling a registered action instead."
+        )
+
+
 def _make_bpmn_parser() -> BpmnParser:
-    """A BpmnParser that additionally accepts ``bpmn:businessRuleTask`` (DMN-less).
+    """A BpmnParser that additionally accepts ``bpmn:businessRuleTask`` (DMN-less)
+    and REFUSES ``bpmn:scriptTask`` outright.
 
     Additive to Phase 1: existing service/user/send/gateway XML is unaffected.
     """
@@ -101,6 +134,7 @@ def _make_bpmn_parser() -> BpmnParser:
     parser.OVERRIDE_PARSER_CLASSES = {
         **parser.OVERRIDE_PARSER_CLASSES,
         full_tag("businessRuleTask"): (_BusinessRuleTaskParser, NoneTask),
+        full_tag("scriptTask"): (_ScriptTaskParser, NoneTask),
     }
     return parser
 

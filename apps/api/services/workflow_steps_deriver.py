@@ -60,6 +60,34 @@ class DeriverError(Exception):
     """Raised when the BPMN XML is structurally unusable for step derivation."""
 
 
+def find_script_tasks(bpmn_xml: str) -> list[str]:
+    """Return the element ids of every ``bpmn:scriptTask`` in ``bpmn_xml``.
+
+    Matches on QName localname (any namespace prefix), the same technique
+    ``derive_steps`` below already uses to identify actionable BPMN element
+    types. This is a raw-XML scan, deliberately NOT a SpiffWorkflow parse: it
+    must be able to answer the question even for a document that would later
+    fail ``parse_bpmn`` for an unrelated reason, and it runs BEFORE that parse
+    is ever attempted. Returns ``[]`` (never raises) on unparseable XML — the
+    caller's own XML validation reports that failure.
+
+    A ``bpmn:scriptTask`` runs arbitrary Python in-process via SpiffWorkflow's
+    unsandboxed ``PythonScriptEngine`` (``eval``/``exec``), outside the action
+    registry, outside every permission check, outside audit, and outside the
+    custody cliff. Every writer of ``workflow_versions.bpmn_xml`` must refuse
+    it — see ``services.workflow_nl_generator._validate``.
+    """
+    try:
+        root = etree.fromstring(bpmn_xml.encode("utf-8"))
+    except etree.XMLSyntaxError:
+        return []
+    return [
+        el.get("id") or "(no id)"
+        for el in root.iter()
+        if etree.QName(el).localname == "scriptTask"
+    ]
+
+
 def _governance(el) -> tuple[str | None, str | None, int | None]:
     """Extract (action_registry_key, assigned_role_profile_id, explicit_tier).
 

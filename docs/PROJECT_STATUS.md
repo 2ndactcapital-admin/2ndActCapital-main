@@ -1,5 +1,48 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-17 (selfapproval.structural — the maker-checker rule
+Last updated: 2026-09-18 (scripttaskrefusal.structural — closes a live
+arbitrary-code-execution gap confirmed by `wave2discovery.lowrisk`
+(2026-09-18, read-only): SpiffWorkflow's stock `PythonScriptEngine` runs a
+BPMN `bpmn:scriptTask`'s body via bare `eval()`/`exec()` in-process, with
+this application's own database credentials, outside the action registry,
+outside every permission check, outside audit, and outside the custody
+cliff — and nothing in this codebase rejected one. The NL generator never
+offered `scriptTask` to the model, but the hand-edit diagram-editor path had
+no such restriction: an org admin could drag one from bpmn-js's stock
+palette, write arbitrary Python, save it (validation did not object), and
+the next run executed it. DECISION: refuse outright at validation, never
+sandbox — RestrictedPython (named in earlier design work, §5.3 of
+`docs/CROSS_PROJECT_STATUS_CONSOLIDATED.md`) is now SUPERSEDED, because a
+sandbox is a weaker guarantee than a refusal and costs materially more to
+build and maintain; a workflow step that needs logic belongs on a Service
+Task calling a registered, permission-checked, audited action instead — the
+entire point of the action registry. Both writers of `workflow_versions.
+bpmn_xml` (`workflow_nl_generator.generate_workflow`,
+`workflow_editor.save_new_version`) share one validator
+(`workflow_nl_generator._validate`), which now refuses any BPMN containing a
+`bpmn:scriptTask`, naming the element, before either writer stores anything;
+`services/workflow_engine.py`'s BPMN parser also refuses the element type
+outright at the SpiffWorkflow parse layer itself (same
+`OVERRIDE_PARSER_CLASSES` mechanism already used for `businessRuleTask`) as
+defense in depth for any future direct-`parse_bpmn` caller. The bpmn-js
+diagram editor also got a best-effort, non-enforcing client-side guard
+(undoes a Script Task the instant it is created/replaced) — usability only;
+the real control is server-side, proven by a direct API POST bypassing the
+client entirely. `wave2discovery.lowrisk` queried the live database and
+confirmed `workflow_versions` held ZERO rows at discovery time, so this was
+a preventive fix, not a remediation of an already-exploited gap.
+`wave2discovery.lowrisk` also corrected a standing inaccuracy in both
+`docs/CROSS_PROJECT_STATUS_CONSOLIDATED.md` and
+`docs/CROSS_PROJECT_STATUS_RECONCILIATION.md`, neither of which had ever
+been updated to reflect that five structural sprints (`workflowmgr1`–
+`workflowmgr5`, plus `workflowbpmnfix`) building the NL generator, the real
+SpiffWorkflow execution engine, the diagram editor, the run console, and a
+granular three-permission model were already merged to `main` — none of
+which had ever appeared in this file either. What remains genuinely unbuilt
+for Wave 2: the verb-tier gating engine (a Service Task does not suspend on
+Tier-1 today) and the NL-to-workflow-template library. See
+`docs/WORKFLOW_WAVE2_DISCOVERY.md` for the full discovery record and
+`apps/api/scripts/verify_scripttaskrefusal.py` (WRITTEN, not yet run by the
+operator); previously 2026-09-17 (selfapproval.structural — the maker-checker rule
 `agenticmakerchecker.structural` built (below) made a single-privileged-user
 org unable to ever approve its own proposals: excluding the maker from
 `review_agent_proposals` holders can leave the eligible-checker set EMPTY,
@@ -169,6 +212,107 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000000000. Script Task refusal — closes the arbitrary-code-execution gap; verify WRITTEN, not yet run (2026-09-18)
+
+**The gap, confirmed live by `wave2discovery.lowrisk` (read-only discovery,
+same day).** SpiffWorkflow's stock `PythonScriptEngine` is in use with NO
+subclass — its own docstring says to subclass it if you are uncomfortable
+with `eval()`/`exec()`. A `bpmn:scriptTask` therefore runs arbitrary Python
+IN PROCESS, with the application's own database credentials, outside the
+action registry, outside every permission check, outside audit, and outside
+the custody cliff. `TaskSpec.manual` defaults `False` and `ScriptTask` never
+overrides it, so `do_engine_steps()` runs a Script Task to completion
+automatically — it never reaches `_drive`'s `ServiceTask`-only
+auto-complete hook, so none of this codebase's permission re-check,
+registry resolution, or hold-on-exception logic ever sees it. The NL
+generator never offers `scriptTask` to the model, but the hand-edit path
+had no such restriction: an org admin could drag one from bpmn-js's stock
+palette, write arbitrary Python, save it (validation did not object), and
+the next run executed it — a live capability of already-merged code, not a
+future risk.
+
+**Task 1 findings.**
+- **1a — live database check**: queried `workflow_versions.bpmn_xml` for any
+  `scriptTask` element, any namespace prefix. **Zero matches — the table
+  held ZERO rows of any kind at discovery time.** This sprint is preventive,
+  not remedial; nothing already-stored needed remediation or deletion.
+- **1b — one shared validator, not two**: both writers
+  (`workflow_nl_generator.generate_workflow`'s `_generate_once` and
+  `workflow_editor.save_new_version` via `validate_workflow_bpmn`) call the
+  same private `_validate` function in `workflow_nl_generator.py`. Fixing
+  `_validate` once closes the gap for both writers simultaneously — proven
+  independently for each path in the verify script rather than assumed from
+  the shared code.
+- **1c — parser-customization mechanism**: `_BusinessRuleTaskParser`
+  (`services/workflow_engine.py`) is registered via
+  `parser.OVERRIDE_PARSER_CLASSES[full_tag("businessRuleTask")] =
+  (_BusinessRuleTaskParser, NoneTask)` inside `_make_bpmn_parser()`. The new
+  `_ScriptTaskParser` follows the identical mechanism — same
+  `OVERRIDE_PARSER_CLASSES` dict, same `full_tag()` helper, same base
+  `TaskParser` class — registered for `full_tag("scriptTask")`, so its
+  `create_task()` raises `ScriptTaskRefusedError` (naming the element)
+  instead of returning `NoneTask`. This replaces SpiffWorkflow's own
+  DEFAULT entry for `scriptTask` (`ScriptTaskParser` → `ScriptTask`, which
+  runs unrestricted), confirmed directly against the installed
+  `SpiffWorkflow==3.1.2` package's `BpmnParser.PARSER_CLASSES`.
+- **1d — the bpmn-js palette**: cannot be the enforcement boundary — a
+  hand-crafted XML POST bypasses any client-side restriction entirely. It
+  CAN be trimmed for usability: `WorkflowDiagramEditor.jsx` now listens for
+  `commandStack.shape.create.postExecute` /
+  `commandStack.shape.replace.postExecute`, and the instant a `bpmn:
+  ScriptTask` lands on the canvas (from the palette OR the context-pad
+  "change type" replace menu — bpmn-js's stock palette itself only offers a
+  generic Task; type-specific choice happens via that replace menu), the
+  command is undone and an inline message explains why. This is UI-nicety
+  only; the verify script proves the server refuses regardless of what the
+  client sends.
+
+**The fix.** `services.workflow_steps_deriver.find_script_tasks` does a raw
+lxml scan (QName localname, any namespace prefix — the same technique
+`derive_steps` already uses to identify BPMN element types) for any
+`scriptTask` element and returns its ids; `_validate` calls it BEFORE
+attempting a SpiffWorkflow parse and returns one specific, named error per
+element if any are found — loud and specific, not folded into a generic
+parse failure. Both HTTP routes (`POST /admin/workflows`,
+`POST /admin/workflows/{id}/versions`) already surface
+`WorkflowValidationError`/`WorkflowGenerationError` as `422` with
+`str(exc)`, so the named error reaches the caller unchanged. Nothing is
+persisted on refusal — both writers validate before either INSERT/UPDATE
+statement runs, unchanged from the existing validate-then-persist
+structure. `services/workflow_engine.py`'s `_ScriptTaskParser` (1c above) is
+defense in depth at the SpiffWorkflow parse layer itself, for any future
+code path that calls `parse_bpmn` directly on BPMN that bypassed
+`_validate`.
+
+**RestrictedPython is SUPERSEDED, not deferred.** It was named in earlier
+design work (`docs/CROSS_PROJECT_STATUS_CONSOLIDATED.md` §5.3) as the
+presumed eventual fix. That recommendation is retired: a sandbox is a
+weaker guarantee than an outright refusal and costs materially more to
+build and maintain, and an escape hatch that runs author-supplied code,
+however sandboxed, reintroduces exactly the bypass the action registry
+exists to prevent. A workflow step that needs logic is a Service Task
+calling a registered verb — that is where permission checks, tiering,
+audit, and the custody cliff already live.
+
+**Status correction, same sprint family.** `wave2discovery.lowrisk` also
+found and corrected a standing inaccuracy this file and both cross-project
+reconciliation docs shared: five structural sprints (`workflowmgr1`–
+`workflowmgr5`, plus `workflowbpmnfix`) building the real NL generator,
+SpiffWorkflow execution engine, bpmn-js diagram editor, run console, and a
+granular three-permission model were already merged to `main` and had never
+been recorded anywhere in status tracking. See
+`docs/WORKFLOW_WAVE2_DISCOVERY.md` for the full read and
+`docs/CROSS_PROJECT_STATUS_CONSOLIDATED.md` §5.1/§5.3 for the corrected
+entries. What remains genuinely unbuilt for Wave 2: the verb-tier gating
+engine (`workflow_steps.autonomy_tier` is computed and stored but never
+consulted by `_execute_service_task` — a Tier-1 Service Task runs
+unattended exactly like Tier-3) and the NL-to-workflow-template library
+(a reusable-template picker, distinct from the definitions-list screen that
+already exists). Neither is in scope for this sprint.
+
+`apps/api/scripts/verify_scripttaskrefusal.py` is WRITTEN, not yet run by
+the operator.
 
 ## 00000000000000000000000000. Self-approval under a genuinely empty checker set; verify WRITTEN, not yet run (2026-09-17)
 
