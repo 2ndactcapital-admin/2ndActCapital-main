@@ -3,8 +3,16 @@
 /**
  * RunDetailPane — the right pane of the Run History screen (schedulerhistory).
  *
- * Read-only, always: there is no write endpoint on a run, so there is no mode
- * to switch into and no control to gate. What it shows:
+ * READ-ONLY except for ONE real write, added by tiergating.structural: when a
+ * run is `awaiting_approval`, a SUSPENDED Tier-1 Service Task did NOT run —
+ * see docs/WORKFLOW_WAVE2_DISCOVERY.md Task 5 — and a caller who holds
+ * `review_agent_proposals` (`permissions.can_review`, from the server
+ * envelope, never a local default) gets Approve/Reject controls that POST to
+ * `/api/admin/workflow-runs/{runId}/steps/{stepId}/decision`. The API
+ * re-checks eligibility per proposal (maker-checker, or disclosed
+ * self-approval under a genuinely empty checker set) — this pane renders the
+ * control, it does not decide who may use it. Everything else below is still
+ * pure display. What it shows:
  *
  *   · WHAT STARTED THE RUN. For a scheduled run, the originating trigger's id
  *     and the SERVER's recurrence summary for it — the same sentence the
@@ -34,7 +42,7 @@
  * shown.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import {
@@ -65,41 +73,73 @@ export default function RunDetailPane({ runId, row }) {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [decisionNotes, setDecisionNotes] = useState("");
+  const [decisionBusy, setDecisionBusy] = useState(false);
+  const [decisionError, setDecisionError] = useState(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(async () => {
     if (!runId) {
       setDetail(null);
       setError(null);
-      return undefined;
+      return;
     }
     setLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(`/api/admin/workflow-runs/${runId}`, {
-          cache: "no-store",
-        });
-        const data = await res.json().catch(() => ({}));
-        if (cancelled) return;
-        if (!res.ok) {
-          setDetail(null);
-          setError(
-            typeof data.error === "string" ? data.error : "Could not load run.",
-          );
-          return;
-        }
-        setDetail(data);
-        setError(null);
-      } catch (e) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
+    try {
+      const res = await fetch(`/api/admin/workflow-runs/${runId}`, {
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDetail(null);
+        setError(
+          typeof data.error === "string" ? data.error : "Could not load run.",
+        );
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      setDetail(data);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }, [runId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function decide(stepId, decision) {
+    setDecisionBusy(true);
+    setDecisionError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/workflow-runs/${runId}/steps/${stepId}/decision`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            decision,
+            review_notes: decisionNotes || null,
+            self_approval_reason: decisionNotes || null,
+          }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDecisionError(
+          typeof data.error === "string" ? data.error : "Decision failed.",
+        );
+        return;
+      }
+      setDecisionNotes("");
+      await load();
+    } catch (e) {
+      setDecisionError(e.message);
+    } finally {
+      setDecisionBusy(false);
+    }
+  }
 
   if (!runId) {
     return (
@@ -115,8 +155,10 @@ export default function RunDetailPane({ runId, row }) {
   const run = detail?.run;
   const steps = detail?.steps || [];
   const alerts = detail?.alerts || [];
+  const permissions = detail?.permissions || {};
   const origin = run?.origin || row?.origin || {};
   const scheduled = origin.kind === "scheduled";
+  const suspendedSteps = steps.filter((s) => s.status === "suspended");
 
   return (
     <aside
@@ -257,6 +299,76 @@ export default function RunDetailPane({ runId, row }) {
             </div>
           )}
 
+          {/* ── Awaiting approval: a Tier-1 step that did NOT run (tiergating.structural) ── */}
+          {run.status === "awaiting_approval" && suspendedSteps.length > 0 && (
+            <div className="border-t border-[var(--2a-border)] pt-3">
+              <span className={EYEBROW}>
+                Suspended — Tier-1 approval required
+              </span>
+              {suspendedSteps.map((s) => (
+                <div
+                  key={s.id}
+                  className="mt-1 rounded border border-[var(--2a-gold)] px-2 py-1.5"
+                >
+                  <p className="text-xs text-[var(--2a-gold)]">
+                    {(s.display_name || s.step_key)} has NOT run. Effective
+                    tier {s.effective_tier} — it moves money, creates an
+                    obligation, produces an artifact a third party relies on,
+                    or mutates ownership/economic terms, so it will not
+                    execute unattended.
+                  </p>
+                  {s.approval_alerts?.length > 0 && (
+                    <p className="mt-1 text-[10px] text-[var(--2a-text-muted)]">
+                      Notified:{" "}
+                      {s.approval_alerts
+                        .map((a) => personLabel(a.user_name, a.user_email))
+                        .join(", ")}
+                    </p>
+                  )}
+                  {permissions.can_review ? (
+                    <div className="mt-2 space-y-1.5">
+                      <textarea
+                        value={decisionNotes}
+                        onChange={(e) => setDecisionNotes(e.target.value)}
+                        placeholder="Notes (required if you are the only eligible reviewer)"
+                        rows={2}
+                        className="w-full rounded border border-[var(--2a-border)] px-2 py-1 text-xs"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={decisionBusy}
+                          onClick={() => decide(s.id, "approved")}
+                          className="rounded border border-[var(--2a-navy)] px-2 py-1 text-xs font-medium text-[var(--2a-navy)] disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={decisionBusy}
+                          onClick={() => decide(s.id, "rejected")}
+                          className="rounded border border-[var(--2a-gold)] px-2 py-1 text-xs font-medium text-[var(--2a-gold)] disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                      {decisionError && (
+                        <p className="text-[11px] text-[var(--2a-gold)]">
+                          {decisionError}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-[10px] text-[var(--2a-text-muted)]">
+                      You do not hold review_agent_proposals — this decision
+                      is not yours to make.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── The step timeline ───────────────────────────────────────── */}
           <div className="border-t border-[var(--2a-border)] pt-3">
             <span className={EYEBROW}>Steps ({steps.length})</span>
@@ -280,8 +392,16 @@ export default function RunDetailPane({ runId, row }) {
                       </span>
                     </div>
                     <p className="text-[10px] text-[var(--2a-text-muted)]">
-                      {s.step_type} · tier {s.autonomy_tier} ·{" "}
-                      {formatDateTime(s.started_at)}
+                      {s.step_type} · effective tier{" "}
+                      {s.effective_tier ?? s.autonomy_tier}
+                      {s.effective_tier != null &&
+                        s.effective_tier !== s.autonomy_tier && (
+                          <span title="Most-restrictive-wins: the registry verb's own stakes tier overrode the diagram author's choice.">
+                            {" "}
+                            (diagram said {s.autonomy_tier})
+                          </span>
+                        )}{" "}
+                      · {formatDateTime(s.started_at)}
                     </p>
                     <p className="text-[10px] text-[var(--2a-text-muted)]">
                       Duration:{" "}

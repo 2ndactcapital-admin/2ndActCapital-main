@@ -24,12 +24,15 @@ export function statusPillClass(status) {
   switch (status) {
     case "held":
     case "failed":
+    case "awaiting_approval":
+    case "suspended":
       return `${base} border-gold text-gold`;
     case "running":
     case "active":
       return `${base} border-navy text-navy`;
     case "completed":
     case "approved":
+    case "rejected":
       return `${base} border-border text-text-secondary`;
     default:
       // pending / proposed / skipped / cancelled / anything else

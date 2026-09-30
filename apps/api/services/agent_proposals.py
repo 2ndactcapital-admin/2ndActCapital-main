@@ -138,7 +138,7 @@ async def create_proposal(
     )
 
 
-async def _holds_review_permission(pool, user_id, org_id) -> bool:
+async def holds_review_permission(pool, user_id, org_id) -> bool:
     """True iff ``user_id`` holds ``REVIEW_PERMISSION`` (or is super_admin),
     with no opinion on whether they are also the proposal's maker.
 
@@ -181,7 +181,7 @@ async def is_eligible_reviewer(pool, org_id, user_id, maker_id) -> bool:
     """
     if str(user_id) == str(maker_id):
         return False
-    return await _holds_review_permission(pool, user_id, org_id)
+    return await holds_review_permission(pool, user_id, org_id)
 
 
 async def has_other_eligible_checker(pool, org_id, maker_id) -> bool:
@@ -268,7 +268,7 @@ async def review_proposal(
     self_approved = False
 
     if is_self:
-        if not await _holds_review_permission(pool, reviewed_by, org_id):
+        if not await holds_review_permission(pool, reviewed_by, org_id):
             raise NotEligibleError(
                 f"user {reviewed_by} does not hold {REVIEW_PERMISSION!r}",
                 proposal_id=proposal_id, user_id=str(reviewed_by),

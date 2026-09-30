@@ -44,11 +44,73 @@ from SpiffWorkflow.bpmn.specs.defaults import NoneTask, ServiceTask, UserTask
 from SpiffWorkflow.util.task import TaskState
 
 from services.action_registry import REGISTRY
-from services import workflow_todos
+from services import agent_proposals, workflow_todos
 
 # SpiffWorkflow task-spec class names that map to our governed workflow_steps.
 _SERVICE_CLS = "ServiceTask"
 _USER_CLS = "UserTask"
+
+# ── Verb-tier gating (tiergating.structural) ────────────────────────────────
+#
+# THE GAP (docs/WORKFLOW_WAVE2_DISCOVERY.md Task 5): the engine fetched
+# workflow_steps.autonomy_tier but never branched on it for a Service Task —
+# a Tier-1 verb invoked from a Service Task executed unattended, the instant
+# the engine reached it, exactly like a Tier-3 verb.
+#
+# TIER 1 IS THE DANGEROUS END, NOT THE SAFE ONE — same convention as
+# AssistantAction.tier (services/action_registry.py): 1 = highest stakes
+# (moves money, creates an obligation, produces a third-party artifact, or
+# mutates ownership/economic terms/a posted ledger line), 3 = lowest. Reading
+# "tier 1" as permissive-low is backwards and will let an unattended run
+# execute the most dangerous class of verb.
+#
+# EFFECTIVE TIER IS MOST-RESTRICTIVE-WINS: min(registry tier, diagram tier).
+# Because 1 is the dangerous end, min() picks the MORE restrictive of the two
+# — an author may UPGRADE a Tier-3 verb by marking its diagram element Tier 1
+# (it will suspend even though the verb itself is low-stakes), but can never
+# DOWNGRADE a Tier-1 verb by marking its diagram element Tier 3 (it still
+# suspends). Same rule CLAUDE.md documents for dual-path permission
+# resolution — do not invent a second one.
+SUSPEND_TIER = 1
+
+
+def compute_effective_tier(step: dict, action) -> int:
+    """The tier that actually governs THIS Service Task at execution time.
+
+    ``step`` is a ``workflow_steps`` row dict (has ``autonomy_tier``, the
+    diagram author's choice). ``action`` is the resolved
+    ``AssistantAction`` (or ``None`` if the key didn't resolve). Most-
+    restrictive-wins: see the module-level note above for why this is
+    ``min()``, not ``max()``, despite reading backwards at a glance.
+    """
+    diagram_tier = step.get("autonomy_tier")
+    if diagram_tier is None:
+        diagram_tier = 3
+    registry_tier = getattr(action, "tier", None) if action is not None else None
+    if registry_tier is None:
+        # Unknown/unresolved verb: nothing to be MORE restrictive than, so
+        # the diagram's own tier (already defaulted conservatively by
+        # workflow_steps_deriver) is all there is to go on.
+        return diagram_tier
+    return min(diagram_tier, registry_tier)
+
+
+# agent_proposals.agent_key this sprint writes for a suspended Service Task's
+# proposal. Not one of the seven conceptual agents in services.agent_proposals
+# (AGENT_KEYS) — this is the deterministic gating engine itself, proposing on
+# behalf of a workflow run rather than an LLM agent. agent_key has no CHECK/FK
+# (documented, not enforced — see agenticmakerchecker_substrate.sql), so this
+# is additive.
+TIER_GATE_AGENT_KEY = "workflow_engine"
+TIER_GATE_OBJECT_TYPE = "workflow_service_task_approval"
+
+# workflow_runs.status / workflow_run_steps.status values this sprint adds.
+# Both columns are plain text with no CHECK constraint (confirmed live), so
+# these are additive, same as 'running'/'completed'/'held' before them.
+RUN_STATUS_AWAITING_APPROVAL = "awaiting_approval"
+RUN_STATUS_REJECTED = "rejected"
+STEP_STATUS_SUSPENDED = "suspended"
+STEP_STATUS_REJECTED = "rejected"
 
 
 class MakerCheckerError(Exception):
@@ -188,13 +250,28 @@ def _ready_user_task(workflow: BpmnWorkflow, step_key: str | None = None):
     return None
 
 
-async def _drive(workflow: BpmnWorkflow):
+def _started_service_task(workflow: BpmnWorkflow, step_key: str):
+    for t in workflow.get_tasks(state=TaskState.STARTED):
+        if t.task_spec.__class__.__name__ == _SERVICE_CLS and t.task_spec.bpmn_id == step_key:
+            return t
+    return None
+
+
+async def _drive(workflow: BpmnWorkflow) -> tuple[list[str], str | None]:
     """Advance the workflow, auto-executing Service Tasks, until it pauses at a
-    User Task or completes.
+    User Task, SUSPENDS at a Tier-1 Service Task, or completes.
 
     A base ``bpmn:serviceTask`` parks in the STARTED state ("external service
     running") rather than auto-completing — that is exactly our hook point.
-    Returns the list of Service Task ``bpmn_id``s executed during this drive.
+
+    Returns ``(executed, suspended_step_key)``: the list of Service Task
+    ``bpmn_id``s that actually ran during this drive, and — if a Service Task
+    whose EFFECTIVE tier is ``SUSPEND_TIER`` was reached — that task's
+    ``bpmn_id``, LEFT UNEXECUTED (still parked STARTED in ``workflow``, never
+    completed). ``suspended_step_key`` is ``None`` when the drive instead
+    paused at a User Task or ran to completion. The caller is responsible for
+    recording the suspension and NOT advancing the workflow further until an
+    approval resumes it.
     """
     executed: list[str] = []
     while True:
@@ -204,14 +281,26 @@ async def _drive(workflow: BpmnWorkflow):
             if t.task_spec.__class__.__name__ == _SERVICE_CLS
         ]
         if not started:
-            break
+            return executed, None
         for task in started:
             step_key = task.task_spec.bpmn_id
+            step = _SERVICE_STEP_MAP.get(step_key, {})
+            action_key = step.get("action_registry_key")
+            resolved = REGISTRY.get(action_key) if action_key else None
+            # Suspension only matters for an action that would actually run a
+            # handler — an unresolved key, or one that never opted into
+            # workflow_invocable, has no side effect to gate either way (see
+            # _execute_service_task), so gating it would add friction with
+            # nothing real to approve.
+            if (
+                getattr(resolved, "workflow_invocable", False)
+                and compute_effective_tier(step, resolved) == SUSPEND_TIER
+            ):
+                return executed, step_key
             result = await _execute_service_task(step_key)
             task.set_data(service_result=result)
             task.complete()
             executed.append(step_key)
-    return executed
 
 
 async def _execute_service_task(step_key: str) -> dict:
@@ -469,7 +558,7 @@ async def start_workflow_run(
                     "run_context": context, "run_id": run_id,
                 }
                 try:
-                    executed = await _drive(workflow)
+                    executed, suspended_step_key = await _drive(workflow)
                 finally:
                     _SERVICE_STEP_MAP = {}
                     _SERVICE_CONTEXT = {}
@@ -490,9 +579,21 @@ async def start_workflow_run(
                         json.dumps(_service_result_for(workflow, step_key)),
                     )
 
-                # Pause point or completion.
-                ready = _ready_user_task(workflow)
-                if ready is not None:
+                # Suspension point, pause point, or completion.
+                ready = None if suspended_step_key is not None else _ready_user_task(workflow)
+                if suspended_step_key is not None:
+                    await _suspend_step(
+                        conn,
+                        run_id=run_id,
+                        org_id=org_id,
+                        maker=started_by,
+                        step_key=suspended_step_key,
+                        step_row=step_by_key.get(suspended_step_key, {}),
+                        run_step_id=run_step_ids.get(suspended_step_key),
+                        workflow=workflow,
+                    )
+                    status = RUN_STATUS_AWAITING_APPROVAL
+                elif ready is not None:
                     # Activate the pausing User Task; started_by "proposes" it so
                     # a different approver is required by maker-checker.
                     rsid = run_step_ids.get(ready.task_spec.bpmn_id)
@@ -556,6 +657,7 @@ async def start_workflow_run(
             "status": status,
             "executed_service_steps": executed,
             "paused_at": ready.task_spec.bpmn_id if ready is not None else None,
+            "suspended_at": suspended_step_key,
         }
 
 
@@ -588,6 +690,96 @@ def _service_result_for(workflow: BpmnWorkflow, step_key: str) -> dict:
         if getattr(t.task_spec, "bpmn_id", None) == step_key:
             return t.data.get("service_result", {"action_registry_key": None})
     return {"action_registry_key": None}
+
+
+async def _run_step_id_for(conn, run_id, step_key: str):
+    """Look up a ``workflow_run_steps.id`` by ``(run_id, step_key)``.
+
+    Only needed by callers resuming mid-run (``complete_user_task``,
+    ``resolve_tier_approval``), which don't have the start-time
+    ``run_step_ids`` dict in scope — that dict is built once, inside
+    ``start_workflow_run``, and never persisted anywhere else."""
+    return await conn.fetchval(
+        """
+        SELECT rs.id
+        FROM workflow_run_steps rs
+        JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
+        WHERE rs.workflow_run_id = $1 AND ws.step_key = $2
+        """,
+        run_id, step_key,
+    )
+
+
+async def _suspend_step(
+    conn, *, run_id, org_id, maker, step_key: str, step_row: dict, run_step_id,
+    workflow: BpmnWorkflow,
+) -> None:
+    """Record a Tier-1 Service Task's suspension.
+
+    Writes, in the caller's transaction: the ``agent_proposals`` row that
+    gates this step (maker-checker eligibility and disclosed self-approval
+    are ``services.agent_proposals``'s job, not reimplemented here), the
+    ``workflow_run_steps`` row (``status='suspended'``, ``proposed_by`` =
+    the maker, linked to the proposal), the ``workflow_runs`` row
+    (``status='awaiting_approval'``, state serialized so the run can be
+    resumed later), and the reviewer alert.
+
+    ``maker`` is ALWAYS ``workflow_runs.started_by`` — for a manual run, the
+    member who started it; for a scheduled run, the trigger's own
+    ``created_by`` (``workflow_scheduler._fire`` already passes this as
+    ``started_by`` — see docs/WORKFLOW_WAVE2_DISCOVERY.md Task 1c). A run
+    with no resolvable maker cannot generate a Tier-1 proposal at all — a
+    NULL maker is never treated as "anyone may approve".
+    """
+    if maker is None:
+        raise WorkflowEngineError(
+            f"Service Task {step_key!r} requires Tier-1 approval, but this "
+            "run has no started_by member to record as the proposal's "
+            "maker — a NULL maker is never treated as 'anyone may approve'"
+        )
+    action = REGISTRY.get(step_row.get("action_registry_key"))
+    effective_tier = compute_effective_tier(step_row, action)
+    payload = {
+        "workflow_run_id": str(run_id),
+        "workflow_run_step_id": str(run_step_id),
+        "step_key": step_key,
+        "action_registry_key": step_row.get("action_registry_key"),
+        "display_name": step_row.get("display_name"),
+        "diagram_tier": step_row.get("autonomy_tier"),
+        "registry_tier": getattr(action, "tier", None),
+        "effective_tier": effective_tier,
+    }
+    proposal_id = await agent_proposals.create_proposal(
+        conn, org_id,
+        agent_key=TIER_GATE_AGENT_KEY,
+        object_type=TIER_GATE_OBJECT_TYPE,
+        payload=payload,
+        proposed_by=maker,
+    )
+    await conn.execute(
+        """
+        UPDATE workflow_run_steps
+        SET status = $2, proposed_by = $3, agent_proposal_id = $4::uuid,
+            started_at = now()
+        WHERE id = $1
+        """,
+        run_step_id, STEP_STATUS_SUSPENDED, maker, proposal_id,
+    )
+    await conn.execute(
+        """
+        UPDATE workflow_runs
+        SET status = $2, spiff_serialized_state = $3::jsonb
+        WHERE id = $1
+        """,
+        run_id, RUN_STATUS_AWAITING_APPROVAL, serialize_state(workflow),
+    )
+    await workflow_todos.create_tier_approval_alerts(
+        conn,
+        org_id=org_id,
+        run_step_id=run_step_id,
+        step_key=step_key,
+        display_name=step_row.get("display_name"),
+    )
 
 
 async def complete_user_task(pool, workflow_run_step_id, completed_by, result: dict | None) -> dict:
@@ -667,7 +859,7 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
                 "run_context": _resume_context or {}, "run_id": run_id,
             }
             try:
-                executed = await _drive(workflow)
+                executed, suspended_step_key = await _drive(workflow)
             finally:
                 _SERVICE_STEP_MAP = {}
                 _SERVICE_CONTEXT = {}
@@ -711,9 +903,22 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
                         json.dumps(_service_result_for(workflow, step_key)),
                     )
 
-                # New pause point or completion.
-                ready = _ready_user_task(workflow)
-                if ready is not None:
+                # New suspension point, pause point, or completion.
+                ready = None if suspended_step_key is not None else _ready_user_task(workflow)
+                if suspended_step_key is not None:
+                    new_rsid = await _run_step_id_for(conn, run_id, suspended_step_key)
+                    await _suspend_step(
+                        conn,
+                        run_id=run_id,
+                        org_id=org_id,
+                        maker=step["started_by"],
+                        step_key=suspended_step_key,
+                        step_row=step_by_key.get(suspended_step_key, {}),
+                        run_step_id=new_rsid,
+                        workflow=workflow,
+                    )
+                    run_status = RUN_STATUS_AWAITING_APPROVAL
+                elif ready is not None:
                     new_rsid = await conn.fetchval(
                         """
                         UPDATE workflow_run_steps rs
@@ -770,5 +975,239 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             "run_status": run_status,
             "completed_step": step["step_key"],
             "executed_service_steps": executed,
+            "suspended_at": suspended_step_key,
             "is_completed": workflow.is_completed(),
+        }
+
+
+async def resolve_tier_approval(
+    pool, workflow_run_step_id, *, reviewed_by, decision,
+    review_notes: str | None = None, self_approval_reason: str | None = None,
+) -> dict:
+    """Approve or reject a SUSPENDED Tier-1 Service Task, and resume the run.
+
+    ``decision`` is ``services.agent_proposals.STATUS_APPROVED`` or
+    ``STATUS_REJECTED``. Eligibility — holds ``review_agent_proposals`` and is
+    not the maker, OR disclosed self-approval under a genuinely empty checker
+    set — is entirely ``agent_proposals.review_proposal``'s job.
+    ``MakerCheckerError`` / ``NotEligibleError`` / ``SelfApprovalReasonRequiredError``
+    all propagate unchanged; this function does not re-implement or relax any
+    of them. Rejecting a self-proposed step under a genuinely empty checker
+    set requires the same disclosure a self-APPROVAL would — that is
+    ``review_proposal``'s existing behavior, not something added here.
+
+    APPROVAL executes the verb EXACTLY ONCE: ``_execute_service_task`` is
+    called directly, precisely once, never through ``_drive``'s own loop
+    (which would recompute the effective tier and suspend on the very same
+    task again). The run then resumes driving, which may hit ANOTHER Tier-1
+    suspension downstream (handled recursively, the same way), a User Task
+    pause, or completion.
+
+    REJECTION means the verb NEVER executes. The run ends in the terminal
+    ``rejected`` state; SpiffWorkflow's serialized state is left exactly as
+    it was suspended (there is no "skip and continue" semantics for a
+    rejected Tier-1 step — like a held run, it does not silently resume from
+    a different point).
+    """
+    async with pool.acquire() as conn:
+        step = await conn.fetchrow(
+            """
+            SELECT rs.id, rs.workflow_run_id, rs.org_id, rs.status,
+                   rs.agent_proposal_id,
+                   ws.step_key, ws.autonomy_tier, ws.action_registry_key,
+                   ws.display_name,
+                   r.workflow_version_id, r.spiff_serialized_state, r.started_by,
+                   r.context
+            FROM workflow_run_steps rs
+            JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
+            JOIN workflow_runs r ON r.id = rs.workflow_run_id
+            WHERE rs.id = $1
+            """,
+            workflow_run_step_id,
+        )
+        if step is None:
+            raise WorkflowEngineError(f"workflow_run_step {workflow_run_step_id} not found")
+        if step["status"] != STEP_STATUS_SUSPENDED:
+            raise WorkflowEngineError(
+                f"step is not awaiting Tier-1 approval (status={step['status']})"
+            )
+        if step["agent_proposal_id"] is None:
+            raise WorkflowEngineError(
+                f"workflow_run_step {workflow_run_step_id} is suspended but has "
+                "no linked agent_proposals row"
+            )
+
+        org_id = step["org_id"]
+        run_id = step["workflow_run_id"]
+
+        proposal = await agent_proposals.review_proposal(
+            pool, conn, org_id, str(step["agent_proposal_id"]),
+            reviewed_by=reviewed_by, decision=decision,
+            review_notes=review_notes, self_approval_reason=self_approval_reason,
+        )
+
+        if decision == agent_proposals.STATUS_REJECTED:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    UPDATE workflow_run_steps
+                    SET status = $2, approved_by = $3, completed_at = now()
+                    WHERE id = $1
+                    """,
+                    workflow_run_step_id, STEP_STATUS_REJECTED, reviewed_by,
+                )
+                await conn.execute(
+                    """
+                    UPDATE workflow_runs
+                    SET status = $2, completed_at = now()
+                    WHERE id = $1
+                    """,
+                    run_id, RUN_STATUS_REJECTED,
+                )
+                await workflow_todos.complete_tier_approval_todos(
+                    conn, run_step_id=workflow_run_step_id
+                )
+            return {
+                "run_id": run_id,
+                "run_status": RUN_STATUS_REJECTED,
+                "step": step["step_key"],
+                "executed": False,
+                "proposal": proposal,
+            }
+
+        # APPROVED — execute the verb exactly once, then resume driving.
+        try:
+            workflow = deserialize_state(step["spiff_serialized_state"])
+            task = _started_service_task(workflow, step["step_key"])
+            if task is None:
+                raise WorkflowEngineError(
+                    f"no STARTED Service Task '{step['step_key']}' in "
+                    "serialized state — was this step already resumed?"
+                )
+
+            steps = await _load_steps(conn, step["workflow_version_id"], org_id)
+            step_by_key = {s["step_key"]: dict(s) for s in steps}
+            global _SERVICE_STEP_MAP, _SERVICE_CONTEXT
+            _SERVICE_STEP_MAP = {
+                k: v for k, v in step_by_key.items() if v["step_type"] == "service"
+            }
+            _resume_context = step["context"]
+            if isinstance(_resume_context, (str, bytes)):
+                try:
+                    _resume_context = json.loads(_resume_context)
+                except (ValueError, TypeError):
+                    _resume_context = {}
+            _SERVICE_CONTEXT = {
+                "pool": pool, "org_id": org_id, "actor_id": step["started_by"],
+                "run_context": _resume_context or {}, "run_id": run_id,
+            }
+            try:
+                result = await _execute_service_task(step["step_key"])
+                task.set_data(service_result=result)
+                task.complete()
+                executed = [step["step_key"]]
+                more_executed, suspended_step_key = await _drive(workflow)
+                executed += more_executed
+            finally:
+                _SERVICE_STEP_MAP = {}
+                _SERVICE_CONTEXT = {}
+
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    UPDATE workflow_run_steps
+                    SET status = 'completed', approved_by = $2, completed_at = now(),
+                        result = $3::jsonb
+                    WHERE id = $1
+                    """,
+                    workflow_run_step_id, reviewed_by,
+                    json.dumps(_service_result_for(workflow, step["step_key"])),
+                )
+                await workflow_todos.complete_tier_approval_todos(
+                    conn, run_step_id=workflow_run_step_id
+                )
+
+                for step_key in more_executed:
+                    await conn.execute(
+                        """
+                        UPDATE workflow_run_steps rs
+                        SET status = 'completed', started_at = now(), completed_at = now(),
+                            result = $3::jsonb
+                        FROM workflow_steps ws
+                        WHERE rs.workflow_step_id = ws.id
+                          AND rs.workflow_run_id = $1 AND ws.step_key = $2
+                        """,
+                        run_id, step_key,
+                        json.dumps(_service_result_for(workflow, step_key)),
+                    )
+
+                ready = None if suspended_step_key is not None else _ready_user_task(workflow)
+                if suspended_step_key is not None:
+                    new_rsid = await _run_step_id_for(conn, run_id, suspended_step_key)
+                    await _suspend_step(
+                        conn,
+                        run_id=run_id,
+                        org_id=org_id,
+                        maker=step["started_by"],
+                        step_key=suspended_step_key,
+                        step_row=step_by_key.get(suspended_step_key, {}),
+                        run_step_id=new_rsid,
+                        workflow=workflow,
+                    )
+                    run_status = RUN_STATUS_AWAITING_APPROVAL
+                elif ready is not None:
+                    new_rsid = await conn.fetchval(
+                        """
+                        UPDATE workflow_run_steps rs
+                        SET status = 'active', started_at = now()
+                        FROM workflow_steps ws
+                        WHERE rs.workflow_step_id = ws.id
+                          AND rs.workflow_run_id = $1 AND ws.step_key = $2
+                          AND rs.status = 'pending'
+                        RETURNING rs.id
+                        """,
+                        run_id, ready.task_spec.bpmn_id,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE workflow_runs SET status = 'running',
+                            spiff_serialized_state = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        run_id, serialize_state(workflow),
+                    )
+                    if new_rsid is not None:
+                        next_step = step_by_key.get(ready.task_spec.bpmn_id, {})
+                        await workflow_todos.sync_user_task_todos(
+                            conn,
+                            org_id=org_id,
+                            run_step_id=new_rsid,
+                            step_key=ready.task_spec.bpmn_id,
+                            display_name=next_step.get("display_name"),
+                            assigned_role_profile_id=next_step.get("assigned_role_profile_id"),
+                        )
+                    run_status = "running"
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE workflow_runs
+                        SET status = 'completed', completed_at = now(),
+                            spiff_serialized_state = $2::jsonb
+                        WHERE id = $1
+                        """,
+                        run_id, serialize_state(workflow),
+                    )
+                    run_status = "completed"
+        except Exception as exc:
+            await _hold_run(conn, run_id, org_id, step["started_by"], exc)
+            raise
+
+        return {
+            "run_id": run_id,
+            "run_status": run_status,
+            "step": step["step_key"],
+            "executed_service_steps": executed,
+            "suspended_at": suspended_step_key,
+            "is_completed": workflow.is_completed(),
+            "proposal": proposal,
         }

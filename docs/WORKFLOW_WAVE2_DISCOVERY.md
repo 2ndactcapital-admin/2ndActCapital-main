@@ -33,6 +33,46 @@ See `apps/api/scripts/verify_scripttaskrefusal.py` and
 accounting. Everything below this notice is the original, unedited
 discovery record.
 
+**[RESOLVED, tiergating.structural, 2026-09-30]** — Task 5's finding below
+(a Tier-1 registry verb invoked from a Service Task executes unattended,
+exactly like Tier-3, because neither tier value was ever consulted by
+`_execute_service_task`) is now closed. Effective tier is
+`min(registry_tier, diagram_tier)` (`services.workflow_engine.
+compute_effective_tier`), most-restrictive-wins (an author may upgrade a
+Tier-3 verb to require approval; a Tier-1 verb can never be downgraded by
+the diagram). A Service Task whose effective tier is 1 no longer executes
+when `_drive` reaches it: the run suspends
+(`workflow_runs.status='awaiting_approval'`,
+`workflow_run_steps.status='suspended'`) and an `agent_proposals` row gates
+it, reusing `agenticmakerchecker.structural`'s maker-checker rule and
+`selfapproval.structural`'s disclosed-self-approval carve-out wholesale —
+not a second approval mechanism. Reviewers are alerted via a seventh
+`member_todos` alert kind (`workflow_todos.create_tier_approval_alerts`),
+scoped to `review_agent_proposals` holders, the same set
+`agent_proposals.is_eligible_reviewer` computes against. Approval
+(`services.workflow_engine.resolve_tier_approval`) invokes the verb EXACTLY
+ONCE, directly, never through `_drive`'s own loop (which would recompute the
+tier and suspend on the same task again), then resumes driving; rejection
+means the verb never executes and the run ends `'rejected'`. The diagram
+editor's "Tier 1 — approval required" option (Task 2a below) is now real —
+selecting it changes what the engine does, not only what is stored. The
+scheduled-run "no maker" premise this task's own text raises below turned
+out to not hold against the live code: `services/workflow_scheduler.py`'s
+`_fire` already passes the trigger's own `created_by` as `started_by`, so
+`workflow_runs.started_by` was already the correct maker for a scheduled
+run, identical in shape to a manual one — `_suspend_step` additionally
+refuses outright (never silently treats it as "anyone may approve") on the
+theoretical case of a run with no resolvable maker at all. New endpoint:
+`POST /admin/workflow-runs/{run_id}/steps/{step_id}/decision`, gated on
+`review_agent_proposals` (separate from the three existing workflow
+permissions). Staffing fact, unchanged since `selfapproval.structural`: only
+`org_admin` holds `review_agent_proposals` in the live 2nd Act org, so most
+approvals today take the disclosed self-approval path. See
+`apps/api/scripts/verify_tiergating.py` and `docs/PROJECT_STATUS.md`'s
+`tiergating.structural` entry for the full accounting. Wave 2's one
+remaining item after this sprint is the NL-to-workflow-template library
+(Task 2b below).
+
 **Sprint**: wave2discovery.lowrisk — read-only, no code/schema changes.
 **Reconciled against**: live source at HEAD of `wave2discovery-work` (branched
 from `main`), which includes `workflowmgr1`–`workflowmgr5.structural` and

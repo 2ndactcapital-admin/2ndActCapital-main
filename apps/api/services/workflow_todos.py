@@ -667,6 +667,101 @@ async def create_platform_ceiling_cap_alert(conn, *, spend_usd: float, ceiling_u
     return ids
 
 
+# ── tiergating.structural: Tier-1 Service Task suspension alerting ─────────
+#
+# A SEVENTH alert kind, same mechanism again: services.workflow_engine
+# suspends a run at a Tier-1 Service Task rather than executing it
+# unattended (docs/WORKFLOW_WAVE2_DISCOVERY.md Task 5), and creates an
+# agent_proposals row to gate it. The people who need to know are whoever can
+# actually act on that proposal — REVIEW_PERMISSION holders — not org_admins:
+# a todo recipient and an eligible approver must be the same set, or the
+# todo would point someone at a control they can't operate (or hide the
+# control from someone who could).
+
+TODO_SOURCE_TIER_APPROVAL = "workflow_tier_approval"
+TIER_APPROVAL_ALERT_UNDELIVERED_ACTION = "workflow_tier_approval_alert_undelivered"
+
+
+async def _review_permission_recipients(org_id) -> set[str]:
+    """Every real holder of ``review_agent_proposals`` in ``org_id`` — the
+    SAME permission ``services.agent_proposals.is_eligible_reviewer`` checks,
+    so this alert's recipient set is never wider or narrower than the set of
+    people who could actually approve or reject the suspended step."""
+    from services.agent_proposals import REVIEW_PERMISSION
+
+    pool = await get_pool()
+    ids = await get_users_with_permission(pool, org_id, REVIEW_PERMISSION)
+    return set(ids)
+
+
+async def create_tier_approval_alerts(
+    conn, *, org_id, run_step_id, step_key: str, display_name: str | None
+) -> list:
+    """Alert every ``review_agent_proposals`` holder that a Tier-1 Service
+    Task is suspended and needs a decision before it can run.
+
+    Keyed on (source='workflow_tier_approval', related_type=
+    'workflow_run_step', related_id=run_step_id) — the same idempotency
+    discipline as :func:`sync_user_task_todos`, so a step that somehow
+    re-suspends refreshes one todo per reviewer rather than stacking
+    duplicates."""
+    recipients = await _review_permission_recipients(org_id)
+    label = display_name or step_key
+    detail = (
+        "A Tier-1 workflow step is suspended and will not run until it is "
+        "approved. Tier 1 means it moves money, creates an obligation, "
+        "produces an artifact a third party relies on, or mutates "
+        "ownership/economic terms — it does not execute unattended."
+    )
+
+    if not recipients:
+        await _record_undelivered_alert(
+            conn,
+            org_id=org_id,
+            source=TODO_SOURCE_TIER_APPROVAL,
+            related_type="workflow_run_step",
+            related_id=run_step_id,
+            reason=(
+                "Tier-1 step suspended with no resolvable reviewer: the org "
+                "has no review_agent_proposals holder"
+            ),
+            action=TIER_APPROVAL_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn,
+                org_id=org_id,
+                user_id=uid,
+                source=TODO_SOURCE_TIER_APPROVAL,
+                related_type="workflow_run_step",
+                related_id=run_step_id,
+                title=f"Approval needed: {label}",
+                detail=detail,
+                priority=8,
+                action_key=_RUN_CONSOLE_PATH,
+            )
+        )
+    return ids
+
+
+async def complete_tier_approval_todos(conn, *, run_step_id) -> None:
+    """Mark a suspended step's approval todo(s) ``done`` once it is decided
+    (approved or rejected — either way, nobody still needs to act on it)."""
+    await conn.execute(
+        """
+        UPDATE member_todos
+        SET status = 'done', updated_at = now()
+        WHERE source = $1 AND related_type = 'workflow_run_step'
+          AND related_id = $2 AND status = 'open'
+        """,
+        TODO_SOURCE_TIER_APPROVAL, run_step_id,
+    )
+
+
 async def dismiss_orphaned_run_alerts(conn, *, org_id=None) -> int:
     """Close held-run alerts whose run no longer exists. Returns how many.
 

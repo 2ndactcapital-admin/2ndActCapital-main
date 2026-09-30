@@ -1,5 +1,47 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-18 (scripttaskrefusal.structural — closes a live
+Last updated: 2026-09-30 (tiergating.structural — closes the verb-tier
+gating gap `wave2discovery.lowrisk` flagged as the most important open item:
+a Tier-1 registry verb invoked from a BPMN Service Task executed unattended,
+exactly like a Tier-3 verb, because `_execute_service_task` read
+`action_registry_key` and nothing else — `workflow_steps.autonomy_tier` was
+fetched but only ever used for a display count. EFFECTIVE TIER IS NOW
+min(registry tier, diagram tier), computed at execution
+(`workflow_engine.compute_effective_tier`) and surfaced in the run console
+in place of the diagram's own value — same most-restrictive-wins rule
+CLAUDE.md documents for dual-path permission resolution: an author may
+UPGRADE a Tier-3 verb by marking its diagram element Tier 1, but can never
+DOWNGRADE a Tier-1 verb by marking it Tier 3. A Service Task whose effective
+tier is 1 no longer executes when `_drive` reaches it: the run suspends
+(`workflow_runs.status='awaiting_approval'`, the step
+`status='suspended'`), and an `agent_proposals` row is created to gate it —
+REUSING the existing maker-checker/disclosed-self-approval mechanism
+(`agenticmakerchecker.structural` / `selfapproval.structural`) rather than
+building a second approval system. Reviewers are alerted via the SAME
+`member_todos` sibling pattern every other workflow alert uses
+(`workflow_todos.create_tier_approval_alerts`), scoped to
+`review_agent_proposals` holders — never `org_admin` broadly, and never
+wider than the set who could actually decide the proposal. THE SCHEDULED-RUN
+MAKER QUESTION the sprint prompt posed turned out to already be answered:
+`workflow_scheduler._fire` already passes the trigger's own `created_by` as
+`started_by`, so `workflow_runs.started_by` is already the correct maker for
+both a manual run and a scheduled one — no change was needed there, only
+documentation that `_suspend_step` refuses outright (rather than treating a
+NULL as "anyone may approve") if a run somehow has none. THE DIAGRAM
+EDITOR'S "Tier 1 — approval required" OPTION (`WorkflowDiagramEditor.jsx`,
+flagged by `wave2discovery.lowrisk` as "worse than no gate" while it did
+nothing) IS NOW REAL. New endpoint `POST /admin/workflow-runs/{run_id}/
+steps/{step_id}/decision`, gated on `review_agent_proposals` (a permission
+SEPARATE from the three existing workflow keys, because "may see runs" and
+"may decide a suspended step" are different questions). STAFFING FACT,
+stated plainly per CLAUDE.md: `review_agent_proposals` is granted to six
+roles and only `org_admin` has a real holder (one user) in the live 2nd Act
+org, so in practice most Tier-1 approvals today take the disclosed
+self-approval path, not a genuine second-reviewer path — this was already
+true before this sprint and is unchanged by it. Wave 2's one remaining item
+after this is the NL-to-workflow-template library. See
+`docs/WORKFLOW_WAVE2_DISCOVERY.md` (Task 5 section updated) and
+`apps/api/scripts/verify_tiergating.py` (WRITTEN, not yet run by the
+operator); previously 2026-09-18 (scripttaskrefusal.structural — closes a live
 arbitrary-code-execution gap confirmed by `wave2discovery.lowrisk`
 (2026-09-18, read-only): SpiffWorkflow's stock `PythonScriptEngine` runs a
 BPMN `bpmn:scriptTask`'s body via bare `eval()`/`exec()` in-process, with
@@ -210,6 +252,149 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000000000000000. Verb-tier gating — a Tier-1 Service Task genuinely suspends; verify WRITTEN, not yet run (2026-09-30)
+
+**The gap, confirmed live by `wave2discovery.lowrisk` Task 5 and unresolved
+until this sprint.** `services/workflow_engine.py`'s `_drive` loop
+auto-completed every `bpmn:serviceTask` the instant SpiffWorkflow parked it
+in `STARTED`, regardless of tier. `_execute_service_task` read only
+`action_registry_key`; `workflow_steps.autonomy_tier` was fetched by
+`_load_steps` and used ONLY for `routers/workflows.py`'s
+`approval_step_count` display count. A real, already-registered,
+`workflow_invocable=True`, Tier-1 action
+(`spv_carry.propose_from_realization`) would have executed unattended from a
+Service Task with no suspension at all. Worse, the bpmn-js diagram editor's
+properties panel already offered "Tier 1 — approval required" as a
+governance option with no engine effect whatsoever — a promised gate that
+did nothing.
+
+**TWO TIER CONCEPTS, NOW CONNECTED.** `assistant_action_catalog.tier`
+(intrinsic to the verb, `actionregistryfix.structural`) and
+`workflow_steps.autonomy_tier` (the diagram author's own choice,
+`workflow_steps_deriver._default_tier`) previously never met. Effective tier
+is now `min(registry_tier, diagram_tier)`
+(`services.workflow_engine.compute_effective_tier`), computed once and
+consumed identically by the engine (to decide suspension) and the run
+console (to DISPLAY it, replacing the raw diagram value the pane used to
+show). Tier 1 is the highest-stakes end (COUNTERINTUITIVE ON PURPOSE, same
+direction `AssistantAction.tier`'s own docstring already documents), so
+`min()` is the MORE restrictive of the two, not the more permissive — an
+author may UPGRADE a Tier-3 verb by marking its diagram element Tier 1 (it
+now suspends even though the verb itself is low-stakes), but can never
+DOWNGRADE a Tier-1 verb by marking it Tier 3 (it still suspends regardless).
+This is the identical most-restrictive-wins rule CLAUDE.md documents for
+dual-path permission resolution (`resolve_field_access_bulk` /
+`resolve_tab_visibility`) — reused, not reinvented.
+
+**SUSPEND AND RESUME.** `_drive` now returns `(executed, suspended_step_key)`
+instead of just `executed`: when the next `STARTED` Service Task's effective
+tier is 1 AND the action is `workflow_invocable`, the loop returns
+immediately WITHOUT calling `_execute_service_task` — the task stays parked
+`STARTED`, unexecuted, in the (now-serialized) SpiffWorkflow state.
+`_suspend_step` (shared by `start_workflow_run`, `complete_user_task`'s
+post-approval continuation, and the new `resolve_tier_approval`) then, in
+one transaction: creates an `agent_proposals` row (`agent_key=
+'workflow_engine'`, a new key documenting the deterministic gating engine
+itself as the "maker" mechanism, distinct from the seven LLM-agent keys —
+`agent_key` has no CHECK/FK, confirmed against
+`agenticmakerchecker_substrate.sql`, so this is additive) with
+`proposed_by` = the run's own `started_by`; sets the `workflow_run_steps`
+row to `status='suspended'`, linked to the proposal via a NEW column,
+`workflow_run_steps.agent_proposal_id` (migration
+`tiergating_agent_proposal_link.sql`, applied live via the
+supabase-2ndact-dev MCP `apply_migration` tool — nullable, since the
+overwhelming majority of steps never suspend); sets
+`workflow_runs.status='awaiting_approval'` with the state serialized so the
+run is resumable; and alerts every `review_agent_proposals` holder via a
+SEVENTH `member_todos` alert kind
+(`workflow_todos.create_tier_approval_alerts`, same `_upsert_todo` /
+`_record_undelivered_alert` machinery every prior alert kind reuses) — never
+`org_admin` broadly, because the recipient set for THIS alert must be
+exactly the set of people who could actually act on it.
+
+**APPROVAL REUSES `agent_proposals`, NOT A SECOND MECHANISM.** The new
+`services.workflow_engine.resolve_tier_approval(pool, workflow_run_step_id,
+*, reviewed_by, decision, review_notes=None, self_approval_reason=None)`
+delegates eligibility entirely to `services.agent_proposals.review_proposal`
+— maker-checker (never the step's own maker, unless
+`has_other_eligible_checker` finds the org's checker set genuinely empty, in
+which case disclosed self-approval applies with a mandatory
+`self_approval_reason`) is not reimplemented here in any form.
+`MakerCheckerError` / `NotEligibleError` / `SelfApprovalReasonRequiredError`
+all propagate to the new endpoint unchanged. On REJECTION the verb never
+executes and both the step and the run move to a terminal `'rejected'`
+status; SpiffWorkflow's serialized state is left exactly as it was
+suspended (there is no "skip and continue" — like a held run, a rejected one
+does not silently resume from elsewhere). On APPROVAL, `_execute_service_task`
+is called directly, EXACTLY ONCE — never through `_drive`'s own loop, which
+would recompute the effective tier and suspend on the very same task again
+— then the run resumes driving, which may hit another Tier-1 suspension
+downstream (handled the same way, recursively), a User Task pause, or
+completion.
+
+**THE SCHEDULED-RUN MAKER QUESTION WAS ALREADY ANSWERED, NOT LEFT OPEN.**
+The sprint prompt raised "a scheduled run has `started_by = NULL` — who is
+the maker?" as an open question to settle. Reading `services/
+workflow_scheduler.py::_fire` shows it is not actually open:
+`_fire` already passes `trigger["created_by"]` as `start_workflow_run`'s
+`started_by` argument, and `workflow_triggers.created_by` is populated from
+the authenticated caller on every trigger the API creates (`routers/
+workflows.py::create_workflow_trigger`, never NULL in practice despite the
+column being nullable). So `workflow_runs.started_by` was ALREADY the
+correct maker for a scheduled run, identical in shape to a manual run — no
+engine change was needed for this decision, only recording it here and
+adding an explicit refusal (`_suspend_step` raises `WorkflowEngineError`
+rather than proceeding) for the theoretical case of a run with no resolvable
+maker at all, so a NULL is never silently read as "anyone may approve."
+
+**THE DIAGRAM EDITOR'S "TIER 1 — APPROVAL REQUIRED" OPTION IS NOW REAL.**
+`wave2discovery.lowrisk` flagged this UI as "worse than no gate" while
+selecting it changed nothing about execution. It now does exactly what it
+says.
+
+**NEW SURFACE.** `POST /admin/workflow-runs/{run_id}/steps/{step_id}/decision`
+(`routers/workflows.py`), gated on `review_agent_proposals` — a permission
+SEPARATE from the three existing workflow keys (`author_workflows` /
+`view_workflow_runs` / `configure_workflow_triggers`), because "may see
+runs" and "may decide a suspended step" are different questions, the same
+separation `agent_proposals.is_eligible_reviewer` already assumes.
+`GET /admin/workflow-runs/{run_id}` now also returns `effective_tier` per
+step (computed the same way the engine computes it) and
+`permissions.can_review`; `RunDetailPane.jsx` renders Approve/Reject
+controls ONLY inside a `can_review` check (no truthy fallback) and shows the
+effective tier, not the diagram's raw value.
+
+**STAFFING FACT, stated plainly per CLAUDE.md's Verify Script Discipline.**
+`review_agent_proposals` is granted to six roles
+(`support_staff`/`advisor`/`investment_committee`/`fund_finance`/
+`compliance`/`org_admin`) and, in the live 2nd Act org, only `org_admin` has
+a real holder (one user) — unchanged by this sprint, already true since
+`selfapproval.structural`. So in practice, most Tier-1 approvals today will
+take the disclosed self-approval path, not a genuine second-reviewer path.
+This is a staffing fact, not a bug in this sprint's mechanism.
+
+**Wave 2's remaining item after this sprint is the NL-to-workflow-template
+library only** (a reusable-template picker, distinct from the
+definitions-list "library" screen that already exists) — RestrictedPython
+is separately and permanently superseded (`scripttaskrefusal.structural`).
+
+Changed: `apps/api/services/workflow_engine.py` (`compute_effective_tier`,
+`_suspend_step`, `_run_step_id_for`, `_started_service_task`,
+`resolve_tier_approval`, new status constants); `apps/api/services/
+workflow_todos.py` (`create_tier_approval_alerts`,
+`complete_tier_approval_todos`); `apps/api/routers/workflows.py`
+(`effective_tier` in the run-step response, `can_review` in the permission
+envelope, `POST .../decision`); `apps/api/migrations/
+tiergating_agent_proposal_link.sql` (applied live); `apps/web/components/
+admin/RunDetailPane.jsx` (Approve/Reject UI, effective-tier display);
+`apps/web/lib/workflowFormat.js` (`awaiting_approval`/`suspended` status
+pill styling); `docs/schema_snapshot.sql` (refreshed for the new column);
+`docs/WORKFLOW_WAVE2_DISCOVERY.md` (Task 5 section updated to point at this
+entry); `apps/api/scripts/verify_tiergating.py` (WRITTEN, not yet run by the
+operator).
 
 ---
 

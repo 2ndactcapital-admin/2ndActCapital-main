@@ -53,11 +53,16 @@ from services.users import ensure_user
 # The held-run alert pane reads member_todos on the SAME key the writer upserts
 # on. Importing the writer's own constant is what keeps the two from drifting:
 # if the source marker is ever renamed, this read moves with it.
-from services import workflow_todos
+from services import agent_proposals, workflow_todos
 from services.workflow_editor import (
     WorkflowEditError,
     WorkflowValidationError,
     save_new_version,
+)
+from services.workflow_engine import (
+    WorkflowEngineError,
+    compute_effective_tier,
+    resolve_tier_approval,
 )
 from services.workflow_nl_generator import WorkflowGenerationError, generate_workflow
 from services.workflow_schedule import (
@@ -410,6 +415,41 @@ async def _require_workflow_permission(
 
 
 # --------------------------------------------------------------------------
+# Auth helper — the ROLE-based gate for review_agent_proposals
+# (tiergating.structural).
+#
+# ``review_agent_proposals`` is NOT a Profile-grantable permission — it was
+# built by `agenticmakerchecker_substrate.sql` on the OTHER permission
+# system this codebase has (`roles` / `role_permissions` / `user_roles`,
+# `services.rbac`), the one `services.agent_proposals.review_proposal`
+# actually checks. Gating this endpoint with `_require_workflow_permission`
+# (Profile-based `services.profiles.user_has_permission`) would check a
+# DIFFERENT grant than the one that decides eligibility one line later —
+# exactly the "3 separate permission systems, don't conflate" trap. This
+# reuses `agent_proposals.holds_review_permission` (the SAME role-based
+# check `review_proposal` calls, deliberately NOT `rbac.has_permission`,
+# whose single-admin default-allow would let ANY role-less user through)
+# so the outer gate and the inner eligibility check can never disagree about
+# what "holds review_agent_proposals" means.
+# --------------------------------------------------------------------------
+async def _require_review_permission(request: Request) -> tuple[str, str, dict]:
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        actor_id = await ensure_user(conn, request)
+        principal = await load_principal(conn, actor_id)
+    if principal is None:
+        principal = {"id": actor_id, "org_id": org_id, "role": None}
+    if not is_super_admin(principal):
+        if not await agent_proposals.holds_review_permission(pool, actor_id, org_id):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Permission required: {agent_proposals.REVIEW_PERMISSION}",
+            )
+    return actor_id, org_id, principal
+
+
+# --------------------------------------------------------------------------
 # The TRIGGER surface's read gate — WIDER than its write gate (schedulerux).
 #
 # Up to this sprint ``configure_workflow_triggers`` gated the trigger list AND
@@ -706,11 +746,14 @@ async def save_workflow_version(request: Request, definition_id: UUID, body: Ver
 # There is no CHECK constraint on ``workflow_runs.status`` — introspected live.
 # The complete set the engine ever writes is below, taken from
 # services/workflow_engine.py: the column DEFAULT and the resume path write
-# 'running', the completion path writes 'completed', and ``_hold_run`` writes
-# 'held'. A filter list built by asking the database what statuses are legal
-# would come back empty, and one built from DISTINCT would silently lose
-# whichever state happens to have no rows right now — so it is named here.
-RUN_STATUSES = ("running", "completed", "held")
+# 'running', the completion path writes 'completed', ``_hold_run`` writes
+# 'held', ``_suspend_step`` (tiergating.structural) writes 'awaiting_approval'
+# when a Tier-1 Service Task suspends, and ``resolve_tier_approval`` writes
+# 'rejected' when a reviewer rejects one. A filter list built by asking the
+# database what statuses are legal would come back empty, and one built from
+# DISTINCT would silently lose whichever state happens to have no rows right
+# now — so it is named here.
+RUN_STATUSES = ("running", "awaiting_approval", "completed", "held", "rejected")
 
 #: DURATION IS NOT MEASURED HERE UNLESS IT REALLY WAS. This applies at BOTH
 #: levels, and the run level is the one that is easy to get wrong.
@@ -754,22 +797,30 @@ RUN_PERIODS = {
 }
 
 
-def _run_permissions(principal: dict) -> dict:
+def _run_permissions(principal: dict, can_review: bool = False) -> dict:
     """What this caller may do on the Run History surface, shipped with the page.
 
-    Run History is READ-ONLY end to end — there is no write endpoint on a run,
-    so ``can_write`` is a constant false rather than a resolved capability. It
-    is published anyway because the screen renders from the same envelope shape
-    every other UX screen in this project renders from, and a screen that had to
-    special-case "this one has no envelope" is how a missing envelope starts
-    reading as permission.
+    Run History itself is READ-ONLY — there is no write endpoint on a run's
+    own fields, so ``can_write`` is a constant false rather than a resolved
+    capability. ``can_review`` (tiergating.structural) is the one real write
+    surface: whether THIS caller may decide a suspended Tier-1 step, i.e.
+    holds ``review_agent_proposals`` or is Super Admin. It is resolved by the
+    caller (who already has ``pool``/``actor_id`` in scope) and published
+    here rather than recomputed, so the gate this envelope describes and the
+    gate the approve/reject endpoint enforces read the same value. This is
+    still not sufficient by itself for any ONE proposal — maker-checker
+    (never the step's own maker, unless disclosed self-approval applies under
+    a genuinely empty checker set) is re-checked per-proposal by
+    ``services.agent_proposals.review_proposal`` at decision time.
     """
     return {
         "can_read": True,          # this envelope is only built after the gate
         "can_write": False,
+        "can_review": bool(can_review) or bool(is_super_admin(principal)),
         "is_super_admin": bool(is_super_admin(principal)),
         "read_permission": PERM_VIEW_RUNS,
         "write_permission": None,
+        "review_permission": agent_proposals.REVIEW_PERMISSION,
         "statuses": list(RUN_STATUSES),
         "periods": list(RUN_PERIODS),
     }
@@ -971,8 +1022,21 @@ async def list_workflow_runs(
     but "runs in the last 7 days" is a claim about the whole table and a client
     filter over a 200-row page would quietly answer a different question.
     """
-    _, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
+    actor_id, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
     all_orgs = is_super_admin(principal)
+    # NOTE: review_agent_proposals is granted via the ROLE system
+    # (role_permissions, agenticmakerchecker_substrate.sql), never the SOC
+    # Profile system — the same distinction CLAUDE.md's "3 separate
+    # permission systems" note warns about. `services.profiles.
+    # user_has_permission` (Profile-based) would answer a DIFFERENT question
+    # than the one `services.agent_proposals.review_proposal` actually
+    # checks; `agent_proposals.holds_review_permission` is the exact
+    # role-based helper the engine itself uses, reused here so this envelope
+    # can never say "you may review" when the engine would refuse, or vice
+    # versa.
+    can_review = await agent_proposals.holds_review_permission(
+        await get_pool(), actor_id, org_id
+    )
 
     statuses = [s.strip() for s in (status or "").split(",") if s.strip()]
     unknown = [s for s in statuses if s not in RUN_STATUSES]
@@ -1026,7 +1090,7 @@ async def list_workflow_runs(
 
     return {
         "rows": rows,
-        "permissions": _run_permissions(principal),
+        "permissions": _run_permissions(principal, can_review),
         "filters": {
             "status": statuses,
             "period": period,
@@ -1051,9 +1115,12 @@ async def get_workflow_run(request: Request, run_id: UUID):
     notified if it held right now — the same answer only while nobody has
     joined, left or changed role since.
     """
-    _, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
+    actor_id, org_id, principal = await _require_workflow_permission(request, PERM_VIEW_RUNS)
     all_orgs = is_super_admin(principal)
     pool = await get_pool()
+    # Role-based, same reasoning as list_workflow_runs above — never the
+    # Profile-based user_has_permission.
+    can_review = await agent_proposals.holds_review_permission(pool, actor_id, org_id)
     async with pool.acquire() as conn:
         run = await conn.fetchrow(
             f"""
@@ -1069,7 +1136,9 @@ async def get_workflow_run(request: Request, run_id: UUID):
             """
             SELECT rs.id, rs.status, rs.result, rs.error_detail,
                    rs.started_at, rs.completed_at, rs.proposed_by, rs.approved_by,
-                   ws.step_key, ws.step_type, ws.display_name, ws.autonomy_tier
+                   rs.agent_proposal_id,
+                   ws.step_key, ws.step_type, ws.display_name, ws.autonomy_tier,
+                   ws.action_registry_key
             FROM workflow_run_steps rs
             JOIN workflow_steps ws ON ws.id = rs.workflow_step_id
             WHERE rs.workflow_run_id = $1
@@ -1090,6 +1159,25 @@ async def get_workflow_run(request: Request, run_id: UUID):
             """,
             workflow_todos.TODO_SOURCE_RUN_HELD, run_id,
         )
+        # Who was actually notified about a SUSPENDED Tier-1 step — same
+        # read-back discipline as the held-run alert query above (who WAS
+        # notified, not who the rule would notify today), keyed on the
+        # source create_tier_approval_alerts upserts on.
+        approval_alert_rows = await conn.fetch(
+            """
+            SELECT t.id, t.user_id, t.status, t.title, t.detail, t.priority,
+                   t.created_at, t.updated_at, t.related_id,
+                   u.full_name AS user_name, u.email AS user_email
+            FROM member_todos t
+            LEFT JOIN users u ON u.id = t.user_id
+            WHERE t.source = $1 AND t.related_type = 'workflow_run_step'
+              AND t.related_id = ANY(
+                  SELECT rs.id FROM workflow_run_steps rs WHERE rs.workflow_run_id = $2
+              )
+            ORDER BY u.full_name NULLS LAST, u.email NULLS LAST
+            """,
+            workflow_todos.TODO_SOURCE_TIER_APPROVAL, run_id,
+        )
 
         run_out = dict(run)
         run_out["context"] = _jsonb(run_out.get("context"))
@@ -1099,6 +1187,10 @@ async def get_workflow_run(request: Request, run_id: UUID):
         )
         run_out["duration_measured"] = run_out["duration_seconds"] is not None
         await _decorate_origins(conn, [run_out])
+
+    approval_alerts_by_step: dict[str, list] = {}
+    for a in approval_alert_rows:
+        approval_alerts_by_step.setdefault(str(a["related_id"]), []).append(dict(a))
 
     steps = []
     for r in step_rows:
@@ -1111,14 +1203,102 @@ async def get_workflow_run(request: Request, run_id: UUID):
         d["duration_seconds"] = (
             _elapsed_seconds(d["started_at"], d["completed_at"]) if measured else None
         )
+        # THE RUN CONSOLE SHOWS THE EFFECTIVE TIER, NOT THE DIAGRAM'S
+        # (tiergating.structural) — ``autonomy_tier`` alone is only half of
+        # what the engine actually enforces; ``effective_tier`` is
+        # min(diagram tier, registry tier), the value that decided whether
+        # this step ran unattended or suspended. Computed the SAME way the
+        # engine computes it (workflow_engine.compute_effective_tier), never
+        # a second, drifting copy of the rule.
+        action = REGISTRY.get(d.get("action_registry_key")) if d.get("action_registry_key") else None
+        d["effective_tier"] = compute_effective_tier(d, action)
+        d["approval_alerts"] = approval_alerts_by_step.get(str(d["id"]), [])
         steps.append(d)
 
     return {
         "run": run_out,
         "steps": steps,
         "alerts": [dict(a) for a in alert_rows],
-        "permissions": _run_permissions(principal),
+        "permissions": _run_permissions(principal, can_review),
     }
+
+
+class TierApprovalDecision(BaseModel):
+    """Approve or reject a SUSPENDED Tier-1 Service Task (tiergating.structural).
+
+    ``self_approval_reason`` is required ONLY when the reviewer IS the run's
+    maker AND no other ``review_agent_proposals`` holder exists in this org
+    (``services.agent_proposals.has_other_eligible_checker``) — omitting it
+    in that case is a 409 naming the requirement, never a silent accept.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    decision: str
+    review_notes: str | None = None
+    self_approval_reason: str | None = None
+
+    @field_validator("decision")
+    @classmethod
+    def _known_decision(cls, value: str) -> str:
+        value = (value or "").strip().lower()
+        if value not in (agent_proposals.STATUS_APPROVED, agent_proposals.STATUS_REJECTED):
+            raise ValueError(
+                f"decision must be {agent_proposals.STATUS_APPROVED!r} or "
+                f"{agent_proposals.STATUS_REJECTED!r} (got {value!r})"
+            )
+        return value
+
+
+@router.post("/admin/workflow-runs/{run_id}/steps/{step_id}/decision")
+async def decide_tier_approval(
+    request: Request, run_id: UUID, step_id: UUID, body: TierApprovalDecision
+):
+    """Approve or reject a SUSPENDED Tier-1 Service Task, and resume the run.
+
+    Gated on ``review_agent_proposals`` — a SEPARATE permission from every
+    other key this router checks, because "may see runs" and "may decide a
+    suspended step" are different questions (the same separation
+    ``agent_proposals.is_eligible_reviewer`` already assumes). Super Admin
+    always passes this gate. Holding the permission is necessary, never
+    sufficient: eligibility for THIS specific proposal (not the maker, unless
+    disclosed self-approval applies under a genuinely empty checker set) is
+    re-checked by ``services.agent_proposals.review_proposal`` itself.
+
+    ``org_id`` is resolved from the authenticated context and the target step
+    is confirmed to belong to BOTH ``run_id`` and the caller's own org before
+    anything is touched — Super Admin may cross orgs, nobody else can.
+    """
+    actor_id, org_id, principal = await _require_review_permission(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        step = await conn.fetchrow(
+            "SELECT id, workflow_run_id, org_id FROM workflow_run_steps WHERE id = $1",
+            step_id,
+        )
+    if (
+        step is None
+        or str(step["workflow_run_id"]) != str(run_id)
+        or (not is_super_admin(principal) and str(step["org_id"]) != str(org_id))
+    ):
+        raise HTTPException(status_code=404, detail="Workflow run step not found")
+
+    try:
+        result = await resolve_tier_approval(
+            pool,
+            step_id,
+            reviewed_by=actor_id,
+            decision=body.decision,
+            review_notes=body.review_notes,
+            self_approval_reason=body.self_approval_reason,
+        )
+    except agent_proposals.SelfApprovalReasonRequiredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (agent_proposals.MakerCheckerError, agent_proposals.NotEligibleError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except WorkflowEngineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return result
 
 
 #: Rows the scheduler tick actually scans. Named once so the row decorator and

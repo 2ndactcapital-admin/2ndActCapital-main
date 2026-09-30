@@ -2243,6 +2243,7 @@
 --   completed_at                             timestamp with time zone
 --   error_detail                             text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   agent_proposal_id                        uuid
 --   PRIMARY KEY workflow_run_steps_pkey: (id)
 
 -- ===== workflow_runs =====
