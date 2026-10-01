@@ -1,3 +1,7 @@
+-- SUPERSEDED IN PART by ensemblesystemone_reshape.sql (2026-10-01): columns
+-- renamed, comparison_kind dropped, ai_judgment_models -> ai_system_one_models.
+-- Kept unchanged as the record of what ensemblemodels.structural applied.
+--
 -- ensemblemodels.structural — judgment-model registry + versioned ensemble
 -- selections for the structured-note hazard ensemble.
 --

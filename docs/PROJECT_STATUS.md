@@ -1,5 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-01 (ensemblemodels.structural — see the top entry).
+Last updated: 2026-10-01 (ensemblesystemone.structural — see the top entry; it
+overwrites ensemblemodels.structural).
 Previous update: 2026-09-30 (tiergating.structural — closes the verb-tier
 gating gap `wave2discovery.lowrisk` flagged as the most important open item:
 a Tier-1 registry verb invoked from a BPMN Service Task executed unattended,
@@ -256,85 +257,119 @@ This file starts with the email item below.
 
 ---
 
-## 00000000000000000000000000000. Ensemble model selection — catalog, versioned selection, picker BUILT; extraction does NOT read it yet; verify WRITTEN, not yet run (2026-10-01)
+## 00000000000000000000000000000. Ensemble = two LLMs + one System One model; /typesafe pass-through LIVE; schema migration NOT YET APPLIED; verify WRITTEN, not yet run (2026-10-01)
 
-**What exists now.** A super-admin control choosing the three models that
-check structured-note hazard fields: Review model 1, Review model 2, and the
-Comparison model.
+`ensemblesystemone.structural` overwrites `ensemblemodels.structural` (WIP commit
+`bd7cc13`). Decisions from Joe, 2026-10-01: an ensemble for a task is exactly
+**Model 1 (LLM) + Model 2 (LLM) + one System One model**. The third slot is
+always a System One model; there is no LLM comparator and no `comparison_kind`.
 
-- `public.ai_judgment_models` — scoring models that are not chat models.
-  Seeded with `typesafe-jev` as **`disabled`**, `last_verified_at` NULL,
-  `credential_name` NULL, `model_version` "unknown — never called". A CHECK
-  (`ai_judgment_models_available_requires_verification_chk`) makes
-  `'available'` impossible without a real `last_verified_at`. Nothing is ever
-  marked available because a credential exists.
-- `public.ai_ensemble_configs` — immutable, versioned selections. Named CHECKs
-  `ai_ensemble_configs_review_models_distinct_chk` and
-  `ai_ensemble_configs_comparison_distinct_chk`, partial unique index
-  `ai_ensemble_configs_one_active_per_task`, and a BEFORE UPDATE trigger
-  `ai_ensemble_configs_retire_only` that permits exactly one update: retiring
-  an active row (is_active true→false with `retired_at` set, every other
-  column unchanged). Beyond the prompt's column list, three `*_version`
-  columns snapshot the exact upstream model each slot resolved to at
-  activation. A LiteLLM group name such as `claude-sonnet` can be repointed
-  later, and without the snapshot a historical ensemble would silently change
-  meaning.
-- Both tables are global (no org_id), with four separate RLS policies copied
-  verbatim from `platform_model_catalog`. `anon`/`authenticated` grants are
-  revoked; only `app_service` has DML. Migration:
-  `apps/api/migrations/ensemblemodels_catalog_and_configs.sql`, applied live
-  via MCP and checked with a follow-up query plus a rolled-back trigger probe.
-- `services/ai_model_catalog.py` — `get_catalog()` unions LiteLLM
-  `/model/info` (via the existing `litellm_credentials.list_deployments`, not a
-  second caller) with `ai_judgment_models`. Availability reuses
-  `platform_model_catalog.availability`
-  (`available`/`deprecated`/`disabled`); no second vocabulary.
-  `activate_ensemble()` mirrors the CHECKs, refuses anything not
-  `available`, and retires + activates in one transaction. It warns (does not
-  block) when both review models share a provider.
-- Endpoints, super_admin only, real prefix `/api/v1` (routers declare
-  `/admin/...` and `main.py` mounts them under `/api/v1`):
-  `GET /api/v1/admin/ai/model-catalog`,
-  `GET /api/v1/admin/ai/ensembles?task_key=note_terms_hazard`,
-  `POST /api/v1/admin/ai/ensembles` (`extra='forbid'`, no org_id).
-  Router: `apps/api/routers/ai_ensembles.py`.
-- UI: an "Ensemble" panel on `/admin/pricing/note-terms-queue`
-  (`apps/web/components/admin/EnsemblePanel.jsx`), via server actions in
-  `lib/noteTermsQueueActions.js`. Write controls render only inside
-  `permissions.can_write === true`.
+**ACTION FOR JOE: apply `apps/api/migrations/ensemblesystemone_reshape.sql`.**
+The sprint's `apply_migration` call was cancelled by the tool, which needs a
+confirmation for destructive DDL (`DROP COLUMN comparison_kind`, the renames).
+Nothing in the database has changed, so live state is still the previous
+run's shape: `ai_ensemble_configs` with `review_model_*`/`comparison_*` and 0
+rows, and `ai_judgment_models` with Jev disabled. The new code expects the
+reshaped schema. Until the file is applied, the picker and the System One
+catalog will 500, and the verify script stops at its first assertion. The
+file includes a `DO` block that re-checks the four RLS policies per table, RLS
+enabled, and the retire-only trigger, and raises if any is missing.
 
-**EXTRACTION DOES NOT READ THE SELECTION YET.**
-`services/note_terms_extraction.py` still resolves `ai.model.default`
-(primary) and `ai.model.assistant` (hazard ensemble) through
-`call_claude_json` → `_execute_chain`. For a global job (`org_id=None`),
-`resolve_model` never consults `org_settings` and returns
-`DEFAULT_SETTINGS` directly. It calls the LiteLLM proxy with the platform
-`LITELLM_MASTER_KEY`, with attribution to the default org id. Wiring
-extraction to `ai_ensemble_configs` is the next sprint.
+**The design.**
+- **LLMs** come from the existing `platform_model_catalog` (Phase D2). No
+  second LLM catalog. A Model 1/2 option is selectable only when it is
+  `'available'` and the live proxy reports `mode: 'chat'`. The mode check is
+  Phase E's `litellm_credentials.chat_capable_models`, reused, so
+  `voyage-3.5` (embedding) is refused. The slot stores
+  `platform_model_catalog.model_id`, the proxy deployment name (e.g.
+  `claude-haiku`); the proxy rejects raw upstream ids with HTTP 400. The
+  upstream id (`claude-haiku-4-5-20251001`) goes only into `model_1_version` /
+  `model_2_version`.
+- **System One models** live in `public.ai_system_one_models`
+  (`ai_judgment_models`, renamed; its data is kept). New columns:
+  `model_route` (what is sent to TypeSafe, pinned `jev-1.13.0`),
+  `is_default` (partial unique index `ai_system_one_models_one_default`, so at
+  most one default), and `last_check_detail` (the reason shown in the
+  picker). `model_version` is now NULL until a real call reports one: it
+  records what TypeSafe said ran, never what was asked for. Jev
+  (`typesafe-jev`) is the default and stays `disabled` until verified.
+- **Availability is earned.** `'available'` is reachable only through
+  `services.system_one.verify_system_one_model`. That runs a real models
+  listing and one real `systemone` decision through the proxy, and checks the
+  probabilities are a float per option summing to 1. A pinned route must come
+  back as exactly itself. A super admin can set `deprecated`/`disabled` by
+  hand, never `available`. The DB CHECK
+  `ai_system_one_models_available_requires_verification_chk` requires
+  `last_verified_at` and `model_version` for `'available'`.
+- **`ai_ensemble_configs`**: columns renamed to `model_1`, `model_2`,
+  `system_one_model` (plus `*_version`); `comparison_kind` dropped. CHECKs:
+  slots non-empty, and `model_1 <> model_2`. New FK `system_one_model →
+  ai_system_one_models(key)` (RESTRICT), so an LLM can never sit in the
+  System One slot, and an entry that history used cannot be deleted (disable
+  it instead). Kept unchanged: the retire-only trigger, the
+  one-active-per-task index, and the four RLS policies.
+- **Platform-wide, by design.** The note-term corpus is global (one corpus,
+  every org), so there is one active ensemble per task across the platform
+  and no per-org selection. No `org_id` column; request bodies use
+  `extra='forbid'`.
 
-**NO VALID ENSEMBLE CAN BE ACTIVATED TODAY.** The proxy serves exactly two
-chat models (`claude-haiku` → `claude-haiku-4-5-20251001`, `claude-sonnet` →
-`claude-sonnet-4-6`). `voyage-3.5` is an embedding model, and Jev is disabled.
-The comparison model must differ from both review models, so the picker
-correctly refuses every save until a third chat model is curated onto the
-proxy and `platform_model_catalog`, or Jev is verified.
+**Code.** `services/system_one.py` (catalog + live check);
+`services/ai_ensembles.py` (picker + `activate_ensemble`: validate, then
+retire and insert in one transaction, with version snapshots; the System One
+row is re-read `FOR SHARE` inside it); `routers/ai_ensembles.py`
+(`GET/POST /api/v1/admin/ai/ensembles`, `GET/POST
+/api/v1/admin/system-one-catalog`, `DELETE …/{key}`, `PUT …/{key}/availability`,
+`PUT …/{key}/default`, `POST …/{key}/verify`, all writes super_admin
+only); `litellm_credentials.proxy_request` (a public wrapper for calls
+through the proxy). UI: `SystemOneCatalogManager.jsx` under the LLM
+catalog on `/admin/model-catalog` (add, remove, set availability, make
+default, Verify now). The reshaped `EnsemblePanel.jsx` on
+`/admin/pricing/note-terms-queue` has Model 1, Model 2 and System One, with
+the System One slot preselected by the server to the default. Unavailable
+options are shown with their reason, and a server-computed `blocker` states
+exactly why no valid ensemble is possible.
 
-**Jev cannot be a selectable LiteLLM model with its output intact on
-v1.96.2.** Evidence, from the 1.96.2 wheel's source and the live proxy:
-(i) `CustomLLM` / `custom_provider_map` exist, but a handler is a Python
-module the proxy imports from `config.yaml` via `get_instance_fn`, and
-remote-URL handlers from the DB overlay are refused. Adding one is a LiteLLM
-deployment change. Its return type is a chat `ModelResponse`. Our transport
-is the Anthropic-shaped `/v1/messages`, whose adapter reads
-`provider_specific_fields` only for `thought_signature`, so probability
-output would be flattened into chat text or dropped. (ii) Pass-through
-endpoints ARE supported in OSS 1.96.2 (`/config/pass_through_endpoint` CRUD
-is live). Auth on them is no longer enterprise-only, and headers resolve
-`os.environ/` references, so LiteLLM can hold a Jev key and log requests
-without touching the payload. No Jev/TypeSafe credential name exists in
-Doppler (`prd`, `dev`, `prd_lite_llm`). **Design consequence:** Jev lives in
-the separate `ai_judgment_models` registry. LiteLLM pass-through is the
-option for key custody once a credential exists.
+**Removed (from `bd7cc13`).** `services/ai_model_catalog.py` (a parallel LLM
+catalog unioning `/model/info` with judgment models, plus the comparison-kind
+logic); `GET /api/v1/admin/ai/model-catalog` and the `comparison_kind` /
+LLM-comparator branches of `routers/ai_ensembles.py`; `getAiModelCatalog` /
+`listAiEnsembles` in `lib/api.js`; the three-slot review/comparison UI in
+`EnsemblePanel.jsx`; `scripts/verify_ensemblemodels.py`. The old migration
+file stays as the record of what was applied.
+
+**Jev through LiteLLM: LIVE.** The proxy is v1.96.2 (`/openapi.json`).
+Native Jev support (`/typesafe/{endpoint}`, registry-priced) first shipped in
+v1.102.1 and is not available here. The generic pass-through IS available, so
+no upgrade was needed. Proxy config is DB-stored (`STORE_MODEL_IN_DB`): models
+and pass-through endpoints change through the admin API with the master key,
+not a config.yaml. `scripts/configure_typesafe_passthrough.py` (idempotent)
+created path `/typesafe` → `https://api.typesafe.ai`, `include_subpath`,
+`auth: true`, header `Authorization: Bearer os.environ/TYPESAFE_API_KEY`. That
+header is a reference the proxy resolves from its own env (Doppler
+`prd_lite_llm`), never a value. Probed live: no LiteLLM key → 401. `GET
+/typesafe/v1/models` → 200, listing `jev-latest` and `jev-preview`. `POST
+/typesafe/v1/systemone` with `model: "jev-1.13.0"` → 200, response `model:
+"jev-1.13.0"` with a `probabilities` map intact. `jev-latest` also resolved to
+`jev-1.13.0` on 2026-10-01. **The listing names aliases only**: the pinned
+`jev-1.13.0` is callable but not listed, so the check accepts a pinned route
+only if the response echoes it exactly. `TYPESAFE_API_KEY` exists in
+`prd_lite_llm` and NOT in root `prd`; the app never holds it.
+
+**KNOWN GAP (recorded, not fixed): Jev spend is invisible to Phase G
+budgets.** On v1.96.2's generic pass-through, spend is not token-priced
+(`cost_per_request` defaults to 0), so `/global/spend/tags` never sees Jev.
+Exposure is small: about $42 per billion input tokens. The fix is the native
+integration.
+
+**FUTURE SPRINT: upgrade LiteLLM to ≥ v1.102.1.** The proxy runs with
+`DISABLE_SCHEMA_UPDATE=true`, so an upgrade needs a supervised Prisma
+migration of the `litellm` schema. That is its own sprint. After it, move Jev
+to the native `/typesafe` route so it is registry-priced.
+
+**Not yet wired.** Extraction does NOT read the active ensemble
+(`services/note_terms_extraction.py` still resolves `ai.model.default` /
+`ai.model.assistant`). Nothing calls Jev to score real note terms. Both are
+the next sprint's work.
 
 **Per-request "no fallback" IS honored on v1.96.2. Proven live.** The
 mechanism is the body field `"disable_fallbacks": true`
@@ -378,17 +413,20 @@ fails with `InvalidPasswordError`. It has the same user, host, port and
 database as `DATABASE_URL`, but its embedded password differs from the
 current `DB_PASSWORD` secret, while `DATABASE_URL`'s matches. Fix: rebuild it
 in Doppler as a `${DB_PASSWORD}` reference (CLAUDE.md "secret referencing").
-Not changed by this sprint. `verify_ensemblemodels.py` connects through it
-by spec, so it will abort loudly (FATAL, no fallback) until this is fixed.
+Not changed by this sprint. `verify_ensemblesystemone.py` does not depend on it: it
+uses `DATABASE_URL` through `_db_bootstrap`.
 
-**Out of scope, untouched.** The 29 `document_field_corrections` rows
-(`target_type='note_terms'`) that store model disagreements as human
-corrections. 2nd Act's `ai.model.*` settings. The LiteLLM version and
-deployment.
+**Out of scope, untouched.** Upgrading LiteLLM; per-org selection; the 29
+`document_field_corrections` rows (`target_type='note_terms'`); 2nd Act's
+`ai.model.*` settings.
 
-**Verification.** `apps/api/scripts/verify_ensemblemodels.py` — WRITTEN, not
-yet run (blocked first on `APP_SERVICE_DATABASE_URL` above). Zero model
-calls.
+**Verification.** `apps/api/scripts/verify_ensemblesystemone.py` is WRITTEN
+but not run (the operator runs it after applying the migration). It covers
+the 12 required assertion groups. The Jev group runs a real call and Verify
+now when `TYPESAFE_API_KEY` is present; if the key is absent it reports
+BLOCKED, never FAIL. Fixture configs use a fixture task key, so the real
+`note_terms_hazard` history is never touched. The one deliberate change to a
+real row: Jev's four verification columns, through the real Verify now.
 
 ---
 

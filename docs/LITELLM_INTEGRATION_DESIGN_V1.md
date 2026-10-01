@@ -1081,3 +1081,62 @@ failures against empty search paths, and a line-number-pinned allowlist
 entry that went stale because this sprint's own additions to
 `extraction.py` shifted an unrelated comment's line number. Fixed;
 `verify_litellmseedfix.py` is back to `31/31 PASS`.
+
+---
+
+## 14.8 · ensemblesystemone — System One models through a generic pass-through (2026-10-01)
+
+**The ensemble design.** An ensemble for a task is exactly Model 1 + Model 2
+(LLMs from `platform_model_catalog`, chat mode per Phase E's
+`chat_capable_models`) plus one System One model from
+`public.ai_system_one_models`. A System One model answers typed questions
+(choice / score / yes-no) with a probability distribution rather than chat
+text. Jev (TypeSafe) is the only one, pinned to `jev-1.13.0`, and is the
+catalog default. LLM slots store the proxy deployment name; raw upstream ids
+are rejected by the proxy (HTTP 400) and are kept only as `*_version`
+snapshots. Configs are immutable, so the snapshots are permanent
+provenance. **The ensemble is platform-wide** (one active config per task, no
+org axis) because the note-term corpus is global. Status and full detail:
+docs/PROJECT_STATUS.md, top entry.
+
+**How Jev is reached.** Not as a LiteLLM model. A `/v1/messages` adapter
+would flatten the probability output into chat text, and a `CustomLLM`
+handler is a deployment change (see the previous run's evidence in
+PROJECT_STATUS). It goes through a **generic pass-through endpoint**, which
+v1.96.2 supports:
+
+| field | value |
+|---|---|
+| path | `/typesafe` |
+| target | `https://api.typesafe.ai` |
+| include_subpath | `true` (so `/typesafe/v1/models`, `/typesafe/v1/systemone`) |
+| auth | `true`: callers present a LiteLLM key; none → 401 (probed) |
+| headers | `Authorization: Bearer os.environ/TYPESAFE_API_KEY` (a reference, resolved by the proxy) |
+
+This deployment stores proxy config in its own DB (`STORE_MODEL_IN_DB`).
+Pass-through endpoints, like models, are created through the admin API
+(`POST /config/pass_through_endpoint`) with the master key, and took effect
+immediately with no restart. `apps/api/scripts/configure_typesafe_passthrough.py`
+is the idempotent record of the change. `TYPESAFE_API_KEY` lives only in
+Doppler `prd_lite_llm` (the proxy's branch config), never in root `prd` and
+never in the app. The app calls through `litellm_credentials.proxy_request`
+with its LiteLLM key only, and the response body reaches the app unchanged.
+
+**Availability rule.** A System One entry becomes `'available'` only through
+Verify now (`services.system_one.verify_system_one_model`). That needs a real
+models listing and one real decision through the proxy, with probabilities
+intact. `last_verified_at` and the reported `model_version` are recorded; a
+DB CHECK requires both. The listing names aliases only (`jev-latest`,
+`jev-preview`), so a pinned route is accepted only when the decision echoes
+it exactly.
+
+**Known gap: Jev spend is not budgeted.** Generic pass-through on v1.96.2
+does not token-price the call (`cost_per_request` defaults to 0), so
+`/global/spend/tags` and Phase G budgets never see Jev spend. Exposure is
+small (about $42 per billion input tokens). Recorded, not fixed.
+
+**Future sprint: upgrade to LiteLLM ≥ v1.102.1**, where native Jev support
+(`/typesafe/{endpoint}` with registry pricing) first shipped. The proxy runs
+`DISABLE_SCHEMA_UPDATE=true`, so the upgrade needs a supervised migration of
+the `litellm` schema. After it, replace the generic endpoint with the native
+route and re-run Verify now.

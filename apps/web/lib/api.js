@@ -706,10 +706,10 @@ export const grantStpPolicy = (body) =>
 export const revokeStpPolicy = (policyId) =>
   fetchAPI(`/api/v1/admin/pricing/stp-policy/${policyId}`, { method: "DELETE" });
 
-// ensemblemodels — the hazard ensemble's three models. Super Admin only,
-// enforced by FastAPI. Bodies never carry an org_id (the data is global).
-export const getAiModelCatalog = () => fetchAPI("/api/v1/admin/ai/model-catalog");
-export const listAiEnsembles = (taskKey) =>
+// ensemblesystemone — the hazard ensemble (Model 1, Model 2, System One).
+// Super Admin only, enforced by FastAPI. Bodies never carry an org_id: the
+// ensemble is platform-wide because the note-terms corpus is global.
+export const getAiEnsemblePicker = (taskKey) =>
   fetchAPI(`/api/v1/admin/ai/ensembles?task_key=${encodeURIComponent(taskKey)}`);
 export const activateAiEnsemble = (body) =>
   fetchAPI("/api/v1/admin/ai/ensembles", { method: "POST", body });

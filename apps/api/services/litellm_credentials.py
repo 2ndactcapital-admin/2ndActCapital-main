@@ -159,6 +159,16 @@ def _http(path: str, *, method: str = "GET", body: dict | None = None,
         return e.code, e.read().decode("utf-8", "replace")
 
 
+def proxy_request(path: str, *, method: str = "GET", body: dict | None = None,
+                  timeout: float = 30.0) -> tuple[int, str]:
+    """Public wrapper over ``_http`` for a call THROUGH the proxy rather than
+    to its admin API — ensemblesystemone's ``/typesafe/...`` pass-through
+    (services.system_one). Authenticates with the app's LiteLLM key only; the
+    upstream provider key is injected by the proxy from its own environment
+    and never exists in this process."""
+    return _http(path, method=method, body=body, timeout=timeout)
+
+
 def _model_info() -> list[dict]:
     status, body = _http("/model/info")
     if status != 200:

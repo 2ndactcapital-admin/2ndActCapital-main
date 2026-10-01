@@ -11,9 +11,8 @@
 
 import {
   activateAiEnsemble,
-  getAiModelCatalog,
+  getAiEnsemblePicker,
   getNoteTermsQueue,
-  listAiEnsembles,
   grantStpPolicy,
   resolveNoteTermsField,
   revokeStpPolicy,
@@ -66,23 +65,19 @@ export async function revokeStpAction(policyId) {
 // creates a new immutable version server-side and retires the previous one.
 export async function loadEnsembleAction(taskKey) {
   try {
-    const [catalog, ensembles] = await Promise.all([
-      getAiModelCatalog(),
-      listAiEnsembles(taskKey),
-    ]);
-    return { ok: true, catalog, ensembles };
+    return { ok: true, picker: await getAiEnsemblePicker(taskKey) };
   } catch (error) {
     return { ok: false, error: error.message, status: error.status };
   }
 }
 
-export async function activateEnsembleAction(taskKey, reviewModel1, reviewModel2, comparisonModel, notes) {
+export async function activateEnsembleAction(taskKey, model1, model2, systemOneModel, notes) {
   try {
     const result = await activateAiEnsemble({
       task_key: taskKey,
-      review_model_1: reviewModel1,
-      review_model_2: reviewModel2,
-      comparison_model: comparisonModel,
+      model_1: model1,
+      model_2: model2,
+      system_one_model: systemOneModel,
       notes: notes || null,
     });
     return { ok: true, result };

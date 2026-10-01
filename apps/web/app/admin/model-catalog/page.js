@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import AppShell from "@/components/AppShell";
 import ModelCatalogManager from "@/components/admin/ModelCatalogManager";
+import SystemOneCatalogManager from "@/components/admin/SystemOneCatalogManager";
 import { getHostSession } from "@/lib/authServer";
 import { loadTheme } from "@/lib/themeServer";
 
@@ -31,7 +32,10 @@ export default async function ModelCatalogPage() {
       </div>
 
       {isSuperAdmin ? (
-        <ModelCatalogManager />
+        <>
+          <ModelCatalogManager />
+          <SystemOneCatalogManager />
+        </>
       ) : (
         <div className="mt-6 rounded-md border border-border bg-bg-card p-10 text-center text-sm text-text-muted">
           The model catalog is restricted to Super Admins.
