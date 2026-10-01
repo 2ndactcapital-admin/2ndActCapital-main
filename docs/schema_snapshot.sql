@@ -169,6 +169,38 @@
 --   bypass_reason                            text
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
+-- ===== ai_ensemble_configs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   task_key                                 text NOT NULL
+--   review_model_1                           text NOT NULL
+--   review_model_1_version                   text NOT NULL
+--   review_model_2                           text NOT NULL
+--   review_model_2_version                   text NOT NULL
+--   comparison_model                         text NOT NULL
+--   comparison_model_version                 text NOT NULL
+--   comparison_kind                          text NOT NULL
+--   is_active                                boolean NOT NULL DEFAULT false
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   activated_at                             timestamp with time zone
+--   retired_at                               timestamp with time zone
+--   notes                                    text
+--   PRIMARY KEY ai_ensemble_configs_pkey: (id)
+
+-- ===== ai_judgment_models =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   key                                      text NOT NULL
+--   display_name                             text NOT NULL
+--   provider                                 text NOT NULL
+--   model_version                            text NOT NULL
+--   credential_name                          text
+--   availability                             text NOT NULL DEFAULT 'disabled'::text
+--   last_verified_at                         timestamp with time zone
+--   notes                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE ai_judgment_models_key_key: (key)
+--   PRIMARY KEY ai_judgment_models_pkey: (id)
+
 -- ===== altruist_connections =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
