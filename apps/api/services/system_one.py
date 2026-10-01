@@ -21,7 +21,7 @@ verification_chk`` backs this: 'available' needs last_verified_at AND the
 model_version TypeSafe reported.
 
 HOW JEV IS CALLED: ``POST {LITELLM_BASE_URL}/typesafe/v1/systemone`` with the
-app's own LiteLLM key. The proxy forwards to https://api.typesafe.ai and
+app's own LiteLLM key. The proxy forwards to TypeSafe and
 injects ``TYPESAFE_API_KEY`` from ITS environment (Doppler prd_lite_llm). The
 app never holds that key (scripts/configure_typesafe_passthrough.py).
 
