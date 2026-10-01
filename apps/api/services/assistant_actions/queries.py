@@ -29,25 +29,16 @@ from services.action_registry import AssistantAction, REGISTRY
 _SAMPLE_LIMIT = 25
 
 
-async def _visible_entity_ids(pool, org_id: str, user_id: str, is_staff: bool) -> set:
-    """Entity ids the caller may see — the SAME engines the rest of the app uses.
-
-    Imported locally (like ``document_embedding._visible_entity_ids``) so this
-    module stays importable without eagerly pulling the whole visibility stack.
-    Returns a set of ``str`` ids. May be EMPTY — a member with no active grants,
-    or a staff user with no assignments, legitimately sees nothing, and the
-    counts below must then be zero (never a silent fall-through to org-wide).
-    """
-    from services.delegate_grants import get_delegate_visible_entity_ids
-    from services.restricted_access import filter_restricted
-    from services.staff_visibility import get_staff_visible_entity_ids
-
-    if is_staff:
-        allowed = await get_staff_visible_entity_ids(pool, user_id, org_id)
-    else:
-        allowed = await get_delegate_visible_entity_ids(pool, org_id, user_id)
-    allowed = await filter_restricted(pool, allowed, user_id, org_id)
-    return {str(x) for x in allowed}
+# Sprint hollisfix: this composition used to live here as a PRIVATE helper, which
+# is exactly why portfolio.py and entity_graph.py each grew their own org-only
+# substitute instead of reusing it. It now lives in
+# ``services.assistant_actions._visibility`` and is shared by every action that
+# touches entity-scoped data. The behaviour is byte-for-byte the same; only the
+# home moved. Kept re-exported under the old private name so nothing that
+# already imports it breaks.
+from services.assistant_actions._visibility import (  # noqa: E402
+    visible_entity_ids as _visible_entity_ids,
+)
 
 
 # ---------------------------------------------------------------------------

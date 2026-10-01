@@ -459,6 +459,13 @@ async def confirm_action(request: Request, body: ConfirmBody):
     if action.required_permission and action.required_permission not in permissions:
         raise HTTPException(status_code=403, detail="Permission denied")
 
+    # Same staff-vs-member signal the message loop threads into READ handlers
+    # (_run_loop's ``caller_is_staff``), resolved from the token exactly as
+    # routers.semantic_search does — never from the request body. Without it a
+    # confirm handler could not tell which visibility engine applies, and every
+    # entity gate on a WRITE path would silently take the staff branch.
+    caller_is_staff = is_staff(request)
+
     handler_result: dict = {"result": None, "render": None, "undo_token": None}
     if body.choice_value != "none":
         try:
@@ -466,9 +473,19 @@ async def confirm_action(request: Request, body: ConfirmBody):
                 pool=pool,
                 user_id=user_id,
                 org_id=org_id,
+                is_staff=caller_is_staff,
                 choice_value=body.choice_value,
                 **params,
             )
+        except PermissionError as exc:
+            # A visibility refusal (services.assistant_actions._visibility
+            # .EntityNotVisible) is a 403, not a 500. ``proposed_action`` is
+            # taken wholesale from the request body, so a confirm can name any
+            # entity_id the caller likes; this is the boundary that refuses it.
+            print(f"confirm handler refused ({action_key}): {exc}")
+            raise HTTPException(status_code=403, detail=str(exc))
+        except HTTPException:
+            raise
         except Exception as exc:
             print(f"confirm handler error ({action_key}): {exc}")
             print(traceback.format_exc())

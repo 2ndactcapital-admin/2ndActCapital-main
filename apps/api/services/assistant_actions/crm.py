@@ -1,5 +1,20 @@
-"""CRM assistant actions (Sprint 11)."""
+"""CRM assistant actions (Sprint 11; scoped Sprint hollisfix).
+
+``crm.draft_note`` carries ``required_permission=None``, so RBAC gates nothing
+here — every authenticated member reaches it. Its ``entity_id`` was previously
+inserted with no ownership check at all, and because
+``routers/assistant.py:confirm_action`` takes the WHOLE ``proposed_action`` from
+the request body, the write is reachable by a direct POST that never goes
+through the LLM loop: any member could attach a note of their own wording to any
+entity in the org. Both the draft and the confirm handler now gate ``entity_id``
+against the caller's visible set. The confirm-side gate is the load-bearing one
+— the draft-side gate only saves a wasted model call.
+"""
 from services.action_registry import AssistantAction, REGISTRY
+from services.assistant_actions._visibility import (
+    EntityNotVisible,
+    assert_entity_visible,
+)
 from services.extraction import call_claude_text
 
 _DRAFT_SYSTEM = (
@@ -10,8 +25,11 @@ _DRAFT_SYSTEM = (
 
 
 async def _draft_note_preview(pool, user_id: str, org_id: str,
+                               is_staff: bool = True,
                                entity_id: str = "", content_hint: str = "", **_):
     """Generate a draft note; returns preview data for proposed_action."""
+    await assert_entity_visible(pool, org_id, user_id, is_staff, entity_id)
+
     draft_text = await call_claude_text(
         system=_DRAFT_SYSTEM,
         messages=[{"role": "user", "content": content_hint or "Draft a general update note."}],
@@ -26,11 +44,22 @@ async def _draft_note_preview(pool, user_id: str, org_id: str,
 
 
 async def _save_note(pool, user_id: str, org_id: str,
+                     is_staff: bool = True,
                      choice_value: str = "save",
                      entity_id: str = "", draft_text: str = "", **_):
-    """Confirm handler: insert entity_notes row on choice 'save'."""
+    """Confirm handler: insert entity_notes row on choice 'save'.
+
+    ``entity_id`` and ``draft_text`` both arrive in ``ConfirmBody.proposed_action
+    .params``, i.e. straight from the client — a replayed or hand-rolled confirm
+    can set them to anything. The gate therefore runs HERE, on the write path,
+    not only in the draft preview a well-behaved client happens to call first.
+    ``EntityNotVisible`` is a ``PermissionError``; ``confirm_action`` maps it to
+    403 rather than letting it surface as a 500.
+    """
     if choice_value != "save":
         return {"result": None, "render": None, "undo_token": None}
+
+    await assert_entity_visible(pool, org_id, user_id, is_staff, entity_id)
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

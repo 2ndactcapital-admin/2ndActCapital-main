@@ -1,19 +1,49 @@
-"""Portfolio assistant actions (Sprint 11 + Sprint 21)."""
+"""Portfolio assistant actions (Sprint 11 + Sprint 21; scoped Sprint hollisfix).
+
+VISIBILITY: both actions below are user-facing data-exposure surfaces. Before
+hollisfix they scoped by ``org_id`` alone and ignored the caller entirely —
+``show_allocation`` and ``find_my_investment`` returned any org row to any
+authenticated member. They now route through the SAME gate every other
+entity-scoped surface uses (``services.assistant_actions._visibility``), never
+a bespoke or org-only path. Do not add a read here that skips it.
+"""
 from services.action_registry import AssistantAction, REGISTRY
 from services.allocation_lens import aggregate_allocation
+from services.assistant_actions._visibility import (
+    EntityNotVisible,
+    assert_entity_visible,
+)
 
 
-async def _show_allocation(pool, user_id: str, org_id: str,
+async def _show_allocation(pool, user_id: str, org_id: str, is_staff: bool = True,
                            selector_type: str = "entity", entity_id: str = "", **_):
-    """Return allocation lens data and a screen directive to the sunburst page."""
+    """Return allocation lens data and a screen directive to the sunburst page.
+
+    ``entity_id`` comes from the LLM tool-call input, which the member's own
+    message controls, so it is gated against the caller's visible set before
+    ``aggregate_allocation`` — which takes ``org_id`` only and has no caller
+    identity parameter — is ever reached. A ``subtree`` selector is gated on its
+    ROOT: ``resolve_entity_set`` walks the look-through from there, and the
+    visibility engines resolve subtrees the same way, so a visible root implies
+    a visible subtree under the platform's own definition of visible.
+    """
+    if not entity_id:
+        return {"text": "Please specify an entity to view its allocation.", "data": {}}
+
+    try:
+        await assert_entity_visible(pool, org_id, user_id, is_staff, entity_id)
+    except EntityNotVisible:
+        # Same text for "not yours" and "does not exist" — see _visibility.
+        return {
+            "text": "That entity is not within your visible set, so I can't show its allocation.",
+            "data": {},
+        }
+
     selector: dict
-    if selector_type == "entity" or selector_type == "subtree":
-        if not entity_id:
-            return {"text": "Please specify an entity to view its allocation.", "data": {}}
-        selector = {"type": selector_type, "id": entity_id} if selector_type == "entity" \
-            else {"type": "subtree", "root_id": entity_id}
+    if selector_type == "subtree":
+        selector = {"type": "subtree", "root_id": entity_id}
     else:
-        selector = {"type": "entity", "id": entity_id} if entity_id else {"type": "all"}
+        selector = {"type": "entity", "id": entity_id}
 
     try:
         result = await aggregate_allocation(pool, selector, org_id)
@@ -40,37 +70,66 @@ async def _show_allocation(pool, user_id: str, org_id: str,
     }
 
 
-async def _find_investment(pool, user_id: str, org_id: str, query: str = "", **_):
-    """Find a member's investment matching the query string."""
+async def _find_investment(pool, user_id: str, org_id: str, is_staff: bool = True,
+                           query: str = "", **_):
+    """Find the CALLER'S OWN investments matching the query string.
+
+    SCOPING: ``member_investments.user_id`` is the platform's own member key for
+    this table — ``routers/portfolio.py:159,185`` (``WHERE mi.user_id = $1 AND
+    mi.org_id = $2``) and ``routers/marketplace.py:198`` both scope on it. The
+    action is "find MY investment", so it is scoped to the caller for EVERY
+    caller, staff included: a staff member's own investments are still their own.
+    Staff who need to look at someone else's book use the portfolio endpoints,
+    which apply the staff visibility engine; this action is not that surface.
+
+    SCHEMA: the previous query selected ``mi.status``, ``mi.current_stage``,
+    ``mi.committed_amount`` and ``mi.currency``. None of those columns exist —
+    the real ones are ``investment_stage`` and ``amount_committed`` (see
+    ``MEMBER_INVESTMENT_SELECT`` in routers/marketplace.py and the same names in
+    queries.py and routers/portfolio.py). Every call raised
+    ``UndefinedColumnError``, caught by the loop's per-tool try/except and handed
+    to the model as a literal error string, since the day it shipped. The OUTPUT
+    keys are kept exactly as before so AssistantPanel's InvestmentCard props do
+    not change shape; only their sources are corrected. ``currency`` has no
+    column on this table anywhere in the schema and is reported as None rather
+    than invented.
+    """
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT mi.id, mi.status, mi.current_stage, mi.committed_amount,
-                   mi.currency, d.name AS deal_name, d.deal_type, d.taxonomy_key
+            SELECT mi.id,
+                   mi.investment_stage,
+                   mi.amount_committed,
+                   d.name AS deal_name,
+                   d.deal_type,
+                   d.taxonomy_key,
+                   d.deal_status
             FROM member_investments mi
             JOIN deals d ON d.id = mi.deal_id
-            JOIN entities e ON e.id = mi.entity_id
-            WHERE e.org_id = $1
+            WHERE mi.org_id = $1
+              AND mi.user_id = $2
               AND (
-                LOWER(d.name) LIKE '%' || LOWER($2) || '%'
-                OR LOWER(mi.status) LIKE '%' || LOWER($2) || '%'
-                OR LOWER(mi.current_stage) LIKE '%' || LOWER($2) || '%'
+                $3 = ''
+                OR LOWER(d.name) LIKE '%' || LOWER($3) || '%'
+                OR LOWER(COALESCE(mi.investment_stage, '')) LIKE '%' || LOWER($3) || '%'
+                OR LOWER(COALESCE(d.deal_status::text, '')) LIKE '%' || LOWER($3) || '%'
               )
             ORDER BY mi.created_at DESC
             LIMIT 5
             """,
             org_id,
-            query,
+            user_id,
+            query or "",
         )
     investments = [
         {
             "id": str(r["id"]),
             "deal_name": r["deal_name"],
             "deal_type": r["deal_type"],
-            "status": r["status"],
-            "current_stage": r["current_stage"],
-            "committed_amount": float(r["committed_amount"]) if r["committed_amount"] else None,
-            "currency": r["currency"],
+            "status": r["deal_status"],
+            "current_stage": r["investment_stage"],
+            "committed_amount": float(r["amount_committed"]) if r["amount_committed"] else None,
+            "currency": None,
         }
         for r in rows
     ]
@@ -122,7 +181,7 @@ def register_actions() -> None:
         AssistantAction(
             key="portfolio.find_my_investment",
             module="portfolio",
-            description="Find a member's investment by deal name, status, or stage.",
+            description="Find the member's own investments by deal name, stage, or deal status.",
             access_type="read",
             required_permission=None,
             tier=3,
@@ -134,7 +193,7 @@ def register_actions() -> None:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search term — deal name, status, or stage keyword.",
+                        "description": "Search term — deal name, investment stage, or deal status keyword.",
                     }
                 },
                 "required": ["query"],

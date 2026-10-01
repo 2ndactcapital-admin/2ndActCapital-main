@@ -1,13 +1,37 @@
 """Entity hierarchy assistant actions (Sprint 15)."""
 from services.action_registry import AssistantAction, REGISTRY
 from services.entity_graph import get_subtree, detect_cycle
+from services.assistant_actions._visibility import (
+    EntityNotVisible,
+    assert_entity_visible,
+)
 
 
 async def _show_hierarchy_handler(pool, user_id: str, org_id: str,
+                                   is_staff: bool = True,
                                    entity_id: str = "", **_):
-    """READ handler: fetch subtree + lookthrough for an entity."""
+    """READ handler: fetch subtree + lookthrough for an entity.
+
+    VISIBILITY (Sprint hollisfix): ``get_subtree`` / ``get_lookthrough`` take
+    ``org_id`` + ``entity_id`` and never a caller identity, so before this gate
+    every authenticated member could read any entity's full ownership tree by
+    supplying its id — and ``entity_id`` is LLM tool-call input, driven by the
+    member's own free text. The focal entity is now checked against the caller's
+    visible set first, the same refuse-don't-widen contract
+    ``services.ownership_tree.member_tree`` enforces for the ownership-tree API.
+    """
     if not entity_id:
         return {"text": "Error: entity_id is required.", "data": None, "render": None}
+
+    try:
+        await assert_entity_visible(pool, org_id, user_id, is_staff, entity_id)
+    except EntityNotVisible:
+        # Identical text for "not yours" and "no such entity" — see _visibility.
+        return {
+            "text": "That entity is not within your visible set, so I can't show its hierarchy.",
+            "data": None,
+            "render": None,
+        }
 
     from services.entity_graph import get_lookthrough
 
@@ -33,11 +57,31 @@ async def _show_hierarchy_handler(pool, user_id: str, org_id: str,
 
 
 async def _link_ownership_draft(pool, user_id: str, org_id: str,
+                                 is_staff: bool = True,
                                  from_entity_id: str = "",
                                  to_entity_id: str = "",
                                  ownership_pct: float = 0.0,
                                  **_):
-    """Draft handler: validate cycle and return proposed_action data."""
+    """Draft handler: validate cycle and return proposed_action data.
+
+    Gated (Sprint hollisfix) because the preview reads back each endpoint's
+    ``display_name`` scoped by ``org_id`` alone — an org-membership oracle for
+    any caller who can guess or enumerate entity ids, even before the confirm
+    step refuses them.
+    """
+    try:
+        await assert_entity_visible(pool, org_id, user_id, is_staff, from_entity_id)
+        await assert_entity_visible(pool, org_id, user_id, is_staff, to_entity_id)
+    except EntityNotVisible:
+        return {
+            "proposed_action": {
+                "error": "One or both entities are not within your visible set.",
+                "from_entity_id": from_entity_id,
+                "to_entity_id": to_entity_id,
+                "ownership_pct": float(ownership_pct),
+            }
+        }
+
     async with pool.acquire() as conn:
         from_row = await conn.fetchrow(
             """
@@ -89,16 +133,27 @@ async def _link_ownership_draft(pool, user_id: str, org_id: str,
 
 
 async def _link_ownership_handler(pool, user_id: str, org_id: str,
+                                   is_staff: bool = True,
                                    choice_value: str = "confirm",
                                    from_entity_id: str = "",
                                    to_entity_id: str = "",
                                    ownership_pct: float = 0.0,
                                    **_):
-    """Confirm handler: insert entity_relationships row on choice 'confirm'."""
+    """Confirm handler: insert entity_relationships row on choice 'confirm'.
+
+    VISIBILITY (Sprint hollisfix): ``manage_deals`` says the caller may mutate
+    ownership SOMEWHERE; it does not say WHICH entities. Both endpoints of the
+    edge arrive in the client-supplied ``proposed_action.params``, so both are
+    gated against the caller's own visible set before the insert. A staff user
+    with no assignments has an empty visible set and is refused here — that is
+    the staff visibility engine working, not a regression.
+    """
     if choice_value == "cancel":
         return {"result": None, "render": None, "undo_token": None}
 
     if choice_value in ("confirm", None):
+        await assert_entity_visible(pool, org_id, user_id, is_staff, from_entity_id)
+        await assert_entity_visible(pool, org_id, user_id, is_staff, to_entity_id)
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """

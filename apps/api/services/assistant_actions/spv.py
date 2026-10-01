@@ -1,6 +1,10 @@
 """SPV assistant actions (Sprint 12)."""
 import uuid
 from services.action_registry import AssistantAction, REGISTRY
+from services.assistant_actions._visibility import (
+    EntityNotVisible,
+    assert_entity_visible,
+)
 from services.spv_allocation import allocate_transaction
 
 
@@ -110,11 +114,24 @@ async def _show_captable(pool, user_id: str, org_id: str, spv_id: str = "", **_)
 
 
 async def _preview_subscribe(pool, user_id: str, org_id: str,
+                              is_staff: bool = True,
                               spv_id: str = "", entity_id: str = "",
                               commitment_amount: float = 0.0, **_):
-    """Draft handler: validate SPV + entity, return subscription preview."""
+    """Draft handler: validate SPV + entity, return subscription preview.
+
+    VISIBILITY (Sprint hollisfix): ``entity_id`` names WHO is committing the
+    capital and is caller-supplied. Gated here so the preview cannot be used to
+    confirm that an arbitrary entity id exists and to read back its
+    ``display_name`` — a cheap org-membership oracle for any member holding
+    ``indicate_interest``.
+    """
     if not spv_id or not entity_id or not commitment_amount:
         return {"error": "spv_id, entity_id, and commitment_amount are required"}
+
+    try:
+        await assert_entity_visible(pool, org_id, user_id, is_staff, entity_id)
+    except EntityNotVisible:
+        return {"error": "That entity is not within your visible set"}
 
     async with pool.acquire() as conn:
         spv = await conn.fetchrow(
@@ -147,12 +164,40 @@ async def _preview_subscribe(pool, user_id: str, org_id: str,
 
 
 async def _execute_subscribe(pool, user_id: str, org_id: str,
+                              is_staff: bool = True,
                               choice_value: str = "confirm",
                               spv_id: str = "", entity_id: str = "",
                               commitment_amount: float = 0.0, **_):
-    """Confirm handler: insert or amend spv_subscriptions on choice 'confirm'."""
+    """Confirm handler: insert or amend spv_subscriptions on choice 'confirm'.
+
+    THIS IS THE CAPITAL-COMMITMENT PATH (Sprint hollisfix). Two things made it
+    the sharpest edge in the registry:
+
+    1. ``entity_id`` arrives in ``ConfirmBody.proposed_action.params`` — client
+       data on a direct POST, not something the LLM has to be talked into. With
+       no ownership check, any member holding ``indicate_interest`` could commit
+       capital in ANOTHER member's entity's name.
+    2. The amend path below CLOSES the existing active subscription for that
+       entity+SPV (``SET valid_to = now()``) before inserting. Unscoped, that is
+       not just a spurious new commitment — it silently supersedes someone
+       else's real one.
+
+    The gate runs before either. Note the existing-subscription lookup and its
+    UPDATE still carry no ``org_id`` predicate; cross-ORG is held by RLS
+    (``app_service``, ``rolbypassrls=false``), and cross-MEMBER is now held here.
+    Adding the org predicate belongs with the wider query-hygiene pass, not in a
+    security fix that has to stay small enough to read.
+
+    STILL OPEN, deliberately not fixed here: there is no maker-checker step on
+    this path. A member's single tap still executes the commitment directly
+    rather than routing through ``propose()``. That is a design decision about
+    who owns the approval, not a bug with one correct answer — see the sprint
+    notes.
+    """
     if choice_value != "confirm":
         return {"result": None, "render": None, "undo_token": {"spv_id": spv_id, "entity_id": entity_id, "action": "unsubscribe"}}
+
+    await assert_entity_visible(pool, org_id, user_id, is_staff, entity_id)
 
     async with pool.acquire() as conn:
         # Close any existing active subscription for this entity+SPV.
