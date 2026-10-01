@@ -2,7 +2,12 @@ import { redirect } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import NoteTermsQueueManager from "@/components/admin/NoteTermsQueueManager";
+import EnsemblePanel from "@/components/admin/EnsemblePanel";
 import { getNoteTermsQueue } from "@/lib/api";
+import { loadEnsembleAction } from "@/lib/noteTermsQueueActions";
+
+// The ensemble task this page governs — a task key, not a display label.
+const ENSEMBLE_TASK_KEY = "note_terms_hazard";
 
 // The note-terms review queue + STP trust policy. Server component: fetch the
 // one-call queue payload (queued rows with their ensemble disagreements, source
@@ -30,6 +35,10 @@ export default async function NoteTermsQueuePage() {
     else error = e.message;
   }
 
+  // Loaded separately so a LiteLLM outage (the catalog reads /model/info)
+  // degrades only the Ensemble panel, never the review queue.
+  const ensemble = error ? null : await loadEnsembleAction(ENSEMBLE_TASK_KEY);
+
   return (
     <AppShell user={session.user}>
       <div>
@@ -49,7 +58,10 @@ export default async function NoteTermsQueuePage() {
           Could not load the review queue: {error}
         </div>
       ) : (
-        <NoteTermsQueueManager initialPayload={payload} />
+        <>
+          <NoteTermsQueueManager initialPayload={payload} />
+          <EnsemblePanel taskKey={ENSEMBLE_TASK_KEY} initial={ensemble} />
+        </>
       )}
     </AppShell>
   );

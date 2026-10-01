@@ -1,5 +1,6 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-09-30 (tiergating.structural — closes the verb-tier
+Last updated: 2026-10-01 (ensemblemodels.structural — see the top entry).
+Previous update: 2026-09-30 (tiergating.structural — closes the verb-tier
 gating gap `wave2discovery.lowrisk` flagged as the most important open item:
 a Tier-1 registry verb invoked from a BPMN Service Task executed unattended,
 exactly like a Tier-3 verb, because `_execute_service_task` read
@@ -252,6 +253,142 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000000000000000000000. Ensemble model selection — catalog, versioned selection, picker BUILT; extraction does NOT read it yet; verify WRITTEN, not yet run (2026-10-01)
+
+**What exists now.** A super-admin control choosing the three models that
+check structured-note hazard fields: Review model 1, Review model 2, and the
+Comparison model.
+
+- `public.ai_judgment_models` — scoring models that are not chat models.
+  Seeded with `typesafe-jev` as **`disabled`**, `last_verified_at` NULL,
+  `credential_name` NULL, `model_version` "unknown — never called". A CHECK
+  (`ai_judgment_models_available_requires_verification_chk`) makes
+  `'available'` impossible without a real `last_verified_at`. Nothing is ever
+  marked available because a credential exists.
+- `public.ai_ensemble_configs` — immutable, versioned selections. Named CHECKs
+  `ai_ensemble_configs_review_models_distinct_chk` and
+  `ai_ensemble_configs_comparison_distinct_chk`, partial unique index
+  `ai_ensemble_configs_one_active_per_task`, and a BEFORE UPDATE trigger
+  `ai_ensemble_configs_retire_only` that permits exactly one update: retiring
+  an active row (is_active true→false with `retired_at` set, every other
+  column unchanged). Beyond the prompt's column list, three `*_version`
+  columns snapshot the exact upstream model each slot resolved to at
+  activation. A LiteLLM group name such as `claude-sonnet` can be repointed
+  later, and without the snapshot a historical ensemble would silently change
+  meaning.
+- Both tables are global (no org_id), with four separate RLS policies copied
+  verbatim from `platform_model_catalog`. `anon`/`authenticated` grants are
+  revoked; only `app_service` has DML. Migration:
+  `apps/api/migrations/ensemblemodels_catalog_and_configs.sql`, applied live
+  via MCP and checked with a follow-up query plus a rolled-back trigger probe.
+- `services/ai_model_catalog.py` — `get_catalog()` unions LiteLLM
+  `/model/info` (via the existing `litellm_credentials.list_deployments`, not a
+  second caller) with `ai_judgment_models`. Availability reuses
+  `platform_model_catalog.availability`
+  (`available`/`deprecated`/`disabled`); no second vocabulary.
+  `activate_ensemble()` mirrors the CHECKs, refuses anything not
+  `available`, and retires + activates in one transaction. It warns (does not
+  block) when both review models share a provider.
+- Endpoints, super_admin only, real prefix `/api/v1` (routers declare
+  `/admin/...` and `main.py` mounts them under `/api/v1`):
+  `GET /api/v1/admin/ai/model-catalog`,
+  `GET /api/v1/admin/ai/ensembles?task_key=note_terms_hazard`,
+  `POST /api/v1/admin/ai/ensembles` (`extra='forbid'`, no org_id).
+  Router: `apps/api/routers/ai_ensembles.py`.
+- UI: an "Ensemble" panel on `/admin/pricing/note-terms-queue`
+  (`apps/web/components/admin/EnsemblePanel.jsx`), via server actions in
+  `lib/noteTermsQueueActions.js`. Write controls render only inside
+  `permissions.can_write === true`.
+
+**EXTRACTION DOES NOT READ THE SELECTION YET.**
+`services/note_terms_extraction.py` still resolves `ai.model.default`
+(primary) and `ai.model.assistant` (hazard ensemble) through
+`call_claude_json` → `_execute_chain`. For a global job (`org_id=None`),
+`resolve_model` never consults `org_settings` and returns
+`DEFAULT_SETTINGS` directly. It calls the LiteLLM proxy with the platform
+`LITELLM_MASTER_KEY`, with attribution to the default org id. Wiring
+extraction to `ai_ensemble_configs` is the next sprint.
+
+**NO VALID ENSEMBLE CAN BE ACTIVATED TODAY.** The proxy serves exactly two
+chat models (`claude-haiku` → `claude-haiku-4-5-20251001`, `claude-sonnet` →
+`claude-sonnet-4-6`). `voyage-3.5` is an embedding model, and Jev is disabled.
+The comparison model must differ from both review models, so the picker
+correctly refuses every save until a third chat model is curated onto the
+proxy and `platform_model_catalog`, or Jev is verified.
+
+**Jev cannot be a selectable LiteLLM model with its output intact on
+v1.96.2.** Evidence, from the 1.96.2 wheel's source and the live proxy:
+(i) `CustomLLM` / `custom_provider_map` exist, but a handler is a Python
+module the proxy imports from `config.yaml` via `get_instance_fn`, and
+remote-URL handlers from the DB overlay are refused. Adding one is a LiteLLM
+deployment change. Its return type is a chat `ModelResponse`. Our transport
+is the Anthropic-shaped `/v1/messages`, whose adapter reads
+`provider_specific_fields` only for `thought_signature`, so probability
+output would be flattened into chat text or dropped. (ii) Pass-through
+endpoints ARE supported in OSS 1.96.2 (`/config/pass_through_endpoint` CRUD
+is live). Auth on them is no longer enterprise-only, and headers resolve
+`os.environ/` references, so LiteLLM can hold a Jev key and log requests
+without touching the payload. No Jev/TypeSafe credential name exists in
+Doppler (`prd`, `dev`, `prd_lite_llm`). **Design consequence:** Jev lives in
+the separate `ai_judgment_models` registry. LiteLLM pass-through is the
+option for key custody once a credential exists.
+
+**Per-request "no fallback" IS honored on v1.96.2. Proven live.** The
+mechanism is the body field `"disable_fallbacks": true`
+(`router.py`: `async_function_with_fallbacks_common_utils` re-raises
+immediately). `/v1/messages` (call_type `anthropic_messages`) goes through
+the same `_ageneric_api_call_with_fallbacks` path. Proof against the live
+proxy: Haiku with `max_tokens=100000` (a real upstream 400) plus per-request
+`fallbacks:["claude-sonnet"]` was served by Sonnet
+(`x-litellm-attempted-fallbacks: 1`). The identical request with
+`disable_fallbacks: true` returned the original 400. The proxy refuses
+`mock_testing_*` params, which is correct and was left alone.
+**The bigger collapse risk is not LiteLLM.** The proxy has no router-level
+fallbacks configured: `GET /fallback/{model}` returns 404 "No ... fallbacks
+configured" for every group and every type (general, context_window,
+content_policy). The fallback that collapses the ensemble is the APP's
+own chain in `_execute_chain` (`[primary, *ai.model.fallback_chain]` =
+`[claude-sonnet, claude-haiku]`). The next sprint must call each ensemble
+slot with exactly one attempt and no app-level chain, plus
+`disable_fallbacks: true` for defence in depth. It should read the served
+model from the `x-litellm-model-name` response header rather than
+re-querying `ai_decision_log`.
+
+**Master-key role (1b).** `GET /key/info` → 404 "Key not found in database",
+because the master key is env-configured, not a DB virtual key. `GET
+/user/info` resolves to the `default_user_id` row with `user_role:
+internal_user`. That is the default user's record, and the source of the
+old "internal_user" scare. Functionally the key IS proxy admin: `/user/list`,
+`/key/list` (lists a key it does not own), `/settings`,
+`/get/config/callbacks` and `/model/info` all return 200.
+`litellm_diagnose.py` no longer exists in the tree (untracked in `f2a64ab`).
+
+**`org_settings` cannot hold a platform row (1e).** `org_id` is `NOT NULL`
+with an FK to `organizations`, so a NULL row is refused by the schema before
+RLS applies. Its single `FOR ALL` policy (`org_settings_org_isolation`:
+`org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid OR
+current_setting('app.is_super_admin', true) = 'true'`) would also hide such a
+row from every non-super-admin read. Policies left unaltered.
+
+**OPEN: Doppler `prd` `APP_SERVICE_DATABASE_URL` has a stale password.** It
+fails with `InvalidPasswordError`. It has the same user, host, port and
+database as `DATABASE_URL`, but its embedded password differs from the
+current `DB_PASSWORD` secret, while `DATABASE_URL`'s matches. Fix: rebuild it
+in Doppler as a `${DB_PASSWORD}` reference (CLAUDE.md "secret referencing").
+Not changed by this sprint. `verify_ensemblemodels.py` connects through it
+by spec, so it will abort loudly (FATAL, no fallback) until this is fixed.
+
+**Out of scope, untouched.** The 29 `document_field_corrections` rows
+(`target_type='note_terms'`) that store model disagreements as human
+corrections. 2nd Act's `ai.model.*` settings. The LiteLLM version and
+deployment.
+
+**Verification.** `apps/api/scripts/verify_ensemblemodels.py` — WRITTEN, not
+yet run (blocked first on `APP_SERVICE_DATABASE_URL` above). Zero model
+calls.
 
 ---
 

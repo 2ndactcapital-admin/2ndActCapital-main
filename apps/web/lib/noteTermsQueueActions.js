@@ -10,7 +10,10 @@
 // server-side by FastAPI from the caller's principal.
 
 import {
+  activateAiEnsemble,
+  getAiModelCatalog,
   getNoteTermsQueue,
+  listAiEnsembles,
   grantStpPolicy,
   resolveNoteTermsField,
   revokeStpPolicy,
@@ -53,6 +56,35 @@ export async function grantStpAction(cik, formType, notes) {
 export async function revokeStpAction(policyId) {
   try {
     const result = await revokeStpPolicy(policyId);
+    return { ok: true, result };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+// The ensemble panel's two calls. A selection is never edited: activating
+// creates a new immutable version server-side and retires the previous one.
+export async function loadEnsembleAction(taskKey) {
+  try {
+    const [catalog, ensembles] = await Promise.all([
+      getAiModelCatalog(),
+      listAiEnsembles(taskKey),
+    ]);
+    return { ok: true, catalog, ensembles };
+  } catch (error) {
+    return { ok: false, error: error.message, status: error.status };
+  }
+}
+
+export async function activateEnsembleAction(taskKey, reviewModel1, reviewModel2, comparisonModel, notes) {
+  try {
+    const result = await activateAiEnsemble({
+      task_key: taskKey,
+      review_model_1: reviewModel1,
+      review_model_2: reviewModel2,
+      comparison_model: comparisonModel,
+      notes: notes || null,
+    });
     return { ok: true, result };
   } catch (error) {
     return { ok: false, error: error.message };

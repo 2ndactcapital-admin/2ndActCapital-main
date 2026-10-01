@@ -706,6 +706,14 @@ export const grantStpPolicy = (body) =>
 export const revokeStpPolicy = (policyId) =>
   fetchAPI(`/api/v1/admin/pricing/stp-policy/${policyId}`, { method: "DELETE" });
 
+// ensemblemodels — the hazard ensemble's three models. Super Admin only,
+// enforced by FastAPI. Bodies never carry an org_id (the data is global).
+export const getAiModelCatalog = () => fetchAPI("/api/v1/admin/ai/model-catalog");
+export const listAiEnsembles = (taskKey) =>
+  fetchAPI(`/api/v1/admin/ai/ensembles?task_key=${encodeURIComponent(taskKey)}`);
+export const activateAiEnsemble = (body) =>
+  fetchAPI("/api/v1/admin/ai/ensembles", { method: "POST", body });
+
 // --- Chancery Phase 6 (document review / confirm) ---
 export const getDocumentReview = (documentId) =>
   fetchAPI(`/api/v1/documents/${documentId}/review`);
