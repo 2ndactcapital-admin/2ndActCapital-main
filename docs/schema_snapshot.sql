@@ -2396,6 +2396,24 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY commitments_pkey: (id)
 
+-- ===== portfolio.edgar_index_filing_filers =====
+--   accession_number                         text NOT NULL
+--   cik                                      text NOT NULL
+--   company_name                             text NOT NULL
+--   PRIMARY KEY edgar_index_filing_filers_pkey: (accession_number, cik)
+
+-- ===== portfolio.edgar_index_filings =====
+--   accession_number                         text NOT NULL
+--   form_type                                text NOT NULL
+--   filing_date                              date NOT NULL
+--   index_quarter                            text NOT NULL
+--   submission_path                          text NOT NULL
+--   filer_count                              integer NOT NULL
+--   pipeline_status                          text NOT NULL DEFAULT 'discovered'::text
+--   status_reason                            text
+--   loaded_at                                timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY edgar_index_filings_pkey: (accession_number)
+
 -- ===== portfolio.external_references =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -2593,6 +2611,19 @@
 --   resolved_by                              uuid
 --   resolved_at                              timestamp with time zone
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
+
+-- ===== portfolio.structured_note_issuers =====
+--   filer_cik                                text NOT NULL
+--   issuer_group                             text NOT NULL
+--   filer_name                               text NOT NULL
+--   filer_role                               text NOT NULL
+--   credit_entity                            text NOT NULL
+--   include_status                           text NOT NULL
+--   index_rows_2024_2026                     integer
+--   notes                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY structured_note_issuers_pkey: (filer_cik)
 
 -- ===== portfolio.ta_calibration_results =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2932,4 +2963,18 @@
 --   currency_code                            text
 --   is_superseded                            boolean
 --   value_reason                             text
+
+-- ===== portfolio.v_edgar_filings_explorer =====  [VIEW]
+--   security_invoker: true — RLS applies to the querying role
+--   accession_number                         text
+--   form_type                                text
+--   filing_date                              date
+--   index_quarter                            text
+--   pipeline_status                          text
+--   issuer_group                             text
+--   credit_entity                            text
+--   include_status                           text
+--   filer_count                              integer
+--   filer_names                              text
+--   sec_filing_url                           text
 
