@@ -865,9 +865,65 @@ async def fetch_section(conn, bucket: str) -> None:
         per_run.append((row["sec_requests"], len(log.entries)))
         return row
 
+    # DIAGNOSTIC (selected=9 of 10 in a full run only): state around run 1.
+    async def _diag_rows(label: str) -> dict:
+        rows = {r["accession_number"]: dict(r) for r in await rls_fetch(conn, """
+            SELECT accession_number, pipeline_status, selection_policy_version, primary_issuer_cik, attempt_count
+            FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])""", targets)}
+        print(f"  [DIAG] {label}: {len(rows)} of {len(targets)} target rows present")
+        for a in targets:
+            r = rows.get(a)
+            print(f"  [DIAG]   {a}: " + ("MISSING" if r is None else
+                  f"status={r['pipeline_status']} policy_v={r['selection_policy_version']} "
+                  f"primary_issuer_cik={r['primary_issuer_cik']} attempts={r['attempt_count']}"))
+        return rows
+
+    await _diag_rows("BEFORE run 1")
+    runs_now = await rls_fetch(conn, """
+        SELECT id, trigger_source, status, stages, fetch_cap, requested_at, started_at, finished_at, selected
+        FROM portfolio.edgar_pipeline_runs
+        WHERE trigger_source = 'verify' OR status IN ('launching', 'launched', 'running')
+        ORDER BY requested_at""")
+    total_runs = await rls_val(conn, "SELECT count(*) FROM portfolio.edgar_pipeline_runs")
+    print(f"  [DIAG] pipeline runs BEFORE run 1: total={total_runs}; verify-or-live rows={len(runs_now)}")
+    for r in runs_now:
+        print(f"  [DIAG]   {dict(r)}")
+    leases_now = await rls_fetch(conn, "SELECT * FROM portfolio.edgar_pipeline_lease ORDER BY lease_name")
+    print(f"  [DIAG] lease rows BEFORE run 1: {len(leases_now)}")
+    for r in leases_now:
+        print(f"  [DIAG]   {dict(r)}")
+
+    # select_stage returns only counts (its RETURNING has no accession), so the
+    # accessions it decided are the target rows whose status changed across the call.
+    real_select_stage = p.select_stage
+
+    async def _diag_select_stage(c, **kw):
+        ident = await c.fetchrow("SELECT current_setting('application_name') AS app, pg_backend_pid() AS pid")
+        print(f"  [DIAG] select stage connection: application_name={ident['app']!r} backend_pid={ident['pid']} "
+              f"(same object as the verify conn: {c is conn}); accessions arg={kw.get('accessions')}")
+        pre = {r["accession_number"]: r["pipeline_status"] for r in await rls_fetch(
+            c, "SELECT accession_number, pipeline_status FROM portfolio.edgar_index_filings "
+               "WHERE accession_number = ANY($1::text[])", targets)}
+        res = await real_select_stage(c, **kw)
+        post = {r["accession_number"]: r["pipeline_status"] for r in await rls_fetch(
+            c, "SELECT accession_number, pipeline_status FROM portfolio.edgar_index_filings "
+               "WHERE accession_number = ANY($1::text[])", targets)}
+        decided = [a for a in targets if pre.get(a) != post.get(a)]
+        print(f"  [DIAG] select stage returned {res}")
+        print(f"  [DIAG] select stage decided {len(decided)}: "
+              + ", ".join(f"{a} {pre.get(a)}->{post.get(a)}" for a in decided))
+        print(f"  [DIAG] targets NOT decided: "
+              + ", ".join(f"{a} ({post.get(a)})" for a in targets if a not in decided))
+        return res
+
     # Run 1: select + fetch, cap C. Bad accession is the newest -> attempted first.
-    r1 = await job(C, ["select", "fetch"])
-    states1 = {r["accession_number"]: r["pipeline_status"] for r in await rls_fetch(
+    p.select_stage = _diag_select_stage
+    try:
+        r1 = await job(C, ["select", "fetch"])
+    finally:
+        p.select_stage = real_select_stage
+    await _diag_rows("AFTER run 1")
+    states1 ={r["accession_number"]: r["pipeline_status"] for r in await rls_fetch(
         conn, "SELECT accession_number, pipeline_status FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])",
         targets)}
     touched1 = [a for a, s in states1.items() if s not in ("selected",)]
