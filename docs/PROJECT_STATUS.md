@@ -1,6 +1,8 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-01 (modelresearch.structural — read-only Model Research
-grid; see the top entry). Earlier the same day: ensemblesystemone.structural
+Last updated: 2026-10-02 (edgarpipelinea.structural — EDGAR pipeline A: status
+lifecycle, selection policies, incremental discovery, fetch-to-R2, the nightly
+Render job and the monitoring screen; see the top entry). Earlier, 2026-10-01:
+modelresearch.structural (read-only Model Research grid). Earlier the same day: ensemblesystemone.structural
 (it overwrites ensemblemodels.structural).
 Previous update: 2026-09-30 (tiergating.structural — closes the verb-tier
 gating gap `wave2discovery.lowrisk` flagged as the most important open item:
@@ -255,6 +257,83 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000000000000000000. EDGAR pipeline A — lifecycle, selection, discovery, fetch-to-R2, nightly job, monitoring; verify WRITTEN, not yet run (2026-10-02)
+
+`edgarpipelinea.structural`. No model is called anywhere; term extraction is sprint B.
+
+**Schema (applied via MCP, recorded in `apps/api/migrations/`):**
+- `edgarindex_discovery_tables.sql` — the four objects created by hand before this
+  sprint (`edgar_index_filings`, `edgar_index_filing_filers`, `structured_note_issuers`,
+  `v_edgar_filings_explorer`), generated from the live catalog. The repo had no file for them.
+- `edgarpipelinea_lifecycle.sql` — the FULL status CHECK (sprint B's statuses
+  included); `document_kind`, `selection_policy_version`, `attempt_count`,
+  `last/next_attempt_at`, `reference_filing_id`, `detected_cusip`, `fetched_at`,
+  `primary_issuer_cik` (function `edgar_primary_issuer_cik` + statement triggers on
+  the issuer table that recompute it on ANY change); `edgar_selection_policies`
+  (versioned, retire-only trigger, one active); `edgar_pipeline_runs`;
+  `edgar_pipeline_lease`; gzip columns on `reference_filings`; sort indexes; four
+  RLS policies on every new table.
+- DATA: policy v1; `primary_issuer_cik` backfilled (690,324 of 716,953; 537,910 of
+  546,013 424B2s — exactly the stated coverage); the 200 pre-existing documents
+  linked and marked `fetched` without re-download (201 minus the fixture); the
+  `VERIFY FIXTURE` row deleted (nothing referenced it; it had no R2 objects).
+
+**Code:** `services/edgar_index.py` (parser + loader, now shared with
+`scripts/load_edgar_index.py`), `services/edgar_pipeline.py` (discovery over the
+daily index, selection, fetch, classification, CUSIP check digit, lease, runs, Render
+launch, the job), `edgar_pipeline_job.py` (Render job entrypoint),
+`services/assistant_actions/edgar_ops.py` (`edgar.launch_pipeline_job`, tier 2),
+`services/edgar_pipeline_admin.py` + `routers/edgar_pipeline_admin.py` (super-admin
+API), `/admin/edgar-pipeline` (Filings / Progress / Issuers), and `DataGrid`'s new
+opt-in `serverSide` mode. `edgar_fetch.py` gained only `set_rate_limit()`.
+
+**Decisions made inside the sprint:**
+- New `reference_filings` rows are `extraction_status = 'fetched'`, `extracted_text`
+  NULL, text gzipped in R2 at `text_r2_key`. Not `'extracted'`: the existing
+  note-terms script selects that status and reads `extracted_text`.
+- The offset map is NOT uploaded for new rows (bandwidth); it is deterministic from
+  the raw HTML with the same extractor, so sprint B can recompute it.
+- The launch step NEVER raises: a raised Service Task HOLDs the run, `held` is
+  non-terminal, and the scheduler would then skip every following night. Refused /
+  failed launches are recorded on the run row instead.
+- Issuer group is a filter, not a sort key (no index can sort 717K rows by a joined
+  name; measured 4 s). Category sorts break ties in the index's mirror order.
+- An issuer edit that changes `include_status`, or a new issuer, sends that
+  issuer's still-undecided (`selected`/`not_selected`) filings back to `discovered`
+  so the next job re-selects them. Fetched rows are never touched.
+- Default fetch cap 5,000 per job (`EDGAR_PIPELINE_FETCH_CAP`), runtime cap 4 h,
+  8 requests/s, retries at 6/12/24/48 h then give up, stop after 25 consecutive
+  failures. Base service for the one-off job: `2ndactcapital-workflow-scheduler`
+  (paid instance, apps/api, Doppler-synced; the API web service is on the free plan).
+
+**OPEN — needs Joe:**
+1. **`R2_BUCKET_NAME` in Doppler `prd` is `'docs_readwrite_hollisworks'` — not a legal
+   bucket name** (it looks like a token name). The EDGAR corpus lives in
+   `hollisworks-docs`. `services/storage.py` uses this value as its DEFAULT bucket, so
+   every default-bucket R2 call on any service synced from Doppler should currently be
+   failing with InvalidBucketName — check document uploads. The pipeline refuses to
+   start with it (loud config error); set it to `hollisworks-docs` (or set
+   `EDGAR_R2_BUCKET`). The verify reports this as a FAIL and then runs its fetch
+   tests against the bucket that actually holds the corpus.
+2. The nightly trigger (`0 6 * * *` UTC, Hollisworks platform org) was created
+   **inactive**: the deployed build does not register `edgar.launch_pipeline_job`, and
+   the engine resolves an unknown key to a silent no-op step. Activate it on
+   /admin/workflows/triggers after deploy.
+3. The first job selects the whole manifest (~717K rows, one quarter per
+   transaction) and then fetches up to the cap. At 5,000/night the ~538K selected
+   backlog takes ~110 nights; raise the cap for the first runs if wanted (watch the
+   Render bandwidth allowance — gzipped raw + text is roughly 1/5 of the HTML).
+4. `edgar_index_filings_form_date_idx` is now a redundant prefix of the new
+   `form_sort_idx`; it stays because the MCP apply path cancels any DROP.
+
+**Verification:** `apps/api/scripts/verify_edgarpipelinea.py`, WRITTEN, NOT RUN
+(operator runs it). It makes real calls: ~40 SEC requests, R2 writes under
+`reference/edgar-verify-edgarpipelinea/` (deleted in teardown), and ONE Render
+one-off job launched through the real nightly workflow with `stages=[]`,
+`fetch_cap=0`. `npm run build` exited 0 during the sprint.
 
 ---
 

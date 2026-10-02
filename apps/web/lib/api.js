@@ -730,3 +730,16 @@ export const linkDocumentEntities = (documentId, entityIds, linkRole) =>
   });
 export const unlinkDocumentEntity = (documentId, entityId) =>
   fetchAPI(`/api/v1/documents/${documentId}/entity-links/${entityId}`, { method: "DELETE" });
+
+// edgarpipelinea — EDGAR pipeline monitoring. Super Admin only, enforced by
+// FastAPI. Global public SEC data: no call here carries an org_id.
+export const getEdgarFilings = (params) =>
+  fetchAPI("/api/v1/admin/edgar/filings", { searchParams: params });
+export const getEdgarProgress = () => fetchAPI("/api/v1/admin/edgar/progress");
+export const getEdgarIssuers = () => fetchAPI("/api/v1/admin/edgar/issuers");
+export const updateEdgarIssuer = (cik, body) =>
+  fetchAPI(`/api/v1/admin/edgar/issuers/${encodeURIComponent(cik)}`, { method: "PUT", body });
+export const addEdgarIssuer = (body) =>
+  fetchAPI("/api/v1/admin/edgar/issuers", { method: "POST", body });
+export const runEdgarPipelineNow = (body) =>
+  fetchAPI("/api/v1/admin/edgar/runs", { method: "POST", body });

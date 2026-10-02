@@ -143,6 +143,12 @@ export const MENU_ITEMS = [
     adminIndex: true,
   },
   {
+    href: "/admin/edgar-pipeline",
+    label: "EDGAR Pipeline",
+    gate: GATE_SUPER_ADMIN,
+    adminIndex: true,
+  },
+  {
     href: "/admin/pricing/surface",
     label: "Volatility Surface",
     gate: GATE_SUPER_ADMIN,

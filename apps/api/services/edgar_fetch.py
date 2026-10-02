@@ -176,6 +176,20 @@ class RateLimiter:
 _limiter = RateLimiter()
 
 
+def set_rate_limit(rate: int) -> None:
+    """Replace the shared limiter with one capped at ``rate`` requests/second.
+
+    The nightly pipeline job runs at 8/s, under the SEC's 10/s per-user cap,
+    so a concurrent manual fetch elsewhere cannot push the total over it.
+    Every request in this process goes through ``_get`` and so through this
+    one limiter — index, folder listing, header and document alike.
+    """
+    global _limiter
+    if not 1 <= rate <= MAX_REQUESTS_PER_SECOND:
+        raise ValueError(f"rate must be 1..{MAX_REQUESTS_PER_SECOND}, got {rate}")
+    _limiter = RateLimiter(rate)
+
+
 async def _get(client: httpx.AsyncClient, url: str) -> httpx.Response:
     """GET with rate limiting and backoff. Raises on non-retryable failure."""
     last_error: Exception | None = None

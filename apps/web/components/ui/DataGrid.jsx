@@ -28,6 +28,16 @@
  *                 only mark the cell it owns; "this whole row is a different
  *                 kind of thing" is a row-level fact and needs a row-level
  *                 hook. Styling only: it cannot change behaviour or content.
+ *   serverSide  — optional. When set, the SERVER owns sort and paging
+ *                 (edgarpipelinea: ~717K manifest rows cannot load into the
+ *                 browser). Shape: { totalRows, pageIndex, pageSize, sorting:
+ *                 [{ id, desc }], onSortingChange(sorting), onPageChange(i),
+ *                 loading }. `rowData` is then just the current page. TanStack
+ *                 runs in manual mode, the global and per-column text filters
+ *                 are hidden (they could only filter the visible page, which
+ *                 would look like a real filter and not be one), and the footer
+ *                 counts `totalRows`. Undefined by default, so every existing
+ *                 caller keeps exactly its client-side behaviour.
  */
 
 import { useMemo, useState, useRef, useEffect } from "react";
@@ -182,6 +192,7 @@ export default function DataGrid({
   enablePagination = true,
   pageSize = 25,
   getRowStyle,
+  serverSide,
 }) {
   // gridId is reserved for a future saved-layout feature. Referenced here so
   // the prop is part of the stable API; no persistence is wired up yet.
@@ -218,28 +229,53 @@ export default function DataGrid({
   );
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize });
 
+  const server = serverSide || null;
+  const serverPagination = server
+    ? { pageIndex: server.pageIndex, pageSize: server.pageSize }
+    : null;
+
   const table = useReactTable({
     data: rowData,
     columns,
     state: {
-      sorting,
+      sorting: server ? server.sorting : sorting,
       columnFilters,
       globalFilter,
       columnVisibility,
       columnOrder,
-      ...(enablePagination ? { pagination } : {}),
+      ...(enablePagination ? { pagination: server ? serverPagination : pagination } : {}),
     },
     getRowId,
-    onSortingChange: setSorting,
+    onSortingChange: server
+      ? (updater) =>
+          server.onSortingChange(
+            typeof updater === "function" ? updater(server.sorting) : updater,
+          )
+      : setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
     onColumnOrderChange: setColumnOrder,
-    onPaginationChange: setPagination,
+    onPaginationChange: server
+      ? (updater) => {
+          const next =
+            typeof updater === "function" ? updater(serverPagination) : updater;
+          if (next.pageIndex !== server.pageIndex) server.onPageChange(next.pageIndex);
+        }
+      : setPagination,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     ...(enablePagination ? { getPaginationRowModel: getPaginationRowModel() } : {}),
+    ...(server
+      ? {
+          manualSorting: true,
+          manualFiltering: true,
+          manualPagination: true,
+          enableSortingRemoval: false,
+          pageCount: Math.max(1, Math.ceil(server.totalRows / server.pageSize)),
+        }
+      : {}),
   });
 
   const sensors = useSensors(
@@ -262,7 +298,8 @@ export default function DataGrid({
 
   const headerGroups = table.getHeaderGroups();
   const rows = table.getRowModel().rows;
-  const anyColumnFilters = columns.some((c) => c.enableColumnFilter);
+  const anyColumnFilters = !server && columns.some((c) => c.enableColumnFilter);
+  const showGlobalFilter = enableGlobalFilter && !server;
 
   // The currently-visible, ordered leaf column ids for the SortableContext.
   const orderedIds = table.getVisibleLeafColumns().map((c) => c.id);
@@ -270,9 +307,9 @@ export default function DataGrid({
   return (
     <div className="flex flex-col">
       {/* Toolbar */}
-      {(enableGlobalFilter || enableColumnPicker) && (
+      {(showGlobalFilter || enableColumnPicker) && (
         <div className="mb-3 flex items-center justify-between gap-3">
-          {enableGlobalFilter ? (
+          {showGlobalFilter ? (
             <input
               type="text"
               value={globalFilter ?? ""}
@@ -383,11 +420,15 @@ export default function DataGrid({
       </div>
 
       {/* Pagination */}
-      {enablePagination && rowData.length > pagination.pageSize && (
+      {enablePagination &&
+        (server
+          ? server.totalRows > server.pageSize
+          : rowData.length > pagination.pageSize) && (
         <div className="mt-3 flex items-center justify-between text-[10px] text-[var(--2a-text-muted)]">
           <span>
-            {table.getFilteredRowModel().rows.length} row
-            {table.getFilteredRowModel().rows.length === 1 ? "" : "s"}
+            {server
+              ? `${server.totalRows.toLocaleString()} row${server.totalRows === 1 ? "" : "s"}${server.loading ? " — loading…" : ""}`
+              : `${table.getFilteredRowModel().rows.length} row${table.getFilteredRowModel().rows.length === 1 ? "" : "s"}`}
           </span>
           <div className="flex items-center gap-2">
             <button

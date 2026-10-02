@@ -30,6 +30,8 @@ const SECTION_DESCRIPTIONS = {
   "/admin/trading-authority": "Per-entity trading-authority tiers.",
   "/admin/pricing/note-terms-queue":
     "Structured-note terms review queue and STP policy.",
+  "/admin/edgar-pipeline":
+    "EDGAR filing manifest, pipeline progress and the structured-note issuer table.",
   "/admin/pricing/surface": "SSVI volatility surface viewer.",
   "/admin/platform": "Platform-wide settings across all orgs.",
 };

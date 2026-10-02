@@ -58,6 +58,7 @@ const TRADING_AUTHORITY_ITEM = { label: "Trading Authority", href: "/admin/tradi
 // Note-terms review queue + STP trust policy. Global SEC reference data, not
 // tenant data — Super Admin only, same gate as the two items above.
 const NOTE_TERMS_QUEUE_ITEM = { label: "Note Terms Review", href: "/admin/pricing/note-terms-queue", icon: "admin" };
+const EDGAR_PIPELINE_ITEM = { label: "EDGAR Pipeline", href: "/admin/edgar-pipeline", icon: "admin" };
 
 // Sprint 31 — SSVI volatility surface viewer. Super Admin only; the API
 // enforces it too (a hidden link is not a permission).
@@ -408,6 +409,11 @@ export default function Sidebar() {
                 item={NOTE_TERMS_QUEUE_ITEM}
                 expanded={expanded}
                 active={isActive(NOTE_TERMS_QUEUE_ITEM.href)}
+              />
+              <NavLink
+                item={EDGAR_PIPELINE_ITEM}
+                expanded={expanded}
+                active={isActive(EDGAR_PIPELINE_ITEM.href)}
               />
               <NavLink
                 item={VOL_SURFACE_ITEM}

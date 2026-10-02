@@ -61,6 +61,7 @@ from routers.reference import router as reference_router
 from routers.semantic_search import router as semantic_search_router
 from routers.restricted_access import router as restricted_access_router
 from routers.pricing_admin import router as pricing_admin_router
+from routers.edgar_pipeline_admin import router as edgar_pipeline_admin_router
 from routers.pricing_surface import router as pricing_surface_router
 from routers.spv import router as spv_router
 from routers.staff_assignments import router as staff_assignments_router
@@ -587,6 +588,7 @@ app.include_router(model_research_router, prefix="/api/v1")
 app.include_router(tenant_router, prefix="/api/v1")
 app.include_router(restricted_access_router, prefix="/api/v1")
 app.include_router(pricing_admin_router, prefix="/api/v1")
+app.include_router(edgar_pipeline_admin_router, prefix="/api/v1")
 app.include_router(pricing_surface_router, prefix="/api/v1")
 app.include_router(trading_authority_router, prefix="/api/v1")
 app.include_router(profiles_router, prefix="/api/v1")
