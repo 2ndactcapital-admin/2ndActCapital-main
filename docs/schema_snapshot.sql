@@ -172,13 +172,12 @@
 -- ===== ai_ensemble_configs =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   task_key                                 text NOT NULL
---   review_model_1                           text NOT NULL
---   review_model_1_version                   text NOT NULL
---   review_model_2                           text NOT NULL
---   review_model_2_version                   text NOT NULL
---   comparison_model                         text NOT NULL
---   comparison_model_version                 text NOT NULL
---   comparison_kind                          text NOT NULL
+--   model_1                                  text NOT NULL
+--   model_1_version                          text NOT NULL
+--   model_2                                  text NOT NULL
+--   model_2_version                          text NOT NULL
+--   system_one_model                         text NOT NULL
+--   system_one_model_version                 text NOT NULL
 --   is_active                                boolean NOT NULL DEFAULT false
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
@@ -187,19 +186,22 @@
 --   notes                                    text
 --   PRIMARY KEY ai_ensemble_configs_pkey: (id)
 
--- ===== ai_judgment_models =====
+-- ===== ai_system_one_models =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   key                                      text NOT NULL
 --   display_name                             text NOT NULL
 --   provider                                 text NOT NULL
---   model_version                            text NOT NULL
+--   model_version                            text
 --   credential_name                          text
 --   availability                             text NOT NULL DEFAULT 'disabled'::text
 --   last_verified_at                         timestamp with time zone
 --   notes                                    text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
---   UNIQUE ai_judgment_models_key_key: (key)
---   PRIMARY KEY ai_judgment_models_pkey: (id)
+--   model_route                              text NOT NULL
+--   is_default                               boolean NOT NULL DEFAULT false
+--   last_check_detail                        text
+--   UNIQUE ai_system_one_models_key_key: (key)
+--   PRIMARY KEY ai_system_one_models_pkey: (id)
 
 -- ===== altruist_connections =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
