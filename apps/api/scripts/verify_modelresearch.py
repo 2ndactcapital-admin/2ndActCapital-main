@@ -521,8 +521,12 @@ async def menu() -> None:
           "Sidebar.jsx renders MODEL_RESEARCH_ITEM once, only inside canAccess(me, GATE_MANAGE_ORG_SETTINGS_STRICT)")
     mv = (WEB_DIR / "lib/menuVisibility.mjs").read_text()
     body = mv.split("export function canPermStrict", 1)[-1].split("\n}\n", 1)[0]
-    check("roles" not in body and "||" not in body and "?? true" not in body,
-          "canPermStrict has no role-less default-allow and no truthy fallback (source)")
+    fallback = re.search(r"(\|\||\?\?)\s*(true|\[|\{)", body)
+    only_true = [l.strip() for l in body.splitlines() if "return true" in l]
+    check("roles" not in body and fallback is None
+          and only_true == ["if (isSuperAdmin(me)) return true;"],
+          "canPermStrict has no role-less default-allow and no truthy fallback (source)",
+          f"fallback={fallback.group(0) if fallback else None} return_true_lines={only_true}")
     grid = (WEB_DIR / "components/admin/ModelResearchGrid.jsx").read_text()
     check("permissions?.can_read !== true" in grid and "|| DEFAULT" not in grid,
           "the grid renders data only on a real envelope (can_read === true), no default fallback (source)")
