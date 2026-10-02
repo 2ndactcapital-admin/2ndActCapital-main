@@ -808,20 +808,31 @@ async def fetch_section(conn, bucket: str) -> None:
     section("[Y] Fetch on a fixed sample, the bad accession, the cap, rate + User-Agent, re-run uploads nothing")
     from services import edgar_pipeline as p
 
+    # A filing co-listed under a parent and its finance subsidiary matches more
+    # than one issuer row, so dedupe to one row per accession (lowest group)
+    # BEFORE taking up to 2 per group; a group left with fewer is fine.
     sample_rows = await rls_fetch(conn, """
-        WITH c AS (
-            SELECT f.accession_number, i.issuer_group,
-                   row_number() OVER (PARTITION BY i.issuer_group
-                                      ORDER BY f.filing_date DESC, f.accession_number DESC) AS rn
+        WITH m AS (
+            SELECT DISTINCT ON (f.accession_number) f.accession_number, f.filing_date, i.issuer_group
             FROM portfolio.edgar_index_filings f
             JOIN portfolio.structured_note_issuers i ON i.filer_cik = f.primary_issuer_cik
             WHERE f.form_type = '424B2' AND f.pipeline_status = 'discovered'
               AND i.include_status = 'yes' AND f.index_quarter = '2026Q3'
               AND i.issuer_group = ANY($1::text[])
               AND NOT EXISTS (SELECT 1 FROM portfolio.reference_filings r
-                              WHERE r.accession_number = f.accession_number))
+                              WHERE r.accession_number = f.accession_number)
+            ORDER BY f.accession_number, i.issuer_group),
+        c AS (
+            SELECT accession_number, issuer_group,
+                   row_number() OVER (PARTITION BY issuer_group
+                                      ORDER BY filing_date DESC, accession_number DESC) AS rn
+            FROM m)
         SELECT accession_number, issuer_group FROM c WHERE rn <= 2 ORDER BY accession_number""", SAMPLE_GROUPS)
-    sample = [r["accession_number"] for r in sample_rows]
+    sampled = [r["accession_number"] for r in sample_rows]
+    dupes = sorted({a for a in sampled if sampled.count(a) > 1})
+    check(not dupes, "the sample contains no duplicate accession numbers",
+          f"sampled={len(sampled)} distinct={len(set(sampled))} dupes={dupes}")
+    sample = list(dict.fromkeys(sampled))   # distinct, order kept
     STATE["sample"] = sample
     snap = {r["accession_number"]: dict(r) for r in await rls_fetch(
         conn, "SELECT * FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])", sample)}
@@ -830,7 +841,7 @@ async def fetch_section(conn, bucket: str) -> None:
     # Every expected count below derives from the REAL filings in the sample.
     # F_BAD is not a real filing: it is selected before run 1 (so run 1's
     # select stage never counts it), it is never fetched, and it is never linked.
-    n_real = len(sample)
+    n_real = len(set(sample))   # DISTINCT real accessions
     C = 3   # run 1's fetch cap: the bad accession (newest) + C-1 real filings
     check(len(groups) >= 5 and n_real >= 8 and F_BAD not in sample,
           f"a fixed sample of {n_real} real 424B2s (up to 2 per group, >= 8) across >= 5 issuer groups, plus "
