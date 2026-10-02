@@ -2412,7 +2412,65 @@
 --   pipeline_status                          text NOT NULL DEFAULT 'discovered'::text
 --   status_reason                            text
 --   loaded_at                                timestamp with time zone NOT NULL DEFAULT now()
+--   document_kind                            text
+--   selection_policy_version                 integer
+--   attempt_count                            integer NOT NULL DEFAULT 0
+--   last_attempt_at                          timestamp with time zone
+--   next_attempt_at                          timestamp with time zone
+--   reference_filing_id                      uuid
+--   detected_cusip                           text
+--   fetched_at                               timestamp with time zone
+--   primary_issuer_cik                       text
 --   PRIMARY KEY edgar_index_filings_pkey: (accession_number)
+
+-- ===== portfolio.edgar_pipeline_lease =====
+--   lease_name                               text NOT NULL
+--   holder                                   text NOT NULL
+--   acquired_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   renewed_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   expires_at                               timestamp with time zone NOT NULL
+--   PRIMARY KEY edgar_pipeline_lease_pkey: (lease_name)
+
+-- ===== portfolio.edgar_pipeline_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   trigger_source                           text NOT NULL
+--   requested_by                             uuid
+--   workflow_run_id                          uuid
+--   status                                   text NOT NULL
+--   stages                                   ARRAY NOT NULL DEFAULT ARRAY['discover'::text, 'select'::text, 'fetch'::text]
+--   fetch_cap                                integer NOT NULL
+--   runtime_cap_seconds                      integer NOT NULL
+--   render_service_id                        text
+--   render_job_id                            text
+--   requested_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   started_at                               timestamp with time zone
+--   finished_at                              timestamp with time zone
+--   discovery_days                           integer NOT NULL DEFAULT 0
+--   discovered_new                           integer NOT NULL DEFAULT 0
+--   selected                                 integer NOT NULL DEFAULT 0
+--   not_selected                             integer NOT NULL DEFAULT 0
+--   fetch_attempted                          integer NOT NULL DEFAULT 0
+--   fetched                                  integer NOT NULL DEFAULT 0
+--   fetch_failed                             integer NOT NULL DEFAULT 0
+--   ready_for_extraction                     integer NOT NULL DEFAULT 0
+--   not_pricing_supplement                   integer NOT NULL DEFAULT 0
+--   prefilter_skipped                        integer NOT NULL DEFAULT 0
+--   bytes_uploaded                           bigint NOT NULL DEFAULT 0
+--   sec_requests                             integer NOT NULL DEFAULT 0
+--   stop_reason                              text
+--   error                                    text
+--   details                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   PRIMARY KEY edgar_pipeline_runs_pkey: (id)
+
+-- ===== portfolio.edgar_selection_policies =====
+--   version                                  integer NOT NULL
+--   rules                                    jsonb NOT NULL
+--   description                              text NOT NULL
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   retired_at                               timestamp with time zone
+--   PRIMARY KEY edgar_selection_policies_pkey: (version)
 
 -- ===== portfolio.external_references =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2493,6 +2551,11 @@
 --   retention_classification                 text NOT NULL DEFAULT 'public_reference'::text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   content_encoding                         text NOT NULL DEFAULT 'identity'::text
+--   compressed_byte_size                     bigint
+--   text_r2_key                              text
+--   text_byte_size                           bigint
+--   text_compressed_byte_size                bigint
 --   UNIQUE reference_filings_accession_document_unique: (accession_number, primary_document)
 --   PRIMARY KEY reference_filings_pkey: (id)
 
@@ -2977,4 +3040,9 @@
 --   filer_count                              integer
 --   filer_names                              text
 --   sec_filing_url                           text
+--   status_reason                            text
+--   document_kind                            text
+--   primary_issuer_cik                       text
+--   detected_cusip                           text
+--   reference_filing_id                      uuid
 
