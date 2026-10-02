@@ -22,7 +22,7 @@ prints a credential value. RLS context is set on EVERY read
 (``app.is_super_admin`` LOCAL inside an explicit transaction).
 
 REAL DATA IS NOT CHANGED. The ~717K manifest rows are fingerprinted before and
-after (md5 over every row's text). The ~10 real sample filings the fetch test
+after (md5 over every row's text). The <=10 real sample filings the fetch test
 touches are snapshotted whole and restored exactly; their reference_filings rows
 and every R2 object under the TEST prefix are deleted in teardown. Fixture rows
 use accession prefix 9999999999-55- and CIKs 9999999551..3.
@@ -37,12 +37,14 @@ ASSERTIONS:
   [Y] The migration file's definitions match the live objects
   [Y] The lifecycle CHECK accepts every listed status and refuses an unknown one
   [Y] primary_issuer_cik: co-listed parent/subsidiary resolves to the subsidiary;
-      filtering by issuer group on the full table returns in under one second
+      filtering by issuer group on the full table executes in under one second
+      (the database's own EXPLAIN ANALYZE Execution Time, not wall clock)
   [Y] Policy v1 selects exactly the expected set on a fixture sample, records its
       version on every decided row; an edit to a stored policy is refused
   [Y] Incremental discovery over one fixed past day is idempotent; co-listed
       duplicates collapse to one filing
-  [Y] Fetch on the sample: R2 objects exist and are gzipped; sha256 of the
+  [Y] The configured R2 bucket is valid and holds the existing corpus (no fallback)
+  [Y] Fetch on the sample (every count derived from its REAL filings): R2 objects exist and are gzipped; sha256 of the
       decompressed bytes matches; sizes recorded; a second run re-uploads
       nothing; statuses are past 'fetched'
   [Y] A bad accession becomes fetch_failed with reason, attempt count and retry
@@ -214,6 +216,37 @@ async def rls_exec(conn, q, *a):
         return await conn.execute(q, *a)
 
 
+class _ExplainingConn:
+    """Passes every call through to ``conn``; each read statement is first run
+    under EXPLAIN (ANALYZE, FORMAT JSON) with the same arguments, recording the
+    server's own "Execution Time" in ms. ``execute`` (the RLS set_config) is
+    passed through untimed."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.timings: list[tuple[str, float]] = []
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    async def _explain(self, sql: str, args) -> None:
+        plan = await self._conn.fetchval("EXPLAIN (ANALYZE, FORMAT JSON) " + sql, *args)
+        plan = json.loads(plan) if isinstance(plan, str) else plan
+        self.timings.append((" ".join(sql.split())[:80], float(plan[0]["Execution Time"])))
+
+    async def fetch(self, sql, *args, **kw):
+        await self._explain(sql, args)
+        return await self._conn.fetch(sql, *args, **kw)
+
+    async def fetchrow(self, sql, *args, **kw):
+        await self._explain(sql, args)
+        return await self._conn.fetchrow(sql, *args, **kw)
+
+    async def fetchval(self, sql, *args, **kw):
+        await self._explain(sql, args)
+        return await self._conn.fetchval(sql, *args, **kw)
+
+
 async def manifest_fingerprint(conn) -> tuple:
     """(row count, md5 over every real manifest row's full text)."""
     row = await rls_row(
@@ -275,8 +308,7 @@ def r2_delete_prefix(bucket: str, prefix: str) -> int:
 
 
 def resolve_bucket() -> tuple[str | None, str]:
-    """The pipeline's configured bucket if valid; otherwise the bucket that
-    actually holds the existing corpus (found by probing, not hard-coded)."""
+    """The pipeline's configured bucket, or (None, why) if it is invalid."""
     from services import edgar_pipeline as p
     try:
         return p.r2_bucket(), "configured"
@@ -285,33 +317,34 @@ def resolve_bucket() -> tuple[str | None, str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# HTTP through the real app (TestClient, one per call, off the main loop)
+# HTTP through the real app, on THIS event loop (httpx.ASGITransport)
+#
+# The app's asyncpg pool (services.database, module-global) belongs to the loop
+# that created it. A TestClient in an executor thread runs the app on its OWN
+# loop, so the moment this process has already created the pool on the main
+# loop (nightly_workflow does, via get_pool), every request crashes on a
+# foreign-loop pool. main_async() creates the pool here, on this loop, before
+# the API sections; ASGITransport then calls the app on the same loop. It runs
+# no startup hook, which is fine: register_all() is called in main_async and
+# the catalog sync is no-op'd there anyway.
 # ═══════════════════════════════════════════════════════════════════════════
-def _api(uid: UUID, method: str, path: str, body=None):
+async def api(uid, method, path, body=None):
+    import httpx
     import main
-    from starlette.testclient import TestClient
 
     sub = _sub(uid)
     main.verify_token = lambda _t: {"sub": sub, "email": f"{sub}@test.local", "org_id": str(ORG)}
-    client = TestClient(main.app, raise_server_exceptions=False)
-    client.__enter__()
+    kw = {"headers": HEADERS}
+    if body is not None:
+        kw["json"] = body
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, raise_app_exceptions=False),
+                                 base_url="http://verify") as client:
+        res = await client.request(method, path, **kw)
     try:
-        kw = {"headers": HEADERS}
-        if body is not None:
-            kw["json"] = body
-        res = client.request(method, path, **kw)
-        return res.status_code, res.text
-    finally:
-        client.__exit__(None, None, None)
-
-
-async def api(uid, method, path, body=None):
-    status, text = await asyncio.get_running_loop().run_in_executor(None, _api, uid, method, path, body)
-    try:
-        parsed = json.loads(text)
+        parsed = json.loads(res.text)
     except ValueError:
-        parsed = {"raw": text[:300]}
-    return status, parsed
+        parsed = {"raw": res.text[:300]}
+    return res.status_code, parsed
 
 
 def _detail(body) -> str:
@@ -619,18 +652,21 @@ async def primary_issuer(conn) -> None:
     check(mism == 0, "stored primary_issuer_cik equals the rule recomputed per row over all of 2025Q1",
           f"mismatches={mism}")
 
-    t0 = time.monotonic()
+    # Time the database's OWN execution of the exact statements list_filings
+    # issues (EXPLAIN ANALYZE "Execution Time"), never this machine's wall
+    # clock, which is dominated by round trips to Supabase.
+    xconn = _ExplainingConn(conn)
     async with conn.transaction():
         await _super(conn)
-        res = await adm.list_filings(conn, filters={"issuer_group": "JPMorgan"}, page=1, page_size=50)
-    elapsed = time.monotonic() - t0
+        res = await adm.list_filings(xconn, filters={"issuer_group": "JPMorgan"}, page=1, page_size=50)
+    db_ms = sum(ms for _sql, ms in xconn.timings)
     direct = await rls_val(conn, """SELECT count(*) FROM portfolio.edgar_index_filings f
                                     WHERE EXISTS (SELECT 1 FROM portfolio.structured_note_issuers i
                                                   WHERE i.filer_cik = f.primary_issuer_cik AND i.issuer_group = 'JPMorgan')""")
-    check(elapsed < 1.0 and res["total"] == direct and len(res["rows"]) == 50,
-          "filtering the FULL manifest by issuer group (count + first page) returns in under one second",
-          f"{elapsed:.3f}s total={res['total']} direct={direct}")
-    find("timing includes network", f"the {elapsed:.3f}s includes this host's round trips to Supabase")
+    check(len(xconn.timings) >= 2 and db_ms < 1000.0 and res["total"] == direct and len(res["rows"]) == 50,
+          "filtering the FULL manifest by issuer group (count + first page): database execution under one second",
+          f"execution={db_ms:.1f} ms over {len(xconn.timings)} statements "
+          f"{[round(ms, 1) for _s, ms in xconn.timings]} total={res['total']} direct={direct}")
 
 
 async def selection(conn) -> None:
@@ -791,8 +827,13 @@ async def fetch_section(conn, bucket: str) -> None:
         conn, "SELECT * FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])", sample)}
     STATE["sample_rows"] = snap
     groups = {r["issuer_group"] for r in sample_rows}
-    check(len(sample) == 10 and len(groups) == 5, "a fixed sample of 10 real 424B2s across 5 issuer groups",
-          f"groups={sorted(groups)}")
+    # Every expected count below derives from the REAL filings in the sample.
+    # F_BAD is not a real filing: it is selected before run 1 (so run 1's
+    # select stage never counts it), it is never fetched, and it is never linked.
+    n_real = len(sample)
+    check(len(groups) == 5 and n_real >= 3 and F_BAD not in sample,
+          f"a fixed sample of {n_real} real 424B2s (up to 2 per group) across 5 issuer groups, plus the "
+          "one deliberately bad accession", f"groups={sorted(groups)}")
 
     # The bad accession is a fixture row; selection decides it like any other.
     await p.select_stage(conn, accessions=[F_BAD])
@@ -818,16 +859,21 @@ async def fetch_section(conn, bucket: str) -> None:
         conn, "SELECT accession_number, pipeline_status FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])",
         targets)}
     touched1 = [a for a, s in states1.items() if s not in ("selected",)]
-    check(r1["status"] == "succeeded" and r1["selected"] == 10 and r1["fetch_attempted"] == 3,
-          "the fetch cap is honored: cap 3 -> exactly 3 filings attempted",
+    # Run 1's select stage decides only the n_real 'discovered' rows; of its 3
+    # attempts the bad accession is one, so exactly 2 real filings are fetched.
+    check(r1["status"] == "succeeded" and r1["selected"] == n_real and r1["fetch_attempted"] == 3,
+          f"the fetch cap is honored: cap 3 -> exactly 3 filings attempted (select stage decided the {n_real} real ones)",
           f"status={r1['status']} selected={r1['selected']} attempted={r1['fetch_attempted']} err={r1['error']}")
-    check(len(touched1) == 3 and states1.get(F_BAD) == "fetch_failed",
-          "exactly 3 rows left 'selected', and the newest (the bad accession) went first", f"{states1}")
+    check(len(touched1) == 3 and states1.get(F_BAD) == "fetch_failed"
+          and sum(1 for a in sample if states1.get(a) == "selected") == n_real - 2,
+          f"exactly 3 rows left 'selected' (the bad accession, newest, went first, + 2 real); "
+          f"{n_real - 2} real still 'selected'", f"{states1}")
 
-    # Run 2: the rest.
+    # Run 2: the rest of the REAL filings.
     r2 = await job(50, ["fetch"])
-    check(r2["status"] == "succeeded" and r2["fetch_attempted"] == 8 and r2["fetched"] == 8,
-          "a second job fetches the remaining 8 (the failed row's retry is not due yet)",
+    check(r2["status"] == "succeeded" and r2["fetch_attempted"] == n_real - 2 and r2["fetched"] == n_real - 2
+          and r2["fetch_failed"] == 0,
+          f"a second job fetches the remaining {n_real - 2} real filings (the failed row's retry is not due yet)",
           f"attempted={r2['fetch_attempted']} fetched={r2['fetched']} failed={r2['fetch_failed']} err={r2['error']}")
 
     bad = await rls_row(conn, """SELECT pipeline_status, status_reason, attempt_count, last_attempt_at, next_attempt_at
@@ -849,7 +895,11 @@ async def fetch_section(conn, bucket: str) -> None:
                r.extraction_status
         FROM portfolio.edgar_index_filings f JOIN portfolio.reference_filings r ON r.id = f.reference_filing_id
         WHERE f.accession_number = ANY($1::text[])""", sample)
-    check(len(rows) == 10, "all 10 sample filings are linked to a reference_filings row", f"linked={len(rows)}")
+    check(len(rows) == n_real, f"all {n_real} real sample filings are linked to a reference_filings row",
+          f"linked={len(rows)}")
+    bad_linked = await rls_val(conn, "SELECT reference_filing_id FROM portfolio.edgar_index_filings "
+                                     "WHERE accession_number = $1", F_BAD)
+    check(bad_linked is None, "the bad accession is NOT linked to any reference_filings row", f"{bad_linked}")
     problems = []
     lastmod = {}
     for r in rows:
@@ -878,7 +928,7 @@ async def fetch_section(conn, bucket: str) -> None:
           f"{problems}")
     kinds = sorted({(r["document_kind"], r["pipeline_status"]) for r in rows})
     find("sample outcomes", f"(kind, status) = {kinds}; CUSIPs detected on "
-         f"{sum(1 for r in rows if r['detected_cusip'])}/10; bytes uploaded run1+run2 = "
+         f"{sum(1 for r in rows if r['detected_cusip'])}/{n_real}; bytes uploaded run1+run2 = "
          f"{r1['bytes_uploaded'] + r2['bytes_uploaded']}")
     for r in rows:
         head = await asyncio.to_thread(lambda k=r["r2_key"]: _s3().head_object(Bucket=bucket, Key=k))
@@ -894,8 +944,10 @@ async def fetch_section(conn, bucket: str) -> None:
         after[k] = head["LastModified"]
     skipped = ((r3.get("details") or {}) if isinstance(r3.get("details"), dict)
                else json.loads(r3["details"] or "{}")).get("fetch", {}).get("uploads_skipped")
-    check(r3["fetched"] == 10 and r3["bytes_uploaded"] == 0 and skipped == 10 and after == lastmod,
-          "a second fetch of the same 10 re-uploads nothing (0 bytes, 10 skipped, R2 LastModified unchanged)",
+    check(r3["fetched"] == n_real and r3["bytes_uploaded"] == 0 and skipped == n_real and after == lastmod
+          and len(lastmod) == n_real,
+          f"a second fetch of the same {n_real} re-uploads nothing ({n_real} skipped, 0 bytes, "
+          "R2 LastModified unchanged)",
           f"fetched={r3['fetched']} bytes={r3['bytes_uploaded']} skipped={skipped}")
 
     # Rate + User-Agent across every SEC request of the three jobs.
@@ -1270,25 +1322,25 @@ async def main_async() -> int:
     fp_before = iss_before = None
     try:
         section("Bucket")
+        # Strict: the bucket comes from Doppler's config, nowhere else. No
+        # fallback, no probing for a substitute — a wrong value fails here and
+        # the fetch section fails with it.
         bucket, why = resolve_bucket()
         check(bucket is not None, "the configured R2 bucket name is valid (R2_BUCKET_NAME / EDGAR_R2_BUCKET)", why)
-        if bucket is None:
-            # Proceed against the bucket that ACTUALLY holds the existing corpus,
-            # found by probing for one of its objects — never a literal.
+        if bucket is not None:
+            # Valid is not enough: it must be the bucket that holds the existing
+            # corpus (one real object probed by its stored key, never a literal).
             key = await rls_val(conn, "SELECT r2_key FROM portfolio.reference_filings "
                                       "WHERE content_encoding = 'identity' AND r2_key IS NOT NULL LIMIT 1")
-            client = _s3()
-            for b in [x["Name"] for x in client.list_buckets()["Buckets"]]:
-                try:
-                    client.head_object(Bucket=b, Key=key)
-                    bucket = b
-                    break
-                except Exception:  # noqa: BLE001
-                    continue
-            if bucket:
-                os.environ["EDGAR_R2_BUCKET"] = bucket
-                find("R2_BUCKET_NAME is invalid", f"proceeding against {bucket!r}, the bucket holding the corpus; "
-                     "fix R2_BUCKET_NAME in Doppler (it also breaks services.storage's default bucket)")
+            try:
+                await asyncio.to_thread(lambda: _s3().head_object(Bucket=bucket, Key=key))
+                holds = True
+                err = ""
+            except Exception as exc:  # noqa: BLE001
+                holds, err = False, type(exc).__name__
+            if not check(holds, "the configured bucket holds the existing EDGAR corpus",
+                         f"bucket={bucket!r} probe={key!r} {err}"):
+                bucket = None
 
         await teardown_fixtures(conn)
         fp_before = await manifest_fingerprint(conn)
@@ -1298,21 +1350,34 @@ async def main_async() -> int:
         await task1_findings(conn)
         await migration_matches(conn)
         await seed(conn)
-        await lifecycle_check(conn)
-        await primary_issuer(conn)
-        await selection(conn)
-        await classification()
-        await discovery(conn)
-        await lease_section(conn)
+
+        async def run(name, coro):
+            # One section's crash is reported and does not skip the others.
+            try:
+                await coro
+            except Exception as exc:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                check(False, f"section '{name}' ran to completion", f"{type(exc).__name__}: {exc}")
+
+        await run("lifecycle", lifecycle_check(conn))
+        await run("primary_issuer", primary_issuer(conn))
+        await run("selection", selection(conn))
+        await run("classification", classification())
+        await run("discovery", discovery(conn))
+        await run("lease", lease_section(conn))
         if bucket:
-            await fetch_section(conn, bucket)
+            await run("fetch", fetch_section(conn, bucket))
         else:
-            check(False, "fetch tests need an R2 bucket", "none found")
-        await nightly_workflow(conn)
-        await existing_documents(conn)
-        await api_section(conn)
-        await paging_section(conn)
-        await issuer_edit(conn)
+            check(False, "fetch tests need the configured R2 bucket", "the bucket check above failed")
+        await run("nightly_workflow", nightly_workflow(conn))
+        await run("existing_documents", existing_documents(conn))
+        # The app's pool must live on THIS loop, the one api() calls the app on.
+        from services.database import get_pool
+        await get_pool()
+        await run("api", api_section(conn))
+        await run("paging", paging_section(conn))
+        await run("issuer_edit", issuer_edit(conn))
     except Exception as exc:  # noqa: BLE001 — report, then still tear down
         import traceback
         traceback.print_exc()
@@ -1325,6 +1390,8 @@ async def main_async() -> int:
                 await teardown_fixtures(conn)
         finally:
             REGISTRY.sync_catalog = original_sync
+            from services.database import close_pool
+            await close_pool()
             await conn.close()
 
     npm_build()
