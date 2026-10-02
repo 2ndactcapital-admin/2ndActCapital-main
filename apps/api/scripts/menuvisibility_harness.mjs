@@ -121,7 +121,11 @@ const result = {
   gates: MENU_ITEMS.map((i) => ({
     href: i.href,
     label: i.label,
-    gate: i.gate ? (i.gate.perm ? `perm:${i.gate.perm}` : `roles:${i.gate.roles.join("|")}`) : "none",
+    gate: i.gate
+      ? i.gate.perm
+        ? `perm:${i.gate.perm}${i.gate.strict ? " (strict)" : ""}`
+        : `roles:${i.gate.roles.join("|")}`
+      : "none",
   })),
 
   superAdminNoProfiles: {
@@ -144,8 +148,14 @@ const result = {
     ["org_admin", ORG_ADMIN],
     ["no_roles_yet", NO_ROLES_YET],
   ].map(([name, me]) => {
-    const now = hrefs(visibleMenuItems(me));
-    const before = legacyVisible(me);
+    // Items behind a STRICT gate (modelresearch.structural) postdate the legacy
+    // rule and deliberately do NOT inherit its role-less default-allow, so the
+    // before/after comparison covers only the items the legacy rule governed.
+    const strictHrefs = new Set(
+      MENU_ITEMS.filter((i) => i.gate?.strict).map((i) => i.href),
+    );
+    const now = hrefs(visibleMenuItems(me)).filter((h) => !strictHrefs.has(h));
+    const before = legacyVisible(me).filter((h) => !strictHrefs.has(h));
     return { name, now, before, unchanged: sameSet(now, before) };
   }),
 

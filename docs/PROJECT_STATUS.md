@@ -1,6 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-01 (ensemblesystemone.structural — see the top entry; it
-overwrites ensemblemodels.structural).
+Last updated: 2026-10-01 (modelresearch.structural — read-only Model Research
+grid; see the top entry). Earlier the same day: ensemblesystemone.structural
+(it overwrites ensemblemodels.structural).
 Previous update: 2026-09-30 (tiergating.structural — closes the verb-tier
 gating gap `wave2discovery.lowrisk` flagged as the most important open item:
 a Tier-1 registry verb invoked from a BPMN Service Task executed unattended,
@@ -254,6 +255,119 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000000000. Model Research page — read-only grid of every model LiteLLM prices; verify WRITTEN, not yet run (2026-10-01)
+
+`modelresearch.structural`. An admin page that lists every model LiteLLM has
+a price for, flagged against what this platform runs. It is read-only: the
+endpoint and the page write nothing, and Refresh only re-reads the sources.
+
+**Where it lives.** `GET /api/v1/admin/model-research[?refresh=true]`
+(`routers/model_research.py`, `services/model_research.py`) →
+`/api/admin/model-research` (Next forward) → `/admin/model-research`
+(`components/admin/ModelResearchGrid.jsx`, on the shared `DataGrid`). Menu:
+sidebar + `/admin` index, from `lib/menuVisibility.mjs`.
+
+**Access.** Super admin, or `manage_org_settings` in the caller's own org, via
+`services.rbac.can_manage_org_settings` (super-admin first). A member gets
+**403** from the API. The menu entry uses a new **strict** gate,
+`GATE_MANAGE_ORG_SETTINGS_STRICT` / `canPermStrict`. It fails CLOSED: no
+envelope, a malformed one, or the `usePermissions` fallback all hide the
+entry. The response carries the standard envelope: `can_write: false`, and
+`editable` / `inline_editable` as empty arrays.
+
+**Task 1 findings (probed live on the pinned v1.96.2 proxy, 2026-10-01):**
+- **1a — the proxy CAN return the full price list.**
+  `GET /public/litellm_model_cost_map` returns 4,455 keys (4,451 models). That
+  is more than double the "roughly two thousand" the prompt assumed. So the
+  proxy is the source, and the GitHub fallback is only used when the proxy
+  fails. `/model/info`, `/v2/model/info`, `/model_group/info` and
+  `/v1/models` return only the 3 registered deployments, and
+  `/public/model_hub` returns `[]`. `GET /model/cost_map/source` reports
+  `source: remote` (GitHub main), `model_count: 4455`, no fallback. Two side
+  findings:
+  - The cost-map route needs **no key**. Besides public price data, it
+    exposes one `{id, db_model, blocked}` stub per registered deployment UUID.
+    It holds no credential, but the deployment ids are readable
+    unauthenticated.
+  - Those 3 stubs are not models. They are excluded and counted.
+- **1b — the proxy's list is NOT materially stale.** Compared with the
+  published `model_prices_and_context_window.json` the same day: proxy 4,451
+  models, published 4,452. One key is only in the published list
+  (`fallback_generalizations`). 10 shared entries have different
+  input/output prices, all `openrouter/*`. Every recent Claude/GPT/Gemini
+  model checked is present on the proxy. The proxy loaded the list from
+  GitHub main when it last started.
+  **The real gap is that its age is unknowable:**
+  - v1.96.2 does not report its load time.
+  - `/schedule/model_cost_map_reload/status` shows no scheduled reload ever
+    ran (`last_run: null`).
+
+  So "Prices as of" says exactly that, rather than inventing a date. The
+  list goes stale as long as the proxy stays up without a restart or a
+  `litellm.reload_model_cost_map` run.
+- **1c — `/model/info` fields:** top level `model_name`, `litellm_params`,
+  `model_info`.
+  - `litellm_params` today holds `model`, `use_in_pass_through`,
+    `use_litellm_proxy`, `use_xai_oauth` and
+    `merge_reasoning_content_in_choices`. It can also hold `api_base` /
+    `api_key` / credential refs.
+  - `model_info` is the price-list schema (~110 fields) plus `id`, `key`,
+    `db_model`, `blocked`, `access_via_team_ids`, `direct_access` and
+    `supported_openai_params`.
+  - The service reads only `model_name`, `model_info.key`, `model_info.mode`
+    and `litellm_params.model` (for matching; never returned). Every row is
+    built from an explicit allow-list.
+- **1d — DataGrid needs no server paging.** It is TanStack, client-side, and
+  paginated, so only one page (50 rows) is in the DOM. Its column filters
+  are text-only, so the multi-select, range and tri-state filters run in the
+  page before rows reach the grid. The response is ~1.6 MB with null fields
+  omitted (~3.2 MB without), which stays under Vercel's 4.5 MB function-response limit.
+- **1e — menu + envelope.** Org-admin pages sit in Sidebar.jsx's
+  `canAccess(me, GATE_MANAGE_ORG_SETTINGS)` block and in
+  `visibleAdminSections`. **FLAGGED, NOT FIXED:** the existing gates fail
+  OPEN on a lost envelope. `canPerm` default-allows when `roles` is empty,
+  and `lib/usePermissions.js` substitutes `{roles: [], permissions: []}`
+  whenever `/users/me` fails. So a failed `/users/me` shows every
+  `manage_org_settings` and `manage_members` item; the API still refuses the
+  pages themselves. Only the new entry is strict. Changing the old gates
+  would alter every role-less account's menu, which is a separate decision.
+
+**Matching rules (how the flags are computed).**
+- **Live on our proxy:** a deployment resolves to `model_info.key`, else
+  `litellm_params.model`, else that route without its `provider/` prefix.
+  Today `claude-sonnet` → `claude-sonnet-4-6`, `claude-haiku` →
+  `claude-haiku-4-5-20251001`, and `voyage-3.5` → `voyage/voyage-3.5`.
+- **In platform catalog:** `platform_model_catalog.model_id` is a proxy
+  alias, so it resolves through that deployment, else by a direct key match.
+- **Unmatched entries:** a deployment or catalog entry that matches nothing
+  gets its own row, so no flag is ever dropped silently.
+- **System One:** each `ai_system_one_models` row (Jev) is its own row, kind
+  `System One`.
+- **Version:** parsed only from a real dated suffix (`-20250807`,
+  `-2025-08-07`, `@20240620`, optionally followed by `-v1:0`); otherwise
+  blank. `gpt-4-0613`'s MMDD is not treated as a date.
+- **Cache:** the proxy reads are cached in-process for 1 hour.
+  `refresh=true` bypasses the cache; the catalog tables are read fresh on
+  every request.
+
+**One accepted asymmetry (a FIND in the verify, by design).** A user holding
+NO roles gets 200 from the API, because `has_permission` default-allows
+role-less users (unchanged). The strict menu gate hides the entry for that
+user anyway.
+
+**Also touched:** `apps/api/scripts/menuvisibility_harness.mjs` — its
+legacy-rule regression comparison now skips strict-gated items. Those items
+postdate the legacy rule and deliberately do not inherit its default-allow.
+Without the skip, `verify_superadminmenu.py`'s `no_roles_yet` regression
+would flag the new entry as a changed menu.
+
+**Verification:** `apps/api/scripts/verify_modelresearch.py` (with
+`modelresearch_menu_harness.mjs`, which feeds the fixture users' REAL
+`/users/me` envelopes into the shipped menu rule). WRITTEN, NOT RUN — the
+operator runs it. `npm run build` exited 0 during the sprint.
 
 ---
 

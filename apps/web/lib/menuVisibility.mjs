@@ -43,6 +43,16 @@ export const GATE_MANAGE_MEMBERS = { perm: "manage_members" };
 // bypass, so nothing else changes for platform staff.
 export const GATE_MANAGE_ORG_SETTINGS = { perm: "manage_org_settings" };
 export const GATE_SUPER_ADMIN = { roles: [SUPER_ADMIN] };
+// modelresearch.structural — the same permission as GATE_MANAGE_ORG_SETTINGS,
+// but STRICT: it fails CLOSED. `canPerm` default-allows when `roles` is empty,
+// and usePermissions substitutes `{ roles: [], permissions: [] }` whenever
+// /users/me fails, so a lost envelope there reads as "allowed". A strict gate
+// passes only for Super Admin or an explicitly listed permission. No envelope,
+// a malformed one, or a role-less account all hide the item.
+export const GATE_MANAGE_ORG_SETTINGS_STRICT = {
+  perm: "manage_org_settings",
+  strict: true,
+};
 
 /**
  * Every navigation item and the gate it is displayed behind.
@@ -104,6 +114,13 @@ export const MENU_ITEMS = [
     href: "/admin/modeling/ta",
     label: "TA Model Defaults",
     gate: GATE_MANAGE_ORG_SETTINGS,
+    adminIndex: true,
+  },
+
+  {
+    href: "/admin/model-research",
+    label: "Model Research",
+    gate: GATE_MANAGE_ORG_SETTINGS_STRICT,
     adminIndex: true,
   },
 
@@ -170,9 +187,22 @@ export function canPerm(me, permission) {
   return (me?.permissions ?? []).includes(permission);
 }
 
+/**
+ * Fail-closed permission check: Super Admin first, then the permission must be
+ * explicitly present in a real `permissions` array. There is no default-allow
+ * branch and no fallback, so a missing or malformed envelope returns false.
+ */
+export function canPermStrict(me, permission) {
+  if (!me || typeof me !== "object") return false;
+  if (isSuperAdmin(me)) return true;
+  if (!Array.isArray(me.permissions)) return false;
+  return me.permissions.includes(permission);
+}
+
 /** True when `me` may see an item carrying `gate` (null gate = always). */
 export function canAccess(me, gate) {
   if (!gate) return true;
+  if (gate.strict) return canPermStrict(me, gate.perm);
   if (gate.perm && !canPerm(me, gate.perm)) return false;
   // Role gates already name super_admin explicitly wherever they are used, so
   // no separate bypass is needed — but check it first anyway so the rule is the

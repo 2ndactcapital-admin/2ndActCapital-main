@@ -44,6 +44,7 @@ from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
 from routers.ai_ensembles import router as ai_ensembles_router
+from routers.model_research import router as model_research_router
 from routers.portfolio import router as portfolio_router
 from routers.portfolio_ingest import router as portfolio_ingest_router
 from routers.portfolio_positions import router as portfolio_positions_router
@@ -582,6 +583,7 @@ app.include_router(allocation_lens_router, prefix="/api/v1")
 app.include_router(ledger_router, prefix="/api/v1")
 app.include_router(org_settings_router, prefix="/api/v1")
 app.include_router(ai_ensembles_router, prefix="/api/v1")
+app.include_router(model_research_router, prefix="/api/v1")
 app.include_router(tenant_router, prefix="/api/v1")
 app.include_router(restricted_access_router, prefix="/api/v1")
 app.include_router(pricing_admin_router, prefix="/api/v1")

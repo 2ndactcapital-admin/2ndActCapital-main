@@ -8,6 +8,7 @@ import { useBrand } from "@/components/ThemeProvider";
 import { usePermissions } from "@/lib/usePermissions";
 import {
   GATE_MANAGE_ORG_SETTINGS,
+  GATE_MANAGE_ORG_SETTINGS_STRICT,
   GATE_SUPER_ADMIN,
   canAccess,
 } from "@/lib/menuVisibility";
@@ -43,6 +44,9 @@ const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon
 // TA Model Sprint 2 — per-strategy J-curve defaults + platform TA settings.
 // Org Admin (own org) or Super Admin, same gate as Organization settings.
 const TA_MODEL_SETTINGS_ITEM = { label: "TA Model Defaults", href: "/admin/modeling/ta", icon: "admin" };
+// modelresearch.structural — read-only grid of every model LiteLLM prices.
+// Super Admin or manage_org_settings, behind the STRICT gate (fails closed).
+const MODEL_RESEARCH_ITEM = { label: "Model Research", href: "/admin/model-research", icon: "admin" };
 const PLATFORM_ITEM = { label: "Platform", href: "/admin/platform", icon: "admin" };
 // SOC Phase 4 — restrict accounts + manage their allow-list (populates the
 // unified restriction filter's data; does not change enforcement yet). Super
@@ -380,6 +384,13 @@ export default function Sidebar() {
                 active={isActive(TA_MODEL_SETTINGS_ITEM.href)}
               />
             </>
+          )}
+          {canAccess(me, GATE_MANAGE_ORG_SETTINGS_STRICT) && (
+            <NavLink
+              item={MODEL_RESEARCH_ITEM}
+              expanded={expanded}
+              active={isActive(MODEL_RESEARCH_ITEM.href)}
+            />
           )}
           {canAccess(me, GATE_SUPER_ADMIN) && (
             <>
