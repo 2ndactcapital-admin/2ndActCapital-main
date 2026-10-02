@@ -34,8 +34,8 @@ import asyncpg
 
 from services.system_one import list_system_one_models
 
-# The only ensemble task that exists today. A key, not a display label.
-KNOWN_TASK_KEYS = frozenset({"note_terms_hazard"})
+# Ensemble tasks. Keys, not display labels. note_terms_extraction = noteextractb1.
+KNOWN_TASK_KEYS = frozenset({"note_terms_hazard", "note_terms_extraction"})
 AVAILABLE = "available"
 
 

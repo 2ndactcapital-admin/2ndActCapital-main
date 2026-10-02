@@ -743,3 +743,18 @@ export const addEdgarIssuer = (body) =>
   fetchAPI("/api/v1/admin/edgar/issuers", { method: "POST", body });
 export const runEdgarPipelineNow = (body) =>
   fetchAPI("/api/v1/admin/edgar/runs", { method: "POST", body });
+
+// noteextractb1 — gold-set review, evaluation results, distribution participants (Super Admin).
+export const getGoldCandidates = (params) =>
+  fetchAPI("/api/v1/admin/note-extraction/gold/candidates", { searchParams: params });
+export const getGoldNote = (filingId) =>
+  fetchAPI(`/api/v1/admin/note-extraction/gold/notes/${encodeURIComponent(filingId)}`);
+export const putGoldValue = (filingId, fieldKey, body) =>
+  fetchAPI(
+    `/api/v1/admin/note-extraction/gold/notes/${encodeURIComponent(filingId)}/fields/${encodeURIComponent(fieldKey)}`,
+    { method: "PUT", body },
+  );
+export const getNoteExtractionRuns = (params) =>
+  fetchAPI("/api/v1/admin/note-extraction/runs", { searchParams: params });
+export const getNoteExtractionRun = (runId) =>
+  fetchAPI(`/api/v1/admin/note-extraction/runs/${encodeURIComponent(runId)}`);

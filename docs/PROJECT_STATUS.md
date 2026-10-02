@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-02 (edgarpipelinea.structural — EDGAR pipeline A: status
+Last updated: 2026-10-02 (noteextractb1.structural — note extraction B1: engine,
+gold set, evaluation harness, pilot runner; results STAGED; see the top entry).
+Earlier the same day: edgarpipelinea.structural — EDGAR pipeline A: status
 lifecycle, selection policies, incremental discovery, fetch-to-R2, the nightly
 Render job and the monitoring screen; see the top entry). Earlier, 2026-10-01:
 modelresearch.structural (read-only Model Research grid). Earlier the same day: ensemblesystemone.structural
@@ -257,6 +259,88 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000000000000000000000000. Note extraction B1 — engine, gold set, evaluation harness, pilot runner; results STAGED; verify WRITTEN, not yet run (2026-10-02)
+
+`noteextractb1.structural`. Nothing writes to `securities_global` or
+`securities_global_note_terms` — B2 promotes. Neither the evaluation nor the
+pilot has been run (both built with `--dry-run` and a required `--spend-cap`).
+
+**Live schema (applied via MCP, verified with follow-up queries; four RLS
+policies each — global read, super-admin writes):**
+`portfolio.note_extraction_runs`, `note_term_readings` (append-only: every
+value any source produced, with deployment, provider-reported model, proxy
+deployment id, ensemble config, prompt version + prefix hash, quote, raw-HTML
+offsets, tokens, cost, latency; one `__call__` row per provider call carries
+the cost so SUM(cost_usd) = real spend), `note_extraction_staging` +
+`note_extraction_staged_fields` (resolved values per note), `note_gold_values`
+(bi-temporal; a BEFORE trigger refuses any write without the transaction-local
+`app.gold_reviewer_id` matching `reviewer_id` — only humans write gold),
+`note_gold_candidates`, `distribution_participants`.
+Files: `migrations/noteextractb1_readings_staging_gold.sql`.
+
+**OPERATOR ACTION 1 — the 29 disagreements are NOT moved yet.**
+`migrations/noteextractb1_move_disagreements.sql` (atomic: 58 readings, a
+count proof, then the delete) was CANCELLED by the MCP tool, which refuses a
+DELETE non-interactively. Run
+`python3 apps/api/scripts/move_note_terms_disagreements.py --apply`
+(dry-run verified: 29 found). The pre-move state is frozen in
+`scripts/fixtures/noteextractb1_disagreements_premove.json`; the verify's
+"29 disagreements" section fails until this runs.
+
+**OPERATOR ACTION 2 — all 7 candidate models are BLOCKED on keys.**
+`prd_lite_llm` has no `DEEPINFRA_API_KEY` (gpt-oss-120b, Mistral-Small-3.2-24B,
+DeepSeek-V3.2, Qwen2.5-7B), `GEMINI_API_KEY` (gemini-2.5-flash-lite) or
+`OPENAI_API_KEY` (gpt-5-nano, gpt-5-mini). Add them, confirm `prd_lite_llm`
+syncs to the proxy's Render service, then
+`python3 apps/api/scripts/register_note_extraction_models.py --apply` registers
+each deployment (`os.environ/NAME`, never a value) and adds it to
+`platform_model_catalog` as 'available' ONLY after a real call succeeds.
+
+**Engine:** `apps/api/services/note_extraction/` — rules (label-anchored,
+CUSIP check digit, dates, estimated value, price/fee table, fee-based price —
+ranges refused, participant names), EdgarTools 5.59.1 (MIT, pinned) on the
+STORED HTML with sockets/DNS blocked and counted, heading-rule trimming (PoD
+kept in full), two readers via `proxy.py` (ONE chokepoint: `disable_fallbacks`
++ the raw-model metadata flag; provider model must match the deployment),
+compare-in-code, one Jev call per note with general criteria, escalation,
+needs_review for unresolved critical fields, the hard per-run spend cap
+(reserve-before-call, settle from recorded cost; an interrupted note's calls
+are still recorded). Schema generated from `note_terms_field_registry` plus
+the B1 extensions; `ai_ensembles.KNOWN_TASK_KEYS` gains `note_terms_extraction`.
+
+**Screens:** `/admin/note-extraction/gold` (gold review), `/admin/note-
+extraction/results` (results grid); router `routers/note_extraction_admin.py`.
+
+**Scripts:** `sample_gold_set.py` (dry run: 74 eligible notes, ALL 2025, 10
+issuers, every trap kind present), `run_note_extraction_eval.py`,
+`run_note_extraction_pilot.py` (needs an ACTIVE `note_terms_extraction`
+ensemble — none exists), `seed_distribution_participants.py`.
+
+**Findings:**
+- ZERO manifest rows are `ready_for_extraction`; the 200 `fetched` rows are
+  the 2025Q1 corpus, never classified. Runs take `--include-corpus`, applying
+  sprint A's own `decide_status` in memory (manifest untouched). A ~2,000-note
+  pilot is not possible until the nightly job fetches more.
+- LiteLLM 1.96.2 REWRITES the response `model` to the requested alias; only the
+  internal `_complexity_router_return_raw_model_name` metadata flag returns the
+  provider's model. It also ACCEPTS a raw upstream id (the "400 on raw ids"
+  premise is false).
+- `services.extraction.call_claude_json` walks the app fallback chain, so it
+  cannot serve an ensemble slot; ensemble calls go through
+  `services/note_extraction/proxy.py` instead (still proxy-only, no SDK).
+- The payoff DSL's `protection_type` vocabulary (buffer/floor/none) has no
+  'barrier' and its 'floor' is not a barrier; the readers use
+  full/buffer/barrier/none. B2 must map before promoting.
+- `pip install edgartools` pulled pandas 3.0.6 into apps/api/venv
+  (requirements say `pandas>=2.0`); watch the scheduler/pricing code on deploy.
+
+**Verification:** `apps/api/scripts/verify_noteextractb1.py`, WRITTEN, NOT RUN
+by the sprint. Mocked providers except one ~16-token claude-haiku call and one
+call to a nonexistent deployment (< $0.01). Run after OPERATOR ACTION 1:
+`python3 apps/api/scripts/verify_noteextractb1.py`.
 
 ---
 

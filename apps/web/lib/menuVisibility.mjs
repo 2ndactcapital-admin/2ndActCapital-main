@@ -149,6 +149,18 @@ export const MENU_ITEMS = [
     adminIndex: true,
   },
   {
+    href: "/admin/note-extraction/gold",
+    label: "Note Gold Set",
+    gate: GATE_SUPER_ADMIN,
+    adminIndex: true,
+  },
+  {
+    href: "/admin/note-extraction/results",
+    label: "Extraction Results",
+    gate: GATE_SUPER_ADMIN,
+    adminIndex: true,
+  },
+  {
     href: "/admin/pricing/surface",
     label: "Volatility Surface",
     gate: GATE_SUPER_ADMIN,

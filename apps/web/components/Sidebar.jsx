@@ -59,6 +59,8 @@ const TRADING_AUTHORITY_ITEM = { label: "Trading Authority", href: "/admin/tradi
 // tenant data — Super Admin only, same gate as the two items above.
 const NOTE_TERMS_QUEUE_ITEM = { label: "Note Terms Review", href: "/admin/pricing/note-terms-queue", icon: "admin" };
 const EDGAR_PIPELINE_ITEM = { label: "EDGAR Pipeline", href: "/admin/edgar-pipeline", icon: "admin" };
+const NOTE_GOLD_ITEM = { label: "Note Gold Set", href: "/admin/note-extraction/gold", icon: "admin" };
+const NOTE_RESULTS_ITEM = { label: "Extraction Results", href: "/admin/note-extraction/results", icon: "admin" };
 
 // Sprint 31 — SSVI volatility surface viewer. Super Admin only; the API
 // enforces it too (a hidden link is not a permission).
@@ -414,6 +416,16 @@ export default function Sidebar() {
                 item={EDGAR_PIPELINE_ITEM}
                 expanded={expanded}
                 active={isActive(EDGAR_PIPELINE_ITEM.href)}
+              />
+              <NavLink
+                item={NOTE_GOLD_ITEM}
+                expanded={expanded}
+                active={isActive(NOTE_GOLD_ITEM.href)}
+              />
+              <NavLink
+                item={NOTE_RESULTS_ITEM}
+                expanded={expanded}
+                active={isActive(NOTE_RESULTS_ITEM.href)}
               />
               <NavLink
                 item={VOL_SURFACE_ITEM}

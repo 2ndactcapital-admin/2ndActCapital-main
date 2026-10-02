@@ -35,3 +35,8 @@ scipy>=1.10
 pandas>=2.0
 yfinance>=0.2
 psutil>=5.9
+# noteextractb1: EdgarTools reads structured-note key-terms tables from the
+# STORED pricing-supplement HTML (never from the SEC — the call runs with the
+# network blocked). PINNED: its table classifiers change between releases.
+# License: MIT.
+edgartools==5.59.1

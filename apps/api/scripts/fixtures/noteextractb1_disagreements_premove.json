@@ -1,0 +1,298 @@
+{
+ "captured_at": "2026-10-02T10:01:07.040368+00:00",
+ "total_rows": 29,
+ "other_rows_count": 0,
+ "other_rows_md5": "d41d8cd98f00b204e9800998ecf8427e",
+ "rows": [
+  {
+   "id": "4f1fbc8a-ce84-406f-ba3d-1b28c0445f80",
+   "target_id": "beedec08-ca2d-4445-a605-b23dbe9fa386",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:34:35.230517+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "7bcc10c5-390b-415d-b32c-4b71b4450b35",
+   "target_id": "2458b333-b69d-48d8-bf80-b40ab670f414",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:34:51.726567+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "025a90ad-9b7f-4778-99b3-02ac9a946ce1",
+   "target_id": "4956d389-ca38-4e85-8fc4-fedf4c35d936",
+   "field_name": "autocall_frequency",
+   "original_value": "none",
+   "corrected_value": "quarterly",
+   "corrected_at": "2026-08-23T14:39:14.174165+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "92c86909-c07e-41e2-88bd-846331ac68c5",
+   "target_id": "d1cbcfac-4520-4695-9f1b-935a66bf7cf2",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:39:49.001702+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "43aea883-72c5-4c2e-930e-aa1c158d7217",
+   "target_id": "dba7c456-83db-45ed-93c9-231d2dc7a385",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:40:06.709877+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "2b2c4a3c-464a-4ade-9215-5b563be6de49",
+   "target_id": "d9245b7b-87de-4519-97e9-abacc685ca81",
+   "field_name": "is_decrement_index",
+   "original_value": null,
+   "corrected_value": "false",
+   "corrected_at": "2026-08-23T14:40:56.681548+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "096e77ca-f5bf-475a-a8c2-0d3d609cc5cb",
+   "target_id": "90773f18-5c71-465e-9e54-a001cef54062",
+   "field_name": "autocall_frequency",
+   "original_value": "none",
+   "corrected_value": "quarterly",
+   "corrected_at": "2026-08-23T14:41:36.466991+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "a3976c6b-3ee0-4218-b963-bccec6fbf3aa",
+   "target_id": "90773f18-5c71-465e-9e54-a001cef54062",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:41:36.638312+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "3e7d4f57-2e00-4d27-bf0f-34e5aa99b6a2",
+   "target_id": "ae69b08c-260e-4a91-adf2-002ab7e12b32",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:42:32.645491+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "871adc68-c8e5-4c93-8063-462efc59f5bd",
+   "target_id": "c961ba69-f755-4973-8cc9-fcd80c1fdd76",
+   "field_name": "autocall_frequency",
+   "original_value": "none",
+   "corrected_value": "quarterly",
+   "corrected_at": "2026-08-23T14:42:49.569483+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "f91b15d0-f4be-4ea6-859f-eb72554170f9",
+   "target_id": "3d1933b7-97fa-4f53-9f44-988c308a633a",
+   "field_name": "basket_type",
+   "original_value": "basket",
+   "corrected_value": "single",
+   "corrected_at": "2026-08-23T14:43:11.509705+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "a40d9286-df30-4073-9f75-3372cefe1b31",
+   "target_id": "3d1933b7-97fa-4f53-9f44-988c308a633a",
+   "field_name": "return_basis",
+   "original_value": "total_return",
+   "corrected_value": "price",
+   "corrected_at": "2026-08-23T14:43:11.670028+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "21e70720-fd0d-4e4f-8851-2a922fbc58b1",
+   "target_id": "af465d5e-182b-4527-abc4-26066535e62f",
+   "field_name": "protection_type",
+   "original_value": "buffer",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:43:27.194795+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "f1acdf65-169b-4370-afd7-a1d0078b0942",
+   "target_id": "bdcf74d5-02e2-41c6-a227-b02356011612",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:44:01.393436+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "05df6190-d056-4fea-8d73-ed7a4c67d211",
+   "target_id": "1af95a39-8c83-4c7e-9e78-0d8ab8df3d6d",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:45:22.481569+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "46900a09-ef5c-4c81-8572-600ddd53e690",
+   "target_id": "db77889e-9341-4d7f-9865-0acd163df5b0",
+   "field_name": "autocall_frequency",
+   "original_value": "none",
+   "corrected_value": "quarterly",
+   "corrected_at": "2026-08-23T14:47:10.201322+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "e8d33043-f179-4bc1-afee-ef97c6104310",
+   "target_id": "db77889e-9341-4d7f-9865-0acd163df5b0",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:47:10.36159+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "138f4f4d-d9c5-4792-83fc-aaadfa5264f5",
+   "target_id": "3ab92efd-0266-428c-838b-5151ccfdbf17",
+   "field_name": "autocall_frequency",
+   "original_value": "none",
+   "corrected_value": "quarterly",
+   "corrected_at": "2026-08-23T14:47:33.99506+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "ae79516e-a3e2-4c72-b847-dcf4eec5f3de",
+   "target_id": "3ab92efd-0266-428c-838b-5151ccfdbf17",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:47:34.150082+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "d60015e3-67b0-4b64-8d5a-d2378ee1a9cf",
+   "target_id": "fec62ebb-43c8-4c93-aa53-6999ae04d800",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:48:27.569503+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "9b16bb80-e7b5-4ba7-9123-d0bbe530c0f4",
+   "target_id": "2cc55e73-a1d6-4ccf-91fa-5e7bc5fe38b4",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:48:49.089431+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "74364e5b-b601-4c0d-be05-146bf3185c4f",
+   "target_id": "bbc5c037-0f0a-4ec9-8166-42252088e2fc",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:49:05.420407+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "6cb9366e-10a8-4f1b-add2-4ae6edc5bdbf",
+   "target_id": "3fdf0fbf-4bd5-4b6b-ab64-a0cdd60a89b7",
+   "field_name": "terms_status",
+   "original_value": "final",
+   "corrected_value": "restated",
+   "corrected_at": "2026-08-23T14:49:26.370978+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "5d9a3cd7-3644-4fc3-bbcf-bbcd35bdf2d7",
+   "target_id": "88e235cf-bcdf-4b29-8314-073858515db2",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:49:43.886055+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "cbc602fa-040b-4320-8b09-220b802cc37b",
+   "target_id": "af682864-d017-4b0c-b5ef-8c8db0ed9285",
+   "field_name": "terms_status",
+   "original_value": "final",
+   "corrected_value": "preliminary",
+   "corrected_at": "2026-08-23T14:51:07.818398+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "6f0e4a69-1ac1-473c-8a09-67224fe019e4",
+   "target_id": "91a5e410-8919-44f4-9326-9d6c67d38351",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:51:41.090761+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "f4b02aa2-1d80-4a7c-a2f9-27b69923ec6f",
+   "target_id": "c5573f67-167f-400a-9751-9fc9ca4b086e",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "buffer",
+   "corrected_at": "2026-08-23T14:52:55.375218+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "3905ec27-73b1-42cd-ab20-ebfb820cb8af",
+   "target_id": "93449210-5dd7-4997-92c4-6c856aec78d1",
+   "field_name": "protection_type",
+   "original_value": "floor",
+   "corrected_value": "none",
+   "corrected_at": "2026-08-23T14:53:13.678589+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  },
+  {
+   "id": "3811a374-0204-4fd8-8cd5-889eda233d29",
+   "target_id": "93449210-5dd7-4997-92c4-6c856aec78d1",
+   "field_name": "return_basis",
+   "original_value": "total_return",
+   "corrected_value": "price",
+   "corrected_at": "2026-08-23T14:53:13.842918+00:00",
+   "model_1": "claude-haiku-4-5-20251001",
+   "model_2": "claude-sonnet-4-6"
+  }
+ ]
+}
