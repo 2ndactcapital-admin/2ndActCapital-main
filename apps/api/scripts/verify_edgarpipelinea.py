@@ -22,7 +22,7 @@ prints a credential value. RLS context is set on EVERY read
 (``app.is_super_admin`` LOCAL inside an explicit transaction).
 
 REAL DATA IS NOT CHANGED. The ~717K manifest rows are fingerprinted before and
-after (md5 over every row's text). The <=10 real sample filings the fetch test
+after (md5 over every row's text). The real sample filings (up to 2 per group) the fetch test
 touches are snapshotted whole and restored exactly; their reference_filings rows
 and every R2 object under the TEST prefix are deleted in teardown. Fixture rows
 use accession prefix 9999999999-55- and CIKs 9999999551..3.
@@ -831,9 +831,10 @@ async def fetch_section(conn, bucket: str) -> None:
     # F_BAD is not a real filing: it is selected before run 1 (so run 1's
     # select stage never counts it), it is never fetched, and it is never linked.
     n_real = len(sample)
-    check(len(groups) == 5 and n_real >= 3 and F_BAD not in sample,
-          f"a fixed sample of {n_real} real 424B2s (up to 2 per group) across 5 issuer groups, plus the "
-          "one deliberately bad accession", f"groups={sorted(groups)}")
+    C = 3   # run 1's fetch cap: the bad accession (newest) + C-1 real filings
+    check(len(groups) >= 5 and n_real >= 8 and F_BAD not in sample,
+          f"a fixed sample of {n_real} real 424B2s (up to 2 per group, >= 8) across >= 5 issuer groups, plus "
+          "the one deliberately bad accession", f"n_real={n_real} groups={sorted(groups)}")
 
     # The bad accession is a fixture row; selection decides it like any other.
     await p.select_stage(conn, accessions=[F_BAD])
@@ -853,28 +854,31 @@ async def fetch_section(conn, bucket: str) -> None:
         per_run.append((row["sec_requests"], len(log.entries)))
         return row
 
-    # Run 1: select + fetch, cap 3. Bad accession is the newest -> attempted first.
-    r1 = await job(3, ["select", "fetch"])
+    # Run 1: select + fetch, cap C. Bad accession is the newest -> attempted first.
+    r1 = await job(C, ["select", "fetch"])
     states1 = {r["accession_number"]: r["pipeline_status"] for r in await rls_fetch(
         conn, "SELECT accession_number, pipeline_status FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])",
         targets)}
     touched1 = [a for a, s in states1.items() if s not in ("selected",)]
-    # Run 1's select stage decides only the n_real 'discovered' rows; of its 3
-    # attempts the bad accession is one, so exactly 2 real filings are fetched.
-    check(r1["status"] == "succeeded" and r1["selected"] == n_real and r1["fetch_attempted"] == 3,
-          f"the fetch cap is honored: cap 3 -> exactly 3 filings attempted (select stage decided the {n_real} real ones)",
-          f"status={r1['status']} selected={r1['selected']} attempted={r1['fetch_attempted']} err={r1['error']}")
-    check(len(touched1) == 3 and states1.get(F_BAD) == "fetch_failed"
-          and sum(1 for a in sample if states1.get(a) == "selected") == n_real - 2,
-          f"exactly 3 rows left 'selected' (the bad accession, newest, went first, + 2 real); "
-          f"{n_real - 2} real still 'selected'", f"{states1}")
+    # Run 1's select stage decides only the n_real 'discovered' rows; of its C
+    # attempts the bad accession is one, so exactly C-1 real filings are fetched.
+    remaining = n_real - (C - 1)
+    check(r1["status"] == "succeeded" and r1["selected"] == n_real and r1["fetch_attempted"] == C,
+          f"the fetch cap is honored: cap {C} -> exactly {C} filings attempted (select stage decided the {n_real} real ones)",
+          f"n_real={n_real} status={r1['status']} selected={r1['selected']} attempted={r1['fetch_attempted']} "
+          f"err={r1['error']}")
+    check(len(touched1) == C and states1.get(F_BAD) == "fetch_failed"
+          and sum(1 for a in sample if states1.get(a) == "selected") == remaining,
+          f"exactly {C} rows left 'selected' (the bad accession, newest, went first, + {C - 1} real); "
+          f"{remaining} real still 'selected'", f"n_real={n_real} {states1}")
 
     # Run 2: the rest of the REAL filings.
     r2 = await job(50, ["fetch"])
-    check(r2["status"] == "succeeded" and r2["fetch_attempted"] == n_real - 2 and r2["fetched"] == n_real - 2
+    check(r2["status"] == "succeeded" and r2["fetch_attempted"] == remaining and r2["fetched"] == remaining
           and r2["fetch_failed"] == 0,
-          f"a second job fetches the remaining {n_real - 2} real filings (the failed row's retry is not due yet)",
-          f"attempted={r2['fetch_attempted']} fetched={r2['fetched']} failed={r2['fetch_failed']} err={r2['error']}")
+          f"a second job fetches the remaining {remaining} real filings (the failed row's retry is not due yet)",
+          f"n_real={n_real} attempted={r2['fetch_attempted']} fetched={r2['fetched']} failed={r2['fetch_failed']} "
+          f"err={r2['error']}")
 
     bad = await rls_row(conn, """SELECT pipeline_status, status_reason, attempt_count, last_attempt_at, next_attempt_at
                                  FROM portfolio.edgar_index_filings WHERE accession_number = $1""", F_BAD)
@@ -882,10 +886,10 @@ async def fetch_section(conn, bucket: str) -> None:
     check(bad["pipeline_status"] == "fetch_failed" and bool(bad["status_reason"]) and bad["attempt_count"] == 1
           and bad["last_attempt_at"] is not None and bad["next_attempt_at"] is not None and bad["next_attempt_at"] > now,
           "the bad accession is fetch_failed with a reason, attempt_count 1 and a future retry time",
-          f"{dict(bad)}")
-    check(r1["fetch_failed"] == 1 and r1["fetched"] == 2,
-          "and the run that hit it still finished the other filings in its cap",
-          f"run1 fetched={r1['fetched']} failed={r1['fetch_failed']}")
+          f"n_real={n_real} {dict(bad)}")
+    check(r1["fetch_failed"] == 1 and r1["fetched"] == C - 1,
+          f"and the run that hit it still finished the other {C - 1} filings in its cap",
+          f"n_real={n_real} run1 fetched={r1['fetched']} failed={r1['fetch_failed']}")
 
     # Per-filing proof against R2, read independently.
     rows = await rls_fetch(conn, """
@@ -896,10 +900,11 @@ async def fetch_section(conn, bucket: str) -> None:
         FROM portfolio.edgar_index_filings f JOIN portfolio.reference_filings r ON r.id = f.reference_filing_id
         WHERE f.accession_number = ANY($1::text[])""", sample)
     check(len(rows) == n_real, f"all {n_real} real sample filings are linked to a reference_filings row",
-          f"linked={len(rows)}")
+          f"n_real={n_real} linked={len(rows)}")
     bad_linked = await rls_val(conn, "SELECT reference_filing_id FROM portfolio.edgar_index_filings "
                                      "WHERE accession_number = $1", F_BAD)
-    check(bad_linked is None, "the bad accession is NOT linked to any reference_filings row", f"{bad_linked}")
+    check(bad_linked is None, "the bad accession is NOT linked to any reference_filings row",
+          f"n_real={n_real} {bad_linked}")
     problems = []
     lastmod = {}
     for r in rows:
@@ -925,7 +930,7 @@ async def fetch_section(conn, bucket: str) -> None:
             problems.append(f"{r['accession_number']}: status {r['pipeline_status']}")
     check(not problems, "each R2 object exists and is gzipped; sha256(decompressed) = recorded hash; "
                         "raw/compressed/text sizes match; extracted_text NULL; status past 'fetched'",
-          f"{problems}")
+          f"n_real={n_real} {problems}")
     kinds = sorted({(r["document_kind"], r["pipeline_status"]) for r in rows})
     find("sample outcomes", f"(kind, status) = {kinds}; CUSIPs detected on "
          f"{sum(1 for r in rows if r['detected_cusip'])}/{n_real}; bytes uploaded run1+run2 = "
@@ -948,7 +953,8 @@ async def fetch_section(conn, bucket: str) -> None:
           and len(lastmod) == n_real,
           f"a second fetch of the same {n_real} re-uploads nothing ({n_real} skipped, 0 bytes, "
           "R2 LastModified unchanged)",
-          f"fetched={r3['fetched']} bytes={r3['bytes_uploaded']} skipped={skipped}")
+          f"n_real={n_real} fetched={r3['fetched']} bytes={r3['bytes_uploaded']} skipped={skipped} "
+          f"lastmod_unchanged={after == lastmod} objects={len(lastmod)}")
 
     # Rate + User-Agent across every SEC request of the three jobs.
     times = [t for t, _ua, _u in entries]
