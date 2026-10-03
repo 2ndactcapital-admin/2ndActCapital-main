@@ -2,12 +2,18 @@
 
 Status: mkt01 built (registry, FRED adapter, historical backfill); verified
 live, 57 passed, 0 failed. mkt02 built (adapter registry, Yahoo adapter,
-nightly orchestrator, staleness report, Render cron entrypoint); its verify
-is written but not yet run. Next: mkt02b, then mkt03.
+nightly orchestrator, staleness report, Render cron entrypoint); verified
+live, 47 passed, 0 failed. mkt03 built (the read API: catalog, series, grid,
+correlations); its verify is written but not yet run. Next: mkt03b, then mkt04.
 
 UPDATE 2026-10-03 (mkt02): decisions 8–13 and the "Launch blockers" section
 below are new. The Roadmap is rewritten: the planned "mkt02 = nightly cron +
 non-FRED adapters" scope was split.
+
+UPDATE 2026-10-03 (mkt03): decisions 14–18, "API contract", "Transform
+definitions", "Correlation method" and "Caveats" are new. Launch blocker 2
+is met at the API level. The Roadmap is rewritten again: mkt03 = this read
+API; mkt03b = key dates and saved views; mkt04 = chart and grid UI.
 
 ## What this is
 
@@ -263,6 +269,74 @@ of 75 series comes from a reviewed seed file,
     laptop and fail from Render. Failure isolation means a Yahoo failure
     never affects FRED series.
 
+### 14. Rebase on the client; grid and correlations on the server (mkt03)
+
+- The chart rebases on the CLIENT while the user drags the anchor, from raw
+  series data. So `GET /market/series` returns raw observations, optionally
+  downsampled, and never transformed.
+- The grid and correlations are computed on the SERVER, so each transform
+  has one definition (`services/market_data/transforms.py`,
+  `correlation.py`).
+
+### 15. Values cross the API as strings (mkt03)
+
+- Every observation and transformed value is exact Decimal text, never a
+  JSON number. JSON numbers are IEEE doubles in every browser.
+- Transforms are computed in Decimal and quantized to 6 dp, ROUND_HALF_EVEN.
+- The one exception is the correlation coefficient. It is computed in
+  float64, rounded to 4 dp, returned as a string, and never stored.
+- Exponent notation is never emitted: a stored `0.000000123` is returned as
+  `"0.000000123"`, not `"1.23E-7"`.
+
+### 16. The catalog exposes `source_provider` and `license_class` (mkt03)
+
+- Every indicator in `GET /market/catalog` carries both fields, and the
+  vocabularies list the values present. This is launch blocker 2, met at the
+  API level, so mkt04 (or later) can gate Yahoo-sourced and
+  `third_party_licensed` series per tenant.
+- **The API itself does not gate them.** At mkt03 discovery, 15 active
+  series were `third_party_licensed` (10 FRED, 5 Yahoo) and 5 were
+  `unreviewed` (4 FRED, 1 Yahoo). Any authenticated session can read them
+  through the API. No UI exists yet. Decision 4 still applies: no tenant UI
+  ships these series until the licensing decision is on record. The Yahoo
+  launch blocker still applies.
+
+### 17. Access: a valid session, decided in one function (mkt03)
+
+- `services/market_data/access.py` `require_market_data_read` is the only
+  gate. No existing permission clearly means "may read market data". The
+  nearest were `view_dashboard` and `view_portfolio`, and neither is about
+  platform reference data. So no permission was invented. The gate admits any
+  valid, active, authenticated session, and the envelope publishes
+  `read_permission: null`.
+- To require a permission later, set `MARKET_DATA_READ_PERMISSION` to its
+  name. The existing branch then resolves it through `rbac.has_permission`,
+  which checks super admin first.
+- Reads use the normal request connection (the RLS-aware pool), switched to
+  `SET LOCAL transaction_read_only = on`, and never `platform_scope()`. The
+  three tables read all have a global SELECT policy.
+  `indicator_ingest_runs` is platform-only and is not exposed.
+
+### 18. Colours are a server-side palette (mkt03)
+
+- Category base colours: Equities #2B5F9E, Rates & credit #C8641E, Growth &
+  labor #3F8A5F, Inflation #9B5A8A, Housing #6F5E4E, Commodities #17707A,
+  FX #4A5568. Any other category (today: "Financial conditions") gets
+  #64748B.
+- Each series gets a shade of its category base. Convert the base to HSL,
+  keep hue and saturation, and spread lightness evenly from L − 0.10 to
+  L + 0.18 in sort_order. A category with one series uses the base colour.
+  Index securities use a navy ramp from #1B2B4B, and structured notes a gold
+  ramp from #C5A880.
+- **Clamp interpretation:** the [0.28, 0.68] clamp is applied to the two ENDS
+  of the range, and the shades are spread between them. Clamping each shade
+  separately would put most of the 54 gold notes on L = 0.68, all the same
+  colour.
+- If two shades still round to the same hex, the later one steps by 1/510 in
+  lightness until it is unique. The result is deterministic, so every call
+  returns identical colours.
+- Moving the bases into the config table is a separate, optional change.
+
 ## Launch blockers
 
 Before ANY external customer sees this platform:
@@ -272,8 +346,163 @@ Before ANY external customer sees this platform:
    decision 13.
 2. **The mkt03 API must expose `source_provider`** on every series it
    returns, so Yahoo-sourced (and other restricted) series can be gated per
-   tenant.
+   tenant. *Met at the API level by mkt03 (decision 16). The gating itself
+   is still unbuilt and belongs to the UI (mkt04).*
 3. The `third_party_licensed` question in decision 4 is still open.
+
+## API contract (mkt03)
+
+All four endpoints are under `/api/v1/market`. They are read-only and gated by
+`require_market_data_read`. No request may carry an org or user: bodies use
+`extra='forbid'`, the series endpoint rejects any unknown query parameter, and
+org and user come only from the verified session. Every response carries
+`permissions` (`can_read`, `can_write: false`, `is_super_admin`,
+`read_permission: null`, `write_permission: null`) and `vocabularies`
+(`editable: []`, `inline_editable: []`, modes, transforms, frequencies,
+grid_frequencies, limits).
+
+Client components never call these endpoints directly. They go through a
+Next.js API route, which mkt04 builds.
+
+- **`GET /market/catalog`** (no parameters) returns:
+  - `categories[]`: {key, label, color, sort_order}, ordered by the first
+    sort_order in each category.
+  - `indicators[]`: one per ACTIVE series, with series_key, name, category,
+    category_key, region, frequency, units, seasonal_adjustment,
+    default_transform, color, source_provider, license_class, cost_tier,
+    first_observation_date, last_observation_date, security_global_id,
+    ingest_status, sort_order.
+  - `securities[]`: every active, non-merged `portfolio.securities_global`
+    row, with id, name, short_name, security_type, price_source
+    (`indicator_series` | `none`), series_key, selectable,
+    unselectable_reason (`no_price_history`), color.
+  - `vocabularies.license_classes` and `vocabularies.source_providers`: the
+    values present.
+- **`GET /market/series?keys=a,b&from=YYYY-MM-DD&to=YYYY-MM-DD&frequency=native|daily|weekly|monthly|quarterly`**
+  - Returns, per key: series_key, native_frequency, frequency (as returned),
+    point_count, first_observation_date, last_observation_date (whole
+    history), and points as `[date, "value"]`, ascending.
+  - `frequency` defaults to `native` and means AT MOST THIS FINE (see
+    Resampling).
+  - A security is selected only through its linked series_key.
+- **`POST /market/grid`** with body `{keys, anchor, end?, mode, frequency}`:
+  - mode is one of `index | sigma | level | default`; frequency is one of
+    `daily | weekly | monthly | quarterly`; end defaults to today (UTC).
+  - Rows are the period ends in [anchor, end], newest first, plus `end`
+    itself when it is not a period end, so the newest row shows the latest
+    data. That row has `is_period_end: false`. Daily rows are weekdays.
+  - Each row is `{date, is_period_end, cells: {series_key: "value" | null}}`.
+  - Per-series metadata: applied_transform, floating,
+    anchor_observation_date, anchor_value, warnings,
+    unavailable_reason, first_observation_date, last_observation_date.
+  - Warnings: `rate_like_series_indexed`, and
+    `native_frequency_coarser_than_grid` (cells are carried forward by the
+    as-of rule).
+  - Unavailable reasons: `non_positive_anchor`, `zero_variance`,
+    `no_observations`.
+- **`POST /market/correlations`** with body `{focus_key, keys, anchor, end?, lag_months = 0 (−24..24), min_periods = 24 (12..120)}`:
+  - Returns, per candidate: series_key, r (string | null), n, frequency,
+    overlap_from, overlap_to, unavailable_reason, change_method ({focus,
+    candidate}: `log` | `diff`), warnings.
+  - The focus is excluded even when listed. Results are sorted by |r|
+    descending, nulls last, then by series_key.
+  - The response includes the window used, `effective_lag_months`, and the
+    lag convention.
+  - Unavailable reasons: `insufficient_overlap`, `zero_variance`,
+    `unsupported_frequency`, `lag_not_multiple_of_period`.
+  - Warning: `promoted_to_monthly_for_lag`.
+
+**Limits** (`read_service.py`):
+
+| Limit | Value | Basis |
+|---|---|---|
+| Keys per request (series, grid, correlation candidates) | 40 | |
+| Points per series | 30,000 | The largest active series, fred.dff, had 26,391 at discovery |
+| Points per series request | 300,000 | Just under the whole active table (313,156) |
+| Grid rows | 2,000 | |
+| Daily grid window | 400 days | |
+| Request body | 64 KiB | |
+
+**Refusals.** Every refusal is a 422 of the form
+`{"detail": {"message", "errors": [{loc, type, msg}]}}`. Unknown or
+non-active keys answer `{"detail": {"message", "unknown_keys", "inactive_keys"}}`,
+which list only the offending keys.
+
+Errors never echo the request: not the value, and not the name of an
+undeclared field. That is why bodies are parsed by the service and not by
+FastAPI. FastAPI's default 422 returns pydantic's `input`, which echoes the
+caller's own data.
+
+## Transform definitions
+
+- Observations of a series: its active rows, ascending by obs_date.
+- as_of(series, date): the value of the last observation with obs_date <= date;
+  none if date is before the first observation.
+- Anchor value v0 = as_of(series, anchor). If none, v0 = the first observation
+  and the series is floating = true.
+- index: 100 * v / v0. Requires v0 > 0, otherwise unavailable_reason
+  'non_positive_anchor'. A series whose default_transform is 'level' still
+  indexes when v0 > 0 but carries the warning 'rate_like_series_indexed'.
+- sigma: (v - v0) / sd, where sd = stddev_samp over ALL active observations of
+  the series (full history, independent of the anchor and window). sd null or 0
+  gives 'zero_variance'.
+- level: v unchanged.
+- default: apply each series' own default_transform: rebase_100 -> index;
+  level -> level; yoy_pct -> 100 * (v / v12 - 1) where v12 = as_of(series, date
+  minus 12 months), null when none; mom_pct -> same with 1 month.
+- All transformed values are Decimal, quantized to 6 decimal places with
+  ROUND_HALF_EVEN, returned as strings.
+- RESAMPLING: frequency means "at most this fine". Each returned point is the
+  LAST observation in its calendar period (ISO week, month, quarter), reported
+  with its actual obs_date. A series with a coarser native frequency is
+  returned natively and never upsampled or interpolated. Frequency order, fine
+  to coarse: daily, weekly, monthly, quarterly. For this purpose treat
+  per_meeting and irregular as monthly; semiannual is unsupported for
+  correlations ('unsupported_frequency').
+
+Implementation notes (mkt03):
+- "date minus N months" clamps the day: Mar 31 minus 1 month is Feb 28 or 29.
+- A yoy or mom whose earlier value is exactly 0 is null, not an error.
+
+## Correlation method
+
+For the focus F and each candidate C:
+  1. Pair frequency = the COARSER of the two series' effective frequencies.
+  2. Reduce both to that frequency (last observation per period), then keep the
+     window [anchor, end].
+  3. Apply the lag: shift C by lag_months so that a positive lag means C leads
+     F (C's value at period t is paired with F's value at period t + lag).
+  4. Changes: for each series, if all of its values in the window are > 0 use
+     the log difference ln(v_t / v_{t-1}); otherwise use the simple difference
+     v_t - v_{t-1}.
+  5. Use only periods where both changes exist. n = their count. If
+     n < min_periods, r = null with reason 'insufficient_overlap'.
+  6. r = Pearson correlation of the paired changes, computed in float64,
+     rounded to 4 decimal places, returned as a string. Zero variance in either
+     change series gives null with reason 'zero_variance'.
+
+Implementation notes (mkt03):
+- v_{t-1} is the previous point of the reduced, windowed series. For daily
+  data that spans weekends and holidays.
+- A lag in calendar months must land on whole periods:
+  - A daily or weekly pair with a non-zero lag runs MONTHLY instead (warning
+    `promoted_to_monthly_for_lag`).
+  - A quarterly pair needs a lag that is a multiple of 3 (else
+    `lag_not_multiple_of_period`).
+- Changes are computed in Decimal (ln included). Only the coefficient is
+  float64.
+
+## Caveats
+
+- **Correlations use period dates, not publication dates.** A monthly series
+  dated the 1st may be published weeks later. Lead/lag results are
+  indicative, not tradeable.
+- **Correlating levels is spurious.** Two trending series correlate in level
+  whatever their relationship. That is why this endpoint only correlates
+  changes.
+- **Correlations are unstable across regimes.** A coefficient over one window
+  says little about another. The anchor and end are the caller's choice for
+  exactly that reason.
 
 ## Code
 
@@ -303,6 +532,13 @@ Before ANY external customer sees this platform:
   adapters) always runs. Phase B (`--live`) runs after two nightly runs.
 - `docs/market_data/RENDER_CRON_SETUP.md` — operator setup for the cron
   service.
+- `apps/api/services/market_data/read_repository.py`, `transforms.py`,
+  `resample.py`, `correlation.py`, `palette.py`, `access.py`,
+  `read_service.py`, and `apps/api/routers/market_data.py` — the mkt03 read
+  API. The pure modules have no database access.
+- `apps/api/scripts/verify_mkt03.py` — Phase A (fixtures `verify.mkt03.*`,
+  through the real ASGI app) always runs. Phase B (`--live`) reads the real
+  data.
 
 ## Roadmap
 
@@ -316,8 +552,27 @@ Before ANY external customer sees this platform:
   `deferred` series each). Built after this cron is proven live. Until then,
   the nightly skips them as `skipped_no_adapter`. The 6 `deferred_paid`
   series wait on a cost decision.
-- **mkt03** — an API that publishes the permission envelope AND
-  `source_provider` (launch blocker 2). It adds the base-100 chart with
-  security overlay and a grid. It also links the six benchmark series to the
-  security master, and resolves the licensing questions before any
-  `third_party_licensed` or Yahoo series is shown to tenants.
+- **mkt03** (built) — the read API: catalog, series, grid, correlations
+  (decisions 14–18, "API contract"). Part 1, applied before the sprint,
+  linked three benchmark series to the security master: fred.sp500,
+  fred.nasdaq100 and yahoo.rut. The other three of decision 2's "six" (EFA,
+  EEM, gold) have no matching `securities_global` row, so they stay
+  unlinked.
+- **mkt03b** — key dates and saved views
+  (`docs/market_data/KEY_DATES_SPEC_V1.md`, if added).
+- **mkt04** — the chart (base-100 with security overlay) and the grid UI,
+  plus the Next.js routes in front of this API. mkt04 also gates
+  `third_party_licensed`, `unreviewed` and Yahoo series per tenant
+  (decisions 4 and 16).
+
+## Next candidates
+
+- The 10 unlinked index securities are the underlyings of the structured
+  notes: Dow Jones Industrial Average, EURO STOXX 50, FTSE 100, MSCI EAFE,
+  Nasdaq-100 Equal Weighted, Nasdaq-100 Technology Sector, S&P 500 Futures
+  Excess Return, S&P/ASX 200, Swiss Market Index, TOPIX. They could be added
+  as registry series from a free source, then linked through
+  `security_global_id`. The catalog would then mark them selectable with no
+  code change.
+- The 54 structured notes need a price source before the overlay can plot
+  them. Today `portfolio.securities_global_prices` has 0 rows.

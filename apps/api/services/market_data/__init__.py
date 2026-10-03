@@ -12,4 +12,13 @@ docs/MARKET_DATA_DESIGN_V1.md.
   yahoo.py    — Yahoo chart adapter (injectable transport, Decimal-only)  (mkt02)
   nightly.py  — run_nightly: one batch, per-series isolation, summary row  (mkt02)
   staleness.py — stale_series(rows, today), first-pass limits  (mkt02)
+
+Read side (mkt03) — read-only, request connection, never platform_scope():
+  read_repository.py — the read queries (series, observations, stats, securities)
+  transforms.py      — as_of, index, sigma, level, yoy, mom (pure, Decimal)
+  resample.py        — frequencies, resample, coarser_frequency (pure)
+  correlation.py     — Pearson over changes, lag, ordering (pure)
+  palette.py         — server-side category/series/security colours (pure)
+  access.py          — THE read gate + permissions envelope
+  read_service.py    — catalog / series / grid / correlations, request parsing
 """

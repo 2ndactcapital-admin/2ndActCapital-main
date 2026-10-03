@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-03 (mkt02.structural — nightly market data refresh:
+Last updated: 2026-10-03 (mkt03.structural — market data READ API: catalog,
+series, grid, correlations; verify WRITTEN, not yet run; see the top entry).
+Earlier the same day: mkt02.structural — nightly market data refresh:
 adapter registry, Yahoo adapter, nightly orchestrator, staleness report,
 Render cron entrypoint + setup doc; verify WRITTEN, not yet run; no Render
 service created; see the top entry). Earlier the same day: edgarcohorts.structural — EDGAR cohorts: named,
@@ -270,6 +272,102 @@ This file starts with the email item below.
 
 ---
 
+## 000000000000000000000000000000000000. Market data mkt03 — read API: catalog, series, grid, correlations; verify WRITTEN, not yet run (2026-10-03)
+
+`mkt03.structural`. This is the READ side the mkt04 chart and grid will sit
+on. It writes no market data, adds no tables, and runs no DDL. Decisions,
+the API contract, the transform definitions and the correlation method are
+in `docs/MARKET_DATA_DESIGN_V1.md` (decisions 14–18, "API contract",
+"Transform definitions", "Correlation method", "Caveats").
+
+**Built:**
+- `routers/market_data.py`, mounted at `/api/v1/market`:
+  - `GET /catalog`
+  - `GET /series`
+  - `POST /grid`
+  - `POST /correlations`
+- `services/market_data/`:
+  - `read_repository.py`: the read queries, with one observation query per
+    call over `series_id = ANY($1)`.
+  - `transforms.py`, `resample.py`, `correlation.py`, `palette.py`: pure
+    functions, no database.
+  - `access.py`: THE gate, plus the envelope.
+  - `read_service.py`: the endpoints' logic and request parsing.
+- `scripts/verify_mkt03.py`: Phase A always runs; Phase B runs with `--live`.
+
+**Task 1 discovery (live, read-only):**
+- Every CONFIRMED REAL FACT matched:
+  - 63 active series (57 fred, 6 yahoo) and 313,156 active observations.
+  - `uq_indicator_series_security` is present, with its 3 links.
+  - 13 index securities, 3 of them linked, plus 54 structured notes.
+  - `securities_global` has 67 rows and `securities_global_prices` has 0.
+- The largest series is fred.dff, with 26,391 active observations. That
+  sets the per-series point cap at 30,000. The per-request total cap is
+  300,000.
+- The pattern mirrored is `routers/model_research.py`: the org from
+  `get_org_id(request)`, and an envelope with `can_write: false`.
+- The verify follows `verify_portfolioux3`/`verify_modelresearch`: one shared
+  TestClient, `main.verify_token` replaced, and `REGISTRY.sync_catalog`
+  no-op'd.
+
+**[FIND] No existing permission means "may read market data".**
+- The candidates were `view_dashboard` and `view_portfolio`. Neither is
+  about platform reference data, so none was invented.
+- The gate is a valid, active session, and `read_permission` is `null`.
+- To add a permission later, set
+  `access.MARKET_DATA_READ_PERMISSION`. That is one line.
+
+**[FIND] fred.sp500 starts on 2016-10-03.** FRED carries only about 10
+years of S&P 500.
+- An anchor of 2000-03-10 therefore FLOATS: v0 is the first observation.
+- Phase B checks "100 at the anchor" at that first observation. It also
+  proves a real, non-floating anchor on fred.nasdaq100, whose history
+  starts in 1986.
+
+**[FIND] Licensing is exposed, not enforced.**
+- 15 active series are `third_party_licensed` (10 FRED, 5 Yahoo) and 5 are
+  `unreviewed`.
+- The API returns `license_class` and `source_provider` on each one
+  (launch blocker 2, met at the API level). It does NOT filter them, and any
+  authenticated session can read them.
+- mkt04 must gate them per tenant before any tenant UI ships (design
+  decisions 4 and 16).
+
+**[FIND] FastAPI's default 422 echoes the caller's input.** It includes
+pydantic's `input` field. So these routes read raw bodies and validate in
+the service. A refusal names the field and the rule, never the value, and
+never the name of an undeclared field such as `org_id`.
+
+**[FIND] The palette's clamp is applied to the ENDS of the lightness range,
+not to each shade.** Clamping each shade separately would put most of the 54
+gold notes on the same colour, which breaks "distinct within a category".
+See design decision 18.
+
+**Interpretations recorded (not in the prompt):**
+- The newest grid row is `end` itself when `end` is not a period end
+  (`is_period_end: false`).
+- Daily grid rows are weekdays.
+- A lag on a daily or weekly correlation pair promotes the pair to monthly.
+- A quarterly pair needs a lag that is a multiple of 3.
+
+**Not run by this sprint (by rule):** the verify, and every live external
+call. What did run:
+- Read-only discovery queries.
+- The pure modules, offline.
+- An offline dry run: the production service functions, with the
+  repository patched to in-memory fixture data, scored by the verify's own
+  assertion functions. 42/42.
+- The verify's static AST check. 1/1.
+
+**OPERATOR ACTIONS:**
+1. `verify_mkt03.py --live`.
+2. Re-run `verify_mkt02.py --live` and `verify_mkt01.py --live` as
+   regression baselines: 47/0 and 57/0.
+
+The commands are at the end of the sprint log.
+
+---
+
 ## 00000000000000000000000000000000000. Market data mkt02 — nightly refresh: adapter registry, Yahoo adapter, orchestrator, staleness, Render cron entrypoint; verify WRITTEN, not yet run; NO Render service created (2026-10-03)
 
 `mkt02.structural`. This makes the mkt01 data stay current. Decisions are in
@@ -384,6 +482,19 @@ sees the platform:
 Yahoo or FRED call. Discovery was read-only. The new write SQL was checked
 with plain `EXPLAIN`, which does not execute. Pure parsing, encoding and
 classification were smoke-tested offline against fake and mock transports.
+
+**UPDATE 2026-10-03 (mkt03.structural):** the operator ran the verifies.
+`verify_mkt02.py --live` = 47 passed, 0 failed; `verify_mkt01.py --live` =
+57 passed, 0 failed. The last two nightly batches each succeeded on all 63
+active series, with 0 revisions. Part 1 of mkt03 linked fred.sp500,
+fred.nasdaq100 and yahoo.rut to their index securities.
+
+The remaining plan:
+- **mkt03** = the read API (catalog, series, grid, correlations). See the
+  entry above.
+- **mkt03b** = key dates and saved views.
+- **mkt04** = the chart and grid UI. It also gates licensed and Yahoo series
+  per tenant.
 
 ---
 
@@ -536,6 +647,14 @@ non-FRED adapters" was **split**:
 - **EIA was dropped.** FRED already covers WTI, Brent and Henry Hub.
 
 See the mkt02 entry above.
+
+**UPDATE 2026-10-03 (mkt03.structural):** mkt01 and mkt02 are verified
+live, with 57/0 and 47/0. The remaining plan:
+- **mkt03** = the read API.
+- **mkt03b** = key dates and saved views.
+- **mkt04** = the chart and grid UI.
+
+See the mkt03 entry at the top.
 
 ---
 
@@ -4256,3 +4375,19 @@ note is not a substitute for re-verifying.
   see docs/market_data/RENDER_CRON_SETUP.md."
 - Under "Database Schema Namespacing" (repeating mkt01's proposal): add
   `market_data` to the schemas that are not on any role's search_path.
+
+## CLAUDE.md lines proposed by mkt03 (for operator review — NOT applied)
+
+- Under "Verify Script Discipline" or "Permission Envelope Pattern": "Never
+  let FastAPI validate a body whose 422 must not echo input. Its default
+  handler returns pydantic's `input`, which is the caller's own data. Parse
+  the raw body and sanitise with
+  `errors(include_input=False, include_url=False, include_context=False)`.
+  For `extra_forbidden`, do not name the undeclared field either."
+- Under "Rule 1 — Never Hardcode Display Data": "Chart colours, like labels,
+  come from the API response. Market data colours are a server-side palette
+  (`services/market_data/palette.py`). See docs/MARKET_DATA_DESIGN_V1.md
+  decision 18."
+- New short note: "Market data values cross the API as strings (exact
+  Decimal text, never exponent notation). The only float is the correlation
+  coefficient, which is never stored."
