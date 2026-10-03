@@ -817,3 +817,65 @@ async def dismiss_orphaned_run_alerts(conn, *, org_id=None) -> int:
                 )
             ).split()[-1]
         )
+
+
+# ── mkt02: market data nightly refresh — failed-batch alert ────────────────
+#
+# An EIGHTH alert kind, same mechanism again (not a new alerting system): the
+# nightly market data refresh (scripts/market_data_nightly.py) raises ONE
+# alert per batch in which any series failed. Market data is platform-global
+# (no org), so — exactly like the platform AI ceiling above — the recipients
+# are HOLLISWORKS_ORG_ID's manage_org_settings holders, and the todo is keyed
+# on the batch id so a re-raise for the same batch refreshes rather than
+# duplicates. That org has had ZERO such holders, in which case the
+# zero-recipient path writes the findable audit_log row instead. The
+# nightly's run log and non-zero exit code remain the primary signal either
+# way; this is the in-app copy.
+
+TODO_SOURCE_MARKET_DATA_BATCH_FAILED = "market_data_batch_failed"
+MARKET_DATA_ALERT_UNDELIVERED_ACTION = "market_data_batch_failed_alert_undelivered"
+MARKET_DATA_BATCH_RELATED_TYPE = "market_data_ingest_batch"
+
+
+def market_data_failure_detail(batch_id, failures: list[tuple[str, str]]) -> str:
+    """The alert body: batch id, every failed series_key, each one's error.
+
+    ``failures`` must already be scrubbed (the orchestrator scrubs every
+    error before it leaves services.market_data.nightly).
+    """
+    lines = [f"Nightly market data batch {batch_id}: {len(failures)} series failed."]
+    lines += [f"- {key}: {error}" for key, error in failures]
+    return "\n".join(lines)[:2000]
+
+
+async def create_market_data_batch_failure_alert(
+    conn, *, batch_id, failures: list[tuple[str, str]]
+) -> list:
+    """Alert every manage_org_settings holder of HOLLISWORKS_ORG_ID that a
+    nightly market data batch had failed series. Call inside
+    platform_scope(conn); the recipient lookup uses the RLS pool, so the
+    caller must also have set a super-admin RLS context."""
+    detail = market_data_failure_detail(batch_id, failures)
+    recipients = await _org_admin_recipients(HOLLISWORKS_ORG_ID)
+    if not recipients:
+        await _record_undelivered_alert(
+            conn, org_id=HOLLISWORKS_ORG_ID, source=TODO_SOURCE_MARKET_DATA_BATCH_FAILED,
+            related_type=MARKET_DATA_BATCH_RELATED_TYPE, related_id=batch_id,
+            reason=("market data nightly batch had failed series with no resolvable "
+                    "recipient: the Hollisworks org has no manage_org_settings holder. "
+                    + detail)[:2000],
+            action=MARKET_DATA_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+    ids = []
+    for uid in recipients:
+        ids.append(
+            await _upsert_todo(
+                conn, org_id=HOLLISWORKS_ORG_ID, user_id=uid,
+                source=TODO_SOURCE_MARKET_DATA_BATCH_FAILED,
+                related_type=MARKET_DATA_BATCH_RELATED_TYPE, related_id=batch_id,
+                title=f"Market data refresh: {len(failures)} series failed",
+                detail=detail, priority=8,
+            )
+        )
+    return ids

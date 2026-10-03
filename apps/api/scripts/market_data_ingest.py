@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Market data (mkt01) — load the indicator registry, validate FRED codes,
-backfill full FRED history.
+"""Market data (mkt01, generalized in mkt02) — load the indicator registry,
+validate source codes, backfill full history.
 
 Usage (from the repo root):
     doppler run -- apps/api/venv/bin/python apps/api/scripts/market_data_ingest.py all
-    ... market_data_ingest.py load|validate|backfill|all [--series fred.dgs10]
+    ... market_data_ingest.py load|validate|backfill|all [--series fred.dgs10] [--provider yahoo]
 
   load      upsert docs/market_data/market_indicator_registry_v1.json into
             market_data.indicator_series (definition fields only)
-  validate  check every FRED code against FRED; pending → active | invalid_code
-  backfill  full observation history for every 'active' series
+  validate  check every code of --provider against its source;
+            → active | invalid_code (transient failures change nothing)
+  backfill  full observation history for every 'active' series of --provider
   all       load, validate, backfill — in that order
+
+--provider defaults to 'fred', so every mkt01 command behaves exactly as
+before. `validate --provider yahoo` also picks up the six Yahoo rows seeded
+'deferred'; that is how they become active (the nightly only refreshes
+'active' series). Every fetch dispatches through the adapter registry
+(services/market_data/adapters.py).
 
 Hydrates secrets from Doppler over HTTPS itself (scripts/_doppler_env.py), so
 it also works without ``doppler run --``. Never prints a URL, a params dict or
@@ -32,8 +39,7 @@ sys.path.insert(0, str(HERE.parent))      # scripts/, for _doppler_env
 
 from _doppler_env import hydrate_from_doppler  # noqa: E402
 from services.database import platform_scope  # noqa: E402
-from services.market_data import ingest, registry  # noqa: E402
-from services.market_data.fred import FredClient  # noqa: E402
+from services.market_data import adapters, ingest, registry  # noqa: E402
 
 
 def _dsn() -> str | None:
@@ -54,9 +60,11 @@ async def run_load(conn, series_key: str | None) -> None:
           f"updated {result.updated}, unchanged {result.unchanged}")
 
 
-async def run_validate(conn, client: FredClient, keys: list[str] | None) -> list:
-    outcomes = await ingest.validate(conn, client, keys)
-    print(f"\nvalidate: {len(outcomes)} FRED series")
+async def run_validate(conn, client, keys: list[str] | None,
+                       provider: str = ingest.DEFAULT_PROVIDER) -> list:
+    """``client`` is a provider adapter (or mkt01's FredClient)."""
+    outcomes = await ingest.validate(conn, client, keys, provider=provider)
+    print(f"\nvalidate: {len(outcomes)} {provider} series")
     print(f"  {'series_key':<28} {'code':<18} {'status':<13} detail")
     for o in outcomes:
         detail = o.units if o.outcome == "active" else (o.error or "")
@@ -71,9 +79,10 @@ async def run_validate(conn, client: FredClient, keys: list[str] | None) -> list
     return outcomes
 
 
-async def run_backfill(conn, client: FredClient, keys: list[str] | None) -> list:
-    outcomes = await ingest.backfill(conn, client, keys)
-    print(f"\nbackfill: {len(outcomes)} active series")
+async def run_backfill(conn, client, keys: list[str] | None,
+                       provider: str = ingest.DEFAULT_PROVIDER) -> list:
+    outcomes = await ingest.backfill(conn, client, keys, provider=provider)
+    print(f"\nbackfill: {len(outcomes)} active {provider} series")
     print(f"  {'series_key':<28} {'rows':>7} {'first':<10} {'last':<10} {'status':<8} "
           f"{'ins':>7} {'rev':>5} {'skip':>5} {'rej':>4}")
     for o in outcomes:
@@ -93,11 +102,18 @@ async def run_backfill(conn, client: FredClient, keys: list[str] | None) -> list
     return outcomes
 
 
-async def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("command", choices=["load", "validate", "backfill", "all"])
     parser.add_argument("--series", help="limit to one series_key")
-    args = parser.parse_args()
+    parser.add_argument("--provider", default=ingest.DEFAULT_PROVIDER,
+                        choices=list(adapters.REAL_PROVIDERS),
+                        help="source_provider to validate/backfill (default: fred)")
+    return parser
+
+
+async def main() -> int:
+    args = build_parser().parse_args()
 
     loaded, doppler_err = hydrate_from_doppler()
     if loaded:
@@ -105,18 +121,22 @@ async def main() -> int:
     elif doppler_err:
         print(f"[INFO] Doppler hydration skipped: {doppler_err} — using the ambient environment")
 
-    needs_fred = args.command in ("validate", "backfill", "all")
-    api_key = os.environ.get("FRED_API_KEY", "").strip()
-    if needs_fred and not api_key:
-        print("FRED_API_KEY is not set in the environment (add it to Doppler) — nothing was run.")
-        return 1
+    needs_source = args.command in ("validate", "backfill", "all")
+    client = None
+    if needs_source:
+        try:
+            client = adapters.build_adapter(args.provider, os.environ)
+        except adapters.MissingConfiguration as exc:
+            print(f"{exc} is not set in the environment (add it to Doppler) — nothing was run.")
+            return 1
     dsn = _dsn()
     if not dsn:
         print("DATABASE_URL is not set — nothing was run.")
+        if client is not None:
+            await client.aclose()
         return 1
 
     conn = await asyncpg.connect(dsn, statement_cache_size=0, ssl="require")
-    client = FredClient(api_key) if needs_fred else None
     try:
         who = await conn.fetchrow(
             "SELECT current_user AS u, "
@@ -126,9 +146,9 @@ async def main() -> int:
         if args.command in ("load", "all"):
             await run_load(conn, args.series)
         if args.command in ("validate", "all"):
-            await run_validate(conn, client, keys)
+            await run_validate(conn, client, keys, args.provider)
         if args.command in ("backfill", "all"):
-            await run_backfill(conn, client, keys)
+            await run_backfill(conn, client, keys, args.provider)
     finally:
         if client is not None:
             await client.aclose()

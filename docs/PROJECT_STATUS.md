@@ -1,5 +1,8 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-03 (edgarcohorts.structural — EDGAR cohorts: named,
+Last updated: 2026-10-03 (mkt02.structural — nightly market data refresh:
+adapter registry, Yahoo adapter, nightly orchestrator, staleness report,
+Render cron entrypoint + setup doc; verify WRITTEN, not yet run; no Render
+service created; see the top entry). Earlier the same day: edgarcohorts.structural — EDGAR cohorts: named,
 frozen sets of filings; cohort-targeted fetch; --cohort for B1's tools; the
 template-study preset and inventory pass; verify WRITTEN, not yet run; see the
 top entry). Earlier the same day: mkt01.structural — market data foundation: indicator
@@ -267,6 +270,123 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000. Market data mkt02 — nightly refresh: adapter registry, Yahoo adapter, orchestrator, staleness, Render cron entrypoint; verify WRITTEN, not yet run; NO Render service created (2026-10-03)
+
+`mkt02.structural`. This makes the mkt01 data stay current. Decisions are in
+`docs/MARKET_DATA_DESIGN_V1.md` §8–13 and "Launch blockers". Operator setup
+is in `docs/market_data/RENDER_CRON_SETUP.md`.
+
+**Discovery (Task 1): the live state matched the sprint's confirmed facts
+exactly. No `[FIND]`, no stop.** Checked:
+- `batch_id uuid` and `idx_indicator_runs_batch` exist.
+- Registry: 57 fred/active; 12 deferred (yahoo 6, shiller, worldbank, imf,
+  bis, oecd, none); 6 none/deferred_paid.
+- 265,737 active observations, which is also the total: there is no history
+  row yet.
+- 114 runs rows, all with `batch_id` NULL.
+- Policies, grants and CHECKs are unchanged. `run_trigger` already allows
+  `nightly` and `manual`. `app_service` has `rolbypassrls = false`.
+- Untouched tables: `securities_global` 67, `securities_global_prices` 0,
+  `fx_rates` 5.
+- The six Yahoo rows: `source_code` is the ticker, `deferred`, `daily`,
+  `default_transform = rebase_100`. `license_class` is `third_party_licensed`
+  for five of them and `unreviewed` for GC=F.
+
+**Built:**
+- `services/market_data/adapters.py`: the registry (`fred`, `yahoo`),
+  `FredAdapter`, and `scrub_error`.
+- `yahoo.py`: Decimal-only parsing, 4dp ROUND_HALF_EVEN, raw close,
+  exchange-local dates, today's bar dropped. Only the explicit "Not Found"
+  error sets `invalid_code`.
+- `nightly.py`: `run_nightly(conn, registry, series_selection=None,
+  trigger='nightly')`.
+- `staleness.py`.
+- `scripts/market_data_nightly.py`: the cron entrypoint. Exits 0, 1, or 2
+  (missing variable).
+- `market_data_ingest.py validate|backfill --provider <name>`, default
+  `fred`.
+- `scripts/verify_mkt02.py`.
+- One new alert kind in `services/workflow_todos.py`. No DDL. `render.yaml`
+  untouched.
+
+**Decisions made in the build, worth knowing:**
+- **mkt01's `backfill` selected every active series regardless of
+  provider.** That was harmless with only FRED active. The moment Yahoo goes
+  active, the default (FRED) backfill would have sent `^RUT` to FRED. It now
+  filters on `--provider`.
+- **The write path is mkt01's, made race-safe in place.**
+  `write_observations` = read → plan → apply.
+  - The close is an id-ordered `FOR UPDATE` plus an `UPDATE … RETURNING id`
+    that repeats the active predicate. A row it did not close was closed by a
+    concurrent run, so that point is NOT inserted and counts as unchanged.
+  - The insert is `ON CONFLICT … DO NOTHING` on `uq_indicator_obs_point`
+    (confirmed as the arbiter with EXPLAIN).
+  - Zero rows can only mean "lost the race" because the function first
+    refuses to run unless `app.is_super_admin = 'true'` in the transaction.
+    Without that check, zero rows could equally be RLS silently refusing the
+    UPDATE (CLAUDE.md "row not found").
+  - mkt01 used to raise on a short close; it now counts it unchanged.
+- **The batch summary row has no columns for series counts.** No DDL was
+  allowed, so they go in its `error` text:
+  `batch summary: attempted=… succeeded=… partial=… failed=…
+  skipped_no_adapter=…[; failed: keys]`. The `rows_*` columns carry the
+  batch's row totals.
+- **Yahoo "maximum range" is `period1=0…now`, not `range=max`.** `range=max`
+  can silently coarsen the granularity, and the parser refuses anything but
+  `1d`.
+- **Yahoo 401 and 403 are transient,** as the sprint says. A bare 404
+  without Yahoo's "Not Found" error body is also not treated as not-found.
+- **Run timestamps come from the database clock.** `started_at` is
+  `clock_timestamp()` at the start of each series, and `finished_at` is
+  `clock_timestamp()` at the write. mkt01's rows had `started_at =
+  finished_at` (both were the transaction's `now()`), and a laptop clock
+  would skew against the server.
+- **Errors are scrubbed by the orchestrator itself,** not just by the
+  adapter. `scrub_error` removes any set `FRED_API_KEY` / `DATABASE_URL` /
+  `DB_PASSWORD` value, every URL's userinfo and query string, and FRED's
+  `api_key=` fragment. The verify proves this with a fake adapter whose
+  scrub is the identity.
+- **Alerting (Task 1g):** an existing mechanism fits. It is
+  `services/workflow_todos.py`, the same platform-level path as the AI
+  platform-ceiling alerts: `member_todos` for the Hollisworks org's
+  `manage_org_settings` holders, with an `audit_log` row when there are none.
+  - One alert is raised per batch with failures.
+  - That org has had zero holders, so expect `audit_log` rows
+    (`market_data_batch_failed_alert_undelivered`) until someone holds the
+    permission.
+  - Exit code 1 is the primary signal.
+- The staleness report flags a NULL `last_observation_date` on an active
+  series even for `per_meeting` frequency. "Always flagged" was taken
+  literally.
+
+**OPERATOR ACTIONS, in order:**
+1. `market_data_ingest.py validate --provider yahoo`, then
+   `backfill --provider yahoo`. This makes the six Yahoo series active.
+2. `market_data_nightly.py` twice, locally.
+3. `verify_mkt02.py --live`, then re-run `verify_mkt01.py --live`. Its
+   Phase B B4 now also covers the active Yahoo series: units and a backfill
+   success row. The commands are at the end of the sprint log.
+4. Create the Render Cron Job from `docs/market_data/RENDER_CRON_SETUP.md`.
+   It needs its own Doppler sync, and no variable set by hand. Then trigger
+   one manual run.
+   - Yahoo may be blocked from Render's IPs. That fails only those series,
+     but makes every night exit 1 until they are paused.
+5. Optional: declare the new cron service in `render.yaml` (that manifest's
+   own invariant). This sprint was told not to edit it.
+
+**Launch blocker (recorded, not resolved):** the six Yahoo series run under
+the owner's personal/internal-use assumption. Before any external customer
+sees the platform:
+- they must be replaced with a licensed source, or removed;
+- mkt03's API must expose `source_provider` so they can be gated per tenant.
+
+**Not run by this sprint (by rule):** the nightly, the verify, and any
+Yahoo or FRED call. Discovery was read-only. The new write SQL was checked
+with plain `EXPLAIN`, which does not execute. Pure parsing, encoding and
+classification were smoke-tested offline against fake and mock transports.
+
+---
+
 ## 0000000000000000000000000000000000. EDGAR cohorts + template study — frozen cohorts, cohort-targeted fetch, --cohort for B1, inventory pass; verify WRITTEN, not yet run (2026-10-03)
 
 `edgarcohorts.structural`. Choosing what to run moved to the Filings tab; the
@@ -405,6 +525,17 @@ rolled-back transaction. Nothing called FRED.
 **Next:** mkt02 (nightly Render cron + non-FRED adapters), mkt03 (API, chart,
 grid, sec-master links for the six benchmark series; the licensing question
 for `third_party_licensed` series must be answered first).
+
+**UPDATE 2026-10-03 (mkt02.structural):** the operator ran the verify:
+`verify_mkt01.py --live` = 57 passed, 0 failed. All 57 FRED codes are valid;
+265,737 active observations. The planned scope "mkt02 = nightly cron +
+non-FRED adapters" was **split**:
+- **mkt02** = the nightly refresh plus the **Yahoo** adapter (6 series).
+- The other non-FRED adapters (**Shiller, World Bank, IMF, BIS, OECD**) moved
+  to **mkt02b**, after the cron is proven live.
+- **EIA was dropped.** FRED already covers WTI, Brent and Henry Hub.
+
+See the mkt02 entry above.
 
 ---
 
@@ -4112,3 +4243,16 @@ note is not a substitute for re-verifying.
 - Under "Verify Script Discipline": "Any API that takes its key in the query
   string (FRED) needs a sentinel-key no-leak proof. httpx exception text embeds
   the full URL, so catch and keep the type name only."
+
+## CLAUDE.md lines proposed by mkt02 (for operator review — NOT applied)
+
+- Under "Verify Script Discipline" or "RLS": "When a write treats zero
+  affected rows as a benign race (lost to a concurrent writer), first assert
+  in the same transaction that the RLS context the policy needs is set.
+  Otherwise the 'race' branch silently swallows an RLS refusal."
+- New short note: "A new Render cron service needs its own Doppler → Render
+  sync, and a block in render.yaml (manifest invariant). The market data
+  nightly (`scripts/market_data_nightly.py`, 11:15 UTC) is one such service;
+  see docs/market_data/RENDER_CRON_SETUP.md."
+- Under "Database Schema Namespacing" (repeating mkt01's proposal): add
+  `market_data` to the schemas that are not on any role's search_path.
