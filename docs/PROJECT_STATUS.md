@@ -1,7 +1,9 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-02 (noteextractb1.structural — note extraction B1: engine,
-gold set, evaluation harness, pilot runner; results STAGED; see the top entry).
-Earlier the same day: edgarpipelinea.structural — EDGAR pipeline A: status
+Last updated: 2026-10-03 (mkt01.structural — market data foundation: indicator
+registry, FRED adapter, historical backfill; ingest + verify WRITTEN, not yet
+run; see the top entry). Previously 2026-10-02 (noteextractb1.structural — note
+extraction B1: engine, gold set, evaluation harness, pilot runner; results
+STAGED). Earlier the same day: edgarpipelinea.structural — EDGAR pipeline A: status
 lifecycle, selection policies, incremental discovery, fetch-to-R2, the nightly
 Render job and the monitoring screen; see the top entry). Earlier, 2026-10-01:
 modelresearch.structural (read-only Model Research grid). Earlier the same day: ensemblesystemone.structural
@@ -259,6 +261,71 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000000000000. Market data mkt01 — indicator registry, FRED adapter, historical backfill; ingest + verify WRITTEN, not yet run (2026-10-03)
+
+`mkt01.structural`. Platform-global reference data in schema `market_data`
+(no org_id; deliberately separate from `portfolio.securities_global_prices`).
+Decisions: `docs/MARKET_DATA_DESIGN_V1.md`.
+
+**Schema:** Part 1 DDL (`mkt01_market_data_schema`) was already live. Task 1
+re-checked it against the live database (columns, CHECK bodies via
+`pg_get_constraintdef`, `pg_policy`, grants, indexes, RLS flags): **it matches
+the sprint's confirmed facts exactly; no drift.** All three tables were empty
+at discovery; `securities_global` = 67, `securities_global_prices` = 0,
+`fx_rates` = 5.
+
+**Code:** `apps/api/services/market_data/` (`registry.py`, `fred.py`,
+`ingest.py`) and the operator script `apps/api/scripts/market_data_ingest.py`
+(`load | validate | backfill | all [--series KEY]`). All writes run in
+`platform_scope()`; Decimal end to end. httpx is the HTTP client (already
+declared; no new dependency).
+
+**OPERATOR ACTION 1 — `FRED_API_KEY` is ABSENT** from the Doppler config this
+environment's token reads (checked names only, 2026-10-03). Add it to
+`hollisworks` `prd` (and `dev` if used), then run
+`doppler run -- apps/api/venv/bin/python apps/api/scripts/market_data_ingest.py all`.
+The script exits with one line if the key is missing.
+
+**OPERATOR ACTION 2 — run the verify after the ingest:**
+`doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_mkt01.py --live`.
+Phase A (fixtures `verify.mkt01.*` + a fake FRED, no network) always runs;
+Phase B (`--live`) checks the real data and spot-checks DGS10 / UNRATE /
+CPIAUCSL against FRED. Any `invalid_code` series prints as `[FIND]` with its
+error: those are the seed's from-memory FRED codes that FRED rejected, and
+each needs a corrected `source_code` in the seed file.
+
+**Decisions made in the build, worth knowing:**
+- **The loader keeps a validated FRED row's frequency.** The sprint lists
+  `frequency` among the loader-owned definition fields, but it also makes FRED
+  authoritative. Taken literally, `load` writes the seed value back and
+  `validate` corrects it again on every `all` run, with a fresh `[FIND]` and an
+  "updated" count each time. So once `last_validated_at` is set on a FRED row,
+  the loader leaves frequency alone. Fix the seed file to clear the `[FIND]`.
+  Proven by verify A5.5.
+- **A 400 counts as "series does not exist" ONLY when FRED's message says
+  so (or the response is a 404).** FRED returns 400 for a bad API key too.
+  Without this rule, a key typo would mark all 57 series `invalid_code`.
+  Proven by verify A5.9.
+- **A point that disappears from FRED is left in place.** The sprint defines
+  no semantics for deleting observations, and silently deleting history is
+  the worse failure.
+- `backfill` clears `last_error` even on a `partial` run, as the spec says.
+  The rejected values are recorded in that run's `indicator_ingest_runs.error`.
+- Phase B's B4 requires a *backfill* `success` run for every active series. A
+  series whose only backfill was `partial` (FRED sent a non-numeric value)
+  FAILS B4 on purpose, so a human sees it.
+
+**Not run by this sprint (by rule):** the ingest and the verify. Read-only
+discovery queries ran against the live database as `app_service`; every write
+statement was PREPAREd (parsed and type-checked, never executed) inside a
+rolled-back transaction. Nothing called FRED.
+
+**Next:** mkt02 (nightly Render cron + non-FRED adapters), mkt03 (API, chart,
+grid, sec-master links for the six benchmark series; the licensing question
+for `third_party_licensed` series must be answered first).
 
 ---
 
@@ -3953,3 +4020,16 @@ The real fix is its own piece of work: either create the missing
 view to key on something that exists. Until then, do not build anything else
 against v_capital_accounts expecting real data — check for yourself first, this
 note is not a substitute for re-verifying.
+
+## CLAUDE.md lines proposed by mkt01 (for operator review — NOT applied)
+
+- Under "Database Schema Namespacing": add `market_data` to the list of real
+  schemas that are not on any role's search_path (alongside `portfolio` and
+  `litellm`). Always write `market_data.indicator_series`.
+- New short section: "Market/macro indicators live in `market_data`, never in
+  `portfolio.securities_global_prices` or the security master. Only investable
+  benchmarks link via `indicator_series.security_global_id`. See
+  docs/MARKET_DATA_DESIGN_V1.md."
+- Under "Verify Script Discipline": "Any API that takes its key in the query
+  string (FRED) needs a sentinel-key no-leak proof. httpx exception text embeds
+  the full URL, so catch and keep the type name only."
