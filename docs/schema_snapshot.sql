@@ -2463,6 +2463,27 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY distribution_participants_pkey: (id)
 
+-- ===== portfolio.edgar_cohort_members =====
+--   cohort_id                                uuid NOT NULL
+--   accession_number                         text NOT NULL
+--   position                                 integer NOT NULL
+--   stratum                                  text
+--   UNIQUE edgar_cohort_members_cohort_id_position_key: (cohort_id, position)
+--   PRIMARY KEY edgar_cohort_members_pkey: (cohort_id, accession_number)
+
+-- ===== portfolio.edgar_cohorts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   name                                     text NOT NULL
+--   purpose                                  text
+--   kind                                     text NOT NULL DEFAULT 'custom'::text
+--   definition                               jsonb NOT NULL
+--   member_count                             integer NOT NULL
+--   copied_from                              uuid
+--   sealed_at                                timestamp with time zone
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY edgar_cohorts_pkey: (id)
+
 -- ===== portfolio.edgar_index_filing_filers =====
 --   accession_number                         text NOT NULL
 --   cik                                      text NOT NULL
@@ -2488,7 +2509,102 @@
 --   detected_cusip                           text
 --   fetched_at                               timestamp with time zone
 --   primary_issuer_cik                       text
+--   selected_by_cohort_id                    uuid
 --   PRIMARY KEY edgar_index_filings_pkey: (accession_number)
+
+-- ===== portfolio.edgar_inventory_concepts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_id                                   uuid NOT NULL
+--   concept_key                              text NOT NULL
+--   display_label                            text NOT NULL
+--   labels                                   ARRAY NOT NULL
+--   issuers                                  ARRAY NOT NULL
+--   frequency                                integer NOT NULL
+--   document_count                           integer NOT NULL
+--   example_values                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   mapped_field_key                         text
+--   proposed_field_key                       text
+--   misleading_flags                         jsonb NOT NULL DEFAULT '[]'::jsonb
+--   grouping_method                          text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY edgar_inventory_concepts_pkey: (id)
+--   UNIQUE edgar_inventory_concepts_run_id_concept_key_key: (run_id, concept_key)
+
+-- ===== portfolio.edgar_inventory_documents =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_id                                   uuid NOT NULL
+--   accession_number                         text NOT NULL
+--   reference_filing_id                      uuid NOT NULL
+--   document_kind                            text
+--   issuer_group                             text
+--   selection_reason                         text
+--   status                                   text NOT NULL
+--   error                                    text
+--   terms_chars                              integer NOT NULL
+--   terms_tokens_est                         integer NOT NULL
+--   terms_sections                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   product_family                           text
+--   program_supplement                       text
+--   has_payout_table                         boolean
+--   issue_size                               text
+--   items_accepted                           integer NOT NULL DEFAULT 0
+--   items_rejected                           integer NOT NULL DEFAULT 0
+--   rejected_items                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   deployment_name                          text
+--   provider_model                           text
+--   proxy_model_id                           text
+--   call_id                                  text
+--   input_tokens                             integer
+--   output_tokens                            integer
+--   cost_usd                                 numeric
+--   latency_ms                               integer
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY edgar_inventory_documents_pkey: (id)
+--   UNIQUE edgar_inventory_documents_run_id_reference_filing_id_key: (run_id, reference_filing_id)
+
+-- ===== portfolio.edgar_inventory_items =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_id                                   uuid NOT NULL
+--   document_id                              uuid NOT NULL
+--   accession_number                         text NOT NULL
+--   issuer_group                             text
+--   label                                    text NOT NULL
+--   label_normalized                         text NOT NULL
+--   value_text                               text
+--   quote                                    text NOT NULL
+--   quote_char_start                         integer
+--   quote_char_end                           integer
+--   section                                  text
+--   mapped_field_key                         text
+--   proposed_field_key                       text
+--   misleading_label                         boolean NOT NULL DEFAULT false
+--   misleading_note                          text
+--   concept_id                               uuid
+--   deployment_name                          text NOT NULL
+--   provider_model                           text
+--   call_id                                  text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY edgar_inventory_items_pkey: (id)
+
+-- ===== portfolio.edgar_inventory_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   cohort_id                                uuid NOT NULL
+--   status                                   text NOT NULL DEFAULT 'running'::text
+--   deployment_name                          text
+--   prompt_version                           text NOT NULL
+--   spend_cap_usd                            numeric NOT NULL
+--   spent_usd                                numeric NOT NULL DEFAULT 0
+--   documents_planned                        integer NOT NULL DEFAULT 0
+--   documents_done                           integer NOT NULL DEFAULT 0
+--   items_accepted                           integer NOT NULL DEFAULT 0
+--   items_rejected                           integer NOT NULL DEFAULT 0
+--   grouping_method                          text
+--   stop_reason                              text
+--   report                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_by                               uuid
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   finished_at                              timestamp with time zone
+--   PRIMARY KEY edgar_inventory_runs_pkey: (id)
 
 -- ===== portfolio.edgar_pipeline_lease =====
 --   lease_name                               text NOT NULL
@@ -2527,6 +2643,8 @@
 --   stop_reason                              text
 --   error                                    text
 --   details                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   cohort_id                                uuid
+--   run_kind                                 text NOT NULL DEFAULT 'fetch'::text
 --   PRIMARY KEY edgar_pipeline_runs_pkey: (id)
 
 -- ===== portfolio.edgar_selection_policies =====
