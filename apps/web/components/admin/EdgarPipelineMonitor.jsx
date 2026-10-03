@@ -3,14 +3,21 @@
 /**
  * EdgarPipelineMonitor — the EDGAR pipeline monitoring screen (edgarpipelinea).
  *
- * Three tabs over global SEC reference data, Super Admin only (FastAPI
+ * Four tabs over global SEC reference data, Super Admin only (FastAPI
  * enforces it; the page shows a "not permitted" panel on its 403):
  *
  *   Filings  — the ~717K-row manifest through the shared DataGrid in its
  *              serverSide mode: filter, sort and paging all happen in FastAPI;
- *              only the current page is ever in the browser.
+ *              only the current page is ever in the browser. Rows can be
+ *              TICKED (ticks are kept by accession number, so they survive
+ *              paging, sorting and filtering) and a COHORT built from the
+ *              ticks or from everything matching the filters (edgarcohorts).
  *   Progress — counts by status per quarter, the recent pipeline runs, and
- *              "Run now" (launches the same Render job the nightly workflow does).
+ *              "Run default policy now (newest first)" — the nightly
+ *              behaviour. Everything targeted runs from the Cohorts tab.
+ *   Cohorts  — saved, frozen cohorts: definition, members by status, runs,
+ *              "Fetch this cohort", copy-and-edit, the template-study preset
+ *              and its inventory results.
  *   Issuers  — the issuer table with inline edits, the unlisted 424B2 filers
  *              beside it, and an add form a filer can be promoted into.
  *
@@ -24,6 +31,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 
+import { CohortBuilder, CohortsTab } from "@/components/admin/EdgarCohorts";
 import DataGrid from "@/components/ui/DataGrid";
 import {
   addIssuerAction,
@@ -48,6 +56,7 @@ const ERROR_INK = "#9B2335";
 const TABS = [
   { key: "filings", label: "Filings" },
   { key: "progress", label: "Progress" },
+  { key: "cohorts", label: "Cohorts" },
   { key: "issuers", label: "Issuers" },
 ];
 
@@ -110,8 +119,11 @@ function Select({ label, value, onChange, options, anyLabel = "Any" }) {
 
 // ─── Filings tab ─────────────────────────────────────────────────────────────
 
-function FilingsTab({ initial }) {
+function FilingsTab({ initial, onCohortSaved }) {
   const [payload, setPayload] = useState(initial);
+  // Ticks are keyed by accession number and live outside the page, so they
+  // survive paging, sorting and filter changes.
+  const [ticked, setTicked] = useState(() => new Set());
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [sorting, setSorting] = useState([{ id: "filing_date", desc: true }]);
   const [pageIndex, setPageIndex] = useState(0);
@@ -154,8 +166,37 @@ function FilingsTab({ initial }) {
     load(next, sorting, 0);
   }
 
+  function toggle(acc) {
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(acc)) next.delete(acc);
+      else next.add(acc);
+      return next;
+    });
+  }
+
+  // A stable array: the builder clears its preview whenever this changes.
+  const tickedList = useMemo(() => [...ticked], [ticked]);
+
+  function tickPage() {
+    setTicked((prev) => new Set([...prev, ...(payload?.rows ?? []).map((r) => r.accession_number)]));
+  }
+
   const columnDefs = useMemo(
     () => [
+      {
+        field: "_tick",
+        headerName: "Pick",
+        enableSorting: false,
+        cell: (_v, row) => (
+          <input
+            type="checkbox"
+            aria-label={`Pick ${row.accession_number}`}
+            checked={ticked.has(row.accession_number)}
+            onChange={() => toggle(row.accession_number)}
+          />
+        ),
+      },
       { field: "filing_date", headerName: "Filed", cell: (v) => fmtDate(v), enableSorting: sortable.has("filing_date") },
       {
         field: "accession_number",
@@ -192,7 +233,7 @@ function FilingsTab({ initial }) {
       { field: "index_quarter", headerName: "Quarter", enableSorting: sortable.has("index_quarter") },
       { field: "attempt_count", headerName: "Attempts", align: "right", enableSorting: false },
     ],
-    [sortable, statuses, kinds],
+    [sortable, statuses, kinds, ticked],
   );
 
   const groupOptions = [
@@ -218,6 +259,15 @@ function FilingsTab({ initial }) {
         </label>
       </div>
       <ErrorLine text={error} />
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--2a-text-secondary)]">
+        <span>{ticked.size.toLocaleString()} ticked</span>
+        <button type="button" className={GHOST} onClick={tickPage} disabled={!(payload?.rows ?? []).length}>
+          Tick this page
+        </button>
+        <button type="button" className={GHOST} onClick={() => setTicked(new Set())} disabled={!ticked.size}>
+          Clear ticks
+        </button>
+      </div>
       <div className="mt-4">
         <DataGrid
           gridId="edgar-filings"
@@ -243,6 +293,12 @@ function FilingsTab({ initial }) {
           }}
         />
       </div>
+      <CohortBuilder
+        filters={filters}
+        total={payload?.total ?? 0}
+        ticked={tickedList}
+        onSaved={onCohortSaved}
+      />
     </div>
   );
 }
@@ -328,11 +384,9 @@ function ProgressTab() {
             />
           </label>
           <button type="button" className={BUTTON} disabled={pending || cap === ""} onClick={launch}>
-            Run now
+            {runNow.label}
           </button>
-          <p className="text-xs text-[var(--2a-text-muted)]">
-            Launches the same job the nightly workflow runs, as a Render one-off job.
-          </p>
+          <p className="text-xs text-[var(--2a-text-muted)]">{runNow.description}</p>
           {runMessage && (
             <p className="w-full text-xs" style={runMessage.error ? { color: ERROR_INK } : undefined}>
               {runMessage.text}
@@ -645,6 +699,7 @@ function IssuersTab() {
 
 export default function EdgarPipelineMonitor({ initialFilings }) {
   const [tab, setTab] = useState("filings");
+  const [focusCohort, setFocusCohort] = useState(null);
   return (
     <div className="mt-6">
       <div className="flex gap-6 border-b border-[var(--2a-border)]">
@@ -663,8 +718,17 @@ export default function EdgarPipelineMonitor({ initialFilings }) {
           </button>
         ))}
       </div>
-      {tab === "filings" && <FilingsTab initial={initialFilings} />}
+      {tab === "filings" && (
+        <FilingsTab
+          initial={initialFilings}
+          onCohortSaved={(c) => {
+            setFocusCohort(c?.id ?? null);
+            setTab("cohorts");
+          }}
+        />
+      )}
       {tab === "progress" && <ProgressTab />}
+      {tab === "cohorts" && <CohortsTab focusId={focusCohort} />}
       {tab === "issuers" && <IssuersTab />}
     </div>
   );

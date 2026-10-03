@@ -743,6 +743,26 @@ export const addEdgarIssuer = (body) =>
   fetchAPI("/api/v1/admin/edgar/issuers", { method: "POST", body });
 export const runEdgarPipelineNow = (body) =>
   fetchAPI("/api/v1/admin/edgar/runs", { method: "POST", body });
+// edgarcohorts — named, frozen cohorts of filings; cohort runs; the template study.
+export const getEdgarCohorts = () => fetchAPI("/api/v1/admin/edgar/cohorts");
+export const previewEdgarCohort = (body) =>
+  fetchAPI("/api/v1/admin/edgar/cohorts/preview", { method: "POST", body });
+export const createEdgarCohort = (body) =>
+  fetchAPI("/api/v1/admin/edgar/cohorts", { method: "POST", body });
+export const previewEdgarTemplateStudy = (body) =>
+  fetchAPI("/api/v1/admin/edgar/cohorts/presets/template-study/preview", { method: "POST", body });
+export const createEdgarTemplateStudy = (body) =>
+  fetchAPI("/api/v1/admin/edgar/cohorts/presets/template-study", { method: "POST", body });
+export const getEdgarCohort = (id) =>
+  fetchAPI(`/api/v1/admin/edgar/cohorts/${encodeURIComponent(id)}`);
+export const getEdgarCohortMembers = (id, params) =>
+  fetchAPI(`/api/v1/admin/edgar/cohorts/${encodeURIComponent(id)}/members`, { searchParams: params });
+export const copyEdgarCohort = (id, body) =>
+  fetchAPI(`/api/v1/admin/edgar/cohorts/${encodeURIComponent(id)}/copy`, { method: "POST", body });
+export const runEdgarCohort = (id, body) =>
+  fetchAPI(`/api/v1/admin/edgar/cohorts/${encodeURIComponent(id)}/runs`, { method: "POST", body });
+export const getEdgarInventoryRun = (id) =>
+  fetchAPI(`/api/v1/admin/edgar/inventory/${encodeURIComponent(id)}`);
 
 // noteextractb1 — gold-set review, evaluation results, distribution participants (Super Admin).
 export const getGoldCandidates = (params) =>

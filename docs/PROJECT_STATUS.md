@@ -1,7 +1,10 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-03 (mkt01.structural — market data foundation: indicator
+Last updated: 2026-10-03 (edgarcohorts.structural — EDGAR cohorts: named,
+frozen sets of filings; cohort-targeted fetch; --cohort for B1's tools; the
+template-study preset and inventory pass; verify WRITTEN, not yet run; see the
+top entry). Earlier the same day: mkt01.structural — market data foundation: indicator
 registry, FRED adapter, historical backfill; ingest + verify WRITTEN, not yet
-run; see the top entry). Previously 2026-10-02 (noteextractb1.structural — note
+run. Previously 2026-10-02 (noteextractb1.structural — note
 extraction B1: engine, gold set, evaluation harness, pilot runner; results
 STAGED). Earlier the same day: edgarpipelinea.structural — EDGAR pipeline A: status
 lifecycle, selection policies, incremental discovery, fetch-to-R2, the nightly
@@ -261,6 +264,82 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000000000000000000000. EDGAR cohorts + template study — frozen cohorts, cohort-targeted fetch, --cohort for B1, inventory pass; verify WRITTEN, not yet run (2026-10-03)
+
+`edgarcohorts.structural`. Choosing what to run moved to the Filings tab; the
+schema for extraction will be settled from an inventory of real filings, not
+one surprise at a time. No extraction schema change in this sprint.
+
+**Schema (applied via MCP, each part verified by a follow-up query):**
+`migrations/edgarcohorts_cohorts_inventory.sql` — `portfolio.edgar_cohorts`
+(name, purpose, kind, definition JSON, member_count 1..50,000, copied_from,
+sealed_at) and `portfolio.edgar_cohort_members` (PK cohort_id + accession —
+deduplicated by accession; position; stratum). FROZEN by trigger: the only
+permitted cohort UPDATE is sealing it (in the same transaction that inserts
+its members); after that every UPDATE of the cohort and every INSERT / UPDATE /
+DELETE of a member is refused. `edgar_pipeline_runs.cohort_id` + `run_kind`
+('fetch' | 'extract'), `edgar_index_filings.selected_by_cohort_id`, and the
+inventory tables `edgar_inventory_runs / _documents / _items / _concepts`.
+Four RLS policies on every new table (global read; super-admin writes).
+**The MCP cancelled the migration as one script** (it contains DROP
+CONSTRAINT / DROP TRIGGER); it was applied in five parts, the constraint swap
+on its own. The file is the full, idempotent definition.
+
+**Cohort selection vs policy selection.** The lifecycle CHECK
+`edgar_index_filings_decided_has_policy_chk` demanded a policy version on
+every decided row; it now accepts `selected_by_cohort_id` instead, and a new
+CHECK forbids both at once. A cohort run marks a member the policy left
+'discovered' or 'not_selected' (e.g. an FWP) as selected by that cohort and
+CLEARS its policy version — never mistaken for a policy decision. A member the
+policy selected keeps its policy provenance.
+
+**Code.** `services/edgar_cohorts.py` (definitions; sampling all / newest N /
+oldest N / random N seeded / stratified N per issuer group x year or era
+2019-2021, 2022-2023, 2024-2026; preview; frozen save; copy-and-edit; reads;
+launch). Seeded order is `hashtextextended(accession, seed)` — md5 measured 2x
+slower; the stratified sort sets `work_mem` LOCAL (it spilled 40MB to disk).
+The template-study preset previewed on live data: 417 members in ~4s.
+`services/edgar_pipeline.py` — cohort runs: fetch stage walks the cohort in
+position order, skips members already past fetch, retries failed-not-given-up
+members, same lease / rate limit / runtime cap; 'extract' is refused
+(`RunKindNotAvailable`, reserved for B2). `edgar_pipeline_job.py --cli
+--cohort`. Routes under `/admin/edgar/cohorts...` and
+`/admin/edgar/inventory/{run_id}` (super-admin; PATCH/PUT on a cohort is always
+409). Web: Filings tab ticks (kept by accession, survive paging) + cohort
+builder with preview; Cohorts tab (definition, members by status, strata,
+runs, "Fetch this cohort", copy-and-edit, template-study preset, inventory
+concepts grid + per-issuer label dictionary); the Progress button is now
+"Run default policy now (newest first)" (label from the envelope).
+B1: `run_note_extraction_pilot.py`, `run_note_extraction_eval.py` and
+`sample_gold_set.py` take `--cohort <id>` (exactly the cohort's
+ready_for_extraction members, in cohort order — `selection.cohort_notes`).
+
+**Inventory pass** — `services/edgar_inventory.py` +
+`scripts/run_edgar_inventory.py --cohort <id> --spend-cap X [--dry-run]`.
+Terms pages only (start through payout examples; stops before risk factors,
+index methodology, licence text, tax). 4-6 pricing supplements per issuer
+chosen greedily for product-family variety, plus 1-2 product supplements.
+Every quote is checked against the filing text; a quote that is not found
+rejects the item (recorded and counted). Concepts by normalised label then ONE
+model-assisted grouping call. Output: the grid, `docs/TEMPLATE_STUDY.md`
+(`--write-doc <run>`), the per-issuer label dictionary. Calls only through
+`services.note_extraction.proxy` (no fallbacks; provider-reported model
+recorded). **BLOCKED today:** `platform_model_catalog` has NO available
+non-Claude chat model (only claude-haiku, claude-sonnet, voyage-3.5), so a real
+run reports BLOCKED until one is registered there and served by the proxy.
+
+**Not done here (operator):** fetch the template-study cohort, register a
+non-Claude model in `platform_model_catalog`, then run the inventory pass —
+dry run first. Schema snapshot not regenerated in this session.
+
+**Verification:** `apps/api/scripts/verify_edgarcohorts.py`, WRITTEN, NOT RUN
+(per the sprint). Fixtures: accessions `9999999999-58-*`, CIKs
+9999999581..3, cohorts named `VERIFY edgarcohorts*`. No Render launch, no
+SEC/R2 traffic, all model responses mocked — $0. `npm run build` exited 0 in
+this session. Run: `python3 apps/api/scripts/verify_edgarcohorts.py`.
 
 ---
 

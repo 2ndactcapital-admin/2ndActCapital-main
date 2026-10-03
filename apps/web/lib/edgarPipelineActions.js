@@ -9,6 +9,16 @@
 
 import {
   addEdgarIssuer,
+  copyEdgarCohort,
+  createEdgarCohort,
+  createEdgarTemplateStudy,
+  getEdgarCohort,
+  getEdgarCohortMembers,
+  getEdgarCohorts,
+  getEdgarInventoryRun,
+  previewEdgarCohort,
+  previewEdgarTemplateStudy,
+  runEdgarCohort,
   getEdgarFilings,
   getEdgarIssuers,
   getEdgarProgress,
@@ -66,4 +76,55 @@ export async function runNowAction(fetchCap) {
   } catch (error) {
     return fail(error);
   }
+}
+
+// ── Cohorts (edgarcohorts). The definition carries filters and sampling only —
+// never an org_id; FastAPI refuses unknown keys.
+
+async function wrap(fn) {
+  try {
+    return { ok: true, payload: await fn() };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+export async function loadCohortsAction() {
+  return wrap(() => getEdgarCohorts());
+}
+
+export async function previewCohortAction(definition) {
+  return wrap(() => previewEdgarCohort({ definition }));
+}
+
+export async function createCohortAction({ name, purpose, definition }) {
+  return wrap(() => createEdgarCohort({ name, purpose: purpose || null, definition }));
+}
+
+export async function previewTemplateStudyAction(body) {
+  return wrap(() => previewEdgarTemplateStudy(body ?? {}));
+}
+
+export async function createTemplateStudyAction(body) {
+  return wrap(() => createEdgarTemplateStudy(body ?? {}));
+}
+
+export async function loadCohortAction(id) {
+  return wrap(() => getEdgarCohort(id));
+}
+
+export async function loadCohortMembersAction(id, params) {
+  return wrap(() => getEdgarCohortMembers(id, params));
+}
+
+export async function copyCohortAction(id, body) {
+  return wrap(() => copyEdgarCohort(id, body));
+}
+
+export async function runCohortAction(id, body) {
+  return wrap(() => runEdgarCohort(id, body));
+}
+
+export async function loadInventoryRunAction(id) {
+  return wrap(() => getEdgarInventoryRun(id));
 }

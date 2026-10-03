@@ -6,11 +6,14 @@ Reports disagreement, Jev, escalation and needs_review rates, cost per note,
 and how often skip-second-reader would have been safe.
 
     python3 apps/api/scripts/run_note_extraction_pilot.py --dry-run --spend-cap 25
+    python3 apps/api/scripts/run_note_extraction_pilot.py --dry-run --spend-cap 25 --cohort <uuid>
     python3 apps/api/scripts/run_note_extraction_pilot.py --spend-cap 25 [--limit 2000]
         [--include-corpus] [--escalation-model gpt-5-mini] [--effort gpt-oss-120b=low]
 
 --spend-cap is REQUIRED: the run stops cleanly when the next call would cross it.
 --dry-run prints the planned calls and an estimated cost and calls NO provider.
+--cohort <uuid> replaces the sampler: exactly the cohort's ready_for_extraction members,
+in cohort order (edgarcohorts). --limit and --include-corpus are then ignored.
 --include-corpus also reads the stored 2025Q1 corpus filings that sprint A's own
 rules classify as final pricing supplements (Task 1a: zero manifest rows are
 ready_for_extraction today).
@@ -21,12 +24,14 @@ import argparse
 import asyncio
 import json
 import sys
+from uuid import UUID
 
 import _note_extraction_common as common
 
 
-async def main() -> int:
+async def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--cohort", type=UUID, default=None)
     ap.add_argument("--limit", type=int, default=2000)
     ap.add_argument("--spend-cap", type=float, required=True)
     ap.add_argument("--dry-run", action="store_true")
@@ -34,7 +39,7 @@ async def main() -> int:
     ap.add_argument("--escalation-model", default=common.escalation_default())
     ap.add_argument("--effort", action="append", help="deployment=low|medium|high (repeatable)")
     ap.add_argument("--max-tokens", type=int, default=4000)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     from services.note_extraction import cascade, documents, proxy, runner, selection
     from services.note_extraction.spend import Plan
@@ -62,13 +67,19 @@ async def main() -> int:
                 print(f"BLOCKED: deployment '{cfg.deployment}' is "
                       f"{'missing from' if dep is None else 'load-balanced on'} the proxy")
                 return 2
-        notes, counts = await selection.select_notes(conn, limit=args.limit, include_corpus=args.include_corpus)
+        if args.cohort:
+            notes = await selection.cohort_notes(conn, args.cohort)
+            counts = {"cohort": str(args.cohort), "cohort_ready": len(notes), "selected": len(notes)}
+        else:
+            notes, counts = await selection.select_notes(conn, limit=args.limit,
+                                                         include_corpus=args.include_corpus)
         print(f"selection: {counts}")
         if not notes:
             print("nothing to read")
             return 0
 
         if args.dry_run:
+            print("PLANNED_NOTES " + json.dumps([n.reference_filing_id for n in notes]))
             before = dict(proxy.CALLS)
             plan = Plan()
             for n in notes:
@@ -85,7 +96,7 @@ async def main() -> int:
         summary = await runner.run_notes(
             conn, [n.reference_filing_id for n in notes], specs, slots, catalog=catalog,
             spend_cap_usd=args.spend_cap, run_kind="pilot",
-            config={"limit": args.limit, "include_corpus": args.include_corpus, "efforts": efforts,
+            config={"cohort": str(args.cohort) if args.cohort else None, "limit": args.limit, "include_corpus": args.include_corpus, "efforts": efforts,
                     "escalation_model": args.escalation_model, "selection": counts},
             participant_rows=parts, progress=lambda f, msg: print(f"  {f}  {msg}"))
         report = await pilot_report(conn, summary.run_id)

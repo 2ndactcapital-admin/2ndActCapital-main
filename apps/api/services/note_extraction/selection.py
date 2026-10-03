@@ -11,6 +11,10 @@ pipeline_status is never changed (out of scope for B1).
 
 Selection is stratified: round-robin across (issuer, filing year) so a few
 prolific issuers cannot dominate a pilot.
+
+COHORT (edgarcohorts). ``cohort_notes`` replaces the sampler: exactly the
+cohort's members that are ready_for_extraction with a stored document, in
+cohort order. Nothing else is added and nothing is re-ordered.
 """
 from __future__ import annotations
 
@@ -72,6 +76,27 @@ def stratify(notes: list[NoteRef], limit: int) -> list[NoteRef]:
             if strata[k] and len(out) < limit:
                 out.append(strata[k].pop(0))
     return out
+
+
+async def cohort_notes(conn, cohort_id) -> list[NoteRef]:
+    from services import edgar_cohorts
+    from services.database import platform_scope
+
+    ids = await edgar_cohorts.ready_reference_ids(conn, cohort_id)
+    if not ids:
+        return []
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            """SELECT f.reference_filing_id, f.filing_date,
+                      COALESCE(i.issuer_group, rf.filer_name) AS issuer
+                 FROM portfolio.edgar_index_filings f
+                 JOIN portfolio.reference_filings rf ON rf.id = f.reference_filing_id
+                 LEFT JOIN portfolio.structured_note_issuers i ON i.filer_cik = f.primary_issuer_cik
+                WHERE f.reference_filing_id = ANY($1::uuid[])""", ids)
+    by = {str(r["reference_filing_id"]): r for r in rows}
+    return [NoteRef(i, by[i]["issuer"] or "unknown",
+                    by[i]["filing_date"].year if by[i]["filing_date"] else None, "cohort")
+            for i in ids if i in by]
 
 
 async def select_notes(conn, *, limit: int, include_corpus: bool) -> tuple[list[NoteRef], dict]:

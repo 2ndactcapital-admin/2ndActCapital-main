@@ -47,6 +47,17 @@ recorded on the run row and returned, never raised: a raised error would HOLD
 the nightly workflow run, a held run is non-terminal, and the scheduler's
 overlap protection would then skip every following night.
 
+COHORT RUNS (edgarcohorts). A run row may carry ``cohort_id``: its fetch stage
+then works through exactly that cohort's members, in cohort ``position`` order,
+instead of the default "selected, newest first" queue — same lease, same rate
+limiter, same runtime cap. A member the default policy did not decide or did
+not select ('discovered' / 'not_selected') is fetched anyway — the operator
+chose it — and is marked ``selected_by_cohort_id`` with its
+``selection_policy_version`` cleared, so it is never mistaken for a policy
+decision. Members already past fetch are skipped; filings outside the cohort
+are never read. ``run_kind`` is 'fetch'; 'extract' is reserved for B2 and
+refused here.
+
 DB ACCESS. Every write runs inside its own transaction with
 ``app.is_super_admin`` set LOCAL (``services.database.platform_scope``) —
 never a session-level SET.
@@ -83,6 +94,8 @@ FETCH_BATCH = 50
 OPENING_CHARS = 4000
 R2_PREFIX = edgar_fetch.R2_PREFIX       # reference/edgar
 STAGES = ("discover", "select", "fetch")
+RUN_KINDS = ("fetch", "extract")       # 'extract' is reserved for B2 — refused today
+COHORT_FETCHABLE = ("discovered", "selected", "not_selected")
 LAUNCH_GUARD = timedelta(minutes=30)    # a launched job not yet holding the lease
 
 DAILY_INDEX_URL = (
@@ -351,10 +364,26 @@ _RUN_UPDATABLE = frozenset(_RUN_COUNT_COLUMNS) | frozenset({
 })
 
 
+class RunKindNotAvailable(EdgarPipelineError):
+    """A run kind that is declared but not built yet ('extract' — sprint B2)."""
+
+
+def check_run_kind(run_kind: str) -> None:
+    if run_kind not in RUN_KINDS:
+        raise ValueError(f"unknown run kind {run_kind!r}; allowed {list(RUN_KINDS)}")
+    if run_kind != "fetch":
+        raise RunKindNotAvailable(
+            f"run kind {run_kind!r} is reserved for sprint B2 and cannot be launched yet")
+
+
 async def create_run(conn, *, trigger_source: str, requested_by=None, fetch_cap: int,
                      runtime_cap_seconds: int = DEFAULT_RUNTIME_CAP_SECONDS,
-                     stages=STAGES, status: str = "launching", workflow_run_id=None):
+                     stages=STAGES, status: str = "launching", workflow_run_id=None,
+                     cohort_id=None, run_kind: str = "fetch"):
+    check_run_kind(run_kind)
     stages = list(stages)
+    if cohort_id is not None and stages != ["fetch"]:
+        raise ValueError("a cohort run has exactly one stage: fetch")
     unknown = [s for s in stages if s not in STAGES]
     if unknown:
         raise ValueError(f"unknown pipeline stage(s): {unknown}; allowed {list(STAGES)}")
@@ -367,12 +396,12 @@ async def create_run(conn, *, trigger_source: str, requested_by=None, fetch_cap:
             """
             INSERT INTO portfolio.edgar_pipeline_runs
                 (trigger_source, requested_by, workflow_run_id, status, stages,
-                 fetch_cap, runtime_cap_seconds)
-            VALUES ($1, $2, $3, $4, $5::text[], $6, $7)
+                 fetch_cap, runtime_cap_seconds, cohort_id, run_kind)
+            VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9)
             RETURNING id
             """,
             trigger_source, requested_by, workflow_run_id, status, stages,
-            int(fetch_cap), int(runtime_cap_seconds),
+            int(fetch_cap), int(runtime_cap_seconds), cohort_id, run_kind,
         )
 
 
@@ -583,6 +612,7 @@ class FetchStats:
     prefilter_skipped: int = 0
     bytes_uploaded: int = 0
     uploads_skipped: int = 0
+    marked_by_cohort: int = 0
     stop_reason: str | None = None
     failures: list = field(default_factory=list)
 
@@ -614,6 +644,50 @@ async def _queue(conn, limit: int, accessions: list[str] | None) -> list[dict]:
             *args,
         )
     return [dict(r) for r in rows]
+
+
+async def _cohort_queue(conn, cohort_id, after_position: int, limit: int) -> list[dict]:
+    """The cohort's next members in POSITION order that still need fetching:
+    undecided, decided either way, or failed-but-not-given-up. A cohort run is
+    deliberate, so a failed member is retried whether or not its retry is due."""
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            """
+            SELECT f.accession_number, f.form_type, f.filing_date, f.submission_path,
+                   f.primary_issuer_cik, f.attempt_count, f.pipeline_status, m.position
+            FROM portfolio.edgar_cohort_members m
+            JOIN portfolio.edgar_index_filings f ON f.accession_number = m.accession_number
+            WHERE m.cohort_id = $1 AND m.position > $2
+              AND (f.pipeline_status = ANY($4::text[])
+                   OR (f.pipeline_status = 'fetch_failed' AND f.next_attempt_at IS NOT NULL))
+            ORDER BY m.position
+            LIMIT $3
+            """,
+            cohort_id, int(after_position), int(limit), list(COHORT_FETCHABLE),
+        )
+    return [dict(r) for r in rows]
+
+
+async def mark_selected_by_cohort(conn, accession: str, cohort_id) -> bool:
+    """Record that a COHORT, not a policy, chose this filing. Only rows the
+    policy left undecided or excluded are marked; a policy-selected row keeps
+    its policy provenance. Returns True when the row was marked."""
+    async with platform_scope(conn):
+        row = await conn.fetchrow(
+            """
+            UPDATE portfolio.edgar_index_filings
+               SET pipeline_status = 'selected',
+                   selected_by_cohort_id = $2,
+                   selection_policy_version = NULL,
+                   status_reason = left('selected by cohort ' || $2::text
+                                        || COALESCE(' (policy had said: ' || status_reason || ')', ''), 1500)
+             WHERE accession_number = $1
+               AND pipeline_status IN ('discovered', 'not_selected')
+            RETURNING accession_number
+            """,
+            accession, cohort_id,
+        )
+    return row is not None
 
 
 async def _filer_name(conn, accession: str, cik: str) -> str:
@@ -765,17 +839,25 @@ async def fetch_stage(conn, *, cap: int, client: httpx.AsyncClient,
                       bucket: str | None = None, r2_prefix: str = R2_PREFIX,
                       deadline: float | None = None,
                       accessions: list[str] | None = None,
-                      on_batch=None) -> FetchStats:
-    """Fetch up to ``cap`` filings, newest first. One failure never stops the run.
+                      on_batch=None, cohort_id=None) -> FetchStats:
+    """Fetch up to ``cap`` filings, newest first — or, with ``cohort_id``, the
+    cohort's members in cohort order. One failure never stops the run.
 
     ``deadline`` is a ``time.monotonic()`` value; ``on_batch`` is awaited between
     batches (the job renews its lease there).
     """
+    if cohort_id is not None and accessions is not None:
+        raise ValueError("pass a cohort or an accession list, not both")
     bucket = bucket or r2_bucket()
     stats = FetchStats()
     consecutive = 0
+    cursor = 0   # cohort position already handed out (a failed member is not re-tried in the same run)
     while stats.attempted < cap and stats.stop_reason is None:
-        batch = await _queue(conn, min(FETCH_BATCH, cap - stats.attempted), accessions)
+        limit = min(FETCH_BATCH, cap - stats.attempted)
+        if cohort_id is not None:
+            batch = await _cohort_queue(conn, cohort_id, cursor, limit)
+        else:
+            batch = await _queue(conn, limit, accessions)
         if not batch:
             stats.stop_reason = "queue empty"
             break
@@ -784,6 +866,10 @@ async def fetch_stage(conn, *, cap: int, client: httpx.AsyncClient,
                 stats.stop_reason = "runtime cap reached"
                 break
             stats.attempted += 1
+            if cohort_id is not None:
+                cursor = row["position"]
+                if await mark_selected_by_cohort(conn, row["accession_number"], cohort_id):
+                    stats.marked_by_cohort += 1
             try:
                 out = await fetch_one(conn, row, client=client, bucket=bucket, r2_prefix=r2_prefix)
             except _SYSTEMIC:
@@ -871,6 +957,9 @@ async def run_job(conn, run_id, *, r2_prefix: str = R2_PREFIX, lease_name: str =
     started = time.monotonic()
     deadline = started + int(run["runtime_cap_seconds"])
     stages = list(run["stages"])
+    cohort_id = run.get("cohort_id")
+    if cohort_id is not None and accessions is not None:
+        raise EdgarPipelineError("a cohort run takes its filings from the cohort, not an accession list")
     await update_run(conn, run_id, status="running", started_at=datetime.now(timezone.utc))
     counts: dict = {}
     details: dict = {}
@@ -894,7 +983,7 @@ async def run_job(conn, run_id, *, r2_prefix: str = R2_PREFIX, lease_name: str =
         if "fetch" in stages and int(run["fetch_cap"]) > 0:
             f = await fetch_stage(
                 conn, cap=int(run["fetch_cap"]), client=client, r2_prefix=r2_prefix,
-                deadline=deadline, accessions=accessions, on_batch=_renew,
+                deadline=deadline, accessions=accessions, on_batch=_renew, cohort_id=cohort_id,
             )
             counts.update(
                 fetch_attempted=f.attempted, fetched=f.fetched, fetch_failed=f.failed,
@@ -903,6 +992,8 @@ async def run_job(conn, run_id, *, r2_prefix: str = R2_PREFIX, lease_name: str =
                 prefilter_skipped=f.prefilter_skipped, bytes_uploaded=f.bytes_uploaded,
             )
             details["fetch"] = {"uploads_skipped": f.uploads_skipped, "failures": f.failures[:50]}
+            if cohort_id is not None:
+                details["cohort"] = {"cohort_id": str(cohort_id), "marked_by_cohort": f.marked_by_cohort}
             stop_reason = f.stop_reason
         counts["sec_requests"] = log.count
         await update_run(
@@ -1012,19 +1103,23 @@ async def _blocking_run(conn) -> dict | None:
 async def launch_pipeline_run(conn, *, trigger_source: str, requested_by=None,
                               fetch_cap: int | None = None, stages=STAGES,
                               runtime_cap_seconds: int = DEFAULT_RUNTIME_CAP_SECONDS,
-                              workflow_run_id=None, starter=None) -> dict:
+                              workflow_run_id=None, starter=None, cohort_id=None,
+                              run_kind: str = "fetch") -> dict:
     """Record a run and launch its Render job. RETURNS IMMEDIATELY; never raises
     for a launch that could not happen — the outcome is on the returned row.
 
     ``starter`` replaces :func:`start_render_job` (tests only).
     """
+    check_run_kind(run_kind)   # raised, not recorded: a kind that does not exist is a caller error
     fetch_cap = fetch_cap_default() if fetch_cap is None else int(fetch_cap)
+    if cohort_id is not None:
+        stages = ("fetch",)
     blocking = await _blocking_run(conn)
     if blocking:
         run_id = await create_run(
             conn, trigger_source=trigger_source, requested_by=requested_by,
             fetch_cap=fetch_cap, runtime_cap_seconds=runtime_cap_seconds, stages=stages,
-            status="refused", workflow_run_id=workflow_run_id,
+            status="refused", workflow_run_id=workflow_run_id, cohort_id=cohort_id, run_kind=run_kind,
         )
         await update_run(conn, run_id, finished_at=datetime.now(timezone.utc),
                          stop_reason=f"another pipeline job is in progress ({blocking['why']}: {blocking['holder']})",
@@ -1034,6 +1129,7 @@ async def launch_pipeline_run(conn, *, trigger_source: str, requested_by=None,
     run_id = await create_run(
         conn, trigger_source=trigger_source, requested_by=requested_by, fetch_cap=fetch_cap,
         runtime_cap_seconds=runtime_cap_seconds, stages=stages, workflow_run_id=workflow_run_id,
+        cohort_id=cohort_id, run_kind=run_kind,
     )
     try:
         service_id, job_id = await (starter or start_render_job)(run_id)

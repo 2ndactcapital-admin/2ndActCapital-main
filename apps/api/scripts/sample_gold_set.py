@@ -9,7 +9,10 @@ No model is called.
 
     python3 apps/api/scripts/sample_gold_set.py                 # dry run: print the sample
     python3 apps/api/scripts/sample_gold_set.py --write          # write note_gold_candidates
-        [--target 75] [--no-corpus] [--batch gold-2026-10]
+        [--target 75] [--no-corpus] [--batch gold-2026-10] [--cohort <uuid>]
+
+--cohort <uuid> proposes candidates from that cohort's ready_for_extraction members
+only (edgarcohorts), instead of every ready note plus the corpus.
 """
 from __future__ import annotations
 
@@ -18,24 +21,30 @@ import asyncio
 import sys
 from collections import Counter
 from datetime import date
+from uuid import UUID
 
 import _note_extraction_common as common
 
 
-async def main() -> int:
+async def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--cohort", type=UUID, default=None)
     ap.add_argument("--target", type=int, default=75)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--no-corpus", action="store_true")
     ap.add_argument("--batch", default=f"gold-{date.today().isoformat()}")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     from services.note_extraction import documents, gold, selection
 
     conn = await common.connect()
     try:
-        ready = await selection.ready_notes(conn)
-        corpus = [] if args.no_corpus else await selection.corpus_notes(conn)
+        if args.cohort:
+            ready = await selection.cohort_notes(conn, args.cohort)
+            corpus = []
+        else:
+            ready = await selection.ready_notes(conn)
+            corpus = [] if args.no_corpus else await selection.corpus_notes(conn)
         pool = []
         for n in ready + corpus:
             text = n.text

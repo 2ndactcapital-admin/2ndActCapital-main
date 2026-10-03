@@ -9,6 +9,11 @@
         Create a 'cli' run row and run it in this process (operator use, e.g.
         under `doppler run --`).
 
+    python edgar_pipeline_job.py --cli --cohort <uuid> [--fetch-cap N]
+        Same, but the run targets a COHORT: its fetch stage works through
+        exactly the cohort's members in cohort order (edgarcohorts). A cohort
+        run has one stage, fetch.
+
 Like workflow_scheduler_tick.py this is NOT the API process: it imports no
 router and serves no request. It opens one raw asyncpg connection
 (statement_cache_size=0 — mandatory behind Supabase's pooler) and every write
@@ -43,6 +48,7 @@ async def main(argv: list[str]) -> int:
     parser.add_argument("--cli", action="store_true")
     parser.add_argument("--fetch-cap", type=int, default=None)
     parser.add_argument("--stages", default=",".join(edgar_pipeline.STAGES))
+    parser.add_argument("--cohort", type=UUID, default=None)
     args = parser.parse_args(argv)
     if not args.run_id and not args.cli:
         parser.error("one of --run-id or --cli is required")
@@ -63,8 +69,9 @@ async def main(argv: list[str]) -> int:
             run_id = await edgar_pipeline.create_run(
                 conn, trigger_source="cli",
                 fetch_cap=edgar_pipeline.fetch_cap_default() if args.fetch_cap is None else args.fetch_cap,
-                stages=[s.strip() for s in args.stages.split(",") if s.strip()],
-                status="launched",
+                stages=(["fetch"] if args.cohort else
+                        [s.strip() for s in args.stages.split(",") if s.strip()]),
+                status="launched", cohort_id=args.cohort,
             )
         if await edgar_pipeline.load_run(conn, run_id) is None:
             print(f"[edgar-job] FATAL: no pipeline run {run_id}", file=sys.stderr)

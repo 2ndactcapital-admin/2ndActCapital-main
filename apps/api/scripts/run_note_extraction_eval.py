@@ -17,7 +17,12 @@ IT REPORTS; IT DOES NOT CHOOSE MODELS. Joe picks the ensemble in the picker.
     python3 apps/api/scripts/run_note_extraction_eval.py --dry-run --spend-cap 10
     python3 apps/api/scripts/run_note_extraction_eval.py --spend-cap 10 \
         [--candidates gpt-oss-120b@low,gpt-oss-120b@medium,gemini-2.5-flash-lite,...] \
-        [--pair gpt-oss-120b@low,gemini-2.5-flash-lite] [--no-jev]
+        [--pair gpt-oss-120b@low,gemini-2.5-flash-lite] [--no-jev] [--cohort <uuid>]
+
+--cohort <uuid> replaces the gold-set note list with exactly the cohort's
+ready_for_extraction members, in cohort order (edgarcohorts). Accuracy is still
+scored only where a note has hand-checked gold values; the report counts the
+cohort notes that have none.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ import asyncio
 import json
 import sys
 from collections import defaultdict
+from uuid import UUID
 
 import _note_extraction_common as common
 
@@ -65,15 +71,16 @@ async def load_gold(conn, specs_by_key) -> dict:
     return {"gold": gold, "quotes": quotes, "raw": raw, "issuer_of": issuer_of, "year_of": year_of}
 
 
-async def main() -> int:
+async def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--cohort", type=UUID, default=None)
     ap.add_argument("--spend-cap", type=float, required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--candidates", default=",".join(DEFAULT_CANDIDATES))
     ap.add_argument("--pair", default=None, help="two candidates for skip-second-reader and Jev measurement")
     ap.add_argument("--no-jev", action="store_true")
     ap.add_argument("--max-tokens", type=int, default=4000)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     from services.note_extraction import (
         cascade, compare as cmp, documents, jev, metrics, participants, proxy, readers, store,
@@ -91,6 +98,18 @@ async def main() -> int:
         G = await load_gold(conn, by_key)
         notes = sorted({n for n, _ in G["gold"]})
         print(f"gold set: {len(notes)} notes, {len(G['gold'])} hand-checked field values")
+        if args.cohort:
+            from services.note_extraction import selection
+            notes = [n.reference_filing_id for n in await selection.cohort_notes(conn, args.cohort)]
+            with_gold = {n for n, _ in G["gold"]}
+            print(f"cohort {args.cohort}: {len(notes)} ready notes, "
+                  f"{sum(1 for n in notes if n in with_gold)} with gold values")
+            if not notes:
+                print("nothing to read: the cohort has no ready_for_extraction members")
+                return 0
+            keep = set(notes)   # score only the cohort's notes
+            G["gold"] = {k: v for k, v in G["gold"].items() if k[0] in keep}
+            G["raw"] = {k: v for k, v in G["raw"].items() if k[0] in keep}
         if not notes:
             print("BLOCKED: the gold set is empty — review notes on the gold screen first.")
             return 2
@@ -121,6 +140,7 @@ async def main() -> int:
                 print(f"  note {n}: not loadable ({exc})")
 
         if args.dry_run:
+            print("PLANNED_NOTES " + json.dumps(list(docs)))
             before = dict(proxy.CALLS)
             plan = Plan(notes=len(docs))
             for tok, cfg in cands:
