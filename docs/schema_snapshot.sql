@@ -2338,6 +2338,59 @@
 --   PRIMARY KEY workflow_versions_pkey: (id)
 --   UNIQUE workflow_versions_workflow_definition_id_version_number_key: (workflow_definition_id, version_number)
 
+-- ===== market_data.indicator_ingest_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   series_id                                uuid
+--   run_trigger                              text NOT NULL
+--   status                                   text NOT NULL
+--   rows_inserted                            integer NOT NULL DEFAULT 0
+--   rows_revised                             integer NOT NULL DEFAULT 0
+--   rows_unchanged                           integer NOT NULL DEFAULT 0
+--   error                                    text
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   finished_at                              timestamp with time zone
+--   PRIMARY KEY indicator_ingest_runs_pkey: (id)
+
+-- ===== market_data.indicator_observations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   series_id                                uuid NOT NULL
+--   obs_date                                 date NOT NULL
+--   value                                    numeric NOT NULL
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY indicator_observations_pkey: (id)
+
+-- ===== market_data.indicator_series =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   series_key                               text NOT NULL
+--   name                                     text NOT NULL
+--   category                                 text NOT NULL
+--   region                                   text NOT NULL DEFAULT 'US'::text
+--   frequency                                text NOT NULL
+--   units                                    text
+--   seasonal_adjustment                      text
+--   best_view                                text
+--   default_transform                        text NOT NULL DEFAULT 'level'::text
+--   cost_tier                                text NOT NULL
+--   cost_note                                text
+--   license_class                            text NOT NULL DEFAULT 'unreviewed'::text
+--   source_provider                          text NOT NULL
+--   source_code                              text
+--   source_url                               text
+--   notes                                    text
+--   sort_order                               integer NOT NULL DEFAULT 0
+--   security_global_id                       uuid
+--   ingest_status                            text NOT NULL DEFAULT 'pending'::text
+--   last_validated_at                        timestamp with time zone
+--   last_observation_date                    date
+--   last_error                               text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE indicator_series_key_uq: (series_key)
+--   PRIMARY KEY indicator_series_pkey: (id)
+
 -- ===== portfolio.asset_identifiers =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   asset_id                                 uuid NOT NULL
@@ -2395,6 +2448,19 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY commitments_pkey: (id)
+
+-- ===== portfolio.distribution_participants =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   canonical_name                           text NOT NULL
+--   participant_type                         text NOT NULL
+--   aliases                                  ARRAY NOT NULL DEFAULT '{}'::text[]
+--   status                                   text NOT NULL DEFAULT 'proposed'::text
+--   observed_count                           integer NOT NULL DEFAULT 0
+--   notes                                    text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY distribution_participants_pkey: (id)
 
 -- ===== portfolio.edgar_index_filing_filers =====
 --   accession_number                         text NOT NULL
@@ -2483,6 +2549,129 @@
 --   last_seen                                timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE external_references_org_source_ext_type_key: (org_id, source_system, external_id, record_type)
 --   PRIMARY KEY external_references_pkey: (id)
+
+-- ===== portfolio.note_extraction_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_kind                                 text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'running'::text
+--   ensemble_config_id                       uuid
+--   config                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   spend_cap_usd                            numeric NOT NULL
+--   spent_usd                                numeric NOT NULL DEFAULT 0
+--   notes_planned                            integer NOT NULL DEFAULT 0
+--   notes_done                               integer NOT NULL DEFAULT 0
+--   stop_reason                              text
+--   report                                   jsonb
+--   created_by                               uuid
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   finished_at                              timestamp with time zone
+--   PRIMARY KEY note_extraction_runs_pkey: (id)
+
+-- ===== portfolio.note_extraction_staged_fields =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   staging_id                               uuid NOT NULL
+--   field_key                                text NOT NULL
+--   resolved_value                           jsonb
+--   resolution                               text NOT NULL
+--   is_critical                              boolean NOT NULL
+--   needs_review                             boolean NOT NULL
+--   winning_reading_id                       uuid
+--   source_quote                             text
+--   raw_char_start                           integer
+--   raw_char_end                             integer
+--   probability                              numeric
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY note_extraction_staged_fields_pkey: (id)
+--   UNIQUE note_extraction_staged_fields_staging_id_field_key_key: (staging_id, field_key)
+
+-- ===== portfolio.note_extraction_staging =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_id                                   uuid NOT NULL
+--   reference_filing_id                      uuid NOT NULL
+--   status                                   text NOT NULL
+--   status_reason                            text
+--   ensemble_config_id                       uuid
+--   full_tokens_est                          integer
+--   trimmed_tokens_est                       integer
+--   disagreement_count                       integer NOT NULL DEFAULT 0
+--   jev_called                               boolean NOT NULL DEFAULT false
+--   escalated                                boolean NOT NULL DEFAULT false
+--   fuller_text_retry                        boolean NOT NULL DEFAULT false
+--   skip_second_reader_safe                  boolean
+--   cost_usd                                 numeric NOT NULL DEFAULT 0
+--   unmatched_participants                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY note_extraction_staging_pkey: (id)
+--   UNIQUE note_extraction_staging_run_id_reference_filing_id_key: (run_id, reference_filing_id)
+
+-- ===== portfolio.note_gold_candidates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   reference_filing_id                      uuid NOT NULL
+--   sample_batch                             text NOT NULL
+--   issuer_group                             text
+--   filing_year                              integer
+--   product_type                             text
+--   trap_tags                                ARRAY NOT NULL DEFAULT '{}'::text[]
+--   status                                   text NOT NULL DEFAULT 'proposed'::text
+--   proposed_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY note_gold_candidates_pkey: (id)
+--   UNIQUE note_gold_candidates_reference_filing_id_key: (reference_filing_id)
+
+-- ===== portfolio.note_gold_values =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   reference_filing_id                      uuid NOT NULL
+--   field_key                                text NOT NULL
+--   value                                    jsonb
+--   action                                   text NOT NULL
+--   source_reading_id                        uuid
+--   source_quote                             text
+--   raw_char_start                           integer
+--   raw_char_end                             integer
+--   notes                                    text
+--   reviewer_id                              uuid NOT NULL
+--   reviewed_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY note_gold_values_pkey: (id)
+
+-- ===== portfolio.note_term_readings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   reference_filing_id                      uuid NOT NULL
+--   note_terms_id                            uuid
+--   run_id                                   uuid
+--   field_key                                text NOT NULL
+--   value                                    jsonb
+--   value_normalized                         text
+--   source                                   text NOT NULL
+--   origin                                   text NOT NULL DEFAULT 'cascade'::text
+--   status                                   text NOT NULL DEFAULT 'ok'::text
+--   error                                    text
+--   deployment_name                          text
+--   provider_model                           text
+--   proxy_model_id                           text
+--   ensemble_config_id                       uuid
+--   prompt_version                           text
+--   prompt_prefix_hash                       text
+--   reasoning_effort                         text
+--   source_quote                             text
+--   quote_verified                           boolean
+--   value_in_quote                           boolean
+--   raw_char_start                           integer
+--   raw_char_end                             integer
+--   probability                              numeric
+--   input_tokens                             integer
+--   output_tokens                            integer
+--   cached_tokens                            integer
+--   cost_usd                                 numeric
+--   latency_ms                               integer
+--   call_id                                  text
+--   legacy_correction_id                     uuid
+--   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY note_term_readings_pkey: (id)
 
 -- ===== portfolio.note_terms_field_registry =====
 --   field_key                                text NOT NULL
