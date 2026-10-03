@@ -2349,6 +2349,7 @@
 --   error                                    text
 --   started_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   finished_at                              timestamp with time zone
+--   batch_id                                 uuid
 --   PRIMARY KEY indicator_ingest_runs_pkey: (id)
 
 -- ===== market_data.indicator_observations =====
