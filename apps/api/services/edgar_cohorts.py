@@ -496,7 +496,7 @@ async def cohort_members_page(conn, cohort_id, *, status: str | None = None, pag
         total = await conn.fetchval(
             """SELECT count(*) FROM portfolio.edgar_cohort_members m
                JOIN portfolio.edgar_index_filings f ON f.accession_number = m.accession_number
-               WHERE m.cohort_id = $1 AND ($2::text IS NULL OR f.pipeline_status = $2)""",
+               WHERE m.cohort_id = $1::uuid AND ($2::text IS NULL OR f.pipeline_status = $2::text)""",
             cohort_id, status)
         rows = await conn.fetch(
             """SELECT m.position, m.stratum, f.accession_number, f.form_type, f.filing_date,
@@ -506,7 +506,7 @@ async def cohort_members_page(conn, cohort_id, *, status: str | None = None, pag
                FROM portfolio.edgar_cohort_members m
                JOIN portfolio.edgar_index_filings f ON f.accession_number = m.accession_number
                LEFT JOIN portfolio.structured_note_issuers i ON i.filer_cik = f.primary_issuer_cik
-               WHERE m.cohort_id = $1 AND ($2::text IS NULL OR f.pipeline_status = $2)
+               WHERE m.cohort_id = $1::uuid AND ($2::text IS NULL OR f.pipeline_status = $2::text)
                ORDER BY m.position
                LIMIT $3 OFFSET $4""",
             cohort_id, status, int(page_size), (int(page) - 1) * int(page_size))

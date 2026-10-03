@@ -41,6 +41,9 @@ ASSERTIONS:
   [Y] The size limit refuses an oversized cohort
   [Y] Super-admin 200; org admin and member 403 on the IDENTICAL request, for
       create, read and run
+  [Y] Regression: the pre-fix mark_selected_by_cohort statement reproduces
+      AmbiguousParameterError; the fixed one marks with a cohort id present and
+      prepares (then hits the CHECK) with it absent; all rolled back
   [Y] Fetching a cohort targets exactly its members in cohort order; a member
       the default policy did not select is fetched and records selection by
       cohort with the cohort id; filings outside the cohort are untouched
@@ -728,6 +731,115 @@ class _FakeFetch:
                 "bytes_uploaded": 0, "upload_skipped": True, "raw_key": None, "text_key": None}
 
 
+# The PRE-FIX text of edgar_pipeline.mark_selected_by_cohort: $2 is bare (uuid,
+# from the column) AND $2::text in the same statement. Kept verbatim so the
+# regression section can reproduce the crash before proving the fix.
+BUGGY_MARK_SQL = """
+            UPDATE portfolio.edgar_index_filings
+               SET pipeline_status = 'selected',
+                   selected_by_cohort_id = $2,
+                   selection_policy_version = NULL,
+                   status_reason = left('selected by cohort ' || $2::text
+                                        || COALESCE(' (policy had said: ' || status_reason || ')', ''), 1500)
+             WHERE accession_number = $1
+               AND pipeline_status IN ('discovered', 'not_selected')
+            RETURNING accession_number
+            """
+
+
+class _Rollback(Exception):
+    pass
+
+
+async def mark_regression_section(conn) -> None:
+    section("[Y] Regression: mark_selected_by_cohort no longer raises AmbiguousParameterError — "
+            "reproduced on the pre-fix text, then the fixed path with a cohort id present and absent")
+    from services import edgar_cohorts as c
+    from services import edgar_pipeline as p
+
+    co = await c.create_cohort(conn, name=f"{COHORT_PREFIX} markfix", purpose="verify",
+                               definition={"source": "hand", "accessions": [A(17), A(10)]})
+    cid = co["id"]
+    targets = [A(17), A(10), A(6)]
+    before = await fixture_rows(conn, targets)
+    check(before[A(17)]["pipeline_status"] == "discovered" and before[A(10)]["pipeline_status"] == "not_selected"
+          and before[A(6)]["pipeline_status"] == "selected",
+          "regression pre-state: one undecided, one policy-excluded, one policy-selected filing",
+          f"{ {a: before[a]['pipeline_status'] for a in targets} }")
+
+    # 1. Reproduce the original failure on the pre-fix statement.
+    err = None
+    try:
+        async with conn.transaction():
+            await _super(conn)
+            await conn.fetchrow(BUGGY_MARK_SQL, A(17), cid)
+    except Exception as exc:  # noqa: BLE001 — the type IS the assertion
+        err = exc
+    check(isinstance(err, asyncpg.exceptions.AmbiguousParameterError),
+          "REPRODUCED: the pre-fix statement raises AmbiguousParameterError for $2",
+          f"{type(err).__name__}: {err}" if err else "no error")
+
+    # 2. Fixed path, cohort id PRESENT — run inside a transaction that is rolled back.
+    marked, rows_in = {}, {}
+    try:
+        async with conn.transaction():
+            for a in targets:
+                marked[a] = await p.mark_selected_by_cohort(conn, a, cid)
+            rows_in = await fixture_rows(conn, targets)
+            raise _Rollback
+    except _Rollback:
+        pass
+    check(marked.get(A(17)) is True and marked.get(A(10)) is True,
+          "cohort id present: the undecided and the policy-excluded filings are marked (True)", f"{marked}")
+    check(marked.get(A(6)) is False, "cohort id present: a policy-selected filing is not marked (False)",
+          f"{marked.get(A(6))}")
+    for a in (A(17), A(10)):
+        r = rows_in.get(a) or {}
+        check(str(r.get("selected_by_cohort_id")) == str(cid) and r.get("selection_policy_version") is None
+              and r.get("pipeline_status") == "selected"
+              and str(r.get("status_reason") or "").startswith(f"selected by cohort {cid}"),
+              f"cohort id present: {a} persisted selected_by_cohort_id = the cohort and the uuid rendered "
+              "as text in status_reason",
+              f"{r.get('selected_by_cohort_id')} {r.get('status_reason')!r}")
+    check("(policy had said: " in str((rows_in.get(A(10)) or {}).get("status_reason")),
+          "cohort id present: the policy's earlier reason is kept after the cohort's")
+
+    # 3. Fixed path, cohort id ABSENT. The statement must still PREPARE (no
+    # AmbiguousParameterError); the database then refuses a 'selected' row with
+    # neither a policy version nor a cohort (decided_has_policy_chk).
+    err = None
+    try:
+        async with conn.transaction():
+            await p.mark_selected_by_cohort(conn, A(17), None)
+            raise _Rollback
+    except _Rollback:
+        err = None
+    except Exception as exc:  # noqa: BLE001 — the type IS the assertion
+        err = exc
+    check(not isinstance(err, asyncpg.exceptions.AmbiguousParameterError),
+          "cohort id absent: the fixed statement prepares (no AmbiguousParameterError)",
+          f"{type(err).__name__}: {err}" if err else "no error")
+    check(isinstance(err, asyncpg.exceptions.CheckViolationError)
+          and "decided_has_policy_chk" in str(err),
+          "cohort id absent: the database refuses a selection with no selector (decided_has_policy_chk)",
+          f"{type(err).__name__}: {err}" if err else "no error")
+
+    after = await fixture_rows(conn, targets)
+    check(all(before[a] == after[a] for a in targets),
+          "every regression write was rolled back: the three filings are unchanged, all columns",
+          f"changed={[a for a in targets if before[a] != after[a]]}")
+
+    # Sibling query (cohort_members_page): $2 is the optional status filter,
+    # exercised absent (NULL) and present, against the same predicate in SQL.
+    all_page = await c.cohort_members_page(conn, cid)
+    disc_page = await c.cohort_members_page(conn, cid, status="discovered")
+    check(all_page["total"] == 2 and sorted(r["accession_number"] for r in all_page["rows"]) == sorted([A(17), A(10)]),
+          "cohort_members_page with no status filter returns every member", f"{all_page['total']}")
+    check(disc_page["total"] == 1 and [r["accession_number"] for r in disc_page["rows"]] == [A(17)],
+          "cohort_members_page with a status filter returns the strict subset with that status",
+          f"{disc_page['total']} {[r['accession_number'] for r in disc_page['rows']]}")
+
+
 async def fetch_section(conn) -> str | None:
     section("[Y] Fetching a cohort: exactly its members, in cohort order; a not-selected member is fetched "
             "and records selection by cohort; filings outside the cohort untouched")
@@ -1388,6 +1500,7 @@ async def main_async() -> int:
             await run("frozen", frozen_section(conn, ids))
         await run("size", size_section(conn))
         await run("permissions", permission_section(conn))
+        await run("mark_regression", mark_regression_section(conn))
         fetch_cid = await run("fetch", fetch_section(conn))
         if fetch_cid:
             await run("lease", lease_section(conn, fetch_cid))

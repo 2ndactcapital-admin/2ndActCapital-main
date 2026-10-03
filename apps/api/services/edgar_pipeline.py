@@ -671,15 +671,19 @@ async def _cohort_queue(conn, cohort_id, after_position: int, limit: int) -> lis
 async def mark_selected_by_cohort(conn, accession: str, cohort_id) -> bool:
     """Record that a COHORT, not a policy, chose this filing. Only rows the
     policy left undecided or excluded are marked; a policy-selected row keeps
-    its policy provenance. Returns True when the row was marked."""
+    its policy provenance. Returns True when the row was marked.
+
+    Every use of $2 is cast ``::uuid`` explicitly: a bare ``$2`` (deduced uuid
+    from the column) next to ``$2::text`` makes asyncpg refuse the statement
+    with AmbiguousParameterError, which crashed every cohort fetch."""
     async with platform_scope(conn):
         row = await conn.fetchrow(
             """
             UPDATE portfolio.edgar_index_filings
                SET pipeline_status = 'selected',
-                   selected_by_cohort_id = $2,
+                   selected_by_cohort_id = $2::uuid,
                    selection_policy_version = NULL,
-                   status_reason = left('selected by cohort ' || $2::text
+                   status_reason = left('selected by cohort ' || $2::uuid::text
                                         || COALESCE(' (policy had said: ' || status_reason || ')', ''), 1500)
              WHERE accession_number = $1
                AND pipeline_status IN ('discovered', 'not_selected')
