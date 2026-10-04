@@ -2361,6 +2361,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   source_provider                          text
 --   PRIMARY KEY indicator_observations_pkey: (id)
 
 -- ===== market_data.indicator_series =====
