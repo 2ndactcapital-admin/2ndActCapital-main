@@ -21,6 +21,9 @@ DATA RULES
   * A bar dated today-or-later (exchange-local) is an incomplete intraday bar
     (futures trade almost around the clock) and is dropped.
   * A null close is skipped and counted. A repeated date keeps the LAST bar.
+  * Units (mkt02c): an instrument whose ``meta.instrumentType`` is 'INDEX'
+    is stored as 'index points' — an index level is not an amount of money.
+    Every other instrument type, or a missing one, keeps the currency code.
 
 ERROR CLASSES
 ──────────────────────────────────────────────────────────────────────────────
@@ -69,6 +72,8 @@ QUANTUM = Decimal("0.0001")
 FETCH_PARAMS_BASE = {"interval": "1d", "period1": "0", "events": "history"}
 VALIDATE_PARAMS = {"interval": "1d", "range": "5d"}
 EXPECTED_GRANULARITY = "1d"
+INDEX_INSTRUMENT_TYPE = "INDEX"
+INDEX_UNITS = "index points"
 
 
 def chart_path(symbol: str) -> str:
@@ -338,4 +343,13 @@ class YahooAdapter:
         tz_name = meta.get("exchangeTimezoneName")
         if tz_name:
             finds.append(f"{series_row['series_key']}: exchange timezone {tz_name}, currency {currency}")
-        return ValidateResult("active", fields={"units": currency.strip()}, finds=finds)
+        return ValidateResult("active", fields={"units": units_for(meta)}, finds=finds)
+
+
+def units_for(meta: dict) -> str:
+    """'index points' for an INDEX instrument, else the currency code.
+    Callers have already refused a missing currency."""
+    instrument = meta.get("instrumentType")
+    if isinstance(instrument, str) and instrument.strip().upper() == INDEX_INSTRUMENT_TYPE:
+        return INDEX_UNITS
+    return str(meta.get("currency")).strip()

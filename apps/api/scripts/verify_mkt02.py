@@ -1052,11 +1052,15 @@ async def phase_b(reader) -> None:
     for s, rows in batches:
         summ = [r for r in rows if r["series_id"] is None]
         per = [r for r in rows if r["series_id"] is not None]
-        shape.append((str(s["batch_id"])[:8], len(summ), len(per)))
+        # mkt02c: the registry can grow between the two batches, so the OLDER
+        # batch is held to the series count IT attempted (its own summary row),
+        # and the LATEST batch to today's active count, read at runtime.
+        attempted = parse_summary(summ[0]["error"]).get("attempted") if len(summ) == 1 else None
+        shape.append((str(s["batch_id"])[:8], len(summ), len(per), attempted))
         failures += [f"{r['series_key']}: {r['status']}: {r['error']}" for r in per if r["status"] != "success"]
-    check("B1 each of the two latest nightly batches has exactly ONE summary row and one per-series row per active "
-          "series with a registered adapter (count read at runtime)",
-          all(n_s == 1 and n_p == expected for _, n_s, n_p in shape),
+    check("B1 each of the two latest nightly batches has exactly ONE summary row and one per-series row per series "
+          "it attempted; the latest batch attempted every active series with a registered adapter (count read at runtime)",
+          all(n_s == 1 and n_p == att for _, n_s, n_p, att in shape) and shape[0][2] == expected,
           "a missing per-series row is a series the nightly silently skipped", f"expected={expected} batches={shape}")
     for f in failures:
         print(f"[FIND] nightly per-series row not success — {f}")

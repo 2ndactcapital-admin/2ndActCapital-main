@@ -337,6 +337,97 @@ of 75 series comes from a reviewed seed file,
   returns identical colours.
 - Moving the bases into the config table is a separate, optional change.
 
+### 19. Long history: splice, provenance, credit spread, underlyings (mkt02c)
+
+**Why.** Real data showed that some key series do not reach back far enough
+for the key-dates chart. FRED serves a ROLLING window for some licensed
+series: about ten years for S&P 500 (`fred.sp500` started 2016-10-03), and
+only from October 2023 for the two ICE BofA credit spreads. A 2000 anchor on
+the S&P therefore "floated" (decision 14's floating rule) instead of landing
+on real history.
+
+**The splice — one series, older history from Yahoo.**
+- There is ONE series, `fred.sp500`, not two. Consumers see one continuous
+  line. FRED stays the source of record and the nightly source. Yahoo
+  (`^GSPC`) supplies only the history before FRED's first observation.
+- Boundary **F0** = the earliest ACTIVE observation whose `source_provider`
+  IS NULL (the series' own source). Spliced rows never define it, so a
+  re-run computes the same F0.
+- The fetch goes through the existing Yahoo adapter with a synthetic series
+  row, so it uses the same parsing as every Yahoo series: Decimal only,
+  4 dp ROUND_HALF_EVEN, raw close, incomplete-bar exclusion. No `^GSPC`
+  registry series exists.
+- **Overlap gate, before any write.** On every date >= F0 that both the
+  fetch and the series' own rows carry:
+  - at least 99.0% of days must differ by <= 0.02 (FRED stores 2 dp, Yahoo 4);
+  - no day may differ by more than 1.00;
+  - at least 20 days must be compared. Zero overlap would otherwise pass the
+    percentage test vacuously.
+  If the gate fails, nothing is written, the worst ten days are printed as
+  [FIND], and the script exits 1. This is what stops a different index, or a
+  differently-scaled series, from being spliced on.
+- **Insert-only before F0.** A date before F0 with no active row is inserted
+  with `source_provider = 'yahoo'`. An active `'yahoo'` row whose value
+  changed gets the Rule 3 revision (close it, insert the new value, still
+  `'yahoo'`). A FRED row (NULL provider), or a row from any other provider,
+  is NEVER revised, closed or deleted by the splice. Dates >= F0 are never
+  written. A re-run is a no-op.
+- One transaction inside `platform_scope()`. It also appends one sentence to
+  the series' notes (once) and writes one `indicator_ingest_runs` row with
+  `run_trigger = 'manual'`. It never changes `ingest_status`.
+- Code: `services/market_data/splice.py`, operator script
+  `scripts/market_data_splice_history.py [--series] [--yahoo-symbol]
+  [--dry-run]`. Exit 0 success, 1 gate or fetch failure, 2 configuration.
+- Caveat: `fred.sp500`'s notes are a loader DEFINITION field. A later
+  `market_data_ingest.py load` (v1 seed) rewrites them and drops the splice
+  sentence. Re-running the splice puts the sentence back and writes no
+  observations.
+
+**Row-level provenance.** `market_data.indicator_observations.source_provider`
+(migration `mkt02c_observation_source_provider`): nullable, CHECKed against
+`fred | yahoo | shiller | worldbank | imf | bis | oecd | manual`. NULL means
+"the series' own `source_provider`". Every row written before mkt02c is NULL,
+and the ingest path still writes NULL. Only the splice writes `'yahoo'`.
+Provenance is recorded per ROW, not per series, because one series can now
+mix sources (see Launch blocker 4).
+
+**The nightly never erases the splice.** Confirmed by reading the write path
+(mkt02c Task 1b) and proven in `verify_mkt02c` (S6): `ingest.plan_writes`
+walks only the points a fetch RETURNS. A date absent from a fetch is never
+read, closed or deleted. FRED's rolling window moving forward therefore
+leaves older rows alone, both spliced rows and FRED's own.
+
+**Credit-spread substitute.** `fred.baa10y` (Moody's Baa corporate yield
+minus the 10-year Treasury, FRED `BAA10Y`, daily) is a long-history
+credit-stress proxy alongside the ICE BofA spreads. Its `license_class` is
+`'unreviewed'` until someone checks Moody's terms on FRED (decision 4).
+
+**Structured-note underlyings.** Five Yahoo index series, each linked
+through `security_global_id` to its index security by the loader's new link
+step (exact id + exact name + type `index` + live + not already linked, or a
+[FIND] and no link):
+
+| series_key | Yahoo | security |
+|---|---|---|
+| yahoo.dji | ^DJI | Dow Jones Industrial Average |
+| yahoo.ftse | ^FTSE | FTSE 100 Index |
+| yahoo.stoxx50e | ^STOXX50E | EURO STOXX 50 Index |
+| yahoo.ssmi | ^SSMI | Swiss Market Index |
+| yahoo.axjo | ^AXJO | S&P/ASX 200 Index |
+
+They load from `docs/market_data/market_indicator_registry_additions_v2.json`
+(`market_data_ingest.py load --seed …`). The v1 seed is not edited, so
+verify_mkt01's v1 structural checks stay valid. **Still no price source:**
+TOPIX (its Yahoo ticker is not confirmed), MSCI EAFE, the two Nasdaq-100
+variants (Equal Weighted, Technology Sector) and S&P 500 Futures Excess
+Return.
+
+**Yahoo units.** When Yahoo's `meta.instrumentType` is `INDEX`, `validate`
+stores units `'index points'`. For any other type, or a missing one, it
+stores the currency code (the previous behavior). The real index series are
+^RUT, DX-Y.NYB and the five above. `validate --provider yahoo` refreshes the
+units on every Yahoo series.
+
 ## Launch blockers
 
 Before ANY external customer sees this platform:
@@ -349,6 +440,12 @@ Before ANY external customer sees this platform:
    tenant. *Met at the API level by mkt03 (decision 16). The gating itself
    is still unbuilt and belongs to the UI (mkt04).*
 3. The `third_party_licensed` question in decision 4 is still open.
+4. **The S&P 500 history before F0 is Yahoo-sourced** (decision 19), so
+   blocker 1 covers it too, even though it sits inside a FRED series. mkt04's
+   per-tenant gate must be able to hide Yahoo-sourced ROWS, not only
+   Yahoo-provider series. That is why provenance is recorded per row in
+   `indicator_observations.source_provider`. The five note underlyings
+   (decision 19) are ordinary Yahoo series and fall under blocker 1 directly.
 
 ## API contract (mkt03)
 
@@ -539,6 +636,15 @@ Implementation notes (mkt03):
 - `apps/api/scripts/verify_mkt03.py` — Phase A (fixtures `verify.mkt03.*`,
   through the real ASGI app) always runs. Phase B (`--live`) reads the real
   data.
+- `apps/api/services/market_data/splice.py` and
+  `apps/api/scripts/market_data_splice_history.py` — the long-history splice
+  (decision 19).
+- `docs/market_data/market_indicator_registry_additions_v2.json` — the
+  mkt02c additions, loaded with `market_data_ingest.py load --seed <path>`.
+  The loader's link step is `registry.link_security`.
+- `apps/api/scripts/verify_mkt02c.py` — Phase A (fixtures `verify.mkt02c.*`,
+  fake transports) always runs. Phase B (`--live`) runs after the operator
+  steps.
 
 ## Roadmap
 
@@ -558,6 +664,9 @@ Implementation notes (mkt03):
   fred.nasdaq100 and yahoo.rut. The other three of decision 2's "six" (EFA,
   EEM, gold) have no matching `securities_global` row, so they stay
   unlinked.
+- **mkt02c** (built) — long history (decision 19): the S&P 500 splice from
+  Yahoo, row-level provenance, `fred.baa10y`, five note-underlying Yahoo
+  series linked to their securities, and Yahoo index units.
 - **mkt03b** — key dates and saved views
   (`docs/market_data/KEY_DATES_SPEC_V1.md`, if added).
 - **mkt04** — the chart (base-100 with security overlay) and the grid UI,
@@ -567,12 +676,11 @@ Implementation notes (mkt03):
 
 ## Next candidates
 
-- The 10 unlinked index securities are the underlyings of the structured
-  notes: Dow Jones Industrial Average, EURO STOXX 50, FTSE 100, MSCI EAFE,
-  Nasdaq-100 Equal Weighted, Nasdaq-100 Technology Sector, S&P 500 Futures
-  Excess Return, S&P/ASX 200, Swiss Market Index, TOPIX. They could be added
-  as registry series from a free source, then linked through
-  `security_global_id`. The catalog would then mark them selectable with no
-  code change.
+- The unlinked index securities are underlyings of the structured notes.
+  mkt02c added and linked five of them (decision 19). Still without a price
+  source: TOPIX (Yahoo ticker not confirmed), MSCI EAFE, Nasdaq-100 Equal
+  Weighted, Nasdaq-100 Technology Sector, S&P 500 Futures Excess Return.
+  Adding a seed row with `security_global_id` + `security_name` is enough;
+  the catalog then marks them selectable with no code change.
 - The 54 structured notes need a price source before the overlay can plot
   them. Today `portfolio.securities_global_prices` has 0 rows.

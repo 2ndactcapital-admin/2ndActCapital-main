@@ -5,9 +5,11 @@ validate source codes, backfill full history.
 Usage (from the repo root):
     doppler run -- apps/api/venv/bin/python apps/api/scripts/market_data_ingest.py all
     ... market_data_ingest.py load|validate|backfill|all [--series fred.dgs10] [--provider yahoo]
+    ... market_data_ingest.py load --seed docs/market_data/market_indicator_registry_additions_v2.json
 
-  load      upsert docs/market_data/market_indicator_registry_v1.json into
-            market_data.indicator_series (definition fields only)
+  load      upsert a seed file (default docs/market_data/market_indicator_registry_v1.json;
+            --seed picks another) into market_data.indicator_series (definition
+            fields only), then set any security link the seed row carries
   validate  check every code of --provider against its source;
             → active | invalid_code (transient failures change nothing)
   backfill  full observation history for every 'active' series of --provider
@@ -47,17 +49,35 @@ def _dsn() -> str | None:
     return dsn.replace("postgresql+asyncpg://", "postgresql://") if dsn else None
 
 
-async def run_load(conn, series_key: str | None) -> None:
-    seed = registry.load_seed_file()
+def resolve_seed_path(raw: str | os.PathLike | None) -> Path:
+    """None → the v1 seed. A relative path is taken from the current directory,
+    falling back to the repo root (the operator runs from the repo root)."""
+    if raw is None:
+        return registry.SEED_PATH
+    path = Path(raw)
+    if not path.is_absolute() and not path.exists():
+        candidate = registry.REPO_ROOT / path
+        if candidate.exists():
+            return candidate
+    return path
+
+
+async def run_load(conn, series_key: str | None, seed_path: str | os.PathLike | None = None):
+    path = resolve_seed_path(seed_path)
+    seed = registry.load_seed_file(path)
     if series_key:
         seed = [s for s in seed if s["series_key"] == series_key]
         if not seed:
-            print(f"load: {series_key} is not in the seed file")
-            return
+            print(f"load: {series_key} is not in the seed file {path.name}")
+            return None
     async with platform_scope(conn):
         result = await registry.load_registry(conn, seed)
-    print(f"load: {len(seed)} seed rows — inserted {result.inserted}, "
-          f"updated {result.updated}, unchanged {result.unchanged}")
+    print(f"load: {len(seed)} seed rows from {path.name} — inserted {result.inserted}, "
+          f"updated {result.updated}, unchanged {result.unchanged}; security links set "
+          f"{result.linked}, already linked {result.link_unchanged}")
+    for find in result.finds:
+        print(f"[FIND] {find}")
+    return result
 
 
 async def run_validate(conn, client, keys: list[str] | None,
@@ -106,6 +126,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("command", choices=["load", "validate", "backfill", "all"])
     parser.add_argument("--series", help="limit to one series_key")
+    parser.add_argument("--seed", default=None,
+                        help="seed file for `load` (default: docs/market_data/market_indicator_registry_v1.json)")
     parser.add_argument("--provider", default=ingest.DEFAULT_PROVIDER,
                         choices=list(adapters.REAL_PROVIDERS),
                         help="source_provider to validate/backfill (default: fred)")
@@ -144,7 +166,7 @@ async def main() -> int:
         print(f"Connected as {who['u']} (bypasses RLS: {who['bypass']})")
         keys = [args.series] if args.series else None
         if args.command in ("load", "all"):
-            await run_load(conn, args.series)
+            await run_load(conn, args.series, args.seed)
         if args.command in ("validate", "all"):
             await run_validate(conn, client, keys, args.provider)
         if args.command in ("backfill", "all"):

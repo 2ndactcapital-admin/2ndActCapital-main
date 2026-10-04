@@ -56,11 +56,24 @@ SERIES_T = "market_data.indicator_series"
 OBS_T = "market_data.indicator_observations"
 RUNS_T = "market_data.indicator_ingest_runs"
 UNTOUCHED = ("portfolio.securities_global", "portfolio.securities_global_prices", "public.fx_rates")
-LINKS = {
+# The three links mkt03 shipped with — they must stay linked and selectable.
+BASELINE_LINKS = {
     "f15ba4cd-03ba-41b9-aa45-859bf80b2607": "fred.sp500",
     "858a0465-2c59-43dc-b7b0-7c9f4c98f448": "fred.nasdaq100",
     "69265688-90b2-4dfe-b3ac-9d0efb36140f": "yahoo.rut",
 }
+# Every live link, read at runtime by load_links() (mkt02c added five more):
+# {security id: series_key} for non-fixture ACTIVE series with a security —
+# exactly the rows the catalog treats as a price source.
+LINKS: dict[str, str] = dict(BASELINE_LINKS)
+
+
+async def load_links(reader) -> None:
+    rows = await reader.fetch(
+        f"SELECT security_global_id, series_key FROM {SERIES_T} WHERE security_global_id IS NOT NULL "
+        f"AND ingest_status = 'active' AND series_key NOT LIKE '{PREFIX}%'")
+    LINKS.clear()
+    LINKS.update({str(r["security_global_id"]): r["series_key"] for r in rows})
 READ_MODULES = [
     API_DIR / "services/market_data/read_repository.py",
     API_DIR / "services/market_data/read_service.py",
@@ -482,7 +495,9 @@ def a_catalog(R, live_active: int, sec_expected: int) -> None:
     by_id = {s["id"]: s for s in secs}
     linked_ok = all(by_id.get(i, {}).get("selectable") is True and by_id[i].get("series_key") == k
                     and by_id[i].get("price_source") == "indicator_series" for i, k in LINKS.items())
-    check("C6 the three linked index securities are selectable with their series_key", linked_ok,
+    linked_ok = linked_ok and all(LINKS.get(i) == k for i, k in BASELINE_LINKS.items())
+    check("C6 every linked index security (the three baseline links + any read at runtime) is selectable "
+          "with its series_key", linked_ok,
           "these are the only securities the overlay can plot today",
           json.dumps({i: (by_id.get(i, {}).get("selectable"), by_id.get(i, {}).get("series_key")) for i in LINKS}))
     others = [s for s in secs if s["id"] not in LINKS]
@@ -827,6 +842,7 @@ async def phase_a(conn, reader, dsn) -> None:
         check("A0 fixtures inserted", n["series"] == len(FIX) and n["obs"] == sum(len(f["points"]) for f in FIX.values()),
               "every assertion below reads these rows", f"counts={n}")
         live_active = await reader.fetchval(f"SELECT count(*) FROM {SERIES_T} WHERE ingest_status = 'active'")
+        await load_links(reader)
         sec_expected = await reader.fetchval(
             "SELECT count(*) FROM portfolio.securities_global WHERE valid_to IS NULL AND system_to IS NULL "
             "AND merged_into_id IS NULL")
@@ -905,7 +921,14 @@ async def _as_of_sql(reader, key, d):
 async def phase_b(reader) -> None:
     section("PHASE B — live")
     live_active = await reader.fetchval(f"SELECT count(*) FROM {SERIES_T} WHERE ingest_status = 'active'")
+    await load_links(reader)
     (sp_first, sp_latest) = await _first_last(reader, "fred.sp500")
+    # mkt02c spliced pre-2016 history into fred.sp500, so the 2000-03-10 anchor
+    # may now land ON a real observation instead of floating. The reference
+    # point is the as-of observation when one exists, else the first one.
+    sp_asof = await _as_of_sql(reader, "fred.sp500", date(2000, 3, 10))
+    sp_ref = (sp_asof["obs_date"], sp_asof["value"]) if sp_asof else sp_first
+    sp_end = date(2000, 3, 10) if sp_asof else sp_first[0]
     (_nd_first, nd_latest) = await _first_last(reader, "fred.nasdaq100")
     nd_anchor = await _as_of_sql(reader, "fred.nasdaq100", date(2000, 3, 10))
     (_t_first, t_latest) = await _first_last(reader, "fred.dgs10")
@@ -925,7 +948,7 @@ async def phase_b(reader) -> None:
     G, S, C = f"{BASE}/grid", f"{BASE}/series", f"{BASE}/correlations"
     plan = [
         ("cat", "GET", f"{BASE}/catalog", None, True),
-        ("sp_at_anchor", "POST", G, grid_body(["fred.sp500"], "2000-03-10", sp_first[0].isoformat(), "index", "monthly"), True),
+        ("sp_at_anchor", "POST", G, grid_body(["fred.sp500"], "2000-03-10", sp_end.isoformat(), "index", "monthly"), True),
         ("sp_latest", "POST", G, grid_body(["fred.sp500", "fred.nasdaq100"], "2000-03-10", sp_latest[0].isoformat(),
                                            "index", "monthly"), True),
         ("nd_latest", "POST", G, grid_body(["fred.nasdaq100"], "2000-03-10", nd_latest[0].isoformat(), "index", "monthly"), True),
@@ -938,8 +961,9 @@ async def phase_b(reader) -> None:
 
     cat = R["cat"].body or {}
     secs = {s["id"]: s for s in cat.get("securities", [])}
-    check("B1 catalog active count equals the live active count, and the three links are present",
+    check("B1 catalog active count equals the live active count, and every link (the three baseline + runtime) is present",
           R["cat"].status == 200 and len(cat.get("indicators", [])) == live_active
+          and all(LINKS.get(i) == k for i, k in BASELINE_LINKS.items())
           and all(secs.get(i, {}).get("series_key") == k and secs[i]["selectable"] for i, k in LINKS.items()),
           "the live menu matches the registry", f"indicators={len(cat.get('indicators', []))} active={live_active}")
 
@@ -951,12 +975,13 @@ async def phase_b(reader) -> None:
              f"FLOATS: v0 is the first observation, {sp_first[1]}. The 'value at the anchor' is checked at "
              "that first observation.")
     check("B2a fred.sp500 indexed from 2000-03-10 is exactly 100 at its anchor observation",
-          a.status == 200 and newest.get("date") == sp_first[0].isoformat()
+          a.status == 200 and newest.get("date") == sp_end.isoformat()
+          and meta.get("anchor_observation_date") == sp_ref[0].isoformat()
           and newest.get("cells", {}).get("fred.sp500") == "100.000000",
           "the chart's anchor point must be exactly 100", f"status={a.status} newest={newest} meta={meta}")
     b = R["sp_latest"]
     latest_row = (b.body or {}).get("rows", [{}])[0]
-    exp_sp = q6(100 * sp_latest[1] / sp_first[1])
+    exp_sp = q6(100 * sp_latest[1] / sp_ref[1])
     check("B2b fred.sp500 at the latest date equals 100 * latest / anchor computed in SQL",
           latest_row.get("cells", {}).get("fred.sp500") == exp_sp,
           "the server's index is the same arithmetic as the database's own numbers",

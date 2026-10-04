@@ -1,7 +1,10 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-03 (mkt03.structural — market data READ API: catalog,
-series, grid, correlations; verify WRITTEN, not yet run; see the top entry).
-Earlier the same day: mkt02.structural — nightly market data refresh:
+Last updated: 2026-10-04 (mkt02c.structural — market data long history:
+S&P 500 splice from Yahoo, row-level provenance, fred.baa10y, five note
+underlyings linked, Yahoo index units; verify WRITTEN, not yet run; see the
+top entry). Previously 2026-10-03 (mkt03.structural — market data READ API:
+catalog, series, grid, correlations; verified 68/0). Earlier the same day:
+mkt02.structural — nightly market data refresh:
 adapter registry, Yahoo adapter, nightly orchestrator, staleness report,
 Render cron entrypoint + setup doc; verify WRITTEN, not yet run; no Render
 service created; see the top entry). Earlier the same day: edgarcohorts.structural — EDGAR cohorts: named,
@@ -272,6 +275,108 @@ This file starts with the email item below.
 
 ---
 
+## 0000000000000000000000000000000000000. Market data mkt02c — long history: S&P 500 splice, credit spread, note underlyings, Yahoo units; verify WRITTEN, not yet run (2026-10-04)
+
+`mkt02c.structural`. Closes the "not far enough back" gap that real data
+exposed. The design is `docs/MARKET_DATA_DESIGN_V1.md` decision 19, plus
+Launch blocker 4. No DDL: Part 1 (`mkt02c_observation_source_provider`, a
+nullable, CHECKed `indicator_observations.source_provider`) was already
+applied.
+
+**Built:**
+- `services/market_data/splice.py` + `scripts/market_data_splice_history.py`:
+  splices `^GSPC` from Yahoo into `fred.sp500`, before F0 (the first
+  NULL-provider row).
+  - An overlap gate runs first: >= 99.0% of days within 0.02, no day over
+    1.00, at least 20 days compared.
+  - Insert-only. Rows are tagged `source_provider='yahoo'`. FRED rows are
+    never touched.
+  - `--dry-run` runs the gate and reports, without writing.
+- `scripts/market_data_ingest.py load --seed <path>`: the default is still
+  the v1 seed.
+- `services/market_data/registry.py`: a link step (`link_security`). It sets
+  `security_global_id` only when every one of these holds:
+  - the id names a live `index` security with exactly the given name;
+  - the series has no link yet;
+  - no other series holds that security.
+  Otherwise it prints a [FIND] and leaves the link alone. It never writes
+  `portfolio.*`.
+- `docs/market_data/market_indicator_registry_additions_v2.json`: six rows.
+  - `fred.baa10y` (`unreviewed`).
+  - `yahoo.dji`, `yahoo.ftse`, `yahoo.stoxx50e`, `yahoo.ssmi`, `yahoo.axjo`,
+    each carrying its security link.
+- `services/market_data/yahoo.py`: `meta.instrumentType == 'INDEX'` → units
+  `'index points'`; otherwise the currency, as before.
+- `scripts/verify_mkt02c.py`: Phase A (fixtures `verify.mkt02c.*`, fake
+  transports) and Phase B (`--live`).
+
+**Task 1 discovery (live, read-only):**
+- Every CONFIRMED REAL FACT matched exactly:
+  - 75 series, 63 active (57 fred / 6 yahoo), 313,156 active observations;
+  - the `source_provider` column + CHECK, with 0 rows set and 4 policies;
+  - the 3 links;
+  - the 5 securities (ids, names, `index`, live, unlinked);
+  - `fred.sp500` starts 2016-10-03 with 2,514 rows.
+- **The write path never closes, deletes or touches an active row whose date
+  is absent from a fetch.** `ingest.plan_writes` iterates only the fetched
+  points. So the nightly cannot erase the splice. Proven by verify S6.
+
+**[FIND]s — prior verify edits (Task 1d, minimal, nothing weakened):**
+- `verify_mkt02.py` B1.
+  - Before: BOTH latest nightly batches had to have per-series rows ==
+    today's active count.
+  - After: the LATEST batch == today's active count (runtime), and EACH
+    batch's per-series rows == the `attempted=` count in its own summary
+    row.
+  - Why: after mkt02c the previous batch attempted 63 and today's count is
+    69, so the old check would fail on correct data.
+- `verify_mkt03.py` LINKS.
+  - Before: a hardcoded dict of 3 links. C7 ("every other security is
+    unselectable") would fail once the 5 new links exist.
+  - After: `BASELINE_LINKS` (the original 3, still required) plus `LINKS`,
+    read at runtime by `load_links()` (non-fixture, ACTIVE series with a
+    security — the catalog's own predicate). C6, C7 and B1 use it.
+- `verify_mkt03.py` B2a/B2b.
+  - Before: grid end = `sp_first`, and the reference value = the first
+    observation.
+  - After the splice, `sp_first` falls before the 2000-03-10 anchor, so the
+    old request would have been a 422 ("anchor after end").
+  - After: the reference is the SQL as-of observation for 2000-03-10 when
+    one exists, else the first observation. The end is the anchor, else
+    `sp_first`. B2a now also checks `anchor_observation_date`.
+- `verify_mkt01.py`: no change needed. Its seed checks read v1, and B6 is
+  `>= 75`.
+
+**Other [FIND]s:**
+- `fred.sp500`'s notes are a loader definition field. A later v1 `load`
+  removes the splice sentence. A splice re-run restores it, with no
+  observation writes.
+- If FRED ever returned a date before F0, the nightly would revise that
+  Yahoo row into a FRED row. That is acceptable (FRED is the source of
+  record), and F0 would move earlier.
+- The gate needs at least 20 overlap days. The sprint did not specify a
+  minimum; without one, zero overlap passes vacuously.
+
+**Not run by this sprint (by rule):** the splice, the ingest, the nightly,
+the verify, and any Yahoo or FRED call. Discovery was read-only SQL. Offline
+only: the gate maths on the verify's own fixtures (pass / >1% / >1.00 / no
+overlap), Yahoo units over a fake transport (INDEX / ETF / missing), and the
+parser default. Every file compiles.
+
+**OPERATOR ACTIONS** (in order; the full commands are at the end of the
+sprint log):
+1. `market_data_ingest.py load --seed docs/market_data/market_indicator_registry_additions_v2.json`
+2. `validate` (activates `fred.baa10y`)
+3. `backfill --series fred.baa10y`
+4. `validate --provider yahoo` (activates the five, refreshes units)
+5. `backfill --provider yahoo`
+6. `market_data_splice_history.py --dry-run`, then without `--dry-run`
+7. `market_data_nightly.py`
+8. `verify_mkt02c.py --live`, then `verify_mkt03`, `verify_mkt02` and
+   `verify_mkt01` with `--live`.
+
+---
+
 ## 000000000000000000000000000000000000. Market data mkt03 — read API: catalog, series, grid, correlations; verify WRITTEN, not yet run (2026-10-03)
 
 `mkt03.structural`. This is the READ side the mkt04 chart and grid will sit
@@ -365,6 +470,10 @@ call. What did run:
    regression baselines: 47/0 and 57/0.
 
 The commands are at the end of the sprint log.
+
+UPDATE 2026-10-03: final verify results — `verify_mkt03.py --live` 68 passed,
+`verify_mkt02.py --live` 47 passed, `verify_mkt01.py --live` 57 passed, all 0
+failed. "verify WRITTEN, not yet run" above is superseded.
 
 ---
 
@@ -495,6 +604,10 @@ The remaining plan:
 - **mkt03b** = key dates and saved views.
 - **mkt04** = the chart and grid UI. It also gates licensed and Yahoo series
   per tenant.
+
+UPDATE 2026-10-03: final verify results — `verify_mkt03.py --live` 68 passed,
+`verify_mkt02.py --live` 47 passed, `verify_mkt01.py --live` 57 passed, all 0
+failed. "verify WRITTEN, not yet run" above is superseded.
 
 ---
 
@@ -655,6 +768,11 @@ live, with 57/0 and 47/0. The remaining plan:
 - **mkt04** = the chart and grid UI.
 
 See the mkt03 entry at the top.
+
+
+UPDATE 2026-10-03: final verify results — `verify_mkt03.py --live` 68 passed,
+`verify_mkt02.py --live` 47 passed, `verify_mkt01.py --live` 57 passed, all 0
+failed. "verify WRITTEN, not yet run" above is superseded.
 
 ---
 
@@ -4391,3 +4509,18 @@ note is not a substitute for re-verifying.
 - New short note: "Market data values cross the API as strings (exact
   Decimal text, never exponent notation). The only float is the correlation
   coefficient, which is never stored."
+
+## CLAUDE.md lines proposed by mkt02c (for operator review — NOT applied)
+
+- Under "Rule 3 — Bi-temporal Writes" or a market data note: "A series can
+  mix sources. `market_data.indicator_observations.source_provider` is
+  per-row provenance (NULL = the series' own source). Anything that must hide
+  Yahoo-sourced data has to filter ROWS, not just series — fred.sp500 before
+  2016 is Yahoo."
+- Under "Verify Script Discipline": "Never hardcode a live data shape (a link
+  list, a count, a 'first observation' date) in a verify's assertion. Read it
+  at runtime, and keep the original values as a required baseline subset.
+  mkt02c had to edit three prior verifies because they froze the registry's
+  shape."
+- Under "Verify Script Discipline": "A ratio or percentage gate needs a
+  minimum sample. With zero comparisons, '>= 99% agree' passes vacuously."
