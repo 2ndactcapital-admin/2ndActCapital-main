@@ -210,6 +210,16 @@ OWN_DATES = weekdays(F0, date(2024, 3, 29))                   # the series' own 
 OWN = [(d, D("4000.00") + i) for i, d in enumerate(OWN_DATES)]
 PRE = [(d, D("3900.1234") + i) for i, d in enumerate(PRE_DATES)]
 OVERLAP_OK = [(d, v + D("0.0049")) for d, v in OWN]           # every day within 0.02
+# Gate fixture (mkt02c2): a ~262-day overlap, so ONE or TWO days beyond 0.02
+# stay inside rule 2 (>= 99.0%) and rule 3 (0.5% of the series value) is
+# proven on its own. With the 42-day OWN above, a single bad day already
+# fails rule 2 and would prove nothing about rule 3. Ends before NOW.
+GATE_F0 = date(2023, 6, 1)
+GATE_PRE_DATES = weekdays(date(2023, 5, 1), date(2023, 5, 31))
+GATE_OWN_DATES = weekdays(GATE_F0, date(2024, 5, 31))
+GATE_OWN = [(d, D("4000.00") + i) for i, d in enumerate(GATE_OWN_DATES)]
+GATE_PRE = [(d, D("3800.1234") + i) for i, d in enumerate(GATE_PRE_DATES)]
+GATE_OK = [(d, v + D("0.0049")) for d, v in GATE_OWN]
 SYMBOL = "VMKT02CSPX"
 SYMBOL_PATH = yahoo.chart_path(SYMBOL)
 
@@ -484,39 +494,47 @@ async def a_splice_main(conn, reader) -> None:
 
 async def a_gate(conn, reader) -> None:
     key = K["splice_gate"]
-    await seed_own_rows(conn, key, OWN)
+    await seed_own_rows(conn, key, GATE_OWN)
 
     async def state():
         return (len(await all_rows(reader, key)), len(await run_rows(reader, key)), await notes_of(reader, key))
 
     base = await state()
-    # > 1% of overlap days off by more than 0.02 (2 of len(OWN) days, each 0.05; none over 1.00)
-    bad_share = [(d, v + D("0.05") if i in (4, 9) else v) for i, (d, v) in enumerate(OWN)]
-    code_a, out_a = await run_script(conn, key, PRE + bad_share)
+    # > 1% of overlap days off by more than 0.02 (5 of ~262 days, each 0.05 — far inside 0.5%)
+    bad_idx = {4, 54, 104, 154, 204}
+    bad_share = [(d, v + D("0.05") if i in bad_idx else v) for i, (d, v) in enumerate(GATE_OWN)]
+    code_a, out_a = await run_script(conn, key, GATE_PRE + bad_share)
     after_a = await state()
-    # exactly one day off by more than 1.00
-    bad_one = [(d, v + D("1.50") if i == 7 else v) for i, (d, v) in enumerate(OWN)]
-    code_b, out_b = await run_script(conn, key, PRE + bad_one)
+    # exactly one day off by more than 0.5% of the series value (25.00 on ~4007 ≈ 0.62%); every
+    # other day exact, so rule 2 holds (1 of ~262 beyond 0.02) and only rule 3 can refuse
+    bad_day = GATE_OWN_DATES[7]
+    bad_one = [(d, v + D("25.00") if i == 7 else v) for i, (d, v) in enumerate(GATE_OWN)]
+    code_b, out_b = await run_script(conn, key, GATE_PRE + bad_one)
     after_b = await state()
+    gate_line_b = next((ln for ln in out_b.splitlines() if ln.startswith("OVERLAP GATE FAILED")), "")
     # no overlap at all — must not pass vacuously
-    code_d, out_d = await run_script(conn, key, PRE)
+    code_d, out_d = await run_script(conn, key, GATE_PRE)
     after_d = await state()
-    check("S3a overlap gate REFUSES when more than 1% of overlap days differ by more than 0.02: exit 1, zero writes, "
-          "worst days printed as [FIND]",
-          code_a == 1 and after_a == base and "OVERLAP GATE FAILED" in out_a and out_a.count("[FIND]") == 2,
+    check("S3a overlap gate REFUSES when more than 1% of overlap days differ by more than 0.02 (rule 2): exit 1, "
+          "zero writes, worst days printed as [FIND]",
+          code_a == 1 and after_a == base and "OVERLAP GATE FAILED" in out_a and "rule 2" in out_a
+          and "rule 3" not in out_a.split("OVERLAP GATE FAILED")[-1] and out_a.count("[FIND]") == len(bad_idx),
           "a differently-scaled or different index must never be spliced on",
           f"exit={code_a} state={base}->{after_a}")
-    check("S3b overlap gate REFUSES when a single overlap day differs by more than 1.00: exit 1, zero writes",
-          code_b == 1 and after_b == base and "OVERLAP GATE FAILED" in out_b and "1.50" in out_b,
-          "one large break is enough to show the sources disagree",
-          f"exit={code_b} state={base}->{after_b}")
+    check("S3b overlap gate REFUSES when one overlap day differs by more than 0.5% of the series value (rule 3), "
+          "although rule 2 holds: exit 1, zero writes, the offending day named",
+          code_b == 1 and after_b == base and "rule 3" in gate_line_b and "rule 2" not in gate_line_b
+          and bad_day.isoformat() in gate_line_b and "25.00" in gate_line_b,
+          "one catastrophic break is enough to show the sources disagree, even when every other day agrees",
+          f"exit={code_b} state={base}->{after_b} gate={gate_line_b!r}")
     check(f"S3d overlap gate REFUSES with no overlap at all (needs >= {splice.MIN_OVERLAP_DAYS} days): exit 1, zero writes",
-          code_d == 1 and after_d == base and "overlapping day" in out_d,
+          code_d == 1 and after_d == base and "overlapping day" in out_d and "rule 1" in out_d,
           "zero comparisons would otherwise pass the percentage test vacuously", f"exit={code_d}")
-    code_c, out_c = await run_script(conn, key, PRE + OVERLAP_OK)
+    code_c, out_c = await run_script(conn, key, GATE_PRE + GATE_OK)
     act = active_of(await all_rows(reader, key))
     check("S3c the SAME fixture with a payload within tolerance passes: exit 0, every pre-F0 date inserted",
-          code_c == 0 and len([d for d in act if d < F0]) == len(PRE) and "100.00%" in out_c,
+          code_c == 0 and len([d for d in act if d < GATE_F0]) == len(GATE_PRE) and "100.00%" in out_c
+          and "OVERLAP GATE PASSED" in out_c and "[FIND]" not in out_c,
           "the gate must let the genuine series through, or it is just a wall", f"exit={code_c}")
 
 

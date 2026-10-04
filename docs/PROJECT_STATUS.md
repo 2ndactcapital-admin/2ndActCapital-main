@@ -375,6 +375,42 @@ sprint log):
 8. `verify_mkt02c.py --live`, then `verify_mkt03`, `verify_mkt02` and
    `verify_mkt01` with `--live`.
 
+**UPDATE 2026-10-04 — splice gate rule changed (`mkt02c2.structural`).**
+Supersedes the gate rule in "Built" above.
+- **Why.** The operator's live dry run (steps 1–5 already done) REFUSED,
+  correctly applying the rule as written. 2,514 overlap days, 99.76% within
+  0.02. But two isolated days broke the absolute "no day over 1.00" limit:
+  2021-08-11 (diff 5.29, about 0.12%) and 2019-08-12 (1.05, about 0.04%).
+  These are single-day disagreements between two feeds of the SAME index,
+  not a different or mis-scaled series. An absolute 1.00 is far too tight
+  for an index near 5,000.
+- **New rule** (`services/market_data/splice.py`, one constant each): passes
+  only if (1) at least 20 overlap days; (2) at least 99.0% within 0.02,
+  unchanged and still the main guard against a wrong series; (3) no day off
+  by more than 0.5% of the series' own value. Rule 3 replaces the 1.00
+  limit. A zero series value fails the gate with a message, never raises.
+- **Output.** The script prints the three rules, the count of days beyond
+  0.02 ("tolerated" on a pass), and the worst ten as [FIND] whether it
+  passes or fails. The gate line names the failed rule(s) and, for rule 3,
+  the offending day.
+- **Unchanged.** The splice still never writes, revises or closes a row
+  dated on or after F0. On the two disagreeing days `fred.sp500` keeps its
+  FRED value. Recorded as a data-quality note in
+  `docs/MARKET_DATA_DESIGN_V1.md` decision 19.
+- **Verify.** `verify_mkt02c.py` S3a/S3b/S3c/S3d now use a ~262-day gate
+  fixture. A single bad day fails rule 2 on the old 42-day overlap, so
+  rule 3 could not be proven alone there. S3b now proves rule 3 (one day
+  ~0.62% off; rule 2 holds). New focused `verify_mkt02c2.py`
+  (`verify.mkt02c2.*` fixtures) re-proves only the gate: S3a–S3e (S3e = the
+  live shape passes, both days listed, own rows unchanged), the constants,
+  the zero value, and dry-run parity.
+- **Not run by this sprint (by rule):** the splice, the nightly, and any
+  verify. Only offline checks ran: the gate function on in-memory data and
+  a compile of every file.
+- **Operator next:** splice `--dry-run`, then the splice, then the nightly
+  (twice), then `verify_mkt02c2`, then `verify_mkt02c --live` and the
+  mkt03/02/01 live verifies. Do NOT repeat load/validate/backfill.
+
 ---
 
 ## 000000000000000000000000000000000000. Market data mkt03 — read API: catalog, series, grid, correlations; verify WRITTEN, not yet run (2026-10-03)

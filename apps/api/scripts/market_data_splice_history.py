@@ -11,6 +11,14 @@ The rules (boundary F0, overlap gate, insert-only before F0, own-source rows
 never touched) live in services/market_data/splice.py. A dry run still runs
 the gate and reports every count; it writes nothing.
 
+Overlap gate (mkt02c2) — on the dates on or after F0 that both sources carry,
+it passes only if ALL hold:
+  1. at least 20 overlap days;
+  2. at least 99.0% of them differ by no more than 0.02;
+  3. no day differs by more than 0.5% of the series' own value.
+Days beyond 0.02 are printed as [FIND] (worst ten) whether the gate passes or
+fails. On a pass they are tolerated: the series' own value stands for each.
+
 Exit codes: 0 success; 1 the overlap gate refused or the fetch failed (nothing
 written); 2 configuration error (no DATABASE_URL, unknown series, no
 own-source rows to splice onto).
@@ -54,13 +62,19 @@ def print_result(res: splice.SpliceResult) -> int:
         return 1
     for line in splice.format_report(res):
         print(line)
+    g = res.gate
+    for d, own, got, diff in g.worst_days:
+        rel = f"{splice.relative_percent(diff, own)}%" if own != 0 else "n/a, series value is zero"
+        print(f"[FIND] {d}: series {own} vs Yahoo {got} (difference {diff}, {rel} of the series value)")
     if res.status == "gate_failed":
-        print(f"OVERLAP GATE FAILED: {res.gate.reason} — nothing written")
-        for d, own, got, diff in res.gate.worst_days:
-            print(f"[FIND] {d}: series {own} vs Yahoo {got} (difference {diff})")
+        print(f"OVERLAP GATE FAILED: {g.reason} — nothing written")
         if res.dry_run:
             print("DRY RUN — nothing written")
         return 1
+    tolerated = (f"{g.beyond_tolerance} overlap day(s) beyond {splice.OVERLAP_TOLERANCE} tolerated; the "
+                 "series' own value stands for each" if g.beyond_tolerance else
+                 f"every overlap day within {splice.OVERLAP_TOLERANCE}")
+    print(f"OVERLAP GATE PASSED: {g.compared} overlap days, {tolerated}")
     if res.dry_run:
         print("DRY RUN — nothing written")
     return 0

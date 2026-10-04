@@ -13,12 +13,22 @@ RULES
   * The fetch goes through the existing Yahoo adapter with a synthetic series
     row — same Decimal-only parsing, 4 dp quantization, raw close and
     incomplete-bar exclusion as every other Yahoo series.
-  * OVERLAP GATE before any write: on dates >= F0 present in both the fetch
-    and the series' own rows, at least 99.0% must differ by <= 0.02 (FRED
-    stores 2 dp, Yahoo 4) and none by more than 1.00, over at least
-    MIN_OVERLAP_DAYS days (zero overlap would otherwise pass vacuously). A
-    failure writes nothing. This is what stops a different index, or a
-    differently-scaled series, from being spliced on.
+  * OVERLAP GATE before any write, on dates >= F0 present in both the fetch
+    and the series' own rows. It passes only if ALL hold (mkt02c2):
+      1. at least MIN_OVERLAP_DAYS (20) days are compared — zero overlap
+         would otherwise pass vacuously;
+      2. at least OVERLAP_MIN_PERCENT (99.0%) of them differ by no more than
+         OVERLAP_TOLERANCE (0.02; FRED stores 2 dp, Yahoo 4) — the main
+         protection against a different index, a futures contract or a
+         differently-scaled series, which fails on most days;
+      3. no day differs by more than OVERLAP_MAX_RELATIVE (0.005 = 0.5%) of
+         the series' own value — catches a catastrophic single-day break.
+    Rule 3 replaced an absolute 1.00 limit, far too tight for an index near
+    5,000: two FEEDS of the same index disagree on isolated days (the live
+    fred.sp500 vs ^GSPC overlap had 2021-08-11 off by 5.29, about 0.12%).
+    A day beyond 0.02 that the gate tolerates is reported as a [FIND] and
+    the series' own value stands for it — the splice never writes on or
+    after F0. A failure writes nothing.
   * Writes only dates strictly before F0. A date with no active row is
     INSERTed with source_provider 'yahoo'. An active 'yahoo' row whose value
     changed gets the Rule 3 revision (close it, insert the new value, still
@@ -45,10 +55,11 @@ from services.market_data import ingest
 from services.market_data.adapters import scrub_error
 
 SPLICE_PROVIDER = "yahoo"
-OVERLAP_TOLERANCE = Decimal("0.02")
-OVERLAP_MAX_DIFF = Decimal("1.00")
-OVERLAP_MIN_PERCENT = Decimal("99.0")
-MIN_OVERLAP_DAYS = 20
+# The overlap gate's rules — each one line to change.
+MIN_OVERLAP_DAYS = 20                     # rule 1
+OVERLAP_MIN_PERCENT = Decimal("99.0")     # rule 2: share of days within OVERLAP_TOLERANCE
+OVERLAP_TOLERANCE = Decimal("0.02")       # rule 2: per-day absolute tolerance
+OVERLAP_MAX_RELATIVE = Decimal("0.005")   # rule 3: |yahoo - series| / |series| on every day
 WORST_DAYS_REPORTED = 10
 DESIGN_DOC = "docs/MARKET_DATA_DESIGN_V1.md"
 
@@ -66,10 +77,20 @@ class GateResult:
     compared: int = 0
     within: int = 0
     worst: Decimal | None = None
-    # (obs_date, own value, fetched value, |difference|), worst first, > 0 only
+    # (obs_date, own value, fetched value, |difference|), worst first, only
+    # days beyond OVERLAP_TOLERANCE — printed as [FIND] whether or not the gate passes
     worst_days: list[tuple[date, Decimal, Decimal, Decimal]] = field(default_factory=list)
+    # rule 3's offender: the day with the largest |difference| / |series value|
+    worst_relative: tuple[date, Decimal, Decimal, Decimal] | None = None
+    zero_value_day: date | None = None    # an overlap day where the series' own value is 0
+    failed_rules: list[int] = field(default_factory=list)
     passed: bool = False
     reason: str | None = None
+
+    @property
+    def beyond_tolerance(self) -> int:
+        """Overlap days differing by more than OVERLAP_TOLERANCE ("tolerated" on a pass)."""
+        return self.compared - self.within
 
     @property
     def percent_within(self) -> Decimal | None:
@@ -100,29 +121,66 @@ class SpliceResult:
     error: str | None = None
 
 
+def relative_percent(diff: Decimal, own: Decimal) -> Decimal:
+    """|difference| as a percent of |series value|, 4 dp, for display only."""
+    return (diff * 100 / abs(own)).quantize(Decimal("0.0001"))
+
+
+def rule_text(rule: int) -> str:
+    return {
+        1: f"rule 1: at least {MIN_OVERLAP_DAYS} overlap days",
+        2: f"rule 2: at least {OVERLAP_MIN_PERCENT}% of overlap days differ by no more than {OVERLAP_TOLERANCE}",
+        3: f"rule 3: no overlap day differs by more than {(OVERLAP_MAX_RELATIVE * 100).normalize()}% "
+           "of the series' own value",
+    }[rule]
+
+
 def run_gate(own: dict[date, Decimal], fetched: list[tuple[date, Decimal]], f0: date) -> GateResult:
-    """Compare fetched vs own values on every date >= F0 both carry."""
+    """Compare fetched vs own values on every date >= F0 both carry. Never
+    raises: a zero series value fails rule 3 with a message instead."""
     g = GateResult()
     diffs: list[tuple[date, Decimal, Decimal, Decimal]] = []
+    worst_rel: Decimal | None = None
     for d, v in fetched:
         if d < f0 or d not in own:
             continue
-        diff = abs(v - own[d])
+        o = own[d]
+        diff = abs(v - o)
         g.compared += 1
         if diff <= OVERLAP_TOLERANCE:
             g.within += 1
-        diffs.append((d, own[d], v, diff))
+        diffs.append((d, o, v, diff))
+        if o == 0:
+            if g.zero_value_day is None or d < g.zero_value_day:
+                g.zero_value_day = d
+            continue
+        rel = diff / abs(o)
+        if worst_rel is None or rel > worst_rel or (rel == worst_rel and d < g.worst_relative[0]):
+            worst_rel, g.worst_relative = rel, (d, o, v, diff)
     diffs.sort(key=lambda t: (-t[3], t[0]))
     g.worst = diffs[0][3] if diffs else None
-    g.worst_days = [t for t in diffs if t[3] > 0][:WORST_DAYS_REPORTED]
+    g.worst_days = [t for t in diffs if t[3] > OVERLAP_TOLERANCE][:WORST_DAYS_REPORTED]
+
+    reasons: list[str] = []
     if g.compared < MIN_OVERLAP_DAYS:
-        g.reason = (f"only {g.compared} overlapping day(s) on or after {f0}; at least "
-                    f"{MIN_OVERLAP_DAYS} are needed to prove both sources are the same index")
-    elif g.worst is not None and g.worst > OVERLAP_MAX_DIFF:
-        g.reason = f"an overlapping day differs by {g.worst} (> {OVERLAP_MAX_DIFF})"
-    elif g.percent_within is not None and Decimal(g.within) * 100 < OVERLAP_MIN_PERCENT * g.compared:
-        g.reason = (f"{g.percent_within}% of overlapping days are within {OVERLAP_TOLERANCE} "
-                    f"(< {OVERLAP_MIN_PERCENT}%)")
+        g.failed_rules.append(1)
+        reasons.append(f"{rule_text(1)} — only {g.compared} overlapping day(s) on or after {f0}; at least "
+                       f"{MIN_OVERLAP_DAYS} are needed to prove both sources are the same index")
+    if g.compared and Decimal(g.within) * 100 < OVERLAP_MIN_PERCENT * g.compared:
+        g.failed_rules.append(2)
+        reasons.append(f"{rule_text(2)} — only {g.percent_within}% are "
+                       f"({g.beyond_tolerance} of {g.compared} days beyond {OVERLAP_TOLERANCE})")
+    if g.zero_value_day is not None:
+        g.failed_rules.append(3)
+        reasons.append(f"{rule_text(3)} — the series' own value is zero on {g.zero_value_day}, so the "
+                       "relative difference cannot be computed; refusing rather than guessing")
+    elif g.worst_relative is not None and g.worst_relative[3] > OVERLAP_MAX_RELATIVE * abs(g.worst_relative[1]):
+        d, o, v, diff = g.worst_relative
+        g.failed_rules.append(3)
+        reasons.append(f"{rule_text(3)} — {d}: series {o} vs Yahoo {v}, difference {diff} "
+                       f"({relative_percent(diff, o)}% of the series value)")
+    g.failed_rules.sort()
+    g.reason = "; ".join(reasons) if reasons else None
     g.passed = g.reason is None
     return g
 
@@ -291,9 +349,14 @@ def format_report(res: SpliceResult) -> list[str]:
         f"series {res.series_key} ← Yahoo {res.symbol}; own-source boundary F0 = {res.f0}",
         f"points fetched: {res.fetched}" + (f" (rejected {res.rejected})" if res.rejected else ""),
         f"candidate pre-F0 points: {res.candidates}",
+        f"overlap gate {rule_text(1)}; {rule_text(2)}; {rule_text(3)}",
         f"overlap days compared: {g.compared}",
         f"within {OVERLAP_TOLERANCE}: {pct if pct is not None else '-'}%",
+        f"overlap days beyond {OVERLAP_TOLERANCE}: {g.beyond_tolerance}",
         f"worst difference: {g.worst if g.worst is not None else '-'}",
+        "worst relative difference: " + (
+            f"{relative_percent(g.worst_relative[3], g.worst_relative[1])}% on {g.worst_relative[0]}"
+            if g.worst_relative is not None else "-"),
         f"rows inserted {res.inserted}, revised {res.revised}, unchanged {res.unchanged}"
         + (f", never-touched non-Yahoo rows before F0 {res.untouchable}" if res.untouchable else "")
         + (f" (lost races {res.lost_races})" if res.lost_races else ""),

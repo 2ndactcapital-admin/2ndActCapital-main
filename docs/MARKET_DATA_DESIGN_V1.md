@@ -357,15 +357,38 @@ on real history.
   row, so it uses the same parsing as every Yahoo series: Decimal only,
   4 dp ROUND_HALF_EVEN, raw close, incomplete-bar exclusion. No `^GSPC`
   registry series exists.
-- **Overlap gate, before any write.** On every date >= F0 that both the
-  fetch and the series' own rows carry:
-  - at least 99.0% of days must differ by <= 0.02 (FRED stores 2 dp, Yahoo 4);
-  - no day may differ by more than 1.00;
-  - at least 20 days must be compared. Zero overlap would otherwise pass the
-    percentage test vacuously.
-  If the gate fails, nothing is written, the worst ten days are printed as
-  [FIND], and the script exits 1. This is what stops a different index, or a
-  differently-scaled series, from being spliced on.
+- **Overlap gate, before any write** (rule revised in mkt02c2). On every
+  date >= F0 that both the fetch and the series' own rows carry, the gate
+  passes only if ALL hold:
+  1. at least 20 days are compared. Zero overlap would otherwise pass the
+     percentage test vacuously;
+  2. at least 99.0% of days differ by <= 0.02 (FRED stores 2 dp, Yahoo 4).
+     This is the main protection against splicing a different index, a
+     futures contract or a differently-scaled series: a wrong series fails
+     it on most days, not one;
+  3. no day differs by more than 0.5% of the series' own value, i.e.
+     `|yahoo - series| / |series| <= 0.005`. This catches a catastrophic
+     single-day break. A zero series value (impossible for an index) fails
+     the gate with a message rather than raising.
+  The thresholds are module constants in `splice.py` (`MIN_OVERLAP_DAYS`,
+  `OVERLAP_MIN_PERCENT`, `OVERLAP_TOLERANCE`, `OVERLAP_MAX_RELATIVE`). Days
+  beyond 0.02 are printed as [FIND] (worst ten) whether the gate passes or
+  fails. On a pass the output says how many were tolerated. If the gate
+  fails, nothing is written, the gate line names the failed rule(s) (and
+  the offending day for rule 3), and the script exits 1.
+  - Rule 3 replaced an absolute "no day may differ by more than 1.00",
+    which is far too tight for an index near 5,000 (see the data-quality
+    note below).
+- **Data-quality note — FRED vs Yahoo on `fred.sp500` (live dry run,
+  2026-10-04).** 2,514 overlap days (2016-10-03 to 2026-10-02), 99.76%
+  within 0.02. Two isolated single-day disagreements between two feeds of
+  the SAME index: 2021-08-11 (FRED 4447.7, Yahoo 4442.4102, about 0.12%)
+  and 2019-08-12 (FRED 2883.75, Yahoo 2882.70, about 0.04%). The next worst
+  was 0.13 (2020-05-11), then nothing above 0.04. The old 1.00 rule refused
+  the splice on these two days alone. On both, `fred.sp500` keeps its own
+  FRED value. **A day-level discrepancy inside FRED's own range (on or
+  after F0) is reported, but never overwritten:** the splice writes only
+  dates strictly before F0, whatever the gate finds.
 - **Insert-only before F0.** A date before F0 with no active row is inserted
   with `source_provider = 'yahoo'`. An active `'yahoo'` row whose value
   changed gets the Rule 3 revision (close it, insert the new value, still
