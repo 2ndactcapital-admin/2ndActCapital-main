@@ -73,6 +73,7 @@ from services.extraction import (
     call_claude_json,
     resolve_model,
 )
+from services.note_extraction.quote_match import TextIndex as _TextIndex
 from services.note_terms_corrections import log_hazard_disagreement
 from services.note_terms_routing import route_note_terms_row
 from services.note_terms_validators import cusip_checksum, run_numeric_validators
@@ -264,62 +265,10 @@ def select_window(text: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 # ── Verbatim-quote location (real offsets, not model-reported integers) ───────
-
-
-class _TextIndex:
-    """Whitespace-normalised view of a filing, with a map back to real offsets.
-
-    Models are unreliable at reporting character offsets and reliable at copying
-    a phrase verbatim. So the model returns a quote and this class finds it,
-    which makes ``source_char_start``/``source_char_end`` a measured fact rather
-    than a hallucinated integer. Normalisation is needed because the extracted
-    text carries the original document's line breaks and a model will
-    silently re-wrap a quote it copies.
-    """
-
-    __slots__ = ("text", "_norm", "_map")
-
-    def __init__(self, text: str) -> None:
-        self.text = text or ""
-        chars: list[str] = []
-        offsets: list[int] = []
-        prev_space = False
-        for i, ch in enumerate(self.text):
-            if ch.isspace():
-                if prev_space:
-                    continue
-                chars.append(" ")
-                offsets.append(i)
-                prev_space = True
-            else:
-                chars.append(ch.lower())
-                offsets.append(i)
-                prev_space = False
-        self._norm = "".join(chars)
-        self._map = offsets
-
-    def locate(self, quote: str | None) -> tuple[int, int] | None:
-        """Absolute ``(start, end)`` of ``quote`` in the full text, or None."""
-        if not quote or not isinstance(quote, str):
-            return None
-        stripped = quote.strip()
-        if len(stripped) < 8:  # too short to be a distinctive anchor
-            return None
-
-        direct = self.text.find(stripped)
-        if direct != -1:
-            return direct, direct + len(stripped)
-
-        needle = re.sub(r"\s+", " ", stripped).lower().strip()
-        if not needle:
-            return None
-        pos = self._norm.find(needle)
-        if pos == -1:
-            return None
-        end_idx = pos + len(needle) - 1
-        if end_idx >= len(self._map):
-            return None
-        return self._map[pos], self._map[end_idx] + 1
+# _TextIndex (imported above as TextIndex) is the SAME helper
+# services.edgar_inventory's quote verification uses, via
+# services.note_extraction.documents.FilingDocument.index — one
+# implementation, so a quote accepted by one is accepted by the other.
 
 
 # ── Coercion ──────────────────────────────────────────────────────────────────

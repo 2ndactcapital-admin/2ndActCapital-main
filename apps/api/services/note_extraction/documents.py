@@ -21,7 +21,7 @@ import os
 from dataclasses import dataclass, field
 
 from services import html_text
-from services.note_terms_extraction import _TextIndex
+from services.note_extraction.quote_match import TextIndex
 
 # The corpus bucket (CONFIRMED in sprint A). Doppler's R2_BUCKET_NAME holds an
 # invalid name, so reads use EDGAR_R2_BUCKET when set and the known corpus
@@ -45,12 +45,12 @@ class FilingDocument:
     cik: str | None = None
     filing_date: object = None
     accession_number: str | None = None
-    _index: _TextIndex | None = field(default=None, repr=False)
+    _index: TextIndex | None = field(default=None, repr=False)
 
     @property
-    def index(self) -> _TextIndex:
+    def index(self) -> TextIndex:
         if self._index is None:
-            self._index = _TextIndex(self.text)
+            self._index = TextIndex(self.text)
         return self._index
 
 

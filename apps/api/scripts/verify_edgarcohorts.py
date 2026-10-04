@@ -1163,13 +1163,21 @@ class FakeProxy:
                               {"label": "Phantom", "value": "x", "quote": fabricated, "section": None,
                                "maps_to": "NEW"}]}
         date_label = "Pricing Date" if INV_PRICING.index(acc) % 2 == 0 else "Trade Date"
+        # Pricing Date maps directly to the real 'pricing_date' field (the
+        # existing-mapping-is-kept case). Trade Date is the SAME real-world
+        # date under a different bank's wording, proposed as a deliberately
+        # DIFFERENT new key — so the two can only land in one concept via the
+        # model-assisted grouping step, exactly as two banks' genuinely
+        # different field-key proposals for the same concept would.
+        maps_existing = date_label == "Pricing Date"
         return {
             "document": {"product_family": "auto-callable contingent coupon notes",
                          "program_supplement": "product supplement no. VERIFY-1",
                          "has_hypothetical_payout_table": True, "issue_size": f"${n},250,000"},
             "items": [
                 {"label": date_label, "value": f"March {n}, 2025", "quote": f"{date_label}: March {n}, 2025",
-                 "section": "Key Terms", "maps_to": self.registry_key or "NEW", "proposed_field_key": None},
+                 "section": "Key Terms", "maps_to": self.registry_key if maps_existing else "NEW",
+                 "proposed_field_key": None if maps_existing else "trade_date"},
                 {"label": "Coupon Barrier", "value": f"{60 + n}.00%", "quote": f"Coupon Barrier: {60 + n}.00% of the Initial Level",
                  "section": "Key Terms", "maps_to": "NEW", "proposed_field_key": "coupon_barrier_pct"},
                 {"label": "Redemption Barrier", "value": f"{50 + n}.00%",
@@ -1186,15 +1194,19 @@ class FakeProxy:
 
     @staticmethod
     def _grouping(user):
+        # v2 groups over distinct EFFECTIVE KEYS, not raw labels: each listed
+        # line is "{i}. {key} — labels: ... — e.g. ... — existing field|proposed NEW"
+        # (services.edgar_inventory.aggregate) — so the token right after the
+        # index is the key itself ('pricing_date', 'trade_date'), never a label.
         ids = {}
         for line in user.splitlines():
-            m = re.match(r"^(\d+)\. (.+?) — ", line)
+            m = re.match(r"^(\d+)\.\s+(\S+)\s+—", line)
             if m:
                 ids[m.group(2)] = int(m.group(1))
         groups = []
-        if "pricing date" in ids and "trade date" in ids:
-            groups.append({"concept": "Pricing date", "label_ids": [ids["pricing date"], ids["trade date"]],
-                           "maps_to": "NEW", "proposed_field_key": "pricing_date"})
+        if "pricing_date" in ids and "trade_date" in ids:
+            groups.append({"concept": "Pricing date", "key_ids": [ids["pricing_date"], ids["trade_date"]],
+                           "maps_to": "pricing_date", "proposed_field_key": None})
         return {"groups": groups}
 
 
@@ -1212,14 +1224,23 @@ async def inventory_section(conn, inv_cohort) -> None:
     check(RISK_SENTINEL not in tp1.text and TAX_SENTINEL not in tp1.text and LICENSE_SENTINEL not in tp1.text
           and "Example 4" in tp1.text and "Coupon Barrier" in tp1.text,
           "terms pages keep the terms and payout examples and stop before risk factors, licence text and tax",
-          f"stopped_at={tp1.stopped_at}")
+          f"sections_included={tp1.sections_included} truncated={tp1.truncated}")
     check(RISK_SENTINEL not in tp2.text and TAX_SENTINEL not in tp2.text and "Example 8" in tp2.text,
           "payout examples placed AFTER the risk section are still kept; the risk text is not", f"{tp2.sections}")
     check(tp1.tokens_est == (tp1.chars + 3) // 4 and tp1.chars < tp1.full_chars,
           "the terms-page size and token estimate are recorded")
 
     registry_rows = await schema.load_registry_rows(conn)
-    registry_key = registry_rows[0]["field_key"] if registry_rows else None
+    field_specs = {s.key: s for s in schema.build_field_specs(registry_rows)}
+    # 'pricing_date' is a B1 EXTENSION field (services/note_extraction/schema.py) —
+    # always present regardless of the live registry's content — whose own label
+    # ("Pricing Date") and description ("The pricing / trade date") genuinely cover
+    # both mocked date labels below. The previous fixture used registry_rows[0]
+    # (the alphabetically FIRST live registry field, unrelated to either label),
+    # which is why this check used to fail: plausible_mapping correctly rejects a
+    # mapping to an unrelated field, so "the mapping is kept" was never true.
+    registry_key = "pricing_date"
+    check(registry_key in field_specs, "sanity: the pricing_date extension field is present in the field spec list")
     fake_catalog = {
         CATALOG_MODEL: Deployment(name=CATALOG_MODEL, deployment_id=CATALOG_DEPLOYMENT_ID, upstream=CATALOG_UPSTREAM,
                                   price_key=CATALOG_MODEL, input_cost_per_token=1e-6, output_cost_per_token=1e-6,
@@ -1319,10 +1340,26 @@ async def inventory_section(conn, inv_cohort) -> None:
     mis = [i for i in items if i["misleading_label"]]
     check(len(mis) == len(INV_PRICING) and all("protects nothing" in (i["misleading_note"] or "") for i in mis),
           "misleading-label flags are stored with their note")
-    if registry_key:
-        check(any(i["mapped_field_key"] == registry_key for i in items)
-              and all(i["mapped_field_key"] is None or i["mapped_field_key"] == registry_key for i in items),
-              "a mapping to an existing registry field is kept; NEW leaves the mapping empty")
+    check(any(i["mapped_field_key"] == registry_key for i in items)
+          and all(i["mapped_field_key"] is None or i["mapped_field_key"] == registry_key for i in items),
+          "a mapping to an existing registry field is kept; NEW leaves the mapping empty")
+
+    # [FIND] plausible_mapping, as written (key/label/description only),
+    # wrongly rejected a LEGITIMATE mapping: "Trigger Value" is an
+    # established real-world synonym for a barrier level (see
+    # services/note_extraction/edgartools_reader.py's barrier regex and
+    # gold.py's threshold_trigger_buffer_wording) but that word only ever
+    # appears on the SIBLING protection_type field's description — never on
+    # barrier_pct's own key, label or description — so the safety net refused
+    # a mapping the model got right. Fixed with a small known-synonyms table
+    # in plausible_mapping (services/edgar_inventory.py).
+    find("plausible_mapping rejected a legitimate mapping before the fix: 'Trigger Value' -> barrier_pct shares "
+         "no vocabulary with barrier_pct's own key/label/description — the synonym 'trigger' lives only on the "
+         "sibling protection_type field's description")
+    check(inv.plausible_mapping("Trigger Value", field_specs["barrier_pct"]) is True,
+          "FIXED: 'Trigger Value' (a real synonym for a barrier level) now maps to barrier_pct")
+    check(inv.plausible_mapping("Denominations", field_specs["maturity_date"]) is False,
+          "a mapping with no relationship in meaning at all is still rejected")
 
     section("[Y] Concept grouping keeps every original label and quote attached; the label dictionary is produced")
     concepts = [dict(r) for r in await rls_fetch(conn, "SELECT * FROM portfolio.edgar_inventory_concepts WHERE run_id = $1",
@@ -1353,8 +1390,13 @@ async def inventory_section(conn, inv_cohort) -> None:
     check(s_o == 403, "the inventory grid is super-admin only (org admin 403)")
     md = inv.render_markdown(run, docs, await inv.inventory_concepts(conn, summary.run_id),
                              await inv.run_label_dictionary(conn, summary.run_id))
-    check("## Concepts" in md and "Pricing Date; Trade Date" in md and "## Per-issuer label dictionary" in md,
-          "docs/TEMPLATE_STUDY.md renders from the stored run (concepts + label dictionary)")
+    check("## Section coverage" in md and "### Coverage per bank" in md,
+          "docs/TEMPLATE_STUDY.md renders v2's section-coverage layout (overall and per-bank)")
+    check("## Concepts" in md and "Ranked by how many banks use the concept" in md
+          and "Pricing Date; Trade Date" in md,
+          "the concepts table documents its own bank-count ranking and includes the merged Pricing/Trade Date concept")
+    check("## Misleading-label flags" in md, "docs/TEMPLATE_STUDY.md has a dedicated misleading-label-flags section")
+    check("## Per-issuer label dictionary" in md, "docs/TEMPLATE_STUDY.md renders the per-issuer label dictionary")
 
     section("[Y] The spending cap stops a run cleanly")
     dry = await inv.run_inventory(conn, inv_cohort, catalog=fake_catalog, spend_cap_usd=1.0, dry_run=True,

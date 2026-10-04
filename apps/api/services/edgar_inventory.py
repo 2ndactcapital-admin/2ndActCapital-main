@@ -4,10 +4,25 @@ Before the extraction schema is settled, list EVERYTHING a small, varied set of
 filings actually contains, so fields are added once, from evidence, instead of
 one surprise at a time.
 
-INPUT. For each chosen document, its TERMS PAGES only (``terms_pages``): from
-the start through the payout examples, stopping before risk factors, index
-methodology, licence text and tax. The kept character count and a token
-estimate are recorded per document.
+INPUT. For each chosen document, its selected SECTIONS (``terms_pages``), kept
+wherever in the document they occur — not a straight read from the start that
+stops at the first risk-factors heading. The whole document is scanned for
+headings; a section is kept if its heading matches a KEEP pattern (cover /
+summary / key terms, payment-at-maturity / coupon / call / schedule,
+hypothetical payout examples, the estimated value section, and the
+(supplemental) plan of distribution including "Conflicts of Interest"
+variants) and dropped if it matches a DROP pattern (risk factors, tax, ERISA,
+underlying/index description or methodology, historical performance, licence
+/ disclaimer text). Text between two recognised headings belongs to the
+heading above it, so an estimated-value or plan-of-distribution section that
+comes AFTER the risk factors — the common case — is still kept. The opening
+(before the first recognised heading) is always kept, capped, since the fee
+table usually lives there. The assembled input is capped overall (about
+20,000 tokens). Per document, which KEEP sections were actually FOUND and
+which made it into the input before the cap (``sections_found`` /
+``sections_included``) are both recorded, plus whether the estimated-value
+section and the plan of distribution were found at all — the run's report
+aggregates this into coverage, and lists the documents missing either.
 
 DOCUMENTS (``select_documents``). From a cohort (normally the template-study
 preset): per issuer group, 4-6 FINAL pricing supplements chosen for VARIETY —
@@ -17,20 +32,44 @@ era — plus 1-2 product supplements, because notes lean on them for definitions
 
 THE MODEL lists every distinct data element: the label exactly as written, the
 value as written, a short EXACT quote, the section, and the existing schema
-field it corresponds to (the field list is generated from
-``portfolio.note_terms_field_registry``) or NEW; and flags labels that are
-misleading about their meaning. Per document it also reports the product family
-as described, the program / product supplement cited, whether a hypothetical
-payout table is present, and the issue size.
+field it corresponds to — given the field's own DESCRIPTION, not just its key
+and label, and told to map only on IDENTICAL meaning, otherwise propose NEW —
+(the field list is generated from ``services.note_extraction.schema.
+build_field_specs``: registry rows plus the B1 extensions, e.g. cusip,
+maturity_date, distribution, so an existing extraction field is never
+re-proposed as NEW); and flags labels that are misleading about their meaning.
+A model-claimed mapping to an existing field is only accepted if the item's
+label shares real vocabulary with that field's own key/label — a mapping with
+no shared meaning at all (e.g. "Issue Date" -> initial_valuation_date,
+"Denominations" -> notional_currency) is rejected back to a proposal instead
+(``plausible_mapping`` — a cheap safety net, not a semantic verifier). Per
+document it also reports the product family as described, the program /
+product supplement cited, whether a hypothetical payout table is present, and
+the issue size.
 
 EVERY QUOTE IS CHECKED against the filing's text (``FilingDocument.index``,
-the same whitespace-normalised locator B1 uses). An item whose quote is not
-found is REJECTED — stored on the document row with the reason, and counted —
-never as an item.
+``services.note_extraction.quote_match.TextIndex`` — the SAME helper
+``services.note_terms_extraction``'s hazard-ensemble quote verification uses,
+whitespace- and punctuation-normalised so a line-wrapped or curly-quoted
+re-typing of a quote is still found, while a paraphrase is still rejected). An
+item whose quote is not found is REJECTED — stored on the document row with
+the reason, and counted — never as an item.
 
-CONCEPTS (``aggregate``). Items are grouped first by normalised label, then by
-ONE model-assisted grouping call over the list of unique labels. Every item
-keeps its original label and quote; a concept records its synonyms, the issuers
+CONCEPTS (``aggregate``). Items are grouped by their EFFECTIVE KEY (the mapped
+existing field, else the proposed new field, else a slug of the label) — never
+by raw label, which fragments into one concept per issuer the moment two
+issuers word the same field differently. The model-assisted step then merges
+keys that mean the same thing (issuer / issuer_name, cusip / cusip_isin, a
+listing/registration-number variant) over the list of DISTINCT keys (with a
+few sample labels and values each) — not the 1,000+ raw labels, which is what
+let the grouping response blow past its own output-token budget and come back
+unparseable before. If the model step cannot run or its answer is unusable,
+grouping falls back to one concept per key (``grouping_method`` 'field_key')
+— and the reason is recorded on the run (``stop_reason`` /
+``report.grouping_note``) and in the written report, never silently dropped
+even when the main document loop already has its own stop reason to report
+(the two are concatenated, never one clobbering the other). Every item keeps
+its original label and quote; a concept records its synonyms, the issuers
 using it, frequency, example values, the mapped or proposed field, and every
 misleading-label flag. ``label_dictionary`` gives issuer -> label -> concept
 for rules.
@@ -44,8 +83,8 @@ provider-reported model recorded); never a provider directly.
 
 COST. A hard spending cap (``SpendTracker``: every call reserves its estimate
 first and is never made if it would cross the cap; the run then stops cleanly
-as ``stopped_spend_cap``). ``dry_run`` plans documents, terms-page sizes and an
-estimated cost and makes ZERO model calls.
+as ``stopped_spend_cap``). ``dry_run`` plans documents, section selection and
+an estimated cost and makes ZERO model calls.
 """
 from __future__ import annotations
 
@@ -60,25 +99,27 @@ from decimal import Decimal
 
 from services.database import platform_scope
 from services.edgar_cohorts import era_of
-from services.note_extraction import proxy, trim
+from services.note_extraction import proxy, schema
 from services.note_extraction.sanitize import strip_nul, strip_nul_deep
 from services.note_extraction.spend import (
     SpendCapReached, SpendTracker, estimate_call_cost, priced_cost,
 )
 from services.note_extraction.trim import estimate_tokens_chars
 
-PROMPT_VERSION = "edgarcohorts.inventory.v1"
-GROUPING_PROMPT_VERSION = "edgarcohorts.grouping.v1"
+PROMPT_VERSION = "edgarcohorts.inventory.v2"
+GROUPING_PROMPT_VERSION = "edgarcohorts.grouping.v2"
 NEW = "NEW"
-MAX_TERMS_CHARS = 120_000
+MAX_TERMS_CHARS = 80_000           # ~20,000 tokens
+OPENING_CHARS = 8_000              # cap on the opening/cover section specifically
 DEFAULT_MAX_TOKENS = 8000
-GROUPING_MAX_TOKENS = 8000
+GROUPING_MAX_TOKENS = 16000
 PER_ISSUER_MIN, PER_ISSUER_MAX = 4, 6
 PRODUCT_SUPPLEMENTS_PER_ISSUER = 2
 FETCHED_PRICING = ("ready_for_extraction", "prefilter_skipped")
 EMBEDDING_PROVIDERS = frozenset({"voyage"})
 MAX_CONSECUTIVE_FAILURES = 5
 DEFAULT_CONCURRENCY = 4
+MAX_HEADING_LEN = 120
 
 # Calls made by this module (dry runs assert this does not move).
 CALLS = {"inventory": 0, "grouping": 0}
@@ -88,46 +129,120 @@ class InventoryBlocked(RuntimeError):
     """No eligible model: nothing can run."""
 
 
-# ═══ Terms pages ═══════════════════════════════════════════════════════════
+# ═══ Section selection: KEEP/DROP by heading, wherever it occurs ═══════════
+# Unlike a "read to the first risk-factors heading" pass, this scans the
+# WHOLE document: every recognised heading is classified KEEP or DROP, and a
+# section runs from its heading to the next recognised heading regardless of
+# where either falls. An estimated-value or plan-of-distribution section that
+# the issuer places AFTER the risk factors — the common case that caused the
+# first real run's estimated-value coverage to be 3 of 22 documents — is kept
+# because it is found by scanning onward, not because of a special case.
+KEEP = "keep"
+DROP = "drop"
+
 _H = lambda *alts: re.compile(r"^(?:\d+\.\s+|[•■▪\-\*]\s*)?(?:" + "|".join(alts) + r")", re.IGNORECASE)
 
-STOP_HEADINGS: tuple[tuple[str, re.Pattern], ...] = (
-    ("risk_factors", _H(r"(?:selected\s+|key\s+|additional\s+|summary\s+)?risk\s+(?:factors|considerations)",
-                        r"risks?\s+relating\s+to", r"key\s+risks")),
-    ("tax", _H(r"(?:material\s+|certain\s+)?(?:u\.\s?s\.\s+|united\s+states\s+)?federal\s+income\s+tax",
-               r"(?:material\s+|certain\s+)?(?:u\.\s?s\.\s+)?tax\s+(?:consequences|considerations|treatment|discussion)",
-               r"supplemental\s+(?:discussion\s+of\s+)?(?:u\.\s?s\.\s+)?federal\s+income\s+tax",
-               r"canadian\s+federal\s+income\s+tax", r"taxation")),
-    ("index_methodology", _H(r"(?:the\s+)?(?:index|indices|underlying)\s+(?:methodology|description|information)",
-                             r"description\s+of\s+the\s+(?:index|indices|underlyings?|reference\s+assets?)",
-                             r"information\s+(?:about|regarding|relating\s+to)\s+the\s+(?:index|indices|underlyings?|reference)",
-                             r"(?:the\s+)?underlying\s+(?:index|indices)\s*$",
-                             r"historical\s+(?:information|performance|data|closing)")),
-    ("license", _H(r"licens(?:e|ing)(?:\s+agreements?)?\b", r"(?:index\s+)?disclaimers?\s*$",
-                   r"trademarks?\b")),
+SECTION_RULES: tuple[tuple[str, str, re.Pattern], ...] = (
+    # ── DROP: never needed for the inventory, no matter where they fall ────
+    (DROP, "risk_factors", _H(r"(?:selected\s+|key\s+|additional\s+|summary\s+)?risk\s+(?:factors|considerations)",
+                              r"risks?\s+relating\s+to", r"key\s+risks")),
+    (DROP, "tax", _H(r"(?:material\s+|certain\s+)?(?:u\.\s?s\.\s+|united\s+states\s+)?federal\s+income\s+tax",
+                     r"(?:material\s+|certain\s+)?(?:u\.\s?s\.\s+)?tax\s+(?:consequences|considerations|treatment|discussion)",
+                     r"supplemental\s+(?:discussion\s+of\s+)?(?:u\.\s?s\.\s+)?federal\s+income\s+tax",
+                     r"canadian\s+federal\s+income\s+tax", r"taxation")),
+    (DROP, "erisa", _H(r"erisa", r"benefit\s+plan\s+investor", r"employee\s+retirement\s+income",
+                       r"certain\s+erisa", r"plan\s+investor\s+considerations")),
+    (DROP, "underlying_methodology", _H(
+        r"(?:the\s+)?(?:index|indices|underlying)\s+(?:methodology|description|information)",
+        r"description\s+of\s+the\s+(?:index|indices|underlyings?|reference\s+assets?)",
+        r"information\s+(?:about|regarding|relating\s+to)\s+the\s+(?:index|indices|underlyings?|reference)",
+        r"(?:the\s+)?underlying\s+(?:index|indices)\s*$")),
+    (DROP, "historical_performance", _H(r"historical\s+(?:information|performance|data|closing)")),
+    (DROP, "license", _H(r"licens(?:e|ing)(?:\s+agreements?)?\b", r"(?:index\s+)?disclaimers?\s*$",
+                         r"trademarks?\b")),
+    # ── KEEP: the sections the inventory actually needs ─────────────────────
+    (KEEP, "plan_of_distribution", _H(
+        r"(?:supplemental\s+)?plan\s+of\s+distribution", r"supplemental\s+plan\s+of\s+distribution",
+        r"underwriting(?:\s*\(conflicts?\s+of\s+interest\))?\s*$",
+        r"distribution\s*(?:\(conflicts?\s+of\s+interest\))?\s*$",
+        r"supplemental\s+information\s+(?:regarding|relating\s+to)\s+(?:the\s+)?(?:plan\s+of\s+)?distribution",
+        r"conflicts?\s+of\s+interest\s*$")),
+    (KEEP, "estimated_value", _H(
+        r"(?:additional\s+information\s+(?:regarding|about|relating\s+to)\s+)?(?:(?:the|our|its|issuer'?s?|bank'?s?)\s+)*estimated\s+value",
+        r"the\s+estimated\s+value", r"valuation\s+of\s+the\s+notes")),
+    (KEEP, "key_terms", _H(
+        r"key\s+terms", r"summary\s+of\s+(?:the\s+)?terms", r"terms\s+of\s+the\s+(?:notes|securities)",
+        r"final\s+terms", r"indicative\s+terms", r"general\s+terms", r"key\s+information",
+        r"summary\s+information", r"the\s+(?:notes|securities)\s*$", r"product\s+terms")),
+    (KEEP, "payoff_terms", _H(
+        r"payment\s+at\s+maturity", r"payment\s+upon", r"payout", r"redemption\s+amount",
+        r"what\s+(?:will|do)\s+(?:i|you)\s+receive", r"how\s+the\s+(?:notes|securities)\s+work",
+        r"determining\s+the\s+payment", r"cash\s+settlement\s+amount", r"maturity\s+payment")),
+    (KEEP, "coupon_call", _H(
+        r"(?:contingent\s+)?(?:coupon|interest)\s+payments?", r"contingent\s+coupon",
+        r"coupon\s+(?:barrier|rate)", r"automatic(?:ally)?\s+(?:call|redemption|early)",
+        r"early\s+redemption", r"issuer\s+call", r"optional\s+(?:early\s+)?redemption",
+        r"call\s+feature", r"redemption\s+at\s+the\s+option")),
+    (KEEP, "schedule", _H(
+        r"observation\s+(?:dates?|schedule)", r"(?:call\s+|coupon\s+)?valuation\s+dates?",
+        r"coupon\s+payment\s+dates?", r"call\s+(?:observation|valuation)\s+dates?",
+        r"determination\s+dates?", r"review\s+dates?")),
+    (KEEP, "fees", _H(
+        r"(?:selling\s+)?commissions?", r"fees\s+and\s+(?:commissions|expenses)",
+        r"selling\s+concessions?", r"structuring\s+fees?", r"price\s+to\s+public",
+        r"proceeds\s+to\s+(?:issuer|us)")),
+    (KEEP, "hypothetical_examples", _H(
+        r"hypothetical\s+(?:examples?|payments?|payouts?|returns?|amounts?|payment\s+at\s+maturity)",
+        r"(?:examples?|illustrations?)\s+of\s+(?:hypothetical\s+)?(?:payments?|payouts?|amounts?|returns?|calculations?)",
+        r"what\s+is\s+the\s+total\s+return", r"scenario\s+analysis")),
 )
-EXAMPLE_HEADINGS = _H(
-    r"hypothetical\s+(?:examples?|payments?|payouts?|returns?|amounts?|payment\s+at\s+maturity)",
-    r"(?:examples?|illustrations?)\s+of\s+(?:hypothetical\s+)?(?:payments?|payouts?|amounts?|returns?|calculations?)",
-    r"what\s+is\s+the\s+total\s+return", r"scenario\s+analysis",
-)
+# Names of KEEP sections, for coverage reporting (excludes "opening").
+KEEP_SECTION_NAMES = tuple(name for klass, name, _ in SECTION_RULES if klass == KEEP)
 
 
-def _heading_kind(line: str) -> tuple[str, str] | None:
+@dataclass
+class Section:
+    name: str
+    klass: str
+    start: int
+    end: int
+    heading: str
+
+
+def classify_heading(line: str) -> tuple[str, str] | None:
     s = line.strip()
-    if not s or len(s) > trim.MAX_HEADING_LEN:
+    if not s or len(s) > MAX_HEADING_LEN:
         return None
     if s.endswith(".") and not s.lower().endswith(("inc.", "co.")):
-        return None
-    for name, rx in STOP_HEADINGS:
+        return None  # a sentence, not a heading
+    for klass, name, rx in SECTION_RULES:
         if rx.match(s):
-            return "stop", name
-    if EXAMPLE_HEADINGS.match(s):
-        return "example", "payout_examples"
-    c = trim.classify_heading(s)
-    if c:
-        return "other", c[1]
+            return klass, name
     return None
+
+
+def sections_of(text: str) -> list[Section]:
+    """Split ``text`` at EVERY recognised heading, wherever it falls. The span
+    before the first one is the always-kept 'opening'. A section runs to the
+    next recognised heading (or the end of the text) regardless of its own or
+    the next heading's class — text between two headings belongs to the
+    heading above it, so an unrecognised sub-heading never creates a stray
+    boundary."""
+    marks: list[tuple[int, str, str, str]] = []
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        c = classify_heading(line)
+        if c:
+            marks.append((pos, c[0], c[1], line.strip()))
+        pos += len(line)
+    out: list[Section] = []
+    first = marks[0][0] if marks else len(text)
+    if first > 0:
+        out.append(Section("opening", KEEP, 0, first, ""))
+    for i, (start, klass, name, heading) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+        out.append(Section(name, klass, start, end, heading))
+    return out
 
 
 @dataclass
@@ -136,40 +251,52 @@ class TermsPages:
     chars: int
     tokens_est: int
     full_chars: int
-    sections: list[dict]
-    stopped_at: str | None
+    sections: list[dict]                   # every recognised heading: name, klass, heading
+    sections_found: list[str]              # KEEP sections present anywhere in the document
+    sections_included: list[str]           # KEEP sections that made it into `text` before the cap
+    estimated_value_found: bool
+    plan_of_distribution_found: bool
+    truncated: bool
 
 
-def terms_pages(text: str, *, max_chars: int = MAX_TERMS_CHARS) -> TermsPages:
-    """From the start through the payout examples, stopping before risk
-    factors, index methodology, licence text and tax.
-
-    Everything before the FIRST stop heading is kept. Some issuers place the
-    hypothetical payout examples after a risk section; a payout-examples
-    section found later is appended, up to the next recognised heading.
-    """
-    marks: list[tuple[int, str, str, str]] = []
-    pos = 0
-    for line in text.splitlines(keepends=True):
-        k = _heading_kind(line)
-        if k:
-            marks.append((pos, k[0], k[1], line.strip()))
-        pos += len(line)
-    first_stop = next((m for m in marks if m[1] == "stop"), None)
-    end = first_stop[0] if first_stop else len(text)
-    parts = [(0, end, "opening_to_first_stop")]
-    if first_stop:
-        for i, m in enumerate(marks):
-            if m[0] > end and m[1] == "example":
-                nxt = next((x[0] for x in marks[i + 1:] if x[1] != "example"), len(text))
-                parts.append((m[0], nxt, "payout_examples"))
-                break
-    kept = "\n\n[…]\n\n".join(text[a:b].strip("\n") for a, b, _ in parts if text[a:b].strip())
-    kept = kept[:max_chars]
+def terms_pages(text: str, *, max_chars: int = MAX_TERMS_CHARS, opening_chars: int = OPENING_CHARS) -> TermsPages:
+    """Assemble the model's input from every KEEP section, in document order,
+    wherever each falls — capped overall at ``max_chars`` (about 20,000
+    tokens). The opening (cover page) is always included, capped separately
+    at ``opening_chars``."""
+    secs = sections_of(text)
+    found = sorted({s.name for s in secs if s.klass == KEEP and s.name != "opening"})
+    kept_chars = 0
+    out_parts: list[str] = []
+    included: list[str] = []
+    truncated = False
+    for s in secs:
+        if s.klass != KEEP:
+            continue
+        end = min(s.end, s.start + opening_chars) if s.name == "opening" else s.end
+        seg = text[s.start:end].strip("\n")
+        if not seg.strip():
+            continue
+        remaining = max_chars - kept_chars
+        if remaining <= 0:
+            truncated = True
+            break
+        if len(seg) > remaining:
+            seg = seg[:remaining]
+            truncated = True
+        out_parts.append(seg)
+        kept_chars += len(seg)
+        if s.name != "opening":
+            included.append(s.name)
+    kept_text = "\n\n[…]\n\n".join(out_parts)
     return TermsPages(
-        text=kept, chars=len(kept), tokens_est=estimate_tokens_chars(len(kept)), full_chars=len(text),
-        sections=[{"start": a, "end": b, "part": name} for a, b, name in parts],
-        stopped_at=(f"{first_stop[2]}: {first_stop[3][:80]}" if first_stop else None),
+        text=kept_text, chars=len(kept_text), tokens_est=estimate_tokens_chars(len(kept_text)),
+        full_chars=len(text),
+        sections=[{"name": s.name, "klass": s.klass, "heading": s.heading} for s in secs],
+        sections_found=found, sections_included=sorted(set(included)),
+        estimated_value_found=("estimated_value" in found),
+        plan_of_distribution_found=("plan_of_distribution" in found),
+        truncated=truncated,
     )
 
 
@@ -335,7 +462,10 @@ For each element give:
 contains the element — it will be searched for in the filing and the item is discarded if \
 it is not found
 - "section": the heading of the section it appears under
-- "maps_to": the key of the existing schema field below that holds the SAME meaning, or "NEW"
+- "maps_to": the key of an existing schema field below, ONLY if the item means EXACTLY what \
+that field's own description says it means — read the description, not just its name. If the \
+meaning differs in any way, or you are unsure, answer "NEW" instead: a wrong mapping is worse \
+than a new proposal.
 - "proposed_field_key": for NEW, a snake_case key you would propose; otherwise null
 - "misleading_label": true when the label is misleading about what the element really does \
 (for example a "Redemption Barrier" that is really only the threshold for a fixed payout and \
@@ -352,29 +482,90 @@ Answer with ONE JSON object only:
 "has_hypothetical_payout_table": ..., "issue_size": ...}, "items": [ {...}, ... ]}
 No prose, no markdown."""
 
-GROUPING_INSTRUCTIONS = """Below is a numbered list of the distinct labels found across many \
-structured-note filings (already lower-cased and normalised), with an example value and the \
-existing-field mapping most items gave. Group labels that mean THE SAME THING — synonyms used \
-by different issuers — into concepts. Do not merge labels that differ in meaning, even if they \
-sound alike (a buffer is not a barrier; a coupon barrier is not a downside threshold).
+GROUPING_INSTRUCTIONS = """Below is a numbered list of the distinct FIELD KEYS proposed or \
+mapped by an inventory pass over many structured-note filings, each with a few sample labels \
+and an example value as evidence of what issuers actually call it. Group keys that mean THE \
+SAME THING — synonyms used by different issuers or proposed independently by different \
+documents (e.g. "issuer" and "issuer_name"; "cusip" and "cusip_isin"; two wordings of a listing \
+or registration-number field) — into concepts. Do not merge keys that differ in meaning, even if \
+they sound alike (a buffer is not a barrier; a coupon barrier is not a downside threshold; an \
+issue date is not a valuation date; a schedule of dates is not a single date).
 
 Answer with ONE JSON object only:
-{"groups": [{"concept": "<short name>", "label_ids": [<ids>], "maps_to": "<existing field key or NEW>", \
+{"groups": [{"concept": "<short name>", "key_ids": [<ids>], "maps_to": "<existing field key or NEW>", \
 "proposed_field_key": "<snake_case or null>"}]}
-Every id should appear in exactly one group; a label with no synonyms is a group of one."""
+Every id should appear in exactly one group; a key with no synonyms is a group of one."""
 
 
-def field_list_text(registry_rows: list[dict]) -> str:
-    lines = [f"- {r['field_key']}: {r['display_label']} ({r['data_type']})" for r in registry_rows]
-    return "Existing schema fields (key: label (type)):\n" + "\n".join(lines)
+def field_list_text(specs: list[schema.FieldSpec]) -> str:
+    lines = [f"- {s.key}: {s.label} ({s.kind}) — {s.description}" for s in specs]
+    return "Existing schema fields (key: label (type) — meaning):\n" + "\n".join(lines)
 
 
-def build_inventory_messages(registry_rows: list[dict], terms_text: str, *, filer: str | None,
+def build_inventory_messages(specs: list[schema.FieldSpec], terms_text: str, *, filer: str | None,
                              accession: str | None) -> list[dict]:
-    system = INSTRUCTIONS + "\n\n" + field_list_text(registry_rows)
+    system = INSTRUCTIONS + "\n\n" + field_list_text(specs)
     user = (f"Filer: {filer or 'unknown'}\nAccession: {accession or 'unknown'}\n\n"
-            f"FILING TEXT (terms pages):\n{terms_text}")
+            f"FILING TEXT (selected sections):\n{terms_text}")
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+# ── A cheap, meaning-aware safety net on "maps_to" ──────────────────────────
+_GENERIC_WORDS = frozenset({
+    "the", "a", "an", "of", "to", "and", "or", "is", "are", "date", "dates", "amount", "amounts",
+    "value", "values", "pct", "percent", "percentage", "rate", "rates", "type", "types", "level",
+    "levels", "number", "numbers", "price", "prices", "total", "aggregate", "per", "for", "on",
+    "at", "in", "notes", "note", "securities", "security",
+})
+
+
+def _significant_words(*texts: str) -> set[str]:
+    words: set[str] = set()
+    for t in texts:
+        for w in re.findall(r"[a-z]+", (t or "").lower()):
+            if len(w) > 2 and w not in _GENERIC_WORDS:
+                words.add(w)
+    return words
+
+
+# Known domain synonyms a legitimate mapping may use without ever sharing a
+# word with the TARGET field's own key/label/description — e.g. "Trigger
+# Value" for a barrier level: the word "trigger" is an established synonym
+# (edgartools_reader.py's barrier regex, gold.py's threshold_trigger_buffer_
+# wording) but only ever appears on the SIBLING protection_type field's
+# description (schema.py), never on barrier_pct's own — so without this table
+# a genuine mapping to barrier_pct was wrongly rejected.
+_SYNONYMS: dict[str, frozenset[str]] = {
+    "barrier": frozenset({"trigger", "knock", "knockin"}),
+}
+
+
+def _with_synonyms(words: set[str]) -> set[str]:
+    out = set(words)
+    for canonical, synonyms in _SYNONYMS.items():
+        if canonical in words or words & synonyms:
+            out.add(canonical)
+            out |= synonyms
+    return out
+
+
+def plausible_mapping(label: str, spec: schema.FieldSpec) -> bool:
+    """Not a semantic verifier — the model is given the field's own
+    description and told to map only on identical meaning. This is the
+    fallback for when it ignores that: reject a mapping whose label shares NO
+    real vocabulary at all with the field's own key, label, description OR a
+    known synonym (``_SYNONYMS``) — the description is included because it is
+    where a true synonym actually shows up ("Pricing Date" ->
+    initial_valuation_date, whose description says "pricing/strike date"),
+    and the synonym table catches the rarer case where the synonym lives on a
+    DIFFERENT field's description instead (barrier_pct / "Trigger Value") —
+    the shape of the real misreads being guarded against is "Issue Date" ->
+    initial_valuation_date, "Denominations" -> notional_currency, "notes are
+    unsecured" -> protection_type, none of which share any vocabulary with
+    the field at all, synonyms included."""
+    item_words = _with_synonyms(_significant_words(label))
+    field_words = _with_synonyms(_significant_words(spec.key.replace("_", " "), spec.label, spec.description))
+    return bool(item_words & field_words)
 
 
 # ═══ Calls (through the proxy chokepoint only) ═════════════════════════════
@@ -466,9 +657,14 @@ def _str_or_none(v) -> str | None:
     return s or None
 
 
-def parse_items(parsed: dict, doc, registry_keys: set[str]) -> tuple[dict, list[dict], list[dict]]:
+def parse_items(parsed: dict, doc, field_specs: dict[str, schema.FieldSpec]) -> tuple[dict, list[dict], list[dict]]:
     """(document facts, accepted items, rejected items). An item whose quote
-    is not found verbatim in the filing text is rejected with a reason."""
+    is not found verbatim in the filing text is rejected with a reason.
+
+    A claimed ``maps_to`` is only accepted if ``plausible_mapping`` finds real
+    shared vocabulary between the item's label and that field — a mapping
+    with no shared meaning at all (e.g. "Issue Date" -> initial_valuation_date)
+    is rejected back to a proposal instead, never silently kept."""
     meta = parsed.get("document") if isinstance(parsed.get("document"), dict) else {}
     facts = {
         "product_family": _str_or_none(meta.get("product_family")),
@@ -496,10 +692,14 @@ def parse_items(parsed: dict, doc, registry_keys: set[str]) -> tuple[dict, list[
             rejected.append({"label": label, "quote": quote[:300], "reason": "quote not found in the filing"})
             continue
         maps_to = _str_or_none(it.get("maps_to")) or NEW
-        mapped = maps_to if maps_to in registry_keys else None
+        spec = field_specs.get(maps_to) if maps_to != NEW else None
+        mapped = maps_to if (spec is not None and plausible_mapping(label, spec)) else None
         proposed = _str_or_none(it.get("proposed_field_key"))
         if maps_to != NEW and mapped is None and not proposed:
-            proposed = maps_to   # the model named a field that does not exist: keep it as a proposal
+            # Either the model named a field that does not exist (keep its own
+            # suggestion as the proposal), or named a REAL field implausibly
+            # (never reuse that field's key — propose a label-derived one).
+            proposed = maps_to if spec is None else _slug(normalise_label(label) or label)
         accepted.append({
             "label": label, "label_normalized": normalise_label(label) or label.lower(),
             "value_text": _str_or_none(it.get("value")), "quote": quote,
@@ -540,7 +740,14 @@ async def store_document(conn, run_id, c: ChosenDocument, res: CallResult, deplo
                        $19,$20,$21,$22,$23,$24,$25,$26) RETURNING id""",
             run_id, c.accession_number, c.reference_filing_id, c.document_kind, c.issuer_group,
             c.reason, res.status, res.error, c.terms.chars, c.terms.tokens_est,
-            json.dumps(c.terms.sections), facts.get("product_family"), facts.get("program_supplement"),
+            json.dumps({
+                "sections": c.terms.sections, "sections_found": c.terms.sections_found,
+                "sections_included": c.terms.sections_included,
+                "estimated_value_found": c.terms.estimated_value_found,
+                "plan_of_distribution_found": c.terms.plan_of_distribution_found,
+                "truncated": c.terms.truncated,
+            }, default=str),
+            facts.get("product_family"), facts.get("program_supplement"),
             facts.get("has_payout_table"), facts.get("issue_size"), len(accepted), len(rejected),
             json.dumps(rejected, default=str), deployment, res.provider_model, res.proxy_model_id,
             res.call_id, res.input_tokens, res.output_tokens, _dec(res.cost_usd), res.latency_ms)
@@ -595,6 +802,25 @@ class InventorySummary:
     plan: list[dict] = field(default_factory=list)
     unloadable: list[dict] = field(default_factory=list)
     model_report: list[dict] = field(default_factory=list)
+    sections_coverage: dict = field(default_factory=dict)
+
+
+def _sections_coverage(plan: list[dict]) -> dict:
+    """Share of planned documents where the estimated-value section and the
+    plan of distribution were found — computed from the SAME per-document
+    section scan whether or not the model is ever called, so it is visible
+    even from a dry run."""
+    n = len(plan)
+    ev = [p for p in plan if p["estimated_value_found"]]
+    pod = [p for p in plan if p["plan_of_distribution_found"]]
+    return {
+        "documents": n,
+        "estimated_value_found": len(ev),
+        "plan_of_distribution_found": len(pod),
+        "missing_estimated_value": [p["accession_number"] for p in plan if not p["estimated_value_found"]],
+        "missing_plan_of_distribution": [p["accession_number"] for p in plan
+                                         if not p["plan_of_distribution_found"]],
+    }
 
 
 async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float, dry_run: bool,
@@ -620,6 +846,8 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
     order, so a batch may run up to ``concurrency - 1`` documents past the
     threshold). On Ctrl+C or any crash, the run is marked 'failed' with its
     real counts and spend so far, instead of being left 'running' forever."""
+    field_specs = {s.key: s for s in schema.build_field_specs(registry_rows)}
+    specs_list = list(field_specs.values())
     chosen_model, model_report = await choose_model(conn, catalog, deployment)
     docs, unloadable = await select_documents(conn, cohort_id, loader=loader, lo=lo, hi=hi,
                                               product_supplements=product_supplements, progress=progress)
@@ -627,7 +855,7 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                                documents_planned=len(docs), unloadable=unloadable, model_report=model_report)
     dep = catalog.get(chosen_model) if chosen_model else None
     for c in docs:
-        msgs = build_inventory_messages(registry_rows, c.terms.text, filer=c.issuer_group,
+        msgs = build_inventory_messages(specs_list, c.terms.text, filer=c.issuer_group,
                                         accession=c.accession_number)
         chars = sum(len(m["content"]) for m in msgs)
         est = estimate_call_cost(dep, chars, max_tokens)
@@ -635,8 +863,12 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
         summary.plan.append({"accession_number": c.accession_number, "issuer_group": c.issuer_group,
                              "document_kind": c.document_kind, "families": c.families, "reason": c.reason,
                              "terms_chars": c.terms.chars, "terms_tokens_est": c.terms.tokens_est,
-                             "full_chars": c.terms.full_chars, "stopped_at": c.terms.stopped_at,
-                             "est_cost_usd": round(est, 6)})
+                             "full_chars": c.terms.full_chars, "sections_found": c.terms.sections_found,
+                             "sections_included": c.terms.sections_included,
+                             "estimated_value_found": c.terms.estimated_value_found,
+                             "plan_of_distribution_found": c.terms.plan_of_distribution_found,
+                             "truncated": c.terms.truncated, "est_cost_usd": round(est, 6)})
+    summary.sections_coverage = _sections_coverage(summary.plan)
     if chosen_model is None:
         summary.status = "blocked"
         summary.stop_reason = ("BLOCKED: no platform_model_catalog entry is available, non-Claude, and "
@@ -646,7 +878,6 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
     if dry_run:
         return summary
 
-    registry_keys = {r["field_key"] for r in registry_rows}
     spend = SpendTracker(cap_usd=float(spend_cap_usd))
     run_id = await create_run(conn, cohort_id=cohort_id, deployment=chosen_model, spend_cap=spend_cap_usd,
                               planned=len(docs), created_by=created_by)
@@ -658,7 +889,7 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
             chunk = docs[i:i + max(1, concurrency)]
             calls = [
                 _call(chosen_model,
-                      build_inventory_messages(registry_rows, c.terms.text, filer=c.issuer_group,
+                      build_inventory_messages(specs_list, c.terms.text, filer=c.issuer_group,
                                                accession=c.accession_number),
                       catalog=catalog, spend=spend, max_tokens=max_tokens,
                       what=f"inventory:{c.accession_number}", kind="inventory",
@@ -676,7 +907,7 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                 res = outcome
                 facts, accepted, rejected = ({}, [], [])
                 if res.status == "ok":
-                    facts, accepted, rejected = parse_items(res.parsed, c.doc, registry_keys)
+                    facts, accepted, rejected = parse_items(res.parsed, c.doc, field_specs)
                     consecutive_failures = 0
                 else:
                     consecutive_failures += 1
@@ -700,14 +931,20 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
         else:
             summary.status = "completed"
         agg = await aggregate(conn, run_id, catalog=catalog, deployment=chosen_model, spend=spend,
-                              use_model=group_with_model)
+                              use_model=group_with_model, field_specs=field_specs)
         summary.spent_usd = spend.spent_usd
+        # Never let one stoppage silently swallow the other: the main
+        # document loop and the grouping step can each have their own real
+        # reason to report, and both must survive onto the run.
+        summary.stop_reason = " | ".join(
+            s for s in (summary.stop_reason, agg.get("grouping_note")) if s) or None
         await finish_run(conn, run_id, status=summary.status, spent_usd=spend.spent_usd,
                          documents_done=summary.documents_done, items_accepted=summary.items_accepted,
                          items_rejected=summary.items_rejected, grouping_method=agg["grouping_method"],
-                         stop_reason=summary.stop_reason or agg.get("grouping_note"),
-                         finished_at=datetime.now(timezone.utc),
+                         stop_reason=summary.stop_reason, finished_at=datetime.now(timezone.utc),
                          report={"plan": summary.plan, "unloadable": unloadable,
+                                 "sections_coverage": summary.sections_coverage,
+                                 "grouping_method": agg["grouping_method"], "grouping_note": agg.get("grouping_note"),
                                  "concepts": agg["concepts"], "label_dictionary": agg["label_dictionary"]})
     except (Exception, asyncio.CancelledError, KeyboardInterrupt) as exc:  # noqa: BLE001 — recorded, re-raised
         summary.status = "failed"
@@ -725,30 +962,41 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", (s or "").lower()).strip("_")[:80] or "concept"
 
 
-def group_labels(items: list[dict], model_groups: list[dict] | None,
-                 unique_labels: list[str]) -> list[dict]:
-    """Pure. ``items`` carry label_normalized; ``model_groups`` (optional) is
-    the model's answer over ``unique_labels`` (by index). Returns concepts:
-    {concept_key, display_label, norm_labels, method, maps_to, proposed}.
-    Every normalised label ends up in exactly ONE concept."""
+def effective_key(item: dict) -> str:
+    """The key an item is really filed under: the mapped existing field,
+    else its own proposal, else a slug of its label. Grouping over THIS —
+    not the raw label — is what lets two issuers' different wording of the
+    same field (or the same field proposed under two different snake_case
+    names by two separate calls) land in one concept."""
+    return (item.get("mapped_field_key") or item.get("proposed_field_key")
+            or item.get("label_normalized") or _slug(item.get("label")))
+
+
+def group_keys(items: list[dict], model_groups: list[dict] | None,
+              unique_keys: list[str]) -> list[dict]:
+    """Pure. ``items`` carry ``effective_key``; ``model_groups`` (optional) is
+    the model's answer over ``unique_keys`` (by index) — grouping synonymous
+    KEYS, not the much larger set of raw labels. Returns concepts:
+    {concept_key, display_label, keys, method, maps_to, proposed}. Every key
+    ends up in exactly ONE concept."""
     assigned: dict[str, int] = {}
     groups: list[dict] = []
     for g in model_groups or []:
-        ids = [i for i in (g.get("label_ids") or []) if isinstance(i, int) and 0 <= i < len(unique_labels)]
-        labels = [unique_labels[i] for i in ids if unique_labels[i] not in assigned]
-        if not labels:
+        ids = [i for i in (g.get("key_ids") or []) if isinstance(i, int) and 0 <= i < len(unique_keys)]
+        keys = [unique_keys[i] for i in ids if unique_keys[i] not in assigned]
+        if not keys:
             continue
         idx = len(groups)
-        for lab in labels:
-            assigned[lab] = idx
+        for k in keys:
+            assigned[k] = idx
         maps_to = g.get("maps_to") if isinstance(g.get("maps_to"), str) else None
-        groups.append({"display_label": str(g.get("concept") or labels[0])[:200], "norm_labels": labels,
+        groups.append({"display_label": str(g.get("concept") or keys[0])[:200], "keys": keys,
                        "method": "model", "maps_to": maps_to,
                        "proposed": g.get("proposed_field_key") if isinstance(g.get("proposed_field_key"), str) else None})
-    for lab in unique_labels:
-        if lab not in assigned:
-            assigned[lab] = len(groups)
-            groups.append({"display_label": lab, "norm_labels": [lab], "method": "normalised_label",
+    for k in unique_keys:
+        if k not in assigned:
+            assigned[k] = len(groups)
+            groups.append({"display_label": k, "keys": [k], "method": "field_key",
                            "maps_to": None, "proposed": None})
     used: Counter = Counter()
     for g in groups:
@@ -758,23 +1006,27 @@ def group_labels(items: list[dict], model_groups: list[dict] | None,
     return groups
 
 
-def concept_rows(items: list[dict], groups: list[dict], registry_keys: set[str]) -> list[dict]:
+def concept_rows(items: list[dict], groups: list[dict],
+                 field_specs: dict[str, schema.FieldSpec]) -> list[dict]:
     """Per concept: original labels (synonyms), issuers, frequency, documents,
-    example values, mapped/proposed field, misleading flags, and the item ids."""
-    by_norm: dict[str, list[dict]] = defaultdict(list)
+    example values, mapped/proposed field, misleading flags, and the item ids.
+    Ranked by how many distinct BANKS use the concept, then frequency."""
+    by_key: dict[str, list[dict]] = defaultdict(list)
     for it in items:
-        by_norm[it["label_normalized"]].append(it)
+        by_key[it["effective_key"]].append(it)
     out = []
     for g in groups:
-        its = [it for lab in g["norm_labels"] for it in by_norm.get(lab, [])]
+        its = [it for k in g["keys"] for it in by_key.get(k, [])]
         if not its:
             continue
         mapped_votes = Counter(it["mapped_field_key"] for it in its if it["mapped_field_key"])
-        proposed_votes = Counter(it["proposed_field_key"] for it in its if it["proposed_field_key"])
-        mapped = g["maps_to"] if g["maps_to"] in registry_keys else (
+        spec = field_specs.get(g["maps_to"]) if g["maps_to"] else None
+        maps_to_plausible = spec is not None and any(plausible_mapping(it["label"], spec) for it in its)
+        mapped = g["maps_to"] if maps_to_plausible else (
             mapped_votes.most_common(1)[0][0] if mapped_votes else None)
         proposed = None
         if mapped is None:
+            proposed_votes = Counter(it["proposed_field_key"] for it in its if it["proposed_field_key"])
             proposed = g["proposed"] or (proposed_votes.most_common(1)[0][0] if proposed_votes else _slug(g["display_label"]))
         examples = []
         for it in its:
@@ -794,7 +1046,7 @@ def concept_rows(items: list[dict], groups: list[dict], registry_keys: set[str])
                                   "quote": it["quote"][:300]} for it in its if it["misleading_label"]],
             "grouping_method": g["method"], "item_ids": [it["id"] for it in its],
         })
-    out.sort(key=lambda c: (-c["frequency"], c["concept_key"]))
+    out.sort(key=lambda c: (-len(c["issuers"]), -c["frequency"], c["concept_key"]))
     return out
 
 
@@ -815,44 +1067,78 @@ async def _load_items(conn, run_id) -> list[dict]:
             """SELECT id, document_id, accession_number, issuer_group, label, label_normalized, value_text,
                       quote, mapped_field_key, proposed_field_key, misleading_label, misleading_note
                FROM portfolio.edgar_inventory_items WHERE run_id = $1 ORDER BY created_at, id""", run_id)
-    return [{**dict(r), "id": str(r["id"]), "document_id": str(r["document_id"])} for r in rows]
+    out = [{**dict(r), "id": str(r["id"]), "document_id": str(r["document_id"])} for r in rows]
+    for it in out:
+        it["effective_key"] = effective_key(it)
+    return out
 
 
-async def _registry_keys(conn) -> set[str]:
-    async with platform_scope(conn):
-        return {r["field_key"] for r in await conn.fetch("SELECT field_key FROM portfolio.note_terms_field_registry")}
+async def _field_specs(conn) -> dict[str, schema.FieldSpec]:
+    rows = await schema.load_registry_rows(conn)
+    return {s.key: s for s in schema.build_field_specs(rows)}
+
+
+def _key_samples(items: list[dict], unique_keys: list[str]) -> dict[str, dict]:
+    samples: dict[str, dict] = {k: {"labels": [], "values": [], "is_existing": False} for k in unique_keys}
+    for it in items:
+        s = samples[it["effective_key"]]
+        if it["mapped_field_key"]:
+            s["is_existing"] = True
+        if it["label"] not in s["labels"] and len(s["labels"]) < 3:
+            s["labels"].append(it["label"])
+        if it["value_text"] and it["value_text"] not in s["values"] and len(s["values"]) < 2:
+            s["values"].append(it["value_text"])
+    return samples
 
 
 async def aggregate(conn, run_id, *, catalog: dict | None = None, deployment: str | None = None,
-                    spend: SpendTracker | None = None, use_model: bool = True) -> dict:
+                    spend: SpendTracker | None = None, use_model: bool = True,
+                    field_specs: dict[str, schema.FieldSpec] | None = None) -> dict:
     """Group the run's items into concepts and store them. Re-runnable: the
-    run's previous concepts are replaced. The ONE model call (if any) is
-    subject to the same spending cap; if it cannot be made or fails, grouping
-    falls back to normalised labels alone — recorded as such."""
+    run's previous concepts are replaced.
+
+    Grouping runs over the distinct EFFECTIVE KEYS the items carry (a few
+    sample labels and values each) — not the much larger set of raw labels,
+    which is both why most items used to end up singletons (two issuers'
+    wordings of the same field never had a chance to be compared unless the
+    labels themselves matched) and why the grouping response could blow past
+    its own output-token budget and come back unparseable on a large cohort.
+
+    The ONE model call (if any) is subject to the same spending cap; if it is
+    explicitly disabled, cannot be made, or fails, grouping falls back to one
+    concept per key (``grouping_method`` 'field_key') — and the reason is
+    ALWAYS recorded in ``grouping_note``, never silently absorbed by a
+    different stop reason the caller might also have."""
+    field_specs = field_specs if field_specs is not None else await _field_specs(conn)
     items = await _load_items(conn, run_id)
-    unique = sorted({it["label_normalized"] for it in items})
-    registry_keys = await _registry_keys(conn)
-    model_groups, method, note = None, "normalised_label", None
-    if use_model and unique and deployment and catalog is not None and spend is not None:
-        sample: dict[str, dict] = {}
-        for it in items:
-            sample.setdefault(it["label_normalized"], it)
+    unique = sorted({it["effective_key"] for it in items})
+    model_groups, method, note = None, "field_key", None
+    if not use_model:
+        note = "model grouping skipped — disabled for this run (--no-model-grouping)"
+    elif not unique:
+        note = "model grouping skipped — no items to group"
+    elif not (deployment and catalog is not None and spend is not None):
+        note = "model grouping skipped — no model/catalog/spend tracker available"
+    else:
+        samples = _key_samples(items, unique)
         listing = "\n".join(
-            f"{i}. {lab} — e.g. {(sample[lab]['value_text'] or '')[:60]!r} — maps_to "
-            f"{sample[lab]['mapped_field_key'] or NEW}" for i, lab in enumerate(unique))
+            f"{i}. {k} — labels: {', '.join(samples[k]['labels']) or k} — e.g. "
+            f"{(samples[k]['values'][0] if samples[k]['values'] else '')!r} — "
+            f"{'existing field' if samples[k]['is_existing'] else 'proposed NEW'}"
+            for i, k in enumerate(unique))
         msgs = [{"role": "system", "content": GROUPING_INSTRUCTIONS},
-                {"role": "user", "content": f"LABELS:\n{listing}"}]
+                {"role": "user", "content": f"FIELD KEYS:\n{listing}"}]
         try:
             res = await _call(deployment, msgs, catalog=catalog, spend=spend, max_tokens=GROUPING_MAX_TOKENS,
                               what="grouping", kind="grouping", tags=[f"inventory_run:{run_id}"])
             if res.status == "ok" and isinstance(res.parsed.get("groups"), list):
                 model_groups, method = res.parsed["groups"], "model"
             else:
-                note = f"model grouping unusable ({res.status}: {res.error}); grouped by normalised label only"
+                note = f"model grouping unusable ({res.status}: {res.error}); grouped by field key only"
         except SpendCapReached as exc:
-            note = f"model grouping skipped — {exc}; grouped by normalised label only"
-    groups = group_labels(items, model_groups, unique)
-    concepts = concept_rows(items, groups, registry_keys)
+            note = f"model grouping skipped — {exc}; grouped by field key only"
+    groups = group_keys(items, model_groups, unique)
+    concepts = concept_rows(items, groups, field_specs)
     async with platform_scope(conn):
         await conn.execute("UPDATE portfolio.edgar_inventory_items SET concept_id = NULL WHERE run_id = $1", run_id)
         await conn.execute("DELETE FROM portfolio.edgar_inventory_concepts WHERE run_id = $1", run_id)
@@ -916,9 +1202,37 @@ async def run_label_dictionary(conn, run_id) -> dict:
     return dict(out)
 
 
+def _doc_sections(d: dict) -> dict:
+    raw = d.get("terms_sections")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "sections_found": raw.get("sections_found") or [],
+        "estimated_value_found": bool(raw.get("estimated_value_found")),
+        "plan_of_distribution_found": bool(raw.get("plan_of_distribution_found")),
+        "truncated": bool(raw.get("truncated")),
+    }
+
+
 def render_markdown(run: dict, documents: list[dict], concepts: list[dict], dictionary: dict) -> str:
     def esc(s):
         return str(s if s is not None else "").replace("|", "\\|").replace("\n", " ")
+
+    docs_sections = [{**d, "_sections": _doc_sections(d)} for d in documents]
+    n = len(docs_sections)
+    ev_n = sum(1 for d in docs_sections if d["_sections"]["estimated_value_found"])
+    pod_n = sum(1 for d in docs_sections if d["_sections"]["plan_of_distribution_found"])
+    missing_ev = [d for d in docs_sections if not d["_sections"]["estimated_value_found"]]
+    missing_pod = [d for d in docs_sections if not d["_sections"]["plan_of_distribution_found"]]
+    by_bank: dict[str, list[dict]] = defaultdict(list)
+    for d in docs_sections:
+        by_bank[d.get("issuer_group") or "(unknown)"].append(d)
+
     lines = [
         "# Template Study — inventory of what structured-note filings contain", "",
         f"Inventory run `{run['id']}` over cohort `{run['cohort_id']}` — model `{run['deployment_name']}` "
@@ -927,24 +1241,65 @@ def render_markdown(run: dict, documents: list[dict], concepts: list[dict], dict
         f"Documents read: {run['documents_done']} of {run['documents_planned']}. Items accepted: "
         f"{run['items_accepted']}. Items REJECTED because their quote was not found in the filing: "
         f"{run['items_rejected']}. Concept grouping: {run['grouping_method']}.", "",
+    ]
+    if run.get("stop_reason"):
+        lines += [f"**Stop / skip reason:** {esc(run['stop_reason'])}", ""]
+    lines += [
         "Generated by `apps/api/scripts/run_edgar_inventory.py --write-doc`; the same data is on the "
         "EDGAR Pipeline page, Cohorts tab.", "",
-        "## Documents", "",
-        "| Issuer | Accession | Kind | Product family (as described) | Program / product supplement | Payout table | Issue size | Terms tokens | Items | Rejected |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "## Section coverage", "",
+        f"Estimated value section found in {ev_n} of {n} documents "
+        f"({(ev_n / n * 100) if n else 0:.0f}%). Plan of distribution found in {pod_n} of {n} documents "
+        f"({(pod_n / n * 100) if n else 0:.0f}%).", "",
     ]
+    if missing_ev:
+        lines.append("Documents where the estimated value section was NOT found: "
+                     + ", ".join(esc(d["accession_number"]) for d in missing_ev) + ".")
+    if missing_pod:
+        lines.append("Documents where the plan of distribution was NOT found: "
+                     + ", ".join(esc(d["accession_number"]) for d in missing_pod) + ".")
+    lines += ["", "### Coverage per bank", "",
+              "| Bank | Docs | Estimated value found | Plan of distribution found |",
+              "|---|---|---|---|"]
+    for bank, ds in sorted(by_bank.items()):
+        lines.append(f"| {esc(bank)} | {len(ds)} | "
+                     f"{sum(1 for d in ds if d['_sections']['estimated_value_found'])}/{len(ds)} | "
+                     f"{sum(1 for d in ds if d['_sections']['plan_of_distribution_found'])}/{len(ds)} |")
+    lines += ["", "### Coverage per document", "",
+              "| Issuer | Accession | Sections found | Est. value | Plan of distribution | Truncated |",
+              "|---|---|---|---|---|---|"]
+    for d in docs_sections:
+        s = d["_sections"]
+        lines.append(f"| {esc(d['issuer_group'])} | {esc(d['accession_number'])} | "
+                     f"{esc(', '.join(s['sections_found']))} | {'yes' if s['estimated_value_found'] else 'NO'} | "
+                     f"{'yes' if s['plan_of_distribution_found'] else 'NO'} | {'yes' if s['truncated'] else 'no'} |")
+    lines += ["", "## Documents", "",
+              "| Issuer | Accession | Kind | Product family (as described) | Program / product supplement | Payout table | Issue size | Terms tokens | Items | Rejected |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
     for d in documents:
         lines.append(f"| {esc(d['issuer_group'])} | {esc(d['accession_number'])} | {esc(d['document_kind'])} | "
                      f"{esc(d['product_family'])} | {esc(d['program_supplement'])} | {esc(d['has_payout_table'])} | "
                      f"{esc(d['issue_size'])} | {d['terms_tokens_est']} | {d['items_accepted']} | {d['items_rejected']} |")
     lines += ["", "## Concepts", "",
-              "| Concept | Labels (synonyms) | Issuers | Frequency | Docs | Existing field | Proposed new field | Example values | Misleading-label flags |",
+              "Ranked by how many banks use the concept, then by frequency.", "",
+              "| Concept | Labels (synonyms) | Banks | Frequency | Docs | Existing field | Proposed new field | Example values | Grouping |",
               "|---|---|---|---|---|---|---|---|---|"]
     for c in concepts:
-        lines.append(f"| {esc(c['display_label'])} | {esc('; '.join(c['labels']))} | {esc(', '.join(c['issuers']))} | "
+        lines.append(f"| {esc(c['display_label'])} | {esc('; '.join(c['labels']))} | "
+                     f"{len(c['issuers'])} ({esc(', '.join(c['issuers']))}) | "
                      f"{c['frequency']} | {c['document_count']} | {esc(c['mapped_field_key'])} | "
                      f"{esc(c['proposed_field_key'])} | {esc('; '.join(map(str, c['example_values'][:3])))} | "
-                     f"{esc('; '.join(f['label'] + ': ' + (f['note'] or '') for f in c['misleading_flags']))} |")
+                     f"{esc(c['grouping_method'])} |")
+    lines += ["", "## Misleading-label flags", "",
+              "Every item the model flagged as misleading about what it really does, with its quote.", ""]
+    any_flags = False
+    for c in concepts:
+        for f in c["misleading_flags"]:
+            any_flags = True
+            lines.append(f"- **{esc(f['label'])}** ({esc(f['issuer_group'])}, {esc(f['accession_number'])}) "
+                         f"— {esc(f['note'])}  \n  > {esc(f['quote'])}")
+    if not any_flags:
+        lines.append("(none this run)")
     lines += ["", "## Per-issuer label dictionary", "", "Issuer -> label exactly as written -> concept.", ""]
     for issuer, labels in sorted(dictionary.items()):
         lines.append(f"### {issuer}")

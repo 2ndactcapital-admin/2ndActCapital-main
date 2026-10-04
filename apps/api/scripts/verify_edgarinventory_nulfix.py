@@ -338,7 +338,9 @@ async def section_inventory_documents(conn) -> None:
             reference_filing_id=str(filing_id), accession_number=f"nulfix-{filing_id.hex}",
             issuer_group="NULFIX ISSUER", document_kind="424B2", filing_date=date.today(),
             families=[], reason="fixture", doc=_FakeFilingDoc(),
-            terms=inv.TermsPages(text="x", chars=1, tokens_est=1, full_chars=1, sections=[], stopped_at=None))
+            terms=inv.TermsPages(text="x", chars=1, tokens_est=1, full_chars=1, sections=[],
+                                 sections_found=[], sections_included=[], estimated_value_found=False,
+                                 plan_of_distribution_found=False, truncated=False))
 
     def make_result() -> inv.CallResult:
         return inv.CallResult(status="ok", provider_model="fixture-model", proxy_model_id="fixture-proxy",

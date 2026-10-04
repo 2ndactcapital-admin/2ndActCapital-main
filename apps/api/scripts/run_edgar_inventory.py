@@ -1,9 +1,15 @@
 """edgarcohorts TEMPLATE STUDY — the inventory pass over a cohort's fetched filings.
 
-Inventory, NOT extraction: the model lists every data element the terms pages
-contain, with exact quotes (each checked against the filing — a quote that is
-not found rejects the item), mapped to the existing field registry or NEW; the
-items are then grouped into concepts. See services/edgar_inventory.py.
+Inventory, NOT extraction: the model lists every data element the selected
+sections contain (cover/key terms, payoff/coupon/call/schedule, hypothetical
+examples, estimated value, plan of distribution — wherever each falls in the
+document, never just a straight read to the first risk-factors heading), with
+exact quotes (each checked against the filing — a quote that is not found
+rejects the item), mapped to an existing field only on identical meaning or
+else proposed NEW; the items are then grouped, by field key rather than raw
+label, into concepts. See services/edgar_inventory.py. Section coverage
+(estimated value / plan of distribution found or not, per document) prints
+below and is written into docs/TEMPLATE_STUDY.md.
 
     python3 apps/api/scripts/run_edgar_inventory.py --cohort <uuid> --dry-run --spend-cap 5
     python3 apps/api/scripts/run_edgar_inventory.py --cohort <uuid> --spend-cap 5 [--model <id>]
@@ -102,6 +108,14 @@ async def main(argv: list[str] | None = None, *, catalog=None, loader=None) -> i
         tokens = sum(p["terms_tokens_est"] for p in summary.plan)
         print(f"terms-page tokens (est.): {tokens:,}   estimated cost: ${summary.est_cost_usd:.4f}"
               f"   spending cap: ${args.spend_cap:.2f}")
+        cov = summary.sections_coverage
+        if cov.get("documents"):
+            print(f"section coverage: estimated value found in {cov['estimated_value_found']}/{cov['documents']}, "
+                  f"plan of distribution found in {cov['plan_of_distribution_found']}/{cov['documents']}")
+            if cov["missing_estimated_value"]:
+                print(f"  missing estimated value: {', '.join(cov['missing_estimated_value'])}")
+            if cov["missing_plan_of_distribution"]:
+                print(f"  missing plan of distribution: {', '.join(cov['missing_plan_of_distribution'])}")
         if args.dry_run:
             print("PLANNED_DOCUMENTS " + json.dumps([p["accession_number"] for p in summary.plan]))
             assert (dict(proxy.CALLS), dict(inv.CALLS)) == before, "dry run made a model call"
