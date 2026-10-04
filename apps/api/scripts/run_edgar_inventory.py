@@ -110,8 +110,10 @@ async def main(argv: list[str] | None = None, *, catalog=None, loader=None) -> i
               f"   spending cap: ${args.spend_cap:.2f}")
         cov = summary.sections_coverage
         if cov.get("documents"):
-            print(f"section coverage: estimated value found in {cov['estimated_value_found']}/{cov['documents']}, "
-                  f"plan of distribution found in {cov['plan_of_distribution_found']}/{cov['documents']}")
+            print(f"section coverage: estimated value found in {cov['estimated_value_found']}/{cov['documents']} "
+                  f"(heading {cov['estimated_value_found_heading']}, content {cov['estimated_value_found_content']}), "
+                  f"plan of distribution found in {cov['plan_of_distribution_found']}/{cov['documents']} "
+                  f"(heading {cov['plan_of_distribution_found_heading']}, content {cov['plan_of_distribution_found_content']})")
             if cov["missing_estimated_value"]:
                 print(f"  missing estimated value: {', '.join(cov['missing_estimated_value'])}")
             if cov["missing_plan_of_distribution"]:

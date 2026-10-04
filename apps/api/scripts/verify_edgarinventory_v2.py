@@ -3,7 +3,11 @@ services/edgar_inventory.py, scripts/run_edgar_inventory.py, and the shared
 quote-matching helper services/note_extraction/quote_match.py.
 
 The first real run (17458851-feff-4eaf-a80c-f06b3827f5db) showed four real
-gaps, each fixed and each proven here:
+gaps, each fixed and each proven here (a fifth, FIX 5, was added later: the
+real-run coverage dry run still found the estimated-value section in only
+7 of 22 documents — the heading-only scan from FIX 1 misses issuers, mostly
+major banks, who state it in a cover-page or key-terms SENTENCE with no
+heading, sometimes inside risk factors):
 
   FIX 1 — section selection scanned the document ONLY from the start to the
   first risk-factors heading, so the estimated-value section and the plan of
@@ -38,6 +42,17 @@ gaps, each fixed and each proven here:
   hazard-ensemble quote verification (``services.note_terms_extraction.
   _TextIndex`` is now an alias for the SAME class — proven by identity, not
   just by behaviour). Proven in ``section_quote_match``.
+
+  FIX 5 — the estimated value / plan-of-distribution economics stated in a
+  SENTENCE, never under a heading of their own (a cover-page sentence, or
+  one paragraph inside risk factors), were invisible to a heading-only scan.
+  The fix always includes any PARAGRAPH, anywhere, matching a fixed set of
+  phrases (``ALWAYS_INCLUDE``) — just that paragraph, not the rest of
+  whatever KEEP or DROP section it sits in — and coverage is now measured by
+  CONTENT (a figure near the phrase) as well as by heading. Proven in
+  ``section_paragraph_level_inclusion`` on a cover-page-only fixture (doc C)
+  and a risk-factors-paragraph-only fixture (doc D), where the one matching
+  paragraph survives and the other risk-factor paragraphs around it do not.
 
 Mocks every model call (``services.note_extraction.proxy._post`` — the one
 network function, same convention as every other inventory verify script);
@@ -108,8 +123,13 @@ async def guarded(label: str, coro) -> None:
 COHORT_ID = UUID("99000000-0000-0000-0000-0000a2c30001")
 REF_A = UUID("99000000-0000-0000-0000-0000a2c30101")
 REF_B = UUID("99000000-0000-0000-0000-0000a2c30102")
+REF_C = UUID("99000000-0000-0000-0000-0000a2c30103")
+REF_D = UUID("99000000-0000-0000-0000-0000a2c30104")
 ACC_A = "9900000000-00-000301"   # edgar_index_filings.accession_number must match
 ACC_B = "9900000000-00-000302"   # ^\d{10}-\d{2}-\d{6}$ (confirmed in verify_edgarinventory_nulfix.py)
+ACC_C = "9900000000-00-000303"   # doc C and D are never inserted into the DB (fake_loader is a plain dict
+ACC_D = "9900000000-00-000304"   # lookup, no query) — their accession format still follows the live CHECK
+                                 # constraint on the chance a future edit DOES seed them.
 # A REAL, already-eligible platform_model_catalog row (available, non-Claude,
 # genuinely served once listed in ``fake_catalog`` below) — never a synthetic
 # fixture row. Only the HTTP call itself (proxy._post, via FakeProxy below) is
@@ -125,6 +145,10 @@ RISK_SENTINEL = "RISKSENTINELV2 you may lose some or all of your principal amoun
 TAX_SENTINEL = "TAXSENTINELV2 the notes should be treated as prepaid derivative contracts"
 ERISA_SENTINEL = "ERISASENTINELV2 benefit plan investors should consult their own fiduciary advisors"
 INDEXMETHOD_SENTINEL = "INDEXMETHODSENTINELV2 the index level is calculated under a proprietary methodology"
+# A SECOND risk-factors paragraph, distinct from RISK_SENTINEL, so doc D can
+# prove the WHOLE section is dropped except the one always-included
+# paragraph — not just that the single paragraph adjacent to it is dropped.
+RISK_OTHER_SENTINEL = "RISKOTHERSENTINELV2 you could lose some or all of your investment in these notes"
 
 # Doc A: estimated value AND plan of distribution both placed AFTER risk
 # factors, tax, ERISA and index-methodology text — the real-run bug.
@@ -166,8 +190,46 @@ HTML_B = "<html><body>" + "".join(f"<p>{line}</p>" for line in [
     "We will offer the notes through Verify Securities LLC.",
 ]) + "</body></html>"
 
-DOC_HTML = {ACC_A: HTML_A, ACC_B: HTML_B}
-ACC_OF_REF = {str(REF_A): ACC_A, str(REF_B): ACC_B}
+# Doc C: NO estimated-value heading anywhere — the real bank pattern, where
+# the figure appears only in a cover-page SENTENCE. Coverage must count this
+# as found by CONTENT, not by heading.
+HTML_C = "<html><body>" + "".join(f"<p>{line}</p>" for line in [
+    "Pricing Supplement",
+    "Third Verify Bank N.A. is the issuer of these notes. The initial estimated value of the notes is "
+    "approximately $9.42 per $10.00 stated principal amount, which is less than the price to public "
+    "of $10.00.",
+    "Key Terms",
+    "Barrier Percentage: 65.00% of the Initial Level.",
+    "Risk Factors",
+    RISK_SENTINEL + ".",
+    "United States Federal Income Tax Considerations",
+    TAX_SENTINEL + ".",
+    "Plan of Distribution",
+    "We will offer the notes through Verify Securities LLC.",
+]) + "</body></html>"
+
+# Doc D: the estimated value is stated only INSIDE the risk-factors section
+# (no heading of its own, anywhere) — one paragraph among three in that DROP
+# section. Only that paragraph should survive; the other two (RISK_SENTINEL,
+# RISK_OTHER_SENTINEL) must not.
+HTML_D = "<html><body>" + "".join(f"<p>{line}</p>" for line in [
+    "Pricing Supplement",
+    "Fourth Verify Bank N.A. is the issuer of these notes. Price to Public: 100.00%",
+    "Key Terms",
+    "Barrier Percentage: 55.00% of the Initial Level.",
+    "Risk Factors",
+    RISK_SENTINEL + ".",
+    "The estimated value of the notes on the pricing date is expected to be between $920 and $970 "
+    "per $1,000 face amount, which will be less than the price to public.",
+    RISK_OTHER_SENTINEL + ".",
+    "United States Federal Income Tax Considerations",
+    TAX_SENTINEL + ".",
+    "Plan of Distribution",
+    "We will offer the notes through Verify Securities LLC.",
+]) + "</body></html>"
+
+DOC_HTML = {ACC_A: HTML_A, ACC_B: HTML_B, ACC_C: HTML_C, ACC_D: HTML_D}
+ACC_OF_REF = {str(REF_A): ACC_A, str(REF_B): ACC_B, str(REF_C): ACC_C, str(REF_D): ACC_D}
 FABRICATED_QUOTE = "VERIFY FABRICATED QUOTE V2 that appears nowhere in any fixture filing text at all"
 
 
@@ -438,6 +500,44 @@ async def section_terms_pages(conn) -> None:
     check("estimated_value" not in tp_b.sections_found, "doc B's sections_found omits estimated_value")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FIX 5 — paragraph-level inclusion by CONTENT, independent of headings
+# ═══════════════════════════════════════════════════════════════════════════
+async def section_paragraph_level_inclusion(conn) -> None:
+    section("[Y] FIX 5: a cover-page sentence AND a risk-factors paragraph each state the estimated "
+           "value with a figure but under NO heading — both are found by CONTENT; the risk-factor "
+           "paragraph is included on its own, the rest of that DROP section is not")
+    doc_c = await fake_loader(conn, REF_C)
+    doc_d = await fake_loader(conn, REF_D)
+    tp_c = inv.terms_pages(doc_c.text)
+    tp_d = inv.terms_pages(doc_d.text)
+
+    check("estimated_value" not in tp_c.sections_found,
+         "doc C has NO estimated-value heading anywhere", f"{tp_c.sections_found}")
+    check(tp_c.estimated_value_found_heading is False,
+         "doc C's heading-based estimated-value flag is False")
+    check(tp_c.estimated_value_found_content is True,
+         "doc C's CONTENT-based estimated-value flag is True — the cover-page sentence has a figure "
+         "near 'estimated value'")
+    check(tp_c.estimated_value_found is True,
+         "doc C's overall estimated_value_found is True even though no heading was ever found")
+    check("$9.42" in tp_c.text,
+         "the cover-page sentence (with its figure) is part of the opening, which is kept whole")
+
+    check("estimated_value" not in tp_d.sections_found,
+         "doc D also has NO estimated-value heading anywhere", f"{tp_d.sections_found}")
+    check(tp_d.estimated_value_found_heading is False and tp_d.estimated_value_found_content is True,
+         "doc D's estimated value is found by CONTENT alone, from inside the (DROP) risk-factors section")
+    check("between $920 and $970" in tp_d.text,
+         "the ONE risk-factor paragraph stating the estimated value made it into the input")
+    check(RISK_SENTINEL not in tp_d.text and RISK_OTHER_SENTINEL not in tp_d.text,
+         "the OTHER two paragraphs in that same risk-factors section — one before, one after — did not",
+         f"text={tp_d.text[:400]!r}")
+    check("estimated_value" in tp_d.always_included_tags,
+         "the always-included paragraph is tagged estimated_value on the TermsPages result",
+         f"{tp_d.always_included_tags}")
+
+
 async def section_coverage_dry_run(conn) -> None:
     section("[Y] FIX 1: section coverage is computed per document, end to end through select_documents, "
            "and a document missing the estimated-value section is identified — all in a DRY RUN (zero "
@@ -697,6 +797,7 @@ async def main() -> int:
         await guarded("section_pg_constraints", section_pg_constraints(conn))
         await guarded("section_quote_match", section_quote_match(conn))
         await guarded("section_terms_pages", section_terms_pages(conn))
+        await guarded("section_paragraph_level_inclusion", section_paragraph_level_inclusion(conn))
         await guarded("section_coverage_dry_run", section_coverage_dry_run(conn))
         await guarded("section_parse_items_mapping", section_parse_items_mapping(conn))
         await guarded("section_aggregate", section_aggregate(conn, state))

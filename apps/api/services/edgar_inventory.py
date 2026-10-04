@@ -24,6 +24,21 @@ which made it into the input before the cap (``sections_found`` /
 section and the plan of distribution were found at all — the run's report
 aggregates this into coverage, and lists the documents missing either.
 
+A heading-only scan still misses issuers (several of the major banks) who
+state the estimated value or the distribution economics in a SENTENCE on
+the cover page or inside key terms, never under a heading of their own —
+sometimes inside a DROP section such as risk factors. So, independent of
+headings, any PARAGRAPH anywhere in the document containing one of a fixed
+set of phrases (estimated value, underwriting discount, selling concession,
+agent's commission, structuring fee, fee-based, advisory account, price to
+public, proceeds to issuer, distribution agent) is always included — just
+that paragraph, not the rest of whatever section (DROP or KEEP) it sits in.
+Coverage is then measured two ways: by HEADING (a KEEP section was found)
+and by CONTENT (the included text actually states a figure — a dollar
+amount or percentage — near the estimated-value or fee language, not merely
+the phrase in isolation); both counts are reported, since a document can
+satisfy one without the other.
+
 DOCUMENTS (``select_documents``). From a cohort (normally the template-study
 preset): per issuer group, 4-6 FINAL pricing supplements chosen for VARIETY —
 greedy over product families found by keyword (autocall, buffer, barrier,
@@ -162,14 +177,15 @@ SECTION_RULES: tuple[tuple[str, str, re.Pattern], ...] = (
                          r"trademarks?\b")),
     # ── KEEP: the sections the inventory actually needs ─────────────────────
     (KEEP, "plan_of_distribution", _H(
-        r"(?:supplemental\s+)?plan\s+of\s+distribution", r"supplemental\s+plan\s+of\s+distribution",
+        r"(?:supplemental\s+)?plan\s+of\s+distribution(?:\s*;\s*conflicts?\s+of\s+interest)?",
+        r"supplemental\s+plan\s+of\s+distribution",
         r"underwriting(?:\s*\(conflicts?\s+of\s+interest\))?\s*$",
         r"distribution\s*(?:\(conflicts?\s+of\s+interest\))?\s*$",
         r"supplemental\s+information\s+(?:regarding|relating\s+to)\s+(?:the\s+)?(?:plan\s+of\s+)?distribution",
         r"conflicts?\s+of\s+interest\s*$")),
     (KEEP, "estimated_value", _H(
-        r"(?:additional\s+information\s+(?:regarding|about|relating\s+to)\s+)?(?:(?:the|our|its|issuer'?s?|bank'?s?)\s+)*estimated\s+value",
-        r"the\s+estimated\s+value", r"valuation\s+of\s+the\s+notes")),
+        r"(?:additional\s+information\s+(?:regarding|about|relating\s+to)\s+)?(?:(?:the|our|its|issuer'?s?|bank'?s?|initial)\s+)*estimated\s+(?:initial\s+)?value",
+        r"the\s+estimated\s+(?:initial\s+)?value", r"initial\s+estimated\s+(?:initial\s+)?value", r"valuation\s+of\s+the\s+notes")),
     (KEEP, "key_terms", _H(
         r"key\s+terms", r"summary\s+of\s+(?:the\s+)?terms", r"terms\s+of\s+the\s+(?:notes|securities)",
         r"final\s+terms", r"indicative\s+terms", r"general\s+terms", r"key\s+information",
@@ -198,6 +214,76 @@ SECTION_RULES: tuple[tuple[str, str, re.Pattern], ...] = (
 )
 # Names of KEEP sections, for coverage reporting (excludes "opening").
 KEEP_SECTION_NAMES = tuple(name for klass, name, _ in SECTION_RULES if klass == KEEP)
+
+
+# ═══ Paragraph-level inclusion, independent of headings ════════════════════
+# Several issuers (the major banks) state the estimated value or the
+# distribution economics in a single SENTENCE on the cover page or in key
+# terms — never under a heading of their own — and sometimes inside a DROP
+# section (most often risk factors). These phrases force that one paragraph
+# into the input no matter which section (KEEP or DROP) it falls in; the
+# rest of a DROP section around it is still dropped.
+ALWAYS_INCLUDE: tuple[tuple[str, re.Pattern], ...] = (
+    ("estimated_value", re.compile(r"estimated\s+(?:initial\s+)?value", re.IGNORECASE)),
+    ("plan_of_distribution", re.compile(
+        r"underwriting\s+discounts?|selling\s+concessions?|agent'?s?\s+commissions?|"
+        r"structuring\s+fees?|fee[\s-]based|advisory\s+accounts?|price\s+to\s+public|"
+        r"proceeds\s+to\s+issuer|distribution\s+agents?", re.IGNORECASE)),
+)
+
+
+def _paragraphs(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    """(abs_start, abs_end) for each "paragraph" in ``text[start:end]``,
+    offsets absolute into the full document. ``services.html_text``'s
+    extractor emits exactly ONE newline per block element (``<p>``, ``<li>``,
+    ``<td>``, ...) — never a blank line between them — so a LINE is the
+    paragraph unit here, the same granularity ``classify_heading`` already
+    uses for headings; a blank-line split would see the whole section as one
+    paragraph and never isolate anything inside it."""
+    spans: list[tuple[int, int]] = []
+    pos = start
+    for line in text[start:end].split("\n"):
+        line_end = pos + len(line)
+        if line.strip():
+            spans.append((pos, line_end))
+        pos = line_end + 1
+    return spans
+
+
+def _always_include_tag(paragraph: str) -> str | None:
+    for tag, rx in ALWAYS_INCLUDE:
+        if rx.search(paragraph):
+            return tag
+    return None
+
+
+# ═══ Content-based coverage: a figure, not just the phrase in isolation ════
+_FIGURE_RE = re.compile(r"\$\s?\d|\d+(?:\.\d+)?\s*%")
+_AGENT_NAMED_RE = re.compile(
+    r"\b(?:distribution\s+agents?|placement\s+agents?|as\s+agent|acting\s+as\s+agent)\b", re.IGNORECASE)
+_COMMISSION_DISCOUNT_RE = re.compile(
+    r"underwriting\s+discounts?|selling\s+concessions?|agent'?s?\s+commissions?|structuring\s+fees?",
+    re.IGNORECASE)
+
+
+def _figure_near(text: str, pos: int, window: int = 200) -> bool:
+    lo, hi = max(0, pos - window), min(len(text), pos + window)
+    return bool(_FIGURE_RE.search(text[lo:hi]))
+
+
+def _estimated_value_content_found(text: str) -> bool:
+    """True when the included text states the estimated value WITH a figure
+    (dollar amount or percentage) nearby — not merely the phrase on its own,
+    which could be a heading or a cross-reference with no number attached."""
+    return any(_figure_near(text, m.start()) for m in re.finditer(r"estimated\s+(?:initial\s+)?value", text, re.IGNORECASE))
+
+
+def _plan_of_distribution_content_found(text: str) -> bool:
+    """True when the included text names a distribution/placement agent, or
+    states a commission/discount/concession WITH a figure nearby."""
+    if _AGENT_NAMED_RE.search(text):
+        return True
+    return any(_figure_near(text, m.start()) for m in _COMMISSION_DISCOUNT_RE.finditer(text))
 
 
 @dataclass
@@ -257,24 +343,50 @@ class TermsPages:
     estimated_value_found: bool
     plan_of_distribution_found: bool
     truncated: bool
+    # Content-based detail, split out from the two fields above (which are
+    # the OR of heading- and content-based, so existing callers that only
+    # ever cared "was it found at all" see no change).
+    always_included_tags: list[str] = field(default_factory=list)
+    estimated_value_found_heading: bool = False
+    estimated_value_found_content: bool = False
+    plan_of_distribution_found_heading: bool = False
+    plan_of_distribution_found_content: bool = False
+
+
+def _candidate_segments(text: str, secs: list[Section], opening_chars: int
+                        ) -> list[tuple[str, str | None, str | None]]:
+    """Ordered (segment_text, keep_section_name_or_None, always_include_tag_or_None)
+    candidates, in document order: a KEEP section contributes itself whole;
+    a DROP section contributes only the paragraphs matching an
+    ALWAYS_INCLUDE phrase — the rest of that section is dropped."""
+    out: list[tuple[str, str | None, str | None]] = []
+    for s in secs:
+        if s.klass == KEEP:
+            end = min(s.end, s.start + opening_chars) if s.name == "opening" else s.end
+            out.append((text[s.start:end].strip("\n"), None if s.name == "opening" else s.name, None))
+        else:
+            for p_start, p_end in _paragraphs(text, s.start, s.end):
+                tag = _always_include_tag(text[p_start:p_end])
+                if tag:
+                    out.append((text[p_start:p_end].strip("\n"), None, tag))
+    return out
 
 
 def terms_pages(text: str, *, max_chars: int = MAX_TERMS_CHARS, opening_chars: int = OPENING_CHARS) -> TermsPages:
     """Assemble the model's input from every KEEP section, in document order,
-    wherever each falls — capped overall at ``max_chars`` (about 20,000
-    tokens). The opening (cover page) is always included, capped separately
-    at ``opening_chars``."""
+    wherever each falls, PLUS any individual paragraph inside an otherwise
+    excluded section that states estimated-value or distribution-economics
+    language (``ALWAYS_INCLUDE``) — capped overall at ``max_chars`` (about
+    20,000 tokens). The opening (cover page) is always included, capped
+    separately at ``opening_chars``."""
     secs = sections_of(text)
     found = sorted({s.name for s in secs if s.klass == KEEP and s.name != "opening"})
     kept_chars = 0
     out_parts: list[str] = []
     included: list[str] = []
+    always_tags: set[str] = set()
     truncated = False
-    for s in secs:
-        if s.klass != KEEP:
-            continue
-        end = min(s.end, s.start + opening_chars) if s.name == "opening" else s.end
-        seg = text[s.start:end].strip("\n")
+    for seg, section_name, tag in _candidate_segments(text, secs, opening_chars):
         if not seg.strip():
             continue
         remaining = max_chars - kept_chars
@@ -286,17 +398,26 @@ def terms_pages(text: str, *, max_chars: int = MAX_TERMS_CHARS, opening_chars: i
             truncated = True
         out_parts.append(seg)
         kept_chars += len(seg)
-        if s.name != "opening":
-            included.append(s.name)
+        if section_name:
+            included.append(section_name)
+        if tag:
+            always_tags.add(tag)
     kept_text = "\n\n[…]\n\n".join(out_parts)
+    ev_heading = "estimated_value" in found
+    pod_heading = "plan_of_distribution" in found
+    ev_content = _estimated_value_content_found(kept_text)
+    pod_content = _plan_of_distribution_content_found(kept_text)
     return TermsPages(
         text=kept_text, chars=len(kept_text), tokens_est=estimate_tokens_chars(len(kept_text)),
         full_chars=len(text),
         sections=[{"name": s.name, "klass": s.klass, "heading": s.heading} for s in secs],
         sections_found=found, sections_included=sorted(set(included)),
-        estimated_value_found=("estimated_value" in found),
-        plan_of_distribution_found=("plan_of_distribution" in found),
+        estimated_value_found=ev_heading or ev_content,
+        plan_of_distribution_found=pod_heading or pod_content,
         truncated=truncated,
+        always_included_tags=sorted(always_tags),
+        estimated_value_found_heading=ev_heading, estimated_value_found_content=ev_content,
+        plan_of_distribution_found_heading=pod_heading, plan_of_distribution_found_content=pod_content,
     )
 
 
@@ -745,6 +866,11 @@ async def store_document(conn, run_id, c: ChosenDocument, res: CallResult, deplo
                 "sections_included": c.terms.sections_included,
                 "estimated_value_found": c.terms.estimated_value_found,
                 "plan_of_distribution_found": c.terms.plan_of_distribution_found,
+                "estimated_value_found_heading": c.terms.estimated_value_found_heading,
+                "estimated_value_found_content": c.terms.estimated_value_found_content,
+                "plan_of_distribution_found_heading": c.terms.plan_of_distribution_found_heading,
+                "plan_of_distribution_found_content": c.terms.plan_of_distribution_found_content,
+                "always_included_tags": c.terms.always_included_tags,
                 "truncated": c.terms.truncated,
             }, default=str),
             facts.get("product_family"), facts.get("program_supplement"),
@@ -809,14 +935,23 @@ def _sections_coverage(plan: list[dict]) -> dict:
     """Share of planned documents where the estimated-value section and the
     plan of distribution were found — computed from the SAME per-document
     section scan whether or not the model is ever called, so it is visible
-    even from a dry run."""
+    even from a dry run. ``estimated_value_found`` / ``plan_of_distribution_
+    found`` are the OR of heading- and content-based detection (unchanged
+    shape for existing callers); the ``_heading`` / ``_content`` counts below
+    break that down, since a document can satisfy one without the other."""
     n = len(plan)
-    ev = [p for p in plan if p["estimated_value_found"]]
-    pod = [p for p in plan if p["plan_of_distribution_found"]]
+
+    def count(key):
+        return len([p for p in plan if p[key]])
+
     return {
         "documents": n,
-        "estimated_value_found": len(ev),
-        "plan_of_distribution_found": len(pod),
+        "estimated_value_found": count("estimated_value_found"),
+        "plan_of_distribution_found": count("plan_of_distribution_found"),
+        "estimated_value_found_heading": count("estimated_value_found_heading"),
+        "estimated_value_found_content": count("estimated_value_found_content"),
+        "plan_of_distribution_found_heading": count("plan_of_distribution_found_heading"),
+        "plan_of_distribution_found_content": count("plan_of_distribution_found_content"),
         "missing_estimated_value": [p["accession_number"] for p in plan if not p["estimated_value_found"]],
         "missing_plan_of_distribution": [p["accession_number"] for p in plan
                                          if not p["plan_of_distribution_found"]],
@@ -867,6 +1002,11 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                              "sections_included": c.terms.sections_included,
                              "estimated_value_found": c.terms.estimated_value_found,
                              "plan_of_distribution_found": c.terms.plan_of_distribution_found,
+                             "estimated_value_found_heading": c.terms.estimated_value_found_heading,
+                             "estimated_value_found_content": c.terms.estimated_value_found_content,
+                             "plan_of_distribution_found_heading": c.terms.plan_of_distribution_found_heading,
+                             "plan_of_distribution_found_content": c.terms.plan_of_distribution_found_content,
+                             "always_included_tags": c.terms.always_included_tags,
                              "truncated": c.terms.truncated, "est_cost_usd": round(est, 6)})
     summary.sections_coverage = _sections_coverage(summary.plan)
     if chosen_model is None:
@@ -1215,6 +1355,10 @@ def _doc_sections(d: dict) -> dict:
         "sections_found": raw.get("sections_found") or [],
         "estimated_value_found": bool(raw.get("estimated_value_found")),
         "plan_of_distribution_found": bool(raw.get("plan_of_distribution_found")),
+        "estimated_value_found_heading": bool(raw.get("estimated_value_found_heading")),
+        "estimated_value_found_content": bool(raw.get("estimated_value_found_content")),
+        "plan_of_distribution_found_heading": bool(raw.get("plan_of_distribution_found_heading")),
+        "plan_of_distribution_found_content": bool(raw.get("plan_of_distribution_found_content")),
         "truncated": bool(raw.get("truncated")),
     }
 
@@ -1227,6 +1371,10 @@ def render_markdown(run: dict, documents: list[dict], concepts: list[dict], dict
     n = len(docs_sections)
     ev_n = sum(1 for d in docs_sections if d["_sections"]["estimated_value_found"])
     pod_n = sum(1 for d in docs_sections if d["_sections"]["plan_of_distribution_found"])
+    ev_heading_n = sum(1 for d in docs_sections if d["_sections"]["estimated_value_found_heading"])
+    ev_content_n = sum(1 for d in docs_sections if d["_sections"]["estimated_value_found_content"])
+    pod_heading_n = sum(1 for d in docs_sections if d["_sections"]["plan_of_distribution_found_heading"])
+    pod_content_n = sum(1 for d in docs_sections if d["_sections"]["plan_of_distribution_found_content"])
     missing_ev = [d for d in docs_sections if not d["_sections"]["estimated_value_found"]]
     missing_pod = [d for d in docs_sections if not d["_sections"]["plan_of_distribution_found"]]
     by_bank: dict[str, list[dict]] = defaultdict(list)
@@ -1248,9 +1396,10 @@ def render_markdown(run: dict, documents: list[dict], concepts: list[dict], dict
         "Generated by `apps/api/scripts/run_edgar_inventory.py --write-doc`; the same data is on the "
         "EDGAR Pipeline page, Cohorts tab.", "",
         "## Section coverage", "",
-        f"Estimated value section found in {ev_n} of {n} documents "
-        f"({(ev_n / n * 100) if n else 0:.0f}%). Plan of distribution found in {pod_n} of {n} documents "
-        f"({(pod_n / n * 100) if n else 0:.0f}%).", "",
+        f"Estimated value found (heading OR content) in {ev_n} of {n} documents "
+        f"({(ev_n / n * 100) if n else 0:.0f}%) — by heading {ev_heading_n}, by content {ev_content_n}. "
+        f"Plan of distribution found in {pod_n} of {n} documents "
+        f"({(pod_n / n * 100) if n else 0:.0f}%) — by heading {pod_heading_n}, by content {pod_content_n}.", "",
     ]
     if missing_ev:
         lines.append("Documents where the estimated value section was NOT found: "
