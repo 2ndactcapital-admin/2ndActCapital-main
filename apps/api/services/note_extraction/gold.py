@@ -26,6 +26,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 
+from services.note_extraction.sanitize import strip_nul, strip_nul_deep
 from services.note_extraction.schema import FieldSpec, normalize
 from services.note_extraction.store import CALL_FIELD
 
@@ -48,6 +49,9 @@ async def record_gold_value(conn, *, reviewer_id: str, reference_filing_id: str,
         raise GoldWriteError("a confirmed or corrected gold value needs a value (use 'absent' for none)")
     if normalize(spec, value) is None and value is not None:
         raise GoldWriteError(f"value {value!r} is not a valid {spec.kind} for '{spec.key}'")
+    value = strip_nul_deep(value)
+    source_quote = strip_nul(source_quote)
+    notes = strip_nul(notes)
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         await conn.execute("SELECT set_config('app.gold_reviewer_id', $1, true)", str(reviewer_id))

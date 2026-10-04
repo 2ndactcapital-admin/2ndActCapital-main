@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from services.database import platform_scope
+from services.note_extraction.sanitize import strip_nul, strip_nul_deep
 
 CALL_FIELD = "__call__"
 
@@ -68,17 +69,19 @@ class ReadingRow:
     def as_tuple(self):
         return (
             self.id, self.reference_filing_id, self.run_id, self.field_key,
-            None if self.value is None else json.dumps(self.value, default=str),
-            self.value_normalized, self.source, self.origin, self.status,
-            (self.error or None) and self.error[:2000], self.deployment_name, self.provider_model,
-            self.proxy_model_id, self.ensemble_config_id, self.prompt_version,
+            None if self.value is None else json.dumps(strip_nul_deep(self.value), default=str),
+            strip_nul(self.value_normalized), self.source, self.origin, self.status,
+            strip_nul((self.error or None) and self.error[:2000]),
+            self.deployment_name, strip_nul(self.provider_model), strip_nul(self.proxy_model_id),
+            self.ensemble_config_id, self.prompt_version,
             self.prompt_prefix_hash, self.reasoning_effort,
-            (self.source_quote or None) and self.source_quote[:2000],
+            strip_nul((self.source_quote or None) and self.source_quote[:2000]),
             self.quote_verified, self.value_in_quote, self.raw_char_start, self.raw_char_end,
             None if self.probability is None else Decimal(str(round(self.probability, 6))),
             self.input_tokens, self.output_tokens, self.cached_tokens,
             None if self.cost_usd is None else Decimal(str(round(self.cost_usd, 8))),
-            self.latency_ms, self.call_id, json.dumps(self.metadata, default=str), self.created_by,
+            self.latency_ms, self.call_id,
+            json.dumps(strip_nul_deep(self.metadata), default=str), self.created_by,
         )
 
 
@@ -128,8 +131,8 @@ async def finish_run(conn, run_id, *, status: str, notes_done: int, stop_reason:
                   SET status = $2, notes_done = $3, stop_reason = $4, report = $5::jsonb,
                       spent_usd = $6, finished_at = now()
                 WHERE id = $1""",
-            run_id, status, notes_done, stop_reason,
-            json.dumps(report, default=str) if report is not None else None,
+            run_id, status, notes_done, strip_nul(stop_reason),
+            json.dumps(strip_nul_deep(report), default=str) if report is not None else None,
             Decimal(str(round(spent, 8))),
         )
 
@@ -171,10 +174,11 @@ async def insert_staging(conn, *, run_id, reference_filing_id, status: str, stat
                   fuller_text_retry, skip_second_reader_safe, cost_usd, unmatched_participants, detail)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb)
                RETURNING id""",
-            run_id, reference_filing_id, status, status_reason, ensemble_config_id,
+            run_id, reference_filing_id, status, strip_nul(status_reason), ensemble_config_id,
             full_tokens_est, trimmed_tokens_est, disagreement_count, jev_called, escalated,
             fuller_text_retry, skip_second_reader_safe, Decimal(str(round(cost_usd, 8))),
-            json.dumps(unmatched_participants, default=str), json.dumps(detail, default=str),
+            json.dumps(strip_nul_deep(unmatched_participants), default=str),
+            json.dumps(strip_nul_deep(detail), default=str),
         )
         await conn.executemany(
             """INSERT INTO portfolio.note_extraction_staged_fields
@@ -182,9 +186,9 @@ async def insert_staging(conn, *, run_id, reference_filing_id, status: str, stat
                   winning_reading_id, source_quote, raw_char_start, raw_char_end, probability)
                VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11)""",
             [(staging_id, f.field_key,
-              None if f.resolved_value is None else json.dumps(f.resolved_value, default=str),
+              None if f.resolved_value is None else json.dumps(strip_nul_deep(f.resolved_value), default=str),
               f.resolution, f.is_critical, f.needs_review, f.winning_reading_id,
-              (f.source_quote or None) and f.source_quote[:2000], f.raw_char_start, f.raw_char_end,
+              strip_nul((f.source_quote or None) and f.source_quote[:2000]), f.raw_char_start, f.raw_char_end,
               None if f.probability is None else Decimal(str(round(f.probability, 6))))
              for f in fields],
         )

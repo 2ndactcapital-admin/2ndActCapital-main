@@ -49,6 +49,7 @@ estimated cost and makes ZERO model calls.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -60,6 +61,7 @@ from decimal import Decimal
 from services.database import platform_scope
 from services.edgar_cohorts import era_of
 from services.note_extraction import proxy, trim
+from services.note_extraction.sanitize import strip_nul, strip_nul_deep
 from services.note_extraction.spend import (
     SpendCapReached, SpendTracker, estimate_call_cost, priced_cost,
 )
@@ -75,6 +77,8 @@ PER_ISSUER_MIN, PER_ISSUER_MAX = 4, 6
 PRODUCT_SUPPLEMENTS_PER_ISSUER = 2
 FETCHED_PRICING = ("ready_for_extraction", "prefilter_skipped")
 EMBEDDING_PROVIDERS = frozenset({"voyage"})
+MAX_CONSECUTIVE_FAILURES = 5
+DEFAULT_CONCURRENCY = 4
 
 # Calls made by this module (dry runs assert this does not move).
 CALLS = {"inventory": 0, "grouping": 0}
@@ -401,7 +405,7 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
     CALLS[kind] += 1
     resp = await proxy.chat(body)
     res = CallResult(status="failed", latency_ms=resp.latency_ms,
-                     proxy_model_id=resp.headers.get("x-litellm-model-id"))
+                     proxy_model_id=strip_nul(resp.headers.get("x-litellm-model-id")))
     res.input_tokens, res.output_tokens, _cached = proxy.response_usage(resp.body)
     actual = proxy.header_cost(resp)
     if actual is None:
@@ -410,17 +414,18 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
         actual = actual if actual is not None else 0.0
     res.cost_usd = await spend.settle(reservation, actual)
     if resp.status != 200 or resp.body is None:
-        res.error = f"HTTP {resp.status}: {resp.error or (resp.text or '')[:300]}"
+        res.error = strip_nul(f"HTTP {resp.status}: {resp.error or (resp.text or '')[:300]}")
         return res
-    res.provider_model = resp.body.get("model")
+    res.provider_model = strip_nul(resp.body.get("model"))
     fallbacks = resp.headers.get("x-litellm-attempted-fallbacks")
     if fallbacks not in (None, "0"):
-        res.status, res.error = "model_mismatch", f"the proxy attempted {fallbacks} fallback(s)"
+        res.status, res.error = "model_mismatch", strip_nul(f"the proxy attempted {fallbacks} fallback(s)")
         return res
     upstream = dep.upstream if dep else None
     if not proxy.reported_model_matches(upstream, res.provider_model):
         res.status = "model_mismatch"
-        res.error = f"asked for '{deployment}' ({upstream}) but the provider reported '{res.provider_model}'"
+        res.error = strip_nul(f"asked for '{deployment}' ({upstream}) but the provider reported "
+                              f"'{res.provider_model}'")
         return res
     if _is_claude(res.provider_model, upstream):
         res.status, res.error = "model_mismatch", "a Claude model answered; Claude is ruled out for this work"
@@ -431,9 +436,9 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
         if not isinstance(parsed, dict):
             raise ValueError("not a JSON object")
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        res.status, res.error = "invalid", f"unparseable response: {exc}"[:300]
+        res.status, res.error = "invalid", strip_nul(f"unparseable response: {exc}"[:300])
         return res
-    res.status, res.parsed = "ok", parsed
+    res.status, res.parsed = "ok", strip_nul_deep(parsed)
     return res
 
 
@@ -454,9 +459,11 @@ def _str_or_none(v) -> str | None:
     if v is None:
         return None
     if isinstance(v, (dict, list)):
-        return json.dumps(v, default=str)[:2000]
-    s = str(v).strip()
-    return s[:2000] or None
+        s = json.dumps(v, default=str)
+    else:
+        s = str(v).strip()
+    s = strip_nul(s)[:2000]
+    return s or None
 
 
 def parse_items(parsed: dict, doc, registry_keys: set[str]) -> tuple[dict, list[dict], list[dict]]:
@@ -474,7 +481,7 @@ def parse_items(parsed: dict, doc, registry_keys: set[str]) -> tuple[dict, list[
     items = parsed.get("items") if isinstance(parsed.get("items"), list) else []
     for it in items:
         if not isinstance(it, dict):
-            rejected.append({"item": str(it)[:200], "reason": "not an object"})
+            rejected.append({"item": strip_nul(str(it)[:200]), "reason": "not an object"})
             continue
         label = _str_or_none(it.get("label"))
         quote = _str_or_none(it.get("quote"))
@@ -595,12 +602,24 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                         created_by=None, max_tokens: int = DEFAULT_MAX_TOKENS,
                         lo: int = PER_ISSUER_MIN, hi: int = PER_ISSUER_MAX,
                         product_supplements: int = PRODUCT_SUPPLEMENTS_PER_ISSUER,
-                        group_with_model: bool = True, progress=None) -> InventorySummary:
+                        group_with_model: bool = True, concurrency: int = DEFAULT_CONCURRENCY,
+                        progress=None) -> InventorySummary:
     """Plan (dry run) or run the inventory pass over a cohort.
 
     ``deployment``: a model id the caller already picked; otherwise
     ``choose_model``. No eligible model -> status 'blocked' (a dry run still
-    plans, so the token counts are visible)."""
+    plans, so the token counts are visible).
+
+    ``concurrency`` documents are in flight at once: each one still reserves
+    its estimated cost (under ``spend``'s own lock, so the cap stays exact)
+    before its call is made, and documents are stored to ``conn`` one at a
+    time in their original order (a single asyncpg connection cannot run
+    concurrent queries) — only the model calls themselves overlap. The run
+    stops cleanly, recording ``stop_reason``, after ``MAX_CONSECUTIVE_FAILURES``
+    documents in a row come back anything other than 'ok' (checked in document
+    order, so a batch may run up to ``concurrency - 1`` documents past the
+    threshold). On Ctrl+C or any crash, the run is marked 'failed' with its
+    real counts and spend so far, instead of being left 'running' forever."""
     chosen_model, model_report = await choose_model(conn, catalog, deployment)
     docs, unloadable = await select_documents(conn, cohort_id, loader=loader, lo=lo, hi=hi,
                                               product_supplements=product_supplements, progress=progress)
@@ -632,27 +651,52 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
     run_id = await create_run(conn, cohort_id=cohort_id, deployment=chosen_model, spend_cap=spend_cap_usd,
                               planned=len(docs), created_by=created_by)
     summary.run_id = run_id
+    consecutive_failures = 0
+    stopped = False
     try:
-        for c in docs:
-            msgs = build_inventory_messages(registry_rows, c.terms.text, filer=c.issuer_group,
-                                            accession=c.accession_number)
-            try:
-                res = await _call(chosen_model, msgs, catalog=catalog, spend=spend, max_tokens=max_tokens,
-                                  what=f"inventory:{c.accession_number}", kind="inventory",
-                                  tags=[f"inventory_run:{run_id}"])
-            except SpendCapReached as exc:
-                summary.status, summary.stop_reason = "stopped_spend_cap", str(exc)
+        for i in range(0, len(docs), max(1, concurrency)):
+            chunk = docs[i:i + max(1, concurrency)]
+            calls = [
+                _call(chosen_model,
+                      build_inventory_messages(registry_rows, c.terms.text, filer=c.issuer_group,
+                                               accession=c.accession_number),
+                      catalog=catalog, spend=spend, max_tokens=max_tokens,
+                      what=f"inventory:{c.accession_number}", kind="inventory",
+                      tags=[f"inventory_run:{run_id}"])
+                for c in chunk
+            ]
+            results = await asyncio.gather(*calls, return_exceptions=True)
+            for c, outcome in zip(chunk, results):
+                if isinstance(outcome, SpendCapReached):
+                    summary.status, summary.stop_reason = "stopped_spend_cap", str(outcome)
+                    stopped = True
+                    break
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                res = outcome
+                facts, accepted, rejected = ({}, [], [])
+                if res.status == "ok":
+                    facts, accepted, rejected = parse_items(res.parsed, c.doc, registry_keys)
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                await store_document(conn, run_id, c, res, chosen_model, facts, accepted, rejected)
+                summary.documents_done += 1
+                summary.items_accepted += len(accepted)
+                summary.items_rejected += len(rejected)
+                if progress:
+                    progress(c.accession_number, f"{res.status} +{len(accepted)} items, {len(rejected)} "
+                                                 f"rejected, ${res.cost_usd:.5f} (run ${spend.spent_usd:.4f})")
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    summary.status = "stopped_consecutive_failures"
+                    summary.stop_reason = strip_nul(
+                        f"stopped after {consecutive_failures} consecutive failed documents "
+                        f"(last: {c.accession_number} {res.status}"
+                        + (f" — {res.error}" if res.error else "") + ")")[:1500]
+                    stopped = True
+                    break
+            if stopped:
                 break
-            facts, accepted, rejected = ({}, [], [])
-            if res.status == "ok":
-                facts, accepted, rejected = parse_items(res.parsed, c.doc, registry_keys)
-            await store_document(conn, run_id, c, res, chosen_model, facts, accepted, rejected)
-            summary.documents_done += 1
-            summary.items_accepted += len(accepted)
-            summary.items_rejected += len(rejected)
-            if progress:
-                progress(c.accession_number, f"{res.status} +{len(accepted)} items, {len(rejected)} rejected, "
-                                             f"${res.cost_usd:.5f} (run ${spend.spent_usd:.4f})")
         else:
             summary.status = "completed"
         agg = await aggregate(conn, run_id, catalog=catalog, deployment=chosen_model, spend=spend,
@@ -665,10 +709,12 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                          finished_at=datetime.now(timezone.utc),
                          report={"plan": summary.plan, "unloadable": unloadable,
                                  "concepts": agg["concepts"], "label_dictionary": agg["label_dictionary"]})
-    except Exception as exc:  # noqa: BLE001 — recorded, then re-raised
-        summary.status, summary.stop_reason = "failed", f"{type(exc).__name__}: {exc}"[:1500]
+    except (Exception, asyncio.CancelledError, KeyboardInterrupt) as exc:  # noqa: BLE001 — recorded, re-raised
+        summary.status = "failed"
+        summary.stop_reason = strip_nul(f"{type(exc).__name__}: {exc}"[:1500]) or type(exc).__name__
         await finish_run(conn, run_id, status="failed", spent_usd=spend.spent_usd,
-                         documents_done=summary.documents_done, stop_reason=summary.stop_reason,
+                         documents_done=summary.documents_done, items_accepted=summary.items_accepted,
+                         items_rejected=summary.items_rejected, stop_reason=summary.stop_reason,
                          finished_at=datetime.now(timezone.utc))
         raise
     return summary
