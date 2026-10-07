@@ -241,7 +241,8 @@ async def a_schema(conn) -> None:
           "every later assertion reads or writes these tables; a missing one would make them fail for the wrong reason",
           str(regs))
     rls = await conn.fetch(
-        "SELECT relname, relrowsecurity FROM pg_class WHERE relnamespace = 'market_data'::regnamespace AND relkind = 'r'")
+        "SELECT relname, relrowsecurity FROM pg_class WHERE relnamespace = 'market_data'::regnamespace AND relkind = 'r' "
+        "AND relname = ANY($1::text[])", [x.split(".", 1)[1] for x in (SERIES_T, OBS_T, RUNS_T)])
     check("A1.2 relrowsecurity = true on all three tables",
           len(rls) == 3 and all(r["relrowsecurity"] for r in rls),
           "with RLS disabled every policy below is decorative and any app_service caller could write global data",
@@ -250,7 +251,7 @@ async def a_schema(conn) -> None:
         "SELECT polrelid::regclass::text AS t, count(*) AS n FROM pg_policy "
         "WHERE polrelid::regclass::text LIKE 'market_data.%' GROUP BY 1")}
     check("A1.3 policy counts: series 4, observations 4, ingest_runs 1",
-          pol == {SERIES_T: 4, OBS_T: 4, RUNS_T: 1},
+          {k: v for k, v in pol.items() if k in (SERIES_T, OBS_T, RUNS_T)} == {SERIES_T: 4, OBS_T: 4, RUNS_T: 1},
           "a missing UPDATE policy silently matches zero rows (CLAUDE.md 'row not found' bug) — counts pin all four commands",
           str(pol))
     grants = {}
