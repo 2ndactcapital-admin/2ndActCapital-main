@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-04 (mkt02c.structural — market data long history:
+Last updated: 2026-10-07 (mkt03b.structural — market data key dates,
+regimes, personal dates and saved views: API, seeds, loader; verify WRITTEN,
+not yet run; see the top entry). Previously 2026-10-04 (mkt02c.structural — market data long history:
 S&P 500 splice from Yahoo, row-level provenance, fred.baa10y, five note
 underlyings linked, Yahoo index units; verify WRITTEN, not yet run; see the
 top entry). Previously 2026-10-03 (mkt03.structural — market data READ API:
@@ -275,6 +277,125 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000000. Market data mkt03b — key dates, regimes, personal dates and saved views: API, seeds, loader; verify WRITTEN, not yet run (2026-10-07)
+
+`mkt03b.structural`. What the mkt04 chart needs around the data: reference
+key dates and regimes every member sees, a member's own dates and named
+views, and platform starter views. Design is in
+`docs/MARKET_DATA_DESIGN_V1.md`, decisions 20–24 and "Key dates, regimes and
+saved views (mkt03b)". No DDL (Part 1, migration
+`mkt03b_key_dates_regimes_views`, was applied before the sprint), no UI, no
+Next.js route.
+
+**Built:**
+- `routers/market_data_personal.py`, mounted at `/api/v1/market` (registered
+  in `main.py`):
+  - `GET /key-dates`, `POST /key-dates/custom`, `DELETE /key-dates/custom/{id}`
+  - `GET /views`, `POST /views`, `PUT /views/{id}`, `DELETE /views/{id}`
+- `services/market_data/`:
+  - `key_dates.py`: the GET body, personal-date create/delete, the live
+    data range, kind and regime-type labels.
+  - `saved_views.py`: the canonical config schema (`extra='forbid'` at every
+    level), key resolution, the stale-selection `unavailable` list, CRUD.
+  - `personal.py`: the shared envelope, name cleaning, the one 404, and a
+    sanitiser that never names an undeclared field or repeats a
+    discriminator value.
+  - `reference_seed.py`: `load_reference(conn, key_dates=, regimes=, views=,
+    dry_run=)` — takes rows; upserts inside `platform_scope()`.
+- `scripts/market_data_seed_reference.py load [--dry-run]`.
+- Seeds: `docs/market_data/market_key_dates_v1.json` (32),
+  `market_regimes_v1.json` (16), `market_view_presets_v1.json` (4), copied
+  verbatim from the sprint prompt.
+- `scripts/verify_mkt03b.py`: Phase A always runs; Phase B runs with `--live`
+  after the loader.
+
+**Task 1 discovery (live, read-only):**
+- Every CONFIRMED REAL FACT matched: the four tables, their columns,
+  defaults, CHECK bodies, unique indexes (`uq_user_key_dates`,
+  `uq_saved_views_user_name`, `uq_saved_views_platform_name`), policies,
+  grants (app_service SELECT/INSERT/UPDATE/DELETE; anon/authenticated none)
+  and RLS enabled. All four were empty.
+- None of the four tables has a trigger, so `updated_at` is set by the code.
+  The owner FKs (`org_id` → organizations, `user_id` → users) are NO ACTION,
+  so teardown must delete personal rows before users and organizations.
+- Identity: the org comes from `get_org_id(request)` (through the gate) and
+  the user from `services.users.ensure_user(conn, request)` — exactly the pair
+  `routers/notifications.py` (`_resolve_user`, preferences) and
+  `routers/dashboard.py` (`patch_todo`, filters `user_id AND org_id`) use.
+  `services.permissions.get_user_id` was NOT used: it is a uuid5 of the sub
+  and does not match `users.id`, which both owner FKs need.
+- mkt03 conventions mirrored: `require_market_data_read`
+  (`services/market_data/access.py`), the envelope shape, raw-body parsing
+  with `read_service._parse_body` and `MarketDataRequestError` so a 422 never
+  echoes input. The data range reuses `read_repository.active_series` +
+  `series_bounds`.
+- Fixtures follow `verify_edgarcohorts.py` (fixed-UUID organizations and
+  users with `auth0_sub`, httpx.ASGITransport, `main.verify_token` replaced
+  with an `org_id` claim). RLS proofs run on DATABASE_URL, which is
+  `app_service` (rolbypassrls = false, asserted).
+
+**[FIND] The platform has THREE RLS session settings, not two.**
+`app.current_auth0_sub` exists (RLS Phase 2). It is read by exactly one
+policy, `users_bootstrap_and_org_visibility`, so a brand-new user can read and
+insert their own row. It does not identify a `users.id`, and no other table
+uses it. The prompt's decision stands: per-user privacy is enforced in the
+service layer, and no new setting was added. Recorded as a next candidate in
+the design doc.
+
+**[FIND] The available data range starts in 1919, not 1970.** The earliest
+first observation across ACTIVE series is 1919-01-01 (an early macro
+macro series), and the latest last is the latest trading day (2026-10-07 at
+discovery). The prompt's "1970-01-02" is the S&P 500's own first date. The
+range is read per request, so the "outside the available data" message
+currently reads "(Jan 1919 to Oct 2026)". All 32 key dates and 16 regimes
+fall inside it.
+
+**[FIND] `docs/market_data/KEY_DATES_SPEC_V1.md` is not in this
+repository.** The prompt calls it the original spec. It was not created
+(by rule); the design doc's new section is the record of what was built.
+
+**[FIND] A 401 cannot prove a route exists here.** `auth0_jwt_middleware`
+answers 401 before routing, so "every route refuses an anonymous caller"
+passes even for a path that is not mounted. The verify's gate check sends the
+IDENTICAL request with a session too, and requires a real route answer (not
+401/405, not FastAPI's `{"detail": "Not Found"}`).
+
+**Interpretations recorded (not in the prompt):**
+- "Outside the available data month": a date is accepted from the first day
+  of the first data month to the last day of the last data month.
+- POSTs answer 201; PUT and DELETE answer 200.
+- An unknown field anywhere is reported at its PARENT object
+  (`["body", "config", "overlays"]`), never by its own name.
+- A view's security key must be the canonical lowercase UUID. Malformed keys
+  are counted, not echoed.
+- The control-character rule also applies to view names.
+- `end` is required in a view config and may be null (every preset sends
+  it), so a config round-trips exactly.
+- The loader also validates each preset against the view config schema;
+  a preset that fails is skipped with a [FIND], like an unresolvable key.
+- A write that cannot resolve a real `users` row (ensure_user's fallback id)
+  answers 403 "Your account could not be resolved." instead of a 500.
+
+**Not run by this sprint (by rule):** the loader, the verify, and every live
+external call. What did run: read-only discovery queries; an offline check
+that the four presets pass the config schema unchanged; an offline exercise
+of the services against a fake connection (messages, range edges, 409, the
+50th/51st, key resolution); route enumeration of the real app (all seven
+routes mounted); a compile and undefined-name scan of every new module.
+
+**OPERATOR ACTIONS:**
+1. `market_data_seed_reference.py load` — expect 32 / 16 / 4 inserted and no
+   [FIND].
+2. `verify_mkt03b.py --live`.
+3. Re-run `verify_mkt03.py --live`, `verify_mkt02.py --live` and
+   `verify_mkt01.py --live` as regression baselines: 68/0, 52/0 and 57/0.
+4. The owner verifies the eight Fed tightening dates against the FOMC record
+   (design decision 24).
+
+The commands are at the end of the sprint log.
+
+---
+
 ## 0000000000000000000000000000000000000. Market data mkt02c — long history: S&P 500 splice, credit spread, note underlyings, Yahoo units; verify WRITTEN, not yet run (2026-10-04)
 
 `mkt02c.structural`. Closes the "not far enough back" gap that real data
@@ -510,6 +631,11 @@ The commands are at the end of the sprint log.
 UPDATE 2026-10-03: final verify results — `verify_mkt03.py --live` 68 passed,
 `verify_mkt02.py --live` 47 passed, `verify_mkt01.py --live` 57 passed, all 0
 failed. "verify WRITTEN, not yet run" above is superseded.
+
+UPDATE 2026-10-07: mkt03b (key dates, regimes, personal dates, saved views —
+see the top entry) is built on these routes. The remaining plan is mkt04: the
+chart and grid UI, the Next.js routes in front of this API, and the
+per-tenant gating of licensed, unreviewed and Yahoo-sourced series.
 
 ---
 
@@ -4560,3 +4686,21 @@ note is not a substitute for re-verifying.
   shape."
 - Under "Verify Script Discipline": "A ratio or percentage gate needs a
   minimum sample. With zero comparisons, '>= 99% agree' passes vacuously."
+
+## CLAUDE.md lines proposed by mkt03b (for operator review — NOT applied)
+
+- Under "RLS Is Now Genuinely Enforced": "There are three RLS session
+  settings: `app.current_org_id`, `app.is_super_admin`, and
+  `app.current_auth0_sub` (read only by the `users` bootstrap policy). None
+  identifies a `users.id`, so per-USER privacy (as opposed to per-org) cannot
+  be enforced by RLS today. User-scoped tables isolate the org in RLS and
+  filter `user_id` in EVERY service query; the user id comes from
+  `services.users.ensure_user`, never `permissions.get_user_id` (a uuid5 of
+  the sub that does not match `users.id`)."
+- Under "Verify Script Discipline": "In apps/api a 401 proves nothing about a
+  route: `auth0_jwt_middleware` answers 401 before routing, so a missing path
+  also returns 401. Prove a gate with the IDENTICAL request both ways, and
+  require the authenticated one to reach a real route."
+- Under "Verify Script Discipline": "A count that excludes fixtures with
+  `NOT (<tag predicate>)` silently drops every real row where the tag column
+  is NULL. Use `NOT coalesce((<predicate>), false)`."

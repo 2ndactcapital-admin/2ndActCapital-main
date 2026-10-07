@@ -4,7 +4,9 @@ Status: mkt01 built (registry, FRED adapter, historical backfill); verified
 live, 57 passed, 0 failed. mkt02 built (adapter registry, Yahoo adapter,
 nightly orchestrator, staleness report, Render cron entrypoint); verified
 live, 47 passed, 0 failed. mkt03 built (the read API: catalog, series, grid,
-correlations); its verify is written but not yet run. Next: mkt03b, then mkt04.
+correlations); verified live, 68 passed, 0 failed. mkt03b built (key dates,
+regimes, personal dates, saved views: API, seeds, loader); its verify is
+written but not yet run. Next: mkt04 (the UI).
 
 UPDATE 2026-10-03 (mkt02): decisions 8–13 and the "Launch blockers" section
 below are new. The Roadmap is rewritten: the planned "mkt02 = nightly cron +
@@ -14,6 +16,13 @@ UPDATE 2026-10-03 (mkt03): decisions 14–18, "API contract", "Transform
 definitions", "Correlation method" and "Caveats" are new. Launch blocker 2
 is met at the API level. The Roadmap is rewritten again: mkt03 = this read
 API; mkt03b = key dates and saved views; mkt04 = chart and grid UI.
+
+UPDATE 2026-10-07 (mkt03b): decisions 20–24 and the section "Key dates,
+regimes and saved views (mkt03b)" are new. `docs/market_data/KEY_DATES_SPEC_V1.md`
+is the ORIGINAL spec for this work and is superseded wherever that section
+says so (notably its §3.4: there is no `visibility` column and no current-user
+RLS setting). [FIND] at mkt03b discovery, that spec file is NOT in this
+repository; the section below is the record of what was built.
 
 ## What this is
 
@@ -451,6 +460,56 @@ stores the currency code (the previous behavior). The real index series are
 ^RUT, DX-Y.NYB and the five above. `validate --provider yahoo` refreshes the
 units on every Yahoo series.
 
+### 20. Per-user privacy is enforced in the service layer (mkt03b)
+
+- The platform's RLS session settings are `app.current_org_id` and
+  `app.is_super_admin`. A third, `app.current_auth0_sub`, exists but is used
+  only by the `users` table's bootstrap policy (so a brand-new user can read
+  and insert their own row); no other policy reads it, and nothing maps it to
+  a `users.id`. So no policy can say "only the caller's own rows".
+- `market_data.user_key_dates` and `market_data.saved_views` therefore follow
+  the established user-scoped pattern (`member_todos`,
+  `user_notification_preferences`): RLS isolates the ORG, and every query in
+  `services/market_data/key_dates.py` and `saved_views.py` ALSO filters by
+  `user_id`. Both ids come only from the verified session: `get_org_id` (via
+  the gate) and `services.users.ensure_user`.
+- The spec's `visibility` column was deliberately not built. Org-shared views
+  or dates are out of scope; the column can be added later.
+- Next candidate: see "Next candidates" — a current-user setting would let the
+  database enforce this.
+
+### 21. Saved views store resolved anchors and stable keys (mkt03b)
+
+- A view stores its anchor RESOLVED — `{"type": "date", "value": …}` or
+  `{"type": "relative", "years": N}` — never a reference to a key date, so
+  deleting a personal date can never break a view.
+- Series are referenced by stable key: `series_key` for indicators, the
+  `portfolio.securities_global` id for securities.
+
+### 22. Stale selections are flagged, never removed (mkt03b)
+
+If a referenced series stops being ACTIVE (or a security stops being
+selectable), `GET /market/views` returns the view unchanged and lists that key
+in the view's `unavailable` array. The stored config is not modified: a read
+never writes. The member decides whether to edit the view.
+
+### 23. Platform presets are seed-only (mkt03b)
+
+Presets are `owner_scope = 'platform'` rows with NULL `org_id` and `user_id`.
+They are written only by `scripts/market_data_seed_reference.py load` (inside
+`platform_scope()`). Every API write filters `owner_scope = 'user'`, so a
+preset id answers 404 to PUT and DELETE; the RLS write policies refuse them as
+well for any non-super-admin context.
+
+### 24. Fed tightening dates are approximate (mkt03b)
+
+The eight `fed_tightening` regimes in `docs/market_data/market_regimes_v1.json`
+(`source = 'fomc_curated'`) were seeded exactly as the owner supplied them.
+They are APPROXIMATE month boundaries and must be verified against the FOMC
+record by the owner before any external member sees them. The eight
+recessions (`source = 'nber'`) follow the NBER chronology at month
+granularity, also seeded exactly as supplied.
+
 ## Launch blockers
 
 Before ANY external customer sees this platform:
@@ -469,6 +528,12 @@ Before ANY external customer sees this platform:
    Yahoo-provider series. That is why provenance is recorded per row in
    `indicator_observations.source_provider`. The five note underlyings
    (decision 19) are ordinary Yahoo series and fall under blocker 1 directly.
+5. **Saved views may reference Yahoo-sourced series** (the presets do:
+   `yahoo.gc_f`, `yahoo.dji`, and `fred.sp500` before 2016). Storing a key
+   is not displaying data, so mkt03b adds no new exposure, but blockers 1 and
+   4 and mkt04's per-tenant gating apply to anything a view opens. A view
+   whose series a tenant may not see must open with those series hidden or
+   flagged, not silently plotted.
 
 ## API contract (mkt03)
 
@@ -552,6 +617,112 @@ Errors never echo the request: not the value, and not the name of an
 undeclared field. That is why bodies are parsed by the service and not by
 FastAPI. FastAPI's default 422 returns pydantic's `input`, which echoes the
 caller's own data.
+
+## Key dates, regimes and saved views (mkt03b)
+
+### Tables (schema `market_data`, migration `mkt03b_key_dates_regimes_views`)
+
+| Table | Holds | Key | RLS |
+|---|---|---|---|
+| `key_dates` | 32 crises and turning points | `slug` UNIQUE | global read; writes only when `app.is_super_admin = 'true'` |
+| `regimes` | 8 NBER recessions, 8 Fed tightening cycles | UNIQUE `(regime_type, start_date)` | global read; writes super-admin only |
+| `user_key_dates` | a member's own dates ("My dates") | UNIQUE `(org_id, user_id, lower(name), event_date)` | ONE org-isolation policy for all commands |
+| `saved_views` | platform presets + members' own views | user: UNIQUE `(org_id, user_id, lower(name))`; platform: UNIQUE `(lower(name))` | read: platform rows + own org; write: `owner_scope = 'user'` rows of own org (or super admin) |
+
+CHECKs: a key date's `end_date >= start_date`; `end_date` and `end_precision`
+both null or both set; a month-precision `start_date` is the 1st. Regime
+`end_date >= start_date`. Personal names are trimmed (`name = btrim(name)`),
+1–60 characters for dates and 1–80 for views. A platform view has NULL
+`org_id` and `user_id`; a user view has both. `config` is a JSON object of at
+most 20,000 bytes (`octet_length(config::text)`). No table has a trigger:
+`updated_at` is set by the code that writes. Both personal tables are hard
+delete (they are bookmarks, not records).
+
+### Seeds and loader
+
+- `docs/market_data/market_key_dates_v1.json` (32: 22 `owner_list`, 10
+  `suggested`), `market_regimes_v1.json` (16), `market_view_presets_v1.json`
+  (4). Each is `{"version": 1, "<list>": [...]}`.
+- `apps/api/scripts/market_data_seed_reference.py load [--dry-run]` calls
+  `services/market_data/reference_seed.load_reference(conn, key_dates=,
+  regimes=, views=, dry_run=)`, which takes ROWS (tests pass fixtures).
+  Upserts: key dates on `slug`, regimes on `(regime_type, start_date)`,
+  presets on `lower(name)`. Only data fields and `updated_at` change, and
+  only when a value differs (`IS DISTINCT FROM`), so a re-run writes nothing.
+  `is_active` and `notes` are never written on an existing row. Nothing is
+  ever deleted. A preset failing the config schema, or naming a key that is
+  not an ACTIVE series or selectable security, is skipped with a `[FIND]`.
+- The loader is the only mkt03b code that uses `platform_scope()`.
+
+### API (under `/api/v1/market`, gate `require_market_data_read`)
+
+| Route | Body | Answers |
+|---|---|---|
+| `GET /key-dates` | — | `key_dates` (active, by `start_date`), `custom_dates` (own only, by `event_date`; `[]` when none), `regimes` (active, by `start_date`), `data_range {first, last}`, `permissions`, `vocabularies {kinds, regime_types}`, `limits {custom_dates_max: 50, name_max: 60}` |
+| `POST /key-dates/custom` | `{name, event_date}` | 201 + the saved row |
+| `DELETE /key-dates/custom/{id}` | — | 200 `{"deleted": true}`; 404 otherwise |
+| `GET /views` | — | `presets`, `views` (own only), each `{id, name, config, created_at, updated_at, unavailable}`; `permissions`; `vocabularies {modes, scales, anchor_types, selection_kinds}`; `limits {views_max: 50, name_max: 80, selection_max: 40, config_max_bytes: 20000, relative_years: [1, 60]}` |
+| `POST /views` | `{name, config}` | 201 + the saved view |
+| `PUT /views/{id}` | `{name?, config?}` (at least one) | 200 + the saved view |
+| `DELETE /views/{id}` | — | 200 `{"deleted": true}`; 404 otherwise |
+
+- `permissions`: `can_read: true`, `can_write: true` (meaning "your own
+  rows"), `is_super_admin`, `read_permission: null`, `write_permission: null`
+  — the same single session gate as the read API; no permission is invented.
+- 404 is one answer for a missing id, a malformed id, another user's row,
+  another org's row and a platform preset: the caller learns nothing about
+  which.
+- Errors are `{"detail": {"message", "errors"?, ...}}` and never echo the
+  request: bodies are parsed raw with `extra='forbid'` at every level, and an
+  undeclared field (e.g. `org_id`, `user_id`) is reported by its PARENT object,
+  never by name. pydantic's discriminator message (which quotes the caller's
+  `type`) is replaced with fixed text.
+- "The available data range" is the earliest first and latest last active
+  observation across ACTIVE series, read per request through the mkt03
+  repository. A personal date is accepted from the first day of the first
+  month to the last day of the last month. [FIND] at mkt03b discovery the
+  range began 1919-01-01 (an early macro series), not 1970-01-02.
+- Writes take a transaction-scoped advisory lock per (table, org, user), so two
+  concurrent saves cannot both pass the 50-row limit.
+
+### Validation messages (exact)
+
+| Case | Status | Message |
+|---|---|---|
+| date name empty / whitespace / missing | 422 | Enter a name for this date. |
+| date name over 60 characters | 422 | Names can be up to 60 characters. |
+| any control character in a name (dates and views) | 422 | Names cannot contain control characters. |
+| date missing or malformed | 422 | Pick a date. |
+| date outside the data range | 422 | That date is outside the available data (Jan 1919 to Oct 2026). — the real range, as `Mon YYYY` |
+| same name (any case) on the same date | 409 | You already saved that name on that date. |
+| the 51st date | 422 | You can save up to 50 dates. Delete one first. |
+| view name empty / missing | 422 | Enter a name for this view. |
+| view name over 80 characters | 422 | Names can be up to 80 characters. |
+| same view name (any case), on POST or a PUT rename | 409 | You already have a view with that name. |
+| the 51st view | 422 | You can save up to 50 views. Delete one first. |
+| PUT with neither field | 422 | Send a name, a config, or both. |
+| config fails a shape rule | 422 | The view's settings are not valid. (+ `errors[].loc` naming the field) |
+| a key not active / not selectable | 422 | Every selection must be an active series or a selectable security. (+ `unknown_keys`, `inactive_keys`, `unselectable_keys`: offending keys only) |
+
+### Config schema (canonical; `extra='forbid'` at every level)
+
+```json
+{"v": 1,
+ "selection": [{"kind": "indicator" | "security", "key": "<series_key | securities_global id>"}],
+ "anchor": {"type": "date", "value": "YYYY-MM-DD"} | {"type": "relative", "years": N},
+ "end": null | <same shape as anchor>,
+ "mode": "index" | "sigma" | "default" | "level",
+ "scale": "log" | "linear",
+ "overlays": {"events": bool, "band": bool, "emphasis": bool}}
+```
+
+Rules: 1–40 selections, no duplicate `(kind, key)`; an indicator key must be an
+ACTIVE registry series and a security key a canonical-lowercase
+`securities_global` id the catalog marks selectable (priced by an active
+series); relative `years` 1–60; dates must parse; when both are dates the
+anchor must not be after the end; `end` is required and may be null. Size is
+checked first, as Postgres measures it. The stored config is the validated
+canonical form, which equals the input for any valid config.
 
 ## Transform definitions
 
@@ -668,6 +839,16 @@ Implementation notes (mkt03):
 - `apps/api/scripts/verify_mkt02c.py` — Phase A (fixtures `verify.mkt02c.*`,
   fake transports) always runs. Phase B (`--live`) runs after the operator
   steps.
+- `apps/api/services/market_data/key_dates.py`, `saved_views.py`,
+  `personal.py` and `apps/api/routers/market_data_personal.py` — the mkt03b
+  personal and reference API. They never import `platform_scope`.
+- `apps/api/services/market_data/reference_seed.py` and
+  `apps/api/scripts/market_data_seed_reference.py` — the reference loader.
+- `docs/market_data/market_key_dates_v1.json`, `market_regimes_v1.json`,
+  `market_view_presets_v1.json` — the seeds.
+- `apps/api/scripts/verify_mkt03b.py` — Phase A (fixture orgs, users, series
+  and rows `verify.mkt03b.*`, through the real ASGI app) always runs. Phase B
+  (`--live`) runs after the loader.
 
 ## Roadmap
 
@@ -690,14 +871,27 @@ Implementation notes (mkt03):
 - **mkt02c** (built) — long history (decision 19): the S&P 500 splice from
   Yahoo, row-level provenance, `fred.baa10y`, five note-underlying Yahoo
   series linked to their securities, and Yahoo index units.
-- **mkt03b** — key dates and saved views
-  (`docs/market_data/KEY_DATES_SPEC_V1.md`, if added).
+- **mkt03b** (built) — key dates, regimes, personal dates and saved views:
+  API, seeds and loader (decisions 20–24, "Key dates, regimes and saved
+  views"). The original spec, `docs/market_data/KEY_DATES_SPEC_V1.md`, is
+  superseded where that section says so.
 - **mkt04** — the chart (base-100 with security overlay) and the grid UI,
   plus the Next.js routes in front of this API. mkt04 also gates
   `third_party_licensed`, `unreviewed` and Yahoo series per tenant
   (decisions 4 and 16).
 
 ## Next candidates
+
+- **A current-user RLS setting (from mkt03b, decision 20).** Today per-user
+  privacy on `user_key_dates` and `saved_views` rests on the service layer's
+  `user_id` filter, with RLS only isolating the org. If the request pipeline
+  set an `app.current_user_id` GUC (resolved from the verified session, the
+  same way `app.current_org_id` is), each policy could add
+  `user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid`
+  and the database would enforce it — a missed filter in a future endpoint
+  would then fail closed instead of leaking a colleague's bookmarks. That is a
+  platform-wide change (every user-scoped table, the middleware and
+  `platform_scope`), so it was not made here.
 
 - The unlinked index securities are underlyings of the structured notes.
   mkt02c added and linked five of them (decision 19). Still without a price

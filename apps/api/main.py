@@ -41,6 +41,7 @@ from routers.enroll import router as enroll_router
 from routers.invites import router as invites_router
 from routers.marketing import router as marketing_router
 from routers.market_data import router as market_data_router
+from routers.market_data_personal import router as market_data_personal_router
 from routers.marketplace import router as marketplace_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
@@ -599,5 +600,6 @@ app.include_router(workflows_router, prefix="/api/v1")
 app.include_router(udf_router, prefix="/api/v1")
 app.include_router(modeling_ta_router, prefix="/api/v1")
 app.include_router(market_data_router, prefix="/api/v1")
+app.include_router(market_data_personal_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)

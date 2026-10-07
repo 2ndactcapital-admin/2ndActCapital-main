@@ -1,0 +1,18 @@
+{"version": 1, "regimes": [
+  {"regime_type": "recession", "name": "US recession 1969-70", "start_date": "1969-12-01", "end_date": "1970-11-30", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 1973-75", "start_date": "1973-11-01", "end_date": "1975-03-31", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 1980", "start_date": "1980-01-01", "end_date": "1980-07-31", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 1981-82", "start_date": "1981-07-01", "end_date": "1982-11-30", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 1990-91", "start_date": "1990-07-01", "end_date": "1991-03-31", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 2001", "start_date": "2001-03-01", "end_date": "2001-11-30", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 2007-09", "start_date": "2007-12-01", "end_date": "2009-06-30", "source": "nber"},
+  {"regime_type": "recession", "name": "US recession 2020", "start_date": "2020-02-01", "end_date": "2020-04-30", "source": "nber"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 1980-81", "start_date": "1980-01-01", "end_date": "1981-06-30", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 1983-84", "start_date": "1983-03-01", "end_date": "1984-08-31", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 1988-89", "start_date": "1988-03-01", "end_date": "1989-02-28", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 1994-95", "start_date": "1994-02-01", "end_date": "1995-02-28", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 1999-00", "start_date": "1999-06-01", "end_date": "2000-05-31", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 2004-06", "start_date": "2004-06-01", "end_date": "2006-06-30", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 2015-18", "start_date": "2015-12-01", "end_date": "2018-12-31", "source": "fomc_curated"},
+  {"regime_type": "fed_tightening", "name": "Fed tightening 2022-23", "start_date": "2022-03-01", "end_date": "2023-07-31", "source": "fomc_curated"}
+]}
