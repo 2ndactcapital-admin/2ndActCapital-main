@@ -2393,6 +2393,57 @@
 --   UNIQUE indicator_series_key_uq: (series_key)
 --   PRIMARY KEY indicator_series_pkey: (id)
 
+-- ===== market_data.key_dates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   slug                                     text NOT NULL
+--   name                                     text NOT NULL
+--   kind                                     text NOT NULL
+--   start_date                               date NOT NULL
+--   start_precision                          text NOT NULL DEFAULT 'day'::text
+--   end_date                                 date
+--   end_precision                            text
+--   source                                   text NOT NULL
+--   is_active                                boolean NOT NULL DEFAULT true
+--   notes                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY key_dates_pkey: (id)
+--   UNIQUE key_dates_slug_uq: (slug)
+
+-- ===== market_data.regimes =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   regime_type                              text NOT NULL
+--   name                                     text NOT NULL
+--   start_date                               date NOT NULL
+--   end_date                                 date NOT NULL
+--   source                                   text NOT NULL
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY regimes_pkey: (id)
+--   UNIQUE regimes_type_start_uq: (regime_type, start_date)
+
+-- ===== market_data.saved_views =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   owner_scope                              text NOT NULL
+--   org_id                                   uuid
+--   user_id                                  uuid
+--   name                                     text NOT NULL
+--   config                                   jsonb NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY saved_views_pkey: (id)
+
+-- ===== market_data.user_key_dates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   name                                     text NOT NULL
+--   event_date                               date NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY user_key_dates_pkey: (id)
+
 -- ===== portfolio.asset_identifiers =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   asset_id                                 uuid NOT NULL
