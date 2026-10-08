@@ -1736,6 +1736,9 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   created_by                               uuid
 --   availability                             text NOT NULL DEFAULT 'available'::text
+--   public_data_only                         boolean NOT NULL DEFAULT false
+--   manual_input_cost_per_mtok               numeric
+--   manual_output_cost_per_mtok              numeric
 --   UNIQUE platform_model_catalog_model_id_key: (model_id)
 --   PRIMARY KEY platform_model_catalog_pkey: (id)
 
@@ -2752,6 +2755,7 @@
 --   raw_char_end                             integer
 --   probability                              numeric
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
 --   PRIMARY KEY note_extraction_staged_fields_pkey: (id)
 --   UNIQUE note_extraction_staged_fields_staging_id_field_key_key: (staging_id, field_key)
 
@@ -2805,6 +2809,7 @@
 --   reviewed_at                              timestamp with time zone NOT NULL DEFAULT now()
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
+--   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
 --   PRIMARY KEY note_gold_values_pkey: (id)
 
 -- ===== portfolio.note_term_readings =====
@@ -2851,6 +2856,21 @@
 --   applies_to_archetypes                    ARRAY
 --   hazard_field                             boolean NOT NULL DEFAULT false
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   description                              text
+--   section                                  text
+--   sort_order                               integer
+--   is_critical                              boolean NOT NULL DEFAULT false
+--   value_shape                              text NOT NULL DEFAULT 'scalar'::text
+--   unit                                     text
+--   enum_values                              ARRAY
+--   synonyms                                 ARRAY NOT NULL DEFAULT '{}'::text[]
+--   trap_rule                                text
+--   extraction_method                        text NOT NULL DEFAULT 'model'::text
+--   derived_from                             ARRAY
+--   former_keys                              ARRAY NOT NULL DEFAULT '{}'::text[]
+--   retired_at                               timestamp with time zone
+--   replaced_by                              ARRAY
+--   replacement_rule                         text
 --   PRIMARY KEY note_terms_field_registry_pkey: (field_key)
 
 -- ===== portfolio.note_terms_stp_policy =====
