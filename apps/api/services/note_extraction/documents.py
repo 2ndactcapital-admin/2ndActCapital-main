@@ -149,7 +149,8 @@ def raw_span_for_text_span(doc: FilingDocument, ts: int, te: int) -> tuple[int, 
 
 def locate_quote(doc: FilingDocument, quote: str | None) -> QuoteLocation | None:
     """Find ``quote`` verbatim in the filing. None = not found = fabricated
-    (or too short to anchor — under 8 characters)."""
+    (or too short to anchor — under ``quote_match.MIN_QUOTE_CHARS``
+    non-whitespace characters)."""
     span = doc.index.locate(quote)
     if span is None:
         return None

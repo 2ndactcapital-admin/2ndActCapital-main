@@ -66,9 +66,15 @@ EVERY QUOTE IS CHECKED against the filing's text (``FilingDocument.index``,
 ``services.note_extraction.quote_match.TextIndex`` — the SAME helper
 ``services.note_terms_extraction``'s hazard-ensemble quote verification uses,
 whitespace- and punctuation-normalised so a line-wrapped or curly-quoted
-re-typing of a quote is still found, while a paraphrase is still rejected). An
-item whose quote is not found is REJECTED — stored on the document row with
-the reason, and counted — never as an item.
+re-typing of a quote is still found; whitespace-insensitive, so a table value
+quoted as "$985.78" is found in extracted text reading "$ 985.78"; and an
+abridged quote ("... ") is found when its fragments all occur in order within
+a short window — while a paraphrase is still rejected). The prompt asks for
+exact, contiguous, short quotes with no ellipsis in the first place. An item
+whose quote is not found is REJECTED — stored WHOLE on the document row with
+the reason, and counted — never as an item. ``rematch_run`` re-checks a stored
+run's rejected items against the stored filing text with the current matcher
+and promotes those that now match, with no model call.
 
 CONCEPTS (``aggregate``). Items are grouped by their EFFECTIVE KEY (the mapped
 existing field, else the proposed new field, else a slug of the label) — never
@@ -78,8 +84,13 @@ keys that mean the same thing (issuer / issuer_name, cusip / cusip_isin, a
 listing/registration-number variant) over the list of DISTINCT keys (with a
 few sample labels and values each) — not the 1,000+ raw labels, which is what
 let the grouping response blow past its own output-token budget and come back
-unparseable before. If the model step cannot run or its answer is unusable,
-grouping falls back to one concept per key (``grouping_method`` 'field_key')
+unparseable before. The keys go to the model in chunks (``GROUPING_CHUNK_KEYS``,
+each call with the run's own ``max_tokens``), merged across chunks afterwards;
+a chunk whose answer is unusable falls back to one concept per key for that
+chunk only, and each chunk's outcome is recorded (``report.grouping_chunks``).
+``regroup_run`` reruns only this step on a stored run. If the model step
+cannot run at all, grouping falls back to one concept per key
+(``grouping_method`` 'field_key')
 — and the reason is recorded on the run (``stop_reason`` /
 ``report.grouping_note``) and in the written report, never silently dropped
 even when the main document loop already has its own stop reason to report
@@ -94,7 +105,10 @@ THE MODEL is chosen at run time (``choose_model``) from
 embedding provider and not an OpenRouter route, and that the LiteLLM proxy
 actually serves under that exact name. None -> BLOCKED. Every call goes through
 ``services.note_extraction.proxy`` — the one HTTP chokepoint (no fallbacks,
-provider-reported model recorded); never a provider directly.
+provider-reported model recorded); never a provider directly. Every call also
+writes a row to the central ``public.ai_decision_log`` (``log_decision``;
+task_type 'edgar_inventory' / 'edgar_inventory_grouping'), like every other
+AI call in the app.
 
 COST. A hard spending cap (``SpendTracker``: every call reserves its estimate
 first and is never made if it would cross the cap; the run then stops cleanly
@@ -121,13 +135,16 @@ from services.note_extraction.spend import (
 )
 from services.note_extraction.trim import estimate_tokens_chars
 
-PROMPT_VERSION = "edgarcohorts.inventory.v2"
-GROUPING_PROMPT_VERSION = "edgarcohorts.grouping.v2"
+PROMPT_VERSION = "edgarcohorts.inventory.v3"
+GROUPING_PROMPT_VERSION = "edgarcohorts.grouping.v3"
 NEW = "NEW"
 MAX_TERMS_CHARS = 80_000           # ~20,000 tokens
 OPENING_CHARS = 8_000              # cap on the opening/cover section specifically
-DEFAULT_MAX_TOKENS = 8000
-GROUPING_MAX_TOKENS = 16000
+DEFAULT_MAX_TOKENS = 8000          # per call, inventory AND grouping (the run's --max-tokens)
+GROUPING_CHUNK_KEYS = 100          # distinct field keys per grouping call
+QUOTE_NOT_FOUND = "quote not found in the filing"
+# ai_decision_log.task_type for this module's two call kinds.
+TASK_TYPE = {"inventory": "edgar_inventory", "grouping": "edgar_inventory_grouping"}
 PER_ISSUER_MIN, PER_ISSUER_MAX = 4, 6
 PRODUCT_SUPPLEMENTS_PER_ISSUER = 2
 FETCHED_PRICING = ("ready_for_extraction", "prefilter_skipped")
@@ -579,9 +596,12 @@ condition and definition — even ones that fit no existing field.
 For each element give:
 - "label": the label EXACTLY as written in the filing (keep its capitalisation and wording)
 - "value": the value as written (null if the element is a definition with no single value)
-- "quote": a SHORT EXACT quote copied verbatim from the text (under 300 characters) that \
-contains the element — it will be searched for in the filing and the item is discarded if \
-it is not found
+- "quote": a SHORT, EXACT, CONTIGUOUS quote copied character for character from the text \
+(under 300 characters) that contains the element — it will be searched for in the filing and \
+the item is discarded if it is not found. Copy one unbroken stretch of the text: never \
+abridge it, never join two separate passages, and never use an ellipsis ("..." or "…"). If \
+the passage is long, quote only the shortest part that contains the element. For a value in \
+a table, quote the cell text exactly as it appears.
 - "section": the heading of the section it appears under
 - "maps_to": the key of an existing schema field below, ONLY if the item means EXACTLY what \
 that field's own description says it means — read the description, not just its name. If the \
@@ -611,6 +631,10 @@ documents (e.g. "issuer" and "issuer_name"; "cusip" and "cusip_isin"; two wordin
 or registration-number field) — into concepts. Do not merge keys that differ in meaning, even if \
 they sound alike (a buffer is not a barrier; a coupon barrier is not a downside threshold; an \
 issue date is not a valuation date; a schedule of dates is not a single date).
+
+The list may be one part of a longer list; group only the keys you are given, and name \
+each concept plainly (its "concept" name and "proposed_field_key" are used to join it with \
+the same concept found in the other parts).
 
 Answer with ONE JSON object only:
 {"groups": [{"concept": "<short name>", "key_ids": [<ids>], "maps_to": "<existing field key or NEW>", \
@@ -702,6 +726,8 @@ class CallResult:
     cost_usd: float = 0.0
     latency_ms: int | None = None
     call_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    finish_reason: str | None = None
+    decision_log_id: str | None = None
 
 
 async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: SpendTracker,
@@ -711,9 +737,10 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
     dep = catalog.get(deployment)
     chars = sum(len(m["content"]) for m in messages)
     reservation = await spend.reserve(estimate_call_cost(dep, chars, max_tokens), what)
+    prompt_version = GROUPING_PROMPT_VERSION if kind == "grouping" else PROMPT_VERSION
     body = {"model": deployment, "messages": messages, "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
-            "metadata": {"tags": tags + [f"usage:{kind}", f"prompt:{PROMPT_VERSION}"]}}
+            "metadata": {"tags": tags + [f"usage:{kind}", f"prompt:{prompt_version}"]}}
     CALLS[kind] += 1
     resp = await proxy.chat(body)
     res = CallResult(status="failed", latency_ms=resp.latency_ms,
@@ -743,6 +770,10 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
         res.status, res.error = "model_mismatch", "a Claude model answered; Claude is ruled out for this work"
         return res
     try:
+        res.finish_reason = strip_nul(resp.body["choices"][0].get("finish_reason"))
+    except (KeyError, IndexError, TypeError, AttributeError):
+        pass
+    try:
         content = resp.body["choices"][0]["message"]["content"]
         parsed = json.loads(content)
         if not isinstance(parsed, dict):
@@ -752,6 +783,53 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
         return res
     res.status, res.parsed = "ok", strip_nul_deep(parsed)
     return res
+
+
+# ═══ The central AI decision log ═══════════════════════════════════════════
+# Every other AI call in the app writes one public.ai_decision_log row
+# (services.extraction._write_ai_decision). These calls go through the
+# proxy chokepoint instead of that chain executor, so they write the same row
+# shape themselves — on the run's own connection, in the order the results
+# are handled (never from inside the concurrent calls: one asyncpg connection
+# cannot run two queries at once). The org is Hollisworks' own platform org:
+# the template study is Hollisworks' own research usage, not usage on behalf
+# of a client org. Non-blocking, like _safe_log: a failed write is printed
+# and counted, never allowed to fail the run.
+DECISION_LOG_IDS: list[str] = []     # every row this process wrote (verify reads the delta)
+DECISION_LOG_FAILURES: list[str] = []
+
+
+async def log_decision(conn, res: CallResult, *, deployment: str, kind: str,
+                       success: bool | None = None, error: str | None = None) -> str | None:
+    """``success`` / ``error`` default to the call's own outcome; the grouping
+    step passes whether the ANSWER was usable, so an HTTP-200 answer with no
+    groups in it is logged as the failure it was."""
+    from services.litellm_credentials import HOLLISWORKS_ORG_ID
+
+    ok = (res.status == "ok") if success is None else success
+    detail = None if ok else (error or f"{res.status}: {res.error}")
+
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT set_config('app.current_org_id', $1, true), "
+                "       set_config('app.is_super_admin', 'true', true)", HOLLISWORKS_ORG_ID)
+            row_id = await conn.fetchval(
+                """INSERT INTO ai_decision_log
+                       (org_id, task_type, model_requested, model_used, fallback_used, fallback_reason,
+                        cost_usd, latency_ms, success, error_detail, litellm_bypassed)
+                   VALUES ($1::uuid, $2, $3, $4, false, NULL, $5, $6, $7, $8, false)
+                   RETURNING id""",
+                HOLLISWORKS_ORG_ID, TASK_TYPE[kind], deployment, res.provider_model or deployment,
+                _dec(res.cost_usd), res.latency_ms, ok, strip_nul(detail)[:1500] if detail else None)
+    except Exception as exc:  # noqa: BLE001 — non-blocking by design; printed and counted
+        msg = f"{type(exc).__name__}: {exc}"[:300]
+        DECISION_LOG_FAILURES.append(msg)
+        print(f"[edgar_inventory] ai_decision_log write failed (non-blocking): {msg}")
+        return None
+    res.decision_log_id = str(row_id)
+    DECISION_LOG_IDS.append(res.decision_log_id)
+    return res.decision_log_id
 
 
 # ═══ Parsing + quote verification ══════════════════════════════════════════
@@ -780,7 +858,9 @@ def _str_or_none(v) -> str | None:
 
 def parse_items(parsed: dict, doc, field_specs: dict[str, schema.FieldSpec]) -> tuple[dict, list[dict], list[dict]]:
     """(document facts, accepted items, rejected items). An item whose quote
-    is not found verbatim in the filing text is rejected with a reason.
+    is not found in the filing text (``TextIndex.locate`` — exact, normalised,
+    whitespace-insensitive, or an abridged quote whose fragments are all found
+    in order) is rejected with a reason, keeping every field of the item.
 
     A claimed ``maps_to`` is only accepted if ``plausible_mapping`` finds real
     shared vocabulary between the item's label and that field — a mapping
@@ -810,7 +890,14 @@ def parse_items(parsed: dict, doc, field_specs: dict[str, schema.FieldSpec]) -> 
             continue
         span = doc.index.locate(quote)
         if span is None:
-            rejected.append({"label": label, "quote": quote[:300], "reason": "quote not found in the filing"})
+            # The WHOLE item is kept (not just label + quote), so a later
+            # --rematch can promote it intact if the matcher improves.
+            rejected.append({"label": label, "quote": quote, "reason": QUOTE_NOT_FOUND,
+                             "value": _str_or_none(it.get("value")), "section": _str_or_none(it.get("section")),
+                             "maps_to": _str_or_none(it.get("maps_to")),
+                             "proposed_field_key": _str_or_none(it.get("proposed_field_key")),
+                             "misleading_label": it.get("misleading_label") is True,
+                             "misleading_note": _str_or_none(it.get("misleading_note"))})
             continue
         maps_to = _str_or_none(it.get("maps_to")) or NEW
         spec = field_specs.get(maps_to) if maps_to != NEW else None
@@ -877,19 +964,27 @@ async def store_document(conn, run_id, c: ChosenDocument, res: CallResult, deplo
             facts.get("has_payout_table"), facts.get("issue_size"), len(accepted), len(rejected),
             json.dumps(rejected, default=str), deployment, res.provider_model, res.proxy_model_id,
             res.call_id, res.input_tokens, res.output_tokens, _dec(res.cost_usd), res.latency_ms)
-        if accepted:
-            await conn.executemany(
-                """INSERT INTO portfolio.edgar_inventory_items
-                       (run_id, document_id, accession_number, issuer_group, label, label_normalized,
-                        value_text, quote, quote_char_start, quote_char_end, section, mapped_field_key,
-                        proposed_field_key, misleading_label, misleading_note, deployment_name,
-                        provider_model, call_id)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)""",
-                [(run_id, doc_id, c.accession_number, c.issuer_group, a["label"], a["label_normalized"],
-                  a["value_text"], a["quote"], a["quote_char_start"], a["quote_char_end"], a["section"],
-                  a["mapped_field_key"], a["proposed_field_key"], a["misleading_label"],
-                  a["misleading_note"], deployment, res.provider_model, res.call_id) for a in accepted])
+        await _insert_items(conn, run_id, doc_id, c.accession_number, c.issuer_group, accepted,
+                            deployment, res.provider_model, res.call_id)
     return str(doc_id)
+
+
+async def _insert_items(conn, run_id, doc_id, accession_number, issuer_group, accepted: list[dict],
+                        deployment: str, provider_model: str | None, call_id: str | None) -> None:
+    """Caller holds ``platform_scope``."""
+    if not accepted:
+        return
+    await conn.executemany(
+        """INSERT INTO portfolio.edgar_inventory_items
+               (run_id, document_id, accession_number, issuer_group, label, label_normalized,
+                value_text, quote, quote_char_start, quote_char_end, section, mapped_field_key,
+                proposed_field_key, misleading_label, misleading_note, deployment_name,
+                provider_model, call_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)""",
+        [(run_id, doc_id, accession_number, issuer_group, a["label"], a["label_normalized"],
+          a["value_text"], a["quote"], a["quote_char_start"], a["quote_char_end"], a["section"],
+          a["mapped_field_key"], a["proposed_field_key"], a["misleading_label"],
+          a["misleading_note"], deployment, provider_model, call_id) for a in accepted])
 
 
 async def finish_run(conn, run_id, **fields) -> None:
@@ -1045,6 +1140,7 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                 if isinstance(outcome, BaseException):
                     raise outcome
                 res = outcome
+                await log_decision(conn, res, deployment=chosen_model, kind="inventory")
                 facts, accepted, rejected = ({}, [], [])
                 if res.status == "ok":
                     facts, accepted, rejected = parse_items(res.parsed, c.doc, field_specs)
@@ -1071,8 +1167,9 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
         else:
             summary.status = "completed"
         agg = await aggregate(conn, run_id, catalog=catalog, deployment=chosen_model, spend=spend,
-                              use_model=group_with_model, field_specs=field_specs)
+                              use_model=group_with_model, field_specs=field_specs, max_tokens=max_tokens)
         summary.spent_usd = spend.spent_usd
+        loop_stop_reason = summary.stop_reason
         # Never let one stoppage silently swallow the other: the main
         # document loop and the grouping step can each have their own real
         # reason to report, and both must survive onto the run.
@@ -1084,8 +1181,8 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
                          stop_reason=summary.stop_reason, finished_at=datetime.now(timezone.utc),
                          report={"plan": summary.plan, "unloadable": unloadable,
                                  "sections_coverage": summary.sections_coverage,
-                                 "grouping_method": agg["grouping_method"], "grouping_note": agg.get("grouping_note"),
-                                 "concepts": agg["concepts"], "label_dictionary": agg["label_dictionary"]})
+                                 "max_tokens": max_tokens, "loop_stop_reason": loop_stop_reason,
+                                 **_grouping_report(agg)})
     except (Exception, asyncio.CancelledError, KeyboardInterrupt) as exc:  # noqa: BLE001 — recorded, re-raised
         summary.status = "failed"
         summary.stop_reason = strip_nul(f"{type(exc).__name__}: {exc}"[:1500]) or type(exc).__name__
@@ -1231,9 +1328,91 @@ def _key_samples(items: list[dict], unique_keys: list[str]) -> dict[str, dict]:
     return samples
 
 
+def _grouping_listing(unique: list[str], samples: dict[str, dict]) -> str:
+    return "\n".join(
+        f"{i}. {k} — labels: {', '.join(samples[k]['labels']) or k} — e.g. "
+        f"{(samples[k]['values'][0] if samples[k]['values'] else '')!r} — "
+        f"{'existing field' if samples[k]['is_existing'] else 'proposed NEW'}"
+        for i, k in enumerate(unique))
+
+
+def _usable_groups(res: CallResult, n_keys: int) -> tuple[list[dict] | None, str | None]:
+    """(groups, None) when a chunk's answer can be used, else (None, why).
+    A 200 whose JSON has no 'groups' list — the real run's "unusable (ok:
+    None)" — now says what it DID contain, and whether it was cut off."""
+    if res.status != "ok":
+        why = f"{res.status}: {res.error}"
+    else:
+        groups = res.parsed.get("groups") if isinstance(res.parsed, dict) else None
+        if isinstance(groups, list):
+            groups = [g for g in groups if isinstance(g, dict)]
+            if any(isinstance(i, int) and 0 <= i < n_keys for g in groups for i in (g.get("key_ids") or [])):
+                return groups, None
+            why = "the 'groups' list names none of this chunk's key ids"
+        else:
+            why = f"the answer has no 'groups' list (top-level keys: {sorted(res.parsed or {})[:5]})"
+    if res.finish_reason:
+        why += f"; finish_reason={res.finish_reason}"
+    if res.output_tokens is not None:
+        why += f"; output_tokens={res.output_tokens}"
+    return None, strip_nul(why)[:500]
+
+
+def merge_chunk_groups(chunk_groups: list[list[dict]]) -> list[dict]:
+    """Pure. ``chunk_groups[c]`` is chunk c's model groups with ``key_ids``
+    already translated to GLOBAL key indexes. A concept whose synonyms fell
+    into two different chunks comes back as one group per chunk; groups from
+    DIFFERENT chunks are joined when they share a concept name, a
+    proposed_field_key, or an existing field (maps_to other than NEW).
+    Groups within one chunk are never joined by this step — that is the
+    model's own decision for the keys it saw together."""
+    flat = [(c, g) for c, groups in enumerate(chunk_groups) for g in groups]
+    parent = list(range(len(flat)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def signatures(g):
+        out = []
+        if isinstance(g.get("concept"), str) and _slug(g["concept"]) != "concept":
+            out.append(("concept", _slug(g["concept"])))
+        if isinstance(g.get("proposed_field_key"), str) and g["proposed_field_key"].strip():
+            out.append(("proposed", _slug(g["proposed_field_key"])))
+        if isinstance(g.get("maps_to"), str) and g["maps_to"] not in ("", NEW):
+            out.append(("maps_to", g["maps_to"]))
+        return out
+
+    seen: dict[tuple, list[int]] = defaultdict(list)
+    for i, (c, g) in enumerate(flat):
+        for sig in signatures(g):
+            for j in seen[sig]:
+                if flat[j][0] != c:
+                    parent[root(i)] = root(j)
+            seen[sig].append(i)
+    merged: dict[int, dict] = {}
+    order: list[int] = []
+    for i, (_c, g) in enumerate(flat):
+        r = root(i)
+        if r not in merged:
+            merged[r] = {"concept": g.get("concept"), "key_ids": [], "maps_to": None, "proposed_field_key": None}
+            order.append(r)
+        m = merged[r]
+        m["key_ids"] += [k for k in (g.get("key_ids") or []) if isinstance(k, int)]
+        mt = g.get("maps_to") if isinstance(g.get("maps_to"), str) else None
+        if mt and (m["maps_to"] in (None, NEW)):
+            m["maps_to"] = mt
+        if not m["proposed_field_key"] and isinstance(g.get("proposed_field_key"), str):
+            m["proposed_field_key"] = g["proposed_field_key"]
+    return [merged[r] for r in order]
+
+
 async def aggregate(conn, run_id, *, catalog: dict | None = None, deployment: str | None = None,
                     spend: SpendTracker | None = None, use_model: bool = True,
-                    field_specs: dict[str, schema.FieldSpec] | None = None) -> dict:
+                    field_specs: dict[str, schema.FieldSpec] | None = None,
+                    max_tokens: int = DEFAULT_MAX_TOKENS, chunk_keys: int = GROUPING_CHUNK_KEYS) -> dict:
     """Group the run's items into concepts and store them. Re-runnable: the
     run's previous concepts are replaced.
 
@@ -1244,15 +1423,27 @@ async def aggregate(conn, run_id, *, catalog: dict | None = None, deployment: st
     labels themselves matched) and why the grouping response could blow past
     its own output-token budget and come back unparseable on a large cohort.
 
-    The ONE model call (if any) is subject to the same spending cap; if it is
-    explicitly disabled, cannot be made, or fails, grouping falls back to one
-    concept per key (``grouping_method`` 'field_key') — and the reason is
-    ALWAYS recorded in ``grouping_note``, never silently absorbed by a
-    different stop reason the caller might also have."""
+    The keys (sorted, so near-synonyms like issuer / issuer_name sit
+    together) are sent ``chunk_keys`` at a time, each call with the run's own
+    ``max_tokens`` — never a separate, smaller limit of its own: a reasoning
+    model spends that budget thinking before it answers, and one call over
+    every key with a fixed lower cap is what came back as an empty answer on
+    run aa1c8c7c. The chunks' groups are then merged across chunks
+    (``merge_chunk_groups``). Each chunk's outcome is recorded
+    (``grouping_chunks``). A chunk that fails (or is stopped by the spending
+    cap) falls back to one concept per key FOR THAT CHUNK ONLY, and says so in
+    ``grouping_note``; the other chunks keep their model grouping. Every call
+    writes an ``ai_decision_log`` row (task_type 'edgar_inventory_grouping').
+
+    If grouping is disabled or cannot run at all, every key gets its own
+    concept (``grouping_method`` 'field_key') — and the reason is ALWAYS
+    recorded in ``grouping_note``, never silently absorbed by a different
+    stop reason the caller might also have."""
     field_specs = field_specs if field_specs is not None else await _field_specs(conn)
     items = await _load_items(conn, run_id)
     unique = sorted({it["effective_key"] for it in items})
     model_groups, method, note = None, "field_key", None
+    chunk_outcomes: list[dict] = []
     if not use_model:
         note = "model grouping skipped — disabled for this run (--no-model-grouping)"
     elif not unique:
@@ -1261,22 +1452,54 @@ async def aggregate(conn, run_id, *, catalog: dict | None = None, deployment: st
         note = "model grouping skipped — no model/catalog/spend tracker available"
     else:
         samples = _key_samples(items, unique)
-        listing = "\n".join(
-            f"{i}. {k} — labels: {', '.join(samples[k]['labels']) or k} — e.g. "
-            f"{(samples[k]['values'][0] if samples[k]['values'] else '')!r} — "
-            f"{'existing field' if samples[k]['is_existing'] else 'proposed NEW'}"
-            for i, k in enumerate(unique))
-        msgs = [{"role": "system", "content": GROUPING_INSTRUCTIONS},
-                {"role": "user", "content": f"FIELD KEYS:\n{listing}"}]
-        try:
-            res = await _call(deployment, msgs, catalog=catalog, spend=spend, max_tokens=GROUPING_MAX_TOKENS,
-                              what="grouping", kind="grouping", tags=[f"inventory_run:{run_id}"])
-            if res.status == "ok" and isinstance(res.parsed.get("groups"), list):
-                model_groups, method = res.parsed["groups"], "model"
-            else:
-                note = f"model grouping unusable ({res.status}: {res.error}); grouped by field key only"
-        except SpendCapReached as exc:
-            note = f"model grouping skipped — {exc}; grouped by field key only"
+        size = max(1, int(chunk_keys))
+        chunks = [unique[i:i + size] for i in range(0, len(unique), size)]
+        per_chunk: list[list[dict]] = []
+        failures: list[str] = []
+        cap_hit: str | None = None
+        for ci, keys in enumerate(chunks):
+            base = ci * size
+            outcome = {"chunk": ci + 1, "of": len(chunks), "keys": len(keys),
+                       "first_key": keys[0], "last_key": keys[-1], "max_tokens": max_tokens}
+            chunk_outcomes.append(outcome)
+            if cap_hit:
+                outcome.update(status="skipped", error=cap_hit)
+                continue
+            msgs = [{"role": "system", "content": GROUPING_INSTRUCTIONS},
+                    {"role": "user", "content": f"FIELD KEYS:\n{_grouping_listing(keys, samples)}"}]
+            try:
+                res = await _call(deployment, msgs, catalog=catalog, spend=spend, max_tokens=max_tokens,
+                                  what=f"grouping:{ci + 1}/{len(chunks)}", kind="grouping",
+                                  tags=[f"inventory_run:{run_id}", f"grouping_chunk:{ci + 1}"])
+            except SpendCapReached as exc:
+                cap_hit = str(exc)
+                outcome.update(status="skipped", error=cap_hit)
+                continue
+            groups, why = _usable_groups(res, len(keys))
+            await log_decision(conn, res, deployment=deployment, kind="grouping",
+                               success=groups is not None, error=why)
+            outcome.update(call_status=res.status, finish_reason=res.finish_reason,
+                           input_tokens=res.input_tokens, output_tokens=res.output_tokens,
+                           cost_usd=round(res.cost_usd or 0.0, 8), call_id=res.call_id,
+                           decision_log_id=res.decision_log_id)
+            if groups is None:
+                outcome.update(status="fallback", error=why)
+                failures.append(f"chunk {ci + 1} of {len(chunks)} ({len(keys)} keys) unusable ({why})")
+                continue
+            outcome.update(status="model", groups=len(groups))
+            per_chunk.append([{**g, "key_ids": [base + i for i in (g.get("key_ids") or [])
+                                                if isinstance(i, int) and 0 <= i < len(keys)]}
+                              for g in groups])
+        if per_chunk:
+            model_groups, method = merge_chunk_groups(per_chunk), "model"
+        skipped = [o for o in chunk_outcomes if o["status"] == "skipped"]
+        parts = list(failures)
+        if skipped:
+            parts.append(f"{len(skipped)} of {len(chunks)} chunk(s) skipped — {cap_hit}")
+        if parts:
+            scope = ("grouped by field key only" if not per_chunk
+                     else "grouped by field key for those chunks only; the other chunks were grouped by the model")
+            note = "model grouping: " + "; ".join(parts) + f" — {scope}"
     groups = group_keys(items, model_groups, unique)
     concepts = concept_rows(items, groups, field_specs)
     async with platform_scope(conn):
@@ -1295,9 +1518,172 @@ async def aggregate(conn, run_id, *, catalog: dict | None = None, deployment: st
                 "UPDATE portfolio.edgar_inventory_items SET concept_id = $1 WHERE id = ANY($2::uuid[])",
                 cid, c["item_ids"])
     dictionary = label_dictionary(concepts, items)
-    return {"grouping_method": method, "grouping_note": note,
+    return {"grouping_method": method, "grouping_note": note, "grouping_chunks": chunk_outcomes,
             "concepts": [{k: v for k, v in c.items() if k != "item_ids"} for c in concepts],
             "label_dictionary": dictionary}
+
+
+def _grouping_report(agg: dict) -> dict:
+    """The grouping step's part of a run's ``report`` (written by a full run
+    and rewritten by ``regroup_run``)."""
+    return {"grouping_method": agg["grouping_method"], "grouping_note": agg.get("grouping_note"),
+            "grouping_chunks": agg.get("grouping_chunks") or [],
+            "concepts": agg["concepts"], "label_dictionary": agg["label_dictionary"]}
+
+
+def _json(v, default):
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except (TypeError, ValueError):
+            return default
+    return v if v is not None else default
+
+
+async def _load_run(conn, run_id) -> dict | None:
+    async with platform_scope(conn):
+        row = await conn.fetchrow("SELECT * FROM portfolio.edgar_inventory_runs WHERE id = $1", run_id)
+    if row is None:
+        return None
+    run = dict(row)
+    run["report"] = _json(run.get("report"), {})
+    return run
+
+
+# ═══ Re-checking a stored run, with NO new document calls ═════════════════
+async def rematch_run(conn, run_id, *, loader, field_specs: dict[str, schema.FieldSpec] | None = None,
+                      progress=None) -> dict:
+    """Re-check every item a stored run REJECTED as "quote not found" against
+    that document's stored filing text (``loader`` — the same R2-backed
+    loader the run used; no model is called) with the CURRENT matcher, and
+    promote each one that now matches into ``edgar_inventory_items``.
+
+    Each promoted item goes through ``parse_items`` exactly as a fresh answer
+    would (same matcher, same ``plausible_mapping`` safety net). Items
+    rejected before rejected entries kept the whole item carry only label +
+    quote, so they are promoted with no value/section/mapping — never a
+    guessed one. The document's ``rejected_items`` / counters and the run's
+    counters are updated in the same transaction as the insert; a rerun
+    finds nothing left to promote. Promoted items have no concept until the
+    run is regrouped (``regroup_run``)."""
+    run = await _load_run(conn, run_id)
+    if run is None:
+        raise LookupError(f"no inventory run {run_id}")
+    field_specs = field_specs if field_specs is not None else await _field_specs(conn)
+    async with platform_scope(conn):
+        docs = await conn.fetch(
+            """SELECT id, accession_number, reference_filing_id, issuer_group, rejected_items, items_accepted,
+                      deployment_name, provider_model, call_id
+               FROM portfolio.edgar_inventory_documents WHERE run_id = $1 ORDER BY accession_number""", run_id)
+    out = {"run_id": str(run_id), "documents_checked": 0, "candidates": 0, "promoted": 0,
+           "still_rejected": 0, "unloadable": [], "promoted_items": []}
+    for d in docs:
+        rejected = _json(d["rejected_items"], [])
+        rejected = rejected if isinstance(rejected, list) else []
+        cand_idx = [i for i, r in enumerate(rejected)
+                    if isinstance(r, dict) and r.get("reason") == QUOTE_NOT_FOUND and r.get("label") and r.get("quote")]
+        if not cand_idx:
+            continue
+        try:
+            doc = await loader(conn, d["reference_filing_id"])
+        except Exception as exc:  # noqa: BLE001 — recorded, never fatal
+            out["unloadable"].append({"accession_number": d["accession_number"], "error": str(exc)[:200]})
+            continue
+        out["documents_checked"] += 1
+        out["candidates"] += len(cand_idx)
+        parsed = {"items": [{"label": rejected[i].get("label"), "value": rejected[i].get("value"),
+                             "quote": rejected[i].get("quote"), "section": rejected[i].get("section"),
+                             "maps_to": rejected[i].get("maps_to"),
+                             "proposed_field_key": rejected[i].get("proposed_field_key"),
+                             "misleading_label": rejected[i].get("misleading_label") is True,
+                             "misleading_note": rejected[i].get("misleading_note")} for i in cand_idx]}
+        _facts, accepted, still = parse_items(parsed, doc, field_specs)
+        cand_set = set(cand_idx)
+        keep = [r for i, r in enumerate(rejected) if i not in cand_set] + still
+        out["still_rejected"] += len(still)
+        if not accepted:
+            continue
+        deployment = d["deployment_name"] or run.get("deployment_name") or "unknown"
+        async with platform_scope(conn):
+            await _insert_items(conn, run_id, d["id"], d["accession_number"], d["issuer_group"], accepted,
+                                deployment, d["provider_model"], d["call_id"])
+            await conn.execute(
+                """UPDATE portfolio.edgar_inventory_documents
+                   SET rejected_items = $2::jsonb, items_rejected = $3, items_accepted = items_accepted + $4
+                   WHERE id = $1""",
+                d["id"], json.dumps(strip_nul_deep(keep), default=str), len(keep), len(accepted))
+            await conn.execute(
+                """UPDATE portfolio.edgar_inventory_runs
+                   SET items_accepted = items_accepted + $2, items_rejected = GREATEST(items_rejected - $2, 0)
+                   WHERE id = $1""", run_id, len(accepted))
+        out["promoted"] += len(accepted)
+        out["promoted_items"] += [{"accession_number": d["accession_number"], "label": a["label"],
+                                   "quote": a["quote"][:200]} for a in accepted]
+        if progress:
+            progress(d["accession_number"], f"promoted {len(accepted)} of {len(cand_idx)}, {len(still)} still rejected")
+    record = {k: v for k, v in out.items() if k != "promoted_items"}
+    record["at"] = datetime.now(timezone.utc).isoformat()
+    async with platform_scope(conn):
+        await conn.execute(
+            """UPDATE portfolio.edgar_inventory_runs
+               SET report = jsonb_set(report, '{rematches}', COALESCE(report->'rematches', '[]'::jsonb) || $2::jsonb)
+               WHERE id = $1""", run_id, json.dumps([record], default=str))
+    return out
+
+
+def _loop_stop_reason(run: dict) -> str | None:
+    """The document loop's own stop reason, without any old grouping note.
+    Runs written since chunked grouping store it in the report; older runs
+    stored ``"<loop reason> | <grouping note>"`` — every grouping note starts
+    with "model grouping"."""
+    report = run.get("report") or {}
+    if "loop_stop_reason" in report:
+        return report["loop_stop_reason"]
+    parts = [p for p in (run.get("stop_reason") or "").split(" | ")
+             if p and not p.startswith("model grouping")]
+    return " | ".join(parts) or None
+
+
+async def regroup_run(conn, run_id, *, catalog: dict | None, spend_cap_usd: float | None,
+                      deployment: str | None = None, use_model: bool = True,
+                      max_tokens: int = DEFAULT_MAX_TOKENS, chunk_keys: int = GROUPING_CHUNK_KEYS,
+                      field_specs: dict[str, schema.FieldSpec] | None = None) -> dict:
+    """Rerun ONLY the grouping step over a stored run's items — no document is
+    loaded and no inventory call is made — and rewrite the run's concepts,
+    grouping method, stop reason (the loop's own reason is kept, the old
+    grouping note replaced) and report. Grouping spend is added to the run's
+    ``spent_usd``. The model defaults to the run's own deployment and must
+    still be eligible (``choose_model``) — no Claude, served by the proxy."""
+    run = await _load_run(conn, run_id)
+    if run is None:
+        raise LookupError(f"no inventory run {run_id}")
+    model = deployment or run.get("deployment_name")
+    spend = None
+    if use_model:
+        chosen, _report = await choose_model(conn, catalog, model)
+        if chosen is None:
+            raise InventoryBlocked(f"BLOCKED: model {model!r} is not eligible for grouping "
+                                   "(available, non-Claude, served by the proxy)")
+        model = chosen
+        if spend_cap_usd is None:
+            raise ValueError("a spending cap is required to regroup with the model")
+        spend = SpendTracker(cap_usd=float(spend_cap_usd))
+    agg = await aggregate(conn, run_id, catalog=catalog, deployment=model if use_model else None, spend=spend,
+                          use_model=use_model, field_specs=field_specs, max_tokens=max_tokens,
+                          chunk_keys=chunk_keys)
+    spent = spend.spent_usd if spend else 0.0
+    loop_reason = _loop_stop_reason(run)
+    stop_reason = " | ".join(s for s in (loop_reason, agg.get("grouping_note")) if s) or None
+    report = {**(run.get("report") or {}), **_grouping_report(agg), "loop_stop_reason": loop_reason}
+    report["regroups"] = list(report.get("regroups") or []) + [{
+        "at": datetime.now(timezone.utc).isoformat(), "deployment": model if use_model else None,
+        "max_tokens": max_tokens, "chunk_keys": chunk_keys, "spent_usd": round(spent, 8),
+        "grouping_method": agg["grouping_method"], "concepts": len(agg["concepts"])}]
+    await finish_run(conn, run_id, grouping_method=agg["grouping_method"], stop_reason=stop_reason,
+                     spent_usd=float(run.get("spent_usd") or 0) + spent, report=report)
+    return {"run_id": str(run_id), "grouping_method": agg["grouping_method"],
+            "grouping_note": agg.get("grouping_note"), "grouping_chunks": agg.get("grouping_chunks"),
+            "concepts": len(agg["concepts"]), "spent_usd": spent, "stop_reason": stop_reason}
 
 
 # ═══ Reads for the Cohorts tab + the markdown report ═══════════════════════
@@ -1392,6 +1778,16 @@ def render_markdown(run: dict, documents: list[dict], concepts: list[dict], dict
     ]
     if run.get("stop_reason"):
         lines += [f"**Stop / skip reason:** {esc(run['stop_reason'])}", ""]
+    chunks = (_json(run.get("report"), {}) or {}).get("grouping_chunks") or []
+    if chunks:
+        lines += ["Grouping chunks (each a separate model call; a failed chunk falls back to one concept "
+                  "per key for that chunk only):", "",
+                  "| Chunk | Keys | Outcome | Output tokens | Finish | Detail |", "|---|---|---|---|---|---|"]
+        for o in chunks:
+            lines.append(f"| {o.get('chunk')}/{o.get('of')} | {o.get('keys')} ({esc(o.get('first_key'))} … "
+                         f"{esc(o.get('last_key'))}) | {esc(o.get('status'))} | {esc(o.get('output_tokens'))} | "
+                         f"{esc(o.get('finish_reason'))} | {esc(o.get('error'))} |")
+        lines.append("")
     lines += [
         "Generated by `apps/api/scripts/run_edgar_inventory.py --write-doc`; the same data is on the "
         "EDGAR Pipeline page, Cohorts tab.", "",

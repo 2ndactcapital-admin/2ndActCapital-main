@@ -17,12 +17,26 @@ below and is written into docs/TEMPLATE_STUDY.md.
         [--concurrency 4]
     python3 apps/api/scripts/run_edgar_inventory.py --write-doc <inventory-run-uuid>
         (re)write docs/TEMPLATE_STUDY.md from a stored run — no model call
+    python3 apps/api/scripts/run_edgar_inventory.py --rematch <inventory-run-uuid>
+        re-check that run's stored REJECTED items against the stored filing text with the
+        current quote matcher and promote those that now match — no model call
+    python3 apps/api/scripts/run_edgar_inventory.py --regroup <inventory-run-uuid> --spend-cap 1
+        [--model <id>] [--max-tokens 8000] [--grouping-chunk-keys 100] [--no-model-grouping]
+        rerun ONLY the grouping step on that run's stored items and rewrite its concepts and
+        report — no document is loaded and no inventory call is made
+    --rematch X --regroup X together: promote first, then regroup (promoted items have no
+    concept until the run is regrouped).
+
+--max-tokens is the per-call output limit for BOTH the inventory calls and the grouping
+calls (grouping is sent in chunks of --grouping-chunk-keys distinct field keys).
 
 --spend-cap is REQUIRED for a run: the run stops cleanly when the next call would cross it.
 --dry-run picks the documents, cuts their terms pages and prints token counts and an
 estimated cost; it calls NO model.
 The model is chosen at run time from platform_model_catalog rows that are 'available', not
 Claude, and served by the LiteLLM proxy; if none is, the script reports BLOCKED (exit 2).
+Every model call is also written to public.ai_decision_log (task_type 'edgar_inventory' /
+'edgar_inventory_grouping').
 --concurrency documents are read concurrently (default 4); the spending cap stays exact
 regardless. Ctrl+C, or any crash, marks the run 'failed' with its real counts and spend
 instead of leaving it stuck 'running'.
@@ -61,6 +75,51 @@ async def write_doc(conn, run_id) -> int:
     return 0
 
 
+async def rematch_regroup(conn, args, *, catalog=None, loader=None) -> int:
+    """--rematch and/or --regroup on a stored run. Neither makes an inventory
+    (document) call: --rematch calls no model at all; --regroup makes only
+    grouping calls (none with --no-model-grouping)."""
+    from services import edgar_inventory as inv
+    from services.note_extraction import documents, proxy
+
+    calls_before = dict(inv.CALLS)
+    if args.rematch:
+        try:
+            r = await inv.rematch_run(conn, args.rematch, loader=loader or documents.load_document,
+                                      progress=lambda k, msg: print(f"  {k}  {msg}"))
+        except LookupError as exc:
+            print(str(exc))
+            return 2
+        print(f"rematch {r['run_id']}: {r['candidates']} rejected item(s) re-checked across "
+              f"{r['documents_checked']} document(s) — {r['promoted']} promoted, {r['still_rejected']} still "
+              f"rejected" + (f", {len(r['unloadable'])} document(s) not loadable" if r["unloadable"] else ""))
+        if r["promoted"] and not args.regroup:
+            print("  promoted items have no concept yet — run --regroup on this run to fold them in")
+    if args.regroup:
+        if catalog is None and not args.no_model_grouping:
+            catalog = await asyncio.to_thread(proxy.deployment_catalog)
+        try:
+            g = await inv.regroup_run(conn, args.regroup, catalog=catalog, spend_cap_usd=args.spend_cap,
+                                      deployment=args.model, use_model=not args.no_model_grouping,
+                                      max_tokens=args.max_tokens, chunk_keys=args.grouping_chunk_keys)
+        except LookupError as exc:
+            print(str(exc))
+            return 2
+        except inv.InventoryBlocked as exc:
+            print(str(exc))
+            return 2
+        print(f"regroup {g['run_id']}: {g['grouping_method']} — {g['concepts']} concepts, "
+              f"${g['spent_usd']:.4f}")
+        for o in g["grouping_chunks"] or []:
+            print(f"  chunk {o['chunk']}/{o['of']} ({o['keys']} keys): {o['status']}"
+                  + (f" — {o['error']}" if o.get("error") else ""))
+        if g["grouping_note"]:
+            print(f"  {g['grouping_note']}")
+    assert inv.CALLS["inventory"] == calls_before["inventory"], "an inventory (document) call was made"
+    await write_doc(conn, args.regroup or args.rematch)
+    return 0
+
+
 async def main(argv: list[str] | None = None, *, catalog=None, loader=None) -> int:
     """``catalog`` / ``loader`` replace the proxy's /model/info and the R2
     document loader (tests only)."""
@@ -73,12 +132,22 @@ async def main(argv: list[str] | None = None, *, catalog=None, loader=None) -> i
     ap.add_argument("--per-issuer-max", type=int, default=6)
     ap.add_argument("--product-supplements", type=int, default=2)
     ap.add_argument("--max-tokens", type=int, default=8000)
+    ap.add_argument("--grouping-chunk-keys", type=int, default=100)
     ap.add_argument("--no-model-grouping", action="store_true")
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--write-doc", type=UUID, default=None)
+    ap.add_argument("--rematch", type=UUID, default=None)
+    ap.add_argument("--regroup", type=UUID, default=None)
     args = ap.parse_args(argv)
     if args.concurrency < 1:
         ap.error("--concurrency must be at least 1")
+    if args.grouping_chunk_keys < 1:
+        ap.error("--grouping-chunk-keys must be at least 1")
+    if args.rematch and args.regroup and args.rematch != args.regroup:
+        ap.error("--rematch and --regroup together must name the same run")
+    if args.regroup and not args.no_model_grouping and args.spend_cap is None:
+        ap.error("--spend-cap is required for --regroup (it makes grouping calls); "
+                 "or pass --no-model-grouping")
 
     from services import edgar_inventory as inv
     from services.note_extraction import documents, proxy, schema
@@ -87,6 +156,8 @@ async def main(argv: list[str] | None = None, *, catalog=None, loader=None) -> i
     try:
         if args.write_doc:
             return await write_doc(conn, args.write_doc)
+        if args.rematch or args.regroup:
+            return await rematch_regroup(conn, args, catalog=catalog, loader=loader)
         if not args.cohort:
             ap.error("--cohort is required")
         if args.spend_cap is None:
