@@ -27,6 +27,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
@@ -50,6 +51,7 @@ from services.market_data.transforms import (
     MODES,
     Series,
     decimal_text,
+    quantize6,
     transform_column,
 )
 
@@ -399,10 +401,21 @@ async def build_catalog(conn) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 # GET /market/series
 # ═══════════════════════════════════════════════════════════════════════════
+def stddev_text(sd: Decimal | None) -> str | None:
+    """The series' full-history sample standard deviation as the API sends it
+    (mkt04b): 6 dp ROUND_HALF_EVEN text, or None when undefined — fewer than
+    two observations (stddev_samp is NULL) or zero variance. The chart's
+    client-side sigma divides by this, so it is never computed in a browser."""
+    if sd is None or sd == 0:
+        return None
+    return decimal_text(quantize6(sd))
+
+
 async def read_series(conn, q: SeriesQuery) -> dict:
     rows = await resolve_active(conn, q.keys)
     ids = [r["id"] for r in rows]
-    bounds = await repo.series_bounds(conn, ids)
+    # series_stats = series_bounds + the grid's own stddev_samp (full history).
+    bounds = await repo.series_stats(conn, ids)
     obs = await repo.observations(conn, ids, q.date_from, q.date_to)
 
     out = []
@@ -421,6 +434,7 @@ async def read_series(conn, q: SeriesQuery) -> dict:
             "point_count": len(pts),
             "first_observation_date": _iso(b.get("first")),
             "last_observation_date": _iso(b.get("last")),
+            "stddev": stddev_text(b.get("sd")),
             "points": [[d.isoformat(), decimal_text(v)] for d, v in pts],
         })
     if over_cap:

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
+import ChartPanel from "@/components/market/ChartPanel";
 import GridPanel from "@/components/market/GridPanel";
 import SelectionPanel from "@/components/market/SelectionPanel";
-import { ERROR_BOX, ERROR_STYLE, QUIET } from "@/components/market/marketStyles.mjs";
+import { ERROR_BOX, ERROR_STYLE } from "@/components/market/marketStyles.mjs";
+import { initialChartSettings } from "@/lib/market/chartRequest.mjs";
 import { initialControls } from "@/lib/market/gridRequest.mjs";
 import { sanitize } from "@/lib/market/selection.mjs";
 
@@ -52,6 +54,9 @@ function ReadyView({ catalog, today, initialTab, initialSelection }) {
   const [tab, setTab] = useState(initialTab === "chart" ? "chart" : "grid");
   const [selection, setSelection] = useState(() => sanitize(initialSelection ?? [], catalog));
   const [controls, setControls] = useState(() => initialControls(catalog, today));
+  // Chart settings are the chart's own (mkt04b); the grid's controls are untouched.
+  const [chartSettings, setChartSettings] = useState(() => initialChartSettings(catalog, today));
+  const patchChartSettings = useCallback((patch) => setChartSettings((prev) => ({ ...prev, ...patch })), []);
 
   return (
     <div className="grid min-w-0 grid-cols-[20rem_minmax(0,1fr)] gap-5" data-market-state="ready">
@@ -78,9 +83,13 @@ function ReadyView({ catalog, today, initialTab, initialSelection }) {
         </div>
 
         {tab === "chart" ? (
-          <p className={`${QUIET} py-10 text-center`} data-market-tab="chart">
-            The chart arrives in the next release.
-          </p>
+          <ChartPanel
+            catalog={catalog}
+            selection={selection}
+            settings={chartSettings}
+            onSettingsChange={patchChartSettings}
+            today={today}
+          />
         ) : (
           <GridPanel
             catalog={catalog}

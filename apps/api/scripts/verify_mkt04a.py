@@ -133,8 +133,17 @@ EXPECTED_DEFAULTS = {
 
 
 def ui_files() -> list[pathlib.Path]:
-    """The new UI code the no-hardcoding scan covers."""
+    """The new UI code the no-hardcoding scan covers.
+
+    Once mkt04a is committed, exactly the files mkt04a itself added (mkt04b
+    pinned this: a later sprint's files in the same directories carry their
+    own contract codes and are scanned by that sprint's verify, against its
+    own exemptions)."""
     files = [PAGE, *sorted(COMPONENTS.glob("*")), *sorted(MARKET_LIB.glob("*"))]
+    rng = mkt04a_range()
+    if rng:
+        added = set(git("diff", "--name-only", "--diff-filter=A", *rng).split())
+        files = [f for f in files if rel(f) in added]
     return [f for f in files if f.is_file() and f not in (DEFAULTS, ROUTES_CORE)]
 
 
@@ -165,7 +174,8 @@ TEST_WHY = {
     "gridRequest.test.mjs": "the grid body must carry only fields the API accepts; one request per burst; "
                             "an older response must never overwrite a newer one",
     "render.test.mjs": "a lost envelope must fail CLOSED (no controls); the grid must show the server's "
-                       "strings unparsed; the nav entry must be visible to any signed-in user",
+                       "strings unparsed; the nav entry must be visible to any signed-in user "
+                       "(mkt04b: the Chart-tab test now asserts the chart, not the placeholder)",
 }
 
 
@@ -439,7 +449,24 @@ def git(*args: str) -> str:
     return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, timeout=120).stdout
 
 
+# mkt04b: this section used to diff `merge-base main HEAD` against the working
+# tree. That is right only while mkt04a is uncommitted on its own branch. Once
+# mkt04a is on main, the same diff measures the NEXT sprint's changes (and the
+# Sidebar check fails with no change at all). The range is now pinned to
+# mkt04a's own commit, located by the commit that ADDED its route core, and
+# falls back to the old working-tree diff only before that commit exists.
+MKT04A_MARKER = "apps/web/lib/market/marketRoutes.mjs"
+
+
+def mkt04a_range() -> tuple[str, str] | None:
+    hits = git("log", "--format=%H", "--diff-filter=A", "--", MKT04A_MARKER).split()
+    return (f"{hits[-1]}^", hits[-1]) if hits else None
+
+
 def changed_files() -> list[str]:
+    rng = mkt04a_range()
+    if rng:
+        return sorted(set(git("diff", "--name-only", *rng).split()))
     base = git("merge-base", "main", "HEAD").strip()
     if not base:
         return []
@@ -450,11 +477,16 @@ def changed_files() -> list[str]:
 
 def diff_scope(pkg: dict) -> list[str]:
     files = changed_files()
+    rng = mkt04a_range()
+    if rng:
+        find(f"scope is mkt04a's own commit {rng[1][:10]} (pinned by the commit that added {MKT04A_MARKER})")
+        pkg = json.loads(git("show", f"{rng[1]}:apps/web/package.json") or "{}")
     check(bool(files), "the diff against main is readable and non-empty", "the scope check needs a real diff")
     outside = [f for f in files if f not in ALLOWED_FILES and not f.startswith(ALLOWED)]
     check(not outside, "changes are confined to apps/web, verify_mkt04a.py, docs and the sprint files",
           "no backend, database or other change rides along with a UI sprint", ", ".join(outside))
-    base = git("merge-base", "main", "HEAD").strip()
+    base = rng[0] if rng else git("merge-base", "main", "HEAD").strip()
+    after = [rng[1]] if rng else []
     try:
         old = json.loads(git("show", f"{base}:apps/web/package.json"))
     except json.JSONDecodeError:
@@ -466,14 +498,14 @@ def diff_scope(pkg: dict) -> list[str]:
     new_scripts.pop("test", None)
     check(old_scripts == new_scripts, "the only package.json script change is the new `test` script",
           "build, dev and lint must behave exactly as before")
-    existing_touched = [f for f in git("diff", "--name-only", base).split()
+    existing_touched = [f for f in git("diff", "--name-only", *(["--diff-filter=M"] if rng else []), base, *after).split()
                         if f.startswith("apps/web/") and f not in ("apps/web/package.json",
                                                                    "apps/web/components/Sidebar.jsx",
                                                                    "apps/web/lib/menuVisibility.mjs")]
     check(not existing_touched, "no existing apps/web file changed beyond package.json and the one nav entry",
           "existing pages keep their behaviour", ", ".join(existing_touched))
     for f in ("apps/web/components/Sidebar.jsx", "apps/web/lib/menuVisibility.mjs"):
-        added = [l for l in git("diff", "-U0", base, "--", f).splitlines()
+        added = [l for l in git("diff", "-U0", base, *after, "--", f).splitlines()
                  if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))]
         removed = [l for l in added if l.startswith("-")]
         check(not removed and len(added) <= 2 and any("/market" in l for l in added),

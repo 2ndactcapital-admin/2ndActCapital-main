@@ -90,10 +90,14 @@ test("a normal envelope renders the selection panel and the grid controls", () =
   assert.ok(!html.includes('data-market="grid-table"'));
 });
 
-test("the Chart tab shows only the placeholder", () => {
+// mkt04b replaced the mkt04a placeholder ("The chart arrives in the next
+// release.") with the chart; this test used to assert the placeholder.
+test("the Chart tab renders the chart's controls, not the grid's and not the old placeholder", () => {
   const state = interpretCatalog({ ok: true, body: catalogBody() });
   const html = renderView(state, { initialTab: "chart" });
-  assert.ok(html.includes("The chart arrives in the next release."));
+  assert.ok(html.includes('data-market-tab="chart"'));
+  assert.ok(html.includes('data-market-control="chart-controls"'));
+  assert.ok(!html.includes("The chart arrives in the next release."));
   assert.ok(!html.includes('data-market-control="grid-controls"'));
 });
 

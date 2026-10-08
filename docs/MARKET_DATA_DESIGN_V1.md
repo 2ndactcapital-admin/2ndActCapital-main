@@ -567,6 +567,13 @@ Next.js API route, which mkt04 builds.
   - Returns, per key: series_key, native_frequency, frequency (as returned),
     point_count, first_observation_date, last_observation_date (whole
     history), and points as `[date, "value"]`, ascending.
+  - `stddev` (mkt04b, additive): the sample standard deviation over ALL the
+    series' active observations — the same `stddev_samp(value)` the grid's
+    sigma uses (`read_repository.series_stats`), full history, independent
+    of `from`/`to` and of `frequency`. A string quantized to 6 dp
+    (ROUND_HALF_EVEN), or `null` when undefined: fewer than two observations,
+    or zero variance. The chart divides by it for client-side sigma; the
+    browser never computes a standard deviation (see "Chart (mkt04b)").
   - `frequency` defaults to `native` and means AT MOST THIS FINE (see
     Resampling).
   - A security is selected only through its linked series_key.
@@ -727,8 +734,8 @@ canonical form, which equals the input for any valid config.
 ## Front end (mkt04a)
 
 The first UI slice: `/market` ("Market indicators") in `apps/web`, with the
-selection panel and the Grid tab. The chart is mkt04b; key dates, saved views
-and correlations are mkt04c.
+selection panel and the Grid tab. The chart is mkt04b (built; see "Chart
+(mkt04b)"); key dates, saved views and correlations are mkt04c.
 
 **Routes.** Every backend route has a Next.js route under `/api/market/...`
 (`catalog`, `series`, `grid`, `correlations`, `key-dates`,
@@ -793,6 +800,125 @@ is already installed (transitive); no dependency was added.
 shows every series the catalog returns, with its source, for internal use
 only. It must not reach an external customer until that gate exists
 (launch blockers 1-5 above).
+
+## Chart (mkt04b)
+
+The Chart tab of `/market`: a multi-line SVG chart (no charting library, no
+new dependency) with a draggable anchor bar, a log or linear axis, hover,
+regime bands and key-date lines, a cohort band with outlier highlighting, and
+the "Trends and outliers" table. Pure logic is in `apps/web/lib/market/`
+(`rebase`, `scales`, `hitTest`, `overlays`, `labelLayout`, `chartModel`,
+`chartRequest`, `chartContract`); the components (`ChartPanel`, `ChartView`,
+`MarketChart`, `AnchorSlider`, `TrendsTable`) only draw what `chartModel`
+returns.
+
+**Client-side rebasing (decision 14, built).** The chart asks for RAW points
+once per (selected keys, resolution) — `GET /api/market/series`, debounced,
+newest response wins — and re-measures every line in the browser whenever the
+anchor moves, so dragging is instant and never refetches. The Grid tab keeps
+using the server's computed values. Chart numbers are floats for plotting
+only; `rebase.mjs` and `scales.mjs` are the only modules that parse the API's
+strings, and the Grid modules still never parse a value.
+
+**Why sd comes from the server.** Sigma divides by the full-history sample
+standard deviation. The chart holds only downsampled points (monthly by
+default), and a standard deviation computed from those differs from the
+server's. So the series endpoint publishes `stddev` (see "API contract"), the
+same `stddev_samp` the grid uses, and the browser divides by it. It never
+computes one. `stddev` is quantized to 6 dp. Sigma divided by that rounded
+value can differ from the grid's (which uses the unrounded value) by at most
+|sigma| x 5e-7 / sd, relatively. That is negligible for every live series
+today (the smallest sd checked, fred.dgs10, is 2.93). It would matter only
+for a series whose sd is below about 0.001.
+
+**Golden-vector check.** `apps/api/scripts/gen_mkt04b_golden.py` runs the
+PRODUCTION `transforms.transform_column` and `read_service.stddev_text` over
+canned series and writes `apps/web/tests/market/golden_rebase.json`. The
+cases: anchor on an observation, between observations, before the first
+(floating), a negative and a zero anchor, zero variance, a single
+observation, a rate-like series, and large values, each in index and sigma.
+`tests/market/rebase.test.mjs` requires the browser to match every value to
+within 5e-7 (the server's 6-decimal rounding) and to report the same floating
+flag, unavailable reason and warnings. The verify regenerates the file in
+memory and fails if the committed copy is stale.
+
+**Resolution and periods.** Default MONTHLY over the whole span. The
+Resolution control lists the server's `vocabularies.frequencies`. A request
+the server refuses (the point caps) shows the server's message. The chart's
+x positions are PERIODS: weekly, monthly and quarterly bucket by period end
+(ISO weeks end on Sunday); native and daily keep each observation date. A
+period end past the latest observation is pulled back to it. Each series is
+plotted at every period by the as-of rule, from its first observation to the
+period holding its last one. A series that has ended is not carried forward.
+Because the points are resampled as "the last observation in each period",
+as-of at a period END on downsampled data equals as-of on the full data, so
+anchoring at a period end is exact.
+
+**Anchor.** Held as an ISO date (the saved-view config's anchor). The bar
+snaps to the period on or before it. Dragging moves it to the nearest period,
+with pointer moves coalesced onto animation frames so lines are recomputed
+once per frame. A native range input below the plot (`aria-label="Anchor
+date"`) is bound to the same period index: arrows move one period, Page Up
+and Page Down move twelve, Home and End go to the ends. "Start of data" and
+"5 years ago" set the date. Day-level anchoring beyond the chosen resolution
+is a later refinement. At monthly resolution a day-precision key date
+(say 2020-03-16) cannot be the anchor; the anchor lands on the month end on
+or before it. Key-date lines are still drawn at their real date, because the
+x axis is time, not period index.
+
+**Measures and axis.** The chart offers two measures, Index (anchor = 100) and
+Sigma, taken from the server's `vocabularies.modes` with the server's labels.
+`level` and `default` are not chart measures. Index defaults to a LOG axis
+(Linear is the alternative); Sigma is always linear. The y range auto-fits the
+visible values with 6% padding in axis space. It is clamped to 1..10,000 for
+log index (1/100 to 100 times the anchor), -1,000..100,000 for linear index,
+and +-6 for sigma; lines beyond the clamp are clipped. Log ticks come from a
+fixed 1-2-5 ladder pruned to at most eight. Linear ticks use the smallest
+1-2-5 step giving at most eight. Year ticks are every 5 years (2 under 15
+years, 1 under 6, quarterly under 2). The axis title is the server's measure
+label plus the anchor month and the scale.
+
+**Hit-testing.** The same rule as the mockup: the period nearest the pointer
+horizontally, then the line whose point at that period is nearest, accepted
+within 18 pixels. Pointer coordinates are divided by the display scale
+(rendered width / logical width) first, so the radius is measured in the
+chart's own units. The hovered line is drawn last at 2.8 px and every other
+line is dimmed. The card shows the name, the as-of observation date, the
+measured value ("Index 118.4 · +18.4% vs anchor" or "+1.30σ vs anchor") and,
+for `default_transform = level` series, the server's raw string with the
+catalog's units.
+
+**Overlays** (all on by default; they map to the saved-view config's
+`overlays.events / band / emphasis`):
+- *Regimes & events*: regime bands and key-date lines from
+  `GET /api/market/key-dates`, fetched once per chart mount. A response
+  without a read-granting envelope draws no events and shows a quiet line
+  (fail closed). Legend labels come from `vocabularies.regime_types`.
+- *Cohort band*: the 25th–75th percentile band and the median across the
+  series with a value at each period. A period needs at least three series.
+- *Highlight outliers*: fences at the latest date are q25 − margin and
+  q75 + margin, where margin = max(0.75 × IQR, 4% of the axis span), computed
+  in axis space. This needs at least five series; with fewer, every status
+  is "Too few series". Outliers draw at 1.7 px; in-pack lines fade; out-of-pack
+  lines do not. Big-move dots mark each series' top three
+  |period change| / (its own sd of period changes) above 3.
+
+**Notices** under the chart group series by code: unavailable series
+(`non_positive_anchor`, `zero_variance`, `no_observations`; excluded from the
+lines), warnings (`rate_like_series_indexed`) and floating series ("starts
+after the anchor"; drawn dashed). Text comes from `vocabText`: the server's
+`[{key, label}]` list if the series response ever publishes one, otherwise
+the code text.
+
+**Trends and outliers.** One row per drawn series, ordered by distance from
+the median at the latest date (axis space), with Group (catalog category, or
+a security's type), Since anchor, 12 mo (with a direction arrow) and Status
+(Outlier above pack / Outlier below pack / In pack / Too few series).
+
+**Fail closed.** A series response draws a chart only when its envelope grants
+read (`chartRequest.interpretSeries`). Otherwise the tab shows the error and
+no chart. Nothing is requested for an empty selection, and more keys than
+`vocabularies.limits.max_keys` are refused before sending.
 
 ## Transform definitions
 
@@ -919,6 +1045,12 @@ Implementation notes (mkt03):
 - `apps/api/scripts/verify_mkt03b.py` — Phase A (fixture orgs, users, series
   and rows `verify.mkt03b.*`, through the real ASGI app) always runs. Phase B
   (`--live`) runs after the loader.
+- `apps/web/lib/market/*.mjs`, `apps/web/components/market/*.jsx`,
+  `apps/web/tests/market/*.test.mjs` — the front end (mkt04a page and grid;
+  mkt04b chart). `apps/api/scripts/verify_mkt04a.py`, `verify_mkt04b.py`.
+- `apps/api/scripts/gen_mkt04b_golden.py` — writes
+  `apps/web/tests/market/golden_rebase.json` from the production transforms
+  (`--check` compares without writing).
 
 ## Roadmap
 
@@ -951,7 +1083,8 @@ Implementation notes (mkt03):
   (decisions 4 and 16).
   - **mkt04a** (built) — the Next.js routes, the `/market` page, the
     selection panel and the grid ("Front end (mkt04a)").
-  - **mkt04b** — the chart. **mkt04c** — key dates, saved views,
+  - **mkt04b** (built) — the chart ("Chart (mkt04b)") and the series
+    endpoint's `stddev` field. **mkt04c** — key dates, saved views,
     correlations. The per-tenant gate is a separate sprint, still unbuilt.
 
 ## Next candidates

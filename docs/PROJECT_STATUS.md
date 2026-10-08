@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-07 (mkt04a.structural — market indicators page: Next.js
+Last updated: 2026-10-07 (mkt04b.structural — market indicators chart: anchor
+bar, client-side rebasing, overlays, series `stddev` field; verify WRITTEN, not
+yet run; see the top entry). Earlier the same day: (mkt04a.structural — market indicators page: Next.js
 routes, page shell, selection panel and grid; verify WRITTEN, not yet run; see
 the top entry). Earlier the same day: (mkt03b.structural — market data key dates,
 regimes, personal dates and saved views: API, seeds, loader; verify WRITTEN,
@@ -279,6 +281,114 @@ This file starts with the email item below.
 
 ---
 
+## 0000000000000000000000000000000000000000. Market data mkt04b — market indicators chart: anchor bar, client-side rebasing, overlays, and the series `stddev` field; verify WRITTEN, not yet run (2026-10-07)
+
+`mkt04b.structural`. The Chart tab of `/market`, replacing mkt04a's
+placeholder: a multi-line SVG chart with a draggable anchor bar that
+re-measures every line in the browser, a log or linear axis, hover, regime
+bands and key-date lines, a cohort band with outlier highlighting, notices,
+and the "Trends and outliers" table. The one backend change is the additive
+`stddev` field on `GET /market/series`. No DDL, no new dependency, and the
+Grid tab is unchanged. Design: `docs/MARKET_DATA_DESIGN_V1.md`,
+"Chart (mkt04b)" and "API contract".
+
+**Built:**
+- `apps/api/services/market_data/read_service.py`: `stddev_text` and one
+  `stddev` key per series in `read_series`, from `read_repository.series_stats`
+  (the same `stddev_samp` the grid's sigma uses; 6 dp half-even text, null
+  under two points or at zero variance). Read live, read-only:
+  `fred.dgs10` → `2.927482`, `fred.sp500` → `1559.763221`.
+- Pure modules `apps/web/lib/market/{chartContract,rebase,scales,hitTest,
+  overlays,labelLayout,chartModel,chartRequest}.mjs`.
+- Components `apps/web/components/market/{ChartPanel,ChartView,MarketChart,
+  AnchorSlider,TrendsTable}.jsx`. `MarketIndicatorsView` swaps the placeholder
+  for `ChartPanel` and holds the chart's own settings beside the grid's
+  untouched controls.
+- `apps/api/scripts/gen_mkt04b_golden.py` → `apps/web/tests/market/
+  golden_rebase.json` (9 cases × index and sigma, from the PRODUCTION
+  transforms).
+- Tests `apps/web/tests/market/{rebase,chartGeometry,chartModel,chartRequest,
+  chartRender}.test.mjs` (74 new; the whole market suite is 183/183).
+- `apps/api/scripts/verify_mkt04b.py`.
+
+**Task 1 discovery:**
+- Page state lives in `MarketIndicatorsView`'s `ReadyView`
+  (tab, selection `[{kind,key}]`, grid controls). `GridPanel` fetches through
+  `createDebouncer` and `createLatestGate`. The placeholder was a `<p>` in
+  the chart branch.
+- `stddev_samp` was already computed for the grid in
+  `read_repository.series_stats`. `read_series` used `series_bounds` (the same
+  scan without it), so switching to `series_stats` was the whole change.
+- `verify_mkt03.py` checks series fields one by one, with no strict key set,
+  so it needed **no edit**.
+- Components render in tests through `tests/market/jsxLoader.mjs` with
+  `react-dom/server`. There is no jsdom, so the anchor input became a
+  hook-free `AnchorSlider` whose real `onKeyDown` the test calls directly.
+
+**[FIND] verify_mkt04a was green only while mkt04a was uncommitted.** It
+compared `merge-base main HEAD` with the working tree and globbed every file
+in `lib/market` and `components/market`. With mkt04a on main
+(main == HEAD at mkt04b start), its diff-scope checks measured the NEXT
+sprint, and its Sidebar check failed with no change at all. Its
+no-hardcoding scan would also have rejected the chart's contract codes,
+which are confined to `chartContract.mjs`. Fixed by pinning it to mkt04a's
+own commit (`git log --diff-filter=A` on its route core). Its static
+sections give 105/0 under the pin. Its total will no longer be 225, because
+render.test.mjs's Chart test was replaced (below).
+
+**[FIND] render.test.mjs's "the Chart tab shows only the placeholder"** was
+replaced by "the Chart tab renders the chart's controls, not the grid's and
+not the old placeholder". The other mkt04a render tests are unchanged, and
+verify_mkt04b asserts exactly that.
+
+**[FIND] stddev precision.** Chart sigma divides by the 6 dp `stddev`, while
+the grid divides by the unrounded value. The relative difference is at most
+5e-7 / sd: negligible for every live series today, material only below an
+sd of about 0.001.
+
+**[FIND] The big-move rule as specified (|period change| / its own sd)**
+scores every period of a smooth, steady trend highly. On real, noisy series
+it marks genuine shocks (2008, 2020 in the live render). Kept as specified,
+with the top three per series.
+
+**[FIND] The log-index clamp (1..10,000) clips long histories anchored
+late.** For example, Nasdaq 100 anchored in 2021 falls below index 1 before
+about 1987. This is by the spec's clamp. Linear is the alternative.
+
+**Interpretations recorded:**
+- Lines are plotted per PERIOD by the as-of rule, never past a series' own
+  last observation. The anchor snaps to period ends, where as-of on the
+  downsampled points equals as-of on the full data.
+- Fences, the median and table distance are computed in axis space (log10 on
+  a log axis). "12 mo" is a percent change for Index and a sigma difference
+  for Sigma.
+- Key dates are fetched once per chart mount and fail closed on their own.
+  The chart still draws without them.
+- Chart settings are separate from the Grid's controls. Both default to an
+  anchor five years back. The chart defaults to monthly resolution, the
+  Index measure and a log axis, with every overlay on.
+
+**Not run by this sprint (by rule):** the dev server, the production build
+and the verify. What did run: the node:test suites (183/183); ESLint on
+every market file (clean, including `react-hooks/refs`); the golden
+generator (`--check` current); the verify's offline sections in-process
+(59/0); verify_mkt04a's static sections (105/0); and a visual check. That
+check rendered the real `MarketChart` server-side with live catalog, series
+and key-date data read read-only, then screenshotted it with headless Chrome
+from a temp file outside the repo, in both Index-log and Sigma.
+
+**OPERATOR ACTIONS:**
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_mkt04b.py --live`
+   (runs the tests, lint, the first `npm run build` with the chart, and the
+   live stddev proofs; Phase B's single-point fixture is rolled back).
+2. `verify_mkt04a.py` and `verify_mkt03.py --live` as regressions.
+3. Signed in at `/market`: drag the anchor, use the arrow keys and Page
+   Up/Down on the slider, hover a line, and toggle each overlay.
+4. **Launch blocker still open:** per-tenant gating of Yahoo-sourced and
+   third-party-licensed series.
+
+---
+
 ## 000000000000000000000000000000000000000. Market data mkt04a — market indicators page: Next.js routes, page shell, selection panel and grid; verify WRITTEN, not yet run (2026-10-07)
 
 `mkt04a.structural`. The first front-end slice over the finished market data
@@ -368,6 +478,12 @@ each kind.
 3. **Launch blocker still open:** per-tenant gating of Yahoo-sourced and
    third-party-licensed series is unbuilt. The page shows them with their
    source; it must not reach an external customer before that sprint.
+
+**UPDATE 2026-10-07 — the chart is built (`mkt04b.structural`, entry above).**
+The Chart tab now draws the chart; the placeholder is gone and render.test's
+Chart test asserts the chart. This entry's verify is now pinned to its own
+commit, so its scope checks no longer measure later sprints. Still to come:
+mkt04c (key dates, saved views, correlations).
 
 ---
 
