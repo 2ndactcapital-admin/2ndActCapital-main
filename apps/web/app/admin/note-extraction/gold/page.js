@@ -25,8 +25,8 @@ export default async function NoteGoldPage() {
       <div>
         <h1 className="text-3xl font-semibold text-navy">Note Gold Set</h1>
         <p className="mt-1 text-sm text-text-muted">
-          Hand-checked note terms. Pick a note, read the trimmed filing beside every reading, and
-          confirm or correct each field. Only a reviewer writes a gold value.
+          Hand-checked note terms. One note at a time: the filing on the left, the pre-filled fields
+          on the right. Confirm, correct or mark each field absent. Only a reviewer writes a gold value.
         </p>
       </div>
       {error === "forbidden" ? (

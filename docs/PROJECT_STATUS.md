@@ -1,7 +1,9 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-08 (notefields.structural — the approved v3 structured-note
-field list is the extraction schema; verify WRITTEN, not yet run; see the top
-entry). Previously 2026-10-07 (mkt04c.structural — market indicators: key dates,
+Last updated: 2026-10-08 (goldset.structural — the gold set workflow: stratified
+plan, propose with trap cases, gpt-5-mini pre-fill, the rebuilt review screen and
+the scorer; verify WRITTEN, not yet run; see the top entry). Earlier the same day:
+(notefields.structural — the approved v3 structured-note
+field list is the extraction schema; verify WRITTEN, not yet run). Previously 2026-10-07 (mkt04c.structural — market indicators: key dates,
 My dates, saved views and the correlations panel, front end only; verify
 WRITTEN, not yet run; see the top entry). Earlier the same day: (mkt04b.structural — market indicators chart: anchor
 bar, client-side rebasing, overlays, series `stddev` field; verify WRITTEN, not
@@ -282,6 +284,81 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000000000000000000000000000000. GOLD SET — stratified top-7-bank sample with trap cases, gpt-5-mini pre-fill, a fast review screen, and a scorer; verify WRITTEN, not yet run (2026-10-08)
+
+**Run:** `python3 apps/api/scripts/verify_goldset.py`. It hydrates from Doppler and mocks every model call
+and every R2/EDGAR read, so it costs $0. It runs `verify_notefields.py` once as a regression subprocess.
+Pure pieces were dry-run in memory before handover:
+- the nine trap detectors: each fires on its crafted snippet and on nothing else;
+- the propose choice: minimums met on a full pool, shortfall reported on a thin one, deterministic per seed;
+- the scorer: counts, range agreement, a reordered list scored correct, "too few", and gate FAIL.
+The web helpers have `node --test tests/goldset/` (7/7). The DB sections have NOT been run.
+
+**Task 1 findings** are in `docs/GOLDSET_DISCOVERY.md` (1a UI/API and the v3 changes, 1b reusable
+comparison, 1c cohort build/fetch/classify, 1d the trap detectors).
+
+**The workflow** — six steps, each its own command:
+1. **Plan.** `python3 apps/api/scripts/build_gold_set.py --plan --size 300 --name "<name>" [--seed N]`
+   - Freezes an edgar cohort over 28 strata: the seven banks (JPMorgan, Morgan Stanley, UBS, Goldman Sachs,
+     Citigroup, Bank of America, Barclays) × four eras (2019-20, 2021-22, 2023-24, 2025-26).
+   - Equal allocation: `ceil(size/28)` per stratum, so 11 each for 300 → 308.
+   - Order within a stratum is the seeded `hashtextextended`. The seed, banks, eras and per-stratum count
+     are stored in the cohort definition (`source: 'gold_plan'`, kind `custom`).
+   - Only policy-selected 424B2s are planned, and members are deduplicated by accession.
+   - Re-running with the same name writes nothing. `--dry-run` prints the plan.
+2. **Fetch.** Run the cohort through the existing pipeline (Cohorts tab → Run). About 25% come back as
+   FINAL pricing supplements; that is why the plan over-fetches.
+3. **Propose.** `build_gold_set.py --propose <cohort_id> --target 50 --batch "<batch>"`
+   - Draws only from the cohort's FETCHED `document_kind = 'pricing_supplement'` members.
+   - Minimums: ≥ 6 per bank, ≥ 1 per bank × era, ≥ 3 per trap tag where the pool allows.
+   - Shortfalls are reported per stratum, per bank and per tag, never padded.
+   - A filing already in any batch is never re-proposed (code filter + the table's UNIQUE).
+4. **Pre-fill.** `python3 apps/api/scripts/prefill_gold.py --batch <batch> --model gpt-5-mini --max-tokens 32000 --spend-cap <usd> [--dry-run]`
+   - One run per batch, `run_kind 'gold_prefill'`.
+   - Each note gets rules + EdgarTools + ONE reader + rules-only fields + derivations + self-checks. Every
+     reading carries the run id, and nothing is staged.
+   - Refused before any write: Claude, OpenRouter, an unpriced model, and `--max-tokens < 32000`.
+     public_data_only is accepted, because the task is `note_terms_extraction` with no org.
+5. **Review.** `/admin/note-extraction/gold`, Super Admin only (the same `rbac.is_super_admin` gate).
+   - One note at a time: the document text on the left with the field's quote highlighted, and fields by
+     section on the right. Critical, economics and distribution sections are expanded; the rest collapsed.
+   - Each field shows the pre-fill value, its quote, and whether it came from the rules, the model or a
+     derivation.
+   - Confirm / Correct / Absent: a range is corrected as min / max / bound, and a list by editing rows.
+   - Keys: J/K, C, A, E, N. There is no confirm-all.
+   - The candidate moves proposed → in_review (first save) → done (every live field has a current gold
+     value). Skip needs a reason.
+   - A correction closes the old row (valid_to) and inserts the new one, so the history stays readable.
+6. **Score.** `python3 apps/api/scripts/score_against_gold.py --run <run_id> [--batch <batch>] [--fields critical|core|all]`
+   - Each field is scored correct / wrong / missed / false, plus accuracy, on notes both cover.
+   - The cascade's `normalize` is used throughout: ranges compare min and max, and lists use the notefields
+     list comparison.
+   - Fewer than 10 notes → "too few".
+   - GATE: every critical field ≥ 95% on ≥ 40 reviewed notes.
+   - The result is merged into `note_extraction_runs.report->'gold_score'`.
+
+**ANCHORING CAVEAT.** The reviewer sees gpt-5-mini's pre-filled values first. gpt-5-mini's own scores
+against this gold set are therefore biased upward and must always be reported with that caveat. The review
+screen shows this note, the pre-fill run's config records it, and the scorer prints it, marking a run as
+`anchored` when it is the pre-fill or names a pre-fill model.
+
+**Migrations.**
+- `goldset_prefill_run_kind.sql` adds `'gold_prefill'` to `note_extraction_runs.run_kind`. It is a CHECK
+  swap and the only DROP-containing file, so it was split out.
+- `goldset_candidate_review.sql` is additive: it adds `note_gold_candidates.skip_reason` and `skipped_by`,
+  plus a CHECK that a skipped row has a reason. There is no new table, so no new policies; the table already
+  has the four global-table policies.
+- Both were **applied live via MCP on 2026-10-08** and re-read from `pg_constraint`.
+- `goldset_drop_edgar_index_filings_indexes.sql` runs `DROP INDEX IF EXISTS` on
+  `edgar_index_filings_form_date_idx` and `edgar_index_filings_status_idx`. Both were dropped LIVE on
+  2026-10-08 to save space and are covered by `form_sort_idx` and `queue_idx`. This file brings the repo in
+  line; it is idempotent and already applied.
+
+**Not done in this sprint (by instruction):** no document was fetched and no model was called. The plan,
+fetch, propose, pre-fill and review are all operator steps.
 
 ---
 

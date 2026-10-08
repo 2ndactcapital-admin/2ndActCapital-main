@@ -774,6 +774,11 @@ export const putGoldValue = (filingId, fieldKey, body) =>
     `/api/v1/admin/note-extraction/gold/notes/${encodeURIComponent(filingId)}/fields/${encodeURIComponent(fieldKey)}`,
     { method: "PUT", body },
   );
+export const skipGoldNote = (filingId, body) =>
+  fetchAPI(`/api/v1/admin/note-extraction/gold/notes/${encodeURIComponent(filingId)}/skip`, {
+    method: "POST",
+    body,
+  });
 export const getNoteExtractionRuns = (params) =>
   fetchAPI("/api/v1/admin/note-extraction/runs", { searchParams: params });
 export const getNoteExtractionRun = (runId) =>

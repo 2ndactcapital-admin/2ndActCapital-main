@@ -27,7 +27,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from services.note_extraction.sanitize import strip_nul, strip_nul_deep
-from services.note_extraction.schema import FieldSpec, normalize
+from services.note_extraction.schema import (
+    KIND_LIST, KIND_RANGE, FieldSpec, RangeValue, normalize, to_jsonable, validate_list,
+)
 from services.note_extraction.store import CALL_FIELD
 
 GOLD_ACTIONS = ("confirmed", "corrected", "absent")
@@ -35,6 +37,31 @@ GOLD_ACTIONS = ("confirmed", "corrected", "absent")
 
 class GoldWriteError(ValueError):
     pass
+
+
+def canonical_value(spec: FieldSpec, value):
+    """A RANGE as {min, max, bound} (min <= max, at least one side); a LIST as
+    its validated members. Anything else unchanged. Raises GoldWriteError."""
+    if value is None:
+        return None
+    if spec.kind == KIND_RANGE:
+        if not isinstance(value, dict):
+            raise GoldWriteError(f"'{spec.key}' is a range: send {{min, max, bound}}")
+        try:
+            r = RangeValue.model_validate(value)
+        except Exception as exc:  # noqa: BLE001 — pydantic ValidationError, reported as a 422
+            raise GoldWriteError(f"'{spec.key}': {str(exc).splitlines()[-1] if str(exc) else exc}") from exc
+        bound = r.bound or ("exact" if r.min == r.max else "up_to" if r.min is None
+                            else "not_less_than" if r.max is None else "between")
+        return to_jsonable({"min": r.min, "max": r.max, "bound": bound})
+    if spec.kind == KIND_LIST:
+        if isinstance(value, list) and not value:
+            raise GoldWriteError(f"'{spec.key}' is empty: mark the field absent instead")
+        members, err = validate_list(spec.key, value)
+        if err:
+            raise GoldWriteError(err)
+        return members
+    return value
 
 
 async def record_gold_value(conn, *, reviewer_id: str, reference_filing_id: str, spec: FieldSpec,
@@ -47,6 +74,7 @@ async def record_gold_value(conn, *, reviewer_id: str, reference_filing_id: str,
         value = None
     elif value is None:
         raise GoldWriteError("a confirmed or corrected gold value needs a value (use 'absent' for none)")
+    value = canonical_value(spec, value)
     if normalize(spec, value) is None and value is not None:
         raise GoldWriteError(f"value {value!r} is not a valid {spec.kind} for '{spec.key}'")
     value = strip_nul_deep(value)
@@ -119,17 +147,19 @@ async def readings_for(conn, reference_filing_id) -> list[dict]:
     return out
 
 
-async def list_candidates(conn, *, status: str | None = None, limit: int = 200) -> list[dict]:
+async def list_candidates(conn, *, status: str | None = None, batch: str | None = None,
+                          limit: int = 200) -> list[dict]:
     rows = await conn.fetch(
         """SELECT c.id, c.reference_filing_id, c.sample_batch, c.issuer_group, c.filing_year,
-                  c.product_type, c.trap_tags, c.status, c.proposed_at,
+                  c.product_type, c.trap_tags, c.status, c.proposed_at, c.skip_reason,
                   f.filer_name, f.form_type, f.filing_date, f.accession_number,
                   (SELECT count(*) FROM portfolio.note_gold_values g
                     WHERE g.reference_filing_id = c.reference_filing_id AND g.valid_to IS NULL) AS gold_fields
              FROM portfolio.note_gold_candidates c
              JOIN portfolio.reference_filings f ON f.id = c.reference_filing_id
-            WHERE ($1::text IS NULL OR c.status = $1)
-            ORDER BY c.proposed_at DESC, f.filer_name LIMIT $2""", status, limit)
+            WHERE ($1::text IS NULL OR c.status = $1) AND ($3::text IS NULL OR c.sample_batch = $3)
+            ORDER BY c.proposed_at DESC, c.issuer_group, c.filing_year, f.filer_name, c.reference_filing_id
+            LIMIT $2""", status, limit, batch)
     out = []
     for r in rows:
         d = dict(r)
@@ -230,3 +260,90 @@ async def write_candidates(conn, sample: list[SampleCandidate], batch: str) -> i
             [(c.reference_filing_id, batch, c.issuer_group, c.filing_year, c.product_type, c.trap_tags)
              for c in sample])
     return len(sample)
+
+
+# ── Review progress (goldset.structural) ────────────────────────────────────
+# proposed -> in_review (first saved field, inside record_gold_value)
+#          -> done (every LIVE registry field has a current gold value)
+# skipped is set only by skip_candidate, with a reason.
+async def refresh_candidate_status(conn, reference_filing_id, live_keys, *, update: bool = True) -> dict:
+    """Recompute the candidate's status from the gold values; returns
+    {status, fields_done, fields_total}. ``update=False`` reads only."""
+    from services.database import platform_scope
+
+    keys = sorted(set(live_keys))
+    async with platform_scope(conn):
+        done = await conn.fetchval(
+            """SELECT count(DISTINCT field_key) FROM portfolio.note_gold_values
+                WHERE reference_filing_id = $1 AND valid_to IS NULL AND field_key = ANY($2::text[])""",
+            reference_filing_id, keys)
+        status = await conn.fetchval(
+            "SELECT status FROM portfolio.note_gold_candidates WHERE reference_filing_id = $1", reference_filing_id)
+        if update and status in ("proposed", "in_review") and keys and done >= len(keys):
+            status = await conn.fetchval(
+                """UPDATE portfolio.note_gold_candidates SET status = 'done', updated_at = now()
+                    WHERE reference_filing_id = $1 RETURNING status""", reference_filing_id)
+    return {"status": status, "fields_done": int(done or 0), "fields_total": len(keys)}
+
+
+async def skip_candidate(conn, reference_filing_id, *, reason: str, actor_id) -> dict | None:
+    """Set a candidate to 'skipped' with its reason. None = no such candidate."""
+    from services.database import platform_scope
+
+    reason = strip_nul((reason or "").strip())
+    if not reason:
+        raise GoldWriteError("skipping a note needs a reason")
+    async with platform_scope(conn):
+        row = await conn.fetchrow(
+            """UPDATE portfolio.note_gold_candidates
+                  SET status = 'skipped', skip_reason = $2, skipped_by = $3, updated_at = now()
+                WHERE reference_filing_id = $1 RETURNING status, skip_reason""",
+            reference_filing_id, reason[:1000], actor_id)
+    return dict(row) if row else None
+
+
+async def batch_progress(conn, batch: str | None) -> dict:
+    from services.database import platform_scope
+
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            """SELECT status, count(*)::int AS n FROM portfolio.note_gold_candidates
+                WHERE ($1::text IS NULL OR sample_batch = $1) GROUP BY status""", batch)
+    by = {r["status"]: r["n"] for r in rows}
+    total = sum(by.values())
+    return {"notes_done": by.get("done", 0), "notes_total": total - by.get("skipped", 0),
+            "by_status": by}
+
+
+async def batches(conn) -> list[str]:
+    from services.database import platform_scope
+
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            "SELECT sample_batch, max(proposed_at) AS at FROM portfolio.note_gold_candidates "
+            "GROUP BY sample_batch ORDER BY at DESC")
+    return [r["sample_batch"] for r in rows]
+
+
+async def prefill_runs_for(conn, reference_filing_id) -> list[dict]:
+    """The gold_prefill runs that read this note, newest first."""
+    from services.database import platform_scope
+
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            """SELECT DISTINCT r.id, r.config->>'model' AS model, r.started_at
+                 FROM portfolio.note_extraction_runs r
+                 JOIN portfolio.note_term_readings t ON t.run_id = r.id
+                WHERE r.run_kind = 'gold_prefill' AND t.reference_filing_id = $1
+                ORDER BY r.started_at DESC""", reference_filing_id)
+    return [{"run_id": str(r["id"]), "model": r["model"]} for r in rows]
+
+
+async def list_candidates_for(conn, reference_filing_id) -> list[dict]:
+    from services.database import platform_scope
+
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            """SELECT id, sample_batch, issuer_group, filing_year, product_type, trap_tags, status, skip_reason
+                 FROM portfolio.note_gold_candidates WHERE reference_filing_id = $1""", reference_filing_id)
+    return [{**dict(r), "id": str(r["id"]), "trap_tags": list(r["trap_tags"] or [])} for r in rows]

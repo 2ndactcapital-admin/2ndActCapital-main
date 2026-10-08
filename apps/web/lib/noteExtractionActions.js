@@ -13,6 +13,7 @@ import {
   getNoteExtractionRun,
   getNoteExtractionRuns,
   putGoldValue,
+  skipGoldNote,
 } from "@/lib/api";
 
 function fail(error) {
@@ -38,6 +39,14 @@ export async function loadGoldNoteAction(filingId) {
 export async function saveGoldValueAction(filingId, fieldKey, body) {
   try {
     return { ok: true, result: await putGoldValue(filingId, fieldKey, body) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+export async function skipGoldNoteAction(filingId, reason) {
+  try {
+    return { ok: true, result: await skipGoldNote(filingId, { reason }) };
   } catch (error) {
     return fail(error);
   }
