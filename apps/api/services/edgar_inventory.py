@@ -50,9 +50,8 @@ value as written, a short EXACT quote, the section, and the existing schema
 field it corresponds to — given the field's own DESCRIPTION, not just its key
 and label, and told to map only on IDENTICAL meaning, otherwise propose NEW —
 (the field list is generated from ``services.note_extraction.schema.
-build_field_specs``: registry rows plus the B1 extensions, e.g. cusip,
-maturity_date, distribution, so an existing extraction field is never
-re-proposed as NEW); and flags labels that are misleading about their meaning.
+build_field_specs`` — the registry's live fields only, since notefields — so
+an existing extraction field is never re-proposed as NEW); and flags labels that are misleading about their meaning.
 A model-claimed mapping to an existing field is only accepted if the item's
 label shares real vocabulary with that field's own key/label — a mapping with
 no shared meaning at all (e.g. "Issue Date" -> initial_valuation_date,
@@ -131,7 +130,8 @@ from services.edgar_cohorts import era_of
 from services.note_extraction import proxy, schema
 from services.note_extraction.sanitize import strip_nul, strip_nul_deep
 from services.note_extraction.spend import (
-    SpendCapReached, SpendTracker, estimate_call_cost, priced_cost,
+    SpendCapReached, SpendTracker, apply_manual_prices, estimate_call_cost, has_price, load_manual_prices,
+    recorded_cost,
 )
 from services.note_extraction.trim import estimate_tokens_chars
 
@@ -552,8 +552,22 @@ def _is_openrouter(*values) -> bool:
     return any(v and "openrouter" in v.lower() for v in values)
 
 
+async def priced(conn, catalog: dict | None) -> dict | None:
+    """The proxy catalogue with platform_model_catalog's manual prices applied
+    where the proxy has none (notefields: the inventory is a BULK run)."""
+    if catalog is None:
+        return None
+    async with platform_scope(conn):
+        manual = await load_manual_prices(conn)
+    return apply_manual_prices(catalog, manual)
+
+
 async def eligible_models(conn, catalog: dict | None) -> tuple[list[str], list[dict]]:
-    """(eligible model ids, every catalog row with why it is or is not)."""
+    """(eligible model ids, every catalog row with why it is or is not). A
+    model with no proxy price and no manual price is not eligible (bulk-run
+    price guard). public_data_only models ARE eligible: the inventory reads
+    public SEC filings only (services.model_catalog.PUBLIC_DATA_TASK_KEYS)."""
+    catalog = await priced(conn, catalog)
     async with platform_scope(conn):
         rows = await conn.fetch(
             "SELECT model_id, display_name, provider, availability FROM platform_model_catalog ORDER BY model_id")
@@ -573,6 +587,8 @@ async def eligible_models(conn, catalog: dict | None) -> tuple[list[str], list[d
             why = "not served by the LiteLLM proxy under this name"
         elif dep is not None and dep.duplicate:
             why = "more than one deployment behind this name (would load-balance)"
+        elif catalog is not None and not has_price(dep):
+            why = "no price on the proxy and no manual price on the catalog entry"
         report.append({"model_id": r["model_id"], "provider": r["provider"],
                        "availability": r["availability"], "eligible": why is None, "why_not": why})
         if why is None:
@@ -673,25 +689,16 @@ def _significant_words(*texts: str) -> set[str]:
     return words
 
 
-# Known domain synonyms a legitimate mapping may use without ever sharing a
-# word with the TARGET field's own key/label/description — e.g. "Trigger
-# Value" for a barrier level: the word "trigger" is an established synonym
-# (edgartools_reader.py's barrier regex, gold.py's threshold_trigger_buffer_
-# wording) but only ever appears on the SIBLING protection_type field's
-# description (schema.py), never on barrier_pct's own — so without this table
-# a genuine mapping to barrier_pct was wrongly rejected.
-_SYNONYMS: dict[str, frozenset[str]] = {
-    "barrier": frozenset({"trigger", "knock", "knockin"}),
-}
-
-
-def _with_synonyms(words: set[str]) -> set[str]:
-    out = set(words)
-    for canonical, synonyms in _SYNONYMS.items():
-        if canonical in words or words & synonyms:
-            out.add(canonical)
-            out |= synonyms
-    return out
+# The mapping check's synonym table is GENERATED from the registry
+# (note_terms_field_registry.synonyms, carried on each FieldSpec) — notefields
+# replaced the hard-coded table that used to live here. A label is a plausible
+# mapping for a field when it shares a significant word with the field's own
+# key, label, description OR one of its registry synonyms (e.g. "Trigger Value"
+# -> barrier_pct, whose synonyms include "Trigger Value").
+def synonym_table(specs) -> dict[str, frozenset[str]]:
+    """{field_key: significant words of every registry synonym of that field}."""
+    specs = specs.values() if isinstance(specs, dict) else specs
+    return {s.key: frozenset(_significant_words(*s.synonyms)) for s in specs if s.synonyms}
 
 
 def plausible_mapping(label: str, spec: schema.FieldSpec) -> bool:
@@ -699,7 +706,7 @@ def plausible_mapping(label: str, spec: schema.FieldSpec) -> bool:
     description and told to map only on identical meaning. This is the
     fallback for when it ignores that: reject a mapping whose label shares NO
     real vocabulary at all with the field's own key, label, description OR a
-    known synonym (``_SYNONYMS``) — the description is included because it is
+    registry synonym (``spec.synonyms``) — the description is included because it is
     where a true synonym actually shows up ("Pricing Date" ->
     initial_valuation_date, whose description says "pricing/strike date"),
     and the synonym table catches the rarer case where the synonym lives on a
@@ -708,8 +715,9 @@ def plausible_mapping(label: str, spec: schema.FieldSpec) -> bool:
     initial_valuation_date, "Denominations" -> notional_currency, "notes are
     unsecured" -> protection_type, none of which share any vocabulary with
     the field at all, synonyms included."""
-    item_words = _with_synonyms(_significant_words(label))
-    field_words = _with_synonyms(_significant_words(spec.key.replace("_", " "), spec.label, spec.description))
+    item_words = _significant_words(label)
+    field_words = (_significant_words(spec.key.replace("_", " "), spec.label, spec.description)
+                   | _significant_words(*spec.synonyms))
     return bool(item_words & field_words)
 
 
@@ -746,9 +754,7 @@ async def _call(deployment: str, messages: list[dict], *, catalog: dict, spend: 
     res = CallResult(status="failed", latency_ms=resp.latency_ms,
                      proxy_model_id=strip_nul(resp.headers.get("x-litellm-model-id")))
     res.input_tokens, res.output_tokens, _cached = proxy.response_usage(resp.body)
-    actual = proxy.header_cost(resp)
-    if actual is None:
-        actual = priced_cost(dep, res.input_tokens, res.output_tokens, _cached)
+    actual = recorded_cost(dep, proxy.header_cost(resp), res.input_tokens, res.output_tokens, _cached)
     if resp.status != 200:
         actual = actual if actual is not None else 0.0
     res.cost_usd = await spend.settle(reservation, actual)
@@ -1078,6 +1084,7 @@ async def run_inventory(conn, cohort_id, *, catalog: dict, spend_cap_usd: float,
     real counts and spend so far, instead of being left 'running' forever."""
     field_specs = {s.key: s for s in schema.build_field_specs(registry_rows)}
     specs_list = list(field_specs.values())
+    catalog = await priced(conn, catalog)
     chosen_model, model_report = await choose_model(conn, catalog, deployment)
     docs, unloadable = await select_documents(conn, cohort_id, loader=loader, lo=lo, hi=hi,
                                               product_supplements=product_supplements, progress=progress)
@@ -1659,6 +1666,7 @@ async def regroup_run(conn, run_id, *, catalog: dict | None, spend_cap_usd: floa
         raise LookupError(f"no inventory run {run_id}")
     model = deployment or run.get("deployment_name")
     spend = None
+    catalog = await priced(conn, catalog)
     if use_model:
         chosen, _report = await choose_model(conn, catalog, model)
         if chosen is None:

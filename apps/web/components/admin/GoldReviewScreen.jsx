@@ -37,10 +37,17 @@ function show(value) {
   if (value === null || value === undefined) return "—";
   if (Array.isArray(value)) {
     return value
-      .map((v) => (typeof v === "object" && v !== null
-        ? `${v.name}${v.role ? ` (${v.role}${v.fee_pct != null ? `, ${v.fee_type ?? "fee"} ${v.fee_pct}%` : ""})` : ""}`
-        : String(v)))
+      .map((v) => {
+        if (typeof v !== "object" || v === null) return String(v);
+        if (v.observation_date) return v.observation_date;
+        const fee = v.fee_min_pct != null || v.fee_max_pct != null
+          ? `, fee ${v.fee_min_pct ?? "…"}–${v.fee_max_pct ?? "…"}%` : "";
+        return `${v.name ?? "?"}${v.role ? ` (${v.role}${fee})` : ""}`;
+      })
       .join("; ");
+  }
+  if (typeof value === "object" && ("min" in value || "max" in value)) {
+    return value.min === value.max ? String(value.min) : `${value.min ?? "…"} – ${value.max ?? "…"}`;
   }
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
@@ -59,15 +66,25 @@ function parseInput(field, raw) {
       return { error: "true or false" };
     case "date":
       return /^\d{4}-\d{2}-\d{2}$/.test(text) ? { value: text } : { error: "use YYYY-MM-DD" };
-    case "list_text":
-      return { value: text.split(";").map((s) => s.trim()).filter(Boolean) };
-    case "participants":
+    case "list":
       try {
         const v = JSON.parse(text);
-        return Array.isArray(v) ? { value: v } : { error: "a JSON list of participants" };
+        return Array.isArray(v) ? { value: v } : { error: "a JSON list of objects" };
       } catch {
-        return { error: "a JSON list of participants" };
+        return { error: "a JSON list of objects" };
       }
+    case "range": {
+      // "977.50" -> min = max; "977.50..1000" -> min..max; "..2.50" -> max only
+      const [lo, hi] = text.includes("..") ? text.split("..") : [text, text];
+      const num = (s) => (s.trim() === "" ? null : Number(s.replace(/[,%$]/g, "")));
+      const min = num(lo);
+      const max = num(hi ?? "");
+      if ((min !== null && !Number.isFinite(min)) || (max !== null && !Number.isFinite(max))) {
+        return { error: "a number, or min..max" };
+      }
+      if (min === null && max === null) return { error: "a number, or min..max" };
+      return { value: { min, max, bound: min === max ? "exact" : min === null ? "up_to" : max === null ? "not_less_than" : "between" } };
+    }
     default:
       return { value: text };
   }
@@ -143,7 +160,7 @@ function FieldRow({ field, readings, gold, writable, onSave, busy }) {
           ) : (
             <input
               className={`${CONTROL} w-64`}
-              placeholder={field.kind === "list_text" ? "name; name" : field.kind === "date" ? "YYYY-MM-DD" : "correct value"}
+              placeholder={field.kind === "list" ? "JSON list" : field.kind === "range" ? "min..max" : field.kind === "date" ? "YYYY-MM-DD" : "correct value"}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />

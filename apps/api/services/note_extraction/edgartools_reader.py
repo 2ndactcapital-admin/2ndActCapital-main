@@ -158,7 +158,7 @@ _MONEY = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
 # additional_terms label -> our field, for percent-of-initial values.
 _ADDITIONAL_PCT = (
     (re.compile(r"^coupon\s+barrier", re.I), "coupon_barrier_pct"),
-    (re.compile(r"^(?:call|autocall|automatic\s+call)\s+(?:value|level|barrier|threshold)", re.I), "autocall_barrier_pct"),
+    (re.compile(r"^(?:call|autocall|automatic\s+call)\s+(?:value|level|barrier|threshold)", re.I), "autocall_level_pct"),
     (re.compile(r"^(?:barrier|downside\s+threshold|trigger|knock-?in)\s*(?:value|level)?", re.I), "barrier_pct"),
     (re.compile(r"^buffer\s*(?:amount|percentage|level)?", re.I), "buffer_pct"),
 )
@@ -202,10 +202,10 @@ def map_terms(terms: dict) -> dict[str, dict]:
     if denoms:
         m = _MONEY.search(denoms)
         if m:
-            put("denomination_amount", _num(m.group(1)), denoms)
+            put("denomination", _num(m.group(1)), denoms)
     und = terms.get("underlying")
     if und and len(und) < 300:
-        put("underlyings", [und.strip()], und)
+        put("underlyings", [{"name": und.strip()}], und)
     buf = terms.get("buffer_amount")
     if buf and "%" in buf:
         put("buffer_pct", _num(buf), buf)

@@ -1,86 +1,69 @@
-"""The readers' field spec — GENERATED from portfolio.note_terms_field_registry.
+"""The note-terms field spec — GENERATED from portfolio.note_terms_field_registry.
 
-ONE SOURCE OF TRUTH
+ONE SOURCE OF TRUTH (notefields.structural)
 ──────────────────────────────────────────────────────────────────────────────
-``build_field_specs(registry_rows)`` turns every registry row into a field the
-readers must answer, then appends the B1 extensions (estimated value, fees,
-dates, underlyings, barrier observation, distribution, ...). A field added to
-the registry appears in the schema with no code change; the overrides below
-only add a description, a vocabulary and a unit to fields we already know.
+``build_field_specs(registry_rows)`` turns every LIVE registry row (retired_at
+IS NULL) into a FieldSpec, carrying the registry's own description (used
+verbatim in reader prompts and in the inventory's mapping check), section,
+criticality, value shape, unit, vocabulary, synonyms, trap rule, extraction
+method and derivation inputs. There is no code-side field list, no override
+table and no extension list: a field added to the registry appears with no
+code change; a field retired there disappears.
+
+``reader_specs(specs)`` is the subset the MODELS answer
+(extraction_method = 'model'). 'rules' fields are extracted by
+services.note_extraction.rules only; 'derived' fields are computed by
+services.note_extraction.derive only.
+
+WHAT STAYS IN CODE: the member structure of the three LIST fields
+(underlyings, observation_schedule, distribution) — a Pydantic model each
+(``LIST_MEMBER_MODELS``). The registry says a field IS a list; this module
+says what one member of it looks like. A registry list field with no member
+model here is refused (``UnknownListField``), never read as free text.
 
 A BUFFER AND A BARRIER NEVER SHARE A FIELD
 ──────────────────────────────────────────────────────────────────────────────
-Protection is a TYPE (full / buffer / barrier / none) plus a level, and the
-level lives in a field that belongs to exactly one type: ``protection_pct``
-(full or partial principal protection only), ``buffer_pct``, ``barrier_pct``.
-Collapsing them is the classic misread: "70% protection" can be a 30% buffer
-(losses start after -30%) or a 70% barrier (breach it and the WHOLE decline
-applies) — opposite payoffs. ``assert_no_shared_protection_field`` makes that a
-checked property of the generated spec.
+``buffer_pct`` (losses begin after -X%) and ``barrier_pct`` (breach it and the
+WHOLE decline applies) are opposite payoffs. ``assert_no_shared_protection_field``
+makes their separation a checked property of the generated spec.
 
-NOTE ON VOCABULARY: the payoff DSL's protection_type vocabulary
-(models.note_terms.PROTECTION_TYPES = buffer/floor/none) predates this sprint.
-These readers use Joe's full/buffer/barrier/none; B1 only STAGES, so mapping
-onto the DSL is B2's job (a DSL 'floor' is not a barrier).
-
-UNITS: percentages as 70.0 (never 0.7); dates YYYY-MM-DD; fees and prices as a
-percent of principal ($25 per $1,000 = 2.5).
+UNITS: percentages as 70.0 (never 0.7); dates YYYY-MM-DD; 'usd_per_1000' is
+currency per $1,000 of principal. A RANGE value is {"min", "max", "bound"}
+(decision C): "up to 2.50%" -> min null, max 2.50; "as low as $977.50" -> min
+977.50, max null; a single amount -> min = max.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model, model_validator
 
-from models.note_terms import PRODUCT_ARCHETYPES, TERMS_STATUSES
-
-SCHEMA_VERSION = "noteextractb1.v1"
+SCHEMA_VERSION = "notefields.v3"
 
 KIND_NUMBER = "number"
 KIND_TEXT = "text"
 KIND_DATE = "date"
 KIND_BOOLEAN = "boolean"
 KIND_ENUM = "enum"
-KIND_LIST = "list_text"
-KIND_PARTICIPANTS = "participants"
+KIND_RANGE = "range"
+KIND_LIST = "list"
 
-PROTECTION_TYPES = ("full", "buffer", "barrier", "none")
-BASKET_TYPES = ("single", "worst_of", "best_of", "weighted_basket")
-RETURN_BASES = ("price", "total_return")
-AUTOCALL_FREQUENCIES = ("monthly", "quarterly", "semi_annual", "annual", "none")
-BARRIER_OBSERVATIONS = ("at_maturity", "daily_close", "continuous_intraday", "periodic", "none")
-COUPON_TYPES = ("contingent", "fixed", "floating", "none")
-CALL_TYPES = ("automatic", "issuer", "none")
-PARTICIPANT_ROLES = (
-    "issuer_affiliated_agent", "distribution_agent", "dealer", "placement_agent", "other",
-)
-FEE_TYPES = (
-    "selling_commission", "structuring_fee", "platform_fee", "marketing_fee",
-    "referral_fee", "other",
-)
+METHOD_MODEL = "model"
+METHOD_RULES = "rules"
+METHOD_DERIVED = "derived"
 
-# Decision 5 — needs_review and the higher Jev threshold apply to these.
-CRITICAL_FIELDS = frozenset({
-    "protection_type", "protection_pct", "buffer_pct", "barrier_pct",
-    "barrier_observation", "principal_conditional",
-    "coupon_type", "coupon_memory", "coupon_barrier_pct",
-    "autocall_barrier_pct", "autocall_frequency", "call_type",
-    "basket_type", "underlyings", "maturity_date",
-    "estimated_value_pct", "total_commissions_fees_pct", "fee_based_account_price_pct",
-})
+# The bound wording a range value records (decision C).
+RANGE_BOUNDS = ("exact", "up_to", "as_low_as", "not_less_than", "between", "approximately")
 
-# The protection-level fields: each belongs to exactly ONE protection type.
-PROTECTION_LEVEL_FIELDS = {
-    "protection_pct": "full",
-    "buffer_pct": "buffer",
-    "barrier_pct": "barrier",
-}
+
+class UnknownListField(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -91,221 +74,303 @@ class FieldSpec:
     description: str
     enum: tuple[str, ...] | None = None
     critical: bool = False
-    origin: str = "registry"          # 'registry' | 'extension'
+    origin: str = "registry"
     registry_data_type: str | None = None
+    section: str | None = None
+    sort_order: int | None = None
+    value_shape: str = "scalar"
+    unit: str | None = None
+    synonyms: tuple[str, ...] = ()
+    trap_rule: str | None = None
+    extraction_method: str = METHOD_MODEL
+    derived_from: tuple[str, ...] = ()
+    former_keys: tuple[str, ...] = ()
 
 
-# ── Overrides for KNOWN registry keys: description (+ vocabulary) only ───────
-_REGISTRY_OVERRIDES: dict[str, dict] = {
-    "product_archetype": {
-        "kind": KIND_ENUM, "enum": tuple(sorted(PRODUCT_ARCHETYPES)),
-        "description": "The product family the payoff belongs to.",
-    },
-    "protection_type": {
-        "kind": KIND_ENUM, "enum": PROTECTION_TYPES,
-        "description": (
-            "How principal is exposed at maturity. 'full': repayment of principal at maturity "
-            "does NOT depend on the underlying (principal-protected, possibly partially — put the "
-            "level in protection_pct). 'buffer': losses begin only after the underlying falls more "
-            "than X%, and only the decline beyond X% is lost (level in buffer_pct). 'barrier': "
-            "once the underlying ends below (or breaches) a threshold, the FULL decline from the "
-            "initial level applies (threshold in barrier_pct; may be called a downside threshold, "
-            "trigger or knock-in level). 'none': every percent of decline is lost."),
-    },
-    "protection_pct": {
-        "description": (
-            "ONLY for protection_type 'full': the percent of principal repaid regardless of the "
-            "underlying (e.g. 100.0, or 90.0 for partial protection). Null for buffer or barrier "
-            "notes — never put a buffer or barrier level here."),
-    },
-    "basket_type": {
-        "kind": KIND_ENUM, "enum": BASKET_TYPES,
-        "description": (
-            "'single' = one underlying. 'worst_of' = the single WORST performer among several "
-            "drives the payoff. 'best_of' = the best performer drives it. 'weighted_basket' = a "
-            "weighted average of several underlyings."),
-    },
-    "return_basis": {
-        "kind": KIND_ENUM, "enum": RETURN_BASES,
-        "description": "'price' = price return (no dividends); 'total_return' = dividends reinvested.",
-    },
-    "autocall_frequency": {
-        "kind": KIND_ENUM, "enum": AUTOCALL_FREQUENCIES,
-        "description": "How often the note can be called (automatic or issuer call). 'none' if it cannot be called.",
-    },
-    "terms_status": {
-        "kind": KIND_ENUM, "enum": tuple(sorted(TERMS_STATUSES)),
-        "description": "'final' for a priced pricing supplement; 'preliminary' for indicative / subject-to-completion terms.",
-    },
-    "is_decrement_index": {
-        "description": "True only if the underlying is a decrement index (a fixed synthetic dividend or fee is deducted from its level).",
-    },
-    "notional_currency": {"description": "ISO currency code of the principal, e.g. USD."},
-    "cap_pct": {"description": "Maximum return as a percent of principal (e.g. 25.0), or null if uncapped."},
-    "participation_rate": {"description": "Upside participation as a percent (150% leverage = 150.0)."},
-    "coupon_rate": {"description": "Coupon rate PER ANNUM as a percent (e.g. 9.25). Convert a per-period rate only if the filing states the per-annum figure."},
-    "coupon_barrier_pct": {"description": "Coupon barrier (coupon threshold) as a percent of the initial level, e.g. 70.0."},
-    "autocall_barrier_pct": {"description": "Level at or above which the note is automatically called, as a percent of the initial level, e.g. 100.0."},
-    "has_no_call_period": {"description": "True if the note cannot be called for an initial period."},
-    "no_call_months": {"description": "Length of the initial no-call period in months."},
-    "initial_valuation_date": {"description": "The pricing/strike date when the initial level is set (YYYY-MM-DD)."},
-    "final_valuation_date": {"description": "The final valuation/observation/determination date (YYYY-MM-DD)."},
-    "tenor_years": {"description": "Term from issue to maturity in years, e.g. 1.5."},
+# ── List members (Task 3) ────────────────────────────────────────────────────
+UNDERLYING_KINDS = ("index", "etf", "single_stock", "rate", "other")
+RETURN_BASES = ("price_return", "total_return", "decrement")
+FX_TREATMENTS = ("none", "quanto", "composite")
+PARTICIPANT_ROLES = ("issuer_affiliated_agent", "distribution_agent", "dealer", "placement_agent")
+
+
+class _Member(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+
+class Underlying(_Member):
+    name: str
+    ticker: Optional[str] = None
+    kind: Optional[Literal[UNDERLYING_KINDS]] = None  # type: ignore[valid-type]
+    weight_pct: Optional[Decimal] = None
+    initial_level: Optional[Decimal] = None
+    return_basis: Optional[Literal[RETURN_BASES]] = None  # type: ignore[valid-type]
+    fx_treatment: Optional[Literal[FX_TREATMENTS]] = None  # type: ignore[valid-type]
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not self.name.strip():
+            raise ValueError("an underlying needs a name")
+        if self.weight_pct is not None and not (Decimal(0) < self.weight_pct <= Decimal(100)):
+            raise ValueError("weight_pct must be in (0, 100]")
+        if self.initial_level is not None and self.initial_level <= 0:
+            raise ValueError("initial_level must be positive")
+        return self
+
+
+class Observation(_Member):
+    observation_date: date
+    payment_date: Optional[date] = None
+    coupon_barrier_pct: Optional[Decimal] = None
+    coupon_amount: Optional[Decimal] = None
+    call_level_pct: Optional[Decimal] = None
+    call_amount: Optional[Decimal] = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.payment_date is not None and self.payment_date < self.observation_date:
+            raise ValueError("payment_date precedes observation_date")
+        for f in ("coupon_barrier_pct", "coupon_amount", "call_level_pct", "call_amount"):
+            v = getattr(self, f)
+            if v is not None and v < 0:
+                raise ValueError(f"{f} must not be negative")
+        return self
+
+
+class DistributionMember(_Member):
+    name: str
+    role: Literal[PARTICIPANT_ROLES]  # type: ignore[valid-type]
+    fee_min_pct: Optional[Decimal] = None
+    fee_max_pct: Optional[Decimal] = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not self.name.strip():
+            raise ValueError("a participant needs a name")
+        for f in ("fee_min_pct", "fee_max_pct"):
+            v = getattr(self, f)
+            if v is not None and not (Decimal(0) <= v <= Decimal(100)):
+                raise ValueError(f"{f} must be a percent in [0, 100]")
+        if (self.fee_min_pct is not None and self.fee_max_pct is not None
+                and self.fee_min_pct > self.fee_max_pct):
+            raise ValueError("fee_min_pct exceeds fee_max_pct")
+        return self
+
+
+LIST_MEMBER_MODELS: dict[str, type[_Member]] = {
+    "underlyings": Underlying,
+    "observation_schedule": Observation,
+    "distribution": DistributionMember,
 }
 
-_REGISTRY_KIND = {
-    "numeric": KIND_NUMBER, "text": KIND_TEXT, "boolean": KIND_BOOLEAN, "date": KIND_DATE,
+# How two members of the same list are recognised as THE SAME member, and
+# whether list order carries meaning. Underlyings and participants are sets
+# (order-insensitive); the schedule is ordered by its own dates, so sorting by
+# observation_date is its canonical order and a reordered copy still agrees.
+_LIST_IDENTITY = {
+    "underlyings": lambda m: normalize_name(m.get("name")),
+    "observation_schedule": lambda m: str(m.get("observation_date") or ""),
+    "distribution": lambda m: normalize_name(m.get("name")),
 }
 
-# ── B1 extensions (not in the registry) ──────────────────────────────────────
-_EXTENSIONS: tuple[FieldSpec, ...] = (
-    FieldSpec("cusip", "CUSIP", KIND_TEXT, "The 9-character CUSIP of these notes.", origin="extension"),
-    FieldSpec("pricing_date", "Pricing Date", KIND_DATE, "The pricing / trade date (YYYY-MM-DD).", origin="extension"),
-    FieldSpec("maturity_date", "Maturity Date", KIND_DATE, "The stated maturity date (YYYY-MM-DD).", origin="extension"),
-    FieldSpec("underlyings", "Underlyings", KIND_LIST,
-              "Every underlying (index, stock, ETF, rate) by name as stated, one entry each.", origin="extension"),
-    FieldSpec("buffer_pct", "Buffer %", KIND_NUMBER,
-              "ONLY for protection_type 'buffer': the buffer size X in 'losses begin only after the "
-              "underlying falls more than X%' (e.g. 15.0). Never a barrier level.", origin="extension"),
-    FieldSpec("barrier_pct", "Barrier %", KIND_NUMBER,
-              "ONLY for protection_type 'barrier': the downside threshold as a percent of the initial "
-              "level (e.g. 70.0); once breached the FULL decline applies. Never a buffer size and never "
-              "the coupon barrier.", origin="extension"),
-    FieldSpec("barrier_observation", "Barrier Observation", KIND_ENUM,
-              "When the downside barrier is observed: 'at_maturity' (final valuation date only), "
-              "'daily_close' (every trading day's close), 'continuous_intraday' (any time), "
-              "'periodic' (on scheduled observation dates), 'none' if there is no barrier.",
-              enum=BARRIER_OBSERVATIONS, origin="extension"),
-    FieldSpec("principal_conditional", "Principal Conditional", KIND_BOOLEAN,
-              "True if repayment of principal at maturity DEPENDS on the underlying's performance. "
-              "Principal is protected only if repayment at maturity does not depend on the underlying.",
-              origin="extension"),
-    FieldSpec("coupon_type", "Coupon Type", KIND_ENUM,
-              "'contingent' = paid only if a condition (e.g. a coupon barrier) is met; 'fixed' = paid "
-              "regardless; 'floating' = rate-linked; 'none' = no coupon.", enum=COUPON_TYPES, origin="extension"),
-    FieldSpec("coupon_memory", "Coupon Memory", KIND_BOOLEAN,
-              "True if missed contingent coupons are paid later when the condition is next met (memory / "
-              "snowball feature).", origin="extension"),
-    FieldSpec("call_type", "Call Type", KIND_ENUM,
-              "'automatic' = called automatically when a level is met; 'issuer' = the issuer MAY redeem at "
-              "its option; 'none' = not callable.", enum=CALL_TYPES, origin="extension"),
-    FieldSpec("estimated_value_pct", "Estimated Value %", KIND_NUMBER,
-              "The issuer's estimated value of the notes as a percent of principal ($965.50 per $1,000 = "
-              "96.55). Null if only a range is given.", origin="extension"),
-    FieldSpec("agent_commission_pct", "Agent Commission %", KIND_NUMBER,
-              "The agent's commission / underwriting discount as a percent of principal.", origin="extension"),
-    FieldSpec("total_commissions_fees_pct", "Total Commissions & Fees %", KIND_NUMBER,
-              "Total selling commissions plus structuring and other fees, as a percent of principal "
-              "($22.50 per $1,000 = 2.25).", origin="extension"),
-    FieldSpec("price_to_public_pct", "Price to Public %", KIND_NUMBER,
-              "The price to the public as a percent of principal (usually 100.0).", origin="extension"),
-    FieldSpec("fee_based_account_price_pct", "Fee-Based Account Price %", KIND_NUMBER,
-              "The separate price for investors in fee-based / advisory accounts, as a percent of "
-              "principal (e.g. 98.0). Never the price to public.", origin="extension"),
-    FieldSpec("denomination_amount", "Minimum Denomination", KIND_NUMBER,
-              "The minimum denomination in currency units (e.g. 1000).", origin="extension"),
-    FieldSpec("distribution", "Distribution Participants", KIND_PARTICIPANTS,
-              "EVERY selling agent, distributor, dealer or placement agent named in the (supplemental) "
-              "plan of distribution, as a LIST: one entry per participant, with the name exactly as "
-              "stated, its role, and the fee it receives (type and amount) if stated.",
-              origin="extension"),
-)
+
+class RangeValue(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    min: Optional[Decimal] = None
+    max: Optional[Decimal] = None
+    bound: Optional[Literal[RANGE_BOUNDS]] = None  # type: ignore[valid-type]
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.min is None and self.max is None:
+            raise ValueError("a range needs a min or a max")
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("range min exceeds max")
+        return self
+
+
+def validate_list(key: str, value) -> tuple[list[dict] | None, str | None]:
+    """(members as JSON-able dicts, None) or (None, error). Never raises."""
+    model = LIST_MEMBER_MODELS.get(key)
+    if model is None:
+        return None, f"no member model for list field '{key}'"
+    if not isinstance(value, list):
+        return None, f"'{key}' must be a list"
+    out = []
+    for i, m in enumerate(value):
+        try:
+            out.append(to_jsonable(model.model_validate(m).model_dump()))
+        except ValidationError as exc:
+            return None, f"'{key}'[{i}]: {exc.error_count()} error(s): {str(exc)[:300]}"
+    return out, None
+
+
+# ── Registry -> specs ───────────────────────────────────────────────────────
+_REGISTRY_KIND = {"numeric": KIND_NUMBER, "text": KIND_TEXT, "boolean": KIND_BOOLEAN, "date": KIND_DATE}
+
+
+def _get(row, k):
+    if isinstance(row, dict) or hasattr(row, "keys"):
+        return row[k] if k in row.keys() else None
+    return getattr(row, k, None)
+
+
+def _kind(data_type: str, value_shape: str, enum_values) -> str:
+    if value_shape == "list":
+        return KIND_LIST
+    if value_shape == "range":
+        return KIND_RANGE
+    if enum_values:
+        return KIND_ENUM
+    return _REGISTRY_KIND.get(data_type, KIND_TEXT)
 
 
 def build_field_specs(registry_rows) -> list[FieldSpec]:
-    """Registry rows (``key -> attr`` or mapping) -> the readers' field list.
-
-    Every registry row becomes a field (generated generically if it has no
-    override), then the extensions are appended. Extensions never shadow a
-    registry key; a registry key always wins.
-    """
+    """Every LIVE registry row -> one FieldSpec, ordered by sort_order. A row
+    without the v3 properties (no description) is refused, not guessed."""
     specs: list[FieldSpec] = []
-    seen: set[str] = set()
     for row in registry_rows:
-        get = (lambda k: row[k]) if isinstance(row, dict) or hasattr(row, "keys") else (lambda k: getattr(row, k))
-        key = get("field_key")
-        data_type = get("data_type")
-        label = get("display_label")
-        o = _REGISTRY_OVERRIDES.get(key, {})
-        kind = o.get("kind") or _REGISTRY_KIND.get(data_type, KIND_TEXT)
-        desc = o.get("description") or f"{label} as stated in the filing."
-        specs.append(FieldSpec(
-            key=key, label=label, kind=kind, description=desc, enum=o.get("enum"),
-            critical=key in CRITICAL_FIELDS, origin="registry", registry_data_type=data_type,
-        ))
-        seen.add(key)
-    for ext in _EXTENSIONS:
-        if ext.key in seen:
+        if _get(row, "retired_at") is not None:
             continue
+        key = _get(row, "field_key")
+        desc = _get(row, "description")
+        if not desc:
+            raise ValueError(f"registry field '{key}' has no description — load docs/NOTE_FIELDS.md first")
+        shape = _get(row, "value_shape") or "scalar"
+        if shape == "list" and key not in LIST_MEMBER_MODELS:
+            raise UnknownListField(f"registry list field '{key}' has no member model in schema.py")
+        enum_values = _get(row, "enum_values")
         specs.append(FieldSpec(
-            key=ext.key, label=ext.label, kind=ext.kind, description=ext.description,
-            enum=ext.enum, critical=ext.key in CRITICAL_FIELDS, origin="extension",
+            key=key, label=_get(row, "display_label"),
+            kind=_kind(_get(row, "data_type"), shape, enum_values),
+            description=desc, enum=tuple(enum_values) if enum_values else None,
+            critical=bool(_get(row, "is_critical")), origin="registry",
+            registry_data_type=_get(row, "data_type"), section=_get(row, "section"),
+            sort_order=_get(row, "sort_order"), value_shape=shape, unit=_get(row, "unit"),
+            synonyms=tuple(_get(row, "synonyms") or ()), trap_rule=_get(row, "trap_rule"),
+            extraction_method=_get(row, "extraction_method") or METHOD_MODEL,
+            derived_from=tuple(_get(row, "derived_from") or ()),
+            former_keys=tuple(_get(row, "former_keys") or ()),
         ))
-        seen.add(ext.key)
+    specs.sort(key=lambda s: (s.sort_order if s.sort_order is not None else 10**6, s.key))
     return specs
 
 
+def reader_specs(specs: list[FieldSpec]) -> list[FieldSpec]:
+    """The fields the two readers (and escalation) answer."""
+    return [s for s in specs if s.extraction_method == METHOD_MODEL]
+
+
+def critical_keys(specs: list[FieldSpec]) -> frozenset[str]:
+    return frozenset(s.key for s in specs if s.critical)
+
+
 def assert_no_shared_protection_field(specs: list[FieldSpec]) -> None:
-    """Raise if any single field could hold both a buffer and a barrier level."""
-    keys = {s.key for s in specs}
-    for f in ("buffer_pct", "barrier_pct", "protection_pct"):
-        if f not in keys:
-            raise ValueError(f"protection level field '{f}' is missing from the spec")
+    """Raise unless buffer_pct and barrier_pct are two separate live fields,
+    each restricted to its own protection type, and no third field could hold
+    either level."""
     by_key = {s.key: s for s in specs}
-    if "barrier" in by_key["buffer_pct"].description.lower().replace("never a barrier", ""):
+    for f in ("buffer_pct", "barrier_pct", "protection_type"):
+        if f not in by_key:
+            raise ValueError(f"protection field '{f}' is missing from the spec")
+    if "protection_pct" in by_key:
+        raise ValueError("protection_pct is live again — a level field shared by every protection type")
+    buf, bar = by_key["buffer_pct"], by_key["barrier_pct"]
+    if buf.kind != KIND_NUMBER or bar.kind != KIND_NUMBER:
+        raise ValueError("buffer_pct and barrier_pct must both be scalar numbers")
+    if "barrier" in buf.description.lower().replace("never a barrier", ""):
         raise ValueError("buffer_pct's description admits a barrier level")
-    if "buffer" in by_key["barrier_pct"].description.lower().replace("never a buffer", ""):
+    if "buffer" in bar.description.lower().replace("never a buffer", ""):
         raise ValueError("barrier_pct's description admits a buffer level")
-    if "only for protection_type 'full'" not in by_key["protection_pct"].description.lower():
-        raise ValueError("protection_pct is not restricted to full protection")
+    if "only for protection_type 'buffer'" not in buf.description.lower():
+        raise ValueError("buffer_pct is not restricted to buffer protection")
+    if "only for protection_type 'barrier'" not in bar.description.lower():
+        raise ValueError("barrier_pct is not restricted to barrier protection")
+    if set(s.lower() for s in buf.synonyms) & set(s.lower() for s in bar.synonyms):
+        raise ValueError("buffer_pct and barrier_pct share a synonym")
 
 
-async def load_registry_rows(conn) -> list[dict]:
-    rows = await conn.fetch(
-        "SELECT field_key, display_label, data_type, applies_to_archetypes, hazard_field "
-        "FROM portfolio.note_terms_field_registry ORDER BY field_key"
-    )
+REGISTRY_SELECT = (
+    "SELECT field_key, display_label, data_type, applies_to_archetypes, hazard_field, description, "
+    "section, sort_order, is_critical, value_shape, unit, enum_values, synonyms, trap_rule, "
+    "extraction_method, derived_from, former_keys, retired_at, replaced_by, replacement_rule "
+    "FROM portfolio.note_terms_field_registry"
+)
+
+
+async def load_registry_rows(conn, *, include_retired: bool = False) -> list[dict]:
+    rows = await conn.fetch(REGISTRY_SELECT + ("" if include_retired else " WHERE retired_at IS NULL")
+                            + " ORDER BY sort_order NULLS LAST, field_key")
     return [dict(r) for r in rows]
 
 
+async def load_specs(conn) -> list[FieldSpec]:
+    return build_field_specs(await load_registry_rows(conn))
+
+
 # ── JSON schema ──────────────────────────────────────────────────────────────
+_NUM = {"type": ["number", "null"]}
+_DATE = {"type": ["string", "null"], "description": "YYYY-MM-DD"}
+
+
+def _member_schema(key: str) -> dict:
+    if key == "underlyings":
+        props = {
+            "name": {"type": "string", "description": "exactly as stated"},
+            "ticker": {"type": ["string", "null"], "description": "Bloomberg ticker if given"},
+            "kind": {"type": ["string", "null"], "enum": list(UNDERLYING_KINDS) + [None]},
+            "weight_pct": {**_NUM, "description": "null for single and worst-of"},
+            "initial_level": _NUM,
+            "return_basis": {"type": ["string", "null"], "enum": list(RETURN_BASES) + [None]},
+            "fx_treatment": {"type": ["string", "null"], "enum": list(FX_TREATMENTS) + [None]},
+        }
+    elif key == "observation_schedule":
+        props = {
+            "observation_date": {"type": "string", "description": "YYYY-MM-DD"},
+            "payment_date": _DATE,
+            "coupon_barrier_pct": _NUM, "coupon_amount": {**_NUM, "description": "per $1,000"},
+            "call_level_pct": _NUM, "call_amount": {**_NUM, "description": "per $1,000"},
+        }
+    elif key == "distribution":
+        props = {
+            "name": {"type": "string", "description": "exactly as stated"},
+            "role": {"type": "string", "enum": list(PARTICIPANT_ROLES)},
+            "fee_min_pct": {**_NUM, "description": "percent of principal"},
+            "fee_max_pct": {**_NUM, "description": "percent of principal"},
+        }
+    else:
+        raise UnknownListField(key)
+    return {"type": "object", "additionalProperties": False, "required": list(props), "properties": props}
+
+
 def _value_schema(spec: FieldSpec) -> dict:
     if spec.kind == KIND_NUMBER:
-        return {"type": ["number", "null"]}
+        return dict(_NUM)
     if spec.kind == KIND_BOOLEAN:
         return {"type": ["boolean", "null"]}
     if spec.kind == KIND_DATE:
-        return {"type": ["string", "null"], "description": "YYYY-MM-DD"}
+        return dict(_DATE)
     if spec.kind == KIND_ENUM:
         return {"type": ["string", "null"], "enum": list(spec.enum or ()) + [None]}
-    if spec.kind == KIND_LIST:
-        return {"type": ["array", "null"], "items": {"type": "string"}}
-    if spec.kind == KIND_PARTICIPANTS:
+    if spec.kind == KIND_RANGE:
         return {
-            "type": ["array", "null"],
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["name", "role", "fee_type", "fee_pct", "fee_per_unit", "quote"],
-                "properties": {
-                    "name": {"type": "string", "description": "exactly as stated"},
-                    "role": {"type": "string", "enum": list(PARTICIPANT_ROLES)},
-                    "fee_type": {"type": ["string", "null"], "enum": list(FEE_TYPES) + [None]},
-                    "fee_pct": {"type": ["number", "null"], "description": "percent of principal"},
-                    "fee_per_unit": {"type": ["number", "null"], "description": "currency per denomination"},
-                    "quote": {"type": ["string", "null"]},
-                },
-            },
+            "type": ["object", "null"], "additionalProperties": False,
+            "required": ["min", "max", "bound"],
+            "properties": {"min": _NUM, "max": _NUM,
+                           "bound": {"type": ["string", "null"], "enum": list(RANGE_BOUNDS) + [None]}},
         }
+    if spec.kind == KIND_LIST:
+        return {"type": ["array", "null"], "items": _member_schema(spec.key)}
     return {"type": ["string", "null"]}
 
 
 def json_schema(specs: list[FieldSpec]) -> dict:
     props = {}
     for s in specs:
+        desc = s.description + (f" Unit: {s.unit}." if s.unit else "")
         props[s.key] = {
             "type": "object",
-            "description": s.description,
+            "description": desc,
             "additionalProperties": False,
             "required": ["value", "quote"],
             "properties": {
@@ -314,12 +379,8 @@ def json_schema(specs: list[FieldSpec]) -> dict:
                           "description": "a SHORT exact quote from the filing supporting the value; null if absent"},
             },
         }
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [s.key for s in specs],
-        "properties": props,
-    }
+    return {"type": "object", "additionalProperties": False, "required": [s.key for s in specs],
+            "properties": props}
 
 
 def schema_hash(specs: list[FieldSpec]) -> str:
@@ -327,16 +388,6 @@ def schema_hash(specs: list[FieldSpec]) -> str:
 
 
 # ── Pydantic (ALWAYS validate the raw JSON text with model_validate_json) ────
-class Participant(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    name: str
-    role: Literal[PARTICIPANT_ROLES]  # type: ignore[valid-type]
-    fee_type: Optional[Literal[FEE_TYPES]] = None  # type: ignore[valid-type]
-    fee_pct: Optional[Decimal] = None
-    fee_per_unit: Optional[Decimal] = None
-    quote: Optional[str] = None
-
-
 def _py_type(spec: FieldSpec):
     if spec.kind == KIND_NUMBER:
         return Decimal
@@ -346,10 +397,10 @@ def _py_type(spec: FieldSpec):
         return date
     if spec.kind == KIND_ENUM:
         return Literal[tuple(spec.enum)]  # type: ignore[valid-type]
+    if spec.kind == KIND_RANGE:
+        return RangeValue
     if spec.kind == KIND_LIST:
-        return list[str]
-    if spec.kind == KIND_PARTICIPANTS:
-        return list[Participant]
+        return list[LIST_MEMBER_MODELS[spec.key]]
     return str
 
 
@@ -357,18 +408,16 @@ _MODEL_CACHE: dict[str, type[BaseModel]] = {}
 
 
 def pydantic_model(specs: list[FieldSpec]) -> type[BaseModel]:
-    """A model with one ``{value, quote}`` object per field. A missing field or
-    a null value is accepted (= absent); a wrong type is a ValidationError."""
+    """One ``{value, quote}`` object per field. A missing field or a null value
+    is accepted (= absent); a wrong type is a ValidationError."""
     h = schema_hash(specs)
     if h in _MODEL_CACHE:
         return _MODEL_CACHE[h]
     fields = {}
     for s in specs:
         item = create_model(
-            f"F_{s.key}",
-            __config__=ConfigDict(extra="ignore"),
-            value=(Optional[_py_type(s)], None),
-            quote=(Optional[str], None),
+            f"F_{s.key}", __config__=ConfigDict(extra="ignore"),
+            value=(Optional[_py_type(s)], None), quote=(Optional[str], None),
         )
         fields[s.key] = (Optional[item], None)
     model = create_model("NoteTermsReading", __config__=ConfigDict(extra="ignore"), **fields)
@@ -399,8 +448,10 @@ def parse_reader_output(specs: list[FieldSpec], raw_text: str | None) -> tuple[d
             out[s.key] = {"value": None, "quote": None}
             continue
         value = item.value
-        if s.kind == KIND_PARTICIPANTS and value is not None:
-            value = [to_jsonable(p.model_dump()) for p in value]
+        if isinstance(value, BaseModel):
+            value = value.model_dump()
+        elif isinstance(value, list):
+            value = [v.model_dump() if isinstance(v, BaseModel) else v for v in value]
         out[s.key] = {"value": to_jsonable(value), "quote": item.quote}
     return out, None
 
@@ -427,7 +478,7 @@ _SUFFIXES = {"llc", "inc", "incorporated", "corporation", "corp", "lp", "ltd", "
 def normalize_name(name: str | None) -> str:
     if not name:
         return ""
-    s = _NAME_STRIP.sub(" ", name.lower()).replace("&", " and ")
+    s = _NAME_STRIP.sub(" ", str(name).lower()).replace("&", " and ")
     tokens = [t for t in s.split() if t not in _SUFFIXES]
     return " ".join(tokens)
 
@@ -436,9 +487,87 @@ def _dec(value) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return Decimal(str(value).replace(",", "").replace("%", "").strip())
+        return Decimal(str(value).replace(",", "").replace("%", "").replace("$", "").strip())
     except (InvalidOperation, ValueError):
         return None
+
+
+def _norm_number(value) -> str | None:
+    d = _dec(value)
+    if d is None:
+        return None
+    return format(d.quantize(Decimal("0.0001")).normalize(), "f")
+
+
+def _norm_date(value) -> str | None:
+    try:
+        return date.fromisoformat(str(value)[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _norm_text(value) -> str | None:
+    if value is None:
+        return None
+    return re.sub(r"\s+", " ", str(value)).strip().lower() or None
+
+
+def as_range(value) -> dict | None:
+    """A range value as {min, max, bound}; a bare number is min = max (an old
+    scalar reading of a field that is now a range compares equal to it)."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        lo, hi = _dec(value.get("min")), _dec(value.get("max"))
+        if lo is None and hi is None:
+            return None
+        return {"min": lo, "max": hi, "bound": value.get("bound")}
+    d = _dec(value)
+    return None if d is None else {"min": d, "max": d, "bound": "exact"}
+
+
+def _member_fields(key: str) -> list[tuple[str, str]]:
+    """(member field, scalar kind) — every member field compared with the same
+    normalisation a scalar of that kind gets."""
+    out = []
+    for name, f in LIST_MEMBER_MODELS[key].model_fields.items():
+        args = getattr(f.annotation, "__args__", ()) or (f.annotation,)
+        if name == "name":
+            out.append((name, "name"))
+        elif Decimal in args:
+            out.append((name, KIND_NUMBER))
+        elif date in args:
+            out.append((name, KIND_DATE))
+        else:
+            out.append((name, KIND_TEXT))
+    return out
+
+
+def _norm_member(key: str, m: dict) -> tuple:
+    out = []
+    for name, kind in _member_fields(key):
+        v = m.get(name)
+        if kind == KIND_NUMBER:
+            out.append(_norm_number(v))
+        elif kind == KIND_DATE:
+            out.append(_norm_date(v) if v is not None else None)
+        elif kind == "name":
+            out.append(normalize_name(v) or None)
+        else:
+            out.append(_norm_text(v))
+    return tuple(out)
+
+
+def normalize_list(key: str, value) -> str | None:
+    """Canonical string for a list: members validated, each member normalised
+    field by field like a scalar, then sorted by the member's identity (so a
+    reordered list of equal members is the same string). Empty -> None."""
+    members, err = validate_list(key, value)
+    if err or not members:
+        return None
+    ident = _LIST_IDENTITY[key]
+    canon = sorted((ident(m), _norm_member(key, m)) for m in members)
+    return json.dumps([c[1] for c in canon], separators=(",", ":"))
 
 
 def normalize(spec: FieldSpec, value) -> str | None:
@@ -446,34 +575,31 @@ def normalize(spec: FieldSpec, value) -> str | None:
     if value is None:
         return None
     if spec.kind == KIND_NUMBER:
-        d = _dec(value)
-        if d is None:
-            return None
-        q = d.quantize(Decimal("0.0001"))
-        s = format(q.normalize(), "f")
-        return s
+        return _norm_number(value)
     if spec.kind == KIND_DATE:
-        try:
-            return date.fromisoformat(str(value)[:10]).isoformat()
-        except ValueError:
-            return None
+        return _norm_date(value)
     if spec.kind == KIND_BOOLEAN:
         return "true" if value is True else "false" if value is False else None
     if spec.kind == KIND_ENUM:
-        return str(value).strip().lower()
+        s = str(value).strip().lower()
+        return s if (not spec.enum or s in spec.enum) else None
+    if spec.kind == KIND_RANGE:
+        r = as_range(value)
+        if r is None:
+            return None
+        return f"{_norm_number(r['min']) or ''}..{_norm_number(r['max']) or ''}"
     if spec.kind == KIND_LIST:
-        if not isinstance(value, list):
-            return None
-        items = sorted({normalize_name(v) for v in value if isinstance(v, str) and v.strip()})
-        return "|".join(items) if items else None
-    if spec.kind == KIND_PARTICIPANTS:
-        if not isinstance(value, list):
-            return None
-        items = sorted({normalize_name(p.get("name")) for p in value if isinstance(p, dict) and p.get("name")})
-        return "|".join(items) if items else None
+        return normalize_list(spec.key, value)
     if spec.kind == KIND_TEXT:
-        return re.sub(r"\s+", " ", str(value)).strip().lower() or None
+        return _norm_text(value)
     return str(value)
+
+
+def lists_agree(key: str, a, b) -> bool:
+    """Same members (order-insensitive where order has no meaning), each
+    member's fields equal under scalar normalisation."""
+    na, nb = normalize_list(key, a), normalize_list(key, b)
+    return na is not None and na == nb
 
 
 # ── Does the value appear in its quote? ──────────────────────────────────────
@@ -510,6 +636,11 @@ def dates_in(text: str) -> set[str]:
     return found
 
 
+def _number_in(d: Decimal, nums: list[Decimal]) -> bool:
+    # stated directly, per $1,000 (965.50 <-> 96.55) or as a percent of it
+    return any(n == d or n == d * 10 or n * 10 == d for n in nums)
+
+
 def value_in_quote(spec: FieldSpec, value, quote: str | None) -> bool | None:
     """True/False when the check applies; None when it does not (enums and
     booleans are judgments, not strings — their quote must still verify)."""
@@ -519,19 +650,26 @@ def value_in_quote(spec: FieldSpec, value, quote: str | None) -> bool | None:
         return None
     if spec.kind == KIND_NUMBER:
         d = _dec(value)
-        if d is None:
+        return False if d is None else _number_in(d, numbers_in(quote))
+    if spec.kind == KIND_RANGE:
+        r = as_range(value)
+        if r is None:
             return False
         nums = numbers_in(quote)
-        # A percent stated directly, or the same value per $1,000 ($965.50 -> 96.55).
-        return any(n == d or n == d * 10 for n in nums)
+        return all(_number_in(v, nums) for v in (r["min"], r["max"]) if v is not None)
     if spec.kind == KIND_DATE:
         return normalize(spec, value) in dates_in(quote)
     if spec.kind == KIND_LIST:
+        if not isinstance(value, list) or not value:
+            return None
+        members = [m for m in value if isinstance(m, dict)]
+        if spec.key == "observation_schedule":
+            found = dates_in(quote)
+            ds = [_norm_date(m.get("observation_date")) for m in members if m.get("observation_date")]
+            return all(d in found for d in ds) if ds else None
         q = normalize_name(quote)
-        return all(normalize_name(v) in q for v in value if isinstance(v, str)) if value else None
-    if spec.kind == KIND_PARTICIPANTS:
-        q = normalize_name(quote)
-        return all(normalize_name(p.get("name")) in q for p in value if isinstance(p, dict)) if value else None
+        names = [normalize_name(m.get("name")) for m in members if m.get("name")]
+        return all(n in q for n in names) if names else None
     return normalize(spec, value) in re.sub(r"\s+", " ", quote).lower()
 
 

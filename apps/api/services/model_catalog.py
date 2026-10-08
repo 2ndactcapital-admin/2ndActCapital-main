@@ -75,13 +75,69 @@ class ModelCatalogError(RuntimeError):
     """A catalog write was rejected — bad input or a real DB conflict."""
 
 
+# ── public_data_only (notefields.structural) ────────────────────────────────
+# A catalog model with public_data_only = true may be used ONLY by the global,
+# public-data task keys below — work over SEC filings, never over an org's
+# data. Set for the OpenAI models: that OpenAI project shares data with OpenAI
+# in exchange for free usage. Every org-scoped path refuses such a model: the
+# org picker (list_catalog_for_org hides it, set_org_selections refuses it),
+# task assignment (validate_assignable_model) and every call through
+# services.extraction._execute_chain that is org-scoped or not a public-data
+# task. Unlike disabled_model_ids, the lookup FAILS CLOSED: not knowing which
+# models share data is never a reason to send org data to one.
+PUBLIC_DATA_TASK_KEYS = frozenset({
+    "note_terms_extraction",      # the note-extraction ensemble (cascade.TASK_KEY) and its legacy path
+    "edgar_inventory",            # the EDGAR template-study inventory
+})
+
+
+class PublicDataOnlyError(ModelCatalogError):
+    """A public-data-only model was asked to serve org-scoped work."""
+
+
+def is_public_data_task(task_key: str | None, org_id=None) -> bool:
+    return org_id is None and task_key in PUBLIC_DATA_TASK_KEYS
+
+
+async def public_data_only_model_ids(conn=None) -> set[str]:
+    """model_id set with public_data_only = true. Raises on lookup failure."""
+    sql = "SELECT model_id FROM platform_model_catalog WHERE public_data_only"
+    if conn is not None:
+        return {r["model_id"] for r in await conn.fetch(sql)}
+    from services.database import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as c:
+        return {r["model_id"] for r in await c.fetch(sql)}
+
+
+def refuse_public_data_only(model_ids, flagged: set[str], *, task_key: str | None, org_id=None) -> list[str]:
+    """``model_ids`` minus every flagged one, unless this is a public-data task
+    with no org in scope. Order kept."""
+    if is_public_data_task(task_key, org_id):
+        return list(model_ids)
+    return [m for m in model_ids if m not in flagged]
+
+
+async def assert_model_allowed_for_task(conn, model_id: str, *, task_key: str | None, org_id=None) -> None:
+    """Raise PublicDataOnlyError if ``model_id`` is public-data-only and this
+    is not a public-data task with no org in scope."""
+    flagged = await public_data_only_model_ids(conn)
+    if model_id in flagged and not is_public_data_task(task_key, org_id):
+        raise PublicDataOnlyError(
+            f"'{model_id}' is public-data-only (its provider project shares data) — it may serve only "
+            f"{sorted(PUBLIC_DATA_TASK_KEYS)} with no organization in scope, not task "
+            f"{task_key!r}" + (f" for org {org_id}" if org_id is not None else ""))
+
+
 async def list_catalog(conn) -> list[dict]:
     """The FULL curated list, every availability state included — this is
     the Hollisworks curation screen's own read, which must see 'deprecated'
     and 'disabled' rows to manage them. Never use this for an org-facing
     picker; see ``list_catalog_for_org``."""
     rows = await conn.fetch(
-        "SELECT model_id, display_name, provider, availability, created_at "
+        "SELECT model_id, display_name, provider, availability, public_data_only, "
+        "manual_input_cost_per_mtok, manual_output_cost_per_mtok, created_at "
         "FROM platform_model_catalog ORDER BY provider, display_name"
     )
     return [dict(r) for r in rows]
@@ -103,7 +159,8 @@ async def list_catalog_for_org(conn, org_id) -> list[dict]:
     catalog = await list_catalog(conn)
     return [
         m for m in catalog
-        if m["availability"] == "available" or m["model_id"] in selected
+        if not m["public_data_only"]
+        and (m["availability"] == "available" or m["model_id"] in selected)
     ]
 
 
@@ -222,7 +279,7 @@ async def set_org_selections(conn, org_id, model_ids: list[str], *, updated_by=N
     model_ids = sorted({m.strip() for m in (model_ids or []) if m and m.strip()})
     if model_ids:
         valid = await conn.fetch(
-            "SELECT model_id, availability FROM platform_model_catalog "
+            "SELECT model_id, availability, public_data_only FROM platform_model_catalog "
             "WHERE model_id = ANY($1::text[])",
             model_ids,
         )
@@ -231,6 +288,11 @@ async def set_org_selections(conn, org_id, model_ids: list[str], *, updated_by=N
         if unknown:
             raise ModelCatalogError(
                 f"Not on the platform catalog: {', '.join(unknown)}"
+            )
+        public_only = sorted(r["model_id"] for r in valid if r["public_data_only"])
+        if public_only:
+            raise PublicDataOnlyError(
+                f"Public-data-only models cannot be selected by an organization: {', '.join(public_only)}"
             )
 
         current = set(await list_org_selections(conn, org_id))
@@ -335,11 +397,15 @@ async def validate_assignable_model(conn, org_id, model_id: str) -> None:
     task-assignment write path too.
     """
     row = await conn.fetchrow(
-        "SELECT availability FROM platform_model_catalog WHERE model_id = $1",
+        "SELECT availability, public_data_only FROM platform_model_catalog WHERE model_id = $1",
         model_id,
     )
     if row is None:
         raise ModelCatalogError(f"'{model_id}' is not on the platform catalog")
+    if row["public_data_only"]:
+        raise PublicDataOnlyError(
+            f"'{model_id}' is public-data-only — it cannot be assigned to an organization's task."
+        )
     availability = row["availability"]
 
     from services.litellm_credentials import chat_capable_models

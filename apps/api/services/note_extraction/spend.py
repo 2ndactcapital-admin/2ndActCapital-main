@@ -17,6 +17,7 @@ per-call estimate is ``NOTE_EXTRACTION_JEV_COST_ESTIMATE_USD`` (default 0.01).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 from dataclasses import dataclass, field
 
@@ -24,6 +25,80 @@ from services.note_extraction.trim import estimate_tokens_chars
 
 DEFAULT_JEV_COST_ESTIMATE = 0.01
 UNKNOWN_PRICE_PER_TOKEN = (1e-06, 4e-06)   # pessimistic when a deployment has no price
+
+
+class UnpricedModelError(RuntimeError):
+    """A bulk run named a model with no proxy price and no manual price."""
+
+    def __init__(self, models: list[str]):
+        super().__init__(
+            "bulk runs refuse a model whose price the proxy does not know and that has no manual price "
+            "on its platform_model_catalog entry (manual_input_cost_per_mtok / manual_output_cost_per_mtok): "
+            + ", ".join(models))
+        self.models = models
+
+
+# ── Bulk-run price guard (notefields.structural) ────────────────────────────
+# Pilot, evaluation, inventory and B2 extraction runs are BULK: a model whose
+# price is unknown would make the spending cap meaningless (the pessimistic
+# UNKNOWN_PRICE_PER_TOKEN guess is fine for one call, not for thousands). So a
+# bulk run first resolves every model it will call through
+# ``priced_catalog_for_bulk``: the proxy's own price wins; a model the proxy has
+# no price for takes the catalog entry's manual price (per million tokens,
+# price_source 'manual'), and both estimates and recorded costs then use it;
+# a model with neither is refused before any call. Jev (System One) is not a
+# catalog model and keeps its explicit per-call estimate.
+def has_price(dep) -> bool:
+    return dep is not None and dep.input_cost_per_token is not None and dep.output_cost_per_token is not None
+
+
+async def load_manual_prices(conn) -> dict[str, tuple[float, float]]:
+    rows = await conn.fetch(
+        "SELECT model_id, manual_input_cost_per_mtok, manual_output_cost_per_mtok FROM platform_model_catalog "
+        "WHERE manual_input_cost_per_mtok IS NOT NULL AND manual_output_cost_per_mtok IS NOT NULL")
+    return {r["model_id"]: (float(r["manual_input_cost_per_mtok"]), float(r["manual_output_cost_per_mtok"]))
+            for r in rows}
+
+
+def apply_manual_prices(catalog: dict, manual: dict[str, tuple[float, float]]) -> dict:
+    """A copy of ``catalog`` where every deployment the proxy has no price for
+    takes its manual price (per token = per million / 1e6). A proxy price is
+    never overridden."""
+    out = {}
+    for name, dep in catalog.items():
+        if not has_price(dep) and name in manual:
+            pin, pout = manual[name]
+            dep = dataclasses.replace(dep, input_cost_per_token=pin / 1e6, output_cost_per_token=pout / 1e6,
+                                      cache_read_cost_per_token=None, price_source="manual")
+        elif not has_price(dep):
+            dep = dataclasses.replace(dep, price_source="none")
+        out[name] = dep
+    return out
+
+
+def assert_bulk_priced(catalog: dict, deployments) -> None:
+    missing = sorted({d for d in deployments if d and not has_price(catalog.get(d))})
+    if missing:
+        raise UnpricedModelError(missing)
+
+
+async def priced_catalog_for_bulk(conn, catalog: dict, deployments) -> dict:
+    """The catalog a bulk run must use: manual prices applied, and every model
+    in ``deployments`` priced — else UnpricedModelError before any call."""
+    priced = apply_manual_prices(catalog, await load_manual_prices(conn))
+    assert_bulk_priced(priced, deployments)
+    return priced
+
+
+def recorded_cost(dep, header_cost: float | None, input_tokens, output_tokens, cached_tokens=None) -> float | None:
+    """The cost to record for one call. The proxy's response-cost header is its
+    live price; when the price is MANUAL the proxy has none (its header is 0 or
+    absent), so the call is priced from the manual rate instead."""
+    if dep is not None and getattr(dep, "price_source", "proxy") == "manual":
+        return priced_cost(dep, input_tokens, output_tokens, cached_tokens)
+    if header_cost is not None:
+        return header_cost
+    return priced_cost(dep, input_tokens, output_tokens, cached_tokens)
 
 
 class SpendCapReached(RuntimeError):

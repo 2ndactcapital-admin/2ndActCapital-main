@@ -126,6 +126,7 @@ class Deployment:
     supports_response_schema: bool
     max_input_tokens: int | None
     duplicate: bool = False
+    price_source: str = "proxy"          # 'proxy' | 'manual' (platform_model_catalog) | 'none'
 
 
 def deployment_catalog() -> dict[str, Deployment]:

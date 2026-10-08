@@ -1,5 +1,14 @@
 """The per-note cascade: rules -> EdgarTools -> trim -> Model 1 + Model 2 ->
-compare -> (fuller-text retry) -> Jev on disputes -> escalation -> staging.
+compare -> (fuller-text retry) -> Jev on disputes -> escalation -> derivations
+-> self-checks -> staging.
+
+The field list is the registry's (schema.build_field_specs). The readers answer
+only extraction_method='model' fields; 'rules' fields are staged from the rules
+alone (resolution 'rules'); 'derived' fields — and decision B's unstated
+estimated-value unit — are computed (services.note_extraction.derive) and staged
+with resolution 'derived' plus a 'derived' reading. A self-check finding
+(services.note_extraction.checks) sends the note to needs_review with its
+reason; it never changes a value.
 
 Every value any source produced is written as a reading; the resolved values
 go to staging. Model 2 is ALWAYS called in B1 — skip-second-reader is only
@@ -11,11 +20,14 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+from dataclasses import asdict
+
+from services.note_extraction import checks, derive
 from services.note_extraction import compare as cmp
 from services.note_extraction import edgartools_reader, jev, participants, readers, rules, trim
 from services.note_extraction.documents import FilingDocument
 from services.note_extraction.schema import (
-    CRITICAL_FIELDS, KIND_PARTICIPANTS, FieldSpec, normalize, subset,
+    METHOD_MODEL, METHOD_RULES, FieldSpec, critical_keys, normalize, reader_specs, subset,
 )
 from services.note_extraction.spend import SpendCapReached, SpendTracker
 from services.note_extraction.store import CALL_FIELD, ReadingRow, StagedField
@@ -105,7 +117,7 @@ def _call_row(doc, call: readers.ReaderCall, *, run_id, origin, ensemble_config_
 def run_static_sources(doc: FilingDocument, specs: list[FieldSpec]):
     """Rules + EdgarTools + trim. No network beyond what the caller already did."""
     tr = trim.trim(doc.text)
-    rr = rules.run_rules(doc.text, distribution_spans=tr.distribution_spans)
+    rr = rules.run_rules(doc.text, distribution_spans=tr.distribution_spans, specs=specs)
     et = edgartools_reader.read_html(doc.html)
     return tr, rr, et
 
@@ -151,6 +163,9 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
                     catalog: dict, spend: SpendTracker | None, run_id, origin: str,
                     participant_rows: list[dict] | None, static) -> NoteOutcome:
     by_key = {s.key: s for s in specs}
+    rspecs = reader_specs(specs)
+    reader_keys = [s.key for s in rspecs]
+    crit = critical_keys(specs)
     ens_id = slots.ensemble_config_id
     tr, rr, et = static or await asyncio.to_thread(run_static_sources, doc, specs)
     out.full_tokens_est, out.trimmed_tokens_est = tr.full_tokens_est, tr.trimmed_tokens_est
@@ -180,9 +195,9 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
     # (d) two readers — two separate calls, two different deployments, concurrently
     tags = [f"note:{doc.reference_filing_id}"] + ([f"run:{run_id}"] if run_id else [])
     c1, c2 = await _read_pair(out, doc, [
-        readers.read(slots.model_1, specs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+        readers.read(slots.model_1, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
                      catalog=catalog, spend=spend, tags=tags),
-        readers.read(slots.model_2, specs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+        readers.read(slots.model_2, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
                      catalog=catalog, spend=spend, tags=tags),
     ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"trimmed_tokens_est": tr.trimmed_tokens_est})
     if not c1.usable and not c2.usable:
@@ -196,11 +211,11 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         f = call.fields.get(key) or {}
         return cmp.evidence(doc, by_key[key], call.slot, f.get("value"), f.get("quote"))
 
-    m1 = {k: ev_for(c1, k) for k in by_key}
-    m2 = {k: ev_for(c2, k) for k in by_key}
+    m1 = {k: ev_for(c1, k) for k in reader_keys}
+    m2 = {k: ev_for(c2, k) for k in reader_keys}
 
     # (c) retry once with fuller text when BOTH readers return null on a critical field
-    both_null = [k for k in by_key if k in CRITICAL_FIELDS and m1[k] is not None and m2[k] is not None
+    both_null = [k for k in reader_keys if k in crit and m1[k] is not None and m2[k] is not None
                  and m1[k].normalized is None and m2[k].normalized is None]
     if both_null:
         out.fuller_text_retry = True
@@ -229,11 +244,11 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
                     ensemble_config_id=ens_id, prompt_version=readers.PROMPT_VERSION))
 
     # (e) compare in code
-    comps = {k: cmp.compare_field(by_key[k], m1[k], m2[k], independent.get(k)) for k in by_key}
+    comps = {k: cmp.compare_field(by_key[k], m1[k], m2[k], independent.get(k)) for k in reader_keys}
     disputed = [c for c in comps.values() if c.outcome == "disputed"]
     out.disagreement_count = len(disputed)
     out.skip_second_reader_safe = cmp.skip_second_reader_would_be_safe(
-        sorted(CRITICAL_FIELDS & set(by_key)), m1, independent, comps)
+        sorted(crit & set(reader_keys)), m1, independent, comps)
 
     resolved: dict[str, dict] = {}
     for k, c in comps.items():
@@ -289,39 +304,92 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
                     resolved[c.spec.key] = {"value": e.value, "resolution": "escalation", "evidence": e,
                                             "reading_id": row.id}
 
+    # rules-only fields: the rules' own reading is the value
+    for k, spec in by_key.items():
+        if spec.extraction_method != METHOD_RULES:
+            continue
+        ev = next((e for e in independent.get(k, []) if e.source == "rules" and e.normalized is not None), None)
+        if ev is not None:
+            resolved[k] = {"value": ev.value, "resolution": "rules", "evidence": ev}
+
+    # derivations: computed from the resolved values, written as 'derived'
+    values = {k: r["value"] for k, r in resolved.items()}
+    for d in derive.derive_all(values):
+        spec = by_key.get(d.field_key)
+        if spec is None:
+            continue
+        if spec.extraction_method == METHOD_MODEL and (resolved.get(d.field_key) or {}).get("value") is not None:
+            continue  # decision B: a STATED value is never overwritten by a derived one
+        row = ReadingRow(
+            reference_filing_id=doc.reference_filing_id, field_key=d.field_key, source="derived",
+            value=d.value, value_normalized=normalize(spec, d.value), run_id=run_id, origin=origin,
+            ensemble_config_id=ens_id,
+            metadata={"derived": True, "derived_from": d.derived_from, "basis": d.basis, "inputs": d.inputs})
+        out.readings.append(row)
+        resolved[d.field_key] = {"value": d.value, "resolution": "derived", "evidence": None,
+                                 "reading_id": row.id, "derived": d}
+        values[d.field_key] = d.value
+
+    # self-checks: a finding sends the note to review; no value is changed
+    extras = rr.extras
+    findings = checks.run_self_checks(
+        values,
+        stated_initial_valuation_date=(extras["initial_valuation_date"].value
+                                       if "initial_valuation_date" in extras else None),
+        hypothetical_rows=(extras["hypothetical_rows"].value if "hypothetical_rows" in extras else None))
+    out.detail["self_checks"] = [asdict(f) for f in findings]
+    reasons_by_field: dict[str, list[str]] = {}
+    for f in findings:
+        for k in f.fields:
+            reasons_by_field.setdefault(k, []).append(f"{f.check}: {f.reason}")
+
     # staging
     needs_review = []
     for k, spec in by_key.items():
         r = resolved.get(k)
+        reasons = reasons_by_field.get(k, [])
+        meta = {"review_reasons": reasons} if reasons else {}
         if r is None:
-            crit = spec.critical
-            if crit:
+            # the unresolved CHECK pins needs_review = is_critical; a self-check
+            # reason on an unresolved field is kept in metadata and on the note
+            is_crit = spec.critical
+            if is_crit:
                 needs_review.append(k)
-            out.staged.append(StagedField(k, None, "unresolved", crit, crit))
+            out.staged.append(StagedField(k, None, "unresolved", is_crit, is_crit, metadata=meta))
             continue
+        if r["resolution"] == "derived":
+            d = r["derived"]
+            meta = {**meta, "derived": True, "derived_from": d.derived_from, "basis": d.basis}
         e = r.get("evidence")
         loc = e.location if e else None
         out.staged.append(StagedField(
-            k, r["value"], r["resolution"], spec.critical, False,
+            k, r["value"], r["resolution"], spec.critical, bool(reasons),
             winning_reading_id=r.get("reading_id") or (e.reading_key if e else None),
             source_quote=e.quote if e else None,
             raw_char_start=loc.raw_start if loc and loc.raw_start is not None else None,
             raw_char_end=loc.raw_end if loc and loc.raw_start is not None else None,
-            probability=r.get("probability")))
+            probability=r.get("probability"), metadata=meta))
 
     # distribution participants: rules names + resolved list, matched, nothing dropped
     names = [{"name": p["name"], "source": "rules"} for p in rr.participant_names]
-    dist_key = next((s.key for s in specs if s.kind == KIND_PARTICIPANTS), None)
-    if dist_key and isinstance((resolved.get(dist_key) or {}).get("value"), list):
-        names += [{"name": p.get("name"), "source": "resolved", "role": p.get("role")}
-                  for p in resolved[dist_key]["value"] if isinstance(p, dict)]
     match = participants.match_names(names, participant_rows or [])
-    out.unmatched_participants = match.unmatched
+    unmatched = list(match.unmatched)
+    if isinstance((resolved.get("distribution") or {}).get("value"), list):
+        members, dist_unmatched = participants.match_distribution(resolved["distribution"]["value"],
+                                                                  participant_rows or [])
+        out.detail["distribution_members"] = members
+        seen = {participants.normalize_name(u.get("name")) for u in unmatched}
+        unmatched += [u for u in dist_unmatched if participants.normalize_name(u.get("name")) not in seen]
+    out.unmatched_participants = unmatched
     out.detail["participants_matched"] = match.matched
 
     out.cost_usd = sum(r.cost_usd or 0 for r in out.readings if r.field_key == CALL_FIELD)
+    reasons = []
     if needs_review:
-        out.status, out.status_reason = "needs_review", "unresolved critical: " + ", ".join(needs_review)
+        reasons.append("unresolved critical: " + ", ".join(needs_review))
+    reasons += [f"self-check {f.check}: {f.reason}" for f in findings]
+    if reasons:
+        out.status, out.status_reason = "needs_review", "; ".join(reasons)
     else:
         out.status, out.status_reason = "verified", None
     return out

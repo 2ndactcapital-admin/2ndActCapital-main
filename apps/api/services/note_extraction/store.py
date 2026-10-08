@@ -158,6 +158,7 @@ class StagedField:
     raw_char_start: int | None = None
     raw_char_end: int | None = None
     probability: float | None = None
+    metadata: dict = field(default_factory=dict)      # review_reasons, derived, renamed_from
 
 
 async def insert_staging(conn, *, run_id, reference_filing_id, status: str, status_reason: str | None,
@@ -183,13 +184,14 @@ async def insert_staging(conn, *, run_id, reference_filing_id, status: str, stat
         await conn.executemany(
             """INSERT INTO portfolio.note_extraction_staged_fields
                  (staging_id, field_key, resolved_value, resolution, is_critical, needs_review,
-                  winning_reading_id, source_quote, raw_char_start, raw_char_end, probability)
-               VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11)""",
+                  winning_reading_id, source_quote, raw_char_start, raw_char_end, probability, metadata)
+               VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)""",
             [(staging_id, f.field_key,
               None if f.resolved_value is None else json.dumps(strip_nul_deep(f.resolved_value), default=str),
               f.resolution, f.is_critical, f.needs_review, f.winning_reading_id,
               strip_nul((f.source_quote or None) and f.source_quote[:2000]), f.raw_char_start, f.raw_char_end,
-              None if f.probability is None else Decimal(str(round(f.probability, 6))))
+              None if f.probability is None else Decimal(str(round(f.probability, 6))),
+              json.dumps(strip_nul_deep(f.metadata or {}), default=str))
              for f in fields],
         )
     return str(staging_id)

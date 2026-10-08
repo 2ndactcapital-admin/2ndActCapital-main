@@ -15,6 +15,7 @@ from services.note_extraction.readers import ReaderConfig, build_messages
 from services.note_extraction.schema import FieldSpec
 from services.note_extraction.spend import (
     Plan, PlannedCall, SpendCapReached, SpendTracker, estimate_call_cost, jev_cost_estimate,
+    priced_catalog_for_bulk,
 )
 from services.note_extraction.trim import estimate_tokens_chars
 
@@ -76,7 +77,12 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
                     keep_outcomes: bool = False, progress=None) -> RunSummary:
     """Sequential over notes (the two readers inside a note run concurrently).
     Stops CLEANLY when the next call would cross the cap: the note in flight is
-    not staged; every finished note is."""
+    not staged; every finished note is.
+
+    A BULK run: every model it will call must have a proxy price or a manual
+    price (spend.priced_catalog_for_bulk) — refused with UnpricedModelError
+    before the run row exists otherwise — and the cap then uses that price."""
+    catalog = await priced_catalog_for_bulk(conn, catalog, bulk_deployments(slots))
     spend = SpendTracker(cap_usd=spend_cap_usd)
     run_id = await store.create_run(conn, run_kind=run_kind, spend_cap_usd=spend_cap_usd,
                                     config=config, ensemble_config_id=slots.ensemble_config_id,
@@ -121,6 +127,13 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
                                notes_done=summary.notes_done, stop_reason=summary.stop_reason,
                                report={"statuses": dict(summary.statuses), "spent_usd": spend.spent_usd})
     return summary
+
+
+def bulk_deployments(slots: EnsembleSlots) -> list[str]:
+    """Every catalog model a run over ``slots`` will call (Jev is System One,
+    not a catalog model — its cost is the explicit per-call estimate)."""
+    return [d for d in (slots.model_1.deployment, slots.model_2.deployment,
+                        slots.escalation.deployment if slots.escalation else None) if d]
 
 
 def reader_config(slot: str, deployment: str, efforts: dict[str, str] | None = None,

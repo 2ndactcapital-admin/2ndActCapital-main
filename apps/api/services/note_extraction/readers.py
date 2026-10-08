@@ -30,9 +30,9 @@ from dataclasses import dataclass, field
 
 from services.note_extraction import proxy
 from services.note_extraction.schema import FieldSpec, json_schema, parse_reader_output
-from services.note_extraction.spend import SpendTracker, estimate_call_cost, priced_cost
+from services.note_extraction.spend import SpendTracker, estimate_call_cost, recorded_cost
 
-PROMPT_VERSION = "noteextractb1.reader.v1"
+PROMPT_VERSION = "notefields.reader.v3"
 
 INSTRUCTIONS = """You read ONE US structured-note pricing supplement (SEC 424B2 or FWP) and \
 report its terms as ONE JSON object that matches the JSON schema below exactly.
@@ -47,8 +47,13 @@ percent of principal ($22.50 per $1,000 = 2.25).
 the underlying falls more than X%. Barrier = once breached, the FULL decline applies. \
 Principal is protected only if repayment at maturity does not depend on the underlying. Put \
 each level only in its own field.
+- Ranges: an amount stated with "up to", "as low as", "not less than" or "between" is a MIN \
+and MAX with its bound ("up to 2.50%" -> min null, max 2.50, bound "up_to"); a single stated \
+amount sets min = max (bound "exact"). Quote the bound wording.
+- Lists (underlyings, observation schedule, distribution): one entry per member, every \
+member its own object. Never merge members into one string.
 - Distribution: list EVERY participant named in the plan of distribution separately, with \
-its own role and fee. Never merge participants into one string.
+its own role and fee.
 - Output JSON only — no prose, no markdown."""
 
 USER_PREFIX = "Read the filing below and answer with the JSON object only.\n\n"
@@ -149,9 +154,8 @@ async def read(cfg: ReaderConfig, specs: list[FieldSpec], filing_text: str, *,
     call.proxy_model_id = resp.headers.get("x-litellm-model-id")
     call.attempted_fallbacks = resp.headers.get("x-litellm-attempted-fallbacks")
     call.input_tokens, call.output_tokens, call.cached_tokens = proxy.response_usage(resp.body)
-    actual = proxy.header_cost(resp)
-    if actual is None:
-        actual = priced_cost(dep, call.input_tokens, call.output_tokens, call.cached_tokens)
+    actual = recorded_cost(dep, proxy.header_cost(resp), call.input_tokens, call.output_tokens,
+                           call.cached_tokens)
     if resp.status != 200:
         actual = actual if actual is not None else 0.0   # a refused call is not billed
     if spend is not None:

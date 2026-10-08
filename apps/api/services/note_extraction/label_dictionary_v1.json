@@ -1,0 +1,1770 @@
+{
+ "version": "notefields.labels.v1",
+ "source_run_id": "aa1c8c7c-239a-4057-9fb3-2c911c9c2bc5",
+ "generated_at": "2026-10-08T06:51:29+00:00",
+ "fields": {
+  "agent_commission_pct": {
+   "labels": [
+    "Underwriting commissions",
+    "Underwriting discount",
+    "Underwriting Discounts and Commissions"
+   ],
+   "by_issuer": {
+    "Jefferies": [
+     "Underwriting Discounts and Commissions"
+    ],
+    "Scotiabank": [
+     "Underwriting commissions"
+    ],
+    "Swedish Export Credit": [
+     "Underwriting discount"
+    ]
+   }
+  },
+  "autocall_frequency": {
+   "labels": [
+    "Automatic Redemption"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Automatic Redemption"
+    ]
+   }
+  },
+  "autocall_level_pct": {
+   "labels": [
+    "Autocall Barrier",
+    "Call Barrier Level",
+    "Call Threshold",
+    "Call threshold level",
+    "Call Value"
+   ],
+   "by_issuer": {
+    "Deutsche Bank": [
+     "Autocall Barrier"
+    ],
+    "HSBC": [
+     "Call Threshold"
+    ],
+    "Jefferies": [
+     "Call Value"
+    ],
+    "Marex": [
+     "Call Threshold"
+    ],
+    "Nomura": [
+     "Call Barrier Level"
+    ],
+    "Scotiabank": [
+     "Call Value"
+    ],
+    "UBS": [
+     "Call threshold level"
+    ]
+   }
+  },
+  "barrier_observation": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "barrier_pct": {
+   "labels": [
+    "Barrier Value",
+    "Downside threshold price",
+    "Threshold Value",
+    "Trigger Value"
+   ],
+   "by_issuer": {
+    "Citigroup": [
+     "Downside threshold price"
+    ],
+    "HSBC": [
+     "Barrier Value"
+    ],
+    "JPMorgan": [
+     "Trigger Value"
+    ],
+    "Jefferies": [
+     "Threshold Value"
+    ],
+    "Scotiabank": [
+     "Barrier Value"
+    ]
+   }
+  },
+  "basket_type": {
+   "labels": [
+    "Least Performing Underlying",
+    "Worst Performing Underlying"
+   ],
+   "by_issuer": {
+    "JPMorgan": [
+     "Least Performing Underlying"
+    ],
+    "Marex": [
+     "Worst Performing Underlying"
+    ]
+   }
+  },
+  "buffer_pct": {
+   "labels": [
+    "Buffer Amount",
+    "Buffer Percentage"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Buffer Percentage"
+    ],
+    "Barclays": [
+     "Buffer Percentage"
+    ],
+    "TD": [
+     "Buffer Amount"
+    ]
+   }
+  },
+  "calculation_agent": {
+   "labels": [
+    "Calculation Agent"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Calculation Agent"
+    ],
+    "Bank of Montreal": [
+     "Calculation Agent"
+    ],
+    "Barclays": [
+     "Calculation Agent"
+    ],
+    "CIBC": [
+     "Calculation Agent"
+    ],
+    "Jefferies": [
+     "Calculation Agent"
+    ],
+    "Marex": [
+     "Calculation Agent"
+    ],
+    "Nomura": [
+     "Calculation Agent"
+    ],
+    "Royal Bank of Canada": [
+     "Calculation Agent"
+    ],
+    "Scotiabank": [
+     "Calculation Agent"
+    ],
+    "TD": [
+     "Calculation Agent"
+    ],
+    "UBS": [
+     "Calculation Agent"
+    ]
+   }
+  },
+  "call_type": {
+   "labels": [
+    "Automatic Call Feature",
+    "Automatic early redemption",
+    "Call Feature"
+   ],
+   "by_issuer": {
+    "Citigroup": [
+     "Automatic early redemption"
+    ],
+    "Jefferies": [
+     "Call Feature"
+    ],
+    "Marex": [
+     "Call Feature"
+    ],
+    "Nomura": [
+     "Automatic Call Feature"
+    ]
+   }
+  },
+  "cap_pct": {
+   "labels": [
+    "Maximum Return"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Maximum Return"
+    ]
+   }
+  },
+  "coupon_barrier_pct": {
+   "labels": [
+    "Contingent Coupon",
+    "Contingent Coupon Payment",
+    "Contingent Interest Payment",
+    "Contingent Interest Rate",
+    "Contingent payment",
+    "Contingent quarterly coupon",
+    "Coupon",
+    "Coupon Barrier",
+    "Coupon Trigger",
+    "Interest Barrier"
+   ],
+   "by_issuer": {
+    "(no listed issuer)": [
+     "Coupon"
+    ],
+    "HSBC": [
+     "Coupon Trigger"
+    ],
+    "JPMorgan": [
+     "Contingent Interest Payment",
+     "Contingent Interest Rate",
+     "Interest Barrier"
+    ],
+    "Jefferies": [
+     "Contingent Coupon Payment",
+     "Coupon Barrier"
+    ],
+    "Marex": [
+     "Contingent Coupon"
+    ],
+    "Morgan Stanley": [
+     "Contingent quarterly coupon"
+    ],
+    "Royal Bank of Canada": [
+     "Contingent Coupon"
+    ],
+    "TD": [
+     "Contingent Interest Rate"
+    ],
+    "UBS": [
+     "Contingent payment"
+    ]
+   }
+  },
+  "coupon_memory": {
+   "labels": [
+    "Contingent Coupons with Memory Feature"
+   ],
+   "by_issuer": {
+    "Royal Bank of Canada": [
+     "Contingent Coupons with Memory Feature"
+    ]
+   }
+  },
+  "coupon_rate_pa": {
+   "labels": [
+    "Contingent coupon",
+    "Contingent Coupon Rate"
+   ],
+   "by_issuer": {
+    "Citigroup": [
+     "Contingent coupon"
+    ],
+    "HSBC": [
+     "Contingent Coupon Rate"
+    ],
+    "Marex": [
+     "Contingent Coupon Rate"
+    ]
+   }
+  },
+  "coupon_type": {
+   "labels": [
+    "Coupon Feature"
+   ],
+   "by_issuer": {
+    "Jefferies": [
+     "Coupon Feature"
+    ]
+   }
+  },
+  "credit_risk_statement": {
+   "labels": [
+    "Any payments on the Notes are subject to our credit risk."
+   ],
+   "by_issuer": {
+    "TD": [
+     "Any payments on the Notes are subject to our credit risk."
+    ]
+   }
+  },
+  "currency": {
+   "labels": [
+    "Currency",
+    "Specified Currency"
+   ],
+   "by_issuer": {
+    "Jefferies": [
+     "Specified Currency"
+    ],
+    "Nomura": [
+     "Currency"
+    ],
+    "Swedish Export Credit": [
+     "Specified Currency"
+    ]
+   }
+  },
+  "cusip": {
+   "labels": [
+    "CUSIP",
+    "CUSIP / ISIN",
+    "CUSIP No.",
+    "CUSIP Number",
+    "CUSIP/ISIN"
+   ],
+   "by_issuer": {
+    "(no listed issuer)": [
+     "CUSIP"
+    ],
+    "Bank of America": [
+     "CUSIP"
+    ],
+    "Bank of Montreal": [
+     "CUSIP"
+    ],
+    "Barclays": [
+     "CUSIP",
+     "CUSIP / ISIN"
+    ],
+    "Citigroup": [
+     "CUSIP / ISIN"
+    ],
+    "Credit Suisse": [
+     "CUSIP"
+    ],
+    "HSBC": [
+     "CUSIP/ISIN"
+    ],
+    "JPMorgan": [
+     "CUSIP"
+    ],
+    "Marex": [
+     "CUSIP/ISIN"
+    ],
+    "Morgan Stanley": [
+     "CUSIP"
+    ],
+    "Nomura": [
+     "CUSIP No."
+    ],
+    "Scotiabank": [
+     "CUSIP / ISIN"
+    ],
+    "Swedish Export Credit": [
+     "CUSIP"
+    ],
+    "UBS": [
+     "CUSIP / ISIN"
+    ],
+    "US Bancorp": [
+     "CUSIP No."
+    ],
+    "Wells Fargo": [
+     "CUSIP Number"
+    ]
+   }
+  },
+  "denomination": {
+   "labels": [
+    "Denomination",
+    "Denominations",
+    "Minimum Denominations",
+    "Minimum Investment",
+    "Minimum Investment and Denominations"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Denominations"
+    ],
+    "Bank of Montreal": [
+     "Minimum Denominations"
+    ],
+    "Barclays": [
+     "Denominations"
+    ],
+    "JPMorgan": [
+     "Minimum denominations"
+    ],
+    "Nomura": [
+     "Denominations"
+    ],
+    "Royal Bank of Canada": [
+     "Minimum Investment"
+    ],
+    "Scotiabank": [
+     "Minimum Investment and Denominations"
+    ],
+    "Swedish Export Credit": [
+     "Denomination"
+    ],
+    "Wells Fargo": [
+     "Denominations"
+    ]
+   }
+  },
+  "distribution": {
+   "labels": [
+    "Agent",
+    "Agent for the distribution of the notes",
+    "Agent for this offering",
+    "Distribution Agent",
+    "Placement agents"
+   ],
+   "by_issuer": {
+    "Credit Suisse": [
+     "Agent for this offering"
+    ],
+    "Jefferies": [
+     "Agent"
+    ],
+    "Morgan Stanley": [
+     "Agent"
+    ],
+    "Nomura": [
+     "Distribution Agent",
+     "Placement agents"
+    ],
+    "US Bancorp": [
+     "Agent"
+    ],
+    "Wells Fargo": [
+     "Agent for the distribution of the notes"
+    ]
+   }
+  },
+  "estimated_value_pct": {
+   "labels": [
+    "Estimated value",
+    "Estimated value on the Pricing Date"
+   ],
+   "by_issuer": {
+    "Jefferies": [
+     "Estimated value on the Pricing Date"
+    ],
+    "TD": [
+     "Estimated value"
+    ]
+   }
+  },
+  "fee_based_account_price": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "filed_pursuant_to_rule": {
+   "labels": [
+    "Filed Pursuant to Rule"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Filed Pursuant to Rule"
+    ],
+    "UBS": [
+     "Filed pursuant to Rule"
+    ]
+   }
+  },
+  "final_valuation_date": {
+   "labels": [
+    "Final determination date",
+    "Final Valuation Date",
+    "Final Value",
+    "Valuation Date"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Valuation Date"
+    ],
+    "Barclays": [
+     "Final Valuation Date",
+     "Final Value"
+    ],
+    "Citigroup": [
+     "Final valuation date"
+    ],
+    "Credit Suisse": [
+     "Valuation Date"
+    ],
+    "Deutsche Bank": [
+     "Final Valuation Date"
+    ],
+    "HSBC": [
+     "Final Valuation Date"
+    ],
+    "Jefferies": [
+     "Valuation Date"
+    ],
+    "Marex": [
+     "Final Valuation Date"
+    ],
+    "Nomura": [
+     "Final Valuation Date"
+    ],
+    "Royal Bank of Canada": [
+     "Valuation Date"
+    ],
+    "Scotiabank": [
+     "Final Valuation Date"
+    ],
+    "TD": [
+     "Final Valuation Date"
+    ],
+    "UBS": [
+     "Final determination date"
+    ]
+   }
+  },
+  "final_value_method": {
+   "labels": [
+    "Final Level",
+    "Final price",
+    "Final share price",
+    "Final Underlier Value",
+    "Final Underlying Level",
+    "Final Value"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Final Level"
+    ],
+    "Citigroup": [
+     "Final share price"
+    ],
+    "Deutsche Bank": [
+     "Final Underlying Level"
+    ],
+    "JPMorgan": [
+     "Final Value"
+    ],
+    "Jefferies": [
+     "Final Value"
+    ],
+    "Marex": [
+     "Final Value"
+    ],
+    "Morgan Stanley": [
+     "Final share price"
+    ],
+    "Nomura": [
+     "Final Value"
+    ],
+    "Royal Bank of Canada": [
+     "Final Underlier Value"
+    ],
+    "TD": [
+     "Final Value"
+    ],
+    "UBS": [
+     "Final price"
+    ]
+   }
+  },
+  "form_of_notes": {
+   "labels": [
+    "Form",
+    "Form of Note",
+    "Form of Notes"
+   ],
+   "by_issuer": {
+    "HSBC": [
+     "Form of Notes"
+    ],
+    "Marex": [
+     "Form of Notes"
+    ],
+    "Swedish Export Credit": [
+     "Form"
+    ],
+    "US Bancorp": [
+     "Form of Note"
+    ]
+   }
+  },
+  "guarantor_entity": {
+   "labels": [
+    "guarantor"
+   ],
+   "by_issuer": {
+    "Goldman Sachs": [
+     "guarantor"
+    ],
+    "JPMorgan": [
+     "Guarantor"
+    ],
+    "Morgan Stanley": [
+     "Guarantor"
+    ],
+    "Nomura": [
+     "Guarantor"
+    ]
+   }
+  },
+  "isin": {
+   "labels": [
+    "ISIN",
+    "ISIN No."
+   ],
+   "by_issuer": {
+    "(no listed issuer)": [
+     "ISIN"
+    ],
+    "Barclays": [
+     "ISIN"
+    ],
+    "Morgan Stanley": [
+     "ISIN"
+    ],
+    "Nomura": [
+     "ISIN No."
+    ],
+    "Swedish Export Credit": [
+     "ISIN"
+    ]
+   }
+  },
+  "issue_date": {
+   "labels": [
+    "Issue Date",
+    "Original Issue Date",
+    "Original Issue Date (Settlement Date)"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Issue Date"
+    ],
+    "Barclays": [
+     "Issue Date"
+    ],
+    "CIBC": [
+     "Issue Date"
+    ],
+    "Citigroup": [
+     "Issue date"
+    ],
+    "HSBC": [
+     "Original Issue Date"
+    ],
+    "JPMorgan": [
+     "Original Issue Date (Settlement Date)"
+    ],
+    "Jefferies": [
+     "Original Issue Date"
+    ],
+    "Marex": [
+     "Original Issue Date"
+    ],
+    "Morgan Stanley": [
+     "Original issue date"
+    ],
+    "Nomura": [
+     "Original Issue Date"
+    ],
+    "Royal Bank of Canada": [
+     "Issue Date"
+    ],
+    "Scotiabank": [
+     "Original Issue Date"
+    ],
+    "UBS": [
+     "Original issue date"
+    ],
+    "US Bancorp": [
+     "Original Issue Date"
+    ],
+    "Wells Fargo": [
+     "Issue Date"
+    ]
+   }
+  },
+  "issue_size": {
+   "labels": [
+    "Aggregate Principal Amount",
+    "Aggregate stated principal amount",
+    "Principal Amount"
+   ],
+   "by_issuer": {
+    "Citigroup": [
+     "Aggregate stated principal amount"
+    ],
+    "Jefferies": [
+     "Aggregate Principal Amount"
+    ],
+    "Morgan Stanley": [
+     "Aggregate principal amount"
+    ],
+    "Nomura": [
+     "Principal Amount"
+    ],
+    "UBS": [
+     "Aggregate principal amount"
+    ],
+    "US Bancorp": [
+     "Principal Amount"
+    ]
+   }
+  },
+  "issuer_entity": {
+   "labels": [
+    "AKTIEBOLAGET SVENSK EXPORTKREDIT (PUBL)",
+    "Deutsche Bank AG",
+    "Issuer",
+    "The Toronto-Dominion Bank",
+    "U.S. BANCORP",
+    "United Airlines, Inc.",
+    "Wells Fargo & Company"
+   ],
+   "by_issuer": {
+    "(no listed issuer)": [
+     "United Airlines, Inc."
+    ],
+    "Barclays": [
+     "Issuer"
+    ],
+    "CIBC": [
+     "Issuer"
+    ],
+    "Citigroup": [
+     "Issuer"
+    ],
+    "Deutsche Bank": [
+     "Deutsche Bank AG"
+    ],
+    "Goldman Sachs": [
+     "issuer"
+    ],
+    "HSBC": [
+     "Issuer"
+    ],
+    "JPMorgan": [
+     "Issuer"
+    ],
+    "Jefferies": [
+     "Issuer"
+    ],
+    "Marex": [
+     "Issuer"
+    ],
+    "Morgan Stanley": [
+     "Issuer"
+    ],
+    "Nomura": [
+     "Issuer"
+    ],
+    "Royal Bank of Canada": [
+     "Issuer"
+    ],
+    "Scotiabank": [
+     "Issuer"
+    ],
+    "Swedish Export Credit": [
+     "AKTIEBOLAGET SVENSK EXPORTKREDIT (PUBL)"
+    ],
+    "TD": [
+     "Issuer",
+     "The Toronto-Dominion Bank"
+    ],
+    "UBS": [
+     "Issuer"
+    ],
+    "US Bancorp": [
+     "U.S. BANCORP"
+    ],
+    "Wells Fargo": [
+     "Wells Fargo & Company"
+    ]
+   }
+  },
+  "listing_status": {
+   "labels": [
+    "Listing",
+    "Notes will not be listed on any securities exchange",
+    "Securities will not be listed"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Securities will not be listed"
+    ],
+    "Citigroup": [
+     "Listing"
+    ],
+    "Goldman Sachs": [
+     "Notes will not be listed on any securities exchange"
+    ],
+    "HSBC": [
+     "Listing"
+    ],
+    "Jefferies": [
+     "Listing"
+    ],
+    "Nomura": [
+     "Listing"
+    ],
+    "Scotiabank": [
+     "Listing"
+    ],
+    "UBS": [
+     "Listing"
+    ],
+    "Wells Fargo": [
+     "Listing"
+    ]
+   }
+  },
+  "maturity_date": {
+   "labels": [
+    "Maturity Date",
+    "Stated Maturity Date",
+    "The notes will mature on"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Maturity Date"
+    ],
+    "Bank of Montreal": [
+     "Maturity Date"
+    ],
+    "Barclays": [
+     "Maturity Date"
+    ],
+    "CIBC": [
+     "Stated Maturity Date"
+    ],
+    "Citigroup": [
+     "Maturity date"
+    ],
+    "Credit Suisse": [
+     "Maturity Date"
+    ],
+    "Deutsche Bank": [
+     "Maturity Date"
+    ],
+    "HSBC": [
+     "Maturity Date"
+    ],
+    "JPMorgan": [
+     "Maturity Date"
+    ],
+    "Jefferies": [
+     "Maturity Date"
+    ],
+    "Marex": [
+     "Maturity Date"
+    ],
+    "Morgan Stanley": [
+     "Maturity date"
+    ],
+    "Nomura": [
+     "Stated Maturity Date"
+    ],
+    "Royal Bank of Canada": [
+     "Maturity Date"
+    ],
+    "Scotiabank": [
+     "Maturity Date"
+    ],
+    "Swedish Export Credit": [
+     "The notes will mature on"
+    ],
+    "UBS": [
+     "Maturity date"
+    ],
+    "Wells Fargo": [
+     "Stated Maturity Date"
+    ]
+   }
+  },
+  "no_call_months": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "observation_schedule": {
+   "labels": [
+    "Contingent Coupon Payment Dates",
+    "Contingent Interest Payment Dates",
+    "Contingent payment dates",
+    "Interest Payment Dates"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Contingent Coupon Payment Dates"
+    ],
+    "Barclays": [
+     "Contingent Coupon Payment Dates"
+    ],
+    "Citigroup": [
+     "Contingent coupon payment dates"
+    ],
+    "JPMorgan": [
+     "Interest Payment Dates"
+    ],
+    "Swedish Export Credit": [
+     "Interest Payment Dates"
+    ],
+    "TD": [
+     "Contingent Interest Payment Dates"
+    ],
+    "UBS": [
+     "Contingent payment dates"
+    ],
+    "US Bancorp": [
+     "Interest Payment Dates"
+    ],
+    "Wells Fargo": [
+     "Interest Payment Dates"
+    ]
+   }
+  },
+  "participation_rate": {
+   "labels": [
+    "Participation Rate",
+    "Upside Gearing",
+    "Upside Leverage Factor"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Upside Leverage Factor"
+    ],
+    "Deutsche Bank": [
+     "Upside Gearing"
+    ],
+    "Scotiabank": [
+     "Participation Rate"
+    ]
+   }
+  },
+  "payoff_formula_quotes": {
+   "labels": [
+    "Payment at Maturity"
+   ],
+   "by_issuer": {
+    "Barclays": [
+     "Payment at Maturity"
+    ],
+    "Nomura": [
+     "Payment at Maturity"
+    ],
+    "Wells Fargo": [
+     "Payment at Maturity"
+    ]
+   }
+  },
+  "price_to_public_pct": {
+   "labels": [
+    "Initial public offering price",
+    "Issue Price",
+    "Original Issue Price (Price to Public)",
+    "Price to Public",
+    "Public Offering Price"
+   ],
+   "by_issuer": {
+    "(no listed issuer)": [
+     "Price to Public"
+    ],
+    "Deutsche Bank": [
+     "Issue Price"
+    ],
+    "Jefferies": [
+     "Issue Price",
+     "Public Offering Price"
+    ],
+    "Morgan Stanley": [
+     "Issue price"
+    ],
+    "Nomura": [
+     "Original Issue Price (Price to Public)"
+    ],
+    "Swedish Export Credit": [
+     "Initial public offering price",
+     "Issue Price"
+    ],
+    "TD": [
+     "Public Offering Price"
+    ],
+    "UBS": [
+     "Issue price"
+    ]
+   }
+  },
+  "pricing_date": {
+   "labels": [
+    "Date of this pricing supplement",
+    "Pricing Date",
+    "Pricing Supplement Dated",
+    "Trade Date"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Pricing Date",
+     "Pricing Supplement Dated"
+    ],
+    "Bank of Montreal": [
+     "Pricing Date",
+     "Pricing Supplement dated"
+    ],
+    "CIBC": [
+     "Pricing Date"
+    ],
+    "Citigroup": [
+     "Pricing date"
+    ],
+    "Credit Suisse": [
+     "Trade Date"
+    ],
+    "Deutsche Bank": [
+     "Trade Date"
+    ],
+    "HSBC": [
+     "Pricing Date"
+    ],
+    "JPMorgan": [
+     "Pricing Date"
+    ],
+    "Jefferies": [
+     "Pricing Date"
+    ],
+    "Marex": [
+     "Pricing Date"
+    ],
+    "Morgan Stanley": [
+     "Pricing date"
+    ],
+    "Nomura": [
+     "Trade Date"
+    ],
+    "Royal Bank of Canada": [
+     "Trade Date"
+    ],
+    "Scotiabank": [
+     "Trade Date"
+    ],
+    "Swedish Export Credit": [
+     "Date of this pricing supplement"
+    ],
+    "UBS": [
+     "Pricing date"
+    ],
+    "US Bancorp": [
+     "Trade Date"
+    ],
+    "Wells Fargo": [
+     "Pricing Date"
+    ]
+   }
+  },
+  "principal_at_risk": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "proceeds_to_issuer_pct": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "product_archetype": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "product_supplement_ref": {
+   "labels": [
+    "Product Supplement No."
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Product Supplement No."
+    ]
+   }
+  },
+  "prospectus_date": {
+   "labels": [
+    "Prospectus dated"
+   ],
+   "by_issuer": {
+    "Bank of America": [
+     "Prospectus dated"
+    ]
+   }
+  },
+  "prospectus_supplement_date": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "protection_type": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "registration_number": {
+   "labels": [
+    "Registration No.",
+    "Registration Number",
+    "Registration Statement No."
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Registration Statement No."
+    ],
+    "Barclays": [
+     "Registration No."
+    ],
+    "CIBC": [
+     "Registration No."
+    ],
+    "Goldman Sachs": [
+     "Registration Statement No."
+    ],
+    "Swedish Export Credit": [
+     "Registration Number"
+    ],
+    "UBS": [
+     "Registration Statement No."
+    ]
+   }
+  },
+  "structuring_fee_pct": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "tenor_months": {
+   "labels": [
+    "Term",
+    "The notes have a term of thirteen years"
+   ],
+   "by_issuer": {
+    "Marex": [
+     "Term"
+    ],
+    "Wells Fargo": [
+     "The notes have a term of thirteen years"
+    ]
+   }
+  },
+  "total_fees_pct": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "underlyings": {
+   "labels": [
+    "Initial Level",
+    "Initial Underlying Level",
+    "Initial Value",
+    "Linked to the iShares ® Global Clean Energy ETF",
+    "Reference Asset",
+    "Reference Assets",
+    "The SPDR ® S&P ® Metals & Mining ETF (the “XME Fund”)",
+    "The VanEck ® Gold Miners ETF (the “GDX Fund”)",
+    "Underlier",
+    "Underlying",
+    "Underlying Asset",
+    "Underlying equity",
+    "Underlying shares",
+    "Underlying stock",
+    "Underlyings"
+   ],
+   "by_issuer": {
+    "Bank of Montreal": [
+     "Initial Level",
+     "Underlying Asset"
+    ],
+    "Barclays": [
+     "Reference Assets",
+     "The SPDR ® S&P ® Metals & Mining ETF (the “XME Fund”)",
+     "The VanEck ® Gold Miners ETF (the “GDX Fund”)"
+    ],
+    "CIBC": [
+     "Linked to the iShares ® Global Clean Energy ETF",
+     "Reference Asset"
+    ],
+    "Citigroup": [
+     "Underlying shares"
+    ],
+    "Credit Suisse": [
+     "Underlyings"
+    ],
+    "Deutsche Bank": [
+     "Initial Underlying Level",
+     "Underlying"
+    ],
+    "HSBC": [
+     "Reference Asset"
+    ],
+    "JPMorgan": [
+     "Underlyings"
+    ],
+    "Jefferies": [
+     "Initial Value"
+    ],
+    "Marex": [
+     "Initial Value",
+     "Reference Asset"
+    ],
+    "Morgan Stanley": [
+     "Underlying stock"
+    ],
+    "Nomura": [
+     "Initial Value",
+     "Reference Asset"
+    ],
+    "Royal Bank of Canada": [
+     "Underlier"
+    ],
+    "Scotiabank": [
+     "Initial Value",
+     "Reference Asset"
+    ],
+    "TD": [
+     "Reference Assets"
+    ],
+    "UBS": [
+     "Underlying equity"
+    ]
+   }
+  }
+ },
+ "retired": {
+  "has_no_call_period": {
+   "labels": [
+    "cannot be redeemed for approximately the first six months"
+   ],
+   "by_issuer": {
+    "Barclays": [
+     "cannot be redeemed for approximately the first six months"
+    ]
+   }
+  },
+  "initial_valuation_date": {
+   "labels": [
+    "Initial Valuation Date"
+   ],
+   "by_issuer": {
+    "Barclays": [
+     "Initial Valuation Date"
+    ]
+   }
+  },
+  "is_decrement_index": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "protection_pct": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "return_basis": {
+   "labels": [],
+   "by_issuer": {}
+  },
+  "terms_status": {
+   "labels": [
+    "Pricing supplement dated"
+   ],
+   "by_issuer": {
+    "Jefferies": [
+     "Pricing supplement dated"
+    ]
+   }
+  }
+ },
+ "items_seen": 1417,
+ "labels_dropped": 454,
+ "unmapped_concepts": {
+  "academy_securities_inc_allocation": 1,
+  "adjustment_factor": 2,
+  "agency_agreement_date": 1,
+  "agent_commission_amount_per_1000": 1,
+  "agent_principal_purchase_terms": 1,
+  "agent_underwriting_description": 1,
+  "agents_commissions_total_amount": 2,
+  "agents_total_principal_amount": 1,
+  "aggregate_fees_commissions_amount": 1,
+  "aggregate_price_to_public": 1,
+  "aggregate_proceeds_to_issuer": 1,
+  "allocated_base_weight_cap_and_floor_pct": 1,
+  "allocated_base_weight_daily_change_limit_pct": 1,
+  "amerivet_securities_inc_allocation": 1,
+  "amount": 1,
+  "amounts_total_table": 1,
+  "anti_dilution_adjustment_stock_dividends": 1,
+  "anti_dilution_adjustment_stock_splits_and_reverse_stock_splits": 1,
+  "auditor_name": 1,
+  "autocall_payoff_per_1000": 1,
+  "autocall_review_dates": 2,
+  "autocallability_explicit": 1,
+  "automatic_call": 1,
+  "automatic_call_description": 2,
+  "automatic_redemption_payment_timing": 1,
+  "average_backtested_note_irr_5yr_examples_pct": 1,
+  "average_backtested_note_irr_examples_pct": 1,
+  "backtest_data_range": 1,
+  "backtest_until_and_realized_after_date": 1,
+  "backtested_pct_called_before_maturity_examples": 1,
+  "backtested_pct_lost_principal_examples": 1,
+  "barclays_capital_inc_allocation": 1,
+  "barrier_values_by_underlying": 2,
+  "base_index_signal_weightings": 1,
+  "base_rate_and_if_applicable_related_interest_periods": 1,
+  "benchmark_treasury_security": 1,
+  "bloomberg_ticker": 1,
+  "bnp_paribas_securities_corp_allocation": 1,
+  "bofa_securities_inc_allocation": 1,
+  "book_entry": 2,
+  "buffer_value_amount": 3,
+  "buffer_value_pct_of_initial": 2,
+  "business_day_convention_interest_payment": 2,
+  "business_day_definition": 2,
+  "business_day_location": 1,
+  "calculation_about_estimated_initial_value_disclosure": 1,
+  "calculation_day_postponement_rule": 1,
+  "calculation_days_schedule": 1,
+  "call_barrier_value": 1,
+  "call_notice_days": 1,
+  "call_observation_date_2": 1,
+  "call_observation_date_3": 1,
+  "call_observation_dates_definition": 1,
+  "call_observation_schedule": 3,
+  "call_payment_amounts_by_date": 4,
+  "call_payment_date": 2,
+  "call_payment_dates_definition": 2,
+  "call_payment_dates_description": 2,
+  "call_payment_formula": 1,
+  "call_premium_amount": 1,
+  "call_premium_percent_by_date": 4,
+  "call_price_per_security": 1,
+  "call_return_pct": 1,
+  "call_settlement_date": 1,
+  "call_settlement_date_definition": 2,
+  "call_valuation_dates": 1,
+  "call_value_numeric_rty": 1,
+  "canadian_bail_in_status": 2,
+  "canadian_investor_eligibility": 1,
+  "cash_settlement_terms": 5,
+  "cik": 3,
+  "citigroup_global_markets_inc": 1,
+  "class_a_certificate": 4,
+  "class_aa_certificate": 4,
+  "clearance_and_settlement": 1,
+  "closing_value_definition": 5,
+  "concession_to_selling_group_members_heading": 1,
+  "conflicts_of_interest": 2,
+  "consent_to_bail_in_power": 3,
+  "contact_morgan_stanley_wealth_management": 1,
+  "contingent_coupon_with_memory_definition": 1,
+  "contingent_interest_barrier_values": 2,
+  "contingent_interest_observation_dates": 1,
+  "contingent_minimum_return_pct": 1,
+  "coupon_barrier_event_definition": 1,
+  "coupon_barrier_ndx_level": 1,
+  "coupon_observation_schedule": 2,
+  "coupon_payment_dates_schedule": 3,
+  "coupon_payment_frequency_description": 2,
+  "coupon_threshold_and_barrier_value": 1,
+  "coupon_trigger_values_by_underlying": 2,
+  "coupon_type_inferred": 1,
+  "credit_agricole_securities_usa_inc": 1,
+  "cusip_90932w_aa1": 1,
+  "cusip_90932w_ab9": 1,
+  "cusip_and_isin": 1,
+  "cusips_on_example_3yr_table": 1,
+  "cusips_on_example_5yr_table": 1,
+  "day_count_convention": 3,
+  "dealer_commissions_statement_per_note": 1,
+  "dealer_concession_per_security": 1,
+  "dealer_hedging_profits_statement": 1,
+  "dealer_purchase_fee_per_10": 1,
+  "debt_status_description": 2,
+  "decay_factor_1": 1,
+  "decay_factor_2": 1,
+  "decrement_applied_daily": 1,
+  "decrement_rate_per_annum": 1,
+  "defeasance": 1,
+  "definition_trading_day": 1,
+  "delivery_instructions": 2,
+  "delta_one_determination": 1,
+  "deposit_insurance_status": 1,
+  "determination_closing_price_definition": 1,
+  "determination_dates": 2,
+  "deutsche_bank_securities_inc": 1,
+  "discount_note_definition_rule1": 1,
+  "discount_note_definition_rule2": 1,
+  "discount_to_brokers_dealers_heading": 1,
+  "discounts_and_commissions_per_security": 1,
+  "discounts_and_commissions_percent": 1,
+  "distribution_agent_conflict_of_interest": 1,
+  "distribution_agreement_date": 1,
+  "distribution_morgan_stanley_wealth_management": 1,
+  "distribution_participant_entry_marex": 1,
+  "distribution_participants_details": 1,
+  "distribution_supplemental_named_dealer": 1,
+  "document_date": 1,
+  "document_subtype": 1,
+  "document_title": 1,
+  "document_type": 1,
+  "downside_exposure_description": 1,
+  "downside_leverage_factor": 3,
+  "downside_threshold": 4,
+  "dtc_delivery_date_approx": 1,
+  "earliest_autocall_date": 1,
+  "early_redemption": 1,
+  "early_redemption_amount_formula": 1,
+  "early_redemption_payment": 2,
+  "early_redemption_terms": 1,
+  "eea_retail_sales_prohibition": 1,
+  "ending_value_definition": 1,
+  "estimated_initial_value_absolute": 1,
+  "estimated_reimbursement_period_in_secondary_market": 1,
+  "estimated_value_basis_description": 1,
+  "estimated_value_description": 1,
+  "estimated_value_disclaimer": 1,
+  "estimated_value_internal_funding_rate_note": 1,
+  "estimated_value_methodology": 1,
+  "estimated_value_qualifier": 1,
+  "estimated_value_statement_qualitative": 1,
+  "estimated_value_text": 1,
+  "estimated_value_usd_per_note": 4,
+  "example1_calculation": 1,
+  "example1_call_payment_per_note": 1,
+  "example1_cash_settlement_if_called": 1,
+  "example2_cash_settlement_final_ge_initial": 1,
+  "example3_calculation": 1,
+  "example3_cash_settlement_with_contingent_minimum": 1,
+  "example3_maturity_payment": 2,
+  "example4_cash_settlement_between_buffer_and_initial": 1,
+  "example_1_underlier_return": 1,
+  "example_4_calculation_cap_applied": 1,
+  "example_called_if_at_or_above_call_value": 1,
+  "example_contingent_coupon_amount": 1,
+  "example_contingent_coupon_totals_table_3": 1,
+  "example_contingent_interest_payment_amount": 1,
+  "example_coupon_return_percent": 1,
+  "example_final_value_50_result": 1,
+  "example_final_value_zero_result": 1,
+  "example_maturity_payment_below_threshold": 1,
+  "example_no_coupon_if_below_coupon_barrier": 1,
+  "example_not_called_but_coupon_paid": 1,
+  "example_priced_on_date": 1,
+  "example_trade_date": 1,
+  "exchange_listing": 1,
+  "exchange_ratio_formula": 1,
+  "expected_issue_date": 1,
+  "face_amount": 1,
+  "february_28_2020": 1,
+  "filing_date": 1,
+  "final_review_date": 1,
+  "finra_rule_5121_conflict_disclosure": 1,
+  "first_interest_period": 1,
+  "first_optional_redemption_date": 1,
+  "fixed_rate_callable_notes": 1,
+  "fixed_sales_commission_per_10": 1,
+  "fixed_structuring_fee_per_10": 1,
+  "fomc_signal_timing": 1,
+  "fomc_signal_values": 1,
+  "footnote_1": 1,
+  "footnote_2": 1,
+  "form_type": 1,
+  "fund_closing_price_definition": 1,
+  "fund_ticker": 1,
+  "further_issues_clause": 1,
+  "gdx_initial_value": 1,
+  "general_terms_supplement_reference": 1,
+  "global_master_note_practice": 1,
+  "goldman_sachs_co_llc": 1,
+  "governing_law": 1,
+  "guarantee": 1,
+  "historical_table_date_range": 1,
+  "hypothetical_autocall_barrier_pct": 1,
+  "hypothetical_barrier_value": 2,
+  "hypothetical_call_price_example": 1,
+  "hypothetical_call_return_pct": 1,
+  "hypothetical_call_value": 1,
+  "hypothetical_contingent_coupon_amount": 1,
+  "hypothetical_coupon_barrier_pct": 1,
+  "hypothetical_coupon_threshold_pct": 1,
+  "hypothetical_downside_threshold_pct": 1,
+  "hypothetical_example_3_showing_loss": 1,
+  "hypothetical_examples_present": 7,
+  "hypothetical_examples_stated_principal_amount_restate": 1,
+  "hypothetical_initial_value": 7,
+  "hypothetical_interest_barrier_examples": 1,
+  "hypothetical_payment_in_table": 1,
+  "hypothetical_positive_maturity_payment_examples": 1,
+  "hypothetical_threshold_pct": 1,
+  "hypothetical_trigger_value_examples": 1,
+  "hypothetical_upside_gearing": 1,
+  "index_eligibility_three_month_adv": 1,
+  "index_launch_date_and_base_values": 1,
+  "index_live_date": 1,
+  "index_name_full": 1,
+  "index_rebalancing_schedule": 1,
+  "index_sponsor": 1,
+  "index_ticker_or_abbreviation": 1,
+  "initial_delivery_settlement_days": 1,
+  "initial_level_definition": 1,
+  "initial_maximum_commitment_amount_under_liquidity_facility_heading": 1,
+  "initial_maximum_commitment_class_a_amount": 1,
+  "initial_maximum_commitment_class_aa_amount": 1,
+  "initial_non_t2_settlement_note": 1,
+  "initial_price": 2,
+  "initial_settlement_cycle": 1,
+  "initial_share_price": 2,
+  "interest_barrier_by_underlying": 3,
+  "interest_day_count_basis": 1,
+  "interest_rate": 3,
+  "interest_review_dates": 1,
+  "investment_description_heading": 1,
+  "investor_considerations_summary": 1,
+  "investor_suitability_bullets_summary": 1,
+  "issue_series": 2,
+  "issue_title_and_size": 1,
+  "issuer_call_definition": 1,
+  "issuer_estimated_value": 6,
+  "issuer_estimated_value_explanation": 1,
+  "issuer_indemnification_of_managers": 1,
+  "issuer_marketing_fee_per_security": 1,
+  "j_p_morgan_securities_llc": 1,
+  "joint_lead_managers": 1,
+  "knock_in_event_definition": 1,
+  "last_optional_redemption_date": 1,
+  "least_performing_percentage_change_definition": 1,
+  "least_performing_reference_asset_definition": 2,
+  "least_performing_underlying_definition": 2,
+  "least_performing_underlying_return_definition": 1,
+  "legal_counsel": 2,
+  "legal_opinion_summary": 1,
+  "leverage_daily_change_cap_pct": 1,
+  "leverage_factor_cap_pct": 1,
+  "leverage_factor_formula": 1,
+  "linked_to_least_performing_description": 1,
+  "liquidation_event_definition": 1,
+  "listing_application_and_venue": 4,
+  "loop_capital_markets_llc": 1,
+  "loss_per_1pct_excess_decline_pct_of_principal": 1,
+  "loss_taper_below_threshold": 1,
+  "make_whole_spread_over_treasuries_heading": 1,
+  "managers_pay_expenses": 1,
+  "market_disruption_and_postponement_reference": 1,
+  "market_disruption_event_definition_summary": 1,
+  "market_maker_obligation_disclaimer": 1,
+  "market_making_premium_period": 1,
+  "marketing_description": 1,
+  "material_tax_reference": 1,
+  "maturity_exposure_below_threshold_note": 1,
+  "maturity_month_year_description": 1,
+  "max_daily_leverage_change_pct": 1,
+  "max_exposure_pct": 1,
+  "maximum_principal_loss_pct": 4,
+  "maximum_redemption_amount": 2,
+  "mean_reversion_cap_pct_and_floor_pct": 1,
+  "mean_reversion_lookback_days": 1,
+  "mean_reversion_multiplier": 1,
+  "mean_reversion_target_vol_pct": 1,
+  "method_of_payment": 1,
+  "minimum_initial_investment_amount": 1,
+  "minimum_maturity_period": 1,
+  "mizuho_securities_usa_llc": 1,
+  "monitoring_period_definition": 1,
+  "morgan_stanley_co_llc": 1,
+  "mufg_securities_americas_inc": 1,
+  "natixis_securities_americas_llc": 1,
+  "natwest_markets_securities_inc": 1,
+  "ni_33_105_disclosure_statement": 1,
+  "no_call_start_date": 1,
+  "not_fdic_insured_statement": 2,
+  "not_listed_statement": 1,
+  "note_title": 1,
+  "notes_interest_or_coupons_flag": 2,
+  "notice_argentina": 1,
+  "notice_british_virgin_islands": 1,
+  "notice_chile": 1,
+  "notice_panama": 1,
+  "notice_paraguay": 1,
+  "notice_regarding_resolution_measures_bail_in": 1,
+  "notice_to_canadian_investors": 1,
+  "notice_to_singapore_investors": 1,
+  "observation_date": 1,
+  "observation_dates": 3,
+  "observation_period_definition": 1,
+  "observation_value_definition": 2,
+  "offering_agent": 1,
+  "offering_description_and_aggregate_amount": 1,
+  "optional_redemption_dates_schedule": 2,
+  "optional_redemption_description": 2,
+  "original_issue_price": 1,
+  "original_offering_price": 4,
+  "our_estimated_value_on_pricing_date_per_security": 1,
+  "pass_through_trust_name": 1,
+  "paying_agent": 1,
+  "payment_business_day_postponement": 1,
+  "payment_currency_symbol": 1,
+  "payment_not_guaranteed_note": 1,
+  "payment_upon_issuer_call": 1,
+  "payments_subject_to_issuer_credit_risk": 1,
+  "percent_100": 2,
+  "percentage_change_definition": 1,
+  "performance_data_source_and_date": 1,
+  "performance_factor_definition": 1,
+  "performance_factor_formula_text": 1,
+  "performance_figures_basis": 1,
+  "placement_agents_fee_cap_per_1000": 1,
+  "placement_agents_forgo_fees_for_fiduciary_accounts": 1,
+  "positive_capped_payment_rule": 1,
+  "positive_uncapped_payment_formula": 1,
+  "postponement_and_market_disruption": 2,
+  "potential_redemption_dates": 1,
+  "pricing_supplement_number": 3,
+  "pricing_supplement_number_and_date": 2,
+  "principal_amount": 10,
+  "principal_loss_risk_statement": 1,
+  "principal_protection_condition": 1,
+  "principal_repayment_conditional_flag_description": 1,
+  "proceeds_pct": 2,
+  "proceeds_pct_before_expenses": 1,
+  "proceeds_to_issuer_combined": 4,
+  "proceeds_to_issuer_total": 4,
+  "proceeds_usd_before_expenses": 1,
+  "product_long_description": 1,
+  "product_long_title": 1,
+  "product_name": 1,
+  "product_series_senior": 1,
+  "product_series_subordinated": 1,
+  "product_supplement_date": 1,
+  "product_supplement_prospectus_references": 1,
+  "program_amount_unlimited_statement": 1,
+  "program_name": 2,
+  "prospectus_reference": 4,
+  "prospectus_request_contact_goldman_sachs": 1,
+  "prospectus_request_contact_morgan_stanley": 1,
+  "protection_type_inferred": 1,
+  "purchase_currency_conversion_deadline": 1,
+  "rate_0_20_pct": 1,
+  "rate_0_25_pct": 3,
+  "rate_0_50_pct": 2,
+  "rate_5_450_pct": 1,
+  "rate_5_875_pct": 1,
+  "raymond_james_associates_inc": 1,
+  "realized_volatility_measurement_method": 1,
+  "redemption_amount": 1,
+  "redemption_date": 1,
+  "redemption_notice_period": 2,
+  "redemption_price_description": 3,
+  "redemption_price_pct": 1,
+  "redemption_subject_to_regulatory_approval": 1,
+  "reference_asset_sec_identifiers": 1,
+  "reference_key_terms_autocall": 1,
+  "reference_return_definition": 4,
+  "reference_return_threshold_for_downside_exposure": 1,
+  "reference_sponsors": 1,
+  "referral_fee_per_1000": 1,
+  "registration_fee_amount": 2,
+  "registration_fee_note": 1,
+  "registration_fee_section_heading": 1,
+  "registration_numbers": 2,
+  "registration_statement_filed_statement": 1,
+  "regular_record_date": 2,
+  "regulatory_approval_disclaimer": 1,
+  "regulatory_reference_rule_15c6_1": 1,
+  "related_supplements_and_prospectus_citation": 1,
+  "relevant_stock_exchange_definition": 1,
+  "reoffer_yield": 1,
+  "return_limited_to_coupons_statement": 1,
+  "review_date": 1,
+  "review_date_frequency": 1,
+  "rounding_contingent_interest": 1,
+  "rounding_maturity_payment": 1,
+  "rule_15c6_1_reference": 1,
+  "rule_filed_pursuant_to": 1,
+  "sec_account_balance": 1,
+  "sec_account_remaining_balance": 1,
+  "sec_website": 1,
+  "secondary_market_initial_predetermined_period": 1,
+  "secondary_market_maker_statement": 1,
+  "secondary_market_pricing_note_wfs_four_month_uplift": 1,
+  "secondary_market_settlement_convention": 1,
+  "secondary_market_three_month_temp_upward_adjustment": 2,
+  "securities_section_heading": 1,
+  "security_performance_factor_definition": 1,
+  "security_rank_and_guarantee_statement": 1,
+  "security_series_name": 1,
+  "security_status_unsecured": 1,
+  "security_title": 2,
+  "selected_dealers_commission": 2,
+  "selling_agent": 1,
+  "selling_commission_per_1000": 1,
+  "selling_concession_cap": 1,
+  "selling_restrictions_eaa_retail": 1,
+  "senior_preferred": 1,
+  "senior_unsecured_maturity_ref": 1,
+  "series": 1,
+  "series_a_prospectus_supplement_date": 1,
+  "series_name": 1,
+  "series_program_name": 1,
+  "settlement_cycle": 1,
+  "settlement_date": 3,
+  "settlement_date_and_cycle": 1,
+  "settlement_heading": 1,
+  "settlement_instructions": 2,
+  "sfa_sections_referenced": 1,
+  "share_adjustment_factor_initial": 1,
+  "share_performance_factor": 1,
+  "share_return": 1,
+  "signatories": 2,
+  "singapore_product_classification": 1,
+  "small_negative_payment_rule": 1,
+  "smbc_nikko_securities_america_inc": 1,
+  "sovereign_non_guarantee_statement": 1,
+  "spread_to_benchmark_treasury": 1,
+  "stabilization_period_limit": 1,
+  "stated_principal_amount": 4,
+  "stated_principal_amount_per_note_repeated": 1,
+  "statute_of_limitations_for_claims": 1,
+  "structuring_fee_per_security": 1,
+  "supplement_addendum_date": 1,
+  "supplyment_reference_1": 1,
+  "target_volatility_index_volatility_target": 1,
+  "temporary_adjustment_period": 1,
+  "temporary_upward_adjustment_to_account_statements": 1,
+  "terms_agreement_date": 1,
+  "threshold_price": 1,
+  "threshold_value_ndx_level": 1,
+  "threshold_value_numeric_rty": 1,
+  "time_to_first_review_date_months": 1,
+  "tom_first_days_count": 1,
+  "tom_signal_last_days_condition": 1,
+  "tom_signal_values": 1,
+  "total_agents_commission": 1,
+  "total_contingent_interest_payments": 2,
+  "total_proceeds_to_issuer": 4,
+  "total_selling_commissions_amount": 1,
+  "total_underwriting_discount_amount": 3,
+  "total_underwriting_fee_amount": 1,
+  "trade_date": 3,
+  "trading_day_definition": 1,
+  "treatment_for_us_federal_income_tax_purposes": 1,
+  "trigger_barrier_values_5yr_pct": 1,
+  "trigger_barrier_values_pct": 1,
+  "trigger_event_definition": 2,
+  "trigger_event_observation_frequency_pct": 1,
+  "trigger_observation_dates_listed": 1,
+  "trigger_value_russell2000": 1,
+  "trigger_value_sp500": 1,
+  "trigger_value_xop": 1,
+  "trustee_name": 2,
+  "trustee_paying_agent_transfer_agent": 1,
+  "type_of_notes": 2,
+  "underlying_description": 1,
+  "underlying_index_description": 2,
+  "underlying_return_formula": 2,
+  "underlying_supplement_date": 1,
+  "underlying_ticker": 3,
+  "underwriter": 2,
+  "underwriters_heading": 1,
+  "underwriting_commission_amount": 1,
+  "underwriting_discounts_total": 2,
+  "underwriting_fee_footnote_text": 1,
+  "united_defined_term": 1,
+  "unpaid_coupon_amount_definition": 1,
+  "unsecured_not_deposits_statement": 1,
+  "use_of_proceeds": 1,
+  "validity_counsel": 3,
+  "valuation_components_definition": 1,
+  "valuation_dates": 1,
+  "wfa_distribution_fee_per_security": 1,
+  "worst_performing_underlying_definition": 1,
+  "xme_initial_value": 1
+ }
+}

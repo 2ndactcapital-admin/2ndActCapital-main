@@ -171,3 +171,25 @@ def channel_tally(staged: list[dict]) -> dict:
                     "fee_pct_avg": (sum(fees) / len(fees)) if fees else None})
     out.sort(key=lambda r: (-r["notes"], r["participant"] or ""))
     return {"rows": out}
+
+
+def match_distribution(members: list[dict], participants: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Annotate every member of a resolved ``distribution`` list with the
+    participant it matches (by canonical name or alias, after normalisation).
+    Returns (members, unmatched). An unmatched member stays IN the list with
+    ``participant_id`` None — it is reported, never dropped."""
+    idx = _index(participants)
+    out, unmatched = [], []
+    for m in members or []:
+        if not isinstance(m, dict):
+            continue
+        row = dict(m)
+        p = idx.get(normalize_name(m.get("name")))
+        if p is None:
+            row.update({"participant_id": None, "canonical_name": None, "matched": False})
+            unmatched.append({"name": m.get("name"), "role": m.get("role"), "source": "distribution"})
+        else:
+            row.update({"participant_id": str(p["id"]), "canonical_name": p["canonical_name"],
+                        "participant_type": p["participant_type"], "matched": True})
+        out.append(row)
+    return out, unmatched

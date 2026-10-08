@@ -9,9 +9,13 @@ this package writes to portfolio.securities_global or
 portfolio.securities_global_note_terms — B2 promotes.
 
 Modules:
-    schema      registry-driven field spec, JSON schema, Pydantic model, normalisation
+    schema      registry-driven field spec (the registry is the ONLY source), list members, ranges,
+                JSON schema, Pydantic model, normalisation
     documents   load a stored filing (R2, gzip or identity) and map quotes to raw-HTML offsets
-    rules       label-anchored rules for labeled fields
+    rules       label-anchored rules for labeled fields, ranges, the hypothetical table
+    label_dictionary  the per-bank label dictionary, GENERATED from an inventory run
+    derive      tenor, max principal loss, decision B's unstated estimated-value unit
+    checks      self-checks that send a note to needs_review with a reason
     edgartools_reader   EdgarTools on the STORED HTML with the network blocked
     trim        heading-rule trimming + the recall measure
     proxy       the ONE HTTP chokepoint for ensemble calls through the LiteLLM proxy

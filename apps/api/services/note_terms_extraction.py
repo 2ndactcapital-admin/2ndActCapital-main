@@ -80,6 +80,20 @@ from services.note_terms_validators import cusip_checksum, run_numeric_validator
 
 TERMS_TABLE = "portfolio.securities_global_note_terms"
 REGISTRY_TABLE = "portfolio.note_terms_field_registry"
+
+# notefields.structural: the registry now holds the v3 B1 field list too (live
+# and retired rows). This legacy path writes the FIXED columns of
+# portfolio.securities_global_note_terms — one per ORIGINAL registry key — so it
+# reads exactly those keys, live or retired, and nothing else. A v3 rename
+# (coupon_rate -> coupon_rate_pa, ...) adds a row; it never changes what this
+# path extracts or writes. securities_global_note_terms is B2's to migrate.
+LEGACY_FIELD_KEYS: tuple[str, ...] = (
+    "autocall_barrier_pct", "autocall_frequency", "basket_type", "cap_pct", "coupon_barrier_pct",
+    "coupon_rate", "final_valuation_date", "has_no_call_period", "initial_valuation_date",
+    "is_decrement_index", "no_call_months", "notional_currency", "participation_rate",
+    "product_archetype", "protection_pct", "protection_type", "return_basis", "tenor_years",
+    "terms_status",
+)
 FILINGS_TABLE = "portfolio.reference_filings"
 SECURITIES_TABLE = "portfolio.securities_global"
 IDENTIFIERS_TABLE = "portfolio.securities_global_identifiers"
@@ -179,8 +193,10 @@ async def load_registry(conn) -> list[NoteTermsFieldRegistryEntry]:
         SELECT field_key, display_label, data_type, applies_to_archetypes,
                hazard_field, created_at
         FROM {REGISTRY_TABLE}
+        WHERE field_key = ANY($1::text[])
         ORDER BY field_key
-        """
+        """,
+        list(LEGACY_FIELD_KEYS),
     )
     return [
         NoteTermsFieldRegistryEntry(

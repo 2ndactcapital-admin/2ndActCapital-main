@@ -1,0 +1,20 @@
+notefields.structural — 2026-10-08
+STATUS: code + migrations done; verify WRITTEN, NOT RUN (operator runs it). HELD for manual review.
+
+Task 1 findings
+ 1a registry readers: schema.build_field_specs/load_registry_rows (schema.py), routers/note_extraction_admin.py (gold screen),
+    scripts/_note_extraction_common.py (pilot/eval harness), services/edgar_inventory.py (inventory + mapping check),
+    scripts/run_edgar_inventory.py, services/note_terms_extraction.py (LEGACY, fixed columns). B1 extension list lived in schema._EXTENSIONS.
+ 1b readings.value / staged.resolved_value / gold.value are all jsonb -> lists and ranges fit, no new column.
+ 1c rows on renamed keys: 0 (readings, staged, gold). 58 legacy readings: protection_type 36, autocall_frequency 10,
+    basket_type 2 (live) + is_decrement_index 2, return_basis 4, terms_status 4 (retired, mapped). FIND: legacy values
+    'basket' and autocall 'none' are outside the v3 vocabularies (kept as history).
+ 1d every platform_model_catalog entry has a proxy price today; only Jev (not a catalog model) is unpriced.
+
+Migrations applied live via MCP: notefields_widen_checks, notefields_registry_v3.
+Registry: 59 live (47 model, 10 rules, 2 derived), 14 retired, 27 critical (= ★ set).
+Label dictionary generated: 1417 items, 50 fields, 22 issuer groups, 454 labels dropped.
+Offline dry run of the verify's pure sections: 73 PASS / 0 FAIL. Cascade fixtures in memory: consistent -> verified,
+inconsistent -> all 5 self-checks fire. DB-writing sections NOT run.
+Behaviour change: compare_field treats "both readers absent + a verified rules value" as disputed.
+Stale prior verify: verify_noteextractb1 (confirmed).

@@ -805,6 +805,41 @@ async def _execute_chain(
                 )
                 raise AIModelNotAuthorizedError(detail)
 
+        # notefields.structural — a public_data_only catalog model (the OpenAI
+        # project that shares data in exchange for free usage) never serves an
+        # org-scoped call, nor any task outside services.model_catalog.
+        # PUBLIC_DATA_TASK_KEYS. The lookup fails CLOSED: if it cannot be read,
+        # the call is refused rather than risk sending org data to such a model.
+        from services.model_catalog import (
+            PUBLIC_DATA_TASK_KEYS, public_data_only_model_ids, refuse_public_data_only,
+        )
+
+        try:
+            public_only = await public_data_only_model_ids()
+        except Exception as exc:  # noqa: BLE001
+            detail = (f"Could not read platform_model_catalog.public_data_only ({type(exc).__name__}); "
+                      f"refusing task '{task_type}' rather than risk a data-sharing model.")
+            print(f"[ai_router] {detail}")
+            raise AIModelNotAuthorizedError(detail)
+        kept = refuse_public_data_only(attempts, public_only, task_key=task_type, org_id=org_id)
+        if len(kept) != len(attempts):
+            dropped = [m for m in attempts if m not in kept]
+            print(f"[ai_router] task '{task_type}' org {org_id}: public-data-only model(s) {dropped} "
+                  f"refused (allowed only for {sorted(PUBLIC_DATA_TASK_KEYS)} with no org)")
+            if not kept:
+                detail = (f"Every model task '{task_type}' would try ({attempts}) is public-data-only and "
+                          f"this call is org-scoped or not a public-data task.")
+                await _safe_log(
+                    org_id=org_id, task_type=task_type, model_requested=primary,
+                    model_used=primary, fallback_used=False, fallback_reason=None,
+                    cost_usd=None, latency_ms=1, success=False, error_detail=detail,
+                    effort_requested=await resolve_effort(org_id, model_key),
+                    litellm_bypassed=(transport != TRANSPORT_LITELLM),
+                    bypass_reason=(transport_reason or None),
+                )
+                raise AIModelNotAuthorizedError(detail)
+        attempts = kept
+
         # litellmavailability follow-up — a 'disabled' catalog model never
         # resolves, unconditionally, regardless of org authorization (an org
         # could have authorised or even still have it assigned to this exact

@@ -128,14 +128,14 @@ def jev_accuracy(jev: dict[tuple, dict], gold: dict[tuple, str | None]) -> dict:
             "accepted_accuracy": accepted_correct / accepted if accepted else None}
 
 
-SIGNATURE_FIELDS = ("underlyings", "maturity_date", "protection_type", "protection_pct", "buffer_pct",
-                    "barrier_pct", "coupon_rate", "coupon_barrier_pct", "autocall_barrier_pct",
+SIGNATURE_FIELDS = ("underlyings", "maturity_date", "protection_type", "buffer_pct",
+                    "barrier_pct", "coupon_rate_pa", "coupon_barrier_pct", "autocall_level_pct",
                     "autocall_frequency", "basket_type", "pricing_date")
 
 
 def identical_terms_across_cusips(notes: list[dict]) -> list[dict]:
     """notes: [{"note", "cusip", "fields": {key: normalised}, "issuer",
-    "total_commissions_fees_pct", "estimated_value_pct", "fee_based_account_price_pct",
+    "total_fees_pct", "estimated_value_pct", "fee_based_account_price",
     "participants"}]. Groups notes whose payoff signature is identical but whose
     CUSIPs differ — the same terms sold through different channels."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
@@ -151,8 +151,8 @@ def identical_terms_across_cusips(notes: list[dict]) -> list[dict]:
             continue
         out.append({"issuer": issuer, "signature": dict(sig), "cusips": sorted(cusips),
                     "notes": [{"note": m["note"], "cusip": m.get("cusip"),
-                               "total_commissions_fees_pct": m.get("total_commissions_fees_pct"),
+                               "total_fees_pct": m.get("total_fees_pct"),
                                "estimated_value_pct": m.get("estimated_value_pct"),
-                               "fee_based_account_price_pct": m.get("fee_based_account_price_pct"),
+                               "fee_based_account_price": m.get("fee_based_account_price"),
                                "participants": m.get("participants")} for m in members]})
     return out

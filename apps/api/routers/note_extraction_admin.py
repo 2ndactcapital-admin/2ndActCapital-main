@@ -60,7 +60,9 @@ async def _specs(conn) -> list[schema.FieldSpec]:
 
 def _spec_out(s: schema.FieldSpec) -> dict:
     return {"key": s.key, "label": s.label, "kind": s.kind, "enum": list(s.enum) if s.enum else None,
-            "critical": s.critical, "description": s.description, "origin": s.origin}
+            "critical": s.critical, "description": s.description, "origin": s.origin,
+            "section": s.section, "value_shape": s.value_shape, "unit": s.unit,
+            "extraction_method": s.extraction_method, "trap_rule": s.trap_rule}
 
 
 # ── Gold ────────────────────────────────────────────────────────────────────

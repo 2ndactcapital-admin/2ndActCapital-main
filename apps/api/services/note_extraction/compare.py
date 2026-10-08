@@ -8,6 +8,8 @@ disagreement, an agreement whose quote cannot be found (a fabricated quote is
 rejected here), or only one usable reader — is DISPUTED and carries its
 distinct candidate values onward to Jev. Rules and EdgarTools readings join a
 disputed field's candidates; they never overrule two agreeing, verified readers.
+Two readers agreeing a field is ABSENT while a rule quotes a verified value is a
+dispute too (notefields): the labeled-field rules are never silently outvoted.
 """
 from __future__ import annotations
 
@@ -75,12 +77,20 @@ def compare_field(spec: FieldSpec, m1: Evidence | None, m2: Evidence | None,
     readers = [e for e in (m1, m2) if e is not None]
     if len(readers) == 2 and m1.normalized == m2.normalized:
         if m1.normalized is None:
-            return FieldComparison(spec, "agreed_null", None, None, [], "both readers: absent")
-        winner = next((e for e in (m1, m2) if e.supports), None)
-        if winner is not None:
-            return FieldComparison(spec, "verified_agreement", winner.value, winner, [],
-                                   "both readers agree and the quote verifies")
-        reason = "readers agree but no quote verifies (fabricated or missing quote)"
+            # notefields: a labeled field the RULES found, with a quote that
+            # verifies, is not "absent" just because both readers missed it —
+            # it is a dispute (the rule's value is a candidate), never a
+            # silent agreed-null and never an automatic rules win.
+            found = [e for e in (extra or []) if e.normalized is not None and e.supports]
+            if not found:
+                return FieldComparison(spec, "agreed_null", None, None, [], "both readers: absent")
+            reason = "both readers: absent, but an independent source quotes a value"
+        else:
+            winner = next((e for e in (m1, m2) if e.supports), None)
+            if winner is not None:
+                return FieldComparison(spec, "verified_agreement", winner.value, winner, [],
+                                       "both readers agree and the quote verifies")
+            reason = "readers agree but no quote verifies (fabricated or missing quote)"
     elif len(readers) == 2:
         reason = "readers disagree"
     else:

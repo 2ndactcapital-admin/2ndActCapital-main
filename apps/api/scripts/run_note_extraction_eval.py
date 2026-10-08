@@ -85,9 +85,10 @@ async def main(argv: list[str] | None = None) -> int:
     from services.note_extraction import (
         cascade, compare as cmp, documents, jev, metrics, participants, proxy, readers, store,
     )
-    from services.note_extraction.schema import CRITICAL_FIELDS
+    from services.note_extraction.schema import critical_keys, reader_specs
     from services.note_extraction.spend import (
-        Plan, PlannedCall, SpendCapReached, SpendTracker, estimate_call_cost, jev_cost_estimate,
+        Plan, PlannedCall, SpendCapReached, SpendTracker, apply_manual_prices, estimate_call_cost, has_price,
+        jev_cost_estimate, load_manual_prices,
     )
     from services.note_extraction.trim import estimate_tokens_chars, recall
 
@@ -95,6 +96,12 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         specs, catalog, parts = await common.load_context(conn)
         by_key = {s.key: s for s in specs}
+        rspecs = reader_specs(specs)          # the readers answer extraction_method='model' fields only
+        reader_keys = [x.key for x in rspecs]
+        CRITICAL_FIELDS = critical_keys(specs)
+        # bulk-run price guard: manual catalog prices fill a missing proxy price;
+        # a candidate with neither is BLOCKED below, never called
+        catalog = apply_manual_prices(catalog, await load_manual_prices(conn))
         G = await load_gold(conn, by_key)
         notes = sorted({n for n, _ in G["gold"]})
         print(f"gold set: {len(notes)} notes, {len(G['gold'])} hand-checked field values")
@@ -118,9 +125,10 @@ async def main(argv: list[str] | None = None) -> int:
         for tok in [t for t in args.candidates.split(",") if t.strip()]:
             dep, effort = parse_candidate(tok)
             d = catalog.get(dep)
-            if d is None or d.duplicate:
+            if d is None or d.duplicate or not has_price(d):
                 blocked.append({"candidate": tok, "reason": "not registered on the proxy" if d is None
-                                else "load-balanced over two deployments"})
+                                else "load-balanced over two deployments" if d.duplicate
+                                else "no price on the proxy and no manual price on the catalog entry"})
                 continue
             cands.append((tok, readers.ReaderConfig("model_1", dep, effort, args.max_tokens)))
         for b in blocked:
@@ -145,7 +153,7 @@ async def main(argv: list[str] | None = None) -> int:
             plan = Plan(notes=len(docs))
             for tok, cfg in cands:
                 for n, doc in docs.items():
-                    msgs, _ = readers.build_messages(specs, statics[n][0].text, filer=doc.filer_name,
+                    msgs, _ = readers.build_messages(rspecs, statics[n][0].text, filer=doc.filer_name,
                                                      form_type=doc.form_type)
                     chars = sum(len(m["content"]) for m in msgs)
                     plan.calls.append(PlannedCall(n, tok, cfg.deployment, chars, estimate_tokens_chars(chars),
@@ -170,7 +178,7 @@ async def main(argv: list[str] | None = None) -> int:
             for tok, cfg in cands:
                 for n, doc in docs.items():
                     tr = statics[n][0]
-                    call = await readers.read(cfg, specs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+                    call = await readers.read(cfg, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
                                               catalog=catalog, spend=spend,
                                               tags=[f"run:{run_id}", f"candidate:{tok}"])
                     rows = [cascade._call_row(doc, call, run_id=run_id, origin="evaluation",
@@ -178,7 +186,8 @@ async def main(argv: list[str] | None = None) -> int:
                     per_cand[tok]["calls"].append({"cost_usd": call.cost_usd, "latency_ms": call.latency_ms,
                                                    "input_tokens": call.input_tokens,
                                                    "cached_tokens": call.cached_tokens})
-                    for k, spec in by_key.items():
+                    for spec in rspecs:
+                        k = spec.key
                         if not call.usable:
                             continue
                         f = call.fields.get(k) or {}
@@ -217,14 +226,14 @@ async def main(argv: list[str] | None = None) -> int:
             for n, doc in docs.items():
                 comps = {k: cmp.compare_field(by_key[k], a.get((n, k)), b.get((n, k)),
                                               [x["evidence"] for x in (rules_r.get((n, k)), et_r.get((n, k))) if x])
-                         for k in by_key}
+                         for k in reader_keys}
                 independent = defaultdict(list)
                 for src in (rules_r, et_r):
                     for (nn, k), x in src.items():
                         if nn == n:
                             independent[k].append(x["evidence"])
-                m1 = {k: a.get((n, k)) for k in by_key}
-                flags.append(cmp.skip_second_reader_would_be_safe(sorted(CRITICAL_FIELDS & set(by_key)),
+                m1 = {k: a.get((n, k)) for k in reader_keys}
+                flags.append(cmp.skip_second_reader_would_be_safe(sorted(CRITICAL_FIELDS & set(reader_keys)),
                                                                   m1, independent, comps))
                 disputed = [c for c in comps.values() if c.outcome == "disputed"]
                 if disputed and jev_route:
