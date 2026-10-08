@@ -2,12 +2,15 @@
 
 import { useMemo } from "react";
 
+import CorrelationsPanel from "@/components/market/CorrelationsPanel";
+import KeyDatesPanel from "@/components/market/KeyDatesPanel";
 import MarketChart from "@/components/market/MarketChart";
 import { BUTTON, CONTROL, ERROR_BOX, ERROR_STYLE, EYEBROW, QUIET } from "@/components/market/marketStyles.mjs";
 import { MEASURE_SIGMA, SCALE_LINEAR, SCALE_LOG } from "@/lib/market/chartContract.mjs";
 import { prepareChartData } from "@/lib/market/chartModel.mjs";
 import { chartMeasureOptions, resolutionOptions } from "@/lib/market/chartRequest.mjs";
 import { startOfData, yearsAgo } from "@/lib/market/gridRequest.mjs";
+import { resolveDateSelection } from "@/lib/market/keyDatesModel.mjs";
 import { DEFAULT_ANCHOR_YEARS_BACK } from "@/lib/market/marketDefaults.mjs";
 import { resolveSelection } from "@/lib/market/selection.mjs";
 
@@ -31,7 +34,9 @@ const SCALES = [
  *
  * Props: catalog, selection, settings, onSettingsChange(patch), today,
  * request (buildSeriesRequest), seriesState, keyDatesState, stale,
- * initialWidth (tests).
+ * initialWidth (tests), and (mkt04c) dateSel, onPickDate(sel, anchorIso),
+ * onKeyDatesChanged(): the key-dates bar under the chart and the "What moves
+ * with it" card above the trends table render with the chart.
  */
 export default function ChartView({
   catalog,
@@ -44,6 +49,9 @@ export default function ChartView({
   keyDatesState,
   stale,
   initialWidth,
+  dateSel,
+  onPickDate,
+  onKeyDatesChanged,
 }) {
   const vocab = catalog.vocabularies ?? {};
   const measures = chartMeasureOptions(vocab);
@@ -54,6 +62,7 @@ export default function ChartView({
     () => (response ? prepareChartData(response, selection, catalog, settings.resolution) : null),
     [response, selection, catalog, settings.resolution],
   );
+  const dateSelection = useMemo(() => resolveDateSelection(dateSel ?? null, keyDatesState), [dateSel, keyDatesState]);
   const dataStart = startOfData(resolveSelection(selection, catalog));
   const setOverlay = (key, on) => onSettingsChange({ overlays: { ...settings.overlays, [key]: on } });
 
@@ -96,6 +105,17 @@ export default function ChartView({
           seriesVocab={response.vocabularies ?? {}}
           keyDates={keyDatesState}
           initialWidth={initialWidth}
+          dateSelection={dateSelection}
+          belowChart={
+            <KeyDatesPanel
+              keyDates={keyDatesState}
+              dateSel={dateSel}
+              periods={prepared.periods}
+              onPickDate={onPickDate}
+              onKeyDatesChanged={onKeyDatesChanged}
+            />
+          }
+          beforeTable={<CorrelationsPanel catalog={catalog} selection={selection} settings={settings} today={today} />}
         />
         {keyDatesState?.kind === "error" && settings.overlays?.events && (
           <p className={QUIET} data-market="key-dates-error">
@@ -178,7 +198,9 @@ export default function ChartView({
             <button
               type="button"
               className={BUTTON}
-              onClick={() => onSettingsChange({ anchor: yearsAgo(today, DEFAULT_ANCHOR_YEARS_BACK) })}
+              onClick={() =>
+                onSettingsChange({ anchor: yearsAgo(today, DEFAULT_ANCHOR_YEARS_BACK), anchorYears: DEFAULT_ANCHOR_YEARS_BACK })
+              }
             >
               {DEFAULT_ANCHOR_YEARS_BACK} years ago
             </button>

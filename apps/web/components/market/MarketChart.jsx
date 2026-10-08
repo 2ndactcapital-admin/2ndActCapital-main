@@ -5,7 +5,15 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import AnchorSlider from "@/components/market/AnchorSlider";
 import TrendsTable from "@/components/market/TrendsTable";
 import { CARD, CARD_STYLE, QUIET } from "@/components/market/marketStyles.mjs";
-import { CHART_HEIGHT, CHART_WIDTH, KEY_DATE_COLOR, buildChartModel, hoverCard } from "@/lib/market/chartModel.mjs";
+import {
+  CHART_HEIGHT,
+  CHART_WIDTH,
+  KEY_DATE_COLOR,
+  MY_DATE_COLOR,
+  SELECTED_BAND_FILL,
+  buildChartModel,
+  hoverCard,
+} from "@/lib/market/chartModel.mjs";
 import { createFrameScheduler } from "@/lib/market/chartRequest.mjs";
 import { hitTest, nearestIndex, toLogical } from "@/lib/market/hitTest.mjs";
 
@@ -24,9 +32,22 @@ const MIN_WIDTH = 520;
  * frames so a drag re-measures lines once per frame, not per pointer event.
  *
  * Props: prepared (prepareChartData), settings, onAnchorChange(iso), modes,
- * seriesVocab, keyDates (interpretKeyDates state), initialWidth (tests).
+ * seriesVocab, keyDates (interpretKeyDates state), initialWidth (tests), and
+ * (mkt04c) dateSelection (the picked key or personal date, resolved),
+ * belowChart (the key-dates bar) and beforeTable (the correlations card).
  */
-export default function MarketChart({ prepared, settings, onAnchorChange, modes, seriesVocab, keyDates, initialWidth }) {
+export default function MarketChart({
+  prepared,
+  settings,
+  onAnchorChange,
+  modes,
+  seriesVocab,
+  keyDates,
+  initialWidth,
+  dateSelection,
+  belowChart,
+  beforeTable,
+}) {
   const boxRef = useRef(null);
   const svgRef = useRef(null);
   const geomRef = useRef(null);
@@ -44,8 +65,9 @@ export default function MarketChart({ prepared, settings, onAnchorChange, modes,
         width,
         height: CHART_HEIGHT,
         hoverKey: hover?.key ?? null,
+        dateSelection: dateSelection ?? null,
       }),
-    [prepared, settings, modes, seriesVocab, keyDates, width, hover],
+    [prepared, settings, modes, seriesVocab, keyDates, width, hover, dateSelection],
   );
 
   // Pointer callbacks run outside render; they read the latest geometry here.
@@ -141,6 +163,17 @@ export default function MarketChart({ prepared, settings, onAnchorChange, modes,
             </clipPath>
           </defs>
 
+          {model.selectedBand && (
+            <rect
+              x={model.selectedBand.x0}
+              y={plot.top}
+              width={Math.max(model.selectedBand.x1 - model.selectedBand.x0, 1)}
+              height={plot.height}
+              fill={SELECTED_BAND_FILL}
+              data-chart="selected-band"
+            />
+          )}
+
           {model.regimes.map((r) => (
             <rect
               key={r.key}
@@ -208,6 +241,21 @@ export default function MarketChart({ prepared, settings, onAnchorChange, modes,
                 <title>{k.label}</title>
               </line>
             ))}
+            {model.myDateLines.map((k) => (
+              <line
+                key={k.key}
+                x1={k.x}
+                x2={k.x}
+                y1={plot.top}
+                y2={plot.bottom}
+                stroke={MY_DATE_COLOR}
+                strokeWidth={1.25}
+                strokeDasharray="3 2"
+                data-chart="my-date"
+              >
+                <title>{k.label}</title>
+              </line>
+            ))}
             {model.lines.map((l) => (
               <path
                 key={l.key}
@@ -260,9 +308,11 @@ export default function MarketChart({ prepared, settings, onAnchorChange, modes,
           <g data-chart="anchor-bar" style={{ cursor: "ew-resize" }} onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag}>
             <line x1={anchor.x} x2={anchor.x} y1={plot.top} y2={plot.bottom} stroke={NAVY} strokeWidth={1.5} />
             <rect x={anchor.x - 6} y={plot.top} width={12} height={plot.height} fill="transparent" />
-            <g transform={`translate(${anchor.flagSide === "left" ? anchor.x - 112 : anchor.x + 4} ${plot.top + 2})`}>
-              <rect width={108} height={18} rx={3} fill={NAVY} />
-              <text x={54} y={12.5} textAnchor="middle" fontSize={10.5} fill="#FFFFFF" data-chart="anchor-flag">
+            <g
+              transform={`translate(${anchor.flagSide === "left" ? anchor.x - anchor.flagWidth - 4 : anchor.x + 4} ${plot.top + 2})`}
+            >
+              <rect width={anchor.flagWidth} height={18} rx={3} fill={NAVY} />
+              <text x={anchor.flagWidth / 2} y={12.5} textAnchor="middle" fontSize={10.5} fill="#FFFFFF" data-chart="anchor-flag">
                 {anchor.flag}
               </text>
             </g>
@@ -295,6 +345,8 @@ export default function MarketChart({ prepared, settings, onAnchorChange, modes,
         </div>
       </div>
 
+      {belowChart}
+
       {model.legend.length > 0 && (
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--2a-text-secondary)]" data-chart="legend">
           {model.legend.map((item) => (
@@ -316,18 +368,24 @@ export default function MarketChart({ prepared, settings, onAnchorChange, modes,
         </ul>
       )}
 
+      {beforeTable}
+
       <TrendsTable rows={model.table} />
     </div>
   );
 }
 
 function LegendSwatch({ item }) {
-  if (item.kind === "median" || item.kind === "keyDate") {
+  if (item.kind === "median" || item.kind === "keyDate" || item.kind === "myDate") {
+    const dash = item.kind === "median" ? "5 3" : item.kind === "myDate" ? "3 2" : "2 3";
     return (
       <svg width={18} height={8} aria-hidden="true">
-        <line x1={0} x2={18} y1={4} y2={4} stroke={item.color} strokeWidth={1.5} strokeDasharray={item.kind === "median" ? "5 3" : "2 3"} />
+        <line x1={0} x2={18} y1={4} y2={4} stroke={item.color} strokeWidth={1.5} strokeDasharray={dash} />
       </svg>
     );
+  }
+  if (item.kind === "selectedPeriod") {
+    return <span aria-hidden="true" className="inline-block h-2.5 w-3.5 rounded-sm" style={{ background: item.color }} />;
   }
   if (item.kind === "bigMove") {
     return (

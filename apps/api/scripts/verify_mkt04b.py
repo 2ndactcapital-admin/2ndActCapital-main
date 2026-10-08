@@ -300,11 +300,24 @@ TEST_WHY = {
 }
 
 
+def mkt04b_suites() -> set[str]:
+    """The market suites on disk that mkt04b's own commit contains.
+
+    Pinned by mkt04c: a later sprint's suites in the same directory are run and
+    counted by that sprint's verify. Before mkt04b is committed, every suite on
+    disk. A suite mkt04b committed that is now missing still fails below."""
+    names = {p.name for p in TESTS.glob("*.test.mjs")}
+    _, sha = sprint_range()
+    if sha:
+        names &= {pathlib.PurePosixPath(f).name for f in git("ls-tree", "--name-only", sha, "apps/web/tests/market/").split()}
+    return names
+
+
 def node_tests() -> None:
     node = shutil.which("node")
     if not check(node is not None, "node is on PATH", "the UI proofs run as node:test suites"):
         return
-    present = sorted(p.name for p in TESTS.glob("*.test.mjs"))
+    present = sorted(mkt04b_suites())
     check(sorted(TEST_WHY) == present, "every market suite on disk is run here, and no listed suite is missing",
           "an unrun suite proves nothing", f"on disk={present}")
     for name, why in TEST_WHY.items():

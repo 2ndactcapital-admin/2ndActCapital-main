@@ -19,6 +19,7 @@ import { codeText, vocabText } from "./catalogModel.mjs";
 import { MEASURE_INDEX, MEASURE_SIGMA, SCALE_LOG, TRANSFORM_LEVEL } from "./chartContract.mjs";
 import { yearsAgo } from "./gridRequest.mjs";
 import { FLOATING_NOTE } from "./gridView.mjs";
+import { anchorFlagText, selectedBandRange } from "./keyDatesModel.mjs";
 import { LABEL_GAP, layoutLabels } from "./labelLayout.mjs";
 import { KIND_SECURITY } from "./marketDefaults.mjs";
 import {
@@ -67,6 +68,13 @@ export const LABEL_MAX_CHARS = 24;
 // Design tokens only; series colours are the catalog's.
 export const REGIME_FILLS = ["#E8D5A3", "#E2E8F0"];
 export const KEY_DATE_COLOR = "#C5A880";
+// mkt04c: personal dates draw darker than the reference key dates; a selected
+// range is shaded in a distinct light blue whatever the overlays.
+export const MY_DATE_COLOR = "#334155";
+export const SELECTED_BAND_FILL = "rgba(43,95,158,0.16)";
+export const FLAG_MIN_WIDTH = 108;
+export const FLAG_CHAR_WIDTH = 5.5;
+export const FLAG_PADDING = 14;
 export const PACK_COLOR = "#1B2B4B";
 
 export const STATUS_TEXT = {
@@ -81,6 +89,8 @@ export const LEGEND_TEXT = {
   band: "Middle half of the series (25th to 75th percentile)",
   median: "Median",
   keyDates: "Key dates",
+  myDates: "My date",
+  selectedPeriod: "Selected period",
   outlier: "Outside the pack",
   bigMove: "Unusually large move",
 };
@@ -198,7 +208,8 @@ function groupNotices(map, textOf) {
  * settings: {anchor, measure, scale, overlays: {events, band, emphasis}}
  * ctx: {modes (catalog vocabularies.modes), seriesVocab (series response
  *       vocabularies), keyDates (interpretKeyDates state or null), width,
- *       height, hoverKey}
+ *       height, hoverKey, dateSelection (mkt04c: keyDatesModel
+ *       resolveDateSelection, or null)}
  */
 export function buildChartModel(prepared, settings, ctx = {}) {
   const width = ctx.width ?? CHART_WIDTH;
@@ -234,6 +245,8 @@ export function buildChartModel(prepared, settings, ctx = {}) {
     axisTitle: "",
     regimes: [],
     keyDateLines: [],
+    myDateLines: [],
+    selectedBand: null,
     band: null,
     dots: [],
     labels: [],
@@ -337,13 +350,26 @@ export function buildChartModel(prepared, settings, ctx = {}) {
   model.axisTitle = `${vocabText(ctx.modes, measure)} (${monthLabel(anchorDate)}${scaleText})`;
 
   const ax = periodXs[anchorIndex];
+  const flag = anchorFlagText(anchorDate, anchorIndex, periods, ctx.dateSelection ?? null);
+  const flagWidth = Math.max(FLAG_MIN_WIDTH, Math.round(flag.length * FLAG_CHAR_WIDTH + FLAG_PADDING));
   model.anchor = {
     index: anchorIndex,
     date: anchorDate,
     x: ax,
-    flag: `Anchor · ${monthLabel(anchorDate)}`,
-    flagSide: ax + FLAG_WIDTH > plot.right ? "left" : "right",
+    flag,
+    flagWidth,
+    flagSide: ax + flagWidth + FLAG_WIDTH - FLAG_MIN_WIDTH > plot.right ? "left" : "right",
   };
+
+  // The picked range (mkt04c): shaded whether or not the events overlay is on.
+  const picked = selectedBandRange(ctx.dateSelection ?? null);
+  if (picked) {
+    const s = isoToMs(picked.start);
+    const f = isoToMs(picked.end);
+    if (s !== null && f !== null && f >= t0 && s <= t1) {
+      model.selectedBand = { x0: x.toPx(Math.max(s, t0)), x1: x.toPx(Math.min(f, t1)) };
+    }
+  }
 
   // Cohort band and median.
   if (overlays.band === true) {
@@ -389,6 +415,11 @@ export function buildChartModel(prepared, settings, ctx = {}) {
       const s = isoToMs(k.start_date);
       if (s === null || s < t0 || s > t1) continue;
       model.keyDateLines.push({ key: k.slug, x: x.toPx(s), label: k.name });
+    }
+    for (const c of kd.customDates ?? []) {
+      const s = isoToMs(c?.event_date);
+      if (s === null || s < t0 || s > t1) continue;
+      model.myDateLines.push({ key: c.id, x: x.toPx(s), label: c.name });
     }
   }
 
@@ -454,6 +485,12 @@ export function buildChartModel(prepared, settings, ctx = {}) {
       }
     });
     model.legend.push({ key: "keyDates", kind: "keyDate", label: LEGEND_TEXT.keyDates, color: KEY_DATE_COLOR });
+    if (model.myDateLines.length > 0) {
+      model.legend.push({ key: "myDates", kind: "myDate", label: LEGEND_TEXT.myDates, color: MY_DATE_COLOR });
+    }
+  }
+  if (model.selectedBand) {
+    model.legend.push({ key: "selectedPeriod", kind: "selectedPeriod", label: LEGEND_TEXT.selectedPeriod, color: SELECTED_BAND_FILL });
   }
   if (emphasis) model.legend.push({ key: "outlier", kind: "outlier", label: LEGEND_TEXT.outlier, color: PACK_COLOR });
   if (overlays.emphasis === true) model.legend.push({ key: "bigMove", kind: "bigMove", label: LEGEND_TEXT.bigMove, color: PACK_COLOR });

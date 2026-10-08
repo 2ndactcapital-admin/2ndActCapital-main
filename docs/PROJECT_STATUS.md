@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-07 (mkt04b.structural — market indicators chart: anchor
+Last updated: 2026-10-07 (mkt04c.structural — market indicators: key dates,
+My dates, saved views and the correlations panel, front end only; verify
+WRITTEN, not yet run; see the top entry). Earlier the same day: (mkt04b.structural — market indicators chart: anchor
 bar, client-side rebasing, overlays, series `stddev` field; verify WRITTEN, not
 yet run; see the top entry). Earlier the same day: (mkt04a.structural — market indicators page: Next.js
 routes, page shell, selection panel and grid; verify WRITTEN, not yet run; see
@@ -281,6 +283,123 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000000000. Market data mkt04c — key dates, My dates, saved views and the "What moves with it" correlations panel (front end); verify WRITTEN, not yet run (2026-10-07)
+
+`mkt04c.structural`. Finishes the `/market` page for internal use. It adds
+the Key dates and My dates dropdowns under the chart (add and delete your
+own dates), a "Saved views" card at the top of the left column (presets,
+your own views, save / update / delete) and the "What moves with it"
+correlations card between the chart and the trends table. Front end only: no
+backend change, no DDL, no new dependency, and the Grid tab is unchanged.
+Design: `docs/MARKET_DATA_DESIGN_V1.md`, "Key dates, views and correlations
+(front end)".
+
+**Built:**
+- Pure modules `apps/web/lib/market/{keyDatesModel,customDates,viewsModel,
+  correlationModel,viewContract}.mjs`. `viewContract.mjs` is the scan's third
+  pinned exemption: the config version, the two anchor shapes and the month
+  precision.
+- Components `apps/web/components/market/{KeyDatesBar,KeyDatesPanel,
+  CorrelationsView,CorrelationsPanel,SavedViewsView,SavedViewsPanel}.jsx`
+  and `marketClient.mjs` (the one browser request helper). Each `*View` /
+  `*Bar` is hook-free, so tests call it and fire its handlers. Each `*Panel`
+  holds state and sends what the pure modules build.
+- Edits to mkt04a/b files, all required by the features:
+  - `MarketIndicatorsView`: lifts the picked date, the view notices, `end`
+    and `anchorYears`, and wraps the left column so Saved views sits on top.
+  - `ChartPanel`: key-dates reload counter. Still exactly one
+    `fetchJson(KEY_DATES_ROUTE)`.
+  - `ChartView`: the two new panels, and the "5 years ago" button marks the
+    anchor as relative.
+  - `MarketChart`: selected-period band, personal-date lines, flag width,
+    and two slots.
+  - `chartModel`: flag text, band, personal lines and two legend entries.
+  - `chartRequest.interpretKeyDates`: also returns `customDates`,
+    `permissions` and `limits`.
+- Tests `apps/web/tests/market/{keyDatesModel,customDates,viewsModel,
+  correlationModel,mkt04cRender}.test.mjs` plus `mkt04cFixtures.mjs`: 48 new.
+  The whole market suite is 231/231.
+- `apps/api/scripts/verify_mkt04c.py`.
+
+**Task 1 discovery:**
+- All page state already lived in `ReadyView`. The plan was to keep that one
+  owner, so a view sets selection and chart settings in one step. Any anchor
+  patch from the chart drops the picked date. A pick sets anchor and
+  selection together.
+- `snapAnchorIndex` snaps to the period **on or before** a date. At month-end
+  periods, 2020-03-16 would land on FEBRUARY. A picked date therefore moves
+  the anchor to the period that CONTAINS it (the first period ending on or
+  after it), which the existing snap then keeps exactly. That gives "a
+  day-precision date lands on its month".
+- Backend contract (read-only) matches CONFIRMED REAL FACTS. The differences
+  are additive:
+  - views also publish `selection_max`, `config_max_bytes` and
+    `relative_years` (1..60), plus `anchor_types` and `selection_kinds`;
+  - custom dates also carry `updated_at`;
+  - correlations also return `lag_convention`, `warnings` and
+    `change_method`;
+  - the lag range is published at `catalog.vocabularies.limits.lag_months`.
+
+**[FIND] The personal endpoints repeat their message.** A refusal arrives as
+`{message: m, errors: [{msg: m}]}`, so mkt04a's `errorMessage` would show
+"m: m". `customDates.refusalMessage` shows a field message only when it
+differs from the headline. Text is still the server's, verbatim.
+
+**[FIND] No reason labels for correlations.** The server publishes none for
+correlation `unavailable_reason` (e.g. `insufficient_overlap`). The row
+shows the code as text through `vocabText`, which will use a server list
+if one ever appears.
+
+**[FIND] The chart has no end control.** A view's `end` is carried in page
+state, saved back unchanged and sent as the correlation window's end, but
+the chart itself is not truncated by it. No preset sets an end today.
+
+**[FIND] Views are refused on write when a key is unavailable.** POST/PUT of
+a view whose selection holds an unavailable key is a 422. Loading such a
+view skips the key, so a later Update saves the reduced selection. That is
+the user's explicit act, and loading alone never writes.
+
+**[FIND] verify_mkt04b required every `tests/market/*.test.mjs` to be in its
+own list,** so any later sprint's suite failed it. Re-pinned minimally: the
+suites on disk ∩ the suites in mkt04b's own commit (`mkt04b_suites`). A
+missing mkt04b suite still fails, and its 277 total is unchanged.
+verify_mkt04c asserts that `node_tests` and the new helper are the only
+top-level changes.
+
+**Interpretations recorded:**
+- The correlation focus defaults to the first selected series. A security
+  linked to a selected indicator is one series.
+- Requests go 300 ms after the last change of focus, lag, selection or
+  anchor. `min_periods` is left to the server.
+- r is never parsed. The bar width is the same digits read as a percentage
+  by moving the decimal point in the text ("0.8312" → 83.12%).
+- An anchor still equal to "5 years ago" (the page default, the quick button
+  or a loaded relative view) saves as `{"type": "relative", "years": N}`.
+  Any other anchor saves as a date.
+
+**Not run by this sprint (by rule):** the dev server, the production build
+and the verify. What did run: the node:test suites (231/231), and ESLint on
+lib/market, components/market and tests/market (clean). verify_mkt04a/b's
+static-scan rules were also applied to every new and changed file (clean).
+
+**OPERATOR ACTIONS:**
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_mkt04c.py`
+   (tests, scans, scope, lint and the first production build with these
+   panels).
+2. `verify_mkt04b.py` and `verify_mkt04a.py` as regressions.
+3. Signed in at `/market`, Chart tab:
+   - pick a range key date and switch Start / End;
+   - add a personal date: a duplicate shows the 409 message, and the inputs
+     stay;
+   - delete it (two steps);
+   - save, load, update and delete a view;
+   - load a preset;
+   - change the correlation focus and lag.
+4. **Launch blocker still open:** per-tenant gating of Yahoo-sourced and
+   third-party-licensed series.
+
+---
+
 ## 0000000000000000000000000000000000000000. Market data mkt04b — market indicators chart: anchor bar, client-side rebasing, overlays, and the series `stddev` field; verify WRITTEN, not yet run (2026-10-07)
 
 `mkt04b.structural`. The Chart tab of `/market`, replacing mkt04a's
@@ -386,6 +505,17 @@ from a temp file outside the repo, in both Index-log and Sigma.
    Up/Down on the slider, hover a line, and toggle each overlay.
 4. **Launch blocker still open:** per-tenant gating of Yahoo-sourced and
    third-party-licensed series.
+
+`UPDATE 2026-10-07` (mkt04c): with mkt04c the `/market` page is
+feature-complete for INTERNAL use: grid, chart, key dates and My dates,
+saved views and the correlations panel. Before any external customer sees
+it, these remain:
+1. The per-tenant gate for restricted series: Yahoo-sourced (including the
+   Yahoo-sourced S&P 500 rows before F0) and third-party-licensed series,
+   including those a saved view or preset opens. It must run before
+   external access (see `docs/MARKET_DATA_DESIGN_V1.md`, "Launch
+   blockers").
+2. The licensing questions behind that gate (launch blockers 1 and 3).
 
 ---
 

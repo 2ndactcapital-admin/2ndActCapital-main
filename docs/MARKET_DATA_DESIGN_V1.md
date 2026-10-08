@@ -920,6 +920,102 @@ read (`chartRequest.interpretSeries`). Otherwise the tab shows the error and
 no chart. Nothing is requested for an empty selection, and more keys than
 `vocabularies.limits.max_keys` are refused before sending.
 
+## Key dates, views and correlations (front end) (mkt04c)
+
+The last slice of the `/market` page. Everything below calls only the
+Next.js routes. Every label, limit and message comes from the server.
+Write controls render only inside an explicit `permissions.can_write ===
+true` from the response that governs them (key-dates for My dates, views
+for saved views). A lost envelope fails closed. Code:
+`lib/market/{keyDatesModel,customDates,viewsModel,correlationModel,viewContract}.mjs`
+and `components/market/{KeyDatesBar,KeyDatesPanel,SavedViewsView,
+SavedViewsPanel,CorrelationsView,CorrelationsPanel}.jsx`.
+
+**State.** One owner (`MarketIndicatorsView`'s `ReadyView`) holds:
+- the selection;
+- the chart settings: measure, scale, resolution, anchor, `anchorYears`,
+  `end`, overlays;
+- the picked date `{source: key|my, id, edge: start|end}`.
+
+A saved view sets selection and settings in one step. The Grid tab's
+controls are not part of a view.
+
+**Key dates and My dates.** These are two dropdowns under the chart, each
+in the server's order:
+- Labels are `Mon D, YYYY · Name`. Month precision shows `Mon YYYY`;
+  ranges show `start – end · Name`.
+- Picking a date moves the anchor to its start. A range also shows "Start
+  of period" / "End of period", and every new pick resets to Start.
+- The anchor moves to the chart period that CONTAINS the date: the first
+  period ending on or after it, clamped to the ends. So at the monthly
+  default a day-precision date lands on its own month, while the dropdown
+  keeps the exact date. (The chart's own snap is "on or before", which
+  would land on the previous month.)
+- While the picked date is the anchor's period, the flag reads `Anchor ·
+  Mon YYYY · Name`, with " (end)" for an end-of-period anchor.
+- Dragging, the quick buttons or loading a view clears the pick.
+- A picked range is shaded `rgba(43,95,158,0.16)` even with "Regimes &
+  events" off. Personal dates draw as darker (`#334155`) dashed lines under
+  that toggle. The legend gains "My date" and "Selected period" when they
+  are drawn.
+- My dates is disabled with "None saved yet" when you have none.
+- Add opens an inline Name / Date form. The Name `maxLength` is the
+  server's `name_max`. Save needs only a trimmed name and a date; every
+  other rule is the server's, and its 422/409 message shows once, verbatim,
+  with the inputs kept. A save selects the new date and moves the anchor to
+  it.
+- Delete appears only while a personal date is picked and asks `Delete
+  "<name>" from your dates?` first.
+- The list changes only by re-reading `GET /key-dates`. Nothing is
+  optimistic.
+
+**Saved views.** The card sits at the top of the left column:
+- Presets come first, then your own views. Clicking one loads it, and the
+  active view is marked. Only your own views have Delete (with a confirm
+  step), and only the active one has Update (PUT `{config}` with the
+  current settings). Presets show neither.
+- Save POSTs `{name, config}`; a 409/422 shows the server's message and
+  keeps the name.
+- The config built is exactly the canonical v1 schema.
+- The anchor is saved as `{"type": "relative", "years": N}` while the page's
+  anchor is still "N years ago": the page default, the quick button or a
+  loaded relative view. Otherwise it is saved as the resolved date. It is
+  never a key-date reference.
+- Loading resolves a relative anchor against the browser's today (29
+  February falls back to the 28th).
+- Keys the server lists in `unavailable`, or that the catalog no longer
+  allows, are skipped and named in a quiet notice. The stored view is never
+  touched by loading.
+- A stored mode that is not a chart measure (`default`, `level`) keeps the
+  current measure, with a note.
+- Views load once on page entry and again after each write. A failure stays
+  inside the card.
+
+**What moves with it.** The card sits under the chart, above the trends
+table:
+- The focus is one of the selected series (a security linked to a selected
+  indicator counts once); the candidates are the others, capped at
+  `vocabularies.limits.max_keys`.
+- The lag uses the catalog's `limits.lag_months` range (default 0).
+  `min_periods` is the server's default.
+- The window is the chart's anchor to its end. A view's `end`, when set, is
+  sent too. The chart itself has no end control yet.
+- One POST goes per burst (300 ms after the last change, so a drag asks
+  once it stops). The newest response wins, and nothing is sent with fewer
+  than two series.
+- Rows keep the server's order (|r| descending, nulls last). Each shows the
+  name, a bar of |r| (navy positive, `#9B2335` negative), r exactly as
+  returned, n and the frequency label.
+- r is never parsed: the bar width is the r text read as a percentage by
+  moving its decimal point. A null r shows its reason; the server publishes
+  no reason labels, so the code shows as text.
+- The server's `lag_convention` and a footnote ("changes, not levels") sit
+  with the results.
+
+**Still before any external customer:** the per-tenant gate for restricted
+series (Launch blockers above). It also applies to series a saved view or
+preset opens.
+
 ## Transform definitions
 
 - Observations of a series: its active rows, ascending by obs_date.

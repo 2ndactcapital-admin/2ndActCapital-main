@@ -92,15 +92,25 @@ export function interpretSeries({ ok, body }) {
 
 /**
  * {ok, body} of GET /api/market/key-dates -> {kind: "ready", keyDates,
- * regimes, vocabularies} or {kind: "error", message}. Same fail-closed rule:
- * no envelope, no overlays.
+ * regimes, vocabularies, customDates, permissions, limits} or {kind: "error",
+ * message}. Same fail-closed rule: no envelope, no overlays. (mkt04c added the
+ * caller's own dates, the envelope — read by the write controls, which need
+ * can_write === true — and the limits.)
  */
 export function interpretKeyDates({ ok, body }) {
   if (!ok) return { kind: "error", message: errorMessage(body, KEY_DATES_UNAVAILABLE) };
   if (!grantsRead(body) || !Array.isArray(body.key_dates) || !Array.isArray(body.regimes) || !isObject(body.vocabularies)) {
     return { kind: "error", message: KEY_DATES_UNAVAILABLE };
   }
-  return { kind: "ready", keyDates: body.key_dates, regimes: body.regimes, vocabularies: body.vocabularies };
+  return {
+    kind: "ready",
+    keyDates: body.key_dates,
+    regimes: body.regimes,
+    vocabularies: body.vocabularies,
+    customDates: Array.isArray(body.custom_dates) ? body.custom_dates : [],
+    permissions: body.permissions,
+    limits: isObject(body.limits) ? body.limits : {},
+  };
 }
 
 /**

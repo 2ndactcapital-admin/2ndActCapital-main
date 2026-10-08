@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import ChartView from "@/components/market/ChartView";
 import {
@@ -24,13 +24,20 @@ async function fetchJson(url) {
  * /api/market/key-dates once. Anchor, measure, axis and overlay changes never
  * refetch — the browser re-measures the same points. Both responses go
  * through the fail-closed interpreters in lib/market/chartRequest.mjs.
+ *
+ * mkt04c: key-dates are fetched again (same route, same interpreter) when the
+ * key-dates bar asks — after a personal date is saved or deleted, so the list
+ * changes only from the server's own response. dateSel / onPickDate are the
+ * picked date, lifted to MarketIndicatorsView.
  */
-export default function ChartPanel({ catalog, selection, settings, onSettingsChange, today }) {
+export default function ChartPanel({ catalog, selection, settings, onSettingsChange, today, dateSel, onPickDate }) {
   const request = buildSeriesRequest(selection, catalog, settings.resolution);
   const url = request && !request.blocked ? request.url : "";
 
   const [series, setSeries] = useState({ kind: "loading", url: "" });
   const [keyDates, setKeyDates] = useState({ kind: "loading" });
+  const [keyDatesVersion, setKeyDatesVersion] = useState(0);
+  const reloadKeyDates = useCallback(() => setKeyDatesVersion((v) => v + 1), []);
   const [loader] = useState(() => createSeriesLoader({ fetchJson, onResult: setSeries }));
 
   useEffect(() => {
@@ -54,7 +61,7 @@ export default function ChartPanel({ catalog, selection, settings, onSettingsCha
     return () => {
       alive = false;
     };
-  }, []);
+  }, [keyDatesVersion]);
 
   // The last accepted response keeps showing (marked stale) while a newer one loads.
   return (
@@ -68,6 +75,9 @@ export default function ChartPanel({ catalog, selection, settings, onSettingsCha
       seriesState={series}
       keyDatesState={keyDates}
       stale={series.url !== url}
+      dateSel={dateSel}
+      onPickDate={onPickDate}
+      onKeyDatesChanged={reloadKeyDates}
     />
   );
 }
