@@ -756,13 +756,31 @@ async def y_cascade(conn, specs, catalog, participant_rows, filings):
         READER_ANSWER.update(reader_answer(rspecs, consistent))
         doc = documents.document_from_html(fixture_html(consistent), reference_filing_id=fid,
                                            filer_name="NOTEFIELDS VERIFY", form_type="424B2")
-        before = len(CHAT_BODIES)
-        out = await cascade.run_note(doc, specs, slots, catalog=catalog, spend=None, participant_rows=participant_rows)
-        check(len(CHAT_BODIES) - before == 2, f"{'consistent' if consistent else 'inconsistent'} note: exactly the "
-              f"two MOCKED reader calls were made")
-        sent = set(json.loads(CHAT_BODIES[-1]["messages"][0]["content"].split("JSON schema:\n", 1)[1])["properties"])
-        check(sent == {s.key for s in rspecs}, "the readers were asked exactly the registry's model fields")
+        name = "consistent" if consistent else "inconsistent"
+        # the run exists BEFORE the cascade and its id is passed in, as runner.run does: the
+        # cascade stamps every reading with it, and teardown deletes readings by run id
         run_id = await store.create_run(conn, run_kind="verify", spend_cap_usd=0, config={"verify_tag": TAG})
+        before = len(CHAT_BODIES)
+        out = await cascade.run_note(doc, specs, slots, catalog=catalog, spend=None, run_id=run_id,
+                                     participant_rows=participant_rows)
+        bodies = CHAT_BODIES[before:]
+
+        def asked(b):
+            return set(json.loads(b["messages"][0]["content"].split("JSON schema:\n", 1)[1])["properties"])
+        # the mock leaves most critical model fields null, so BOTH readers return null on them
+        # and the cascade's fuller-text retry (step c) legitimately asks exactly those again
+        model_keys = {s.key for s in rspecs}
+        retry_keys = {s.key for s in rspecs if s.critical and READER_ANSWER[s.key]["value"] is None}
+        check(len(bodies) == 4 and [b["model"] for b in bodies] == [M1, M2, M1, M2]
+              and out.fuller_text_retry and out.jev_calls == 0 and out.escalation_calls == 0,
+              f"{name} note: exactly the two MOCKED reader calls plus their one fuller-text retry pair were made",
+              f"{[b['model'] for b in bodies]} retry={out.fuller_text_retry}")
+        check(len(bodies) >= 2 and all(asked(b) == model_keys for b in bodies[:2]),
+              "the readers were asked exactly the registry's model fields",
+              f"{len(model_keys)} model fields of {len(specs)}")
+        check(len(bodies) == 4 and all(asked(b) == retry_keys for b in bodies[2:]),
+              "the fuller-text retry asked exactly the critical model fields both readers left null",
+              f"{len(retry_keys)} fields")
         staging_id = await runner.persist_outcome(conn, out, run_id=run_id, ensemble_config_id=None)
         results[consistent] = (out, run_id, staging_id)
     # re-read from the database
