@@ -724,6 +724,76 @@ anchor must not be after the end; `end` is required and may be null. Size is
 checked first, as Postgres measures it. The stored config is the validated
 canonical form, which equals the input for any valid config.
 
+## Front end (mkt04a)
+
+The first UI slice: `/market` ("Market indicators") in `apps/web`, with the
+selection panel and the Grid tab. The chart is mkt04b; key dates, saved views
+and correlations are mkt04c.
+
+**Routes.** Every backend route has a Next.js route under `/api/market/...`
+(`catalog`, `series`, `grid`, `correlations`, `key-dates`,
+`key-dates/custom`, `key-dates/custom/[id]`, `views`, `views/[id]`; eleven
+handlers). The table and the forward live in `lib/market/marketRoutes.mjs`
+(pure, testable with a faked session and backend); `lib/marketForward.js`
+binds it to the host-aware `getRequestAuthClient`. Each handler checks the
+session (401 `{"error": "Unauthorized"}` without one, backend never called),
+attaches the access token, passes the query string through for `series`
+only, forwards a POST/PUT body as the caller's own text after checking it
+parses, and returns the backend's status and body unchanged with
+`Cache-Control: no-store`. Nothing is logged. No handler reads or adds an org
+or user; a body that carries one reaches the API, which refuses it (422).
+
+**Fail closed.** `lib/market/catalogModel.mjs` `interpretCatalog` returns
+`ready` only for a response whose `permissions.can_read === true` and which
+has a `vocabularies` object. Anything else is an error state, and the
+selection panel and grid controls exist only in the ready branch of
+`MarketIndicatorsView`. A grid response without its envelope is also shown as
+an error, not a table. There is no truthy fallback anywhere.
+
+**Selection model.** React state in the page, held as `[{kind, key}]` —
+`indicator` + series_key, or `security` + securities_global id — exactly the
+saved-view config's `selection`, so mkt04c can persist it unchanged.
+`lib/market/selection.mjs` does all grouping, chip state (all / some / none),
+toggling and the limit (`vocabularies.limits.max_keys`, counted per
+selection; a catalog without it allows nothing). Unselectable securities and
+notes can never enter the list. A security is requested through its linked
+series_key; an indicator and the security it prices are requested once.
+
+**Server versus chrome.** From the API: category labels, order and colours;
+series and security names and colours; source provider (shown on every row);
+the license marker (the class's code text, shown for every class except
+`public_domain`, and only when the catalog's `license_classes` lists it);
+unselectable reasons; the Measure and Frequency option lists
+(`modes`, `grid_frequencies`); the selection limit; every grid value, date,
+floating flag, warning and unavailable reason; every error message. The API
+publishes no label for license classes, warnings or reasons, so those show as
+their code text with underscores as spaces. Chrome: the page title, tab
+names, control captions, "Start of data", "5 years ago", the empty-state and
+placeholder lines, "starts after the anchor", and the limit sentence (with
+the server's number). The defaults the sprint fixed (mode `default`,
+frequency `monthly`, anchor five years back, the `public_domain` exception,
+the two selection kinds) live in `lib/market/marketDefaults.mjs` alone and
+fall back to the server's first option if the server stops offering them.
+
+**Grid.** One POST per burst of changes (300 ms debounce), none for an empty
+selection, and only the newest response renders. Cells are the server's
+strings; the only change is comma grouping of the integer digits, done on the
+text (no number conversion). Null is an em dash. Rows keep the server's order.
+The table scrolls inside its own container (sticky header and date column),
+so the page never scrolls sideways. `components/ui/DataGrid.jsx` is not used:
+it sorts, filters and paginates client-side.
+
+**Tests.** `apps/web/tests/market/*.test.mjs` (node:test, `npm test`) import
+the real modules and render the real components with `react-dom/server`.
+`tests/market/jsxLoader.mjs` compiles JSX with the `typescript` package that
+is already installed (transitive); no dependency was added.
+
+**Open launch blocker.** Per-tenant gating of Yahoo-sourced and
+`third_party_licensed` (and `unreviewed`) series is still unbuilt. The page
+shows every series the catalog returns, with its source, for internal use
+only. It must not reach an external customer until that gate exists
+(launch blockers 1-5 above).
+
 ## Transform definitions
 
 - Observations of a series: its active rows, ascending by obs_date.
@@ -879,6 +949,10 @@ Implementation notes (mkt03):
   plus the Next.js routes in front of this API. mkt04 also gates
   `third_party_licensed`, `unreviewed` and Yahoo series per tenant
   (decisions 4 and 16).
+  - **mkt04a** (built) — the Next.js routes, the `/market` page, the
+    selection panel and the grid ("Front end (mkt04a)").
+  - **mkt04b** — the chart. **mkt04c** — key dates, saved views,
+    correlations. The per-tenant gate is a separate sprint, still unbuilt.
 
 ## Next candidates
 

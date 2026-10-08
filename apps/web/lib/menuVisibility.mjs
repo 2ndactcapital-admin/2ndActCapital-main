@@ -67,6 +67,8 @@ export const MENU_ITEMS = [
   { href: "/marketplace", label: "Marketplace", gate: null },
   { href: "/portfolio", label: "Investments", gate: null },
   { href: "/portfolio-reporting", label: "Portfolio Reporting", gate: null },
+  // mkt04a — the market API admits any valid session, so no gate here either.
+  { href: "/market", label: "Market Indicators", gate: null },
   { href: "/spvs", label: "SPV Manager", gate: null },
   { href: "/insurance", label: "Insurance", gate: null },
   { href: "/community", label: "Community", gate: null },

@@ -22,6 +22,8 @@ const NAV_ITEMS = [
   { label: "Securities", href: "/portfolio/securities", icon: "portfolio" },
   { label: "Commitments", href: "/portfolio/commitments", icon: "portfolio-reporting" },
   { label: "Portfolio Reporting", href: "/portfolio-reporting", icon: "portfolio-reporting" },
+  // mkt04a — any signed-in user, matching the API's session-only gate.
+  { label: "Market Indicators", href: "/market", icon: "portfolio-reporting" },
   { label: "SPV Manager", href: "/spvs", icon: "spv-manager" },
   { label: "Insurance", href: "/insurance", icon: "insurance" },
   { label: "Community", href: "/community", icon: "community" },

@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-07 (mkt03b.structural — market data key dates,
+Last updated: 2026-10-07 (mkt04a.structural — market indicators page: Next.js
+routes, page shell, selection panel and grid; verify WRITTEN, not yet run; see
+the top entry). Earlier the same day: (mkt03b.structural — market data key dates,
 regimes, personal dates and saved views: API, seeds, loader; verify WRITTEN,
 not yet run; see the top entry). Previously 2026-10-04 (mkt02c.structural — market data long history:
 S&P 500 splice from Yahoo, row-level provenance, fred.baa10y, five note
@@ -277,6 +279,98 @@ This file starts with the email item below.
 
 ---
 
+## 000000000000000000000000000000000000000. Market data mkt04a — market indicators page: Next.js routes, page shell, selection panel and grid; verify WRITTEN, not yet run (2026-10-07)
+
+`mkt04a.structural`. The first front-end slice over the finished market data
+API: the Next.js routes for all eleven backend routes, a new page at
+`/market` ("Market indicators"), the selection panel and the Grid tab. The
+chart (mkt04b) and the key-date, saved-view and correlations controls
+(mkt04c) are not built; the Chart tab is a placeholder. No backend change, no
+DDL, no new dependency. Design: `docs/MARKET_DATA_DESIGN_V1.md`, "Front end
+(mkt04a)".
+
+**Built (all in `apps/web`):**
+- `lib/market/marketRoutes.mjs` (pure forward core + the eleven-route table),
+  `lib/marketForward.js` (binds it to the host-aware
+  `getRequestAuthClient`), and nine route files under `app/api/market/**`
+  exporting the eleven handlers. Mirrors `lib/apiForward.js` (session check,
+  token, the same two 401 bodies, Bearer header) except: the backend's status
+  and body pass through byte-for-byte, every response is `no-store`, nothing
+  is logged, and a body is forwarded as the caller's own text after a JSON
+  parse check.
+- `app/market/page.js` (host-aware `getHostSession`, AppShell),
+  `components/market/` (MarketIndicators, MarketIndicatorsView, SelectionPanel,
+  GridPanel, MarketGridTable, marketStyles).
+- Pure modules `lib/market/{catalogModel,selection,gridRequest,gridView,marketDefaults}.mjs`.
+- One nav entry, "Market Indicators" → `/market`, in `components/Sidebar.jsx`
+  NAV_ITEMS and `lib/menuVisibility.mjs` MENU_ITEMS (`gate: null`).
+- `tests/market/*.test.mjs` (node:test, 109 tests, all passing during the
+  sprint) and a `test` script (`node --test tests/`) in `apps/web/package.json`.
+- `apps/api/scripts/verify_mkt04a.py`.
+
+**Task 1 discovery:**
+- `apps/web` is JavaScript (jsconfig `@/*` alias, no TypeScript, no typecheck
+  script), Next 16.1, React 19.2, Tailwind v4 with `--2a-*` CSS variables
+  injected from org_settings; fonts are loaded by the root layout from
+  settings. There was NO test runner: earlier UI sprints proved their logic
+  with pure `.mjs` modules exercised by Node harnesses in `apps/api/scripts`.
+- Forward pattern copied from `lib/apiForward.js` (+ `lib/authServer.js`
+  `getRequestAuthClient`); base URL variable `NEXT_PUBLIC_API_URL`.
+- Envelope rendering mirrored from `components/portfolio/PositionsGrid.jsx`.
+  `components/ui/DataGrid.jsx` was NOT reused: it sorts, filters, paginates
+  and drag-reorders client-side and has no sticky header or rich header cell;
+  the grid must keep the server's order and show every row.
+- Navigation: `Sidebar.jsx` NAV_ITEMS render unfiltered for any signed-in
+  user; MENU_ITEMS `gate: null` means the same. That matches the API's
+  session-only gate.
+- Dates use the native `<input type="date">` (the existing convention); no
+  `/market` route existed (`/marketplace` does, no collision).
+
+**[FIND] `npm run lint` already fails on main** — 98 errors in 67 files this
+sprint did not touch (64 are `react-hooks/set-state-in-effect`). The new and
+changed files lint clean. The verify gates on this sprint's files and reports
+the baseline as a [FIND]; fixing it would change existing pages, which the
+sprint forbids.
+
+**[FIND] The server publishes no labels for license classes, grid warnings,
+unavailable reasons or the unselectable reason.** The page shows the code
+text with underscores as spaces; `vocabText` will use a `[{key, label}]`
+vocabulary if the API ever adds one.
+
+**[FIND] The prompt's own rules name vocabulary values** (default mode
+`default`, frequency `monthly`, the `public_domain` exception, the kinds
+`indicator`/`security`). They live in ONE file, `lib/market/marketDefaults.mjs`,
+validated against the server's vocabulary at runtime; the verify's
+no-hardcoding scan exempts only that file and pins its exact contents.
+
+**Interpretations recorded:**
+- The page opens on the Grid tab (the only working view in this release).
+- The 40-series limit counts selections (as the saved-view `selection_max`
+  does); an indicator and the security priced by it are requested once.
+- A category chip that would cross the limit adds nothing (all or none).
+- Security groups come from `security_type`; a group with nothing selectable
+  (the structured notes) starts collapsed with its count.
+- An unavailable series shows its reason in one cell spanning the column.
+- JSX in tests is compiled by `tests/market/jsxLoader.mjs` with the
+  `typescript` package already in node_modules (transitive, ESLint
+  toolchain); nothing was added to package.json dependencies.
+
+**Not run by this sprint (by rule):** the dev server, the production build
+and the verify. What did run: the node:test suites (109/109), ESLint on every
+new and changed file (clean), and the verify's static checks alone (97/0),
+plus a probe proving the no-hardcoding scan catches a planted violation of
+each kind.
+
+**OPERATOR ACTIONS:**
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_mkt04a.py`
+   (runs the tests, lint and `npm run build`).
+2. The manual checklist in the sprint log, signed in.
+3. **Launch blocker still open:** per-tenant gating of Yahoo-sourced and
+   third-party-licensed series is unbuilt. The page shows them with their
+   source; it must not reach an external customer before that sprint.
+
+---
+
 ## 00000000000000000000000000000000000000. Market data mkt03b — key dates, regimes, personal dates and saved views: API, seeds, loader; verify WRITTEN, not yet run (2026-10-07)
 
 `mkt03b.structural`. What the mkt04 chart needs around the data: reference
@@ -393,6 +487,12 @@ routes mounted); a compile and undefined-name scan of every new module.
    (design decision 24).
 
 The commands are at the end of the sprint log.
+
+**UPDATE 2026-10-07 — the front end has started (`mkt04a.structural`).** The
+Next.js routes for these seven personal routes (and the four mkt03 read
+routes), the `/market` page, the selection panel and the grid are built (see
+the mkt04a entry above). Next: mkt04b (the chart) and mkt04c (key dates, saved
+views and correlations — the first UI over this sprint's endpoints).
 
 ---
 
