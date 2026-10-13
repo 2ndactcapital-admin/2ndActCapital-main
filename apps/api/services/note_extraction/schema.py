@@ -387,7 +387,7 @@ def schema_hash(specs: list[FieldSpec]) -> str:
     return hashlib.sha256(json.dumps(json_schema(specs), sort_keys=True).encode()).hexdigest()
 
 
-# ── Pydantic (ALWAYS validate the raw JSON text with model_validate_json) ────
+# ── Pydantic (notefix1: validated PER FIELD, not as one combined model) ─────
 def _py_type(spec: FieldSpec):
     if spec.kind == KIND_NUMBER:
         return Decimal
@@ -404,22 +404,35 @@ def _py_type(spec: FieldSpec):
     return str
 
 
+_FIELD_MODEL_CACHE: dict[tuple, type[BaseModel]] = {}
+
+
+def _field_model(s: FieldSpec) -> type[BaseModel]:
+    """The ``{value, quote}`` model for ONE field. Cached by (key, kind, enum)
+    so a field's shape change (notefix1: scalar -> range) invalidates its own
+    cache entry without touching any other field's."""
+    cache_key = (s.key, s.kind, tuple(s.enum or ()))
+    model = _FIELD_MODEL_CACHE.get(cache_key)
+    if model is None:
+        model = create_model(
+            f"F_{s.key}", __config__=ConfigDict(extra="ignore"),
+            value=(Optional[_py_type(s)], None), quote=(Optional[str], None),
+        )
+        _FIELD_MODEL_CACHE[cache_key] = model
+    return model
+
+
 _MODEL_CACHE: dict[str, type[BaseModel]] = {}
 
 
 def pydantic_model(specs: list[FieldSpec]) -> type[BaseModel]:
-    """One ``{value, quote}`` object per field. A missing field or a null value
-    is accepted (= absent); a wrong type is a ValidationError."""
+    """One ``{value, quote}`` object per field, ALL validated together — kept
+    for callers that want one failure to mean one failure (none remain in this
+    codebase; ``parse_reader_output`` validates per field, see below)."""
     h = schema_hash(specs)
     if h in _MODEL_CACHE:
         return _MODEL_CACHE[h]
-    fields = {}
-    for s in specs:
-        item = create_model(
-            f"F_{s.key}", __config__=ConfigDict(extra="ignore"),
-            value=(Optional[_py_type(s)], None), quote=(Optional[str], None),
-        )
-        fields[s.key] = (Optional[item], None)
+    fields = {s.key: (Optional[_field_model(s)], None) for s in specs}
     model = create_model("NoteTermsReading", __config__=ConfigDict(extra="ignore"), **fields)
     _MODEL_CACHE[h] = model
     return model
@@ -428,32 +441,97 @@ def pydantic_model(specs: list[FieldSpec]) -> type[BaseModel]:
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 
 
-def parse_reader_output(specs: list[FieldSpec], raw_text: str | None) -> tuple[dict | None, str | None]:
-    """Validate a reader's raw output. Returns ({key: {value, quote}}, None) or
-    (None, error). A failed validation is a FAILED READING, never an exception."""
+def _extract_item_value(item: BaseModel):
+    value = item.value
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    elif isinstance(value, list):
+        value = [v.model_dump() if isinstance(v, BaseModel) else v for v in value]
+    return to_jsonable(value)
+
+
+def _coerce_raw_item(spec: FieldSpec, raw_item):
+    """A shape mismatch that is unambiguous to fix (notefix1 Task 3): a bare
+    scalar answered for a RANGE field becomes an exact range (min = max); a
+    range answered for a SCALAR field becomes that scalar ONLY when its min
+    and max agree (there is no ambiguity about which end is meant). Returns
+    (coerced_raw_item, label) or (None, None) when no coercion applies."""
+    if not isinstance(raw_item, dict) or "value" not in raw_item:
+        return None, None
+    v = raw_item["value"]
+    if spec.kind == KIND_RANGE and v is not None and not isinstance(v, dict):
+        return {**raw_item, "value": {"min": v, "max": v, "bound": "exact"}}, "scalar_to_range"
+    if spec.kind != KIND_RANGE and isinstance(v, dict):
+        lo, hi = v.get("min"), v.get("max")
+        if lo is not None and hi is not None and lo == hi:
+            return {**raw_item, "value": lo}, "range_to_scalar"
+    return None, None
+
+
+def _parse_one_field(spec: FieldSpec, model: type[BaseModel], raw_item) -> tuple[bool, dict, str | None, str | None]:
+    """(ok, {value, quote}, error, coerced_label) for ONE field's raw
+    ``{value, quote}`` object. Never raises."""
+    try:
+        item = model.model_validate(raw_item)
+        return True, {"value": _extract_item_value(item), "quote": item.quote}, None, None
+    except ValidationError as exc:
+        coerced_item, label = _coerce_raw_item(spec, raw_item)
+        if coerced_item is not None:
+            try:
+                item = model.model_validate(coerced_item)
+                return True, {"value": _extract_item_value(item), "quote": item.quote}, None, label
+            except ValidationError:
+                pass
+        return False, {"value": None, "quote": None}, f"{exc.error_count()} error(s): {str(exc)[:300]}", None
+
+
+def parse_reader_output(specs: list[FieldSpec], raw_text: str | None
+                        ) -> tuple[dict | None, str | None, dict]:
+    """Validate a reader's raw output PER FIELD (notefix1 Task 3 — one bad
+    field no longer fails the whole reading). Returns
+    ``(fields, fatal_error, field_issues)``:
+
+      fields        {key: {value, quote}} for every field that parsed, incl.
+                    one that was COERCED (see ``_coerce_raw_item``); an absent
+                    field is {value: None, quote: None}, same as before.
+                    ``None`` only when ``fatal_error`` is set.
+      fatal_error   set ONLY when the response as a whole is not parseable —
+                    not valid JSON, or not a JSON object. This is still a
+                    FAILED READING, exactly like before.
+      field_issues  {key: {"error": str|None, "raw_value": ..., "coerced":
+                    str|None}} — one entry per field that either failed its
+                    own shape (dropped from ``fields``, ``error`` set) or was
+                    coerced (kept in ``fields``, ``coerced`` set, ``error``
+                    None). A field with neither problem has no entry here.
+    """
     if not raw_text or not raw_text.strip():
-        return None, "empty response"
+        return None, "empty response", {}
     text = raw_text
     m = _FENCE.match(text)
     if m:
         text = m.group(1)
     try:
-        obj = pydantic_model(specs).model_validate_json(text)
-    except ValidationError as exc:
-        return None, f"schema validation failed: {exc.error_count()} error(s): {str(exc)[:400]}"
-    out = {}
+        raw = json.loads(text)
+    except (ValueError, TypeError) as exc:
+        return None, f"response is not valid JSON: {exc}", {}
+    if not isinstance(raw, dict):
+        return None, f"response is not a JSON object (got {type(raw).__name__})", {}
+
+    out: dict = {}
+    issues: dict = {}
     for s in specs:
-        item = getattr(obj, s.key, None)
-        if item is None:
+        raw_item = raw.get(s.key)
+        if raw_item is None:
             out[s.key] = {"value": None, "quote": None}
             continue
-        value = item.value
-        if isinstance(value, BaseModel):
-            value = value.model_dump()
-        elif isinstance(value, list):
-            value = [v.model_dump() if isinstance(v, BaseModel) else v for v in value]
-        out[s.key] = {"value": to_jsonable(value), "quote": item.quote}
-    return out, None
+        ok, parsed, error, coerced = _parse_one_field(s, _field_model(s), raw_item)
+        if ok:
+            out[s.key] = parsed
+            if coerced:
+                issues[s.key] = {"error": None, "raw_value": raw_item, "coerced": coerced}
+        else:
+            issues[s.key] = {"error": error, "raw_value": raw_item, "coerced": None}
+    return out, None, issues
 
 
 def to_jsonable(value):

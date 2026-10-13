@@ -61,7 +61,33 @@ _DISTRIBUTION_AGENT = _rx(r"\b(?:distribution|placement|selling)\s+agent\b|\bact
                           r"\b(?:iCapital|InspereX|Incapital|Halo\s+Investing|SIMON\s+Markets)\b")
 
 
+# notefix1 1d: the numeric-row parser (rules.find_hypothetical_rows) needs an
+# exact "% ... $" line shape and missed 137 of 138 real finals — real headings
+# vary by bank ("Hypothetical Examples" / "Hypothetical Examples of How the
+# Notes Might Perform" / "Hypothetical Payout Profile and Examples of
+# Payments at Maturity" / column headers like "Hypothetical Ending Value" or
+# "Hypothetical Initial Value"). This widens the TRAP detector to the heading
+# and column-header wording itself; the numeric-row parser stays as the
+# separate, stricter path the self-check (checks.payoff_matches_examples)
+# needs to actually recompute a payoff. A generous match here (e.g. a filing
+# that only explains what "hypothetical" means, with no inline table) just
+# costs one extra sampled note — see the module docstring.
+_HYPOTHETICAL_WORDING = _rx(
+    r"hypothetical\s+examples?\b|"
+    r"examples?\s+of\s+hypothetical\s+payments?|"
+    r"hypothetical\s+payout\s+profile|"
+    r"hypothetical\s+(?:payment|return)s?\s+(?:at\s+maturity|on\s+the\s+notes)|"
+    r"what\s+is\s+the\s+total\s+return[^.\n]{0,100}assuming|"
+    r"hypothetical\s+(?:initial|starting|ending|final)\s+(?:index\s+)?"
+    r"(?:value|level|share\s+price|underlying\s+value)|"
+    r"hypothetical\s+underlying\s+return|"
+    r"hypothetical\s+downside\s+threshold\s+level"
+)
+
+
 def _hypothetical(text: str) -> bool:
+    if _HYPOTHETICAL_WORDING.search(text):
+        return True
     res = rules.RuleResult()
     rules.find_hypothetical_rows(text, res)
     rows = res.extras.get("hypothetical_rows")

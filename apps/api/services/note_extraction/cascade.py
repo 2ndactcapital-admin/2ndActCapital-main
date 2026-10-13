@@ -330,6 +330,22 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
                                  "reading_id": row.id, "derived": d}
         values[d.field_key] = d.value
 
+    # per-field validation (notefix1 Task 3): a field that failed its own
+    # shape never fails the whole reading (readers.read / schema.
+    # parse_reader_output already dropped it from call.fields); it is
+    # recorded here on the run report and sends the note to needs_review.
+    # A coerced field (scalar<->range, unambiguous) is recorded too but is
+    # NOT an error — it is not a review reason.
+    field_errors = [
+        {"slot": rc.slot, "field_key": k, **issue}
+        for rc in out.reader_calls for k, issue in (rc.field_issues or {}).items()
+        if issue.get("error")
+    ]
+    out.detail["field_issues"] = [
+        {"slot": rc.slot, "field_key": k, **issue}
+        for rc in out.reader_calls for k, issue in (rc.field_issues or {}).items()
+    ]
+
     # self-checks: a finding sends the note to review; no value is changed
     extras = rr.extras
     findings = checks.run_self_checks(
@@ -342,6 +358,8 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
     for f in findings:
         for k in f.fields:
             reasons_by_field.setdefault(k, []).append(f"{f.check}: {f.reason}")
+    for d in field_errors:
+        reasons_by_field.setdefault(d["field_key"], []).append(f"field validation ({d['slot']}): {d['error']}")
 
     # staging
     needs_review = []
@@ -350,12 +368,14 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         reasons = reasons_by_field.get(k, [])
         meta = {"review_reasons": reasons} if reasons else {}
         if r is None:
-            # the unresolved CHECK pins needs_review = is_critical; a self-check
-            # reason on an unresolved field is kept in metadata and on the note
+            # unresolved needs review when it's critical OR it carries its own
+            # reason (a self-check or notefix1 field-validation finding) --
+            # previously only is_critical set this, so an unresolved
+            # non-critical field with a real reason silently showed clean
             is_crit = spec.critical
             if is_crit:
                 needs_review.append(k)
-            out.staged.append(StagedField(k, None, "unresolved", is_crit, is_crit, metadata=meta))
+            out.staged.append(StagedField(k, None, "unresolved", is_crit, is_crit or bool(reasons), metadata=meta))
             continue
         if r["resolution"] == "derived":
             d = r["derived"]
@@ -388,6 +408,7 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
     if needs_review:
         reasons.append("unresolved critical: " + ", ".join(needs_review))
     reasons += [f"self-check {f.check}: {f.reason}" for f in findings]
+    reasons += [f"field {d['field_key']} ({d['slot']}): {d['error']}" for d in field_errors]
     if reasons:
         out.status, out.status_reason = "needs_review", "; ".join(reasons)
     else:

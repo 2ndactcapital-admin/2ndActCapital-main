@@ -13,8 +13,11 @@ path at all.
 
 STRUCTURED OUTPUT: ``response_format = json_schema`` when the deployment's
 price-list entry says ``supports_response_schema``, otherwise ``json_object``.
-Either way the raw text is validated with Pydantic ``model_validate_json``; a
-failed validation is a FAILED READING (status 'invalid'), never a crash.
+Either way the raw text is validated PER FIELD (notefix1 Task 3,
+``schema.parse_reader_output``): a field that fails its own shape is dropped
+and recorded on ``ReaderCall.field_issues``, every other field is kept, and
+the WHOLE call only fails (status 'invalid') when the response is not
+parseable JSON at all.
 
 PROVENANCE: the provider-reported model must match the deployment asked for
 (``proxy.reported_model_matches``) and the proxy must report zero attempted
@@ -74,6 +77,7 @@ class ReaderCall:
     status: str                    # 'ok' | 'failed' | 'model_mismatch' | 'invalid'
     error: str | None = None
     fields: dict = field(default_factory=dict)        # key -> {value, quote}
+    field_issues: dict = field(default_factory=dict)  # key -> {error, raw_value, coerced} (notefix1)
     provider_model: str | None = None
     proxy_model_id: str | None = None
     input_tokens: int | None = None
@@ -190,11 +194,12 @@ async def read(cfg: ReaderConfig, specs: list[FieldSpec], filing_text: str, *,
         call.status = "invalid"
         call.error = "response carries no message content"
         return call
-    parsed, error = parse_reader_output(specs, content)
-    if error:
+    parsed, fatal_error, field_issues = parse_reader_output(specs, content)
+    if fatal_error:
         call.status = "invalid"
-        call.error = error
+        call.error = fatal_error
         return call
     call.fields = parsed
+    call.field_issues = field_issues
     call.status = "ok"
     return call

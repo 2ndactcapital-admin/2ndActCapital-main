@@ -1,5 +1,9 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-08 (goldset.structural — the gold set workflow: stratified
+Last updated: 2026-10-13 (notefix1.structural — four fixes found by the first
+real gold pre-fill: fee fields become ranges, one bad field no longer rejects
+a whole note, a wider hypothetical-example detector, and the gold verify's
+regression runs after its own teardown; verify WRITTEN, not yet run; see the
+top entry). Previously 2026-10-08 (goldset.structural — the gold set workflow: stratified
 plan, propose with trap cases, gpt-5-mini pre-fill, the rebuilt review screen and
 the scorer; verify WRITTEN, not yet run; see the top entry). Earlier the same day:
 (notefields.structural — the approved v3 structured-note
@@ -284,6 +288,110 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 00000000000000000000000000000000000000000000. NOTEFIX1 — four fixes from the first real gold pre-fill: fee fields become ranges, per-field validation, a wider hypothetical detector, goldset regression ordering; verify WRITTEN, not yet run (2026-10-13)
+
+**Run:** `python3 apps/api/scripts/verify_notefix1.py`. Doppler-hydrated, every model call mocked, real
+spend $0. Runs `verify_notefields.py` and `verify_goldset.py` once each, as flat subprocesses, AFTER its
+own teardown.
+
+**Trigger.** The first real gold pre-fill (run `e6da8fcd-b4e7-4300-9bac-48dee6e54697`, batch `gold-1`,
+gpt-5-mini, $1.00) filled 49 of 50 notes. The 50th, `6380efa7-5a87-4202-8b6c-3bcaf34030aa`, failed with
+"schema validation failed: 1 validation error for NoteTermsReading structuring_fee_pct.value Decimal input
+should be ... input_value={'min': None, 'max': 0.4, 'bound': 'up_to'}" — the model correctly read "a
+structuring fee of up to 0.85%" for a field the v3 registry still called `scalar`. Only the note's 5
+rules/derived values were saved; every model-read field was lost. 0 gold values exist on `gold-1` (all 50
+candidates `proposed`), so the fix lands before any human review depends on the old shapes.
+
+**Task 1 (discovery), reported in full in `verify_notefix1.py`'s own [Y] output:**
+- **1a.** The whole-reading failure lived in exactly one place: `schema.parse_reader_output` validated the
+  reader's ENTIRE JSON response as one combined Pydantic model (`pydantic_model(specs).model_validate_json`)
+  — one field's `ValidationError` raised for the whole object, which `readers.read` turned into
+  `call.status = 'invalid'`, discarding every other field's value. Fixed by validating per field (below).
+- **1b.** The review screen already picks the newest `gold_prefill` run per note correctly, with no code
+  change needed: `gold.prefill_runs_for` orders candidate runs `ORDER BY r.started_at DESC`, and
+  `routers/note_extraction_admin.py`'s `gold_note` takes `prefill_runs[0]`. A second (superseding) run is
+  "picked up cleanly" automatically, because every note in the batch gets a fresh reading under the new
+  run's id.
+- **1c.** `checks.fees_reconcile` read `price_to_public_pct`, `total_fees_pct` and `proceeds_to_issuer_pct`
+  as three scalars. With the latter two now ranges, it compares the IMPLIED proceeds interval (`price -
+  fees`, varying fees across its own min/max) against the stated proceeds range, and fires only when the
+  two intervals share no feasible point (within `FEES_TOLERANCE_PCT`) — see `NOTE_FIELDS.md`'s Self-checks
+  section for the exact rule. `estimated_value_below_price` already used `as_range` and needed no change.
+- **1d.** Ran the detector over the 138 fetched finals in cohort `54024e47-096c-4120-bcf3-e3403ad2ef7b`
+  (read-only; real R2 text, no model call). The old `hypothetical_example_table` trap (which required
+  `rules.find_hypothetical_rows` to parse ≥2 numeric "% ... $" rows from a 6000-char window after the FIRST
+  "hypothetical" occurrence anywhere in the filing) hit **1 of 138**. Real per-bank headings: Morgan
+  Stanley / Goldman Sachs / UBS use "Hypothetical Examples" (UBS also "...of How the Notes Might Perform");
+  Bank of America uses "Hypothetical Payout Profile and Examples of Payments at Maturity"; Citigroup and
+  Barclays use column-header wording ("Hypothetical final underlying value", "Hypothetical underlying
+  return", "hypothetical Initial Value of each Reference Asset"); JPMorgan's filings in this cohort contain
+  no inline worked table at all in the extracted text — only risk-factor boilerplate ("hypothetical
+  components: (1) a fixed-income debt component...") — so a miss on JPMorgan is a correct quiet result, not
+  a bug. Also checked bound ("up to" / "at least") wording near the five economics fields: confirmed on
+  `structuring_fee_pct` (6 hits) and `other_fees_pct` (24 hits, mostly Bank of America referral fees); zero
+  on `total_fees_pct` and `proceeds_to_issuer_pct` in THIS cohort (widened anyway, per the task — the real
+  incident field, `structuring_fee_pct`, confirms the shape exists in the wild). `price_to_public_pct`'s
+  only 2 "up to" hits (both Goldman Sachs) describe a DEALER RESALE DISCOUNT off the price, not the field's
+  own value — it correctly stays scalar.
+
+**Task 2 — fee fields become ranges.** `value_shape` is now `'range'` for `structuring_fee_pct`,
+`other_fees_pct`, `total_fees_pct` and `proceeds_to_issuer_pct` (migration
+`notefix1_economics_field_ranges.sql`; `NOTE_FIELDS.md` updated to match). `price_to_public_pct` stays
+scalar (1d). **No data migration was needed**: `schema.as_range()` already reads a bare scalar as `{min:
+v, max: v, bound: 'exact'}`, so every existing reading, staged field and (there are currently zero) gold
+value on these four keys reads correctly under the new range kind with no rewrite — readings are
+append-only and this migration never touches them.
+
+**Task 3 — one bad field never rejects a note.** `schema.parse_reader_output` now parses the response's
+JSON once, then validates each field's own `{value, quote}` object against its own per-field Pydantic
+model (`_field_model`, cached per `(key, kind, enum)` so a shape change invalidates only its own entry). A
+field that fails validation is DROPPED from the result and recorded, with its error and raw value, in a new
+`field_issues` return value — every other field is kept. The whole reading only fails (`fatal_error` set,
+`fields is None`) when the response is not parseable JSON, or not a JSON object, at all. Additionally, an
+unambiguous shape mismatch is COERCED rather than dropped: a bare scalar answered for a range field becomes
+an exact range (`min = max`, `bound: 'exact'`); a range answered for a scalar field becomes that scalar only
+when its `min` and `max` already agree (there is no ambiguity about which end is meant) — recorded in
+`field_issues` with `coerced` set and `error: None`. `readers.ReaderCall` carries the new `field_issues`;
+`cascade.run_note` turns a real field error into a `needs_review` reason (both at the note level and on
+that field's own staged metadata, `review_reasons`) while leaving every other field's resolution untouched;
+`prefill.prefill_note` records the same `field_issues` on the gold-prefill run's per-note report. The
+original incident (note `6380efa7...`) now stores `structuring_fee_pct` as a range with the bound wording
+as its quote instead of losing the whole note.
+
+**Task 4 — wider hypothetical-example detector.** `traps._hypothetical` now ALSO fires on real heading and
+column-header wording (`traps._HYPOTHETICAL_WORDING`): "Hypothetical Examples" (any case), "Examples of
+Hypothetical Payments", "Hypothetical Payout Profile", "Hypothetical Payment/Return at Maturity", "What Is
+the Total Return ... Assuming", and the "hypothetical initial/starting/ending/final value/level" /
+"hypothetical underlying return" column-header family — in ADDITION to the original numeric-row parser
+(`rules.find_hypothetical_rows`, kept unchanged since the self-check `checks.payoff_matches_examples` needs
+its strict, parseable rows for real). New hit rate over the 138 fetched finals: **132/138** (up from 1/138)
+— JPMorgan 18/18, Morgan Stanley 27/30, UBS 13/13, Goldman Sachs 7/9, Citigroup 17/17, Bank of America
+29/29, Barclays 21/22. The module's own "a false positive just costs one extra sampled note" tolerance
+means firing on a bank's boilerplate "hypothetical" disclaimer sentence (no inline table) is acceptable;
+the detector still stays quiet on a document with zero "hypothetical" wording at all.
+
+**Task 5 — gold verify discipline.**
+- `verify_goldset.py`'s nested `verify_notefields.py` regression used to run INSIDE the main try block,
+  before its own `finally`-block teardown — meaning it saw goldset's own live fixtures while they still
+  existed. This was the exact, already-known cause of the single historical FAIL (127/128). Moved: the
+  regression now runs only after teardown completes AND `fixture_counts` confirms zero rows remain (a
+  `teardown_clean` flag gates it; a dirty teardown skips the regression and reports its own FAIL instead
+  of running a contaminated check).
+- `prefill_gold.py` gained `--supersede`: a second `gold_prefill` run for a batch that already has one is
+  refused (`prefill.PrefillRefused`) unless `--supersede` is passed, and refused even then once the batch
+  has any human gold value (`prefill.batch_has_gold_values`, `note_gold_values` with `valid_to IS NULL`).
+  Nothing is written either way when refused. A batch with no prior run never needs the flag. Per 1b, the
+  review screen serves the newest run automatically once a superseding run is allowed to exist.
+- **Operator step:** re-run the gold-1 pre-fill with `--supersede` (e.g. `python3
+  apps/api/scripts/prefill_gold.py --batch gold-1 --model gpt-5-mini --max-tokens 32000 --spend-cap 5
+  --supersede`) to pick up the range-shaped fields and per-field validation on the note that previously
+  failed, before Joe's review starts.
+
+**Not done in this sprint (by instruction):** no model was called and nothing was run against gold-1 for
+real; the re-prefill is an operator step, listed above.
 
 ---
 

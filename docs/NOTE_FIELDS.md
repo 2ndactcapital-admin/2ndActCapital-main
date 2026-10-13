@@ -85,13 +85,13 @@ rules-only.
 ## 7 · Economics — the value signal
 | Field | Type | Seen | Notes |
 |---|---|---|---|
-| ★ `price_to_public_pct` | numeric | 15 | Usually 100%. |
+| ★ `price_to_public_pct` | numeric | 15 | Usually 100%. Stays scalar: the only "up to" wording near it in the 138-final corpus describes a dealer resale discount, not this field's own value (notefix1 1d). |
 | ★ `estimated_value_per_1000` | numeric | 16+4+3 | **Decision B.** Banks state it as a % (16 docs) or a $ per note (7). Store a range when stated ("not less than $X"). |
 | ★ `agent_commission_pct` | numeric range | 7 | Min/max: "up to" is common. |
-| `structuring_fee_pct` / `other_fees_pct` | numeric | — | Platform, marketing, structuring fees. |
-| ★ `total_fees_pct` | numeric | 6 | |
+| `structuring_fee_pct` / `other_fees_pct` | numeric range | — | **notefix1.** Platform, marketing, structuring fees. "Up to $X" / "up to X%" wording confirmed in the 138-final corpus. |
+| ★ `total_fees_pct` | numeric range | 6 | **notefix1.** Widened with the other fee fields. |
 | ★ `fee_based_account_price` | numeric | 5 | The price an RIA's advisory client pays. Usually a range ("may pay as little as $977.50"). |
-| `proceeds_to_issuer_pct` | numeric | 4 | Self-check: price − fees ≈ proceeds. |
+| `proceeds_to_issuer_pct` | numeric range | 4 | **notefix1.** Self-check: price − fees ≈ proceeds, using the range ends that make the check meaningful (see Self-checks below). |
 
 ## 8 · Distribution — child table, one row per participant
 | Field | Type | Seen | Notes |
@@ -108,7 +108,13 @@ boilerplate, business-day conventions, settlement lags. All are labeled lines th
 rules extract exactly.
 
 ## Self-checks (free accuracy checks)
-- price − total fees ≈ proceeds to issuer
+- price − total fees ≈ proceeds to issuer. **notefix1:** `total_fees_pct` and `proceeds_to_issuer_pct` are
+  both ranges now. The check computes the IMPLIED proceeds interval `[price − fees.max, price − fees.min]`
+  (price is still scalar) and fires only when that interval and the stated proceeds range do not overlap,
+  within tolerance. A single stated amount is a range with `min = max`, so a wholly scalar note is checked
+  exactly as before. The check never fires on a range whose bounds are both individually consistent with
+  the other side — it fires only when EVERY combination of a feasible fee and a feasible proceeds value
+  disagrees with price.
 - estimated value < price
 - autocall schedule dates fall between pricing and maturity
 - a recomputed payoff matches the filing's hypothetical example table (mismatch → review, since filings contain errors too)

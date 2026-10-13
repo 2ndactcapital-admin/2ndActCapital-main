@@ -1192,7 +1192,6 @@ async def main_async() -> int:
             await run("scorer", y_scorer, conn, specs, run_id, proposed)
         else:
             check(False, "review and scorer sections had their prerequisites", f"proposed={bool(proposed)} run={run_id}")
-        await run("regression", y_regression)
         check(all(not str(b.get("model", "")).startswith(("gpt", "claude", "gemini")) for b in CHAT_BODIES),
               "every reader call went to the mocked fixture deployment (no real model named)",
               f"{len(CHAT_BODIES)} calls")
@@ -1207,16 +1206,20 @@ async def main_async() -> int:
         check(False, "verify ran to completion", f"{type(exc).__name__}: {exc}")
     finally:
         section("[Y] Teardown: zero fixture rows; every touched table at its pre-test count")
+        teardown_clean = False
         try:
             await teardown(conn)
             left = await fixture_counts(conn)
-            check(sum(left.values()) == 0, "zero fixture rows remain", json.dumps(left))
+            teardown_clean = sum(left.values()) == 0
+            check(teardown_clean, "zero fixture rows remain", json.dumps(left))
             if pre_counts is not None:
                 post = await table_counts(conn)
                 diff = {t: (pre_counts[t], post[t]) for t in COUNTED if pre_counts[t] != post[t]}
                 check(not diff, "every touched table is back at its exact pre-test count", json.dumps(diff))
+                teardown_clean = teardown_clean and not diff
             else:
                 check(False, "pre-test counts were taken")
+                teardown_clean = False
         except Exception as exc:  # noqa: BLE001
             check(False, "end-of-run teardown", f"{type(exc).__name__}: {exc}")
         try:
@@ -1225,6 +1228,15 @@ async def main_async() -> int:
         except Exception:  # noqa: BLE001
             pass
         await conn.close()
+
+        # notefix1 Task 5: the nested verify_notefields.py regression runs
+        # ONLY after THIS teardown is done and confirmed clean — it used to
+        # run while goldset's own fixtures were still live, which is exactly
+        # the self-contamination the regression is supposed to rule out.
+        if teardown_clean:
+            y_regression()
+        else:
+            check(False, "regression skipped: this run's own teardown did not leave zero fixture rows")
     print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
     return 0 if _n_fail == 0 else 1
 

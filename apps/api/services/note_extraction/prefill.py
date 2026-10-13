@@ -12,6 +12,15 @@ metadata.gold_prefill = true). Nothing is staged — a single reader's answer is
 not a resolved value under the cascade's rules — and nothing touches
 securities_global_note_terms. The self-check findings go to the run's report.
 
+NOTEFIX1: the reader call validates PER FIELD now (readers.read /
+schema.parse_reader_output). A field that fails its own shape is dropped
+(every other field is kept) and recorded, with a coerced field flagged
+separately, in ``PrefillNote.field_issues`` and the run's per-note report.
+The whole note only goes ``reader_failed`` when the response is not
+parseable JSON at all — the bug that failed note 6380efa7-5a87-4202-8b6c-
+3bcaf34030aa in the gold-1 pre-fill (one range-shaped field under the old
+scalar registry shape) can no longer happen.
+
 ANCHORING: the reviewer sees this model's values first, so this model's own
 score against the gold set is biased upward. ``ANCHORING_NOTE`` is shown on the
 review screen and written to the run's config.
@@ -52,6 +61,47 @@ ANCHORING_NOTE = (
 
 class PrefillRefused(RuntimeError):
     pass
+
+
+async def existing_prefill_runs(conn, batch: str) -> list[str]:
+    from services.database import platform_scope
+
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            "SELECT id FROM portfolio.note_extraction_runs WHERE run_kind = $1 AND config->>'batch' = $2",
+            RUN_KIND, batch)
+    return [str(r["id"]) for r in rows]
+
+
+async def batch_has_gold_values(conn, filing_ids: list[str]) -> bool:
+    from services.database import platform_scope
+
+    if not filing_ids:
+        return False
+    async with platform_scope(conn):
+        return bool(await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM portfolio.note_gold_values "
+            "WHERE reference_filing_id = ANY($1::uuid[]) AND valid_to IS NULL)", filing_ids))
+
+
+async def check_supersede(conn, batch: str, filing_ids: list[str], *, supersede: bool) -> None:
+    """Refuse a SECOND gold_prefill run for ``batch`` unless ``--supersede`` is
+    passed, and refuse it even then once a human has recorded a gold value for
+    any note in the batch (goldset.structural Task 5). A batch with no prior
+    gold_prefill run never needs ``--supersede``. Nothing is written either
+    way — this only decides whether ``run_prefill`` may be called. The review
+    screen (``gold.prefill_runs_for``) already serves the newest run per note
+    by ``started_at``, so a superseding run is picked up with no further
+    change once it is allowed to exist."""
+    prior = await existing_prefill_runs(conn, batch)
+    if not prior:
+        return
+    if not supersede:
+        raise PrefillRefused(
+            f"batch {batch!r} already has {len(prior)} gold_prefill run(s) — pass --supersede to add another")
+    if await batch_has_gold_values(conn, filing_ids):
+        raise PrefillRefused(
+            f"batch {batch!r} already has a human gold value — --supersede is refused once review has started")
 
 
 def anchoring_note(model: str) -> str:
@@ -95,6 +145,7 @@ class PrefillNote:
     readings: list[ReadingRow] = field(default_factory=list)
     values: dict = field(default_factory=dict)
     self_checks: list[dict] = field(default_factory=list)
+    field_issues: dict = field(default_factory=dict)   # notefix1: key -> {error, raw_value, coerced}
     cost_usd: float = 0.0
 
 
@@ -137,6 +188,7 @@ async def prefill_note(doc, specs: list[FieldSpec], cfg: readers.ReaderConfig, *
                                                        prompt_version=readers.PROMPT_VERSION, extra=dict(meta)))
             if e.normalized is not None:
                 values[s.key] = e.value
+        out.field_issues = call.field_issues
     else:
         out.status, out.error = "reader_failed", call.error
 
@@ -244,7 +296,8 @@ async def run_prefill(conn, *, batch: str, filing_ids: list[str], specs: list[Fi
             await store.insert_readings(conn, note.readings)
             done += 1
             per_note[fid] = {"status": note.status, "error": note.error, "cost_usd": note.cost_usd,
-                             "fields_with_value": len(note.values), "self_checks": note.self_checks}
+                             "fields_with_value": len(note.values), "self_checks": note.self_checks,
+                             "field_issues": note.field_issues}
             if progress:
                 progress(fid, f"{note.status} ${note.cost_usd:.5f} (run ${spend.spent_usd:.4f})")
         else:

@@ -39,6 +39,9 @@ async def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--spend-cap", type=float, required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=None, help="only the first N notes of the batch")
+    ap.add_argument("--supersede", action="store_true",
+                    help="allow a second gold_prefill run for a batch that already has one; refused once "
+                         "the batch has any human gold value")
     args = ap.parse_args(argv)
     if args.spend_cap <= 0:
         ap.error("--spend-cap must be positive")
@@ -57,6 +60,12 @@ async def main(argv: list[str] | None = None) -> int:
         if not ids:
             print(f"batch {args.batch!r} has no notes to pre-fill")
             return 0
+        if not args.dry_run:
+            try:
+                await prefill.check_supersede(conn, args.batch, ids, supersede=args.supersede)
+            except prefill.PrefillRefused as exc:
+                print(f"refused: {exc}")
+                return 2
         print(f"batch {args.batch!r}: {len(ids)} notes, model {args.model}, max_tokens {args.max_tokens}, "
               f"{len(schema.reader_specs(specs))} model fields of {len(specs)} live fields")
         print(prefill.anchoring_note(args.model))

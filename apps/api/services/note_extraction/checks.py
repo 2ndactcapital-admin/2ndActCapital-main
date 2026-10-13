@@ -12,6 +12,14 @@ VALUE: filings contain errors too, so a disagreement is for a person to read.
                                   that differs from the pricing date
     payoff_matches_examples       the payoff recomputed from the extracted terms
                                   agrees with the filing's hypothetical table
+
+NOTEFIX1: total_fees_pct and proceeds_to_issuer_pct are RANGES now (price_to_
+public_pct stays scalar). fees_reconcile compares intervals, not numbers: it
+computes the IMPLIED proceeds interval price - [fees.min, fees.max] and fires
+only when that interval and the stated proceeds range do NOT overlap (within
+tolerance) — i.e. only when no feasible combination of a fee value and a
+proceeds value is consistent with price. A single stated amount is a range
+with min = max, so a wholly scalar note reduces to the old equality check.
 """
 from __future__ import annotations
 
@@ -54,16 +62,37 @@ def _date(v) -> date | None:
 
 
 def fees_reconcile(values: dict) -> Finding | None:
-    price, fees, proceeds = (_d(values.get(k)) for k in ("price_to_public_pct", "total_fees_pct",
-                                                           "proceeds_to_issuer_pct"))
+    """price - fees ~= proceeds, where fees and proceeds are both ranges
+    (notefix1). A single stated amount is a range with min = max, so this
+    reduces to the old equality check when every field is scalar-as-range.
+
+    Not an equality test on numbers: an INTERVAL overlap test. The implied
+    proceeds interval is price minus the fee range (varying the fee across
+    its own min/max); the finding fires only when that interval and the
+    stated proceeds range share no feasible point, even after widening both
+    sides by the tolerance. A wide-but-consistent pair of ranges never fires,
+    because some fee/proceeds combination inside both ranges satisfies price
+    - fee = proceeds."""
+    price = _d(values.get("price_to_public_pct"))
+    fees, proceeds = as_range(values.get("total_fees_pct")), as_range(values.get("proceeds_to_issuer_pct"))
     if price is None or fees is None or proceeds is None:
         return None
-    gap = price - fees - proceeds
-    if abs(gap) <= FEES_TOLERANCE_PCT:
-        return None
-    return Finding("fees_reconcile", ["price_to_public_pct", "total_fees_pct", "proceeds_to_issuer_pct"],
-                   f"price to public {price} - total fees {fees} = {price - fees}, but proceeds to issuer "
-                   f"is {proceeds} (off by {gap})", {"gap_pct": str(gap)})
+    # An open-ended bound ("up to X" / "at least X") is unconstrained on its
+    # open side, not collapsed to the stated side: fees range [0, price],
+    # proceeds range [0, price] of principal.
+    fee_lo = fees["min"] if fees["min"] is not None else Decimal(0)
+    fee_hi = fees["max"] if fees["max"] is not None else price
+    proceeds_lo = proceeds["min"] if proceeds["min"] is not None else Decimal(0)
+    proceeds_hi = proceeds["max"] if proceeds["max"] is not None else price
+    implied_lo, implied_hi = price - fee_hi, price - fee_lo
+    if implied_hi < proceeds_lo - FEES_TOLERANCE_PCT or proceeds_hi < implied_lo - FEES_TOLERANCE_PCT:
+        return Finding("fees_reconcile", ["price_to_public_pct", "total_fees_pct", "proceeds_to_issuer_pct"],
+                       f"price to public {price} minus total fees {fees['min']}..{fees['max']} implies "
+                       f"proceeds {implied_lo}..{implied_hi}, but proceeds to issuer is stated as "
+                       f"{proceeds['min']}..{proceeds['max']} — no feasible combination reconciles",
+                       {"implied_proceeds": [str(implied_lo), str(implied_hi)],
+                        "stated_proceeds": [str(proceeds["min"]), str(proceeds["max"])]})
+    return None
 
 
 def estimated_value_below_price(values: dict) -> Finding | None:
