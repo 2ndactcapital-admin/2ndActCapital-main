@@ -2791,6 +2791,8 @@
 --   status                                   text NOT NULL DEFAULT 'proposed'::text
 --   proposed_at                              timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   skip_reason                              text
+--   skipped_by                               uuid
 --   PRIMARY KEY note_gold_candidates_pkey: (id)
 --   UNIQUE note_gold_candidates_reference_filing_id_key: (reference_filing_id)
 
