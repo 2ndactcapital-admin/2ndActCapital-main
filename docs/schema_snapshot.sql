@@ -2516,6 +2516,7 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   affiliated_issuer_group                  text
 --   PRIMARY KEY distribution_participants_pkey: (id)
 
 -- ===== portfolio.edgar_cohort_members =====
@@ -2795,6 +2796,20 @@
 --   skipped_by                               uuid
 --   PRIMARY KEY note_gold_candidates_pkey: (id)
 --   UNIQUE note_gold_candidates_reference_filing_id_key: (reference_filing_id)
+
+-- ===== portfolio.note_gold_second_reader =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   reference_filing_id                      uuid NOT NULL
+--   field_key                                text NOT NULL
+--   seq                                      integer NOT NULL DEFAULT 0
+--   prefill                                  jsonb
+--   suggested                                jsonb
+--   evidence                                 text
+--   severity                                 text NOT NULL
+--   kind                                     text NOT NULL
+--   source                                   text NOT NULL DEFAULT 'gold1_second_reader_v1'::text
+--   loaded_at                                timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY note_gold_second_reader_pkey: (id)
 
 -- ===== portfolio.note_gold_values =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
