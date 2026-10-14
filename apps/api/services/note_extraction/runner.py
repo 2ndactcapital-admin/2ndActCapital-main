@@ -74,7 +74,8 @@ class RunSummary:
 async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: EnsembleSlots, *,
                     catalog: dict, spend_cap_usd: float, run_kind: str, config: dict,
                     participant_rows: list[dict], created_by=None, downloader=None,
-                    keep_outcomes: bool = False, progress=None) -> RunSummary:
+                    keep_outcomes: bool = False, progress=None,
+                    issuer_groups: dict[str, str] | None = None) -> RunSummary:
     """Sequential over notes (the two readers inside a note run concurrently).
     Stops CLEANLY when the next call would cross the cap: the note in flight is
     not staged; every finished note is.
@@ -100,7 +101,7 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
             try:
                 outcome = await run_note(doc, specs, slots, catalog=catalog, spend=spend, run_id=run_id,
                                          origin="evaluation" if run_kind == "evaluation" else "cascade",
-                                         participant_rows=participant_rows)
+                                         participant_rows=participant_rows, issuer_groups=issuer_groups)
             except SpendCapReached as exc:
                 # Calls already made for the interrupted note cost money: record
                 # them (readings only — the note is not staged).

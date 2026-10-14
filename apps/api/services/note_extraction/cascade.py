@@ -78,13 +78,16 @@ async def active_ensemble(conn, task_key: str = TASK_KEY) -> dict | None:
 
 def _reading_from_evidence(doc, e: cmp.Evidence, spec_key: str, *, run_id, origin, call=None,
                            ensemble_config_id=None, prompt_version=None, extra=None) -> ReadingRow:
+    meta = dict(extra or {})
+    if e.dropped:
+        meta["dropped_members"] = e.dropped   # notefix2 Task 3: hygiene-dropped list members, never silent
     r = ReadingRow(
         reference_filing_id=doc.reference_filing_id, field_key=spec_key, source=e.source,
         value=e.value, value_normalized=e.normalized, run_id=run_id, origin=origin,
         source_quote=e.quote, quote_verified=e.quote_verified, value_in_quote=e.value_in_quote,
         raw_char_start=e.location.raw_start if e.location and e.location.raw_start is not None else None,
         raw_char_end=e.location.raw_end if e.location and e.location.raw_start is not None else None,
-        ensemble_config_id=ensemble_config_id, prompt_version=prompt_version, metadata=extra or {},
+        ensemble_config_id=ensemble_config_id, prompt_version=prompt_version, metadata=meta,
     )
     if call is not None:
         r.deployment_name = call.deployment
@@ -124,15 +127,23 @@ def run_static_sources(doc: FilingDocument, specs: list[FieldSpec]):
 
 async def run_note(doc: FilingDocument, specs: list[FieldSpec], slots: EnsembleSlots, *,
                    catalog: dict, spend: SpendTracker | None, run_id=None, origin: str = "cascade",
-                   participant_rows: list[dict] | None = None, static=None) -> NoteOutcome:
+                   participant_rows: list[dict] | None = None, static=None,
+                   issuer_groups: dict[str, str] | None = None) -> NoteOutcome:
     """Run the full cascade on one note. Raises SpendCapReached before any call
     that would exceed the cap (the caller stops the run cleanly). The raised
     exception carries ``partial_readings`` — every call already MADE for this
-    note — so the run can record that spend instead of losing it."""
+    note — so the run can record that spend instead of losing it.
+
+    ``issuer_groups`` (notefix2 F1): {filer_cik: issuer_group}, from
+    ``participants.load_issuer_groups`` — optional so existing callers that
+    don't pass it keep working exactly as before (the affiliated-agent rule
+    simply never fires for them, same as if the note's issuer_group were
+    unknown)."""
     out = NoteOutcome(doc.reference_filing_id, "failed", None)
     try:
         return await _run_note(out, doc, specs, slots, catalog=catalog, spend=spend, run_id=run_id,
-                               origin=origin, participant_rows=participant_rows, static=static)
+                               origin=origin, participant_rows=participant_rows, static=static,
+                               issuer_groups=issuer_groups)
     except SpendCapReached as exc:
         exc.partial_readings = list(out.readings)
         raise
@@ -161,7 +172,8 @@ async def _read_pair(out: NoteOutcome, doc, coros, *, run_id, origin, ens_id, ex
 
 async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec], slots: EnsembleSlots, *,
                     catalog: dict, spend: SpendTracker | None, run_id, origin: str,
-                    participant_rows: list[dict] | None, static) -> NoteOutcome:
+                    participant_rows: list[dict] | None, static,
+                    issuer_groups: dict[str, str] | None = None) -> NoteOutcome:
     by_key = {s.key: s for s in specs}
     rspecs = reader_specs(specs)
     reader_keys = [s.key for s in rspecs]
@@ -170,19 +182,29 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
     tr, rr, et = static or await asyncio.to_thread(run_static_sources, doc, specs)
     out.full_tokens_est, out.trimmed_tokens_est = tr.full_tokens_est, tr.trimmed_tokens_est
 
+    # notefix2 Task 5: the rules' own independently-read pricing_date (never a
+    # model's) rejects an echoed-typo maturity_date/final_valuation_date; the
+    # hypothetical-example section's span rejects a quote lifted from inside it.
+    pricing_hint = rr.hits["pricing_date"].value if "pricing_date" in rr.hits else None
+    hypo_span = rr.extras["hypothetical_span"].value if "hypothetical_span" in rr.extras else None
+
+    def _ev(spec_key, source, value, quote):
+        return cmp.evidence(doc, by_key[spec_key], source, value, quote,
+                            reject_if_equals=pricing_hint, hypothetical_span=hypo_span)
+
     # (a) rules and (b) EdgarTools readings
     independent: dict[str, list[cmp.Evidence]] = {}
     for key, hit in rr.hits.items():
         if key not in by_key:
             continue
-        e = cmp.evidence(doc, by_key[key], "rules", hit.value, hit.quote)
+        e = _ev(key, "rules", hit.value, hit.quote)
         independent.setdefault(key, []).append(e)
         out.readings.append(_reading_from_evidence(doc, e, key, run_id=run_id, origin=origin,
                                                    ensemble_config_id=ens_id))
     for key, v in et.fields.items():
         if key not in by_key:
             continue
-        e = cmp.evidence(doc, by_key[key], "edgartools", v["value"], v["quote"])
+        e = _ev(key, "edgartools", v["value"], v["quote"])
         independent.setdefault(key, []).append(e)
         out.readings.append(_reading_from_evidence(
             doc, e, key, run_id=run_id, origin=origin, ensemble_config_id=ens_id,
@@ -209,7 +231,7 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         if not call.usable:
             return None
         f = call.fields.get(key) or {}
-        return cmp.evidence(doc, by_key[key], call.slot, f.get("value"), f.get("quote"))
+        return _ev(key, call.slot, f.get("value"), f.get("quote"))
 
     m1 = {k: ev_for(c1, k) for k in reader_keys}
     m2 = {k: ev_for(c2, k) for k in reader_keys}
@@ -296,7 +318,7 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         if ec.usable:
             for c in remaining:
                 f = ec.fields.get(c.spec.key) or {}
-                e = cmp.evidence(doc, c.spec, "escalation", f.get("value"), f.get("quote"))
+                e = _ev(c.spec.key, "escalation", f.get("value"), f.get("quote"))
                 row = _reading_from_evidence(doc, e, c.spec.key, run_id=run_id, origin=origin, call=ec,
                                              ensemble_config_id=ens_id, prompt_version=readers.PROMPT_VERSION)
                 out.readings.append(row)
@@ -312,9 +334,13 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         if ev is not None:
             resolved[k] = {"value": ev.value, "resolution": "rules", "evidence": ev}
 
-    # derivations: computed from the resolved values, written as 'derived'
+    # derivations: computed from the resolved values, written as 'derived'.
+    # notefix2 Task 4: the two language-dependent defaults need a full-text
+    # signal, never a model's reading, for "no call language anywhere" /
+    # "no memory language anywhere".
     values = {k: r["value"] for k, r in resolved.items()}
-    for d in derive.derive_all(values):
+    for d in derive.derive_all(values, has_call_language=rules.has_call_language(doc.text),
+                               has_memory_language=rules.has_memory_language(doc.text)):
         spec = by_key.get(d.field_key)
         if spec is None:
             continue
@@ -330,6 +356,29 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
                                  "reading_id": row.id, "derived": d}
         values[d.field_key] = d.value
 
+    # distribution participants: rules names + resolved list, matched, nothing
+    # dropped. Done BEFORE staging (notefix2 F1): the role correction below
+    # must be what gets staged, not a detail blob computed too late to matter.
+    issuer_group = (issuer_groups or {}).get(doc.cik)
+    names = [{"name": p["name"], "source": "rules"} for p in rr.participant_names]
+    match = participants.match_names(names, participant_rows or [])
+    unmatched = list(match.unmatched)
+    if isinstance((resolved.get("distribution") or {}).get("value"), list):
+        members, dist_unmatched = participants.match_distribution(resolved["distribution"]["value"],
+                                                                  participant_rows or [])
+        members = participants.resolve_distribution_roles(members, issuer_group)
+        resolved["distribution"]["value"] = members
+        values["distribution"] = members
+        out.detail["distribution_members"] = members
+        seen = {participants.normalize_name(u.get("name")) for u in unmatched}
+        unmatched += [u for u in dist_unmatched if participants.normalize_name(u.get("name")) not in seen]
+    out.unmatched_participants = unmatched
+    out.detail["participants_matched"] = match.matched
+    cal_affiliation = participants.calculation_agent_affiliation(
+        values.get("calculation_agent"), issuer_group, participant_rows or [])
+    if cal_affiliation is not None:
+        out.detail["calculation_agent_affiliation"] = cal_affiliation
+
     # per-field validation (notefix1 Task 3): a field that failed its own
     # shape never fails the whole reading (readers.read / schema.
     # parse_reader_output already dropped it from call.fields); it is
@@ -344,6 +393,10 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
     out.detail["field_issues"] = [
         {"slot": rc.slot, "field_key": k, **issue}
         for rc in out.reader_calls for k, issue in (rc.field_issues or {}).items()
+    ]
+    out.detail["list_hygiene_dropped"] = [
+        {"field_key": r.field_key, "source": r.source, "dropped": r.metadata.get("dropped_members")}
+        for r in out.readings if r.metadata.get("dropped_members")
     ]
 
     # self-checks: a finding sends the note to review; no value is changed
@@ -389,19 +442,6 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
             raw_char_start=loc.raw_start if loc and loc.raw_start is not None else None,
             raw_char_end=loc.raw_end if loc and loc.raw_start is not None else None,
             probability=r.get("probability"), metadata=meta))
-
-    # distribution participants: rules names + resolved list, matched, nothing dropped
-    names = [{"name": p["name"], "source": "rules"} for p in rr.participant_names]
-    match = participants.match_names(names, participant_rows or [])
-    unmatched = list(match.unmatched)
-    if isinstance((resolved.get("distribution") or {}).get("value"), list):
-        members, dist_unmatched = participants.match_distribution(resolved["distribution"]["value"],
-                                                                  participant_rows or [])
-        out.detail["distribution_members"] = members
-        seen = {participants.normalize_name(u.get("name")) for u in unmatched}
-        unmatched += [u for u in dist_unmatched if participants.normalize_name(u.get("name")) not in seen]
-    out.unmatched_participants = unmatched
-    out.detail["participants_matched"] = match.matched
 
     out.cost_usd = sum(r.cost_usd or 0 for r in out.readings if r.field_key == CALL_FIELD)
     reasons = []

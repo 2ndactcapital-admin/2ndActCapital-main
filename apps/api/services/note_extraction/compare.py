@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from services.note_extraction import rules
 from services.note_extraction.documents import FilingDocument, QuoteLocation, locate_quote
-from services.note_extraction.schema import FieldSpec, normalize, value_in_quote
+from services.note_extraction.schema import KIND_LIST, FieldSpec, normalize, value_in_quote
 
 
 @dataclass
@@ -30,6 +31,7 @@ class Evidence:
     quote_verified: bool | None
     value_in_quote: bool | None
     reading_key: str | None = None    # set by the cascade: links back to the stored reading
+    dropped: list[dict] = field(default_factory=list)   # notefix2 Task 3: hygiene-dropped list members
 
     @property
     def supports(self) -> bool:
@@ -37,13 +39,76 @@ class Evidence:
         return bool(self.quote_verified) and self.value_in_quote is not False
 
 
-def evidence(doc: FilingDocument, spec: FieldSpec, source: str, value, quote) -> Evidence:
-    norm = normalize(spec, value)
+_MATURITY_LIKE_FIELDS = ("maturity_date", "final_valuation_date")
+# notefix2 Task 5: fields a hypothetical-example section's own numbers (a
+# placeholder coupon, a round placeholder initial level, a worked-example
+# date) can masquerade as a real extracted value for. ``underlyings`` is
+# handled separately below — the LIST itself is still real, only a member's
+# ``initial_level`` is suspect when the field's quote comes from inside the
+# section.
+_HYPOTHETICAL_REJECT_FIELDS = ("coupon_rate_pa", "pricing_date", "issue_date", "maturity_date",
+                               "barrier_pct", "buffer_pct")
+
+
+def _within(loc: QuoteLocation | None, span: tuple[int, int] | None) -> bool:
+    return bool(loc and span and span[0] <= loc.text_start and loc.text_end <= span[1])
+
+
+def evidence(doc: FilingDocument, spec: FieldSpec, source: str, value, quote, *,
+            reject_if_equals: str | None = None, hypothetical_span: tuple[int, int] | None = None) -> Evidence:
+    """notefix2 Task 3: for ``underlyings`` / ``distribution``, list members
+    are hygiene-filtered BEFORE they become this reading's value — a table
+    header, a definition sentence, or a merged multi-member entry never
+    reaches comparison, agreement or staging. Every source (rules, the
+    model readers, EdgarTools, Jev, escalation) calls this ONE function to
+    build its evidence, so filtering here covers all of them at a single
+    choke point. Dropped members are kept on ``Evidence.dropped`` for the
+    run's own report — never silently discarded.
+
+    notefix2 Task 5: ``reject_if_equals`` (an ISO date, normally the rules'
+    own independently-read pricing_date) rejects a candidate ``maturity_date``
+    / ``final_valuation_date`` that equals it — a filing's trade/pricing
+    date echoed into the wrong field is never a real maturity. ``
+    hypothetical_span`` rejects a value whose quote lies ENTIRELY inside a
+    detected hypothetical-example section for the fields in
+    ``_HYPOTHETICAL_REJECT_FIELDS`` (it may still be used by the payoff
+    check, which reads the section's own rows directly, not this reading);
+    for ``underlyings`` it strips just ``initial_level`` from every member
+    instead of rejecting the whole list, since the member names are
+    typically still real."""
+    dropped: list[dict] = []
+    if spec.kind == KIND_LIST and isinstance(value, list):
+        value, dropped = rules.filter_list_members(spec.key, value)
+        if not value:
+            value = None
     loc = locate_quote(doc, quote) if quote else None
+    if hypothetical_span and _within(loc, hypothetical_span):
+        if spec.key in _HYPOTHETICAL_REJECT_FIELDS and value is not None:
+            dropped.append({"value": value, "drop_reason": "hypothetical_section"})
+            value = None
+        elif spec.key == "underlyings" and isinstance(value, list):
+            stripped_any = False
+            cleaned = []
+            for m in value:
+                if isinstance(m, dict) and m.get("initial_level") is not None:
+                    dropped.append({"name": m.get("name"), "initial_level": m.get("initial_level"),
+                                    "drop_reason": "hypothetical_section"})
+                    m = {**m, "initial_level": None}
+                    stripped_any = True
+                cleaned.append(m)
+            if stripped_any:
+                value = cleaned
+    if (spec.key in _MATURITY_LIKE_FIELDS and reject_if_equals and value is not None
+            and normalize(spec, value) == normalize(spec, reject_if_equals)):
+        dropped.append({"value": value, "drop_reason": f"equals the pricing date {reject_if_equals} — "
+                        "rejected for maturity_date/final_valuation_date"})
+        value = None
+    norm = normalize(spec, value)
     verified = None if not quote else loc is not None
     in_quote = value_in_quote(spec, value, quote) if (value is not None and quote) else (
         None if value is None else False)
-    return Evidence(source, value if norm is not None else None, quote, norm, loc, verified, in_quote)
+    return Evidence(source, value if norm is not None else None, quote, norm, loc, verified, in_quote,
+                    dropped=dropped)
 
 
 @dataclass

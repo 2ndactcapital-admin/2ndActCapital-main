@@ -14,6 +14,19 @@ list — otherwise 'other' for a super-admin to set.
 
 Matching never discards: every name is returned either matched (with the
 participant id) or in ``unmatched``.
+
+AFFILIATED AGENTS (notefix2 F1): ``affiliated_issuer_group`` (confirmed live:
+0 rows existed before notefix2.structural seeded the real issuer-affiliated
+broker-dealers — BofAS/MLPF&S, JPMS, MS & Co./MSSB, GS&Co., Barclays Capital
+Inc., UBS Securities LLC, UBS Financial Services Inc., CGMI) is matched
+against ``portfolio.structured_note_issuers.issuer_group`` for THIS note.
+``resolve_distribution_roles`` overrides a distribution member's role to
+'issuer_affiliated_agent' when it matches a participant whose affiliated
+group is the note's own issuer group — REGARDLESS of what the model (or any
+reader) answered — and records the correction so it is auditable, never
+silent. A participant with no affiliated_issuer_group, or a group that does
+not match this note's issuer, is left exactly as matched (never promoted).
+An unmatched name is still reported, never dropped (unchanged from before).
 """
 from __future__ import annotations
 
@@ -24,14 +37,27 @@ from services.database import platform_scope
 from services.note_extraction.schema import normalize_name
 
 PARTICIPANT_TYPES = ("issuer_affiliate", "distribution_platform", "dealer", "wealth_manager", "other")
+ISSUER_AFFILIATED_ROLE = "issuer_affiliated_agent"
 
 
 async def load_participants(conn) -> list[dict]:
     rows = await conn.fetch(
-        "SELECT id, canonical_name, participant_type, aliases, status, observed_count "
-        "FROM portfolio.distribution_participants WHERE status <> 'retired' ORDER BY canonical_name"
+        "SELECT id, canonical_name, participant_type, aliases, affiliated_issuer_group, status, "
+        "observed_count FROM portfolio.distribution_participants WHERE status <> 'retired' "
+        "ORDER BY canonical_name"
     )
     return [dict(r) for r in rows]
+
+
+async def load_issuer_groups(conn) -> dict[str, str]:
+    """{filer_cik: issuer_group} — every row of the global issuer table, keyed
+    by CIK the way ``FilingDocument.cik`` carries it."""
+    rows = await conn.fetch("SELECT filer_cik, issuer_group FROM portfolio.structured_note_issuers")
+    return {r["filer_cik"]: r["issuer_group"] for r in rows}
+
+
+def _norm_group(g: str | None) -> str:
+    return (g or "").strip().casefold()
 
 
 def _index(participants: list[dict]) -> dict[str, dict]:
@@ -190,6 +216,51 @@ def match_distribution(members: list[dict], participants: list[dict]) -> tuple[l
             unmatched.append({"name": m.get("name"), "role": m.get("role"), "source": "distribution"})
         else:
             row.update({"participant_id": str(p["id"]), "canonical_name": p["canonical_name"],
-                        "participant_type": p["participant_type"], "matched": True})
+                        "participant_type": p["participant_type"],
+                        "affiliated_issuer_group": p.get("affiliated_issuer_group"), "matched": True})
         out.append(row)
     return out, unmatched
+
+
+def resolve_distribution_roles(members: list[dict], issuer_group: str | None) -> list[dict]:
+    """F1 rule, applied AFTER ``match_distribution``: a member matched to a
+    participant whose ``affiliated_issuer_group`` is THIS note's own issuer
+    group is role 'issuer_affiliated_agent' — regardless of what any reader
+    answered. The correction is recorded (``role_source``, and
+    ``role_corrected_from`` when it actually changed a reader's answer) so it
+    is auditable, never silent. A member that doesn't match an affiliate of
+    THIS issuer is returned unchanged (its own reader-assigned role stands;
+    ``role_source`` 'reader')."""
+    want = _norm_group(issuer_group)
+    out = []
+    for m in members or []:
+        row = dict(m)
+        group = _norm_group(row.get("affiliated_issuer_group"))
+        if row.get("matched") and want and group and group == want:
+            prior = row.get("role")
+            row["role_source"] = "rule"
+            if prior != ISSUER_AFFILIATED_ROLE:
+                row["role_corrected_from"] = prior
+            row["role"] = ISSUER_AFFILIATED_ROLE
+        else:
+            row.setdefault("role_source", "reader")
+        out.append(row)
+    return out
+
+
+def calculation_agent_affiliation(name: str | None, issuer_group: str | None,
+                                  participants: list[dict]) -> dict | None:
+    """The same affiliation check for the (scalar) ``calculation_agent``
+    field: NOTE_FIELDS.md flags an issuer-affiliated calculation agent as a
+    conflict. None when there is no name to check; otherwise
+    {participant_id, canonical_name, affiliated} — ``affiliated`` is only
+    True when the matched participant's own group is THIS note's issuer
+    group, exactly like the distribution rule."""
+    if not name:
+        return None
+    idx = _index(participants)
+    p = idx.get(normalize_name(name))
+    if p is None:
+        return {"participant_id": None, "canonical_name": None, "affiliated": False}
+    affiliated = bool(issuer_group) and _norm_group(p.get("affiliated_issuer_group")) == _norm_group(issuer_group)
+    return {"participant_id": str(p["id"]), "canonical_name": p["canonical_name"], "affiliated": affiliated}

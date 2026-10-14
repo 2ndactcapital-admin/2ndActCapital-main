@@ -31,7 +31,8 @@ async def load_context(conn):
     schema.assert_no_shared_protection_field(specs)
     catalog = await asyncio.to_thread(proxy.deployment_catalog)
     parts = await participants.load_participants(conn)
-    return specs, catalog, parts
+    issuer_groups = await participants.load_issuer_groups(conn)   # notefix2 F1
+    return specs, catalog, parts, issuer_groups
 
 
 def parse_efforts(items: list[str] | None) -> dict[str, str]:

@@ -171,6 +171,46 @@ async def list_candidates(conn, *, status: str | None = None, batch: str | None 
     return out
 
 
+# ── Second-reader findings (notefix2 Task 8) ────────────────────────────────
+# Reference annotation only — loaded by scripts/load_second_reader_findings.py
+# from docs/gold/gold1_second_reader_v1.json into
+# portfolio.note_gold_second_reader. NEVER writes note_gold_values; the
+# reviewer still confirms, corrects or marks absent on the review screen.
+async def second_reader_counts(conn, reference_filing_ids: list[str]) -> dict[str, dict]:
+    """{reference_filing_id: {critical, total}} for every filing id given —
+    used to sort the batch view so critically-flagged notes come first."""
+    if not reference_filing_ids:
+        return {}
+    rows = await conn.fetch(
+        """SELECT reference_filing_id,
+                  count(*) FILTER (WHERE severity = 'critical')::int AS critical,
+                  count(*)::int AS total
+             FROM portfolio.note_gold_second_reader
+            WHERE reference_filing_id = ANY($1::uuid[])
+            GROUP BY reference_filing_id""",
+        reference_filing_ids)
+    return {str(r["reference_filing_id"]): {"critical": r["critical"], "total": r["total"]} for r in rows}
+
+
+async def second_reader_for(conn, reference_filing_id) -> list[dict]:
+    """Every second-reader finding for one note, newest-loaded first within
+    each field — the review screen groups these by ``field_key`` itself."""
+    rows = await conn.fetch(
+        """SELECT id, field_key, seq, prefill, suggested, evidence, severity, kind, source, loaded_at
+             FROM portfolio.note_gold_second_reader
+            WHERE reference_filing_id = $1
+            ORDER BY field_key, seq""", reference_filing_id)
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["id"] = str(d["id"])
+        d["prefill"] = json.loads(d["prefill"]) if d["prefill"] is not None else None
+        d["suggested"] = json.loads(d["suggested"]) if d["suggested"] is not None else None
+        d["loaded_at"] = d["loaded_at"].isoformat()
+        out.append(d)
+    return out
+
+
 # ── The sampler ─────────────────────────────────────────────────────────────
 TRAP_PATTERNS: dict[str, re.Pattern] = {
     "threshold_trigger_buffer_wording": re.compile(

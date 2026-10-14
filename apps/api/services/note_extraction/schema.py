@@ -265,10 +265,21 @@ def critical_keys(specs: list[FieldSpec]) -> frozenset[str]:
     return frozenset(s.key for s in specs if s.critical)
 
 
+_QUOTED_PHRASE = re.compile(r"'[^']*'")
+
+
 def assert_no_shared_protection_field(specs: list[FieldSpec]) -> None:
     """Raise unless buffer_pct and barrier_pct are two separate live fields,
     each restricted to its own protection type, and no third field could hold
-    either level."""
+    either level.
+
+    notefix2 Task 6: a quoted alias ("the filing calls it a ... 'trigger
+    buffer level'") is what a FILING calls the barrier, not a semantic claim
+    that barrier_pct can hold a buffer value — real Goldman filings use
+    exactly that phrase for what is, by the field's own test, a barrier. The
+    bare-word check below strips quoted phrases FIRST so a real alias never
+    trips it, while a genuine unquoted admission ("...or a buffer level")
+    still would."""
     by_key = {s.key: s for s in specs}
     for f in ("buffer_pct", "barrier_pct", "protection_type"):
         if f not in by_key:
@@ -278,9 +289,11 @@ def assert_no_shared_protection_field(specs: list[FieldSpec]) -> None:
     buf, bar = by_key["buffer_pct"], by_key["barrier_pct"]
     if buf.kind != KIND_NUMBER or bar.kind != KIND_NUMBER:
         raise ValueError("buffer_pct and barrier_pct must both be scalar numbers")
-    if "barrier" in buf.description.lower().replace("never a barrier", ""):
+    buf_unquoted = _QUOTED_PHRASE.sub("", buf.description.lower())
+    bar_unquoted = _QUOTED_PHRASE.sub("", bar.description.lower())
+    if "barrier" in buf_unquoted.replace("never a barrier", ""):
         raise ValueError("buffer_pct's description admits a barrier level")
-    if "buffer" in bar.description.lower().replace("never a buffer", ""):
+    if "buffer" in bar_unquoted.replace("never a buffer", ""):
         raise ValueError("barrier_pct's description admits a buffer level")
     if "only for protection_type 'buffer'" not in buf.description.lower():
         raise ValueError("buffer_pct is not restricted to buffer protection")

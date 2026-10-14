@@ -94,7 +94,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     conn = await common.connect()
     try:
-        specs, catalog, parts = await common.load_context(conn)
+        specs, catalog, parts, _issuer_groups = await common.load_context(conn)
         by_key = {s.key: s for s in specs}
         rspecs = reader_specs(specs)          # the readers answer extraction_method='model' fields only
         reader_keys = [x.key for x in rspecs]

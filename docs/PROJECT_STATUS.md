@@ -1,5 +1,15 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-13 (notefix1.structural — four fixes found by the first
+Last updated: 2026-10-14 (notefix2.structural — seven systematic errors found
+by checking all 50 gold-1 notes against their own SEC filings: affiliated
+agents resolved by rule, junk list members dropped before they become
+readings, buffer-vs-barrier and digital-vs-participation field definitions
+rewritten with a filing-wording test instead of relying on the word
+"barrier"/"buffer" literally appearing, blank-field defaults, a fee-total
+default, two new self-checks (coupon cross-check, maturity-after-pricing)
+plus a payoff check extended to the protection level itself, and the
+second-reader findings loaded into a new table the review screen surfaces
+per field; verify WRITTEN, not yet run; see the top entry). Previously
+2026-10-13 (notefix1.structural — four fixes found by the first
 real gold pre-fill: fee fields become ranges, one bad field no longer rejects
 a whole note, a wider hypothetical-example detector, and the gold verify's
 regression runs after its own teardown; verify WRITTEN, not yet run; see the
@@ -288,6 +298,157 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000000000000000000000000. NOTEFIX2 — seven systematic errors from checking all 50 gold-1 notes against their own filings; second-reader findings in the review screen; verify WRITTEN, not yet run (2026-10-14)
+
+**Run:** `python3 apps/api/scripts/verify_notefix2.py`. Doppler-hydrated, every model call mocked, real
+spend $0. Runs `verify_notefields.py`, `verify_goldset.py` and `verify_notefix1.py` once each, as flat
+subprocesses, AFTER its own teardown.
+
+**Trigger.** The gold-1 pre-fill (run `683e1565-db22-400f-bdd6-cb5e3f04bfe9`, gpt-5-mini, 50 notes) was
+checked field by field against each SEC filing by hand (Joe, with a second-reader pass, agreed
+2026-10-14). ~1,440 fields matched; 237 were flagged (54 critical) — recorded in
+`docs/gold/gold1_second_reader_v1.json`. The errors are mostly missing definitions, missing rules and
+missing checks, not model capacity — this sprint fixes those so cheap models can pass. It does NOT write
+gold values, does not run any model for real, and does not touch `securities_global_note_terms`.
+
+**Task 1 (discovery) — confirmed live:**
+- **1a.** Junk list members come from TWO places, neither hygiene-checked before this sprint: the MODEL
+  reader itself (gold-1 note `baf65e2d…`, BofA: `model_1`/gpt-5-mini merged two real underlyings into one
+  descriptive sentence as a single list entry, despite the prompt's own instruction against merging), and
+  `edgartools_reader.map_terms`'s `underlying` mapping (note `08da83c9…`: `source='edgartools'` produced
+  `[{"name": "For each underlying on any valuation date, (i) its closing value..."}]` — a definition
+  sentence, with only a `len < 300` guard). `schema.Underlying` validated shape only (a non-empty string),
+  never content.
+- **1b.** `portfolio.distribution_participants` had 0 rows live. `participants.match_distribution` only
+  annotated whatever role the model had already picked — it never corrected one. Role was entirely the
+  model's own judgment (gold-1 note `18e37394…`: MS & Co. labeled `distribution_agent` despite its own
+  quote reading "an affiliate of MSFL and a wholly owned subsidiary of Morgan Stanley").
+- **1c.** `cascade.py`'s real cascade already derives from `resolved` (the agreed/Jev/escalation value) —
+  correct. `prefill.py` (what gold-1 actually ran) built its `values` dict straight from model_1's single
+  raw reading with no cross-check against an independent rules reading. This is the exact, confirmed
+  mechanism behind the gold-1 `tenor_months` bug (note #1): rules correctly read "Pricing Date: January 28,
+  2019" via its own label match; model_1 read the filing's own typo sentence ("January 28, 2018 (the
+  pricing date)"); that unverified single reading is what `derive.tenor_months` used.
+- **1d.** `rules.find_hypothetical_rows` already recorded a character span, but only when it successfully
+  parsed ≥1 numeric row — nothing used the span to reject OTHER fields' quotes. Widened (Task 5 below) to
+  record the span (`extras["hypothetical_span"]`) whenever a "hypothetical" heading is found at all, from
+  the first heading's start to the last heading's 6000-char window end.
+- **1e.** A registry field's `description` reaches the reader prompt verbatim via `schema.json_schema`'s
+  per-field `"description"` (embedded in the system message). No few-shot examples existed anywhere in
+  `readers.py` before this sprint.
+- **1f.** A payoff self-check already existed (`checks.payoff_matches_examples`/`payoff_per_1000`), called
+  from both `cascade.py` and `prefill.py`, comparing the recomputed payoff against the filing's OWN
+  hypothetical table rows. It did not yet synthesize rows at the protection level ± a small epsilon.
+
+**F1 — affiliated agents (Task 2).** `distribution_participants` gained `affiliated_issuer_group`
+(migration `notefix2_affiliated_agents.sql`, applied via the pre-cutover postgres-owner connection — DDL
+on an existing table needs table ownership, confirmed live: `app_service` got `InsufficientPrivilegeError`
+on a bare `ALTER TABLE`) and 10 real, seeded participants (BofA Securities/BofAS, MLPF&S, J.P. Morgan
+Securities LLC/JPMS, Morgan Stanley & Co. LLC/MS & Co., Morgan Stanley Smith Barney LLC/Morgan Stanley
+Wealth Management/MSSB, Goldman Sachs & Co. LLC/GS&Co., Barclays Capital Inc., UBS Securities LLC, UBS
+Financial Services Inc., Citigroup Global Markets Inc./CGMI), each `status='active'` (real reference data,
+not a proposal) with `affiliated_issuer_group` matching live `structured_note_issuers.issuer_group` values.
+`participants.resolve_distribution_roles` overrides a matched member's role to `issuer_affiliated_agent`
+when its affiliated group equals THIS note's own issuer group (via the new `participants.load_issuer_groups`,
+keyed by `reference_filings.cik`) — regardless of what any reader answered — recording `role_source` and
+`role_corrected_from` when it actually changed something. `participants.calculation_agent_affiliation` runs
+the identical match for the scalar `calculation_agent` field. Both wired into `cascade.py` (BEFORE staging,
+not after — the correction must be what gets staged) and `prefill.py`. An unknown or unaffiliated name is
+still reported, never dropped.
+
+**F2 — list hygiene (Task 3).** `rules.filter_list_members` (and per-list `hygiene_underlying` /
+`hygiene_distribution`) drops a known table header, a definition sentence, or a single entry naming more
+than one real member — recording the reason, never silently discarding. Wired into `compare.evidence`
+(the ONE choke point every source — rules, both model readers, EdgarTools, Jev, escalation — already calls
+to build its evidence), so filtering covers every source at once; dropped members land on
+`Evidence.dropped` → `ReadingRow.metadata.dropped_members` → `NoteOutcome.detail['list_hygiene_dropped']`.
+`rules.cross_check_initial_levels` exists for the "cross-check against the key-terms table" requirement but
+is not yet wired to a live source — EdgarTools' own parsed terms do not expose per-underlying initial
+levels distinctly, so this is a real, honest gap, not a silent no-op dressed up as done.
+
+**F2/F7 — hypothetical-section rejection (Task 5).** `compare.evidence` gained `hypothetical_span`: a
+reading for `coupon_rate_pa`, `pricing_date`, `issue_date`, `maturity_date`, `barrier_pct` or `buffer_pct`
+whose quote lies ENTIRELY inside the span is rejected (`drop_reason: 'hypothetical_section'`); for
+`underlyings` it strips just `initial_level` from affected members (the names are typically still real).
+The self-checks (`payoff_matches_examples`, `payoff_matches_at_protection_levels`) still read the section's
+own rows directly — a reading is rejected FOR EXTRACTION, never for the payoff check that needs those rows
+on purpose.
+
+**F3 — buffer vs barrier.** Field definitions rewritten live (migration `notefix2_field_definitions.sql`,
+DML only — `app_service` has UPDATE on this table) to give a TEST rather than relying on a filing's own
+word: `barrier_pct` now says to use it "even when the filing calls it a 'threshold value', 'trigger value',
+'trigger buffer level' or 'downside threshold'" and gives the breach test; `buffer_pct` says explicitly
+"never the buffer rate or downside gearing (e.g. 111.11%)". **Real finding fixing this surfaced a false
+positive in `schema.assert_no_shared_protection_field`**: the literal alias `'trigger buffer level'` inside
+`barrier_pct`'s own description tripped the "admits a buffer level" guard, because the guard did a bare
+substring check with no awareness that quoted filing-wording aliases are not semantic admissions. Fixed by
+stripping single-quoted spans before the bare-word check (`_QUOTED_PHRASE`) — a real existing invariant
+that needed to get smarter, not relaxed. `checks.payoff_matches_at_protection_levels` (Task 7) recomputes
+the payoff at each stated level ± 0.01% and compares against the nearest real filing row within that
+tolerance — catching a barrier read as a buffer even when the filing's own table doesn't happen to
+tabulate a row at exactly that level; proven live against the exact "Threshold Value 60%, $599.90 at
+59.99%" shape from gold-1 note #6.
+
+**F4 — digital payouts.** `participation_rate` / `cap_pct` descriptions now say explicitly "never a digital
+or fixed percentage" / "not a fixed premium or digital return"; `fixed_payout_amount` /
+`fixed_payout_threshold_pct` descriptions state the digital/step/fixed-final-date-premium shape plainly.
+
+**F5 — blank defaults (Task 4).** New derivations in `derive.py`, each a `Derived` with its own rule name,
+applied ONLY when the field is unresolved (the existing decision-B guard already refuses to overwrite a
+stated value, including a non-USD currency): `default_currency` → USD; `default_call_type` → 'none', gated
+on a full-TEXT signal (`rules.has_call_language`, never a model's reading) finding zero call/redemption
+wording anywhere in the filing; `default_coupon_memory` → false, gated the same way on
+`rules.has_memory_language` and only when `coupon_type == 'contingent'`; `no_call_months` → the first
+observation-schedule date that checks a call, minus `issue_date`.
+
+**F6 — fee totals.** `derive.default_total_fees`: when only `agent_commission_pct` is stated and no other
+fee component is, `total_fees_pct` is derived as that same range. `checks.fees_reconcile`'s Finding now
+also proposes the corrected total (`detail.proposed_total_fees_pct = price - proceeds`) when the stated
+total fails the price − fees ≈ proceeds check, instead of merely flagging the disagreement.
+
+**F7 — wrong-reading numbers.** `checks.coupon_cross_check`: when the observation schedule states a fixed
+per-period coupon amount and `coupon_frequency` is known, `coupon_rate_pa` must equal amount × periods/yr
+÷ denomination × 100 (±0.01%) — catches the gold-1 "$18.75 quarterly on $1,000" (7.50%) vs a stated 6%.
+`checks.maturity_after_pricing`: `maturity_date`/`final_valuation_date` must be strictly after
+`pricing_date` (a value literally equal to `pricing_date` is already rejected earlier, at the evidence
+level, via `reject_if_equals` sourced from the RULES' own independently-read pricing_date — never a
+model's). Both the typo-date tenor bug and the maturity-equals-trade-date case are the SAME root cause
+(1c) and are fixed by the same mechanism: `prefill.prefill_note` now compares model_1's reading against an
+independent rules reading when both exist, and leaves the field UNRESOLVED (`PrefillNote.
+input_disagreements`) rather than trusting either one alone when they disagree — so `tenor_months` /
+`no_call_months` correctly come back null + needs_review instead of computing from the wrong date.
+
+**Task 6 — few-shot block.** `readers.FEW_SHOT` (PROMPT_VERSION bumped to `notefields.reader.v4`): four
+real corrected cases from the second-reader review — the BofA "Threshold Value" barrier, the Goldman
+buffer-RATE, the Barclays digital payout, the BofA issuer-affiliated agent — each with its filing quote and
+correct values, under ~1,500 tokens (measured 522, printed by the verify script).
+
+**Task 8 — second-reader findings in the review screen.** New table `portfolio.note_gold_second_reader`
+(migration `notefix2_second_reader.sql`, the usual global 4-policy RLS pattern) keyed on
+`(reference_filing_id, field_key, seq, source)` — `seq` is the 0-based position of a finding among
+findings sharing the same field within the same note (confirmed live: 3 of gold-1's 50 notes flag the same
+field_key twice with distinct issues, so `(filing, field)` alone collides). Loaded by the idempotent
+`scripts/load_second_reader_findings.py` — run live: 237 findings inserted, then a second run inserted 0.
+`routers/note_extraction_admin.py`'s `gold_note` response now carries `second_reader.by_field` (grouped,
+ready for the UI) plus `critical_count`/`total_count`; `gold_candidates` carries each note's
+`second_reader_critical`/`second_reader_total` and accepts `?critical_first=true` to sort flagged notes
+first. `GoldReviewScreen.jsx`'s `FieldRow` renders a "Second reader" note (suggestion + evidence quote) on
+any flagged field via the new `noteGoldReview.secondReaderFor` (covered by `node --test`); a checkbox in
+the batch toolbar toggles the critical-first sort. The whole response stays behind the existing
+`_require_super_admin` gate — no new permission surface was added, so the gate proof is on the SAME
+request, now carrying second-reader data. `note_gold_values` is never written by any of this.
+
+**Operator step after merge:** re-run an EVALUATION (not a pre-fill — `run_note_extraction_eval.py`, not
+`prefill_gold.py`) on gold-1 once real gold values exist, then `score_against_gold.py`, to measure whether
+the fixes in this sprint actually move a cheap model's accuracy — this sprint fixed the engine, not the
+gold-1 batch's own readings (those are superseded by a future prefill/eval run, same as notefix1's own
+operator step).
+
+**Not done in this sprint (by instruction):** no model was called and nothing was run against gold-1 for
+real; `securities_global_note_terms` was not touched; no gold values were written.
 
 ---
 

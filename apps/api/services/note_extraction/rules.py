@@ -685,9 +685,26 @@ def find_hypothetical_rows(text: str, result: RuleResult, *, max_rows: int = 40)
     """Rows of the filing's hypothetical payment table: (underlying return %,
     payment per $1,000). A row is a line whose FIRST token is a percent and that
     carries a $ amount; it is taken only from text after a 'hypothetical'
-    heading. Stored as an extra — never a field."""
+    heading. Stored as an extra — never a field.
+
+    notefix2 Task 5 (1d): a 'hypothetical' heading ALSO marks a character span
+    stored as ``extras["hypothetical_span"]`` — REGARDLESS of whether its rows
+    parse (a prose-only hypothetical section, or a table this parser's strict
+    "% ... $" line shape misses, still marks the span: the span is a quote-
+    exclusion zone, not a data source, so it must not depend on the stricter
+    row parser succeeding). Covers every heading found, from the first one's
+    start to the last one's window end, so a filing with more than one
+    'hypothetical' section (a narrative explanation, then a worked table
+    further down) is excluded throughout."""
+    heads = list(_HYPO_HEAD.finditer(text))
+    if heads:
+        span_start = heads[0].start()
+        span_end = min(len(text), max(h.start() + 6000 for h in heads))
+        result.extras["hypothetical_span"] = RuleHit(
+            "hypothetical_span", (span_start, span_end), span_start, span_end,
+            text[span_start: min(span_end, span_start + 300)])
     rows = []
-    for h in _HYPO_HEAD.finditer(text):
+    for h in heads:
         window = text[h.start(): h.start() + 6000]
         for line in window.split("\n"):
             line = line.strip()
@@ -708,6 +725,154 @@ def find_hypothetical_rows(text: str, result: RuleResult, *, max_rows: int = 40)
             result.extras["hypothetical_rows"] = RuleHit("hypothetical_rows", rows, start,
                                                          start + len(window), window[:300])
             return
+
+
+# ── List hygiene (notefix2 Task 3) ───────────────────────────────────────────
+# A junk list member — a table header, a definition sentence, or a single
+# member whose name actually lists several real members — reaches the list
+# because nothing before notefix2 checked a member's NAME against anything
+# beyond Pydantic shape (non-empty string). Confirmed live (notefix2 Task 1a):
+# both the model reader (one list entry merging two real underlyings into one
+# descriptive sentence) and EdgarTools' own ``map_terms`` (a definition
+# sentence picked up as its 'underlying' table cell) produce this junk with no
+# hygiene filter catching either.
+_TABLE_HEADER_NAMES = {
+    "cusip", "cusip no.", "isin", "ticker", "barrier value", "initial level",
+    "initial underlying value", "final underlying value", "underlying", "underlier",
+    "weight", "weighting", "return basis",
+}
+_DEFINITION_STARTS = (
+    "the closing level", "with respect to", "for each", "the underlying",
+    "each underlying", "for purposes of", "as used herein", "the final underlying value",
+    "the initial underlying value",
+)
+
+
+def _is_definition_sentence(name: str) -> bool:
+    n = re.sub(r"\s+", " ", name).strip().lower()
+    if not n:
+        return False
+    if any(n.startswith(p) for p in _DEFINITION_STARTS):
+        return True
+    # "The underlying index with the lesser index percent change" /
+    # "The underlying ... with the ..." — a description of WHICH underlying,
+    # not a name, regardless of where "underlying" sits in the sentence.
+    if re.search(r"\bunderlying\b.{0,40}\bwith\s+the\b", n):
+        return True
+    return False
+
+
+def hygiene_underlying(member: dict) -> str | None:
+    """None = keep. Otherwise the drop reason. Never raises; a non-dict or a
+    member with no name is left for the normal Pydantic validator to reject
+    (that is a shape error, not a hygiene judgment)."""
+    if not isinstance(member, dict):
+        return None
+    name = str(member.get("name") or "").strip()
+    if not name:
+        return None
+    low = re.sub(r"\s+", " ", name).strip().lower().rstrip(":*")
+    if low in _TABLE_HEADER_NAMES:
+        return "matches a known table header, not an underlying's name"
+    if _is_definition_sentence(name):
+        return "a definition sentence, not an underlying's name"
+    has_ticker = bool(member.get("ticker"))
+    has_level = member.get("initial_level") is not None
+    word_count = len(name.split())
+    if not has_ticker and not has_level and word_count > 8:
+        return (f"no ticker, no initial level, and {word_count} words — reads as a sentence, "
+                "not a single underlying's name")
+    if re.search(r"\band\s+the\b.{0,80}\b(index|etf|shares|stock)\b", name, re.IGNORECASE) and " and " in name:
+        return "names more than one underlying in a single list entry"
+    return None
+
+
+_DIST_SENTENCE_STARTS = ("each", "every", "any", "the agent may", "the dealers")
+
+
+def hygiene_distribution(member: dict) -> str | None:
+    """None = keep. Otherwise the drop reason — same shape of junk as
+    underlyings (a sentence describing the plan of distribution, not a single
+    participant's name), seen in the same corpus."""
+    if not isinstance(member, dict):
+        return None
+    name = str(member.get("name") or "").strip()
+    if not name:
+        return None
+    low = name.lower()
+    if any(low.startswith(p) for p in _DIST_SENTENCE_STARTS) and len(name.split()) > 8:
+        return "a sentence describing distribution, not a single participant's name"
+    if len(name.split()) > 14:
+        return f"{len(name.split())} words — too long to be a single participant's name"
+    return None
+
+
+_HYGIENE = {"underlyings": hygiene_underlying, "distribution": hygiene_distribution}
+
+
+def filter_list_members(key: str, members: list) -> tuple[list[dict], list[dict]]:
+    """(kept, dropped) for a list field's raw members. ``dropped`` entries
+    carry the original member plus ``drop_reason`` — reported, never
+    silently discarded. A field with no hygiene rule (the observation
+    schedule) is returned unchanged."""
+    check = _HYGIENE.get(key)
+    if check is None or not isinstance(members, list):
+        return (members if isinstance(members, list) else []), []
+    kept, dropped = [], []
+    for m in members:
+        reason = check(m)
+        if reason is None:
+            kept.append(m)
+        else:
+            dropped.append({**(m if isinstance(m, dict) else {"value": m}), "drop_reason": reason})
+    return kept, dropped
+
+
+def cross_check_initial_levels(members: list[dict], key_terms_levels: dict[str, object] | None) -> list[dict]:
+    """When the filing's own key-terms table states an underlying's initial
+    level (``key_terms_levels``: {normalized_name: level}), flag a member
+    whose extracted ``initial_level`` disagrees with it by more than 0.5% —
+    annotated on the member (``initial_level_table_mismatch``), never
+    silently overwritten: a disagreement is for a person (or the payoff
+    self-check) to weigh, not for this function to resolve."""
+    if not key_terms_levels:
+        return members
+    out = []
+    for m in members or []:
+        row = dict(m) if isinstance(m, dict) else {"value": m}
+        lvl, name = _dec(row.get("initial_level")), row.get("name")
+        table_lvl = _dec(key_terms_levels.get(_norm_key(name))) if name else None
+        if lvl is not None and table_lvl is not None and table_lvl != 0:
+            drift = abs(lvl - table_lvl) / table_lvl
+            if drift > Decimal("0.005"):
+                row["initial_level_table_mismatch"] = {"extracted": _num(lvl), "key_terms_table": _num(table_lvl)}
+        out.append(row)
+    return out
+
+
+def _norm_key(name) -> str:
+    return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+
+
+# ── Full-text signals for the Task 4 defaults (never a model's reading) ─────
+_CALL_LANGUAGE = re.compile(
+    r"\b(?:call(?:able|ed)?|redeem(?:able|ed)?|redemption)\b", re.IGNORECASE)
+_MEMORY_LANGUAGE = re.compile(
+    r"\bmemory\b|unpaid\s+contingent\s+(?:coupon|interest)s?|previously\s+unpaid|"
+    r"accru(?:ed|al)\s+(?:of\s+)?(?:any\s+)?(?:missed|unpaid)", re.IGNORECASE)
+
+
+def has_call_language(text: str) -> bool:
+    """True when the filing contains ANY call/redemption wording at all —
+    the signal ``derive.default_call_type`` needs to know a note is genuinely
+    not callable, rather than that the model simply didn't answer."""
+    return bool(_CALL_LANGUAGE.search(text or ""))
+
+
+def has_memory_language(text: str) -> bool:
+    """True when the filing contains memory / accrual-of-missed-coupon
+    wording — the signal ``derive.default_coupon_memory`` needs."""
+    return bool(_MEMORY_LANGUAGE.search(text or ""))
 
 
 # ── Distribution participant NAMES (plan of distribution only) ───────────────

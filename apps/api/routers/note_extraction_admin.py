@@ -77,13 +77,21 @@ class GoldBody(BaseModel):
 
 @router.get("/admin/note-extraction/gold/candidates")
 async def gold_candidates(request: Request, status: str | None = Query(default=None),
-                          batch: str | None = Query(default=None, max_length=200)):
+                          batch: str | None = Query(default=None, max_length=200),
+                          critical_first: bool = Query(default=False)):
     await _require_super_admin(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await gold.list_candidates(conn, status=status, batch=batch)
+        counts = await gold.second_reader_counts(conn, [r["reference_filing_id"] for r in rows])
         progress = await gold.batch_progress(conn, batch)
         batches = await gold.batches(conn)
+    for r in rows:
+        c = counts.get(r["reference_filing_id"]) or {"critical": 0, "total": 0}
+        r["second_reader_critical"] = c["critical"]
+        r["second_reader_total"] = c["total"]
+    if critical_first:
+        rows = sorted(rows, key=lambda r: -r["second_reader_critical"])
     return {"rows": rows, "batches": batches, "batch": batch, "progress": progress,
             "anchoring_note": prefill.anchoring_note("gpt-5-mini"), **_envelope(True, GOLD_EDITABLE)}
 
@@ -168,6 +176,16 @@ def _prefill_by_field(specs, readings, run_id: str | None) -> dict:
     return out
 
 
+def _group_by_field(second_reader: list[dict]) -> dict[str, list[dict]]:
+    """{field_key: [finding, ...]} — the review screen's per-field "Second
+    reader" note renders straight from this, keyed the same way as
+    ``prefill.by_field`` and ``gold`` (by field_key)."""
+    out: dict[str, list[dict]] = {}
+    for s in second_reader:
+        out.setdefault(s["field_key"], []).append(s)
+    return out
+
+
 @router.get("/admin/note-extraction/gold/notes/{filing_id}")
 async def gold_note(request: Request, filing_id: str):
     await _require_super_admin(request)
@@ -183,6 +201,7 @@ async def gold_note(request: Request, filing_id: str):
         prefill_runs = await gold.prefill_runs_for(conn, filing_id)
         candidate = next(iter(await gold.list_candidates_for(conn, filing_id)), None)
         status = await gold.refresh_candidate_status(conn, filing_id, live, update=False) if candidate else None
+        second_reader = [s for s in await gold.second_reader_for(conn, filing_id) if s["field_key"] in live]
         try:
             doc = await documents.load_document(conn, filing_id)
             text, text_error = doc.text, None
@@ -209,6 +228,10 @@ async def gold_note(request: Request, filing_id: str):
         "readings": readings, "gold": golds,
         "prefill": {"runs": prefill_runs, "run_id": run_id,
                     "by_field": _prefill_by_field(specs, readings, run_id)},
+        "second_reader": {"findings": second_reader,
+                          "by_field": _group_by_field(second_reader),
+                          "critical_count": sum(1 for s in second_reader if s["severity"] == "critical"),
+                          "total_count": len(second_reader)},
         "anchoring_note": prefill.anchoring_note(prefill_runs[0]["model"] if prefill_runs and prefill_runs[0]["model"]
                                                  else "gpt-5-mini"),
         **_envelope(True, GOLD_EDITABLE),

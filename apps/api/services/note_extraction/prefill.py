@@ -41,7 +41,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass, field
 
-from services.note_extraction import checks, derive, documents, readers, store
+from services.note_extraction import checks, derive, documents, participants, readers, rules, store
 from services.note_extraction import compare as cmp
 from services.note_extraction.cascade import TASK_KEY, _call_row, _reading_from_evidence, run_static_sources
 from services.note_extraction.schema import METHOD_MODEL, METHOD_RULES, FieldSpec, normalize, reader_specs
@@ -146,29 +146,50 @@ class PrefillNote:
     values: dict = field(default_factory=dict)
     self_checks: list[dict] = field(default_factory=list)
     field_issues: dict = field(default_factory=dict)   # notefix1: key -> {error, raw_value, coerced}
+    input_disagreements: list[str] = field(default_factory=list)   # notefix2 Task 4/1c
+    calculation_agent_affiliation: dict | None = None   # notefix2 F1
     cost_usd: float = 0.0
 
 
 async def prefill_note(doc, specs: list[FieldSpec], cfg: readers.ReaderConfig, *, catalog: dict,
-                       spend: SpendTracker | None, run_id) -> PrefillNote:
+                       spend: SpendTracker | None, run_id,
+                       participant_rows: list[dict] | None = None,
+                       issuer_groups: dict[str, str] | None = None) -> PrefillNote:
+    """notefix2 Task 1c / Task 4: ``values`` (what every derivation in
+    ``derive.derive_all`` reads) is the RESOLVED value of each field, never
+    model_1's raw, unverified reading alone. With only one reader, "resolved"
+    here means: the model's answer stands when rules found nothing or agrees
+    with it; when an INDEPENDENT rules reading disagrees, the field is left
+    unresolved (``input_disagreements``) rather than trusting either one — the
+    exact mechanism the gold-1 tenor_months bug (note #1) needed: rules read
+    the correct 2019-01-28 pricing_date via its own label match while model_1
+    read the filing's own 2018 typo sentence; with this guard neither
+    resolves pricing_date alone, so tenor_months (and no_call_months) are
+    correctly left null rather than computed from the wrong one."""
     by_key = {s.key: s for s in specs}
     rspecs = reader_specs(specs)
     out = PrefillNote(doc.reference_filing_id, "ok")
     origin = "cascade"
     meta = {"gold_prefill": True}
     tr, rr, et = await asyncio.to_thread(run_static_sources, doc, specs)
+    pricing_hint = rr.hits["pricing_date"].value if "pricing_date" in rr.hits else None
+    hypo_span = rr.extras["hypothetical_span"].value if "hypothetical_span" in rr.extras else None
+
+    def _ev(spec_key, source, value, quote):
+        return cmp.evidence(doc, by_key[spec_key], source, value, quote,
+                            reject_if_equals=pricing_hint, hypothetical_span=hypo_span)
 
     rules_ev: dict[str, cmp.Evidence] = {}
     for key, hit in rr.hits.items():
         if key not in by_key:
             continue
-        e = cmp.evidence(doc, by_key[key], "rules", hit.value, hit.quote)
+        e = _ev(key, "rules", hit.value, hit.quote)
         rules_ev[key] = e
         out.readings.append(_reading_from_evidence(doc, e, key, run_id=run_id, origin=origin, extra=dict(meta)))
     for key, v in et.fields.items():
         if key not in by_key:
             continue
-        e = cmp.evidence(doc, by_key[key], "edgartools", v["value"], v["quote"])
+        e = _ev(key, "edgartools", v["value"], v["quote"])
         out.readings.append(_reading_from_evidence(
             doc, e, key, run_id=run_id, origin=origin,
             extra={**meta, "edgartools_version": et.version}))
@@ -183,11 +204,17 @@ async def prefill_note(doc, specs: list[FieldSpec], cfg: readers.ReaderConfig, *
     if call.usable:
         for s in rspecs:
             f = call.fields.get(s.key) or {}
-            e = cmp.evidence(doc, s, SLOT, f.get("value"), f.get("quote"))
+            e = _ev(s.key, SLOT, f.get("value"), f.get("quote"))
             out.readings.append(_reading_from_evidence(doc, e, s.key, run_id=run_id, origin=origin, call=call,
                                                        prompt_version=readers.PROMPT_VERSION, extra=dict(meta)))
+            rule_e = rules_ev.get(s.key)
             if e.normalized is not None:
+                if rule_e is not None and rule_e.normalized is not None and rule_e.normalized != e.normalized:
+                    out.input_disagreements.append(s.key)   # never resolve either side alone
+                    continue
                 values[s.key] = e.value
+            elif rule_e is not None and rule_e.normalized is not None:
+                values[s.key] = rule_e.value   # the reader found nothing; the rule's labeled value stands
         out.field_issues = call.field_issues
     else:
         out.status, out.error = "reader_failed", call.error
@@ -196,7 +223,8 @@ async def prefill_note(doc, specs: list[FieldSpec], cfg: readers.ReaderConfig, *
         if spec.extraction_method == METHOD_RULES and k in rules_ev and rules_ev[k].normalized is not None:
             values[k] = rules_ev[k].value
 
-    for d in derive.derive_all(values):
+    for d in derive.derive_all(values, has_call_language=rules.has_call_language(doc.text),
+                               has_memory_language=rules.has_memory_language(doc.text)):
         spec = by_key.get(d.field_key)
         if spec is None:
             continue
@@ -208,6 +236,16 @@ async def prefill_note(doc, specs: list[FieldSpec], cfg: readers.ReaderConfig, *
             metadata={**meta, "derived": True, "derived_from": d.derived_from, "basis": d.basis,
                       "inputs": d.inputs}))
         values[d.field_key] = d.value
+
+    # distribution participants (notefix2 F1): the same role-resolution rule
+    # cascade.py applies, done here too since gold_prefill is a real read
+    # path the reviewer sees values from.
+    issuer_group = (issuer_groups or {}).get(doc.cik)
+    if isinstance(values.get("distribution"), list):
+        members, _dist_unmatched = participants.match_distribution(values["distribution"], participant_rows or [])
+        values["distribution"] = participants.resolve_distribution_roles(members, issuer_group)
+    out.calculation_agent_affiliation = participants.calculation_agent_affiliation(
+        values.get("calculation_agent"), issuer_group, participant_rows or [])
 
     extras = rr.extras
     findings = checks.run_self_checks(
@@ -268,7 +306,9 @@ async def batch_filing_ids(conn, batch: str) -> list[str]:
 
 async def run_prefill(conn, *, batch: str, filing_ids: list[str], specs: list[FieldSpec], model: str,
                       max_tokens: int, spend_cap_usd: float, catalog: dict, created_by=None,
-                      downloader=None, extra_config: dict | None = None, progress=None) -> dict:
+                      downloader=None, extra_config: dict | None = None, progress=None,
+                      participant_rows: list[dict] | None = None,
+                      issuer_groups: dict[str, str] | None = None) -> dict:
     """The real run. ``catalog`` must already be the guarded one (check_model)."""
     cfg = readers.ReaderConfig(slot=SLOT, deployment=model, max_tokens=max_tokens)
     config = {"batch": batch, "model": model, "max_tokens": max_tokens, "slot": SLOT,
@@ -289,7 +329,8 @@ async def run_prefill(conn, *, batch: str, filing_ids: list[str], specs: list[Fi
                     progress(fid, per_note[fid]["status"])
                 continue
             try:
-                note = await prefill_note(doc, specs, cfg, catalog=catalog, spend=spend, run_id=run_id)
+                note = await prefill_note(doc, specs, cfg, catalog=catalog, spend=spend, run_id=run_id,
+                                          participant_rows=participant_rows, issuer_groups=issuer_groups)
             except SpendCapReached as exc:
                 status, stop_reason = "stopped_spend_cap", str(exc)
                 break
@@ -297,7 +338,8 @@ async def run_prefill(conn, *, batch: str, filing_ids: list[str], specs: list[Fi
             done += 1
             per_note[fid] = {"status": note.status, "error": note.error, "cost_usd": note.cost_usd,
                              "fields_with_value": len(note.values), "self_checks": note.self_checks,
-                             "field_issues": note.field_issues}
+                             "field_issues": note.field_issues, "input_disagreements": note.input_disagreements,
+                             "calculation_agent_affiliation": note.calculation_agent_affiliation}
             if progress:
                 progress(fid, f"{note.status} ${note.cost_usd:.5f} (run ${spend.spent_usd:.4f})")
         else:

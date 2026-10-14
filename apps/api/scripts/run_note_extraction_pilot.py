@@ -46,7 +46,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     conn = await common.connect()
     try:
-        specs, catalog, parts = await common.load_context(conn)
+        specs, catalog, parts, issuer_groups = await common.load_context(conn)
         ens = await cascade.active_ensemble(conn)
         if ens is None:
             print("BLOCKED: no ACTIVE ensemble for task 'note_terms_extraction'. Pick Model 1, "
@@ -98,7 +98,8 @@ async def main(argv: list[str] | None = None) -> int:
             spend_cap_usd=args.spend_cap, run_kind="pilot",
             config={"cohort": str(args.cohort) if args.cohort else None, "limit": args.limit, "include_corpus": args.include_corpus, "efforts": efforts,
                     "escalation_model": args.escalation_model, "selection": counts},
-            participant_rows=parts, progress=lambda f, msg: print(f"  {f}  {msg}"))
+            participant_rows=parts, issuer_groups=issuer_groups,
+            progress=lambda f, msg: print(f"  {f}  {msg}"))
         report = await pilot_report(conn, summary.run_id)
         from services.note_extraction import store
         await store.finish_run(conn, summary.run_id, status=summary.status, notes_done=summary.notes_done,

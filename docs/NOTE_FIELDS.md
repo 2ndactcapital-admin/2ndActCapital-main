@@ -51,15 +51,15 @@ rules-only.
 | Field | Type | Seen | Notes |
 |---|---|---|---|
 | ★ `product_archetype` | enum | 7 | autocallable / buffered / barrier / digital / leveraged / principal-protected / reverse convertible / other. |
-| ★ `protection_type` | enum | 10 | none / buffer / barrier / floor / full. **Never a yes/no.** |
-| ★ `buffer_pct` | numeric | 4 | Losses start only after the underlying falls more than X%. |
-| ★ `barrier_pct` | numeric | 11+4 | Below it, the full decline applies from the first dollar. Synonyms: downside threshold (4 docs, grouped separately), trigger value, knock-in level, threshold value. |
+| ★ `protection_type` | enum | 10 | none / buffer / barrier / floor / full. **Never a yes/no.** Buffer only when losses start AFTER the buffer amount; barrier when crossing the level exposes the FULL decline. |
+| ★ `buffer_pct` | numeric | 4 | The size of the decline the investor is protected from — losses equal only the decline BEYOND this amount. Never the buffer RATE / downside gearing (e.g. 111.11%, 117.65%) — that is a leverage multiplier, not a level. ONLY for `protection_type` 'buffer'. |
+| ★ `barrier_pct` | numeric | 11+4 | Level below which the FULL decline applies, from the first dollar. **notefix2 F3: use this even when the filing calls it a "threshold value" (BofA), a "trigger buffer level" (Goldman), a "trigger value", "knock-in level" or "downside threshold"** — the word "buffer" in a filing's own label is not evidence this is `buffer_pct`. Test: at a final level just below it, does the investor lose (initial − final)/initial? Then it is a barrier. ONLY for `protection_type` 'barrier'. |
 | ★ `barrier_observation` | enum | 5 | at maturity only / daily / continuous. **Trap: daily is far riskier.** |
 | `downside_leverage` | numeric | — | E.g. 1:1 below the barrier, or geared loss below a buffer. |
 | ★ `principal_at_risk` | boolean | 13 | True unless repayment at maturity does not depend on the underlying. |
-| `participation_rate` | numeric | 5 | |
-| `cap_pct` | numeric | — | Maximum return. |
-| `fixed_payout_amount` / `fixed_payout_threshold_pct` | numeric | — | **New.** Digital / "redemption barrier" payouts like the BofA $1,330 note. **Trap: a "barrier" here protects nothing.** |
+| `participation_rate` | numeric | 5 | Upside participation in the underlying's gain only. **notefix2 F4: never a digital or fixed percentage** (e.g. a "Digital Percentage: 40.00%" belongs in `fixed_payout_amount`/`fixed_payout_threshold_pct`, not here). |
+| `cap_pct` | numeric | — | Maximum return when the upside is participation-based. **notefix2 F4: not a fixed final-date premium or a digital return** — those are `fixed_payout_amount`. |
+| `fixed_payout_amount` / `fixed_payout_threshold_pct` | numeric | — | **New.** Digital / "redemption barrier" payouts like the BofA $1,330 note: a fixed amount per $1,000 paid when the underlying ends at or above a threshold (digital, "contingent digital return", "step", fixed final-date premium), and that threshold as % of initial. **Trap: a "barrier" here protects nothing**, and a stated "Digital Percentage" or fixed final-date premium must NOT land in `participation_rate` or `cap_pct` (notefix2 F4). |
 | ★ `final_value_method` | enum | 12 | **New in v2.** How the final level is set: single closing level / average of several dates / lowest of several dates. Changes the note's value materially. |
 | `payoff_formula_quotes` | text (evidence) | 10 | **New in v2.** The filing's own payment-at-maturity formulas (above and below the threshold), stored as quotes for the payoff self-check, not as fields to fill. |
 | `max_principal_loss_pct` | derived | 3 | Computed from protection type and level, never extracted. |
@@ -97,9 +97,9 @@ rules-only.
 | Field | Type | Seen | Notes |
 |---|---|---|---|
 | ★ `name` | text → participants table | 10 | E.g. issuer's own broker-dealer, iCapital Markets, dealers. |
-| `role` | enum | — | issuer-affiliated agent / distribution agent / dealer / placement agent. |
+| `role` | enum | — | issuer-affiliated agent / distribution agent / dealer / placement agent. **notefix2 F1: `issuer_affiliated_agent` is resolved by RULE from `portfolio.distribution_participants.affiliated_issuer_group`, not left to the reader** — a member matching a seeded affiliate (BofAS/MLPF&S, JPMS, MS & Co./MSSB, GS&Co., Barclays Capital Inc., UBS Securities LLC, UBS Financial Services Inc., CGMI) of the note's OWN issuer group is this role regardless of what any reader answered. An unaffiliated or unknown name is still reported, never dropped. |
 | `fee_pct` | numeric range | — | |
-| `calculation_agent` (on the note) | text | 9 | Flag when it is an issuer affiliate (a conflict). |
+| `calculation_agent` (on the note) | text | 9 | Flag when it is an issuer affiliate (a conflict) — same affiliate-table match as `distribution`'s role rule (`participants.calculation_agent_affiliation`). |
 
 ## 9 · Later, rules only (not extracted by models)
 Registration statement number (14 docs), listing status (11), prospectus and
@@ -118,6 +118,35 @@ rules extract exactly.
 - estimated value < price
 - autocall schedule dates fall between pricing and maturity
 - a recomputed payoff matches the filing's hypothetical example table (mismatch → review, since filings contain errors too)
+- **notefix2 F6:** when only an underwriting discount / agent's commission is stated and
+  `total_fees_pct` is blank, the commission IS the total (derived, named `default_total_fees`);
+  `fees_reconcile`'s finding now also proposes the corrected total (`detail.proposed_total_fees_pct`)
+  when the stated total fails the price − fees ≈ proceeds check.
+- **notefix2 F7 (`coupon_cross_check`):** when the observation schedule states a fixed per-period
+  coupon amount and `coupon_frequency` is known, `coupon_rate_pa` must equal
+  amount × periods/yr ÷ denomination × 100 (±0.01%); a mismatch is `needs_review` naming both numbers.
+- **notefix2 F7 (`maturity_after_pricing`):** `maturity_date` / `final_valuation_date` must be
+  strictly after `pricing_date`. A date that LITERALLY equals `pricing_date` is already rejected
+  earlier, at the evidence level, before it can even become a candidate.
+- **notefix2 F3 (`payoff_matches_at_protection_levels`):** extends the payoff self-check with
+  SYNTHETIC rows at the stated barrier/buffer level ± 0.01% — catching a barrier read as a buffer
+  (or vice versa) even on a filing whose own table happens not to tabulate a row exactly at that
+  level, by comparing against the nearest real filing row within that tolerance.
+- **notefix2 F2/F7 (hypothetical-section rejection):** for `coupon_rate_pa`, `pricing_date`,
+  `issue_date`, `maturity_date`, `barrier_pct`, `buffer_pct` and `underlyings.initial_level`, a
+  reading whose quote lies ENTIRELY inside a detected "hypothetical example" section is rejected
+  for that field (reason `hypothetical_section`) before it can become a candidate — it may still be
+  used by the payoff check, which reads the section's own rows directly, not this reading.
+- **notefix2 Task 3 (list hygiene):** before `underlyings` / `distribution` list members become
+  readings, a table header ("CUSIP", "Barrier Value"), a definition sentence ("The closing level of
+  the underlying...", "For each underlying...") or a single entry naming more than one real member
+  is dropped with its reason (`services.note_extraction.rules.filter_list_members`) — recorded, never
+  silently discarded.
+- **notefix2 Task 4 (defaults):** `currency` defaults to USD, `call_type` to 'none' (no call/
+  redemption wording anywhere in the filing), `coupon_memory` to false (a contingent coupon with no
+  memory/accrual wording), and `no_call_months` from the first observation-schedule date that checks
+  a call minus `issue_date` — each written as a `derived` reading naming its own rule, and NEVER
+  applied over a value the filing actually states (a EUR note stays EUR).
 
 ---
 
@@ -128,4 +157,8 @@ rules extract exactly.
   filing states is extracted, the other is derived and marked derived.
 - **C.** "Up to" / "as low as" / "not less than" amounts are stored as a MIN and MAX with the
   bound's wording kept as evidence. A single stated amount sets min = max.
-- **D.** No further fields for now.
+- **D.** No further fields for now (superseded by notefix2 — see below).
+- **E. (notefix2, 2026-10-14)** Every derivation reads the RESOLVED value of its inputs, never a
+  single unverified reading — including inside `gold_prefill`, which has only one reader: there,
+  "resolved" means the model's answer stands when an independent rules reading agrees or is silent,
+  and the field is left unresolved (not merely wrong) when they disagree.

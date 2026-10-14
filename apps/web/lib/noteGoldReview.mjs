@@ -136,6 +136,15 @@ export function highlightSegments(text, start, end) {
   ];
 }
 
+// notefix2 Task 8: the second-reader findings for ONE field, from the
+// note's own "second_reader.by_field" (never a client-side default — an
+// absent key is simply no findings for that field).
+export function secondReaderFor(note, fieldKey) {
+  const byField = note?.second_reader?.by_field;
+  const list = byField && typeof byField === "object" ? byField[fieldKey] : null;
+  return Array.isArray(list) ? list : [];
+}
+
 export function showValue(value) {
   if (value === null || value === undefined) return "—";
   if (Array.isArray(value)) {

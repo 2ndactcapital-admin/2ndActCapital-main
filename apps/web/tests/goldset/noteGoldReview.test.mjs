@@ -10,6 +10,7 @@ import {
   parseList,
   parseRange,
   parseScalar,
+  secondReaderFor,
   step,
 } from "../../lib/noteGoldReview.mjs";
 import { canWriteGold } from "../../lib/noteGoldGates.mjs";
@@ -80,6 +81,14 @@ test("highlight splits around the quote span, and ignores a bad span", () => {
     [["ab", false], ["cd", true], ["ef", false]]);
   assert.equal(highlightSegments("abc", null, null).length, 1);
   assert.equal(highlightSegments("abc", 2, 9).length, 1);
+});
+
+test("second-reader findings come from the response, never a default", () => {
+  const note = { second_reader: { by_field: { underlyings: [{ severity: "critical", evidence: "junk entry" }] } } };
+  assert.equal(secondReaderFor(note, "underlyings").length, 1);
+  assert.deepEqual(secondReaderFor(note, "cap_pct"), []);
+  assert.deepEqual(secondReaderFor(null, "underlyings"), []);
+  assert.deepEqual(secondReaderFor({}, "underlyings"), []);
 });
 
 test("write gate fails closed", () => {

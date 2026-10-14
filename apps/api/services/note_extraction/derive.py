@@ -11,6 +11,33 @@ or inconsistent returns None — it never guesses.
     estimated value unit    decision B: whichever of estimated_value_per_1000 /
                             estimated_value_pct the filing STATED is extracted;
                             the other is derived from it (x10 or /10)
+    no_call_months          notefix2 Task 4: issue_date -> the first observation
+                            date in the schedule that carries a call level/amount
+    currency / call_type /
+    coupon_memory           notefix2 Task 4: DEFAULTS, applied only when the
+                            field is unresolved — a stated value (including a
+                            non-USD currency) is never overwritten, same
+                            "decision B" guard every derivation already gets
+                            from the cascade (``spec.extraction_method ==
+                            METHOD_MODEL and resolved value is not None``).
+                            call_type / coupon_memory need a FULL-TEXT signal
+                            (is there any call/redemption or memory/accrual
+                            wording at all) because "no call language found"
+                            is not something any single field's resolved
+                            value can answer on its own; the signal itself is
+                            a rule over the whole filing
+                            (services.note_extraction.rules.has_call_language
+                            / has_memory_language), never a model's reading.
+
+NOTEFIX2 Task 1c / Task 4: every function here takes already-RESOLVED inputs
+(the cascade's or prefill's agreed value, never a single unverified reading)
+— ``derive_all`` is the boundary; its caller is responsible for building
+``values`` from resolution, not from one reader. The gold-1 pre-fill's
+tenor_months bug (note #1: 96.18 computed from model_1's own typo-sentence
+reading of pricing_date, while the rules independently read the correct
+date from a label) was exactly a caller handing this module an unverified
+single reading — fixed in prefill.py's ``_resolved_for_derivation``, not
+here: this module has no way to know whether its caller did that correctly.
 """
 from __future__ import annotations
 
@@ -120,8 +147,91 @@ def estimated_value_counterpart(per_1000=None, pct=None) -> Derived | None:
                    "percent of principal x 10", derived_from=["estimated_value_pct"])
 
 
-def derive_all(values: dict) -> list[Derived]:
-    """Every derivation the resolved ``values`` allow."""
+def no_call_months(issue_date, observation_schedule) -> Derived | None:
+    """Whole months from ``issue_date`` to the first observation date in the
+    schedule that carries a call level or amount — None when there is no
+    schedule, no issue date, or no row that actually checks a call."""
+    idate = _date(issue_date)
+    if idate is None or not isinstance(observation_schedule, list) or not observation_schedule:
+        return None
+    call_dates = sorted(
+        d for row in observation_schedule if isinstance(row, dict)
+        and (row.get("call_level_pct") is not None or row.get("call_amount") is not None)
+        for d in [_date(row.get("observation_date"))] if d is not None
+    )
+    if not call_dates:
+        return None
+    first = call_dates[0]
+    if first <= idate:
+        return None
+    months = (first.year - idate.year) * 12 + (first.month - idate.month)
+    if first.day < idate.day:
+        months -= 1
+    if months < 0:
+        return None
+    return Derived("no_call_months", months,
+                   {"issue_date": idate.isoformat(), "first_call_observation_date": first.isoformat()},
+                   "months from issue_date to the first observation date that checks a call",
+                   derived_from=["issue_date", "observation_schedule"])
+
+
+def default_total_fees(total_fees_pct, agent_commission_pct, structuring_fee_pct=None,
+                       other_fees_pct=None) -> Derived | None:
+    """notefix2 F6: when the filing states ONLY an underwriting discount /
+    agent's commission and nothing for ``total_fees_pct``, the commission IS
+    the total — derived, never left blank. Declines to guess when more than
+    one fee component is independently stated (structuring or other fees),
+    since then the total is not simply the commission."""
+    if total_fees_pct is not None:
+        return None
+    r = as_range(agent_commission_pct)
+    if r is None:
+        return None
+    if as_range(structuring_fee_pct) is not None or as_range(other_fees_pct) is not None:
+        return None
+    value = {"min": _num(r["min"]) if r["min"] is not None else None,
+             "max": _num(r["max"]) if r["max"] is not None else None, "bound": r.get("bound")}
+    return Derived("total_fees_pct", value, {"agent_commission_pct": agent_commission_pct},
+                   "default: total fees = the stated underwriting discount / agent's commission "
+                   "(no other fee component stated)", derived_from=["agent_commission_pct"])
+
+
+def default_currency(currency) -> Derived | None:
+    """USD when the filing states no currency at all."""
+    if currency is not None:
+        return None
+    return Derived("currency", "USD", {"currency": None}, "default: USD when the filing states no currency",
+                   derived_from=["currency"])
+
+
+def default_call_type(call_type, has_call_language: bool) -> Derived | None:
+    """'none' only when the field is unresolved AND no call/redemption
+    wording exists anywhere in the filing — a genuine absence, not a guess
+    made because the model happened not to answer."""
+    if call_type is not None or has_call_language:
+        return None
+    return Derived("call_type", "none", {"call_type": None, "has_call_language": False},
+                   "default: 'none' — no call or redemption wording found in the filing",
+                   derived_from=["call_type"])
+
+
+def default_coupon_memory(coupon_type, coupon_memory, has_memory_language: bool) -> Derived | None:
+    """False only for an unresolved field on a note with a contingent coupon
+    AND no memory / accrual-of-missed-coupons wording anywhere in the
+    filing."""
+    if coupon_memory is not None or coupon_type != "contingent" or has_memory_language:
+        return None
+    return Derived("coupon_memory", False, {"coupon_type": coupon_type, "has_memory_language": False},
+                   "default: false — a contingent coupon with no memory/accrual-of-missed-coupons wording",
+                   derived_from=["coupon_type"])
+
+
+def derive_all(values: dict, *, has_call_language: bool = False, has_memory_language: bool = False
+              ) -> list[Derived]:
+    """Every derivation the RESOLVED ``values`` allow. ``has_call_language``
+    / ``has_memory_language`` are full-filing-text signals (notefix1-style
+    rule facts, never a model's reading) the two language-dependent defaults
+    need."""
     out: list[Derived] = []
     t = tenor_months(values.get("pricing_date"), values.get("maturity_date"))
     if t:
@@ -133,4 +243,20 @@ def derive_all(values: dict) -> list[Derived]:
     e = estimated_value_counterpart(values.get("estimated_value_per_1000"), values.get("estimated_value_pct"))
     if e:
         out.append(e)
+    n = no_call_months(values.get("issue_date"), values.get("observation_schedule"))
+    if n:
+        out.append(n)
+    tf = default_total_fees(values.get("total_fees_pct"), values.get("agent_commission_pct"),
+                            values.get("structuring_fee_pct"), values.get("other_fees_pct"))
+    if tf:
+        out.append(tf)
+    c = default_currency(values.get("currency"))
+    if c:
+        out.append(c)
+    ct = default_call_type(values.get("call_type"), has_call_language)
+    if ct:
+        out.append(ct)
+    cm = default_coupon_memory(values.get("coupon_type"), values.get("coupon_memory"), has_memory_language)
+    if cm:
+        out.append(cm)
     return out

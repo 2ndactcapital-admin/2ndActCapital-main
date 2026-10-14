@@ -48,7 +48,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     conn = await common.connect()
     try:
-        specs, catalog, _parts = await common.load_context(conn)
+        specs, catalog, parts, issuer_groups = await common.load_context(conn)
         try:
             catalog = await prefill.check_model(conn, args.model, catalog, max_tokens=args.max_tokens)
         except (prefill.PrefillRefused, PublicDataOnlyError, UnpricedModelError) as exc:
@@ -83,7 +83,7 @@ async def main(argv: list[str] | None = None) -> int:
             return 0
         res = await prefill.run_prefill(
             conn, batch=args.batch, filing_ids=ids, specs=specs, model=args.model, max_tokens=args.max_tokens,
-            spend_cap_usd=args.spend_cap, catalog=catalog,
+            spend_cap_usd=args.spend_cap, catalog=catalog, participant_rows=parts, issuer_groups=issuer_groups,
             progress=lambda fid, msg: print(f"  {fid}: {msg}", flush=True))
         print(f"\nrun {res['run_id']}: {res['status']}, {res['notes_done']} notes, ${res['spent_usd']:.4f}"
               + (f" — {res['stop_reason']}" if res["stop_reason"] else ""))

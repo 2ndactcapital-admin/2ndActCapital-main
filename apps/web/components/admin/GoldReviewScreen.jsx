@@ -37,6 +37,7 @@ import {
   parseList,
   parseRange,
   parseScalar,
+  secondReaderFor,
   showValue,
   step,
 } from "@/lib/noteGoldReview.mjs";
@@ -192,8 +193,27 @@ function Editor({ field, start, busy, onSubmit, onCancel }) {
   );
 }
 
-function FieldRow({ field, prefill, gold, selected, editing, writable, busy, onSelect, onConfirm, onAbsent,
-                    onEdit, onCorrect, onCancel, rowRef }) {
+function SecondReaderNote({ findings }) {
+  if (!findings.length) return null;
+  return (
+    <div className="mt-1.5 space-y-1 rounded border px-2 py-1" style={{ borderColor: ERROR_INK, background: "#FBEAEA" }}>
+      {findings.map((f, i) => (
+        <div key={i} className="text-xs">
+          <span className="font-semibold" style={{ color: ERROR_INK }}>
+            Second reader ({f.severity}){f.kind ? ` — ${f.kind}` : ""}:
+          </span>{" "}
+          <span className="text-[var(--2a-text)]">should be {showValue(f.suggested)}</span>
+          {f.evidence && (
+            <div className="mt-0.5 text-[var(--2a-text-muted)]" title={f.evidence}>“{f.evidence}”</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FieldRow({ field, prefill, gold, secondReader, selected, editing, writable, busy, onSelect, onConfirm,
+                    onAbsent, onEdit, onCorrect, onCancel, rowRef }) {
   return (
     <div
       ref={rowRef}
@@ -232,6 +252,7 @@ function FieldRow({ field, prefill, gold, selected, editing, writable, busy, onS
           <span className="text-[var(--2a-text-muted)]">none</span>
         )}
       </div>
+      <SecondReaderNote findings={secondReader ?? []} />
       {writable && selected && !editing && (
         <div className="mt-1.5 flex items-center gap-2">
           <button
@@ -276,6 +297,7 @@ export default function GoldReviewScreen({ initial }) {
   const [editing, setEditing] = useState(false);
   const [collapsed, setCollapsed] = useState({});
   const [skipReason, setSkipReason] = useState("");
+  const [criticalFirst, setCriticalFirst] = useState(false);
   const [message, setMessage] = useState(null);
   const [pending, startTransition] = useTransition();
   const markRef = useRef(null);
@@ -310,12 +332,19 @@ export default function GoldReviewScreen({ initial }) {
     });
   }, []);
 
-  const reloadList = (batch) => {
+  const reloadList = (batch, critical = criticalFirst) => {
     startTransition(async () => {
-      const res = await loadGoldCandidatesAction(batch ? { batch } : {});
+      const params = { ...(batch ? { batch } : {}), ...(critical ? { critical_first: true } : {}) };
+      const res = await loadGoldCandidatesAction(params);
       if (res.ok) setList(res.payload);
       else setMessage(res.status === 403 ? "Super Admin access required." : res.error);
     });
+  };
+
+  const toggleCriticalFirst = () => {
+    const next = !criticalFirst;
+    setCriticalFirst(next);
+    reloadList(list?.batch, next);
   };
 
   const nextNote = useCallback(() => {
@@ -434,9 +463,14 @@ export default function GoldReviewScreen({ initial }) {
             {candidates.map((c) => (
               <option key={c.reference_filing_id} value={c.reference_filing_id}>
                 {c.issuer_group ?? c.filer_name} · {c.filing_year} · {c.product_type} · {c.status}
+                {c.second_reader_critical > 0 ? ` · ${c.second_reader_critical} critical flag(s)` : ""}
               </option>
             ))}
           </select>
+        </label>
+        <label className="flex items-center gap-1 text-xs text-[var(--2a-text-muted)]">
+          <input type="checkbox" checked={criticalFirst} onChange={toggleCriticalFirst} />
+          critical second-reader flags first
         </label>
         <button type="button" className={GHOST} onClick={nextNote} disabled={!candidates.length} title="N">
           Next note
@@ -474,6 +508,11 @@ export default function GoldReviewScreen({ initial }) {
             </span>
             {note.candidate?.trap_tags?.length > 0 && (
               <div className="text-[10px] text-[var(--2a-text-muted)]">traps: {note.candidate.trap_tags.join(", ")}</div>
+            )}
+            {note.second_reader?.total_count > 0 && (
+              <div className="text-[10px]" style={{ color: ERROR_INK }}>
+                second reader: {note.second_reader.critical_count} critical, {note.second_reader.total_count} total
+              </div>
             )}
             {note.text_error && <p className="text-xs" style={{ color: ERROR_INK }}>{note.text_error}</p>}
             <pre className="mt-2 whitespace-pre-wrap font-sans text-xs leading-relaxed text-[var(--2a-text)]">
@@ -525,6 +564,7 @@ export default function GoldReviewScreen({ initial }) {
                         field={f}
                         prefill={prefillBy[k]}
                         gold={goldBy[k]}
+                        secondReader={secondReaderFor(note, k)}
                         selected={idx === fieldIdx}
                         editing={idx === fieldIdx && editing}
                         writable={writable}

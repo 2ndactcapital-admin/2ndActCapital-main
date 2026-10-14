@@ -1,0 +1,2485 @@
+{
+ "batch": "gold-1",
+ "prefill_run": "683e1565-db22-400f-bdd6-cb5e3f04bfe9",
+ "checked": "2026-10-13",
+ "reviewer_note": "Second-reader findings (Claude via web fetch). Reviewed and agreed by Joe 2026-10-14. Suggestions only; gold values are entered by a person in the review screen.",
+ "notes": [
+  {
+   "reference_filing_id": "baf65e2d-6a04-461b-b22d-feeb1cfe0b0d",
+   "n": 1,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "pricing_date",
+     "prefill": [
+      "2018-01-28",
+      "2019-01-28"
+     ],
+     "should_be": "2019-01-28",
+     "evidence": "Pricing Date: January 28, 2019 (the estimated-value sentence says \"January 28, 2018 (the pricing date)\" — a typo in the filing)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "tenor_months",
+     "prefill": 96.18,
+     "should_be": 84.2,
+     "evidence": "Pricing Jan 28, 2019 → maturity Feb 2, 2026; 96 came from the 2018 typo date",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "total_fees_pct",
+     "prefill": "missing",
+     "should_be": {
+      "min": 3.25,
+      "max": 3.25,
+      "bound": "exact"
+     },
+     "evidence": "Underwriting Discount $32.50 ... Proceeds (before expenses) to BofA Finance $967.50",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "MLPF&S role distribution_agent",
+     "should_be": "MLPF&S role issuer_affiliated_agent, 3.25%",
+     "evidence": "Selling Agent: MLPF&S, an affiliate of BofA Finance",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "final_valuation_date",
+     "prefill": "missing",
+     "should_be": "absent (defined by rule: final Observation Date, ≥3 trading days before Feb 2, 2026)",
+     "evidence": "Observation Dates: ... at least three scheduled trading days before the relevant Contingent Payment Date",
+     "severity": "critical",
+     "kind": "uncertain"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "Contingent Coupon paid only if each Underlying is at or above its Threshold Value on that Observation Date",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The S&P 500® Index (Bloomberg ticker: “SPX”) and the Russell 2000® Index ..."
+      }
+     ],
+     "should_be": "drop junk entry; keep SPX 2643.85 and RTY 1473.536",
+     "evidence": "sentence read as a single underlying name",
+     "severity": "critical",
+     "kind": "junk_extra"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "7aa1fc33-dd75-416f-95ca-0f757406751d",
+   "n": 2,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "maturity_date",
+     "prefill": [
+      "2021-01-27",
+      "2024-01-31"
+     ],
+     "should_be": "2024-01-31",
+     "evidence": "Maturity Date: January 31, 2024 (2021-01-27 is the Trade Date)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "CUSIP"
+      }
+     ],
+     "should_be": "drop junk entry; keep NDX 13,112.65 and SPX 3,750.77",
+     "evidence": "NASDAQ-100 row: \"05591G124 / US05591G1242\"",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "no Contingent Coupon Payment will accrue or be paid",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "ac419acf-7b5c-4493-acdc-4dcbbc8a1832",
+   "n": 3,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "BofAS",
+       "role": "dealer",
+       "fee_max_pct": 0.5,
+       "fee_min_pct": 0.5
+      }
+     ],
+     "should_be": "BofAS role issuer_affiliated_agent, fee 0.5",
+     "evidence": "BofA Securities, Inc. (\"BofAS\"), an affiliate of BofA Finance",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "whole-sentence name entry",
+     "should_be": "drop junk; keep NDX 11,945.50, RTY 1,739.382, GDX $30.18",
+     "evidence": "The Nasdaq-100® Index (Bloomberg symbol: \"NDX\"), a price return index, the Russell 2000®...",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 6,
+     "evidence": "first Call Date November 17, 2022 (issue date May 17, 2022)",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,000.00 per Note",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "you will not receive the Contingent Coupon Payment applicable to that Observation Date",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "4d79f3f3-c73b-4a6b-af34-6030bb029c71",
+   "n": 4,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "BofA Securities, Inc.",
+       "role": "distribution_agent"
+      }
+     ],
+     "should_be": "BofAS role issuer_affiliated_agent (fee 0); referral-fee payer also affiliate",
+     "evidence": "BofA Securities, Inc. (\"BofAS\"), an affiliate of BofA Finance",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "whole-sentence name entry",
+     "should_be": "drop junk; keep INDU/NDX/SPX (initial levels not set, preliminary)",
+     "evidence": "The Dow Jones Industrial Average® (Bloomberg symbol: \"INDU\"), the Nasdaq-100®...",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "total_fees_pct",
+     "prefill": 0,
+     "should_be": "0 underwriting discount; plus up to 0.65 referral fee paid by affiliate - reviewer to decide if included",
+     "evidence": "an affiliate of BofA Finance will pay a referral fee of up to $6.50 per $1,000",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 6,
+     "evidence": "first Call Date October 24, 2023 (issue date April 24, 2023)",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "you will not receive the Contingent Coupon Payment applicable to that Observation Date",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "cc735e84-f092-436e-b3c6-91acf1d94f6f",
+   "n": 5,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "BofAS",
+       "role": "distribution_agent",
+       "fee_max_pct": 0.85
+      }
+     ],
+     "should_be": "BofAS role issuer_affiliated_agent (up to 0.85); referral fee up to 0.50 via affiliate",
+     "evidence": "BofA Securities, Inc. (BofAS), an affiliate of BofA Finance",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "whole-sentence name entry",
+     "should_be": "drop junk; keep NDX 18,043.85, RTY 2,054.843, SPX 5,096.27",
+     "evidence": "The Nasdaq-100® Index (Bloomberg symbol: \"NDX\"), the Russell 2000® Index...",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "issue_size",
+     "prefill": 219000,
+     "should_be": 219000,
+     "evidence": "Total $219,000.00 but total discount $1,091.50 != 219 x $8.50 ($1,861.50) - filing internal inconsistency",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 6,
+     "evidence": "callable starting September 4, 2024 (issue date March 5, 2024)",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "will not receive the Contingent Coupon Payment applicable to that Observation Date",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "315f7a83-782e-496c-82d1-21ee155ad235",
+   "n": 6,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "buffer_pct",
+     "prefill": 40,
+     "should_be": "absent",
+     "evidence": "Threshold Value 60% of Starting Value; hypothetical ending 59.99 pays $599.90 (full loss from first dollar)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "barrier_pct",
+     "prefill": "missing",
+     "should_be": 60,
+     "evidence": "Threshold values (60%): MXEA 1,341.79; MXEF 602.50; RTY 1,168.594",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "protection_type",
+     "prefill": "buffer",
+     "should_be": "barrier",
+     "evidence": "lose 1% of principal for each 1% decline from its Starting Value",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "barrier_observation",
+     "prefill": "missing",
+     "should_be": "at_maturity",
+     "evidence": "If the Ending Value of the Least Performing Underlying is less than its Threshold Value",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "autocall_level_pct",
+     "prefill": 65,
+     "should_be": "absent",
+     "evidence": "Issuer optional call: we have the right to redeem all (but not less than all) of the Notes",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "whole-sentence name entry",
+     "should_be": "drop junk; keep MXEA 2,236.31, MXEF 1,004.17, RTY 1,947.656",
+     "evidence": "The MSCI EAFE® Index (Bloomberg symbol: \"MXEA\"), the MSCI Emerging Markets®...",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,000.00 per note",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "that date's coupon is not paid (no catch-up)",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "b28744f5-2137-44d0-9338-03dd69370b1c",
+   "n": 7,
+   "bank": "Bank of America",
+   "issues": [
+    {
+     "field": "buffer_pct",
+     "prefill": 25,
+     "should_be": "absent",
+     "evidence": "Threshold Value 75.00% of Starting Value; hypothetical ending 74.99 pays $749.90",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "barrier_pct",
+     "prefill": "missing",
+     "should_be": 75,
+     "evidence": "Threshold Value: With respect to each Underlying, 75.00% of its Starting Value",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "protection_type",
+     "prefill": "buffer",
+     "should_be": "barrier",
+     "evidence": "lose 1% for each 1% the Least Performing Underlying's Ending Value is below its Starting Value",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "barrier_observation",
+     "prefill": "missing",
+     "should_be": "at_maturity",
+     "evidence": "If the Ending Value of the Least Performing Underlying is less than its Threshold Value",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "whole-sentence name entry",
+     "should_be": "drop junk; keep RTY, SPX (levels not set, preliminary)",
+     "evidence": "The Russell 2000® Index (Bloomberg symbol: \"RTY\") and the S&P 500® Index...",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "BofAS",
+       "role": "distribution_agent"
+      }
+     ],
+     "should_be": "BofAS role issuer_affiliated_agent (fee 0); referral fee up to 0.75 via affiliate",
+     "evidence": "BofAS, a broker-dealer affiliate ... is the selling agent",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "total_fees_pct",
+     "prefill": 0,
+     "should_be": "0 underwriting discount; plus up to 0.75 referral fee paid by affiliate - reviewer to decide if included",
+     "evidence": "an affiliate of BofA Finance will pay a referral fee of up to $7.50 per $1,000.00",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 6,
+     "evidence": "First Call Payment Date: May 29, 2026 (issue date December 1, 2025)",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,000 minimum denominations",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "you will not receive the Contingent Coupon Payment applicable to that Observation Date",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "6380efa7-5a87-4202-8b6c-3bcaf34030aa",
+   "n": 8,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "participation_rate",
+     "prefill": 40,
+     "should_be": "absent",
+     "evidence": "Digital Percentage: 40.00% — a fixed payout, not participation",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "fixed_payout_amount",
+     "prefill": "missing",
+     "should_be": 1400,
+     "evidence": "$1,000 + [$1,000 × Digital Percentage] when Final Value ≥ Barrier Value but < Initial Value",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "fixed_payout_threshold_pct",
+     "prefill": "missing",
+     "should_be": 60,
+     "evidence": "Barrier Value: 60.00% of its Initial Value",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "amounts stated in $",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "Barrier Value"
+      }
+     ],
+     "should_be": "drop junk entry; keep SPX 2,950.46 and XOP $26.71",
+     "evidence": "table column header read as an underlying",
+     "severity": "critical",
+     "kind": "junk_extra"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "bd39ddaf-b77e-419d-9c68-7c8c4cec13b6",
+   "n": 9,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "cusip",
+     "prefill": "missing",
+     "should_be": "06748C347",
+     "evidence": "CUSIP 06748C347 / ISIN US06748C3473 on cover",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 6,
+     "evidence": "callable at the Issuer's election on quarterly Observation Dates beginning June 6, 2023",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "With respect to each Underlying, the Closing Level of that Underlying on the Final Valuation Date"
+      }
+     ],
+     "should_be": "absent (keep only MXEF/RTY/SPX list)",
+     "evidence": "Underlyings: MSCI Emerging Markets Index (MXEF); Russell 2000 Index (RTY); S&P 500 Index (SPX)",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "Contingent Coupon ... will not accrue or be payable",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "product_archetype",
+     "prefill": "autocallable",
+     "should_be": "uncertain: issuer-callable contingent coupon (no automatic call); call_type issuer is correct",
+     "evidence": "Issuer call only (no automatic call)",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "distribution",
+     "prefill": "UBS / Barclays Capital Inc. with fees null",
+     "should_be": "fees: underwriting discount 3.5% ($0.35 per $10) to the Agents",
+     "evidence": "Underwriting Discount $0.35 ... Proceeds to Barclays Bank PLC $9.65",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "7b379c56-bce1-45ae-9912-c27172bec6ae",
+   "n": 10,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "fixed_payout_amount",
+     "prefill": "missing",
+     "should_be": "Step Return 25.30% (i.e. $1,253 per $1,000 minimum if at/above step barrier)",
+     "evidence": "$10 + ($10 x the greater of (a) the Underlying Return and (b) the Step Return); Step Return 25.30%",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "fixed_payout_threshold_pct",
+     "prefill": "missing",
+     "should_be": 100,
+     "evidence": "Step Barrier: 5,421.03 (100% of the Initial Underlying Level)",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "participation_rate",
+     "prefill": "missing",
+     "should_be": 100,
+     "evidence": "greater of (a) the Underlying Return and (b) the Step Return -- uncapped 1:1 above step",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "product_archetype",
+     "prefill": "other",
+     "should_be": "digital (step/digital-plus) barrier note",
+     "evidence": "Trigger Step Securities",
+     "severity": "critical",
+     "kind": "uncertain"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The Closing Level of the Underlying on the Final Valuation Date"
+      }
+     ],
+     "should_be": "absent (keep only SPX)",
+     "evidence": "Underlying: S&P 500 Index (SPX), Initial Underlying Level 5,421.03",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "distribution",
+     "prefill": "Barclays Capital Inc. / UBS with fees null",
+     "should_be": "fees: 3.5% underwriting discount ($0.35 per $10) to the Agents",
+     "evidence": "the Agents will buy the Securities at the issue price less the $0.35 underwriting discount",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "79887776-59b1-4085-89b9-11511d0f1339",
+   "n": 11,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,000 per Note ... Proceeds to Barclays Bank PLC $8,742,800",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "no memory or catch-up feature described",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "a2b9e5df-9a69-4380-8b0f-3f1f3824c7dc",
+   "n": 12,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "autocall_level_pct",
+     "prefill": "missing",
+     "should_be": "90 (call dates 1-12), stepping down to 50 (call dates 13-25)",
+     "evidence": "Call Value: 90.00% of Initial Value for the 1st through 12th Call Valuation Dates; 50.00% for the 13th through 25th",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "Barclays Capital Inc.",
+       "role": "distribution_agent"
+      }
+     ],
+     "should_be": "role issuer_affiliated_agent (Barclays affiliate)",
+     "evidence": "Barclays Capital Inc. (the \"Agent\")",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Price to public: 100.00% / $336,000",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 55.4976,
+     "should_be": "uncertain: this is the max return from call premium (3 x 18.4992%), not an upside cap on a participation payoff",
+     "evidence": "maximum possible return is 55.4976%",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "8b9e13f0-9ef5-42ae-8e75-d01fdfaf0028",
+   "n": 13,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "product_archetype",
+     "prefill": "autocallable",
+     "should_be": "uncertain: issuer-callable contingent coupon, no automatic call (call_type issuer is correct)",
+     "evidence": "Barclays may redeem all (not part) of the Notes at its discretion on a Call Valuation Date",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "Barclays Capital Inc.",
+       "role": "distribution_agent",
+       "fee_max_pct": 0.7
+      }
+     ],
+     "should_be": "role issuer_affiliated_agent",
+     "evidence": "Barclays Capital Inc. receives $7.00 per $1,000",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Price to Public: 100.00% / $587,000",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "Missed coupons are not stated to accumulate or be paid later",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "e3ed6618-bf07-4648-9e25-648a4b64679e",
+   "n": 14,
+   "bank": "Barclays",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "Barclays Capital Inc.",
+       "role": "distribution_agent",
+       "fee_max_pct": 2.8
+      }
+     ],
+     "should_be": "role issuer_affiliated_agent",
+     "evidence": "Barclays Capital Inc. is the Agent ... receives $28.00 per $1,000 in commissions",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Price to Public $1,000 (100.00%) ... Total $1,190,000",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "downside_leverage",
+     "prefill": "missing",
+     "should_be": 1,
+     "evidence": "$1,000 + [$1,000 x Reference Asset Return of the Least Performing Reference Asset]",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 61.25,
+     "should_be": "uncertain: max return from call premium (5 x 12.25%), not an upside cap",
+     "evidence": "Redemption Price ... $1,612.50 (final date, year 5)",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "716cc6e1-fea8-4d06-9a1e-9eb71913e7e1",
+   "n": 15,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "cap_pct",
+     "prefill": 25,
+     "should_be": "absent (25% is the fixed final-date premium, not a cap on participation; no upside participation)",
+     "evidence": "If final value of worst performer >= initial: $1,000 plus the premium for the final valuation date (25.00%)",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "fixed_payout_amount",
+     "prefill": "missing",
+     "should_be": "250 per $1,000 (final-date premium 25%), threshold 100%",
+     "evidence": "The final valuation date premium is 25.00%",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 12,
+     "evidence": "Premiums ... from 5.00% on December 22, 2021 (first valuation date)",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "[CGMI (name 'Citigroup Global Markets Inc. (“ CGMI ”)') issuer_affiliated_agent up to 3.25]",
+     "should_be": "CGMI issuer_affiliated_agent up to 3.25%; plus selected unaffiliated dealers (dealer) selling concession up to 3.25%; clean name",
+     "evidence": "may pay selected unaffiliated dealers a variable selling concession of up to $32.50 per security",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc. (CGMI)",
+     "evidence": "CGMI, an affiliate of the issuer, serves as calculation agent",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price: $1,000.00",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "61150029-c53c-4a6d-b05f-fa7b75f46d15",
+   "n": 16,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "product_archetype",
+     "prefill": "autocallable",
+     "should_be": "reverse_convertible (issuer-callable fixed coupon with 60% barrier; no automatic call)",
+     "evidence": "The issuer may call the notes in whole, not in part, on any coupon payment date ... at least three business days' notice",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "[{\"name\":\"The closing level of the underlying on the final valuation date.\"}] (one reading)",
+     "should_be": "only S&P 500 Index (SPX), index, initial 4,475.01",
+     "evidence": "S&P 500 Index (Ticker: SPX) ... initial underlying level 4,475.01",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "price_to_public_pct",
+     "prefill": 100,
+     "should_be": "100 per cover (filing inconsistency: UBS supplemental plan says offered at $9.90)",
+     "evidence": "UBS proposes to offer the notes to the public at a price of $9.90 per note.",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc. (CGMI)",
+     "evidence": "CGMI, an affiliate of the issuer, acts as calculation agent",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price $10.00 per note",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "60abbb8a-da7f-44e0-9644-012642a7acc9",
+   "n": 17,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "pricing_date",
+     "prefill": "2022-05-19",
+     "should_be": "2022-05-19 (pricing date) but strike date is 2022-05-18 and initial values are strike-date closes; reviewer to choose",
+     "evidence": "Strike date: May 18, 2022 ... Pricing date: May 19, 2022",
+     "severity": "critical",
+     "kind": "uncertain"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "[{\"name\":\"For each underlying, (i) its final underlying value minus its initial underlying value, divided by (ii)...\"}] (one reading)",
+     "should_be": "only Comcast ($42.13) and Walt Disney ($104.30) single stocks",
+     "evidence": "Comcast Corporation, $42.13; The Walt Disney Company, $104.30",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc. (CGMI)",
+     "evidence": "CGMI, an affiliate of the issuer, acts as calculation agent",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "b242fa0e-72e0-4268-a33d-78301184b181",
+   "n": 18,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "cap_pct",
+     "prefill": [
+      20.25,
+      202.5
+     ],
+     "should_be": 20.25,
+     "evidence": "Maximum return at maturity: $202.50 per security (20.25% of the stated principal amount)",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "total_fees_pct",
+     "prefill": "missing",
+     "should_be": 0,
+     "evidence": "will not receive any underwriting fee for any securities sold in the offering",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "[{\"name\":\"(i) The final underlying value minus the initial underlying value, divided by (ii) the initial underlying value\"}] (one reading)",
+     "should_be": "only S&P 500 Index, initial 3,901.36",
+     "evidence": "initial underlying value of 3,901.36, the closing value of the underlying on the pricing date",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc. (CGMI)",
+     "evidence": "CGMI, as calculation agent, will be required to make discretionary judgments",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price $1,000.00",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "d97fa8cd-1f48-4af8-9f80-09c5a3494041",
+   "n": 19,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "cap_pct",
+     "prefill": 50.75,
+     "should_be": "absent (50.75% is the fixed final-date premium; no participation in appreciation)",
+     "evidence": "Aug 22, 2028: 50.75% ($507.50) ... no participation in appreciation; gains limited to the fixed premium",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "fixed_payout_amount",
+     "prefill": "missing",
+     "should_be": "507.50 per $1,000 (final-date premium), threshold 100%",
+     "evidence": "If worst performer's final value >= initial: $1,000 plus the final-date premium",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 12,
+     "evidence": "Valuation dates: August 22, 2024; August 22, 2025; ...",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "[CGMI (name 'Citigroup Global Markets Inc. (\" CGMI \")') up to 4.125]",
+     "should_be": "CGMI issuer_affiliated_agent up to 4.125%; plus unaffiliated selected dealers (dealer) concession up to 4.125%; clean name",
+     "evidence": "may pay unaffiliated selected dealers a variable selling concession of up to $41.25 per security",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc. (CGMI)",
+     "evidence": "CGMI, an affiliate of the issuer, serves as calculation agent",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "08da83c9-f865-4ec3-b089-f780774884bf",
+   "n": 20,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "underlyings",
+     "prefill": "[{\"name\":\"For each underlying on any valuation date, (i) its closing value ... divided by (ii) its initial underlying value\"}] (one reading); tickers null",
+     "should_be": "only AMKR $22.51, ASML $751.55, COP $96.26 single stocks (tickers AMKR/ASML/COP)",
+     "evidence": "Amkor Technology, Inc. (AMKR): $22.51; ASML Holding N.V. (ASML): $751.55; ConocoPhillips (COP): $96.26",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 12,
+     "evidence": "Potential autocall dates are February 17, 2026, May 14, 2026, ...",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc. (CGMI)",
+     "evidence": "CGMI, as calculation agent, will be required to make discretionary judgments",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price $1,000.00",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "a7251914-ce22-470f-ad26-9df201327818",
+   "n": 21,
+   "bank": "Citigroup",
+   "issues": [
+    {
+     "field": "total_fees_pct",
+     "prefill": [
+      0.75,
+      {
+       "max": 0.9,
+       "min": 0.9,
+       "bound": "exact"
+      }
+     ],
+     "should_be": {
+      "max": 0.75,
+      "min": 0.75,
+      "bound": "exact"
+     },
+     "evidence": "Underwriting fee $7.50 ... Proceeds to issuer $992.50; CGMI will pay to one or more electronic platform providers a fee of $1.50",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "other_fees_pct",
+     "prefill": {
+      "max": 0.15,
+      "min": 0.15,
+      "bound": "exact"
+     },
+     "should_be": "0.15 platform fee paid by CGMI; not clearly additional to the 0.75 underwriting fee (proceeds 99.25)",
+     "evidence": "CGMI will pay to one or more electronic platform providers a fee of $1.50 for each security sold",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "contingent coupon paid only if worst performer at or above coupon barrier; no memory/accrual language",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 3,
+     "evidence": "Pricing date July 15, 2026; first potential autocall date October 15, 2026",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Citigroup Global Markets Inc.",
+     "evidence": "CGMI, an affiliate of the issuer, acts as calculation agent",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,000.00 per security",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "name 'Citigroup Global Markets Inc. (\" CGMI \")'",
+     "should_be": "name 'Citigroup Global Markets Inc.' (strip alias text)",
+     "evidence": "CGMI, an affiliate of the issuer, is the underwriter",
+     "severity": "minor",
+     "kind": "junk_extra"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "c0b8e6eb-fbac-4c96-a826-2a285acd9756",
+   "n": 22,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "buffer_pct",
+     "prefill": [
+      10,
+      111.11
+     ],
+     "should_be": 10,
+     "evidence": "Buffer amount: 10% ... buffer rate ... equals approximately 111.11%",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "Goldman Sachs & Co. LLC",
+       "role": "dealer"
+      }
+     ],
+     "should_be": "Goldman Sachs & Co. LLC role issuer_affiliated_agent, fee 0.35; dealer concession up to 0.25",
+     "evidence": "GS&Co. is an affiliate of GS Finance Corp. ... concession not in excess of 0.25% of the face amount",
+     "severity": "economics",
+     "kind": "wrong"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "54669d60-3303-4a6d-952a-af2b5ec84bc3",
+   "n": 23,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "Goldman Sachs & Co. LLC",
+       "role": "dealer",
+       "fee_max_pct": 4.25
+      }
+     ],
+     "should_be": "GS&Co. issuer_affiliated_agent (4.25; dealer concession up to 3.875); add SIMON Markets LLC (fee undisclosed)",
+     "evidence": "GS&Co. will also pay a fee in connection with the distribution of the notes to SIMON Markets LLC",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "product_archetype",
+     "prefill": "leveraged",
+     "should_be": "buffered (105% participation is marginal leverage)",
+     "evidence": "Upside participation rate: 105% ... Buffer amount: 25%",
+     "severity": "critical",
+     "kind": "uncertain"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,000 face amount",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "b30e351d-9c0f-4f10-ad80-da6d47ff945a",
+   "n": 24,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "protection_type",
+     "prefill": "buffer",
+     "should_be": "barrier",
+     "evidence": "If any final level is below the trigger level: $1,000 plus the lesser performing underlier return",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "buffer_pct",
+     "prefill": [
+      30,
+      70
+     ],
+     "should_be": "absent",
+     "evidence": "Trigger buffer level: for each underlier, 70% of its initial underlier level",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "barrier_pct",
+     "prefill": "missing",
+     "should_be": 70,
+     "evidence": "Trigger buffer level: for each underlier, 70% of its initial underlier level",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "barrier_observation",
+     "prefill": "missing",
+     "should_be": "at_maturity",
+     "evidence": "If any final level is below the trigger level",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "fixed_payout_amount",
+     "prefill": 1241.25,
+     "should_be": "absent (this is the call payment amount, not a digital maturity payout)",
+     "evidence": "Call payment amount: for each $1,000 of the outstanding face amount, equal to $1,241.25",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "fixed_payout_threshold_pct",
+     "prefill": 110,
+     "should_be": "absent (110% is the call level, already in autocall_level_pct)",
+     "evidence": "Call level: each underlier's closing level must be at least 110% of its initial level",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 30,
+     "evidence": "Trade date: July 16, 2021 ... Call observation date: January 16, 2024",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "Goldman Sachs & Co. LLC",
+       "role": "distribution_agent"
+      }
+     ],
+     "should_be": "GS&Co. issuer_affiliated_agent",
+     "evidence": "GS&Co. offers the notes ... concession not in excess of 0.5% of the face amount",
+     "severity": "economics",
+     "kind": "wrong"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "617f8990-b11c-408f-8072-50ba65b330bc",
+   "n": 25,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "coupon_rate_pa",
+     "prefill": "missing",
+     "should_be": "6.50 initial, stepping to 7.00 / 8.00 / 9.00",
+     "evidence": "6.50% per annum from and including November 15, 2023 to but excluding November 15, 2026",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 24,
+     "evidence": "We may redeem the notes at our option ... on or after November 15, 2025",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Goldman Sachs & Co. LLC",
+     "evidence": "Calculation agent: Goldman Sachs & Co. LLC",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "GS&Co. issuer_affiliated_agent, InspereX LLC dealer, no fees",
+     "should_be": "both underwriters ($2.25M each); InspereX distribution_agent/underwriter; fee 1.037",
+     "evidence": "Goldman Sachs & Co. LLC ($2,250,000) and InspereX LLC ($2,250,000)",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "013db510-99c1-432e-9c93-5a307532ef1c",
+   "n": 26,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "product_archetype",
+     "prefill": "leveraged",
+     "should_be": "principal_protected",
+     "evidence": "If the final underlier level is equal to or below the initial level, you receive the face amount of your notes",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "agent_commission_pct",
+     "prefill": [
+      {
+       "max": 0.85,
+       "min": null,
+       "bound": "up_to"
+      },
+      {
+       "max": 3,
+       "min": 3,
+       "bound": "exact"
+      }
+     ],
+     "should_be": {
+      "max": 3,
+      "min": 3,
+      "bound": "exact"
+     },
+     "evidence": "Underwriting discount: 3% of face amount, plus a structuring fee of up to 0.85%",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "total_fees_pct",
+     "prefill": "missing",
+     "should_be": {
+      "max": 3.85,
+      "min": 3,
+      "bound": "up_to"
+     },
+     "evidence": "3% of face amount, plus a structuring fee of up to 0.85% of face amount",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 139.75,
+     "should_be": "39.75 (max return; notes 22/23 store cap as max return, 14.2 / 80)",
+     "evidence": "Maximum settlement amount: $1,397.50 per $1,000 face amount",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "name 'the S&P 500 ® Index (current Bloomberg symbol: “SPX Index”)'",
+     "should_be": "name 'S&P 500 Index'",
+     "evidence": "S&P 500® Index (Bloomberg symbol \"SPX Index\")",
+     "severity": "minor",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,397.50 per $1,000 face amount",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "4c5ae944-1044-4084-8c34-4321b23500c6",
+   "n": 27,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "participation_rate",
+     "prefill": 41.15,
+     "should_be": "absent",
+     "evidence": "Upside payment: $411.50 per security (41.15% of the stated principal amount)",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "fixed_payout_amount",
+     "prefill": "missing",
+     "should_be": 1411.5,
+     "evidence": "If the final share price is at or above the initial share price ... $1,000 plus the $411.50 upside payment",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "fixed_payout_threshold_pct",
+     "prefill": "missing",
+     "should_be": 100,
+     "evidence": "final share price is at or above the initial share price",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "product_archetype",
+     "prefill": "barrier",
+     "should_be": "digital",
+     "evidence": "upside payment ... $411.50 per security; maximum payment is $1,000.00 plus the upside payment",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 41.15,
+     "should_be": "absent (no cap term; max return is the fixed digital payment)",
+     "evidence": "No separate cap term; maximum payment is $1,000.00 plus the upside payment",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "distribution",
+     "prefill": "Goldman Sachs & Co. LLC role dealer",
+     "should_be": "Goldman Sachs & Co. LLC role issuer_affiliated_agent",
+     "evidence": "GS&Co. is an affiliate and has a conflict of interest under FINRA Rule 5121",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,765,000 in the aggregate",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "dce9c7dd-b002-45d9-b147-893d5f0289ae",
+   "n": 28,
+   "bank": "Goldman Sachs",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": "Goldman Sachs & Co. LLC role dealer",
+     "should_be": "Goldman Sachs & Co. LLC role issuer_affiliated_agent (underwriter $7mm); InspereX LLC underwriter",
+     "evidence": "Goldman Sachs & Co. LLC, one of the underwriters, is an affiliate of The Goldman Sachs Group, Inc.",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Goldman Sachs & Co. LLC",
+     "evidence": "Calculation Agent: Goldman Sachs & Co. LLC",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "cusip",
+     "prefill": "38151FRJ4",
+     "should_be": "unverified",
+     "evidence": "Reader found no CUSIP/ISIN stated in the pricing supplement text",
+     "severity": "critical",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "8ffe50f8-1b8e-4c9c-a7d8-2aa72776be28",
+   "n": 29,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "underlyings",
+     "prefill": "{\"name\":\"The lower\\nof the Underlying Returns of the Underlyings\"}",
+     "should_be": "only NDX 7843.875 and RTY 1511.900 entries",
+     "evidence": "Lesser Performing Underlying Return is the lower of the two Underlying Returns",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "underlyings.return_basis",
+     "prefill": null,
+     "should_be": "price_return",
+     "evidence": "Underlying Return ... (Final Value - Initial Value) / Initial Value",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "JPMS / JPMorgan Financial affiliate (not clearly named)",
+     "evidence": "JPMorgan Financial and its affiliates act as calculation agent",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "fd02a72f-a9dd-4d02-9d35-0cdaf4d8fde5",
+   "n": 30,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "barrier_pct",
+     "prefill": 85,
+     "should_be": "absent (85% is the buffer/threshold level; loss beyond 15% buffer, leveraged by 1.1765, not full loss from first dollar)",
+     "evidence": "$1,000 plus ... $1,000 times the buffer rate times the sum of the underlier return plus the buffer amount",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 112.5,
+     "should_be": "absent (or 12.5 max return; 112.5 is a level not a return)",
+     "evidence": "Threshold settlement amount: $1,125.00",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "distribution",
+     "prefill": "J.P. Morgan Securities LLC role distribution_agent",
+     "should_be": "JPMS role issuer_affiliated_agent; unnamed unaffiliated dealer",
+     "evidence": "J.P. Morgan Securities LLC... will sell the notes to an unaffiliated dealer at 100.00% of the principal amount",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "J.P. Morgan Securities LLC",
+     "evidence": "Calculation agent: JPMS",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "$1,125.00 ... $1,000 principal amount note",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "fac6c444-9b77-44d1-a540-4b32877441bc",
+   "n": 31,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": "J.P. Morgan Securities LLC role distribution_agent",
+     "should_be": "J.P. Morgan Securities LLC role issuer_affiliated_agent",
+     "evidence": "JPMS, acting as agent for JPMorgan Financial, will pay all of the selling commissions of $37.50",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings.return_basis",
+     "prefill": null,
+     "should_be": "price_return",
+     "evidence": "Least Performing Index Return",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "f33de47e-c033-45c6-b909-e7d34b6dbd40",
+   "n": 32,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": "J.P. Morgan Securities LLC role distribution_agent",
+     "should_be": "J.P. Morgan Securities LLC role issuer_affiliated_agent",
+     "evidence": "J.P. Morgan Securities LLC (JPMS), acting as agent ... will pay all of the selling commissions of $6.00",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings.name",
+     "prefill": "The MSCI EAFE ® Index (Bloomberg ticker: MXEA)",
+     "should_be": "MSCI EAFE Index",
+     "evidence": "MSCI EAFE® Index (Bloomberg ticker: MXEA)",
+     "severity": "minor",
+     "kind": "junk_extra"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "bd677e64-a7ef-45c1-8e1a-20ef30b77f0a",
+   "n": 33,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "underlyings[0].name",
+     "prefill": "The common stock of NVIDIA Corporation, par value $0.001 per share (Bloomberg ticker: NVDA).",
+     "should_be": "NVIDIA Corporation common stock",
+     "evidence": "Reference Stock: The common stock of NVIDIA Corporation, par value $0.001 per share (Bloomberg ticker: NVDA)",
+     "severity": "minor",
+     "kind": "junk_extra"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "463241cf-53fa-47a9-ad4e-7de69a0fa4fd",
+   "n": 34,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "distribution[0].role",
+     "prefill": "distribution_agent",
+     "should_be": "issuer_affiliated_agent",
+     "evidence": "J.P. Morgan Securities LLC (\"JPMS\"), acting as agent for JPMorgan Financial, will pay all selling commissions of $5.00",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "MerQube",
+     "should_be": "absent in pricing supplement (MerQube is only Index Calculation Agent; note calc agent is JPMS per product supplement)",
+     "evidence": "MerQube ... Index Sponsor and Index Calculation Agent",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 12,
+     "evidence": "other than the first through eleventh and final Review Dates ... earliest possible call February 28, 2025",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "basket_type",
+     "prefill": "missing",
+     "should_be": "single",
+     "evidence": "Index: MerQube US Tech+ Vol Advantage Index (Bloomberg ticker: MQUSTVA)",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "Contingent Interest Payment ... paid only if the Index closes at or above the Interest Barrier (no unpaid-amount carry-forward)",
+     "severity": "economics",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "91d79037-fcae-48df-9b85-d0cef4294a82",
+   "n": 35,
+   "bank": "JPMorgan",
+   "issues": [
+    {
+     "field": "cap_pct",
+     "prefill": 9.7,
+     "should_be": "absent (9.70% is the fixed digital return, captured in fixed_payout_amount 1097)",
+     "evidence": "Contingent Digital Return: 9.70% ... $1,000 + ($1,000 × 9.70%) = $1,097.00",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "distribution[0].role",
+     "prefill": "distribution_agent",
+     "should_be": "issuer_affiliated_agent",
+     "evidence": "J.P. Morgan Securities LLC (\"JPMS\") acts as agent for the issuer and pays all selling commissions of $7.25",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "call_type",
+     "prefill": "missing",
+     "should_be": "none",
+     "evidence": "no autocall feature described; notes \"do not pay interest\"",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "The notes do not pay interest",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "18e37394-7df1-4b0b-88e8-3c1752200600",
+   "n": 36,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "total_fees_pct",
+     "prefill": {
+      "max": 9.26,
+      "min": 9.26,
+      "bound": "exact"
+     },
+     "should_be": {
+      "max": 3.75,
+      "min": 3.75,
+      "bound": "exact"
+     },
+     "evidence": "Per Buffered PLUS $1,000 | Agent's commissions $37.50 | Proceeds to us $962.50",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "distribution[0].role",
+     "prefill": "distribution_agent",
+     "should_be": "issuer_affiliated_agent",
+     "evidence": "MS & Co. is an affiliate of MSFL and a wholly owned subsidiary of Morgan Stanley",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "MS & Co.",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "[{name only}] and [{ticker:null, return_basis:null, initial_level:706.87}]",
+     "should_be": "single entry: Dow Jones U.S. Select Dividend Index, ticker DJDVP, index, price_return, 706.87",
+     "evidence": "Bloomberg ticker: DJDVP ... Initial index value: 706.87",
+     "severity": "minor",
+     "kind": "junk_extra"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "a0295ad8-1d89-40df-bc2b-d3a1b34e94c2",
+   "n": 37,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "underlyings",
+     "prefill": "extra entry whose name is the 'underlying return' definition sentence",
+     "should_be": "only SX5E and SXXP entries",
+     "evidence": "With respect to an underlying, the percentage change from its starting level to its ending level",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "MS & Co.",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "call_type",
+     "prefill": "missing",
+     "should_be": "none",
+     "evidence": "no call/redemption feature; payment at maturity only",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "total_fees_pct",
+     "prefill": {
+      "max": 3.225,
+      "min": 3.225,
+      "bound": "exact"
+     },
+     "should_be": {
+      "max": 3.225,
+      "min": null,
+      "bound": "up_to"
+     },
+     "evidence": "will receive a commission of up to $32.25 for each security it sells",
+     "severity": "minor",
+     "kind": "wrong"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "c599ff1c-34d7-452f-ac7e-fbe8e2ae8019",
+   "n": 38,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "total_fees_pct",
+     "prefill": "missing",
+     "should_be": 0.25,
+     "evidence": "Agent's commissions and fees: $2.50 | Proceeds to us: $997.50",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "only MS & Co. (issuer_affiliated_agent, fee 0)",
+     "should_be": "also unaffiliated dealer (dealer, 0.25%)",
+     "evidence": "MS & Co. expects to sell all of the PLUS ... to an unaffiliated dealer at a price of $997.50 per PLUS",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "extra entry 'The underlying index with the lesser index percent change'; tickers null",
+     "should_be": "INDU (Dow Jones Industrial Average) and SPX (S&P 500) only",
+     "evidence": "Dow Jones Industrial AverageSM (the \"INDU Index\") and S&P 500® Index (the \"SPX Index\")",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "MS & Co.",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "call_type",
+     "prefill": "missing",
+     "should_be": "none",
+     "evidence": "payment at maturity only; no call feature",
+     "severity": "critical",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "7cbe07ef-b644-4113-8ac9-c734a85edc71",
+   "n": 39,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The underlying index with the lowest index percent change"
+      }
+     ],
+     "should_be": "drop; keep only NDX 17,421.01 / RTY 1,978.331 / INDU 38,109.43",
+     "evidence": "Underlying indices: Nasdaq-100 Index, Russell 2000 Index, Dow Jones Industrial Average",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "ticker null; names contain control chars (\\u0002, \\u001c)",
+     "should_be": "tickers NDX, RTY, INDU; clean names",
+     "evidence": "Nasdaq-100 Index (NDX), Russell 2000 Index (RTY), Dow Jones Industrial Average (INDU)",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 163,
+     "should_be": "63 if cap is on return; 163 is max payment as % of principal",
+     "evidence": "maximum payment at maturity of $1,630 per Trigger PLUS (163% of the stated principal amount)",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Morgan Stanley & Co. LLC (MS & Co.)",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "MS & Co. role distribution_agent",
+     "should_be": "MS & Co. role issuer_affiliated_agent",
+     "evidence": "MS & Co., an affiliate of MSFL and a wholly owned subsidiary of Morgan Stanley",
+     "severity": "minor",
+     "kind": "wrong"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "31e5ed74-c0ff-433a-8e7c-5f4ec0b27d72",
+   "n": 40,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "participation_rate",
+     "prefill": 0,
+     "should_be": "absent (no upside participation feature)",
+     "evidence": "investors will not participate in any appreciation of the underlying stock",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Stated principal amount: $1,000 per security",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Morgan Stanley & Co. LLC (MS & Co.)",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "ticker null",
+     "should_be": "AMD",
+     "evidence": "Bloomberg ticker AMD",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "MS & Co. role distribution_agent",
+     "should_be": "MS & Co. role issuer_affiliated_agent",
+     "evidence": "MS & Co., a wholly owned subsidiary of Morgan Stanley... affiliate of MSFL",
+     "severity": "minor",
+     "kind": "wrong"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "0b76a9d6-169f-4e9d-8c89-a93decfc15ee",
+   "n": 41,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 3,
+     "evidence": "Determination dates: quarterly from July 26, 2024 ... redeemed if at or above initial on any of the first eleven determination dates",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "No coupon is paid for any quarter when the closing price is below the threshold (no memory feature described)",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "MS & Co. distribution_agent; Morgan Stanley Wealth Management / MS&Co International / Bank Morgan Stanley AG as dealer",
+     "should_be": "all issuer_affiliated_agent; MSWM fees 1.75% sales + 0.50% structuring",
+     "evidence": "MS & Co., an affiliate of MSFL ... through Morgan Stanley Smith Barney LLC ... structuring fee of $5",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Stated principal amount: $1,000",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Morgan Stanley & Co. LLC (MS & Co.)",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "ticker null",
+     "should_be": "MSFT",
+     "evidence": "Microsoft Corporation common stock (MSFT)",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "fb0bace4-dde2-400e-a391-aa7a978c5843",
+   "n": 42,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "buffer_pct",
+     "prefill": [
+      15,
+      117.65
+     ],
+     "should_be": 15,
+     "evidence": "Threshold Amount: 15%; Buffer Rate: approximately 117.65% (117.65 is the downside rate, not a buffer)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "distribution",
+     "prefill": "MS & Co. role distribution_agent only",
+     "should_be": "MS & Co. issuer_affiliated_agent; plus unaffiliated dealer (resells at par, no discount); fee to iCapital Markets LLC included in issue price",
+     "evidence": "MS & Co. will sell all notes to an unaffiliated dealer at 100.00% of face amount",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "cap_pct",
+     "prefill": 18.2,
+     "should_be": "absent or 18.2 depending on convention; payout is fixed digital $1,182 already in fixed_payout_amount",
+     "evidence": "Maximum Settlement Amount: $1,182.00 per $1,000 Face Amount",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "ticker null",
+     "should_be": "SPX",
+     "evidence": "S&P 500 Index, Bloomberg ticker SPX",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "62297f6f-09ee-477a-92e9-09ba5e4292d4",
+   "n": 43,
+   "bank": "Morgan Stanley",
+   "issues": [
+    {
+     "field": "total_fees_pct",
+     "prefill": [
+      3,
+      {
+       "max": 3.85,
+       "bound": "up_to"
+      }
+     ],
+     "should_be": "3 (fee table agent's commission $30; proceeds $970); 3.85 conflicts with proceeds",
+     "evidence": "Agent's commissions $30 / Proceeds to us $970; structuring fee up to $8.50 paid from MS & Co. or its affiliates",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "call_type",
+     "prefill": "missing",
+     "should_be": "none",
+     "evidence": "No autocall or redemption feature described",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Stated principal amount: $1,000",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "Morgan Stanley & Co. LLC (MS & Co.)",
+     "evidence": "Calculation agent: MS & Co.",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "MS & Co. role distribution_agent",
+     "should_be": "MS & Co. issuer_affiliated_agent (3.00% plus up to 0.85% structuring)",
+     "evidence": "MS & Co., an affiliate of MSFL ... structuring fee of up to $8.50",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "ticker null",
+     "should_be": "SPX, RTY",
+     "evidence": "S&P 500 Index (SPX); Russell 2000 Index (RTY)",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "product_archetype",
+     "prefill": "other",
+     "should_be": "barrier (or digital: minimum 48.5% upside payment)",
+     "evidence": "upside payment $485 per security ... downside threshold 75%",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "39ac6f14-cc43-41c6-bf5a-5556df95ea6a",
+   "n": 44,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "underlyings",
+     "prefill": "includes Citigroup Inc. (C, 67.42) alongside Boeing",
+     "should_be": "Boeing only (BA, 379.64) for CUSIP 90281C682; Citigroup is a separate note",
+     "evidence": "CUSIP: 90281C682 (Boeing); 90281C690 (Citigroup)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The\ncommon stock of a specific company, as indicated on the cover hereof."
+      }
+     ],
+     "should_be": "drop",
+     "evidence": "sentence used as name",
+     "severity": "critical",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "basket_type",
+     "prefill": "single",
+     "should_be": "single (confirm, given the Citigroup entry in underlyings)",
+     "evidence": "Common stock of The Boeing Company (BA)",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "protection_type",
+     "prefill": "none",
+     "should_be": "barrier",
+     "evidence": "Conversion level $334.08, 88.00% of initial level; if below, UBS delivers the share delivery amount",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "barrier_pct",
+     "prefill": "missing",
+     "should_be": 88,
+     "evidence": "Conversion level: $334.08, or 88.00% of initial level (Boeing)",
+     "severity": "critical",
+     "kind": "missing"
+    },
+    {
+     "field": "barrier_observation",
+     "prefill": "missing",
+     "should_be": "at_maturity",
+     "evidence": "If not called and the final level is below the conversion level, UBS delivers the share delivery amount",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "product_archetype",
+     "prefill": "autocallable",
+     "should_be": "reverse_convertible (fixed unconditional coupon + physical delivery), callable",
+     "evidence": "UBS will pay a coupon on each coupon payment date regardless of the performance of the underlying",
+     "severity": "economics",
+     "kind": "uncertain"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 1,
+     "evidence": "Observation dates: quarterly, from May 15, 2019",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "distribution",
+     "prefill": "UBS Securities LLC dealer 1.5%; UBS Financial Services Inc. distribution_agent 0%",
+     "should_be": "both issuer_affiliated_agent; UBS Securities LLC buys at discount, resells to UBS Financial Services Inc. at discount equal to 1.5%",
+     "evidence": "Each of UBS Securities LLC and UBS Financial Services Inc. is an affiliate of UBS",
+     "severity": "minor",
+     "kind": "wrong"
+    },
+    {
+     "field": "calculation_agent",
+     "prefill": "missing",
+     "should_be": "an affiliate of UBS (not named)",
+     "evidence": "the calculation agent will be an affiliate of UBS",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "265fbd8f-c730-47cf-94c3-671d256a3293",
+   "n": 45,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "UBS Securities LLC",
+       "role": "distribution_agent",
+       "fee_max_pct": 3.5,
+       "fee_min_pct": 3.5
+      }
+     ],
+     "should_be": [
+      {
+       "name": "UBS Securities LLC",
+       "role": "issuer_affiliated_agent",
+       "fee_max_pct": 3.5,
+       "fee_min_pct": 3.5
+      }
+     ],
+     "evidence": "UBS Securities LLC, an affiliate of UBS, receives an underwriting discount of $35.00 per Note",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The\nshares of The Technology Select Sector SPDR® Fund, the shares of The Industrial Select Sector SPDR® Fund and the shares of The Utilities Select Sector SPDR® Fund"
+      }
+     ],
+     "should_be": "absent (keep only the 3-entry list XLK 87.03 / XLI 60.81 / XLU 58.63)",
+     "evidence": "Technology Select Sector SPDR Fund (XLK) $87.03; Industrial (XLI) $60.81; Utilities (XLU) $58.63",
+     "severity": "minor",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price to public $1,000.00 / $135,000.00",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "9688a516-0adf-46fb-80f7-8536dbebd006",
+   "n": 46,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "coupon_rate_pa",
+     "prefill": 6,
+     "should_be": 7.5,
+     "evidence": "Contingent coupon rate 7.50% per annum; contingent coupon $18.75 per $1,000 Note (quarterly)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "UBS Securities LLC",
+       "role": "issuer_affiliated_agent",
+       "fee_max_pct": 4,
+       "fee_min_pct": 4
+      },
+      {
+       "name": "UBS Investment Bank",
+       "role": "distribution_agent",
+       "fee_max_pct": null,
+       "fee_min_pct": null
+      }
+     ],
+     "should_be": [
+      {
+       "name": "UBS Securities LLC",
+       "role": "issuer_affiliated_agent",
+       "fee_max_pct": 4,
+       "fee_min_pct": 4
+      }
+     ],
+     "evidence": "UBS Investment Bank is the cover-page brand line, not a separate distributor; UBS Securities LLC 'has agreed to re-allow the full amount of this discount'",
+     "severity": "minor",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The common stock of Apple Inc., the common stock of Amazon.com, Inc., the common stock of Facebook, Inc. and the common stock of Microsoft Corporation"
+      }
+     ],
+     "should_be": "absent (keep only the 4-entry list AAPL/AMZN/FB/MSFT)",
+     "evidence": "Apple (AAPL, $147.06); Amazon.com (AMZN, $3,375.99); Facebook (FB, $362.97); Microsoft (MSFT, $289.52)",
+     "severity": "minor",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price to public $5,955,000.00",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "2fd3ec9d-3dbf-4ea9-af0d-bb4337750661",
+   "n": 47,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "distribution",
+     "prefill": [
+      {
+       "name": "UBS Securities LLC",
+       "role": "dealer",
+       "fee_max_pct": 1.5,
+       "fee_min_pct": 1.5
+      },
+      {
+       "name": "UBS Financial Services Inc.",
+       "role": "distribution_agent"
+      },
+      {
+       "name": "LFT Securities, LLC",
+       "role": "placement_agent"
+      }
+     ],
+     "should_be": "UBS Securities LLC and UBS Financial Services Inc. both issuer_affiliated_agent (1.5% discount); LFT Securities, LLC paid an undisclosed platform-services fee",
+     "evidence": "UBS Securities LLC and UBS Financial Services Inc. are affiliates of UBS ... conflict of interest under FINRA Rule 5121",
+     "severity": "economics",
+     "kind": "wrong"
+    },
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 3,
+     "evidence": "automatic call as early as the first potential call settlement date (which is approximately 3 months after the trade date)",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "contingent coupon ... will not accrue or be payable",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "final_valuation_date",
+     "prefill": "2026-11-09",
+     "should_be": "uncertain - no calendar date found in fetched text (observation dates 'see page 4' not rendered)",
+     "evidence": "The final level of the underlying asset is observed on the final valuation date.",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "issue_date",
+     "prefill": "2024-11-12",
+     "should_be": "uncertain - filing gives only T+2 rule (Nov 7 + 2 business days = Nov 11, a bond-market holiday, so Nov 12 plausible)",
+     "evidence": "We expect to deliver the Notes against payment on the second business day following the trade date.",
+     "severity": "minor",
+     "kind": "uncertain"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "194fedb2-9467-4291-875a-0c5973b10a5e",
+   "n": 48,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "total_fees_pct",
+     "prefill": "missing",
+     "should_be": {
+      "min": 0,
+      "max": 0.6,
+      "bound": "between"
+     },
+     "evidence": "Underwriting compensation $0.00; UBS AG will pay unaffiliated third-party dealers $6.00 per Note on $14,295,000 of the aggregate principal amount",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "structuring_fee_pct",
+     "prefill": {
+      "min": 0.6,
+      "max": 0.6,
+      "bound": "exact"
+     },
+     "should_be": "0.6 applies only to $14,295,000 of $19,018,000 (range 0-0.6, or ~0.45% blended)",
+     "evidence": "$6.00 per Note on $14,295,000 of the aggregate principal amount",
+     "severity": "minor",
+     "kind": "uncertain"
+    },
+    {
+     "field": "fee_based_account_price",
+     "prefill": "missing",
+     "should_be": 1000,
+     "evidence": "Notes sold to certain fee-based advisory accounts ... at the $1,000 issue price",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "will not accrue or be payable",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "7be38d19-078d-4b71-9621-5cbf2afc0bcd",
+   "n": 49,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "coupon_rate_pa",
+     "prefill": 6,
+     "should_be": 11.0,
+     "evidence": "Contingent coupon rate: 11.00% per annum; $9.1667 per Note per observation date (monthly)",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": "NDX 26000, RTY 2500, TLT 90, XLU 45 (round placeholder levels, return_basis/fx null)",
+     "should_be": "NDX 25,529.26; RTY 2,677.738; TLT 87.80; XLU 43.39",
+     "evidence": "Nasdaq-100 25,529.26; Russell 2000 2,677.738; TLT $87.80; XLU $43.39",
+     "severity": "critical",
+     "kind": "wrong"
+    },
+    {
+     "field": "underlyings",
+     "prefill": [
+      {
+       "name": "The Nasdaq-100 Index®, the Russell 2000® Index, the shares of the iShares® 20+ Year Treasury Bond ETF and the shares of the Utilities Select Sector SPDR® Fund"
+      }
+     ],
+     "should_be": "absent",
+     "evidence": "sentence used as a single underlying name",
+     "severity": "minor",
+     "kind": "junk_extra"
+    },
+    {
+     "field": "downside_leverage",
+     "prefill": "missing",
+     "should_be": 1,
+     "evidence": "$1,000 x (1 + Underlying Return of the Least Performing Underlying Asset)",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  },
+  {
+   "reference_filing_id": "c5d1c9ea-3533-4dab-b003-388fc82638ee",
+   "n": 50,
+   "bank": "UBS",
+   "issues": [
+    {
+     "field": "no_call_months",
+     "prefill": "missing",
+     "should_be": 3,
+     "evidence": "Call dates: May 20, 2026; Aug. 20, 2026 ... (trade date February 20, 2026)",
+     "severity": "economics",
+     "kind": "missing"
+    },
+    {
+     "field": "coupon_memory",
+     "prefill": "missing",
+     "should_be": false,
+     "evidence": "will not accrue or be payable",
+     "severity": "minor",
+     "kind": "missing"
+    },
+    {
+     "field": "currency",
+     "prefill": "missing",
+     "should_be": "USD",
+     "evidence": "Issue price to public $1,000.00 / $600,000.00",
+     "severity": "minor",
+     "kind": "missing"
+    }
+   ]
+  }
+ ]
+}

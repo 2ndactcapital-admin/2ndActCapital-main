@@ -35,7 +35,7 @@ from services.note_extraction import proxy
 from services.note_extraction.schema import FieldSpec, json_schema, parse_reader_output
 from services.note_extraction.spend import SpendTracker, estimate_call_cost, recorded_cost
 
-PROMPT_VERSION = "notefields.reader.v3"
+PROMPT_VERSION = "notefields.reader.v4"   # notefix2 Task 6: added the few-shot block
 
 INSTRUCTIONS = """You read ONE US structured-note pricing supplement (SEC 424B2 or FWP) and \
 report its terms as ONE JSON object that matches the JSON schema below exactly.
@@ -59,7 +59,48 @@ member its own object. Never merge members into one string.
 its own role and fee.
 - Output JSON only — no prose, no markdown."""
 
+# notefix2 Task 6: four REAL corrected cases from the gold-1 second-reader
+# review (docs/gold/gold1_second_reader_v1.json) — one BofA "threshold value"
+# barrier, one Goldman buffer-RATE, one Barclays digital payout, one BofA
+# issuer-affiliated agent. Kept under ~1,500 tokens (see FEW_SHOT_TOKEN_EST
+# below, printed by verify_notefix2.py) — four examples, not a library.
+FEW_SHOT = """Four real corrected examples, from hand-checking 50 SEC filings against their own extracted values:
+
+1) Buffer vs barrier — a BofA note whose filing never says "barrier":
+   Quote: "Threshold Value 60% of Starting Value" ... the hypothetical table shows a 59.99% \
+ending value paying $599.90 per $1,000 — the FULL decline from the first dollar, not a cushioned loss.
+   Correct: protection_type "barrier", barrier_pct 60, buffer_pct null. The filing's own word \
+"Threshold" is not evidence either way — apply the test: at a final level just below it, does the \
+investor lose the full (initial - final)/initial? Here yes, so it is a barrier, never a buffer.
+
+2) A buffer RATE is not a buffer — a Goldman Sachs note:
+   Quote: "Buffer amount: 10%" ... "the buffer rate, which equals approximately 111.11%".
+   Correct: buffer_pct 10 (the buffer AMOUNT — the decline protected from). 111.11% is the buffer \
+RATE, a downside leverage multiplier (100 / (100 - 10)) applied BEYOND the buffer — never a second \
+buffer_pct, and never confused with the 10% amount.
+
+3) A digital payout is not participation — a Barclays note:
+   Quote: "Digital Percentage: 40.00%" ... "$1,000 + [$1,000 x Digital Percentage] ... if the \
+Final Value is greater than or equal to the Barrier Value but less than the Initial Value".
+   Correct: fixed_payout_amount 1400, fixed_payout_threshold_pct = the Barrier Value as a percent \
+of the initial level. participation_rate and cap_pct are both null — a digital or fixed percentage \
+is never upside participation, no matter how the filing phrases the dollar amount.
+
+4) An issuer-affiliated agent stays affiliated even under a generic title — a BofA note:
+   Quote: "Selling Agent: MLPF&S, an affiliate of BofA Finance" (BofA Finance is this note's own \
+issuer).
+   Correct: distribution includes {"name": "MLPF&S", "role": "issuer_affiliated_agent", ...}. The \
+filing's own label ("Selling Agent") never overrides a stated affiliation to the issuer — a \
+broker-dealer the filing itself calls an issuer affiliate is role issuer_affiliated_agent, not \
+distribution_agent or dealer."""
+
 USER_PREFIX = "Read the filing below and answer with the JSON object only.\n\n"
+
+
+def few_shot_token_estimate() -> int:
+    """chars/4 — the same rough estimator used throughout this codebase for
+    unknown-tokenizer cost planning (trim.estimate_tokens_chars)."""
+    return len(FEW_SHOT) // 4
 
 
 @dataclass
@@ -102,7 +143,7 @@ def build_messages(specs: list[FieldSpec], filing_text: str, *, filer: str | Non
                    form_type: str | None) -> tuple[list[dict], str]:
     """(messages, prefix_hash). The filing text is the LAST thing in the call."""
     schema = json_schema(specs)
-    system = (INSTRUCTIONS + "\n\nJSON schema:\n"
+    system = (INSTRUCTIONS + "\n\n" + FEW_SHOT + "\n\nJSON schema:\n"
               + json.dumps(schema, sort_keys=True, separators=(",", ":")))
     per_note = f"Filer: {filer or 'unknown'}\nForm type: {form_type or 'unknown'}\n\nFILING TEXT:\n"
     user = USER_PREFIX + per_note + filing_text
