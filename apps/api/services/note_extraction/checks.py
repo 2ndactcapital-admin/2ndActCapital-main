@@ -12,6 +12,10 @@ VALUE: filings contain errors too, so a disagreement is for a person to read.
                                   that differs from the pricing date
     payoff_matches_examples       the payoff recomputed from the extracted terms
                                   agrees with the filing's hypothetical table
+    dollar_totals_match           bulkfetch: the CALCULATED total_fees_usd /
+                                  proceeds_to_issuer_usd agree with the dollar
+                                  totals the cover table states (+-$1 or
+                                  +-0.01%), naming both numbers when not
 
 NOTEFIX1: total_fees_pct and proceeds_to_issuer_pct are RANGES now (price_to_
 public_pct stays scalar). fees_reconcile compares intervals, not numbers: it
@@ -37,7 +41,9 @@ PROTECTION_LEVEL_EPSILON_PCT = Decimal("0.01")
 
 CHECKS = ("fees_reconcile", "estimated_value_below_price", "observation_dates_in_term",
           "initial_valuation_date", "payoff_matches_examples", "coupon_cross_check",
-          "maturity_after_pricing", "payoff_matches_at_protection_levels")
+          "maturity_after_pricing", "payoff_matches_at_protection_levels", "dollar_totals_match")
+DOLLAR_TOLERANCE_USD = Decimal("1")
+DOLLAR_TOLERANCE_REL = Decimal("0.0001")      # 0.01%
 
 
 @dataclass
@@ -314,8 +320,41 @@ def payoff_matches_at_protection_levels(values: dict, rows: list[dict] | None) -
                    {"mismatches": mismatches})
 
 
+def _usd(v) -> str:
+    return f"${v:,.2f}".replace(".00", "")
+
+
+def dollar_totals_match(values: dict, stated: dict | None) -> Finding | None:
+    """Each calculated dollar total vs the filing's stated total. A calculated
+    RANGE agrees when the stated number lies inside it (widened by the
+    tolerance); a point agrees within +-$1 or +-0.01% of the stated number."""
+    if not stated:
+        return None
+    bad = []
+    for key, pct_key in (("total_fees_usd", "total_fees_pct"), ("proceeds_to_issuer_usd", "proceeds_to_issuer_pct")):
+        want = _d(stated.get(key))
+        calc = as_range(values.get(key))
+        if want is None or calc is None:
+            continue
+        tol = max(DOLLAR_TOLERANCE_USD, abs(want) * DOLLAR_TOLERANCE_REL)
+        lo = calc["min"] if calc["min"] is not None else calc["max"]
+        hi = calc["max"] if calc["max"] is not None else calc["min"]
+        if lo is None:
+            continue
+        if not (lo - tol <= want <= hi + tol):
+            shown = _usd(lo) if lo == hi else f"{_usd(lo)}-{_usd(hi)}"
+            bad.append({"field": key, "calculated": shown, "stated": _usd(want), "pct_field": pct_key})
+    if not bad:
+        return None
+    return Finding("dollar_totals_match", ["issue_size"] + [b["field"] for b in bad] + [b["pct_field"] for b in bad],
+                   "; ".join(f"{b['field']}: calculated {b['calculated']} but the filing states {b['stated']}"
+                             for b in bad),
+                   {"mismatches": bad, "stated_quote": stated.get("quote")})
+
+
 def run_self_checks(values: dict, *, stated_initial_valuation_date: str | None = None,
-                    hypothetical_rows: list[dict] | None = None) -> list[Finding]:
+                    hypothetical_rows: list[dict] | None = None,
+                    stated_totals: dict | None = None) -> list[Finding]:
     found = [
         fees_reconcile(values),
         estimated_value_below_price(values),
@@ -325,5 +364,6 @@ def run_self_checks(values: dict, *, stated_initial_valuation_date: str | None =
         coupon_cross_check(values),
         maturity_after_pricing(values),
         payoff_matches_at_protection_levels(values, hypothetical_rows),
+        dollar_totals_match(values, stated_totals),
     ]
     return [f for f in found if f is not None]

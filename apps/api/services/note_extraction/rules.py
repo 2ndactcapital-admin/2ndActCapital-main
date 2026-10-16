@@ -467,6 +467,43 @@ def find_pricing_table(text: str, result: RuleResult, denomination: Decimal | No
         return
 
 
+# ── Stated dollar totals (bulkfetch Task 9) ──────────────────────────────────
+# The cover table's "Total" row states the issue's dollar totals: price,
+# underwriting discount, proceeds ("Total  $860,000  $27,950  $832,050"). A
+# second layout puts one item per row with a per-note and a total column
+# ("Underwriting discount  $32.50  $27,950"): the LAST dollar amount on the
+# row is the total.
+_TOTAL_ROW = re.compile(r"^[ \t]*Total\b.*$", re.IGNORECASE | re.MULTILINE)
+_USD_ONLY = re.compile(r"\$\s?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)")
+_FEE_ROW = re.compile(r"^[ \t]*(?:underwriting\s+discount|agent'?s?\s+commission|selling\s+commission|"
+                      r"fees?\s+and\s+commissions?)[^\n]*$", re.IGNORECASE | re.MULTILINE)
+_PROCEEDS_ROW = re.compile(r"^[ \t]*proceeds[^\n]*$", re.IGNORECASE | re.MULTILINE)
+
+
+def find_stated_dollar_totals(text: str) -> dict | None:
+    """{total_fees_usd, proceeds_to_issuer_usd, price_usd?, quote} from the
+    cover table, or None. Rules only; a 'Total' row is used only when its
+    first three dollar amounts are consistent (price = fees + proceeds)."""
+    text = text or ""
+    for m in _TOTAL_ROW.finditer(text):
+        vals, end = _amounts_after(text, m.start() + len(m.group(0)) - len(m.group(0).lstrip()) + 5)
+        usd = [v for v, is_pct in vals if v is not None and not is_pct]
+        for i in range(len(usd) - 2):
+            a, b, c = usd[i:i + 3]
+            if a >= 1000 and abs(a - (b + c)) <= Decimal("1"):
+                return {"price_usd": a, "total_fees_usd": b, "proceeds_to_issuer_usd": c,
+                        "quote": " ".join(text[m.start():end].split())[:300]}
+    out: dict = {}
+    for key, rx in (("total_fees_usd", _FEE_ROW), ("proceeds_to_issuer_usd", _PROCEEDS_ROW)):
+        for m in rx.finditer(text):
+            amounts = [_dec(a) for a in _USD_ONLY.findall(m.group(0))]
+            if len(amounts) >= 2 and amounts[-1] is not None and amounts[-1] >= 100:
+                out[key] = amounts[-1]
+                out.setdefault("quote", " ".join(m.group(0).split())[:300])
+                break
+    return out or None
+
+
 # ── Estimated value (decision B: whichever unit is STATED is extracted) ──────
 _EV = re.compile(
     r"(?:estimated\s+value|estimated\s+initial\s+value|initial\s+estimated\s+value)"

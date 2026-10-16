@@ -11,6 +11,14 @@ participants. SUPER ADMIN ONLY, not org-scoped (the note corpus is global).
     POST /admin/note-extraction/participants                    add a participant
     PUT  /admin/note-extraction/participants/{participant_id}   edit type / aliases / status
 
+BULKFETCH (Part B): list fields carry their member columns (the screen renders
+them as tables); CUSIP / ISIN are validated on save (a bad CUSIP or malformed
+ISIN is a 422; an ISIN not carrying the note's CUSIP is saved with a warning
+and a needs_review reason in the gold row's metadata); the two CALCULATED
+dollar totals are computed here, shown, compared with the filing's stated
+totals, and refused as a write target; issuer / guarantor / agent names come
+back with their normalised match (display only).
+
 The gate is ``services.rbac.is_super_admin`` — checked FIRST, the one shared
 helper. An org admin and a member get 403 on every route. Gold values are
 written only through services.note_extraction.gold.record_gold_value with the
@@ -26,7 +34,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.database import get_pool
-from services.note_extraction import documents, gold, participants as parts, prefill, schema, trim
+from services.note_extraction import (
+    checks, derive, documents, gold, identifiers, normalise_names, participants as parts, prefill, rules, schema,
+    trim,
+)
 from services.rbac import is_super_admin, load_principal
 from services.users import ensure_user
 
@@ -129,6 +140,7 @@ def _member_fields(list_key: str) -> list[dict]:
 
 def _gold_field(s: schema.FieldSpec) -> dict:
     d = _spec_out(s)
+    d["calculated"] = s.key in derive.CALCULATED_FIELDS
     if s.kind == schema.KIND_LIST:
         d["members"] = _member_fields(s.key)
     if s.kind == schema.KIND_RANGE:
@@ -186,6 +198,43 @@ def _group_by_field(second_reader: list[dict]) -> dict[str, list[dict]]:
     return out
 
 
+def _reviewable(keys) -> set[str]:
+    """Fields a reviewer decides: every live field except the calculated ones."""
+    return {k for k in keys if k not in derive.CALCULATED_FIELDS}
+
+
+def _current_values(golds: list[dict], prefill_by: dict) -> dict:
+    """The value a field has right now: the reviewer's gold value when there is
+    one (an 'absent' gold is None), else the pre-fill."""
+    out = {k: v.get("value") for k, v in prefill_by.items()}
+    for g in golds:
+        out[g["field_key"]] = g["value"]
+    return out
+
+
+def _calculated(values: dict, text: str | None) -> dict:
+    """The calculated dollar totals from the CURRENT values, and the check
+    against the dollar totals the filing's cover table states."""
+    out = {k: None for k in derive.CALCULATED_FIELDS}
+    for d in derive.dollar_totals(values.get("issue_size"), values.get("total_fees_pct"),
+                                  values.get("proceeds_to_issuer_pct")):
+        out[d.field_key] = {"value": d.value, "basis": d.basis, "inputs": d.inputs, "derived": True,
+                            "extraction_method": schema.METHOD_DERIVED}
+    stated = rules.find_stated_dollar_totals(text or "") if text else None
+    merged = dict(values)
+    merged.update({k: (v or {}).get("value") for k, v in out.items()})
+    finding = checks.dollar_totals_match(merged, stated)
+    out["stated"] = ({k: (str(v) if v is not None and k != "quote" else v) for k, v in stated.items()}
+                     if stated else None)
+    out["check"] = ({"check": finding.check, "reason": finding.reason, "needs_review": True,
+                     "detail": finding.detail} if finding else None)
+    return out
+
+
+async def _note_issuer_group(conn, issuer_rows: list[dict], filing_row) -> str | None:
+    return normalise_names.note_issuer_group(issuer_rows, filing_row["cik"] if "cik" in filing_row else None)
+
+
 @router.get("/admin/note-extraction/gold/notes/{filing_id}")
 async def gold_note(request: Request, filing_id: str):
     await _require_super_admin(request)
@@ -200,7 +249,11 @@ async def gold_note(request: Request, filing_id: str):
         golds = [g for g in await gold.gold_values(conn, filing_id) if g["field_key"] in live]
         prefill_runs = await gold.prefill_runs_for(conn, filing_id)
         candidate = next(iter(await gold.list_candidates_for(conn, filing_id)), None)
-        status = await gold.refresh_candidate_status(conn, filing_id, live, update=False) if candidate else None
+        status = (await gold.refresh_candidate_status(conn, filing_id, _reviewable(live), update=False)
+                  if candidate else None)
+        issuer_rows = await normalise_names.load_issuer_rows(conn)
+        participant_rows = await parts.load_participants(conn)
+        note_group = await _note_issuer_group(conn, issuer_rows, row)
         second_reader = [s for s in await gold.second_reader_for(conn, filing_id) if s["field_key"] in live]
         try:
             doc = await documents.load_document(conn, filing_id)
@@ -216,6 +269,8 @@ async def gold_note(request: Request, filing_id: str):
         except Exception as exc:  # noqa: BLE001
             text, text_error, tokens = None, f"{type(exc).__name__}: {exc}", None
     run_id = prefill_runs[0]["run_id"] if prefill_runs else None
+    prefill_by = _prefill_by_field(specs, readings, run_id)
+    current = _current_values(golds, prefill_by)
     return {
         "filing": {"id": str(row["id"]), "filer_name": row["filer_name"], "form_type": row["form_type"],
                    "accession_number": row["accession_number"],
@@ -226,8 +281,11 @@ async def gold_note(request: Request, filing_id: str):
         "sections": _sections(specs),
         "text": text, "text_error": text_error, "tokens": tokens,
         "readings": readings, "gold": golds,
-        "prefill": {"runs": prefill_runs, "run_id": run_id,
-                    "by_field": _prefill_by_field(specs, readings, run_id)},
+        "prefill": {"runs": prefill_runs, "run_id": run_id, "by_field": prefill_by},
+        "calculated": _calculated(current, text),
+        "normalisation": normalise_names.normalise_note(current, issuer_rows=issuer_rows,
+                                                        participant_rows=participant_rows,
+                                                        note_group=note_group),
         "second_reader": {"findings": second_reader,
                           "by_field": _group_by_field(second_reader),
                           "critical_count": sum(1 for s in second_reader if s["severity"] == "critical"),
@@ -250,6 +308,28 @@ async def put_gold_value(request: Request, filing_id: str, field_key: str, body:
         spec = specs.get(field_key)
         if spec is None:
             raise HTTPException(status_code=422, detail=f"unknown or retired field '{field_key}'")
+        if field_key in derive.CALCULATED_FIELDS:
+            raise HTTPException(status_code=422, detail=(
+                f"'{field_key}' is calculated (issue size x percentage), never edited — correct "
+                f"issue_size or the percentage instead"))
+        value, warnings, review_reasons = body.value, [], []
+        if body.action != "absent" and value is not None:
+            try:
+                if field_key == "cusip":
+                    value = identifiers.check_cusip(value)
+                elif field_key == "isin":
+                    value, warnings = identifiers.check_isin(value, await _note_cusip(conn, filing_id))
+                    review_reasons += [f"isin: {w}" for w in warnings]
+            except identifiers.IdentifierError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+            if field_key in normalise_names.ISSUER_FIELDS:
+                issuer_rows = await normalise_names.load_issuer_rows(conn)
+                filing = await documents.load_filing_row(conn, filing_id)
+                group = normalise_names.note_issuer_group(issuer_rows, filing["cik"])
+                reasons = normalise_names.review_reasons(field_key, value, issuer_rows=issuer_rows,
+                                                         note_group=group)
+                review_reasons += reasons
+                warnings += reasons
         quote = start = end = None
         if body.source_reading_id:
             if body.action != "confirmed":
@@ -264,12 +344,30 @@ async def put_gold_value(request: Request, filing_id: str, field_key: str, body:
         try:
             saved = await gold.record_gold_value(
                 conn, reviewer_id=reviewer_id, reference_filing_id=filing_id, spec=spec,
-                action=body.action, value=body.value, source_reading_id=body.source_reading_id,
-                source_quote=quote, raw_char_start=start, raw_char_end=end, notes=body.notes)
+                action=body.action, value=value, source_reading_id=body.source_reading_id,
+                source_quote=quote, raw_char_start=start, raw_char_end=end, notes=body.notes,
+                metadata=({"needs_review": True, "needs_review_reasons": review_reasons}
+                          if review_reasons else None))
         except gold.GoldWriteError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        progress = await gold.refresh_candidate_status(conn, filing_id, specs)
-    return {"saved": saved, "progress": progress, **_envelope(True, GOLD_EDITABLE)}
+        progress = await gold.refresh_candidate_status(conn, filing_id, _reviewable(specs))
+    return {"saved": saved, "progress": progress, "warnings": warnings, **_envelope(True, GOLD_EDITABLE)}
+
+
+async def _note_cusip(conn, filing_id: str) -> str | None:
+    """The note's CUSIP for the ISIN cross-check: the reviewer's gold value,
+    else the newest non-null reading."""
+    v = await conn.fetchval(
+        """SELECT value #>> '{}' FROM portfolio.note_gold_values
+            WHERE reference_filing_id = $1 AND field_key = 'cusip' AND valid_to IS NULL AND value IS NOT NULL""",
+        filing_id)
+    if v:
+        return v
+    return await conn.fetchval(
+        """SELECT value #>> '{}' FROM portfolio.note_term_readings
+            WHERE reference_filing_id = $1 AND field_key = 'cusip' AND value IS NOT NULL
+              AND jsonb_typeof(value) = 'string' ORDER BY created_at DESC LIMIT 1""",
+        filing_id)
 
 
 class SkipBody(BaseModel):

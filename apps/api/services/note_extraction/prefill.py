@@ -252,7 +252,8 @@ async def prefill_note(doc, specs: list[FieldSpec], cfg: readers.ReaderConfig, *
         values,
         stated_initial_valuation_date=(extras["initial_valuation_date"].value
                                        if "initial_valuation_date" in extras else None),
-        hypothetical_rows=(extras["hypothetical_rows"].value if "hypothetical_rows" in extras else None))
+        hypothetical_rows=(extras["hypothetical_rows"].value if "hypothetical_rows" in extras else None),
+        stated_totals=rules.find_stated_dollar_totals(doc.text))
     out.self_checks = [asdict(f) for f in findings]
     out.values = values
     return out

@@ -74,20 +74,24 @@ class ParsedIndex:
         return [(acc, cik, name) for (acc, cik), name in self.filers.items()]
 
 
-def parse_index_lines(lines) -> ParsedIndex:
+def parse_index_lines(lines, forms=None) -> ParsedIndex:
     """Parse master-index lines into a deduplicated :class:`ParsedIndex`.
+
+    ``forms`` (bulkfetch) overrides the default :data:`FORMS` — the bulk
+    runner passes the union of its configured sources' form types.
 
     Header lines, other form types and malformed rows are skipped. A line is
     "malformed" only if it has the 5-field shape of a data row but a field
     fails validation; the free-text header above the dashes is not counted.
     """
     out = ParsedIndex()
+    wanted = frozenset(forms) if forms is not None else FORMS
     for line in lines:
         parts = [p.strip() for p in line.rstrip("\r\n").split("|")]
         if len(parts) != 5:
             continue
         cik, name, form, filed, fname = parts
-        if form not in FORMS:
+        if form not in wanted:
             continue
         acc = fname.rsplit("/", 1)[-1]
         if acc.endswith(".txt"):
@@ -111,8 +115,13 @@ def parse_index_lines(lines) -> ParsedIndex:
     return out
 
 
-async def load_records(conn, filing_records, filer_records) -> tuple[int, int]:
+async def load_records(conn, filing_records, filer_records,
+                       collect: list | None = None) -> tuple[int, int]:
     """INSERT filings + filers (idempotent). Returns ``(new_filings, new_filers)``.
+
+    ``collect`` (bulkfetch), when given, is extended with the accession numbers
+    this call actually inserted — so a caller can apply selection to exactly
+    the new rows and nothing else.
 
     Opens its own transaction (a SAVEPOINT if the caller already holds one) and
     sets ``app.is_super_admin`` LOCAL inside it — never a session-level SET.
@@ -154,6 +163,8 @@ async def load_records(conn, filing_records, filer_records) -> tuple[int, int]:
                ON CONFLICT (accession_number, cik) DO NOTHING"""
         )
         accessions = [r["accession_number"] for r in new_accessions]
+        if collect is not None:
+            collect.extend(accessions)
         if accessions:
             await conn.execute(
                 """UPDATE portfolio.edgar_index_filings

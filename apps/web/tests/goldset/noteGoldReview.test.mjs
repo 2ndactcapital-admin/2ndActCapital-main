@@ -98,3 +98,53 @@ test("write gate fails closed", () => {
   assert.equal(canWriteGold({ ...env, permissions: { can_write: "true" } }), false);
   assert.equal(canWriteGold({ ...env, vocabularies: { editable: [] } }), false);
 });
+
+// ── bulkfetch Part B ──
+import { checkIdentifier, isReviewable, listTable, matchLabel, rowQuote } from "../../lib/noteGoldReview.mjs";
+
+const UNDERLYINGS = {
+  key: "underlyings",
+  kind: "list",
+  members: [
+    { key: "name", kind: "text", required: true },
+    { key: "ticker", kind: "text", required: false },
+    { key: "kind", kind: "enum", enum: ["index", "etf", "single_stock", "rate", "other"], required: false },
+    { key: "initial_level", kind: "number", required: false },
+  ],
+};
+
+test("list values render as one row per member, columns from the member model", () => {
+  const t = listTable(UNDERLYINGS, [
+    { name: "S&P 500 Index", ticker: "SPX", kind: "index", initial_level: 2643.85 },
+    { name: "Russell 2000 Index", ticker: "RTY", kind: "index", initial_level: 1473.536 },
+  ]);
+  assert.deepEqual(t.columns, ["name", "ticker", "kind", "initial_level"]);
+  assert.equal(t.rows.length, 2);
+  assert.equal(t.rows[1].ticker, "RTY");
+  assert.deepEqual(listTable({ key: "x", kind: "list" }, [{ a: 1 }]).columns, []);
+});
+
+test("row quote: own quote, else the field quote around the name, else null", () => {
+  assert.equal(rowQuote({ name: "SPX", quote: "own" }, "field"), "own");
+  assert.match(rowQuote({ name: "Russell 2000" }, "the S&P 500 Index and the Russell 2000 Index"), /Russell 2000/);
+  assert.equal(rowQuote({ name: "Nikkei" }, "the S&P 500 Index"), null);
+});
+
+test("CUSIP check digit refuses 09709TJV5 and accepts 09709TJV4; ISIN mismatch is a warning", () => {
+  assert.deepEqual(checkIdentifier("cusip", "09709tjv4"), { value: "09709TJV4" });
+  assert.ok(checkIdentifier("cusip", "09709TJV5").error);
+  assert.ok(checkIdentifier("cusip", "09709TJV").error);
+  assert.deepEqual(checkIdentifier("isin", "US09709TJV44", "09709TJV4"), { value: "US09709TJV44" });
+  const w = checkIdentifier("isin", "US06745QAB18", "09709TJV4");
+  assert.equal(w.value, "US06745QAB18");
+  assert.ok(w.warning);
+  assert.ok(checkIdentifier("isin", "US09709TJV45").error);
+});
+
+test("calculated fields are not reviewable; match labels", () => {
+  assert.equal(isReviewable({ key: "total_fees_usd", calculated: true }), false);
+  assert.equal(isReviewable({ key: "cusip", calculated: false }), true);
+  assert.equal(matchLabel({ matched: false }), "no match");
+  assert.match(matchLabel({ matched: true, canonical: "Merrill Lynch", affiliate: true }), /affiliate of this note's issuer/);
+  assert.equal(matchLabel(null), null);
+});
