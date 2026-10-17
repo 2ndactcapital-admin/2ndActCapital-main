@@ -220,8 +220,9 @@ def decide_status(text: str, extra_strong=()) -> tuple[str, str, str]:
     if not text.strip():
         return "not_pricing_supplement", "extraction produced no text", kind
     if kind == "pricing_supplement":
-        hits = edgar_fetch.prefilter_hits_with(text, extra_strong)
-        if edgar_fetch.passes_prefilter_with(text, extra_strong):
+        hits = edgar_fetch.prefilter_hits_with(text, extra_strong) if extra_strong else edgar_fetch.prefilter_hits(text)
+        if edgar_fetch.passes_prefilter(text) or (
+                extra_strong and edgar_fetch.passes_prefilter_with(text, extra_strong)):
             return "ready_for_extraction", f"pricing supplement; prefilter hits {hits}", kind
         return "prefilter_skipped", f"pricing supplement; prefilter hits {hits}", kind
     return "not_pricing_supplement", f"{kind}: {kind_reason}", kind
@@ -933,9 +934,12 @@ async def fetch_stage(conn, *, cap: int, client: httpx.AsyncClient,
                 if await mark_selected_by_cohort(conn, row["accession_number"], cohort_id):
                     stats.marked_by_cohort += 1
             try:
-                out = await fetch_one(
-                    conn, row, client=client, bucket=bucket, r2_prefix=r2_prefix,
-                    extra_strong=prefilter_terms_for(policy_rules, groups.get(row.get("primary_issuer_cik") or "")))
+                # The v2 prefilter terms are passed ONLY when the policy grants
+                # some to this filing's group: with none, fetch_one is called
+                # exactly as before (callers and test doubles keep its old shape).
+                extra = prefilter_terms_for(policy_rules, groups.get(row.get("primary_issuer_cik") or ""))
+                out = await fetch_one(conn, row, client=client, bucket=bucket, r2_prefix=r2_prefix,
+                                      **({"extra_strong": extra} if extra else {}))
             except _SYSTEMIC:
                 raise
             except Exception as exc:  # noqa: BLE001 — one filing's failure is recorded, not fatal

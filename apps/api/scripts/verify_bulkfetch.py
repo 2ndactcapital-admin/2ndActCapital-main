@@ -38,7 +38,7 @@ nightly job), every real manifest row.
 Teardown is FK child-before-parent from pg_constraint (contype::text), then every
 touched table is re-read for its exact pre-test count. The nested regressions
 (verify_edgarpipelinea.py, verify_edgarcohorts.py, verify_notefix2.py) run ONCE
-each as flat subprocesses, 600 s timeout, ONLY after this script's teardown left
+each as flat subprocesses, 600 s timeout (1800 s for notefix2, which nests three more), ONLY after this script's teardown left
 zero fixture rows.
 """
 from __future__ import annotations
@@ -753,19 +753,32 @@ async def y_resume(conn, pool, eb) -> None:
     check(s1.done == K and len(left) == 4 and all(st[a]["claimed_by"] is None for a in accs),
           f"the first run stopped after {K}; the rest are still 'selected' and unclaimed", f"done {s1.done}")
     _r, s2 = await run_bulk(pool, eb, opts(eb, "Resume", D0, D0 + timedelta(days=6)))
-    gets = {a: doc_gets(a) for a in accs}
+    # A peeked final costs TWO document GETs (the 16 KB Range peek + the full
+    # download); "downloaded once" means exactly one FULL download.
+    gets = {a: doc_gets(a, full_only=True) for a in accs}
     check(s2.done == 4 and all(v == 1 for v in gets.values()),
-          "the restart processed only the remaining 4; every filing was downloaded exactly once", f"{gets}")
+          "the restart processed only the remaining 4; every filing was downloaded (in full) exactly once",
+          f"{gets}")
 
     g2 = await make_group(conn, "Two", 1)
     accs2 = [await make_filing(conn, g2[0], D0 + timedelta(days=i % 6), body=COVER_FINAL.format(extra=""))
              for i in range(10)]
     o = opts(eb, "Two", D0, D0 + timedelta(days=6), concurrency=3)
-    (_ra, sa), (_rb, sb) = await asyncio.gather(run_bulk(pool, eb, o), run_bulk(pool, eb, o))
-    gets2 = [doc_gets(a) for a in accs2]
+    # Claim 2 at a time so both runners genuinely compete for the same rows
+    # (with the default batch of 50 the first claim takes all 10 and the other
+    # runner, correctly, finds nothing left — no overlap, but nothing proven).
+    saved_batch = eb.CLAIM_BATCH
+    eb.CLAIM_BATCH = 2
+    try:
+        (_ra, sa), (_rb, sb) = await asyncio.gather(run_bulk(pool, eb, o), run_bulk(pool, eb, o))
+    finally:
+        eb.CLAIM_BATCH = saved_batch
+    gets2 = [doc_gets(a, full_only=True) for a in accs2]
     check(sa.done + sb.done == 10 and all(v == 1 for v in gets2),
-          "two runners at once: 10 filings between them, each downloaded exactly once",
-          f"runner A {sa.done}, runner B {sb.done}, GETs {gets2}")
+          "two runners at once: 10 filings between them, each downloaded (in full) exactly once",
+          f"runner A {sa.done}, runner B {sb.done}, full GETs {gets2}")
+    check(sa.done > 0 and sb.done > 0, "both runners claimed and processed work (claims interleaved)",
+          f"runner A {sa.done}, runner B {sb.done}")
 
 
 async def y_failures(conn, pool, eb) -> None:
@@ -1249,19 +1262,37 @@ async def main_async() -> int:
     return 0 if _n_fail == 0 else 1
 
 
+# verify_notefix2.py itself re-runs verify_notefields / verify_goldset /
+# verify_notefix1 (goldset alone is ~7 min), so it needs more than 600 s
+# end to end (~12 min measured 2026-10-16). Every other nested run keeps 600 s.
+REGRESSION_TIMEOUT = {"verify_notefix2.py": 1800}
+
+
 def y_regression() -> None:
     section("[Y] Regression: verify_edgarpipelinea.py, verify_edgarcohorts.py and verify_notefix2.py, "
             "ONCE each as flat subprocesses, AFTER this script's own teardown")
+    log_dir = REPO / "sprint_prompts" / "logs"
     for name in ("verify_edgarpipelinea.py", "verify_edgarcohorts.py", "verify_notefix2.py"):
+        timeout = REGRESSION_TIMEOUT.get(name, 600)
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
-                                  text=True, timeout=600, cwd=str(REPO))
+                                  text=True, timeout=timeout, cwd=str(REPO))
             out = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired as exc:
-            out = f"TIMEOUT after 600s: {(exc.stdout or b'')[-300:]!r}"
-        m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
-        check(m is not None and int(m.group(1)) > 0 and int(m.group(2)) == 0,
-              f"{name} still reports 0 FAIL", m.group(0) if m else out[-300:])
+            out = f"TIMEOUT after {timeout}s: {(exc.stdout or b'')[-300:]!r}"
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / f"verify_bulkfetch.regression.{name.removesuffix('.py')}.out").write_text(out)
+        except OSError:
+            pass
+        # The LAST "TOTAL:" line is the script's own: a script that nests
+        # further regressions prints their TOTAL lines first.
+        totals = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
+        m = totals[-1] if totals else None
+        fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
+        check(m is not None and int(m[0]) > 0 and int(m[1]) == 0,
+              f"{name} still reports 0 FAIL",
+              (f"TOTAL: {m[0]} PASS, {m[1]} FAIL" if m else out[-300:]) + (f"; {fails[:3]}" if fails else ""))
 
 
 if __name__ == "__main__":
