@@ -245,8 +245,30 @@ async def fixture_counts(conn) -> dict[str, int]:
     return out
 
 
+def fixture_filing_ids(k: dict) -> list:
+    return list({*k["filings"], FID_GOLD})
+
+
+async def teardown_gold(conn, k: dict) -> None:
+    """The list-editor / totals sections write gold values and readings on the
+    fixture filing. Delete them explicitly, child before parent (a gold value's
+    source_reading_id references a reading), before anything is counted. The
+    gold writes carry no run_id, so the only keys are the fixture filing ids and
+    the fixture reviewer / creator users — never a real gold row."""
+    f = fixture_filing_ids(k)
+    async with conn.transaction():
+        await _super(conn)
+        await conn.execute("DELETE FROM portfolio.note_gold_values "
+                           "WHERE reference_filing_id = ANY($1::uuid[]) OR reviewer_id = ANY($2::uuid[])",
+                           f, FIXTURE_USERS)
+        await conn.execute("DELETE FROM portfolio.note_term_readings "
+                           "WHERE reference_filing_id = ANY($1::uuid[]) OR created_by = ANY($2::uuid[])",
+                           f, FIXTURE_USERS)
+
+
 async def teardown(conn) -> None:
     k = await fixture_keys(conn)
+    await teardown_gold(conn, k)
     preds = predicates(k)
     for t in await delete_order(conn):
         where, args = preds[t]
@@ -273,14 +295,14 @@ async def table_counts(conn) -> dict[str, int]:
 
 
 async def gold_checksum(conn) -> tuple[int, str]:
+    f = fixture_filing_ids(await fixture_keys(conn))
     r = await rls_row(
         conn, """SELECT count(*) AS n,
                         md5(COALESCE(string_agg(id::text || field_key || COALESCE(value::text, '') || action
                                                 || COALESCE(valid_to::text, '') || metadata::text, ',' ORDER BY id), '')) AS h
                    FROM portfolio.note_gold_values g
-                  WHERE NOT EXISTS (SELECT 1 FROM portfolio.reference_filings r
-                                     WHERE r.id = g.reference_filing_id AND r.accession_number LIKE $1)""",
-        ACC_PREFIX + "%")
+                  WHERE NOT (g.reference_filing_id = ANY($1::uuid[]))""",
+        f)
     return int(r["n"]), r["h"]
 
 
