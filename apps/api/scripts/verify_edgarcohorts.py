@@ -1051,7 +1051,10 @@ async def b1_section(conn) -> None:
 
     async def fake_context(conn_):
         specs = schema.build_field_specs(await schema.load_registry_rows(conn_))
-        return specs, fake_catalog, []
+        # load_context returns FOUR values since notefix2 (b6f60ea) added the
+        # issuer-group map (participants.load_issuer_groups); this double
+        # still returned the pre-notefix2 three. Empty map = no affiliate rule.
+        return specs, fake_catalog, [], {}
 
     async def fake_ensemble(_conn):
         return {"id": UUID("99000000-0000-0000-0000-0000ed0c0e01"), "model_1": "verify-m1",

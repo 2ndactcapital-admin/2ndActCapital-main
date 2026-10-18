@@ -1,5 +1,9 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-14 (notefix2.structural — seven systematic errors found
+Last updated: 2026-10-16 (bulkfetch.structural — a resumable, rate-limited bulk
+EDGAR downloader run from the command line with a cover-page peek, sources as
+configuration, index refresh, product supplements once per program, WF/DB
+prefilter v2, the 200 stuck 'fetched' rows, and five gold review screen fixes;
+verify WRITTEN, not yet run; see the top entry). Previously 2026-10-14 (notefix2.structural — seven systematic errors found
 by checking all 50 gold-1 notes against their own SEC filings: affiliated
 agents resolved by rule, junk list members dropped before they become
 readings, buffer-vs-barrier and digital-vs-participation field definitions
@@ -298,6 +302,198 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000000000000000000000000000000000. BULKFETCH — bulk EDGAR downloader (CLI, peek, shared rate limit, resumable), sources as configuration, index refresh, product supplements once per program, WF/DB prefilter v2, stuck 'fetched' rows; review screen: list tables, labels, CUSIP/ISIN, calculated totals, normalised names; verify WRITTEN, not yet run (2026-10-16)
+
+**Run:** `python3 apps/api/scripts/verify_bulkfetch.py`. Doppler-hydrated; SEC, R2 and every model call
+mocked (no network); real spend $0. Runs `verify_edgarpipelinea.py`, `verify_edgarcohorts.py` and
+`verify_notefix2.py` once each, as flat subprocesses, AFTER its own teardown (600 s timeout each).
+Task 1's nine findings: **docs/BULKFETCH_DISCOVERY.md**.
+
+**Migrations applied live via MCP (2026-10-16):**
+- `bulkfetch_sources_claims_supplements.sql` (additive): `portfolio.edgar_sources`;
+  `edgar_index_filings.claimed_by` / `claimed_until`; `portfolio.reference_filing_supplements`. Both
+  new tables get the global 4-policy RLS pattern.
+- `bulkfetch_widen_reference_form_type.sql`: `reference_filings.form_type` now also allows
+  424B3/424B5, because product supplements are often filed under those forms.
+- `bulkfetch_review_fields.sql` (registry DML): the agent_commission_pct label, plus the two
+  calculated rows.
+
+### Part A — bulk download
+
+**Sources are configuration.** `portfolio.edgar_sources` has a name, form types, a filer source
+(`structured_note_issuers` filtered by include_status, or an `explicit` CIK list) and a NAMED
+classifier from `services.edgar_bulk.CLASSIFIERS`. The seeded row is `structured_notes`: 424B2,
+issuer table yes/review, `structured_note_cover` (= `edgar_pipeline.classify_document`). The runner
+takes `--source` (default structured_notes); `--refresh-index` loads the union of the active sources'
+form types.
+
+**Adding a `defined_outcome_etfs` source later (NOT done this sprint):**
+1. Insert an `edgar_sources` row: forms `497`, `497K`, `N-1A` (485BPOS too, if prospectus updates
+   matter); `filer_source 'explicit'` with the trust CIKs of Innovator ETFs Trust, First Trust
+   Exchange-Traded Fund VIII (FT Vest) and AllianzIM's Advisors Series Trust; a new classifier name,
+   e.g. `defined_outcome_prospectus`.
+2. Add that classifier to `CLASSIFIERS`. Rules only: outcome period, cap, buffer, series name from
+   the cover.
+3. Widen `reference_filings.form_type` again for those forms (it is a CHECK, now 424B2/FWP/424B3/424B5).
+4. Add a selection policy rule for the ETF forms. Today's policy decides only by `form_types` +
+   issuer include_status, and `select_stage` is keyed to the structured-note issuer table, so the ETF
+   source needs either its own policy key or a source-scoped selection.
+5. Run `--refresh-index` over the wanted history, then `--source defined_outcome_etfs`. The ETF
+   trusts are not issuer groups, so `--banks` takes the source's own name for an explicit source.
+
+**Index refresh.** `run_bulk_fetch.py --refresh-index [--to YYYY-MM-DD] [--dry-run]`:
+- reads EDGAR's DAILY index from the last loaded filing date (inclusive; a re-read is a no-op)
+  through `--to` (default yesterday, UTC), with the existing loader;
+- then applies the ACTIVE selection policy to exactly the accessions it inserted.
+
+The dry run prints the date span and the number of index files. Today that is 2026-10-01 …
+2026-10-15, 11 files.
+
+**The runner.** `services/edgar_bulk.py` + `apps/api/scripts/run_bulk_fetch.py`.
+
+Flags:
+- `--banks` takes issuer-group names (case-insensitive). An unknown name errors and lists the valid
+  ones. The dry run prints every filer entity, its CIK and its count per institution, then per year.
+- `--from` / `--to` are inclusive filing dates. A `--to` past the last indexed date stops and says to
+  run `--refresh-index`.
+- `--kinds`: final / preliminary / product_supplement / underlying_supplement / term_sheet /
+  prospectus_supplement / other. The classifier has no prospectus-supplement kind, so that option
+  maps to `other`; see the discovery doc, 1c.
+- Also: `--concurrency` (6), `--max-rps` (8; above 8 needs `--allow-above-8`, never above 10),
+  `--limit`, `--order newest|oldest`, `--stop-after-failures` (50), `--no-peek`,
+  `--keep-preliminaries`, `--retry-failed`, `--refetch-peek-skipped`, `--dry-run`, `--peek-test N`.
+
+Scope and order: selected rows of the source's forms for those groups and dates, institution by
+institution in the order given, newest first.
+
+Claims: `FOR UPDATE SKIP LOCKED` inside one UPDATE, keyset-paged. A crashed run's claims lapse after
+30 min, and the nightly `_queue` now skips claimed rows. Ctrl-C finishes in-flight filings, releases
+every unstarted claim and closes the run row.
+
+Retries and failures:
+- 429 / 5xx / connection errors back off exponentially, honouring Retry-After (capped at 60 s).
+- A request failing 3 times makes the filing `fetch_failed` with the reason. It is not
+  nightly-retried; `--retry-failed` brings it back.
+- N consecutive failures stop the run and say why.
+
+Output: a progress line every 100 filings (done / remaining, rate, ETA, kinds, peek-skipped). The
+final summary covers each institution × document_kind, R2 bytes uploaded, bytes saved by peeking,
+and **seconds per filing by step (sec / extract / upload / db)**. That last figure is the first real
+per-step measurement; Task 1a's breakdown is only an inference.
+
+Each run is a row in `edgar_pipeline_runs`: trigger_source `cli`, scope in `details.bulk`, result in
+`details.bulk_result`. Several runner processes share the 8/s budget. Each holds a lease row
+`bulk_fetch:<run id>`, and at start a runner divides `--max-rps` by the number of live runners (the
+nightly job's lease counts as one).
+
+**The peek.**
+- A Range GET of the first 16 KB with `Accept-Encoding: identity`, then the existing classifier.
+- A recognised kind outside `--kinds` is recorded as document_kind + `not_pricing_supplement` with
+  status_reason `peek: …`. There is no full GET and no R2 write.
+- `other` (unrecognised) and a 200 (Range ignored) both fall through to the full fetch; on a 200 the
+  body already received is used, with no second GET.
+- Peek requests go through the same limiter as every other request.
+- **The peek-test result is to be filled in by the operator** (`--peek-test 20`): Range honoured
+  ______ / 20 (206 vs 200); cover recognised from 16 KB ______ / 20.
+
+**Measured per-filing cost (Task 1a):**
+- Today: 3 SEC requests and 1.91 s per filing, serial. The gold cohort run (308 filings, 924
+  requests, 588 s) took 2.7 days for 125k.
+- Bulk mode with the peek: 3.33 requests per filing averaged (4 kept, 2 peek-skipped), 416k requests
+  at 8/s = **≈14.4 h** for ~124,800 filings; R2 ≈8.3 GB new, so $0/month under the 10 GB free tier.
+- Without the peek: ≈13.0 h and ≈12.5 GB (≈$0.04/month).
+- **[FIND]** The peek saves storage and upload, not time: at the rate cap it costs one extra request
+  per kept filing.
+
+**Product supplements once per program.** With `--kinds …,product_supplement`, every final's
+supplement is resolved:
+1. by its sec.gov link, where the URL's own label line says "product supplement";
+2. otherwise by name + date against manifest rows already classified product_supplement within
+   ±3 days.
+
+Each distinct supplement is fetched ONCE: a per-accession lock, and never if a `reference_filings`
+row already holds it. Every note gets a row in `reference_filing_supplements` (link / name_date /
+unresolved). The run summary reports distinct found / fetched / already stored / unresolved.
+
+Measured on the 171 stored 2025Q1 424B2 texts: 76 cite a supplement by link and 41 by name + date
+only. The 76 links point to just 20 distinct supplements.
+
+**Selection v2 (WF / DB).**
+- **[FIND] The prompt's premise was wrong.** Selection v1 has no keyword filter, and zero WF/DB 424B2s
+  are `not_selected`. Their real pricing supplements are dropped AFTER fetch by the keyword
+  prefilter: 19 sit at `prefilter_skipped` with zero hits.
+- v2 = v1's rules unchanged, plus
+  `prefilter: {version: 2, issuer_groups: ["Wells Fargo", "Deutsche Bank"]}`. The extra STRONG terms
+  (`edgar_fetch.PREFILTER_V2_STRONG`: market linked, threshold / starting / ending value, maximum
+  return, upside participation, trigger level / value, knock-in, digital return, linked to the
+  performance of) apply to those two groups ONLY, so no other bank's outcome can change.
+- `run_bulk_fetch.py --selection-v2 --dry-run` prints, per year, what moves:
+  `not_selected → selected` (expected 0) and `prefilter_skipped → ready_for_extraction`. The second
+  needs an R2 read of the stored text; operator to fill in: ______.
+- Without `--dry-run` it activates policy v2 (v1 retired, its rules never edited) and moves exactly
+  those rows, fenced by CIK and accession.
+- **[FIND] WF's 2021–23 lows (11 / 106 / 156) are in the SEC index itself.** Nothing was excluded.
+  Check on EDGAR which form WF used for its 2021 notes.
+
+**Stuck filings.** `--reprocess-fetched [--dry-run]` classifies the 200 'fetched' rows (the 2025Q1
+corpus) from their database text: zero SEC requests and zero R2 reads.
+- 169 are 424B2 from listed issuers and get `decide_status`'s answer.
+- 31 are FWP or have no listed issuer, so they become `not_selected` with document_kind recorded.
+- All are stamped with the active policy version (the decided-has-policy CHECK requires it).
+
+**Operator commands (tmux):**
+```
+tmux new -s bulkfetch
+cd ~/2ndActCapital && doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --refresh-index --dry-run
+doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --refresh-index
+doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --reprocess-fetched
+doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --selection-v2 --dry-run      # then without --dry-run
+B="JPMorgan,UBS,Goldman Sachs,Morgan Stanley,Wells Fargo,Bank of America"
+doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --banks "$B" --from 2025-01-01 --to 2026-10-01 --dry-run
+doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --banks "$B" --from 2025-01-01 --to 2026-10-01 --peek-test 20
+doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --banks "$B" --from 2025-01-01 --to 2026-10-01 \
+    --kinds final,product_supplement --concurrency 6 --max-rps 8
+# detach: Ctrl-b d · reattach: tmux attach -t bulkfetch · stop cleanly: Ctrl-C (re-run resumes)
+```
+
+### Part B — gold review screen
+
+- **List fields as tables (Task 8).** Underlyings, distribution and observation schedule ALWAYS show
+  as tables: one row per member, one column per member field from the server's member model.
+  Pre-fill rows come first, then the gold rows once reviewed. Each row shows its quote when the
+  member's name is in the field's quote.
+  - The editor was already a table, but hidden behind E; it gains a quote column. Tab moves across
+    cells, and C / E / A act on the whole list. Saving writes the whole list as one gold value,
+    validated by `schema.validate_list`, so an invalid `kind` is a 422.
+- **Label (Task 9).** agent_commission_pct now displays "Underwriting discount / agent commission"
+  (registry + NOTE_FIELDS.md); the key is unchanged.
+- **CUSIP / ISIN (Task 9).** `services/note_extraction/identifiers.py` reuses the existing
+  check-digit code.
+  - The review API refuses a CUSIP that is not 9 characters or fails the check digit (422, naming
+    the right digit), and an ISIN that is not 12 characters or fails its Luhn digit.
+  - A US/CA ISIN without the note's CUSIP (gold value, else the newest reading) is SAVED, with a
+    warning and `metadata.needs_review_reasons` on the gold row.
+  - The screen runs the same check as you type (`checkIdentifier`).
+- **Calculated totals (Task 9).**
+  - `total_fees_usd` and `proceeds_to_issuer_usd` are new registry rows with extraction_method
+    `derived`, computed as issue_size × pct / 100, each range end separately
+    (`derive.dollar_totals`). The cascade and pre-fill produce them too.
+  - New self-check `dollar_totals_match`: `rules.find_stated_dollar_totals` reads the cover table's
+    Total row (or the "Underwriting discount $32.50 $27,950" layout) and compares the result (±$1 or
+    ±0.01%). A mismatch is needs_review naming both numbers.
+  - The review screen shows the totals in the economics section as calculated, with no controls. The
+    API refuses a gold write to them, and they never count toward a note's fields-to-review total.
+- **Names normalised (Task 10).** `services/note_extraction/normalise_names.py`.
+  - Beside issuer_entity / guarantor_entity, the screen shows the matched `structured_note_issuers`
+    row (filer name or credit entity, with EDGAR's "/DE/" dropped). Beside calculation_agent and each
+    distribution row it shows the matched `distribution_participants` row. Each shows whether the
+    match is an affiliate of the note's issuer group, or "no match".
+  - The reviewer's value is what is saved. An issuer or guarantor that does not match the issuer
+    table's credit entity for the note's group is a needs_review reason on the gold row. There is no
+    CRM linkage.
 
 ---
 

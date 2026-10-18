@@ -13,6 +13,16 @@
  * Absent. Keyboard: J / K next / previous field, C confirm, A absent, E edit,
  * N next note. There is no "confirm all": every field is its own decision.
  *
+ * bulkfetch: a list field (underlyings, distribution, observation schedule)
+ * always shows as a table — one row per member, one column per member field,
+ * the pre-filled rows first, each row's quote when there is one — and is
+ * edited as a table (Add row / Remove row, Tab across cells; C / E / A still
+ * act on the whole list). The two calculated dollar totals show their
+ * calculation and the check against the filing's stated totals, with no
+ * controls at all. CUSIP / ISIN are checked as typed (the API refuses the same
+ * values); issuer, guarantor, calculation agent and each distribution row show
+ * their normalised match beside the value.
+ *
  * Field list, sections, member fields, vocabularies and the editable list come
  * from the response (Rule 1). Write controls render ONLY when
  * canWriteGold(payload) — `permissions.can_write === true` and "value" in
@@ -30,13 +40,18 @@ import {
 } from "@/lib/noteExtractionActions";
 import { canWriteGold } from "@/lib/noteGoldGates.mjs";
 import {
+  checkIdentifier,
   highlightSegments,
+  isReviewable,
   keyAction,
   listRows,
+  listTable,
+  matchLabel,
   orderedFields,
   parseList,
   parseRange,
   parseScalar,
+  rowQuote,
   secondReaderFor,
   showValue,
   step,
@@ -59,7 +74,53 @@ function sectionTitle(key) {
   return String(key ?? "").replace(/_/g, " ");
 }
 
-function Editor({ field, start, busy, onSubmit, onCancel }) {
+function cellText(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  return String(v);
+}
+
+// A list value as a table: one row per member, one column per member field
+// (from the server's member model), plus the row's quote and, for the
+// distribution list, the normalised participant match.
+function ListTable({ field, value, quote, matches, caption }) {
+  const { columns, rows } = listTable(field, value);
+  if (!rows.length) return <span className="text-[var(--2a-text-muted)]">none</span>;
+  return (
+    <div className="mt-1 overflow-x-auto">
+      {caption && <span className={EYEBROW}>{caption}</span>}
+      <table className="text-xs">
+        <thead>
+          <tr>
+            {columns.map((c) => (
+              <th key={c} className="px-1 text-left font-medium text-[var(--2a-text-muted)]">{c}</th>
+            ))}
+            {matches && <th className="px-1 text-left font-medium text-[var(--2a-text-muted)]">match</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const q = rowQuote(Array.isArray(value) ? value[i] : null, quote);
+            return (
+              <tr key={i} className="align-top">
+                {columns.map((c) => (
+                  <td key={c} className="px-1 py-0.5 text-[var(--2a-text)]">{cellText(r[c])}</td>
+                ))}
+                {matches && (
+                  <td className="px-1 py-0.5 text-[var(--2a-text-muted)]">{matchLabel(matches[i]) ?? "—"}</td>
+                )}
+                {q && (
+                  <td className="max-w-xs truncate px-1 py-0.5 text-[var(--2a-text-muted)]" title={q}>“{q}”</td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Editor({ field, start, busy, onSubmit, onCancel, quote, noteCusip }) {
   const [text, setText] = useState(() =>
     start == null || typeof start === "object" ? "" : String(start),
   );
@@ -73,17 +134,20 @@ function Editor({ field, start, busy, onSubmit, onCancel }) {
   const [err, setErr] = useState(null);
 
   const submit = () => {
-    const parsed =
+    let parsed =
       field.kind === "range"
         ? parseRange(field, min, max, bound)
         : field.kind === "list"
           ? parseList(field, rows)
           : parseScalar(field, text);
+    if (!parsed.error && (field.key === "cusip" || field.key === "isin")) {
+      parsed = checkIdentifier(field.key, parsed.value, noteCusip);
+    }
     if (parsed.error) {
       setErr(parsed.error);
       return;
     }
-    setErr(null);
+    setErr(parsed.warning ?? null);
     onSubmit(parsed.value);
   };
 
@@ -115,6 +179,7 @@ function Editor({ field, start, busy, onSubmit, onCancel }) {
                     {m.key}{m.required ? " *" : ""}
                   </th>
                 ))}
+                <th />
                 <th />
               </tr>
             </thead>
@@ -148,6 +213,9 @@ function Editor({ field, start, busy, onSubmit, onCancel }) {
                     <button type="button" className={GHOST} onClick={() => setRows(rows.filter((_r, j) => j !== i))}>
                       Remove
                     </button>
+                  </td>
+                  <td className="max-w-xs truncate px-1 text-[var(--2a-text-muted)]" title={rowQuote(row, quote) ?? ""}>
+                    {rowQuote(row, quote) ? `“${rowQuote(row, quote)}”` : ""}
                   </td>
                 </tr>
               ))}
@@ -212,8 +280,37 @@ function SecondReaderNote({ findings }) {
   );
 }
 
+function CalculatedRow({ field, calc, check, selected, onSelect, rowRef }) {
+  return (
+    <div
+      ref={rowRef}
+      onClick={onSelect}
+      className={`cursor-pointer border-b border-[var(--2a-border)] px-3 py-2 ${selected ? "bg-[var(--2a-bg)]" : ""}`}
+      style={selected ? { boxShadow: `inset 3px 0 0 ${HIGHLIGHT}` } : undefined}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-sm font-medium text-[var(--2a-navy)]">
+          {field.label}
+          <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--2a-text-muted)]">calculated</span>
+        </div>
+        <div className="text-xs text-[var(--2a-text)]">{calc ? showValue(calc.value) : "—"}</div>
+      </div>
+      <div className="mt-1 text-xs text-[var(--2a-text-muted)]">
+        {calc ? calc.basis : "needs issue size and the percentage"} · never edited
+      </div>
+      {check && (
+        <div className="mt-1 rounded border px-2 py-1 text-xs" style={{ borderColor: ERROR_INK, color: ERROR_INK, background: "#FBEAEA" }}>
+          Needs review: {check.reason}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FieldRow({ field, prefill, gold, secondReader, selected, editing, writable, busy, onSelect, onConfirm,
-                    onAbsent, onEdit, onCorrect, onCancel, rowRef }) {
+                    onAbsent, onEdit, onCorrect, onCancel, rowRef, match, rowMatches, noteCusip }) {
+  const isList = field.kind === "list";
+  const reasons = gold?.metadata?.needs_review_reasons ?? [];
   return (
     <div
       ref={rowRef}
@@ -230,12 +327,33 @@ function FieldRow({ field, prefill, gold, secondReader, selected, editing, writa
           <span className="ml-2 text-[10px] text-[var(--2a-text-muted)]">{field.kind}</span>
         </div>
         <div className="text-xs" style={{ color: gold ? SUCCESS_INK : "var(--2a-text-muted)" }}>
-          {gold ? `${gold.action}: ${showValue(gold.value)}` : "not reviewed"}
+          {gold ? (isList ? `${gold.action}: ${Array.isArray(gold.value) ? gold.value.length : 0} row(s)` : `${gold.action}: ${showValue(gold.value)}`) : "not reviewed"}
         </div>
       </div>
+      {match !== undefined && match !== null && (
+        <div className="mt-0.5 text-[11px] text-[var(--2a-text-muted)]">
+          normalised: {matchLabel(match)}
+          {match.needs_review_reason && <span style={{ color: ERROR_INK }}> — needs review</span>}
+        </div>
+      )}
+      {reasons.length > 0 && (
+        <div className="mt-0.5 text-[11px]" style={{ color: ERROR_INK }}>needs review: {reasons.join("; ")}</div>
+      )}
+      {isList && gold && Array.isArray(gold.value) && (
+        <ListTable field={field} value={gold.value} quote={gold.source_quote} caption="gold"
+                   matches={field.key === "distribution" ? rowMatches : null} />
+      )}
       <div className="mt-1 text-xs">
         <span className="text-[var(--2a-text-muted)]">pre-fill </span>
-        {prefill ? (
+        {prefill && isList ? (
+          <>
+            <span className="ml-1 rounded border border-[var(--2a-border)] px-1 text-[10px] text-[var(--2a-text-muted)]">
+              {prefill.came_from}
+            </span>
+            <ListTable field={field} value={prefill.value} quote={prefill.quote}
+                       matches={field.key === "distribution" && !gold ? rowMatches : null} />
+          </>
+        ) : prefill ? (
           <>
             <span className="font-medium text-[var(--2a-text)]">{showValue(prefill.value)}</span>
             <span className="ml-1 rounded border border-[var(--2a-border)] px-1 text-[10px] text-[var(--2a-text-muted)]">
@@ -280,6 +398,8 @@ function FieldRow({ field, prefill, gold, secondReader, selected, editing, writa
             busy={busy}
             onSubmit={onCorrect}
             onCancel={onCancel}
+            quote={gold?.source_quote ?? prefill?.quote ?? null}
+            noteCusip={noteCusip}
           />
         </div>
       )}
@@ -367,7 +487,8 @@ export default function GoldReviewScreen({ initial }) {
         const reload = await loadGoldNoteAction(selectedNote);
         if (reload.ok) setNote(reload.payload);
         setEditing(false);
-        setMessage(`Saved ${fieldKey} (${body.action}).`);
+        const warnings = Array.isArray(res.result?.warnings) ? res.result.warnings : [];
+        setMessage(`Saved ${fieldKey} (${body.action}).${warnings.length ? ` Needs review: ${warnings.join("; ")}` : ""}`);
         if (advance) setFieldIdx((i) => step(i, fields.length, "next"));
       });
     },
@@ -375,6 +496,7 @@ export default function GoldReviewScreen({ initial }) {
   );
 
   const confirm = useCallback(() => {
+    if (!isReviewable(field)) return;
     const p = field && prefillBy[field.key];
     if (!p || p.value === null) {
       setMessage("Nothing pre-filled to confirm — correct it or mark it absent.");
@@ -383,7 +505,10 @@ export default function GoldReviewScreen({ initial }) {
     save(field.key, { action: "confirmed", value: p.value, source_reading_id: p.reading_id });
   }, [field, prefillBy, save]);
 
-  const absent = useCallback(() => field && save(field.key, { action: "absent", value: null }), [field, save]);
+  const absent = useCallback(
+    () => isReviewable(field) && save(field.key, { action: "absent", value: null }),
+    [field, save],
+  );
 
   useEffect(() => {
     const onKey = (e) => {
@@ -397,11 +522,11 @@ export default function GoldReviewScreen({ initial }) {
       else if (!writable) return;
       else if (a === "confirm") confirm();
       else if (a === "absent") absent();
-      else if (a === "edit") setEditing(true);
+      else if (a === "edit" && isReviewable(field)) setEditing(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [note, fields.length, writable, confirm, absent, nextNote]);
+  }, [note, fields.length, writable, confirm, absent, nextNote, field]);
 
   // keep the selected field and its quote in view (its section is always shown open)
   useEffect(() => {
@@ -557,6 +682,19 @@ export default function GoldReviewScreen({ initial }) {
                     const f = fields.find((x) => x.key === k);
                     if (!f) return null;
                     const idx = fields.indexOf(f);
+                    if (!isReviewable(f)) {
+                      return (
+                        <CalculatedRow
+                          key={k}
+                          rowRef={(el) => { rowRefs.current[k] = el; }}
+                          field={f}
+                          calc={note.calculated?.[k] ?? null}
+                          check={note.calculated?.check ?? null}
+                          selected={idx === fieldIdx}
+                          onSelect={() => { setFieldIdx(idx); setEditing(false); }}
+                        />
+                      );
+                    }
                     return (
                       <FieldRow
                         key={k}
@@ -575,6 +713,9 @@ export default function GoldReviewScreen({ initial }) {
                         onEdit={() => setEditing(true)}
                         onCorrect={(value) => save(k, { action: "corrected", value })}
                         onCancel={() => setEditing(false)}
+                        match={note.normalisation?.[k] === undefined || k === "distribution" ? undefined : note.normalisation[k]}
+                        rowMatches={Array.isArray(note.normalisation?.distribution) ? note.normalisation.distribution : null}
+                        noteCusip={goldBy.cusip?.value ?? prefillBy.cusip?.value ?? null}
                       />
                     );
                   })}
@@ -584,7 +725,8 @@ export default function GoldReviewScreen({ initial }) {
         </div>
       )}
       <p className="text-[11px] text-[var(--2a-text-muted)]">
-        Keys: J / K next / previous field · C confirm · A absent · E edit · N next note. Each field is its own decision.
+        Keys: J / K next / previous field · C confirm · A absent · E edit · N next note · Tab moves across a
+        list's cells. Each field is its own decision; calculated fields are shown, never edited.
       </p>
     </div>
   );

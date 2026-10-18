@@ -87,11 +87,13 @@ rules-only.
 |---|---|---|---|
 | ★ `price_to_public_pct` | numeric | 15 | Usually 100%. Stays scalar: the only "up to" wording near it in the 138-final corpus describes a dealer resale discount, not this field's own value (notefix1 1d). |
 | ★ `estimated_value_per_1000` | numeric | 16+4+3 | **Decision B.** Banks state it as a % (16 docs) or a $ per note (7). Store a range when stated ("not less than $X"). |
-| ★ `agent_commission_pct` | numeric range | 7 | Min/max: "up to" is common. |
+| ★ `agent_commission_pct` | numeric range | 7 | Display label: "Underwriting discount / agent commission" (bulkfetch — the key is unchanged). Most bank covers call it the underwriting discount. Min/max: "up to" is common. |
 | `structuring_fee_pct` / `other_fees_pct` | numeric range | — | **notefix1.** Platform, marketing, structuring fees. "Up to $X" / "up to X%" wording confirmed in the 138-final corpus. |
 | ★ `total_fees_pct` | numeric range | 6 | **notefix1.** Widened with the other fee fields. |
 | ★ `fee_based_account_price` | numeric | 5 | The price an RIA's advisory client pays. Usually a range ("may pay as little as $977.50"). |
 | `proceeds_to_issuer_pct` | numeric range | 4 | **notefix1.** Self-check: price − fees ≈ proceeds, using the range ends that make the check meaningful (see Self-checks below). |
+| `total_fees_usd` | derived range | — | **bulkfetch. Calculated, never extracted or edited:** `issue_size` × `total_fees_pct` / 100, each end of the range separately. Self-check `dollar_totals_match`: compared with the dollar total the cover table states (e.g. "$27,950"), ±$1 or ±0.01%; a mismatch is needs_review naming both numbers. |
+| `proceeds_to_issuer_usd` | derived range | — | **bulkfetch. Calculated, never extracted or edited:** `issue_size` × `proceeds_to_issuer_pct` / 100, range ends separately; same self-check against the stated total (e.g. "$832,050"). |
 
 ## 8 · Distribution — child table, one row per participant
 | Field | Type | Seen | Notes |

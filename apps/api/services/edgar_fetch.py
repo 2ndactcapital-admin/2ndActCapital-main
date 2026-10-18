@@ -362,6 +362,45 @@ def passes_prefilter(text: str) -> bool:
     return len(hits) >= PREFILTER_MIN_HITS
 
 
+# ── Prefilter v2 (bulkfetch, selection policy v2) ─────────────────────────────
+# MEASURED (bulkfetch Task 1e): the v1 terms above miss the payoff vocabulary
+# Wells Fargo and Deutsche Bank use on their covers — WF "Market Linked
+# Securities" speak of a starting / ending / threshold value and a maximum
+# return, DB of trigger levels and knock-ins — so 19 of their FINAL pricing
+# supplements scored ZERO hits and sat at prefilter_skipped. These extra
+# STRONG terms apply ONLY to the issuer groups the active policy names
+# (``rules.prefilter.issuer_groups``), so no other bank's outcome can change.
+# v1's tables above are never edited.
+PREFILTER_V2_STRONG = (
+    "market linked",
+    "threshold value",
+    "starting value",
+    "ending value",
+    "maximum return",
+    "upside participation",
+    "trigger level",
+    "trigger value",
+    "knock-in",
+    "digital return",
+    "linked to the performance of",
+)
+
+
+def prefilter_hits_with(text: str, extra_strong=()) -> list[str]:
+    """v1 hits plus any ``extra_strong`` term present. Deterministic."""
+    lowered = text.lower()
+    return prefilter_hits(text) + [k for k in extra_strong if k in lowered]
+
+
+def passes_prefilter_with(text: str, extra_strong=()) -> bool:
+    """v1's rule, with ``extra_strong`` counted as STRONG terms. With no extra
+    terms this IS ``passes_prefilter`` — same answer for every input."""
+    if passes_prefilter(text):
+        return True
+    lowered = text.lower()
+    return any(k in lowered for k in extra_strong)
+
+
 def extract_filing_text(raw_bytes: bytes) -> html_text.HtmlExtraction:
     """Plain text + raw-HTML character offsets. No term parsing whatsoever."""
     return html_text.extract_bytes(raw_bytes)

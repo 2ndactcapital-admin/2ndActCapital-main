@@ -164,3 +164,110 @@ export function showValue(value) {
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
+
+// ── bulkfetch Part B ──────────────────────────────────────────────────────
+
+// Task 8: a list value as a table — one row per member, one column per member
+// field, columns from the server's member model (field.members). Never a
+// client-side column list: a field with no members gives no columns.
+export function listTable(field, value) {
+  const columns = (Array.isArray(field?.members) ? field.members : []).map((m) => m.key);
+  const rows = (Array.isArray(value) ? value : []).map((v) =>
+    Object.fromEntries(columns.map((c) => [c, v && typeof v === "object" ? v[c] ?? null : null])),
+  );
+  return { columns, rows };
+}
+
+// The quote for ONE list row: the member's own quote when it carries one,
+// else the stretch of the field's quote around the member's name (when the
+// name occurs in it), else null.
+export function rowQuote(member, fieldQuote, pad = 60) {
+  if (member && typeof member === "object") {
+    const own = member.quote ?? member.source_quote;
+    if (typeof own === "string" && own.trim()) return own;
+  }
+  const name = member && typeof member === "object" ? member.name : null;
+  if (typeof fieldQuote !== "string" || !fieldQuote || typeof name !== "string" || !name.trim()) return null;
+  const i = fieldQuote.toLowerCase().indexOf(name.trim().toLowerCase());
+  if (i < 0) return null;
+  const start = Math.max(0, i - pad);
+  const end = Math.min(fieldQuote.length, i + name.trim().length + pad);
+  return `${start > 0 ? "…" : ""}${fieldQuote.slice(start, end)}${end < fieldQuote.length ? "…" : ""}`;
+}
+
+// Task 9: CUSIP / ISIN checks for immediate feedback. The API is the real
+// gate (it refuses the same values); this only saves a round trip.
+function cusipCheckDigit(base8) {
+  let total = 0;
+  for (let i = 0; i < 8; i += 1) {
+    const ch = base8[i];
+    let v;
+    if (/[0-9]/.test(ch)) v = Number(ch);
+    else if (/[A-Z]/.test(ch)) v = ch.charCodeAt(0) - 55;
+    else if (ch === "*") v = 36;
+    else if (ch === "@") v = 37;
+    else if (ch === "#") v = 38;
+    else return null;
+    if (i % 2 === 1) v *= 2;
+    total += Math.floor(v / 10) + (v % 10);
+  }
+  return (10 - (total % 10)) % 10;
+}
+
+function isinValid(isin) {
+  if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) return false;
+  const digits = isin
+    .slice(0, -1)
+    .split("")
+    .map((c) => parseInt(c, 36).toString())
+    .join("");
+  let total = 0;
+  const rev = digits.split("").reverse();
+  for (let i = 0; i < rev.length; i += 1) {
+    let n = Number(rev[i]);
+    if (i % 2 === 0) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    total += n;
+  }
+  return (10 - (total % 10)) % 10 === Number(isin[isin.length - 1]);
+}
+
+// {value} (canonical, upper-case) or {error}; ISIN may also return {warning}
+// when a US/CA ISIN does not carry the note's CUSIP — a warning, not a refusal.
+export function checkIdentifier(fieldKey, raw, noteCusip = null) {
+  const v = String(raw ?? "").replace(/\s+/g, "").toUpperCase();
+  if (fieldKey === "cusip") {
+    if (v.length !== 9) return { error: `a CUSIP is exactly 9 characters; this has ${v.length}` };
+    const want = cusipCheckDigit(v.slice(0, 8));
+    if (want === null) return { error: "the CUSIP contains a character a CUSIP cannot" };
+    if (String(want) !== v[8]) return { error: `CUSIP ${v} fails the check digit (expected ${want})` };
+    return { value: v };
+  }
+  if (fieldKey === "isin") {
+    if (v.length !== 12) return { error: `an ISIN is exactly 12 characters; this has ${v.length}` };
+    if (!isinValid(v)) return { error: `ISIN ${v} fails the check digit` };
+    const c = String(noteCusip ?? "").replace(/\s+/g, "").toUpperCase();
+    if (["US", "CA"].includes(v.slice(0, 2)) && c && v.slice(2, 11) !== c) {
+      return { value: v, warning: `ISIN ${v} does not contain the note's CUSIP ${c}` };
+    }
+    return { value: v };
+  }
+  return { value: raw };
+}
+
+// Task 9: calculated fields are shown, never edited — the C / E / A keys and
+// the buttons act only on reviewable fields.
+export function isReviewable(field) {
+  return Boolean(field) && field.calculated !== true;
+}
+
+// Task 10: one line for a normalised name match, from the API's
+// "normalisation" block. null -> nothing to show.
+export function matchLabel(match) {
+  if (!match) return null;
+  if (!match.matched) return "no match";
+  const aff = match.affiliate ? "affiliate of this note's issuer" : "not an affiliate of this note's issuer";
+  return `${match.canonical} · ${aff}`;
+}

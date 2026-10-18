@@ -67,7 +67,8 @@ def canonical_value(spec: FieldSpec, value):
 async def record_gold_value(conn, *, reviewer_id: str, reference_filing_id: str, spec: FieldSpec,
                             action: str, value, source_reading_id: str | None = None,
                             source_quote: str | None = None, raw_char_start: int | None = None,
-                            raw_char_end: int | None = None, notes: str | None = None) -> dict:
+                            raw_char_end: int | None = None, notes: str | None = None,
+                            metadata: dict | None = None) -> dict:
     if action not in GOLD_ACTIONS:
         raise GoldWriteError(f"action must be one of {GOLD_ACTIONS}")
     if action == "absent":
@@ -90,11 +91,12 @@ async def record_gold_value(conn, *, reviewer_id: str, reference_filing_id: str,
         row = await conn.fetchrow(
             """INSERT INTO portfolio.note_gold_values
                  (reference_filing_id, field_key, value, action, source_reading_id, source_quote,
-                  raw_char_start, raw_char_end, notes, reviewer_id)
-               VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10)
+                  raw_char_start, raw_char_end, notes, reviewer_id, metadata)
+               VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
                RETURNING id, reviewed_at""",
             reference_filing_id, spec.key, None if value is None else json.dumps(value),
-            action, source_reading_id, source_quote, raw_char_start, raw_char_end, notes, reviewer_id)
+            action, source_reading_id, source_quote, raw_char_start, raw_char_end, notes, reviewer_id,
+            json.dumps(strip_nul_deep(metadata or {}), default=str))
         await conn.execute(
             """INSERT INTO portfolio.note_term_readings
                  (reference_filing_id, field_key, value, value_normalized, source, origin, status,
@@ -107,13 +109,14 @@ async def record_gold_value(conn, *, reviewer_id: str, reference_filing_id: str,
             """UPDATE portfolio.note_gold_candidates SET status = 'in_review', updated_at = now()
                 WHERE reference_filing_id = $1 AND status = 'proposed'""", reference_filing_id)
     return {"id": str(row["id"]), "reviewed_at": row["reviewed_at"].isoformat(),
-            "field_key": spec.key, "value": value, "action": action, "reviewer_id": str(reviewer_id)}
+            "field_key": spec.key, "value": value, "action": action, "reviewer_id": str(reviewer_id),
+            "metadata": metadata or {}}
 
 
 async def gold_values(conn, reference_filing_id) -> list[dict]:
     rows = await conn.fetch(
         """SELECT g.id, g.field_key, g.value, g.action, g.source_reading_id, g.source_quote,
-                  g.reviewer_id, g.reviewed_at, u.email AS reviewer_email
+                  g.reviewer_id, g.reviewed_at, u.email AS reviewer_email, g.metadata
              FROM portfolio.note_gold_values g LEFT JOIN users u ON u.id = g.reviewer_id
             WHERE g.reference_filing_id = $1 AND g.valid_to IS NULL ORDER BY g.field_key""",
         reference_filing_id)
@@ -121,6 +124,8 @@ async def gold_values(conn, reference_filing_id) -> list[dict]:
     for r in rows:
         d = dict(r)
         d["value"] = json.loads(d["value"]) if d["value"] is not None else None
+        d["metadata"] = (json.loads(d["metadata"]) if isinstance(d.get("metadata"), str)
+                         else (d.get("metadata") or {}))
         for k in ("id", "source_reading_id", "reviewer_id"):
             d[k] = str(d[k]) if d[k] is not None else None
         d["reviewed_at"] = d["reviewed_at"].isoformat()

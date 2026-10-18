@@ -14,6 +14,10 @@ or inconsistent returns None — it never guesses.
     no_call_months          notefix2 Task 4: issue_date -> the first observation
                             date in the schedule that carries a call level/amount
     currency / call_type /
+    total_fees_usd /
+    proceeds_to_issuer_usd  bulkfetch Task 9: CALCULATED dollar totals —
+                            issue_size x the pct range / 100, each end of the
+                            range separately. Never extracted, never edited.
     coupon_memory           notefix2 Task 4: DEFAULTS, applied only when the
                             field is unresolved — a stated value (including a
                             non-USD currency) is never overwritten, same
@@ -226,6 +230,50 @@ def default_coupon_memory(coupon_type, coupon_memory, has_memory_language: bool)
                    derived_from=["coupon_type"])
 
 
+_CENT = Decimal("0.01")
+# Shown on the review screen as CALCULATED, never edited: the review API
+# refuses a gold write to either key, and they never count toward a note's
+# fields-to-review total.
+CALCULATED_FIELDS = ("total_fees_usd", "proceeds_to_issuer_usd")
+
+
+def _usd_range(issue_size, pct_value) -> dict | None:
+    size = _dec_or_none(issue_size)
+    r = as_range(pct_value)
+    if size is None or size <= 0 or r is None:
+        return None
+
+    def end(v):
+        return None if v is None else _num((size * Decimal(str(v)) / 100).quantize(_CENT))
+
+    return {"min": end(r["min"]), "max": end(r["max"]), "bound": r.get("bound")}
+
+
+def _dec_or_none(v):
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return Decimal(str(v))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def dollar_totals(issue_size, total_fees_pct, proceeds_to_issuer_pct) -> list[Derived]:
+    """bulkfetch Task 9: total_fees_usd and proceeds_to_issuer_usd =
+    issue_size x pct / 100, range ends computed separately (an "up to 3.25%"
+    fee is "up to $27,950" on an $860,000 issue). Nothing when an input is
+    missing — never a guess."""
+    out = []
+    for key, pct_key, pct in (("total_fees_usd", "total_fees_pct", total_fees_pct),
+                              ("proceeds_to_issuer_usd", "proceeds_to_issuer_pct", proceeds_to_issuer_pct)):
+        v = _usd_range(issue_size, pct)
+        if v is not None:
+            out.append(Derived(key, v, {"issue_size": issue_size, pct_key: pct},
+                               f"calculated: issue_size x {pct_key} / 100, each end of the range separately",
+                               derived_from=["issue_size", pct_key]))
+    return out
+
+
 def derive_all(values: dict, *, has_call_language: bool = False, has_memory_language: bool = False
               ) -> list[Derived]:
     """Every derivation the RESOLVED ``values`` allow. ``has_call_language``
@@ -259,4 +307,7 @@ def derive_all(values: dict, *, has_call_language: bool = False, has_memory_lang
     cm = default_coupon_memory(values.get("coupon_type"), values.get("coupon_memory"), has_memory_language)
     if cm:
         out.append(cm)
+    # dollar totals read total_fees_pct AFTER its own default above
+    fees = values.get("total_fees_pct") if values.get("total_fees_pct") is not None else (tf.value if tf else None)
+    out += dollar_totals(values.get("issue_size"), fees, values.get("proceeds_to_issuer_pct"))
     return out
