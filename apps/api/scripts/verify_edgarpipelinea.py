@@ -95,8 +95,14 @@ import asyncpg  # noqa: E402
 REPO = HERE.parents[3]
 API_DIR = HERE.parents[1]
 WEB_DIR = REPO / "apps" / "web"
+# Later sprints legitimately extend these six tables in their OWN migration
+# files: edgarcohorts (selected_by_cohort_id, cohort_id, run_kind, the frozen
+# triggers) and bulkfetch (claimed_by / claimed_until). The drift check reads
+# every file that defines objects on them, not only this sprint's two.
 MIGRATIONS = [API_DIR / "migrations" / "edgarindex_discovery_tables.sql",
-              API_DIR / "migrations" / "edgarpipelinea_lifecycle.sql"]
+              API_DIR / "migrations" / "edgarpipelinea_lifecycle.sql",
+              API_DIR / "migrations" / "edgarcohorts_cohorts_inventory.sql",
+              API_DIR / "migrations" / "bulkfetch_sources_claims_supplements.sql"]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Fixtures — the "ed9a" block, the 9999999999-55- accession prefix and CIKs
@@ -503,8 +509,10 @@ async def task1_findings(conn) -> None:
     callers = [f for f in (WEB_DIR / "components").rglob("*.jsx")
                if "serverSide=" in f.read_text() and f.name != "DataGrid.jsx"]
     check("serverSide," in dg and "manualPagination: true" in dg and "manualSorting: true" in dg
-          and [c.name for c in callers] == ["EdgarPipelineMonitor.jsx"],
-          "1d. DataGrid gained an opt-in serverSide mode; only the EDGAR monitor passes it",
+          and sorted(c.name for c in callers) == ["EdgarCohorts.jsx", "EdgarPipelineMonitor.jsx"],
+          # EdgarCohorts.jsx (edgarcohorts, e011167) is the second, deliberate
+          # server-side caller: its Filings tab pages the 717K manifest.
+          "1d. DataGrid gained an opt-in serverSide mode; only the EDGAR screens (monitor, cohorts) pass it",
           f"callers={[c.name for c in callers]}")
     find("1d. DataGrid", "it was client-side only (TanStack sort/filter/paginate over rowData). Extended "
          "with `serverSide` (manual sorting/paging, text filters hidden, footer counts totalRows); "
@@ -563,8 +571,22 @@ async def migration_matches(conn) -> None:
             WHERE s.nspname = 'portfolio' AND c.relname = ANY($1::text[]))""", tables)
     # Unnamed inline CHECKs get Postgres's own name (<table>_<column>_check);
     # those are proven by the column check above plus the definitions below.
+    # Likewise an inline "<col> uuid REFERENCES ..." FK gets Postgres's own
+    # <table>_<col>_fkey name (edgarcohorts declares two that way): accepted
+    # when that column is declared with REFERENCES in the migrations.
+    def _inline_fkey(n: str) -> bool:
+        if not n.endswith("_fkey"):
+            return False
+        for t in tables:
+            if n.startswith(t + "_"):
+                col = n[len(t) + 1:-len("_fkey")]
+                if re.search(rf"\b{re.escape(col)} uuid references ", flat):
+                    return True
+        return False
+
     undeclared = sorted({r["n"] for r in names
-                         if r["n"].lower() not in flat and not r["n"].endswith("_check")})
+                         if r["n"].lower() not in flat and not r["n"].endswith("_check")
+                         and not _inline_fkey(r["n"])})
     check(not undeclared and len(names) > 40,
           "every live constraint, index, policy and trigger on those tables is named in the migrations",
           f"checked={len(names)} undeclared={undeclared}")
@@ -819,7 +841,11 @@ async def fetch_section(conn, bucket: str) -> None:
             SELECT DISTINCT ON (f.accession_number) f.accession_number, f.filing_date, i.issuer_group
             FROM portfolio.edgar_index_filings f
             JOIN portfolio.structured_note_issuers i ON i.filer_cik = f.primary_issuer_cik
-            WHERE f.form_type = '424B2' AND f.pipeline_status = 'discovered'
+            WHERE f.form_type = '424B2'
+              AND (f.pipeline_status = 'discovered'
+                   OR (f.pipeline_status = 'selected' AND f.selected_by_cohort_id IS NULL
+                       AND f.reference_filing_id IS NULL AND f.attempt_count = 0
+                       AND f.claimed_by IS NULL))
               AND i.include_status = 'yes' AND f.index_quarter = '2026Q3'
               AND i.issuer_group = ANY($1::text[])
               AND f.accession_number NOT LIKE $2 AND f.accession_number <> $3
@@ -843,6 +869,14 @@ async def fetch_section(conn, bucket: str) -> None:
     snap = {r["accession_number"]: dict(r) for r in await rls_fetch(
         conn, "SELECT * FROM portfolio.edgar_index_filings WHERE accession_number = ANY($1::text[])", sample)}
     STATE["sample_rows"] = snap
+    # The live manifest no longer holds ANY 'discovered' row: the whole 717K was
+    # decided by policy v1 before bulkfetch (pipeline_status counts, 2026-10-16:
+    # 0 discovered). So the sample may take never-fetched 'selected' rows and put
+    # them back to 'discovered' here, so run 1's select stage decides them as
+    # before. The snapshot above is taken FIRST and teardown restores it exactly.
+    await rls_exec(conn, """UPDATE portfolio.edgar_index_filings
+                               SET pipeline_status = 'discovered', selection_policy_version = NULL
+                             WHERE accession_number = ANY($1::text[]) AND pipeline_status = 'selected'""", sample)
     groups = {r["issuer_group"] for r in sample_rows}
     # Every expected count below derives from the REAL filings in the sample.
     # F_BAD is not a real filing: it is selected before run 1 (so run 1's

@@ -204,23 +204,39 @@ def classify_document(text: str) -> tuple[str, str]:
     return best[1], f"first title phrase {best[2]!r} at {best[0]}"
 
 
-def decide_status(text: str) -> tuple[str, str, str]:
+def decide_status(text: str, extra_strong=()) -> tuple[str, str, str]:
     """``(pipeline_status, status_reason, document_kind)`` for fetched text.
 
     Only a final pricing supplement can become ready_for_extraction, and only if
     the EXISTING keyword prefilter (edgar_fetch.passes_prefilter) passes. A
     preliminary pricing supplement is classified first and so is never ready,
     however many payoff keywords it contains.
+
+    ``extra_strong`` (bulkfetch, policy v2) adds strong prefilter terms for one
+    filing — the caller passes them only for the issuer groups the active
+    policy names (:func:`prefilter_terms_for`). Empty = exactly v1.
     """
     kind, kind_reason = classify_document(text)
     if not text.strip():
         return "not_pricing_supplement", "extraction produced no text", kind
     if kind == "pricing_supplement":
-        hits = edgar_fetch.prefilter_hits(text)
-        if edgar_fetch.passes_prefilter(text):
+        hits = edgar_fetch.prefilter_hits_with(text, extra_strong) if extra_strong else edgar_fetch.prefilter_hits(text)
+        if edgar_fetch.passes_prefilter(text) or (
+                extra_strong and edgar_fetch.passes_prefilter_with(text, extra_strong)):
             return "ready_for_extraction", f"pricing supplement; prefilter hits {hits}", kind
         return "prefilter_skipped", f"pricing supplement; prefilter hits {hits}", kind
     return "not_pricing_supplement", f"{kind}: {kind_reason}", kind
+
+
+def prefilter_terms_for(policy_rules: dict | None, issuer_group: str | None) -> tuple[str, ...]:
+    """The extra strong prefilter terms the policy grants THIS filing's issuer
+    group: ``rules.prefilter = {"version": 2, "issuer_groups": [...]}``. Any
+    other group, or a policy without the key (v1), gets none — v1 exactly."""
+    pf = (policy_rules or {}).get("prefilter")
+    if not isinstance(pf, dict) or int(pf.get("version") or 1) < 2 or not issuer_group:
+        return ()
+    groups = {str(g).strip().casefold() for g in pf.get("issuer_groups") or []}
+    return edgar_fetch.PREFILTER_V2_STRONG if issuer_group.strip().casefold() in groups else ()
 
 
 # ═══ CUSIP (rule + check digit) ═════════════════════════════════════════════
@@ -465,16 +481,17 @@ async def fetch_daily_index(day: date, client: httpx.AsyncClient) -> str | None:
 
 
 async def discover_day(conn, day: date, client: httpx.AsyncClient,
-                       stats: DiscoveryStats | None = None) -> DiscoveryStats:
+                       stats: DiscoveryStats | None = None, *, forms=None,
+                       collect: list | None = None) -> DiscoveryStats:
     stats = stats or DiscoveryStats()
     body = await fetch_daily_index(day, client)
     if body is None:
         stats.days_missing += 1
         stats.days.append({"day": day.isoformat(), "index": "none"})
         return stats
-    parsed = edgar_index.parse_index_lines(body.splitlines())
+    parsed = edgar_index.parse_index_lines(body.splitlines(), forms)
     new_filings, new_filers = await edgar_index.load_records(
-        conn, parsed.filing_records(None), parsed.filer_records()
+        conn, parsed.filing_records(None), parsed.filer_records(), collect
     )
     stats.days_read += 1
     stats.lines_matched += parsed.lines_matched
@@ -511,7 +528,8 @@ async def discover_incremental(conn, client: httpx.AsyncClient, *,
 
 # ═══ Stage 2: selection ═════════════════════════════════════════════════════
 
-_POLICY_KEYS = frozenset({"form_types", "issuer_include_status", "filing_date_from", "order"})
+_POLICY_KEYS = frozenset({"form_types", "issuer_include_status", "filing_date_from", "order",
+                          "prefilter"})   # prefilter: policy v2 (bulkfetch) — see prefilter_terms_for
 
 
 async def active_policy(conn) -> dict:
@@ -637,6 +655,7 @@ async def _queue(conn, limit: int, accessions: list[str] | None) -> list[dict]:
             WHERE (f.pipeline_status = 'selected'
                    OR (f.pipeline_status = 'fetch_failed'
                        AND f.next_attempt_at IS NOT NULL AND f.next_attempt_at <= now()))
+              AND (f.claimed_until IS NULL OR f.claimed_until <= now())   -- a bulk runner's claim (bulkfetch)
               {scope}
             ORDER BY f.filing_date DESC, f.accession_number DESC
             LIMIT $1
@@ -727,28 +746,55 @@ async def _record_failure(conn, row: dict, exc: BaseException) -> None:
         )
 
 
-async def fetch_one(conn, row: dict, *, client: httpx.AsyncClient, bucket: str,
-                    r2_prefix: str = R2_PREFIX) -> dict:
-    """Fetch, store, classify one manifest row. Raises on any per-filing failure."""
+def filing_meta(row: dict, filer_name: str = "UNKNOWN") -> edgar_fetch.FilingMeta:
+    """The :class:`edgar_fetch.FilingMeta` for one manifest row (no request)."""
     m = _SUBMISSION_CIK_RE.search(row["submission_path"])
     folder_cik = m.group(1) if m else (row["primary_issuer_cik"] or "")
     if not folder_cik:
         raise EdgarPipelineError("cannot derive the filing folder CIK from submission_path")
-    meta = edgar_fetch.FilingMeta(
+    return edgar_fetch.FilingMeta(
         cik=str(int(folder_cik)),
-        filer_name=await _filer_name(conn, row["accession_number"], str(int(folder_cik))),
+        filer_name=filer_name,
         form_type=row["form_type"],
         accession_number=row["accession_number"],
         filing_date=row["filing_date"],
         submission_path=row["submission_path"],
     )
+
+
+async def fetch_one(conn, row: dict, *, client: httpx.AsyncClient, bucket: str,
+                    r2_prefix: str = R2_PREFIX, extra_strong=()) -> dict:
+    """Fetch, store, classify one manifest row. Raises on any per-filing failure."""
+    meta = filing_meta(row)
+    meta.filer_name = await _filer_name(conn, row["accession_number"], meta.cik)
     await edgar_fetch.resolve_filing_documents(meta, client)
     if not meta.primary_document:
         raise EdgarPipelineError("the filing's folder index lists no HTML or text document")
     raw = await edgar_fetch.fetch_filing(meta, client)
+    return await store_fetched(conn, meta, raw, bucket=bucket, r2_prefix=r2_prefix,
+                               extra_strong=extra_strong)
+
+
+async def store_fetched(conn, meta: edgar_fetch.FilingMeta, raw: bytes, *, bucket: str,
+                        r2_prefix: str = R2_PREFIX, timings: dict | None = None,
+                        extra_strong=()) -> dict:
+    """gzip -> R2 -> text -> classify -> status for one already-downloaded document.
+
+    The second half of :func:`fetch_one`, split out (bulkfetch) so the bulk
+    runner, which downloads the document itself (after a cover-page peek),
+    stores and classifies it with exactly this code rather than a copy.
+    ``timings`` (optional) accumulates seconds per step: extract, upload, db.
+    """
     if not raw:
         raise EdgarPipelineError("the main document downloaded as zero bytes")
 
+    def _tick(step: str, since: float) -> float:
+        now = time.monotonic()
+        if timings is not None:
+            timings[step] = timings.get(step, 0.0) + (now - since)
+        return now
+
+    t = time.monotonic()
     content_hash = hashlib.sha256(raw).hexdigest()
     raw_gz = _gzip(raw)
     extraction = edgar_fetch.extract_filing_text(raw)
@@ -758,8 +804,9 @@ async def fetch_one(conn, row: dict, *, client: httpx.AsyncClient, bucket: str,
     base = f"{r2_prefix}/{meta.cik}/{meta.accession_number}/{meta.primary_document}"
     raw_key, text_key = f"{base}.gz", f"{base}.txt.gz"
 
-    status, reason, kind = decide_status(text)
+    status, reason, kind = decide_status(text, extra_strong)
     cusip = detect_cusip(text)
+    t = _tick("extract", t)
 
     async with platform_scope(conn):
         existing = await conn.fetchrow(
@@ -768,6 +815,7 @@ async def fetch_one(conn, row: dict, *, client: httpx.AsyncClient, bucket: str,
                WHERE accession_number = $1 AND primary_document = $2""",
             meta.accession_number, meta.primary_document,
         )
+    t = _tick("db", t)
     already = bool(
         existing and existing["content_hash"] == content_hash
         and existing["r2_key"] == raw_key and existing["text_r2_key"] == text_key
@@ -778,6 +826,7 @@ async def fetch_one(conn, row: dict, *, client: httpx.AsyncClient, bucket: str,
         await asyncio.to_thread(storage.upload_bytes, raw_key, raw_gz, "application/gzip", bucket)
         await asyncio.to_thread(storage.upload_bytes, text_key, text_gz, "application/gzip", bucket)
         uploaded = len(raw_gz) + len(text_gz)
+    t = _tick("upload", t)
 
     async with platform_scope(conn):
         ref_id = await conn.fetchval(
@@ -822,6 +871,7 @@ async def fetch_one(conn, row: dict, *, client: httpx.AsyncClient, bucket: str,
             """,
             meta.accession_number, status, reason[:1500], kind, cusip, ref_id,
         )
+    _tick("db", t)
     return {
         "accession_number": meta.accession_number, "status": status,
         "document_kind": kind, "cusip": cusip, "reference_filing_id": ref_id,
@@ -855,6 +905,15 @@ async def fetch_stage(conn, *, cap: int, client: httpx.AsyncClient,
     bucket = bucket or r2_bucket()
     stats = FetchStats()
     consecutive = 0
+    try:
+        policy_rules = (await active_policy(conn))["rules"]
+    except EdgarPipelineError:
+        policy_rules = {}
+    groups: dict[str, str] = {}
+    if isinstance(policy_rules.get("prefilter"), dict):
+        async with platform_scope(conn):
+            groups = {r["filer_cik"]: r["issuer_group"] for r in await conn.fetch(
+                "SELECT filer_cik, issuer_group FROM portfolio.structured_note_issuers")}
     cursor = 0   # cohort position already handed out (a failed member is not re-tried in the same run)
     while stats.attempted < cap and stats.stop_reason is None:
         limit = min(FETCH_BATCH, cap - stats.attempted)
@@ -875,7 +934,12 @@ async def fetch_stage(conn, *, cap: int, client: httpx.AsyncClient,
                 if await mark_selected_by_cohort(conn, row["accession_number"], cohort_id):
                     stats.marked_by_cohort += 1
             try:
-                out = await fetch_one(conn, row, client=client, bucket=bucket, r2_prefix=r2_prefix)
+                # The v2 prefilter terms are passed ONLY when the policy grants
+                # some to this filing's group: with none, fetch_one is called
+                # exactly as before (callers and test doubles keep its old shape).
+                extra = prefilter_terms_for(policy_rules, groups.get(row.get("primary_issuer_cik") or ""))
+                out = await fetch_one(conn, row, client=client, bucket=bucket, r2_prefix=r2_prefix,
+                                      **({"extra_strong": extra} if extra else {}))
             except _SYSTEMIC:
                 raise
             except Exception as exc:  # noqa: BLE001 — one filing's failure is recorded, not fatal

@@ -405,7 +405,8 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         values,
         stated_initial_valuation_date=(extras["initial_valuation_date"].value
                                        if "initial_valuation_date" in extras else None),
-        hypothetical_rows=(extras["hypothetical_rows"].value if "hypothetical_rows" in extras else None))
+        hypothetical_rows=(extras["hypothetical_rows"].value if "hypothetical_rows" in extras else None),
+        stated_totals=rules.find_stated_dollar_totals(doc.text))
     out.detail["self_checks"] = [asdict(f) for f in findings]
     reasons_by_field: dict[str, list[str]] = {}
     for f in findings:
