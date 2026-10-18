@@ -383,12 +383,26 @@ def _fmt_eta(seconds: float) -> str:
     return f"{h}h{m:02d}m" if h else f"{m}m"
 
 
+async def plan_scope(conn, scope: Scope, *, rate: float, concurrency: int, peek: bool,
+                     limit: int | None = None, prelim_share: float = PRELIMINARY_SHARE) -> dict:
+    """The dry run's numbers without the printing: counts per institution
+    (per filer entity and per year), the total, and the ETA / storage
+    estimate. READ-ONLY. Used by ``dry_run`` (the CLI) and by the API's bulk
+    preview, so the screen and the command line can never disagree."""
+    counts = await scope_counts(conn, scope)
+    total = sum(c["total"] for c in counts.values())
+    n = min(total, limit) if limit else total
+    est = estimate(n, rate=rate, concurrency=concurrency, peek=peek, prelim_share=prelim_share,
+                   stored_bytes_now=await stored_bytes(conn))
+    return {"counts": counts, "total": total, "estimate": est}
+
+
 async def dry_run(conn, scope: Scope, *, rate: float, concurrency: int, peek: bool,
                   limit: int | None = None, out=print) -> dict:
     """Print the scope per institution (every filer entity with its CIK and
     count, then per year), the ETA and the storage estimate. WRITES NOTHING."""
-    counts = await scope_counts(conn, scope)
-    total = sum(c["total"] for c in counts.values())
+    plan = await plan_scope(conn, scope, rate=rate, concurrency=concurrency, peek=peek, limit=limit)
+    counts, total, est = plan["counts"], plan["total"], plan["estimate"]
     n = min(total, limit) if limit else total
     out(f"source {scope.source.name}: forms {list(scope.source.form_types)}, "
         f"filed {scope.date_from} .. {scope.date_to} (inclusive), order {scope.order}")
@@ -399,8 +413,6 @@ async def dry_run(conn, scope: Scope, *, rate: float, concurrency: int, peek: bo
             out(f"    CIK {f.cik:<10} {f.filer_name:<45} {f.filer_role or '':<10} {c['filers'].get(f.cik, 0):>8,}")
         for y, k in c["years"].items():
             out(f"    {y}: {k:,}")
-    est = estimate(n, rate=rate, concurrency=concurrency, peek=peek,
-                   stored_bytes_now=await stored_bytes(conn))
     out(f"\nTotal in scope: {total:,}" + (f" (limited to {n:,})" if limit else ""))
     out(f"ETA at {rate:g} req/s, {concurrency} workers, peek {'on' if peek else 'off'}: "
         f"{_fmt_eta(est['eta_seconds'])} ({est['requests']:,} SEC requests, "
@@ -757,6 +769,10 @@ class RunOptions:
     r2_prefix: str = edgar_pipeline.R2_PREFIX
     bucket: str | None = None
     trigger_source: str = "cli"
+    # bulkfetchui: a QUEUED run row (portfolio.edgar_pipeline_runs, status
+    # 'running' after the worker's claim) this Runner adopts instead of
+    # inserting its own. None = the CLI path (create_run_row).
+    run_id: object = None
 
 
 def check_rate(max_rps: int, allow_above_8: bool) -> int:
@@ -823,6 +839,41 @@ async def create_run_row(conn, opts: RunOptions, scope_total: int, details: dict
                RETURNING id""",
             opts.trigger_source, min(int(opts.limit or scope_total), 2_000_000_000),
             RUNTIME_CAP_SECONDS, json.dumps({"bulk": details}, default=str))
+
+
+async def adopt_run_row(conn, run_id, scope_total: int, details: dict) -> None:
+    """A queued run (bulkfetchui) already has its row; the worker's claim set it
+    'running'. Record what the Runner resolved — the same details the CLI's
+    own row gets, so every reader of details.bulk sees one shape."""
+    async with platform_scope(conn):
+        await conn.execute(
+            """UPDATE portfolio.edgar_pipeline_runs
+                  SET fetch_cap = $2, started_at = COALESCE(started_at, now()),
+                      details = details || $3::jsonb
+                WHERE id = $1""",
+            run_id, min(int(scope_total), 2_000_000_000), json.dumps({"bulk": details}, default=str))
+
+
+def progress_snapshot(runner: "Runner") -> dict:
+    """What the Bulk download screen shows for a running run: done, remaining,
+    by kind, failures, bytes, rate and ETA. Written to the run row's
+    ``progress`` every PROGRESS_EVERY filings and on finish."""
+    s = runner.stats
+    elapsed = max(time.monotonic() - s.started, 0.001)
+    total = runner.opts.limit or s.scope_total
+    remaining = max(0, total - s.done)
+    rate = s.done / elapsed
+    return {
+        "scope_total": s.scope_total, "done": s.done, "remaining": remaining,
+        "fetched": s.fetched, "failed": s.failed, "peek_skipped": s.peek_skipped,
+        "by_kind": dict(s.by_kind), "by_status": dict(s.by_status),
+        "bytes_uploaded": s.bytes_uploaded, "bytes_downloaded": s.bytes_downloaded,
+        "sec_requests": runner.sec.requests, "rate_per_second": round(rate, 3),
+        "eta_seconds": round(remaining / rate) if rate > 0 else None,
+        "elapsed_seconds": round(elapsed), "effective_rps": s.effective_rps,
+        "failures": s.failures[-20:], "stop_reason": s.stop_reason,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 async def register_runner(conn, run_id) -> int:
@@ -926,12 +977,20 @@ def _is_storage_error(exc: BaseException) -> bool:
 class Runner:
     def __init__(self, pool, opts: RunOptions, *, client: httpx.AsyncClient, out=print,
                  stop_event: asyncio.Event | None = None, sleep=asyncio.sleep,
-                 backoff_base: float | None = None, after_filing=None):
+                 backoff_base: float | None = None, after_filing=None, on_progress=None,
+                 owns_run=None):
         self.pool, self.opts, self.out = pool, opts, out
         self.stop = stop_event or asyncio.Event()
         self.sec = SecClient(client, backoff_base=backoff_base, sleep=sleep)
         self.stats = RunStats()
         self.after_filing = after_filing      # verify hook: awaited after each filing
+        # bulkfetchui worker hooks. on_progress(runner) is awaited every
+        # PROGRESS_EVERY filings; owns_run() -> bool is asked before the final
+        # write — a worker that lost its claim on the run row (requeued while
+        # its heartbeat was stale) must not close a run another worker now owns.
+        self.on_progress = on_progress
+        self.owns_run = owns_run
+        self._progress_mark = 0
         self._lock = asyncio.Lock()
 
     def _tick(self, step: str, seconds: float) -> None:
@@ -961,7 +1020,11 @@ class Runner:
                        "keep_preliminaries": o.keep_preliminaries, "concurrency": o.concurrency,
                        "max_rps": o.max_rps, "order": o.order, "limit": o.limit,
                        "scope_total": self.stats.scope_total}
-            run_id = await create_run_row(conn, o, self.stats.scope_total, details)
+            if o.run_id is None:
+                run_id = await create_run_row(conn, o, self.stats.scope_total, details)
+            else:
+                run_id = o.run_id
+                await adopt_run_row(conn, run_id, self.stats.scope_total, details)
             self.stats.run_id = run_id
             live = await register_runner(conn, run_id)
         self.stats.live_runners = live
@@ -984,31 +1047,51 @@ class Runner:
             workers = [asyncio.create_task(self._work(queue, error)) for _ in range(o.concurrency)]
             await asyncio.gather(producer, *workers)
         finally:
+            owner = True if self.owns_run is None else await self.owns_run()
+            s = self.stats
+            if error and s.stop_reason is None:
+                s.stop_reason = f"{type(error[0]).__name__}: {error[0]}"
             async with self.pool.acquire() as conn:
-                await release_claims(conn, run_id)
-                await release_runner(conn, run_id)
-                s = self.stats
-                if error and s.stop_reason is None:
-                    s.stop_reason = f"{type(error[0]).__name__}: {error[0]}"
-                await edgar_pipeline.update_run(
-                    conn, run_id,
-                    status="failed" if error else "succeeded",
-                    finished_at=datetime.now(timezone.utc),
-                    fetch_attempted=s.done, fetched=s.fetched, fetch_failed=s.failed,
-                    ready_for_extraction=s.by_status.get("ready_for_extraction", 0),
-                    not_pricing_supplement=s.by_status.get("not_pricing_supplement", 0),
-                    prefilter_skipped=s.by_status.get("prefilter_skipped", 0),
-                    bytes_uploaded=s.bytes_uploaded + self.supplements.bytes_uploaded,
-                    sec_requests=self.sec.requests,
-                    stop_reason=s.stop_reason or ("stopped by operator" if self.stop.is_set() else "scope done"),
-                    error=(f"{type(error[0]).__name__}: {error[0]}"[:2000] if error else None),
-                    details={"bulk_result": s.summary() | {"sec_retries": self.sec.retries}},
-                )
+                if not owner:
+                    # Fenced: the run row now belongs to another worker, and so do
+                    # this run id's claims and lease. Touch none of them.
+                    self.out(f"run {run_id}: this worker no longer owns the run; leaving it to its new owner")
+                else:
+                    await release_claims(conn, run_id)
+                    await release_runner(conn, run_id)
+                    await edgar_pipeline.update_run(
+                        conn, run_id,
+                        status=self._final_status(error),
+                        finished_at=datetime.now(timezone.utc),
+                        fetch_attempted=s.done, fetched=s.fetched, fetch_failed=s.failed,
+                        ready_for_extraction=s.by_status.get("ready_for_extraction", 0),
+                        not_pricing_supplement=s.by_status.get("not_pricing_supplement", 0),
+                        prefilter_skipped=s.by_status.get("prefilter_skipped", 0),
+                        bytes_uploaded=s.bytes_uploaded + self.supplements.bytes_uploaded,
+                        sec_requests=self.sec.requests,
+                        stop_reason=s.stop_reason or ("stopped by operator" if self.stop.is_set() else "scope done"),
+                        error=(f"{type(error[0]).__name__}: {error[0]}"[:2000] if error else None),
+                        details={"bulk_result": s.summary() | {"sec_retries": self.sec.retries}},
+                    )
         self.stats.bytes_uploaded += self.supplements.bytes_uploaded
         self._final_summary()
         if error:
             raise error[0]
         return self.stats
+
+    def _final_status(self, error: list) -> str:
+        """The CLI keeps its behaviour (an operator Ctrl-C or the failure stop
+        closes the row 'succeeded' with the stop reason). A QUEUED run
+        distinguishes them: the failure stop is 'failed', an operator stop
+        (stop_requested / Ctrl-C) is 'stopped' — which is what Requeue resumes."""
+        if error:
+            return "failed"
+        if self.opts.run_id is not None:
+            if self.stats.stop_reason:
+                return "failed"
+            if self.stop.is_set():
+                return "stopped"
+        return "succeeded"
 
     async def _produce(self, queue: asyncio.Queue, error: list) -> None:
         o = self.opts
@@ -1055,6 +1138,9 @@ class Runner:
                     continue
                 if self.after_filing is not None:
                     await self.after_filing(self)
+                if self.on_progress is not None and self.stats.done - self._progress_mark >= PROGRESS_EVERY:
+                    self._progress_mark = self.stats.done
+                    await self.on_progress(self)
 
     async def _one(self, conn, row: dict) -> None:
         o, s = self.opts, self.stats

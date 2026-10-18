@@ -1276,7 +1276,12 @@ async def main_async() -> int:
         except Exception:  # noqa: BLE001
             pass
         await conn.close()
-        if teardown_clean:
+        if teardown_clean and os.environ.get("VERIFY_SKIP_NESTED_REGRESSION") == "1":
+            # Set by a parent verify (verify_bulkfetchui.py) that runs this script's
+            # three regressions itself, once each, flat — so they never run twice
+            # and this script fits the parent's 600 s timeout.
+            print("[FIND] nested regressions skipped: VERIFY_SKIP_NESTED_REGRESSION=1 (the parent verify runs them)")
+        elif teardown_clean:
             y_regression()
         else:
             check(False, "regression skipped: this run's own teardown did not leave zero fixture rows")

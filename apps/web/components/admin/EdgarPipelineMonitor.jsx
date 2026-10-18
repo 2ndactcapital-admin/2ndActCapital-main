@@ -3,7 +3,7 @@
 /**
  * EdgarPipelineMonitor — the EDGAR pipeline monitoring screen (edgarpipelinea).
  *
- * Four tabs over global SEC reference data, Super Admin only (FastAPI
+ * Five tabs over global SEC reference data, Super Admin only (FastAPI
  * enforces it; the page shows a "not permitted" panel on its 403):
  *
  *   Filings  — the ~717K-row manifest through the shared DataGrid in its
@@ -20,6 +20,9 @@
  *              and its inventory results.
  *   Issuers  — the issuer table with inline edits, the unlisted 424B2 filers
  *              beside it, and an add form a filer can be promoted into.
+ *   Bulk download — (bulkfetchui, EdgarBulkDownload.jsx) pick institutions,
+ *              dates and kinds, preview, QUEUE a run for the laptop (or
+ *              Render) worker, watch / stop / requeue it.
  *
  * Every label (statuses, document kinds, include statuses, roles), every
  * filter vocabulary and every editable-field list comes from the response
@@ -31,6 +34,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 
+import BulkDownloadTab from "@/components/admin/EdgarBulkDownload";
 import { CohortBuilder, CohortsTab } from "@/components/admin/EdgarCohorts";
 import DataGrid from "@/components/ui/DataGrid";
 import {
@@ -58,6 +62,7 @@ const TABS = [
   { key: "progress", label: "Progress" },
   { key: "cohorts", label: "Cohorts" },
   { key: "issuers", label: "Issuers" },
+  { key: "bulk", label: "Bulk download" },
 ];
 
 const EMPTY_FILTERS = {
@@ -730,6 +735,7 @@ export default function EdgarPipelineMonitor({ initialFilings }) {
       {tab === "progress" && <ProgressTab />}
       {tab === "cohorts" && <CohortsTab focusId={focusCohort} />}
       {tab === "issuers" && <IssuersTab />}
+      {tab === "bulk" && <BulkDownloadTab />}
     </div>
   );
 }

@@ -305,6 +305,89 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000000000000000. BULKFETCH UI — "Bulk download" tab on the EDGAR Pipeline screen: pick institutions / dates / kinds, live preview, QUEUE a run for a laptop (default) or Render worker, watch / stop / requeue; `run_bulk_fetch.py --worker`; verify WRITTEN, not yet run (2026-10-18)
+
+**Run:** `python3 apps/api/scripts/verify_bulkfetchui.py`. Doppler-hydrated; SEC, R2, Render and every model
+call mocked (no network); real spend $0. Runs `verify_bulkfetch.py`, `verify_edgarpipelinea.py` and
+`verify_edgarcohorts.py` once each, as flat subprocesses, AFTER its own teardown (600 s timeout each).
+Task 1's five findings: **docs/BULKFETCHUI_DISCOVERY.md**.
+
+**The screen.** EDGAR Pipeline → **Bulk download** (`components/admin/EdgarBulkDownload.jsx`, logic in
+`lib/edgarBulkDownload.mjs`, node tests `tests/edgar/`). Institutions (search, expand to legal entities and
+CIKs with selected counts by year, Select all / none); time frame (From / To, presets 2025–2026 · Last 12
+months · Year to date · Custom; the last indexed date and **Refresh index**, which queues a refresh run);
+document kinds (Final pricing supplements on by default, Product supplements, Preliminaries, Other; "Skip
+preliminaries by peeking" on); **Run on** Laptop (default) / Render with a status dot from GET workers;
+Advanced (concurrency, max requests/second capped at 8); a debounced preview (totals, institution × year,
+entities included, ETA, storage and monthly R2 cost); **Queue run** with a confirm dialog; the runs table
+(progress bar done/total, rate, ETA, failures, Stop / Cancel / Requeue, auto-refresh every 10 s while a run
+is active). Super Admin only (the same `_require_super_admin` gate as every EDGAR screen).
+
+**The API never downloads.** It QUEUES a row in `portfolio.edgar_pipeline_runs` (run_kind `bulk_fetch` or
+`refresh_index`, target `laptop` | `render`, params, queued_at). A worker executes it with the SAME
+`edgar_bulk.Runner` as a CLI run (`RunOptions.run_id` adopts the queued row).
+
+**Start the laptop worker (tmux):**
+
+    tmux new -s bulkworker 'doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --worker --target laptop'
+
+Detach with Ctrl-b d; reattach with `tmux attach -t bulkworker`. The worker heartbeats every 30 s,
+polls for queued runs every 15 s (`--poll-seconds`), writes progress every 100 filings, and serves ONE run
+at a time. `--once` claims at most one run and exits. Ctrl-C finishes the in-flight filings, marks the run
+`stopped`, then exits. The laptop must stay awake: a sleeping laptop stops heartbeating, the screen shows
+"worker lost" after 2 minutes, and Requeue resumes the run.
+
+**Queued-run lifecycle.**
+
+    queued ──worker claims (FOR UPDATE SKIP LOCKED)──▶ running ──▶ succeeded | failed | stopped
+    queued ──Cancel──▶ cancelled
+    running ──Stop (stop_requested)──▶ in-flight filings finish, unstarted claims released ──▶ stopped
+    running, heartbeat older than 2 min ──▶ shown as "worker lost" (Stop closes it at once)
+    stopped | failed | worker lost ──Requeue──▶ queued (same row; resumes: only rows still 'selected' are taken)
+
+- **One run at a time across ALL workers.** The claim is refused while any queued-kind run is running with
+  a fresh heartbeat (check + claim under one advisory lock), so the SEC budget stays at 8/s. The
+  Runner's lease division is computed once at start and would let two concurrent runs reach 12/s (FIND,
+  discovery doc).
+- **Fencing.** Every heartbeat updates the run `WHERE worker_id = me`. A worker whose run was requeued
+  stops, and leaves the row, its claims and its lease to the new owner.
+- **Laptop with no worker:** the run is still queued. The response carries `worker_online: false` and
+  the exact start command (shown with a Copy button).
+- **Render not set up:** HTTP 409 "Render worker is not set up — run on Laptop, or see setup steps",
+  and NOTHING is queued.
+
+**Render worker setup (later; nothing created on Render this sprint).** `render.yaml` carries the block,
+commented out.
+1. Render → New → **Background Worker** from this repo, root directory `apps/api`, build
+   `pip install -r requirements.txt`, **start command
+   `python3 scripts/run_bulk_fetch.py --worker --target render`**, plan Starter (**~$7/month**; a worker
+   runs continuously, unlike the free web plan that spins down).
+2. Doppler → project `hollisworks`, config `prd` → **its own sync connection** to the new service. A
+   Render service gets nothing from another service's sync, and a sync can overwrite manual values. It
+   needs DATABASE_URL, EDGAR_USER_AGENT and R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
+   R2_BUCKET_NAME.
+3. Doppler: set **`EDGAR_BULK_RENDER_WORKER_SERVICE_ID`** to the new service's id (the API reads it, and
+   makes one read-only `GET /v1/services/{id}` with RENDER_API_KEY to confirm a non-suspended
+   background worker).
+4. Deploy. The tab's Render dot shows "online" after the first heartbeat (alive = a heartbeat within
+   5 minutes).
+
+**Measured preview time (live, EXPLAIN ANALYZE, 2026-10-18):** JPMorgan 2025 scope query **82.7 ms**.
+Institutions catalog: **10,114 ms** (seq scan) → **299 ms** after the new partial index
+`edgar_index_filings_selected_count_idx` + VACUUM, and cached 60 s. The verify prints the end-to-end
+API time for one real group/year (must be < 2 s).
+
+**Schema (`apps/api/migrations/bulkfetchui_queued_runs.sql`, applied live):** run_kind + `bulk_fetch`,
+`refresh_index`; status + `queued`, `stopped`, `cancelled` (every old value kept); columns target, params,
+queued_at, worker_id, worker_host, heartbeat_at, stop_requested, progress; partial index on queued runs by
+target; `portfolio.edgar_fetch_workers` (global read, super-admin write); the selected-count index.
+
+**API (`routers/edgar_pipeline_admin.py`, service `services/edgar_bulk_queue.py`):** GET
+`/admin/edgar/bulk/institutions` · POST `/bulk/preview` (read-only; a To after the last indexed date → 409
+"Refresh the index first" with the date) · POST `/bulk/runs` · POST `/bulk/runs/refresh-index` · GET
+`/bulk/runs`, `/bulk/runs/{id}` (derived "worker lost") · POST `/bulk/runs/{id}/stop` | `/cancel` (queued
+only) | `/requeue` · GET `/bulk/workers`. No AI model anywhere.
+
 ## 0000000000000000000000000000000000000000000000. BULKFETCH — bulk EDGAR downloader (CLI, peek, shared rate limit, resumable), sources as configuration, index refresh, product supplements once per program, WF/DB prefilter v2, stuck 'fetched' rows; review screen: list tables, labels, CUSIP/ISIN, calculated totals, normalised names; verify WRITTEN, not yet run (2026-10-16)
 
 **Run:** `python3 apps/api/scripts/verify_bulkfetch.py`. Doppler-hydrated; SEC, R2 and every model call

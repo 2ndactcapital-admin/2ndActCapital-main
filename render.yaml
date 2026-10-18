@@ -150,6 +150,14 @@ services:
       - key: EDGAR_USER_AGENT
         sync: false
 
+      # bulkfetchui — the id of the Render BACKGROUND WORKER that serves the
+      # "Bulk download" tab's Render queue (services/edgar_bulk_queue.py,
+      # render_worker_state). UNSET today: no such worker exists, and the API
+      # refuses target 'render' with a 409 until it is set AND the worker
+      # heartbeats. The API only ever READS Render (GET /v1/services/{id}).
+      - key: EDGAR_BULK_RENDER_WORKER_SERVICE_ID
+        sync: false
+
       # -----------------------------------------------------------------------
       # DELIBERATELY NOT DECLARED — do not "helpfully" add these.
       #
@@ -306,3 +314,39 @@ services:
         sync: false
       - key: LITELLM_MASTER_KEY
         sync: false
+
+  # ---------------------------------------------------------------------------
+  # bulkfetchui — FUTURE Render background worker for the EDGAR "Bulk download"
+  # tab. NOT CREATED: commented out on purpose. The default is the laptop worker
+  # (tmux, see docs/PROJECT_STATUS.md "BULKFETCH UI"); Render is for later.
+  #
+  # Setup, when wanted (about $7/month on Starter — a worker runs continuously):
+  #   1. Uncomment this block (or create the service by hand: type Background
+  #      Worker, root dir apps/api, the start command below).
+  #   2. Give it its OWN Doppler sync connection (project hollisworks, config
+  #      prd). A Render service does not get secrets because another service in
+  #      the project does — and a sync can OVERWRITE manual values.
+  #   3. Put the new service id in Doppler as EDGAR_BULK_RENDER_WORKER_SERVICE_ID
+  #      (read by the API service above to detect the worker).
+  #   4. Deploy; the tab's Render dot turns "online" at the first heartbeat.
+  # ---------------------------------------------------------------------------
+  # - type: worker
+  #   name: 2ndactcapital-edgar-bulk-worker
+  #   runtime: python
+  #   plan: starter
+  #   rootDir: apps/api
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: python3 scripts/run_bulk_fetch.py --worker --target render
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       sync: false
+  #     - key: EDGAR_USER_AGENT
+  #       sync: false
+  #     - key: R2_ACCOUNT_ID
+  #       sync: false
+  #     - key: R2_ACCESS_KEY_ID
+  #       sync: false
+  #     - key: R2_SECRET_ACCESS_KEY
+  #       sync: false
+  #     - key: R2_BUCKET_NAME
+  #       sync: false
