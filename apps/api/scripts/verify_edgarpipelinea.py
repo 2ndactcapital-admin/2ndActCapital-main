@@ -96,13 +96,16 @@ REPO = HERE.parents[3]
 API_DIR = HERE.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 # Later sprints legitimately extend these six tables in their OWN migration
-# files: edgarcohorts (selected_by_cohort_id, cohort_id, run_kind, the frozen
-# triggers) and bulkfetch (claimed_by / claimed_until). The drift check reads
-# every file that defines objects on them, not only this sprint's two.
-MIGRATIONS = [API_DIR / "migrations" / "edgarindex_discovery_tables.sql",
-              API_DIR / "migrations" / "edgarpipelinea_lifecycle.sql",
-              API_DIR / "migrations" / "edgarcohorts_cohorts_inventory.sql",
-              API_DIR / "migrations" / "bulkfetch_sources_claims_supplements.sql"]
+# files (edgarcohorts, bulkfetch, bulkfetchui, ...). The drift check reads
+# every file that defines objects on them — discovered, not a fixed list, so
+# the next EDGAR sprint's migration is picked up without editing this script.
+CHECKED_TABLES = ["edgar_index_filings", "edgar_index_filing_filers", "structured_note_issuers",
+                  "edgar_selection_policies", "edgar_pipeline_runs", "edgar_pipeline_lease"]
+_DDL_ON_TABLE = re.compile(
+    r"\b(?:TABLE|ON|INTO|REFERENCES)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:ONLY\s+)?(?:portfolio\.)?(?:"
+    + "|".join(CHECKED_TABLES) + r")\b", re.IGNORECASE)
+MIGRATIONS = sorted(f for f in (API_DIR / "migrations").glob("*.sql")
+                    if _DDL_ON_TABLE.search(f.read_text(encoding="utf-8")))
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Fixtures — the "ed9a" block, the 9999999999-55- accession prefix and CIKs
@@ -508,12 +511,15 @@ async def task1_findings(conn) -> None:
     dg = (WEB_DIR / "components/ui/DataGrid.jsx").read_text()
     callers = [f for f in (WEB_DIR / "components").rglob("*.jsx")
                if "serverSide=" in f.read_text() and f.name != "DataGrid.jsx"]
+    caller_names = sorted(c.name for c in callers)
+    # Later EDGAR screens (EdgarCohorts.jsx, edgarcohorts e011167; the bulk
+    # download tab, ...) are deliberate server-side callers too: any Edgar*
+    # caller is accepted, the monitor must be one, and a non-Edgar caller fails.
     check("serverSide," in dg and "manualPagination: true" in dg and "manualSorting: true" in dg
-          and sorted(c.name for c in callers) == ["EdgarCohorts.jsx", "EdgarPipelineMonitor.jsx"],
-          # EdgarCohorts.jsx (edgarcohorts, e011167) is the second, deliberate
-          # server-side caller: its Filings tab pages the 717K manifest.
-          "1d. DataGrid gained an opt-in serverSide mode; only the EDGAR screens (monitor, cohorts) pass it",
-          f"callers={[c.name for c in callers]}")
+          and "EdgarPipelineMonitor.jsx" in caller_names
+          and all(n.startswith("Edgar") for n in caller_names),
+          "1d. DataGrid gained an opt-in serverSide mode; only the EDGAR screens (Edgar*.jsx) pass it",
+          f"callers={caller_names}")
     find("1d. DataGrid", "it was client-side only (TanStack sort/filter/paginate over rowData). Extended "
          "with `serverSide` (manual sorting/paging, text filters hidden, footer counts totalRows); "
          "undefined by default, so existing callers are unchanged")
@@ -538,10 +544,10 @@ def _norm_type(t: str) -> str:
 
 async def migration_matches(conn) -> None:
     section("[Y] The migration files' definitions match the live objects")
+    print(f"  migrations read ({len(MIGRATIONS)}): {[p.name for p in MIGRATIONS]}")
     text = "\n".join(p.read_text() for p in MIGRATIONS)
     flat = re.sub(r"\s+", " ", text).lower()
-    tables = ["edgar_index_filings", "edgar_index_filing_filers", "structured_note_issuers",
-              "edgar_selection_policies", "edgar_pipeline_runs", "edgar_pipeline_lease"]
+    tables = CHECKED_TABLES
     missing_cols = []
     for t in tables:
         cols = await rls_fetch(conn, """SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS typ

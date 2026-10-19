@@ -582,7 +582,12 @@ async def y_schema(conn) -> None:
     check(not missing and not undeclared, "every new run column is live AND declared in the migration",
           f"missing live {missing}; undeclared {undeclared}")
     defs = await check_defs(conn, "portfolio.edgar_pipeline_runs")
-    st, kinds, tg = allowed(defs, "status"), allowed(defs, "run_kind"), allowed(defs, "target")
+    st = allowed(defs, "status")
+    # Read run_kind / target from their own named CHECKs: matching by column
+    # name also picks up edgar_pipeline_runs_queued_target_check, whose
+    # run_kind values would pollute the target set.
+    kinds = set(re.findall(r"'([^']+)'::text", defs.get("edgar_pipeline_runs_run_kind_check", "")))
+    tg = set(re.findall(r"'([^']+)'::text", defs.get("edgar_pipeline_runs_target_check", "")))
     old_st = {"launching", "launched", "launch_failed", "refused", "running", "succeeded", "failed"}
     new_st = {"queued", "stopped", "cancelled"}
     check(old_st <= st and new_st <= st, "status CHECK keeps every old value and adds queued/stopped/cancelled",
