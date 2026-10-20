@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -980,12 +981,15 @@ async def main_async() -> int:
 
 
 async def y_regression() -> None:
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     section("[Y] Regression: verify_notefields.py, verify_goldset.py and verify_notefix1.py, "
             "run ONCE each as flat subprocesses, AFTER this script's own teardown")
     for name in ("verify_notefields.py", "verify_goldset.py", "verify_notefix1.py"):
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
-                                  text=True, timeout=600, cwd=str(REPO))
+                                  text=True, timeout=600, cwd=str(REPO), env=os.environ | {"VERIFY_NESTED": "1"})
             out = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after 600s: {(exc.stdout or b'')[-300:]!r}"

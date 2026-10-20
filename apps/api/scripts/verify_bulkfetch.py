@@ -1276,12 +1276,7 @@ async def main_async() -> int:
         except Exception:  # noqa: BLE001
             pass
         await conn.close()
-        if teardown_clean and os.environ.get("VERIFY_SKIP_NESTED_REGRESSION") == "1":
-            # Set by a parent verify (verify_bulkfetchui.py) that runs this script's
-            # three regressions itself, once each, flat — so they never run twice
-            # and this script fits the parent's 600 s timeout.
-            print("[FIND] nested regressions skipped: VERIFY_SKIP_NESTED_REGRESSION=1 (the parent verify runs them)")
-        elif teardown_clean:
+        if teardown_clean:
             y_regression()
         else:
             check(False, "regression skipped: this run's own teardown did not leave zero fixture rows")
@@ -1296,14 +1291,18 @@ REGRESSION_TIMEOUT = {"verify_notefix2.py": 1800}
 
 
 def y_regression() -> None:
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     section("[Y] Regression: verify_edgarpipelinea.py, verify_edgarcohorts.py and verify_notefix2.py, "
             "ONCE each as flat subprocesses, AFTER this script's own teardown")
     log_dir = REPO / "sprint_prompts" / "logs"
+    env = os.environ | {"VERIFY_NESTED": "1"}
     for name in ("verify_edgarpipelinea.py", "verify_edgarcohorts.py", "verify_notefix2.py"):
         timeout = REGRESSION_TIMEOUT.get(name, 600)
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
-                                  text=True, timeout=timeout, cwd=str(REPO))
+                                  text=True, timeout=timeout, cwd=str(REPO), env=env)
             out = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after {timeout}s: {(exc.stdout or b'')[-300:]!r}"

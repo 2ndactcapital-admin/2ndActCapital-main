@@ -1164,12 +1164,14 @@ REGRESSIONS = ("verify_bulkfetch.py", "verify_edgarpipelinea.py", "verify_edgarc
 
 
 def y_regression() -> None:
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     section("[Y] Regression: verify_bulkfetch.py, verify_edgarpipelinea.py, verify_edgarcohorts.py — ONCE each, "
             "flat subprocesses, AFTER this script's own teardown")
     log_dir = REPO / "sprint_prompts" / "logs"
-    # verify_bulkfetch.py would otherwise re-run pipelinea / cohorts / notefix2 itself
-    # (nested, ~12 min) — they run here, once, flat.
-    env = os.environ | {"VERIFY_SKIP_NESTED_REGRESSION": "1"}
+    # VERIFY_NESTED=1: each child skips its own regression section, so nothing nests.
+    env = os.environ | {"VERIFY_NESTED": "1"}
     for name in REGRESSIONS:
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True, text=True,
