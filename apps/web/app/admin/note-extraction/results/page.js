@@ -3,6 +3,7 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import NoteExtractionResults from "@/components/admin/NoteExtractionResults";
 import { getNoteExtractionRuns } from "@/lib/api";
+import { labelFor } from "@/lib/menuVisibility";
 
 // Evaluation + pilot results (noteextractb1). The harness REPORTS; Joe picks
 // the ensemble in the picker. Super Admin enforced server-side by FastAPI.
@@ -23,7 +24,7 @@ export default async function NoteExtractionResultsPage() {
   return (
     <AppShell user={session.user}>
       <div>
-        <h1 className="text-3xl font-semibold text-navy">Extraction Results</h1>
+        <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/note-extraction/results")}</h1>
         <p className="mt-1 text-sm text-text-muted">
           Each candidate model measured against the gold set — accuracy, missed and invented values,
           cost and latency — and the pilot&apos;s disagreement and review rates.

@@ -5,6 +5,7 @@ import NoteTermsQueueManager from "@/components/admin/NoteTermsQueueManager";
 import EnsemblePanel from "@/components/admin/EnsemblePanel";
 import { getNoteTermsQueue } from "@/lib/api";
 import { loadEnsembleAction } from "@/lib/noteTermsQueueActions";
+import { labelFor } from "@/lib/menuVisibility";
 
 // The ensemble task this page governs — a task key, not a display label.
 const ENSEMBLE_TASK_KEY = "note_terms_hazard";
@@ -42,7 +43,7 @@ export default async function NoteTermsQueuePage() {
   return (
     <AppShell user={session.user}>
       <div>
-        <h1 className="text-3xl font-semibold text-navy">Note Terms Review</h1>
+        <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/pricing/note-terms-queue")}</h1>
         <p className="mt-1 text-sm text-text-muted">
           Settle the hazard fields the two extraction readers disagreed on, and
           decide which issuers earn straight-through processing.

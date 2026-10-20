@@ -814,7 +814,7 @@ async def reindex_estimate(conn, org_id, new_model: str) -> dict:
 
 
 # ── RETRIEVE: visibility-scoped semantic search ───────────────────────────────
-async def _visible_entity_ids(pool, org_id, user_id, is_staff) -> set:
+async def visible_entity_ids(pool, org_id, user_id, is_staff) -> set:
     """Allowed entity-id set for the caller, reusing the SAME engines as the rest
     of the app (ownership tree, etc.) — never a bespoke visibility path.
 
@@ -836,6 +836,21 @@ async def _visible_entity_ids(pool, org_id, user_id, is_staff) -> set:
     return {str(x) for x in allowed}
 
 
+# navregroup: public so keyword Document Search (services.document_linkage.
+# search_documents) reuses this exact rule instead of a second copy. The old
+# private name stays for any caller that still imports it.
+_visible_entity_ids = visible_entity_ids
+
+
+def document_visible(entity_id, allowed: set, is_staff: bool) -> bool:
+    """The per-document rule over ``visible_entity_ids``: an entity document is
+    visible iff its entity is allowed; an org-general document (no entity) is
+    visible to staff only. Document Search applies the same predicate in SQL."""
+    if entity_id is None:
+        return bool(is_staff)
+    return str(entity_id) in allowed
+
+
 async def semantic_search(
     pool, org_id, user_id, query, *, is_staff=True, limit=20
 ) -> list[dict]:
@@ -845,7 +860,7 @@ async def semantic_search(
 
     Cross-org isolation is enforced twice: the SQL is ``WHERE e.org_id = $1`` and
     the document_embeddings RLS policy is org-scoped. Restricted-access and
-    per-user entity visibility are enforced by ``_visible_entity_ids`` above.
+    per-user entity visibility are enforced by ``visible_entity_ids`` above.
     """
     limit = max(1, min(int(limit or 20), 100))
     qvec = await embed_query(pool, org_id, query)
@@ -876,18 +891,14 @@ async def semantic_search(
     finally:
         reset_rls_context(tokens)
 
-    allowed = await _visible_entity_ids(pool, org_id, user_id, is_staff)
+    allowed = await visible_entity_ids(pool, org_id, user_id, is_staff)
 
     results: list[dict] = []
     for r in rows:
         entity_id = r["entity_id"]
-        if entity_id is None:
-            # Org-general document (not tied to an entity): visible to staff of
-            # the org; members only see documents on their own entities.
-            visible = is_staff
-        else:
-            visible = str(entity_id) in allowed
-        if not visible:
+        # Org-general document (not tied to an entity): visible to staff of the
+        # org; members only see documents on their own entities.
+        if not document_visible(entity_id, allowed, is_staff):
             continue
         distance = float(r["distance"])
         results.append({

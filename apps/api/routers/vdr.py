@@ -14,7 +14,7 @@ never a second, parallel deal-creation path — and approval requires the same
 
 Routes (mounted under ``/api/v1``):
   POST /document-drops/{drop_id}/analyze-vdr   run aggregate VDR analysis → proposal
-  GET  /vdr-proposals                          pending proposals (org)
+  GET  /vdr-proposals                          pending proposals (org; manage_deals)
   POST /vdr-proposals/{proposal_id}/approve    approve → create deal + link docs
   POST /vdr-proposals/{proposal_id}/reject     reject (no deal, no links)
 """
@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from routers.entities import get_org_id
 from services.database import get_pool
+from services import rbac
 from services.permissions import require_permission
 from services.users import ensure_user
 from services import vdr_analysis as vdr
@@ -61,8 +62,20 @@ async def analyze_vdr(drop_id: UUID, request: Request):
 
 @router.get("/vdr-proposals")
 async def list_vdr_proposals(request: Request):
+    # navregroup: listing pending proposals (AI-drafted deals from a data room)
+    # needs manage_deals — it had no check at all, so any member could read
+    # every pending proposal. There is no separate read permission for deals.
+    #
+    # Resolved through services.rbac (the DB role grants /users/me publishes and
+    # the menu gates on), NOT the token-claim helper approve/reject use: real
+    # API-audience tokens carry no permissions claim (routers/entities.py
+    # org_id_from_claims), and the token helper allows a token without one, so a
+    # token-claim gate here would be inert for every real caller.
     org_id = get_org_id(request)
     pool = await get_pool()
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+    await rbac.require_permission(pool, user_id, org_id, "manage_deals")
     async with pool.acquire() as conn:
         proposals = await vdr.list_pending_proposals(conn, org_id)
     return {"proposals": proposals}

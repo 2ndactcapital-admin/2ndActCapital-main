@@ -44,6 +44,12 @@ reads ``EDGAR_BULK_RENDER_WORKER_SERVICE_ID`` (not set in Doppler as of
 service. Choosing Render when it is not set up (or its worker has not
 heartbeated in RENDER_ALIVE_SECONDS) is refused with a 409 and nothing queued.
 
+LAPTOP INSTRUCTIONS (bulkfetchui2). The laptop worker's start command is the
+setting ``EDGAR_BULK_LAPTOP_WORKER_COMMAND``, read per request like the other
+settings here. Unset, it defaults to the command that actually works on Joe's
+laptop (``LAPTOP_COMMAND``). ``laptop_instructions`` builds the "Run on your
+laptop" dialog's steps from it, so no step text lives only in the front end.
+
 NO MODEL ANYWHERE.
 """
 from __future__ import annotations
@@ -51,6 +57,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import socket
 import time
 import uuid
@@ -79,8 +86,13 @@ CLAIM_LOCK_KEY = 0x0B0F_5E12       # pg_advisory_xact_lock key for the claim cri
 INSTITUTIONS_CACHE_SECONDS = 60
 SETUP_ANCHOR = "render-worker-setup"
 
-LAPTOP_COMMAND = "doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --worker --target laptop"
-LAPTOP_TMUX_COMMAND = f"tmux new -s bulkworker '{LAPTOP_COMMAND}'"
+LAPTOP_COMMAND_ENV = "EDGAR_BULK_LAPTOP_WORKER_COMMAND"
+# The default: what actually starts the worker on Joe's laptop (WSL). The repo
+# root, an explicit Doppler project/config and the repo's venv are all needed —
+# a bare `doppler run -- python3 …` from another folder does not work there.
+LAPTOP_COMMAND = ("cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- "
+                  "venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop")
+LAPTOP_TMUX_SESSION = "bulkworker"
 RENDER_COMMAND = "python3 apps/api/scripts/run_bulk_fetch.py --worker --target render"
 RENDER_REFUSAL = "Render worker is not set up — run on Laptop, or see setup steps"
 RENDER_SETUP_STEPS = [
@@ -394,11 +406,70 @@ def _worker_out(w: dict | None) -> dict | None:
             "started_at": w["started_at"]}
 
 
+# ═══ Laptop worker instructions (bulkfetchui2) ══════════════════════════════
+
+def laptop_start_command() -> str:
+    """The setting, or the working default. Read per call (never cached), like
+    every other setting in this module."""
+    return (os.environ.get(LAPTOP_COMMAND_ENV) or "").strip() or LAPTOP_COMMAND
+
+
+def laptop_tmux_command(cmd: str | None = None) -> str:
+    """One-liner: a tmux session running the command (shell-quoted, so a
+    configured command containing quotes still survives)."""
+    return f"tmux new -s {LAPTOP_TMUX_SESSION} {shlex.quote(cmd or laptop_start_command())}"
+
+
+def laptop_instructions(cmd: str | None = None) -> list[dict]:
+    """The "Run on your laptop" dialog's steps, in order. ``section`` is
+    'start' (collapsed by the dialog while a worker is already running) or
+    'ongoing' (always shown). ``command`` is copyable text; ``keys`` is a
+    keystroke, shown but not copied."""
+    cmd = cmd or laptop_start_command()
+    s = LAPTOP_TMUX_SESSION
+    steps = [
+        {"key": "open_terminal", "section": "start", "title": "Open the Ubuntu (WSL) terminal",
+         "detail": "On the laptop, open Ubuntu from the Start menu. The worker runs inside WSL, not in "
+                   "PowerShell or Command Prompt."},
+        {"key": "tmux_new", "section": "start", "title": "Start a tmux session",
+         "detail": "tmux keeps the worker running after the terminal window is closed. If it says the session "
+                   "already exists, a worker may already be running — see \"To check on it later\" below.",
+         "command": f"tmux new -s {s}"},
+        {"key": "start_worker", "section": "start", "title": "Start the worker",
+         "detail": "Paste and run this inside the tmux session. It reads its secrets from Doppler and picks up "
+                   "queued runs one at a time.",
+         "command": cmd},
+        {"key": "detach", "section": "start", "title": "Detach and leave it running",
+         "detail": "Press Ctrl-B, then D. The worker keeps running; the terminal can be closed.",
+         "keys": "Ctrl-B, then D"},
+        {"key": "keep_awake", "section": "ongoing", "title": "Keep the laptop awake",
+         "detail": "A run only progresses while the laptop is awake and plugged in. Windows: Settings → System → "
+                   "Power → Sleep → \"Never\" when plugged in. A sleeping laptop shows as \"worker lost\" here "
+                   f"after {WORKER_LOST_SECONDS // 60} minutes."},
+        {"key": "check", "section": "ongoing", "title": "To check on it later",
+         "detail": "Reattach to see the worker's output, then detach again with Ctrl-B, then D.",
+         "command": f"tmux attach -t {s}"},
+        {"key": "stop", "section": "ongoing", "title": "To stop the worker",
+         "detail": "Reattach and press Ctrl-C inside tmux; the in-flight filings finish first. Stop it before "
+                   "running any verify script — the verify scripts refuse to run while a real worker is "
+                   "heartbeating.",
+         "keys": "Ctrl-C"},
+        {"key": "requeue", "section": "ongoing", "title": "If a run stops or the worker crashes",
+         "detail": "Start the worker again and Requeue the run in the Bulk downloads table. It continues where "
+                   "it stopped; nothing already downloaded is fetched twice."},
+    ]
+    for i, step in enumerate(steps, start=1):
+        step["n"] = i
+    return steps
+
+
 async def workers_state(conn) -> dict:
     w = await latest_worker(conn, "laptop")
+    cmd = laptop_start_command()
     laptop = {"online": bool(w and w["age_seconds"] <= WORKER_LOST_SECONDS), "worker": _worker_out(w),
-              "start_command": LAPTOP_COMMAND, "tmux_command": LAPTOP_TMUX_COMMAND}
+              "start_command": cmd, "tmux_command": laptop_tmux_command(cmd)}
     return {"laptop": laptop, "render": await render_worker_state(conn),
+            "laptop_start_command": cmd, "laptop_instructions": laptop_instructions(cmd),
             "worker_lost_seconds": WORKER_LOST_SECONDS, "render_alive_seconds": RENDER_ALIVE_SECONDS}
 
 
@@ -426,11 +497,14 @@ async def _check_target(conn, target: str) -> dict:
             raise BulkQueueError(RENDER_REFUSAL, status=409, extra={
                 "error": "render_not_set_up", "reason": state["reason"], "setup_anchor": SETUP_ANCHOR,
                 "setup_steps": RENDER_SETUP_STEPS})
-        return {"worker_online": True, "start_command": None}
+        return {"worker_online": True, "start_command": None, "laptop_start_command": laptop_start_command()}
     w = await latest_worker(conn, "laptop")
     online = bool(w and w["age_seconds"] <= WORKER_LOST_SECONDS)
-    return {"worker_online": online, "start_command": None if online else LAPTOP_COMMAND,
-            "tmux_command": None if online else LAPTOP_TMUX_COMMAND}
+    cmd = laptop_start_command()
+    worker = _worker_out(w) if online else None
+    return {"worker_online": online, "worker": worker, "worker_host": worker["host"] if worker else None,
+            "start_command": None if online else cmd, "tmux_command": None if online else laptop_tmux_command(cmd),
+            "laptop_start_command": cmd}
 
 
 async def queue_bulk_run(conn, raw_params: dict, *, target: str = DEFAULT_TARGET, requested_by=None) -> dict:

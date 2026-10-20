@@ -130,3 +130,99 @@ export function queueOutcome(res) {
   }
   return { error: false, text: "Queued. The worker will pick it up shortly.", command: null };
 }
+
+// ─── "Run on your laptop" dialog (bulkfetchui2) ─────────────────────────────
+// The steps come ONLY from GET workers' `laptop_instructions` (server-built
+// from the EDGAR_BULK_LAPTOP_WORKER_COMMAND setting); nothing here carries a
+// copy of the command.
+
+export const LAPTOP_DIALOG_PREF_KEY = "hollisworks.edgarBulk.hideLaptopDialogWhenOnline";
+export const LAPTOP_DIALOG_RECHECK_MS = 5000;
+
+/** Per-browser "don't show again while the worker is running". Any storage failure reads as false. */
+export function readHideWhenOnline(storage) {
+  try {
+    return storage?.getItem(LAPTOP_DIALOG_PREF_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeHideWhenOnline(storage, value) {
+  try {
+    if (value === true) storage?.setItem(LAPTOP_DIALOG_PREF_KEY, "1");
+    else storage?.removeItem(LAPTOP_DIALOG_PREF_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether POST /runs's answer opens the dialog. Only a successful Laptop
+ * queue does; Render keeps its inline refusal. The don't-show preference
+ * suppresses it only when the response says a worker IS online.
+ */
+export function dialogAfterQueue(res, target, hideWhenOnline) {
+  if (target !== "laptop" || res?.ok !== true) return null;
+  const p = res.payload ?? {};
+  const online = p.worker_online === true;
+  if (online && hideWhenOnline === true) return null;
+  return { source: "queue", runId: p.run?.id ?? null };
+}
+
+/** "Show these steps": the same dialog, nothing queued. */
+export function stepsDialog() {
+  return { source: "steps", runId: null };
+}
+
+/**
+ * Queue a run and decide the dialog. `queueRun` is the POST (injected, so the
+ * node tests can count calls). Returns the inline outcome and the dialog (or null).
+ */
+export async function queueAndOpen({ queueRun, params, target, hideWhenOnline }) {
+  const res = await queueRun({ params, target });
+  return { res, outcome: queueOutcome(res), dialog: dialogAfterQueue(res, target, hideWhenOnline) };
+}
+
+/** The dialog's status banner from the latest GET workers. */
+export function laptopDialogStatus(workers, { queued = true } = {}) {
+  const laptop = workers?.laptop;
+  if (laptop?.online === true) {
+    const host = laptop.worker?.host ?? "unknown host";
+    return {
+      online: true,
+      tone: "success",
+      host,
+      text: queued
+        ? `Laptop worker running on ${host} — your run will start automatically`
+        : `Laptop worker running on ${host} — queued runs start automatically`,
+    };
+  }
+  return {
+    online: false,
+    tone: "warning",
+    host: null,
+    text: queued
+      ? "No laptop worker running — your run is queued and will start when you start one"
+      : "No laptop worker running — queued runs will start when you start one",
+  };
+}
+
+export function stepHasCommand(step) {
+  return typeof step?.command === "string" && step.command.trim().length > 0;
+}
+
+/**
+ * Split the server's steps for rendering: the "start" steps collapse under
+ * "How to start the worker" ONLY while a worker is online; everything else
+ * stays visible. Order is the server's.
+ */
+export function laptopDialogSteps(workers, online) {
+  const steps = Array.isArray(workers?.laptop_instructions) ? workers.laptop_instructions : [];
+  if (online !== true) return { visible: steps, collapsed: [] };
+  return {
+    visible: steps.filter((s) => s.section !== "start"),
+    collapsed: steps.filter((s) => s.section === "start"),
+  };
+}

@@ -12,6 +12,12 @@
  * shows progress and offers Stop / Cancel / Requeue, auto-refreshing every
  * 10 s while a run is queued or running.
  *
+ * Queuing on the Laptop opens the "Run on your laptop" dialog
+ * (LaptopWorkerDialog): live worker status re-checked every 5 s, and the
+ * numbered steps from GET workers' `laptop_instructions` (server-built — the
+ * component holds no copy of the start command). "Show these steps" beside the
+ * Laptop radio opens it without queuing.
+ *
  * Every label (document kinds, targets, statuses, the Render refusal) comes
  * from the response envelope (Rule 1). Write controls render only inside a
  * `permissions.can_write === true` check (lib/edgarBulkDownload.mjs canWrite)
@@ -20,8 +26,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import LaptopWorkerDialog, { CopyButton } from "@/components/admin/LaptopWorkerDialog";
 import DataGrid from "@/components/ui/DataGrid";
 import {
+  LAPTOP_DIALOG_RECHECK_MS,
   PRESETS,
   buildParams,
   canWrite,
@@ -30,10 +38,14 @@ import {
   presetRange,
   previewReady,
   progressPercent,
+  queueAndOpen,
   queueOutcome,
+  readHideWhenOnline,
   renderStatus,
   rowActions,
   runsActive,
+  stepsDialog,
+  writeHideWhenOnline,
 } from "@/lib/edgarBulkDownload.mjs";
 import {
   bulkRunAction,
@@ -56,6 +68,7 @@ const GHOST =
   "rounded border border-[var(--2a-border)] px-3 py-1.5 text-xs text-[var(--2a-navy)] hover:bg-[var(--2a-bg)] disabled:opacity-50";
 const ERROR_INK = "#9B2335";
 const SUCCESS_INK = "#2D6A4F";
+const HIGHLIGHT_BG = "rgba(232, 213, 163, 0.35)";   // Gold Light, tinted
 const PREVIEW_DEBOUNCE_MS = 450;
 const RUNS_REFRESH_MS = 10000;
 const RUNS_PAGE_SIZE = 25;
@@ -80,26 +93,12 @@ function Dot({ on }) {
   );
 }
 
-function CopyButton({ text }) {
-  const [copied, setCopied] = useState(false);
-  if (!text) return null;
-  return (
-    <button
-      type="button"
-      className={GHOST}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          setCopied(false);
-        }
-      }}
-    >
-      {copied ? "Copied" : "Copy"}
-    </button>
-  );
+function browserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function Command({ text }) {
@@ -344,7 +343,7 @@ function ConfirmDialog({ preview, targetLabel, onCancel, onConfirm, pending }) {
 
 // ─── Runs table ─────────────────────────────────────────────────────────────
 
-function RunsTable({ runsPayload, pageIndex, onPage, loading, onAction, pendingAction }) {
+function RunsTable({ runsPayload, pageIndex, onPage, loading, onAction, pendingAction, highlightId }) {
   const vocab = runsPayload?.vocabularies ?? {};
   const statuses = vocab.statuses ?? {};
   const targets = vocab.targets ?? {};
@@ -453,6 +452,8 @@ function RunsTable({ runsPayload, pageIndex, onPage, loading, onAction, pendingA
       columnDefs={columns}
       rowData={runsPayload?.rows ?? []}
       getRowId={(row) => row.id}
+      selectedRowId={highlightId}
+      getRowStyle={(row) => (highlightId && row.id === highlightId ? { background: HIGHLIGHT_BG } : undefined)}
       enableGlobalFilter={false}
       emptyMessage={loading ? "Loading…" : "No bulk downloads queued yet."}
       serverSide={{
@@ -478,6 +479,7 @@ export default function BulkDownloadTab() {
   const [runsPage, setRunsPage] = useState(0);
   const [runsLoading, startRuns] = useTransition();
   const [, startWorkers] = useTransition();
+  const [checkingNow, startCheckNow] = useTransition();   // the dialog's "check again" only, not the 5 s poll
 
   const [banks, setBanks] = useState(() => new Set());
   const [preset, setPreset] = useState("2025-2026");
@@ -499,6 +501,17 @@ export default function BulkDownloadTab() {
   const [pendingAction, setPendingAction] = useState(null);
   const [pending, startTransition] = useTransition();
   const previewSeq = useRef(0);
+
+  // "Run on your laptop" dialog: { source: "queue" | "steps", runId } or null.
+  const [laptopDialog, setLaptopDialog] = useState(null);
+  // Read once, lazily. It only renders inside the dialog, which is closed on the
+  // first render, so a server render (no window -> false) cannot mismatch.
+  const [hideWhenOnline, setHideWhenOnline] = useState(() => readHideWhenOnline(browserStorage()));
+  const [highlightRunId, setHighlightRunId] = useState(null);
+  const queueButtonRef = useRef(null);
+  const stepsLinkRef = useRef(null);
+  const openerRef = useRef(null);
+  const runsCardRef = useRef(null);
 
   const vocab = inst?.vocabularies ?? {};
   const writable = canWrite(inst);
@@ -544,6 +557,16 @@ export default function BulkDownloadTab() {
     refreshWorkers();
     refreshRuns(runsPage);
   }, [refreshWorkers, refreshRuns, runsPage]);
+
+  // While the laptop dialog is open: check now, then every 5 s (independent of
+  // the runs table's own refresh, which only runs while a run is active).
+  const dialogOpen = laptopDialog !== null;
+  useEffect(() => {
+    if (!dialogOpen) return undefined;
+    refreshWorkers();
+    const id = setInterval(refreshWorkers, LAPTOP_DIALOG_RECHECK_MS);
+    return () => clearInterval(id);
+  }, [dialogOpen, refreshWorkers]);
 
   // Auto-refresh every 10 s while a run is queued or running (and the worker
   // dots with it).
@@ -609,13 +632,53 @@ export default function BulkDownloadTab() {
 
   function queue() {
     startTransition(async () => {
-      const res = await queueBulkRunAction({ params, target });
+      const { outcome: o, dialog } = await queueAndOpen({
+        queueRun: queueBulkRunAction, params, target, hideWhenOnline,
+      });
       setConfirming(false);
-      setOutcome(queueOutcome(res));
+      setOutcome(o);
+      if (dialog) {
+        openerRef.current = queueButtonRef.current;
+        setLaptopDialog(dialog);
+      }
       refreshRuns(0);
       setRunsPage(0);
       refreshWorkers();
     });
+  }
+
+  function checkWorkersNow() {
+    startCheckNow(async () => {
+      const res = await loadBulkWorkersAction();
+      if (res.ok) setWorkers(res.payload);
+    });
+  }
+
+  function openLaptopSteps() {
+    openerRef.current = stepsLinkRef.current;
+    setLaptopDialog(stepsDialog());
+  }
+
+  function closeLaptopDialog() {
+    const opener = openerRef.current;
+    setLaptopDialog(null);
+    setTimeout(() => opener?.focus(), 0);
+  }
+
+  function viewQueuedRun() {
+    const runId = laptopDialog?.runId ?? null;
+    setLaptopDialog(null);
+    setHighlightRunId(runId);
+    setRunsPage(0);
+    setTimeout(() => {
+      runsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      runsCardRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  function changeHideWhenOnline(value) {
+    setHideWhenOnline(value);
+    writeHideWhenOnline(browserStorage(), value);
   }
 
   function refreshIndex() {
@@ -742,19 +805,29 @@ export default function BulkDownloadTab() {
           <div className={`${CARD} p-4`}>
             <h3 className="mb-2 text-sm font-semibold text-[var(--2a-navy)]">Run on</h3>
             <div className="flex flex-col gap-2 text-xs" role="radiogroup" aria-label="Run on">
-              <label className="flex flex-wrap items-center gap-2">
-                <input
-                  type="radio"
-                  name="bulk-run-on"
-                  value="laptop"
-                  checked={target === "laptop"}
-                  onChange={() => setTarget("laptop")}
-                />
-                <span className="font-medium text-[var(--2a-text)]">{targets.laptop}</span>
-                <Dot on={laptop.online} />
-                <span className="text-[var(--2a-text-secondary)]">{laptop.text}</span>
-                <Command text={laptop.command} />
-              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="radio"
+                    name="bulk-run-on"
+                    value="laptop"
+                    checked={target === "laptop"}
+                    onChange={() => setTarget("laptop")}
+                  />
+                  <span className="font-medium text-[var(--2a-text)]">{targets.laptop}</span>
+                  <Dot on={laptop.online} />
+                  <span className="text-[var(--2a-text-secondary)]">{laptop.text}</span>
+                  <Command text={laptop.command} />
+                </label>
+                <button
+                  ref={stepsLinkRef}
+                  type="button"
+                  className="text-[11px] text-[var(--2a-navy)] underline decoration-[var(--2a-gold)] underline-offset-2"
+                  onClick={openLaptopSteps}
+                >
+                  Show these steps
+                </button>
+              </div>
               <label className={`flex flex-wrap items-center gap-2 ${render.greyed ? "opacity-60" : ""}`}>
                 <input
                   type="radio"
@@ -814,6 +887,7 @@ export default function BulkDownloadTab() {
       {writable && (
         <div className={`${CARD} flex flex-wrap items-center gap-3 p-4`}>
           <button
+            ref={queueButtonRef}
             type="button"
             className={BUTTON}
             disabled={pending || !preview || !preview.total || !target}
@@ -851,7 +925,20 @@ export default function BulkDownloadTab() {
         />
       )}
 
-      <div className={`${CARD} p-4`}>
+      {laptopDialog && (
+        <LaptopWorkerDialog
+          dialog={laptopDialog}
+          workers={workers}
+          checking={checkingNow}
+          onCheck={checkWorkersNow}
+          onViewRun={viewQueuedRun}
+          onClose={closeLaptopDialog}
+          hideWhenOnline={hideWhenOnline}
+          onHideChange={changeHideWhenOnline}
+        />
+      )}
+
+      <div ref={runsCardRef} tabIndex={-1} className={`${CARD} p-4 focus:outline-none`}>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-[var(--2a-navy)]">Bulk downloads</h3>
           <span className="text-[11px] text-[var(--2a-text-muted)]">
@@ -868,6 +955,7 @@ export default function BulkDownloadTab() {
           loading={runsLoading}
           onAction={act}
           pendingAction={pendingAction}
+          highlightId={highlightRunId}
         />
       </div>
 

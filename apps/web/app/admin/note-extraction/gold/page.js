@@ -3,6 +3,7 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import GoldReviewScreen from "@/components/admin/GoldReviewScreen";
 import { getGoldCandidates } from "@/lib/api";
+import { labelFor } from "@/lib/menuVisibility";
 
 // Note gold set (noteextractb1). Super Admin is enforced SERVER-SIDE by
 // FastAPI; anyone else who types the URL gets a 403 and the panel below.
@@ -23,7 +24,7 @@ export default async function NoteGoldPage() {
   return (
     <AppShell user={session.user}>
       <div>
-        <h1 className="text-3xl font-semibold text-navy">Note Gold Set</h1>
+        <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/note-extraction/gold")}</h1>
         <p className="mt-1 text-sm text-text-muted">
           Hand-checked note terms. One note at a time: the filing on the left, the pre-filled fields
           on the right. Confirm, correct or mark each field absent. Only a reviewer writes a gold value.

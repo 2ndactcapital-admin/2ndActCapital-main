@@ -28,6 +28,7 @@
     GET  /admin/edgar/bulk/runs | /admin/edgar/bulk/runs/{id}   status, progress, ETA, "worker lost"
     POST /admin/edgar/bulk/runs/{id}/stop | /cancel | /requeue
     GET  /admin/edgar/bulk/workers                     last heartbeat per target; Render detection (read-only)
+                                                       + laptop_start_command, laptop_instructions (the dialog's steps)
 
 Everything here is GLOBAL public SEC reference data (the manifest, the issuer
 table, the pipeline runs) — no org_id is read or accepted anywhere. The gate is
@@ -551,8 +552,10 @@ async def edgar_bulk_preview(body: BulkParams, request: Request):
 @router.post("/admin/edgar/bulk/runs", status_code=202)
 async def edgar_bulk_queue_run(body: BulkRunCreate, request: Request):
     """QUEUE a bulk download for a worker. Laptop: always queued (with
-    worker_online=false and the start command when no worker is heartbeating).
-    Render: 409 and nothing queued unless a Render worker is configured AND
+    worker_online=false and the start command when no worker is heartbeating;
+    worker_online=true and worker_host when one is). Every response carries
+    laptop_start_command (setting EDGAR_BULK_LAPTOP_WORKER_COMMAND, else the
+    working default). Render: 409 and nothing queued unless a Render worker is configured AND
     alive."""
     actor_id = await _require_super_admin(request)
     pool = await get_pool()

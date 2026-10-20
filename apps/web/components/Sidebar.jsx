@@ -6,67 +6,30 @@ import { IconAddressBook } from "@tabler/icons-react";
 import BrandNavIcon from "./BrandNavIcon";
 import { useBrand } from "@/components/ThemeProvider";
 import { usePermissions } from "@/lib/usePermissions";
-import {
-  GATE_MANAGE_ORG_SETTINGS,
-  GATE_MANAGE_ORG_SETTINGS_STRICT,
-  GATE_SUPER_ADMIN,
-  canAccess,
-} from "@/lib/menuVisibility";
+import { entryIsActive, visibleSections } from "@/lib/menuVisibility";
 
-const NAV_ITEMS = [
-  { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
-  { label: "CRM", href: "/crm", TablerIcon: IconAddressBook },
-  { label: "Marketplace", href: "/marketplace", icon: "marketplace" },
-  { label: "Investments", href: "/portfolio", icon: "portfolio" },
-  { label: "Positions", href: "/portfolio/positions", icon: "portfolio-reporting" },
-  { label: "Securities", href: "/portfolio/securities", icon: "portfolio" },
-  { label: "Commitments", href: "/portfolio/commitments", icon: "portfolio-reporting" },
-  { label: "Portfolio Reporting", href: "/portfolio-reporting", icon: "portfolio-reporting" },
-  // mkt04a — any signed-in user, matching the API's session-only gate.
-  { label: "Market Indicators", href: "/market", icon: "portfolio-reporting" },
-  { label: "SPV Manager", href: "/spvs", icon: "spv-manager" },
-  { label: "Insurance", href: "/insurance", icon: "insurance" },
-  { label: "Community", href: "/community", icon: "community" },
-  { label: "Notifications", href: "/notifications", icon: "notifications" },
-];
+// navregroup — this component keeps NO item list and NO gate of its own. Every
+// entry, label, order, section and gate comes from lib/menuVisibility.mjs
+// (MENU_ITEMS / GROUPS) through visibleSections(). It used to hard-code a second
+// item list with its own gate checks, which drifted from MENU_ITEMS. The only
+// thing kept here is presentation: which icon component draws an icon name.
+const TABLER_ICONS = { crm: IconAddressBook };
 
-const ADMIN_ITEM = { label: "Admin", href: "/admin", icon: "admin" };
-const USERS_ITEM = { label: "User Management", href: "/admin/users", icon: "investment-profile" };
-// SOC Phase 2 — staff teams + entity assignments (populates the visibility
-// resolver's data; does not change any endpoint's visibility behavior yet).
-const STAFF_VISIBILITY_ITEM = { label: "Staff Visibility", href: "/admin/staff-visibility", icon: "investment-profile" };
-// SOC Phase A — profiles + permission sets (the additive permission layer).
-// Org Admin (own org) or Super Admin.
-const PROFILES_ITEM = { label: "Profiles", href: "/admin/profiles", icon: "investment-profile" };
-const PERMISSION_SETS_ITEM = { label: "Permission Sets", href: "/admin/permission-sets", icon: "admin" };
-const WORKFLOWS_ITEM = { label: "Workflows", href: "/admin/workflows", icon: "admin" };
-// Sprint 24 — white-label settings. Org Admins see their own org; Super
-// Admins additionally get the platform-wide screen.
-const ORG_SETTINGS_ITEM = { label: "Organization", href: "/admin/settings", icon: "admin" };
-// TA Model Sprint 2 — per-strategy J-curve defaults + platform TA settings.
-// Org Admin (own org) or Super Admin, same gate as Organization settings.
-const TA_MODEL_SETTINGS_ITEM = { label: "TA Model Defaults", href: "/admin/modeling/ta", icon: "admin" };
-// modelresearch.structural — read-only grid of every model LiteLLM prices.
-// Super Admin or manage_org_settings, behind the STRICT gate (fails closed).
-const MODEL_RESEARCH_ITEM = { label: "Model Research", href: "/admin/model-research", icon: "admin" };
-const PLATFORM_ITEM = { label: "Platform", href: "/admin/platform", icon: "admin" };
-// SOC Phase 4 — restrict accounts + manage their allow-list (populates the
-// unified restriction filter's data; does not change enforcement yet). Super
-// Admin only.
-const RESTRICTED_ACCESS_ITEM = { label: "Restricted Access", href: "/admin/restricted-access", icon: "admin" };
-// SOC Phase 5: assign per-entity trading-authority tiers (feeds the maker-checker
-// + tier enforcement engine). Super Admin only.
-const TRADING_AUTHORITY_ITEM = { label: "Trading Authority", href: "/admin/trading-authority", icon: "admin" };
-// Note-terms review queue + STP trust policy. Global SEC reference data, not
-// tenant data — Super Admin only, same gate as the two items above.
-const NOTE_TERMS_QUEUE_ITEM = { label: "Note Terms Review", href: "/admin/pricing/note-terms-queue", icon: "admin" };
-const EDGAR_PIPELINE_ITEM = { label: "EDGAR Pipeline", href: "/admin/edgar-pipeline", icon: "admin" };
-const NOTE_GOLD_ITEM = { label: "Note Gold Set", href: "/admin/note-extraction/gold", icon: "admin" };
-const NOTE_RESULTS_ITEM = { label: "Extraction Results", href: "/admin/note-extraction/results", icon: "admin" };
-
-// Sprint 31 — SSVI volatility surface viewer. Super Admin only; the API
-// enforces it too (a hidden link is not a permission).
-const VOL_SURFACE_ITEM = { label: "Volatility Surface", href: "/admin/pricing/surface", icon: "admin" };
+/**
+ * The rendered entries for a /users/me payload — exported so node tests can
+ * check what the sidebar would show for each persona without a browser.
+ */
+export function sidebarModel(me, pathname) {
+  return visibleSections(me).map((section) => ({
+    id: section.id,
+    header: section.header,
+    entries: section.entries.map((entry) => ({
+      ...entry,
+      TablerIcon: TABLER_ICONS[entry.icon] || null,
+      active: entryIsActive(entry, pathname),
+    })),
+  }));
+}
 
 // The Ascent mark inline SVG — white on navy, with gold-light top square.
 function AscendMark({ size = 20 }) {
@@ -138,6 +101,37 @@ function NavLink({ item, expanded, active, badge = 0 }) {
   );
 }
 
+/** The nav list itself — pure presentation over sidebarModel(), exported for tests. */
+export function SidebarNav({ me, pathname, expanded, unread = 0 }) {
+  return (
+    <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
+      {sidebarModel(me, pathname).map((section) => (
+        <div key={section.id} data-section={section.id} className="space-y-0.5">
+          {section.header && expanded && (
+            <div
+              className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
+              style={{
+                color: "color-mix(in srgb, var(--2a-nav-rest) 60%, transparent)",
+              }}
+            >
+              {section.header}
+            </div>
+          )}
+          {section.entries.map((entry) => (
+            <NavLink
+              key={entry.key}
+              item={entry}
+              expanded={expanded}
+              active={entry.active}
+              badge={entry.href === "/notifications" ? unread : 0}
+            />
+          ))}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 function PinIcon({ pinned }) {
   // Simple pin icon — diagonal line with dot
   return (
@@ -183,7 +177,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const brand = useBrand();
   // navPinned comes from /api/users/me (cached by usePermissions).
-  const { can, navPinned, me } = usePermissions();
+  const { navPinned, me } = usePermissions();
   const mouseLeaveTimer = useRef(null);
   // Track whether the account value has been applied so we only sync once.
   const accountSynced = useRef(false);
@@ -223,9 +217,6 @@ export default function Sidebar() {
 
   // When pinned, always expanded. Otherwise expanded only while hovered.
   const expanded = pinned || hovered;
-
-  const isActive = (href) =>
-    pathname === href || pathname?.startsWith(href + "/");
 
   // Unread notification badge — poll every 60 s.
   useEffect(() => {
@@ -319,129 +310,8 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* Nav items */}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.href}
-              item={item}
-              expanded={expanded}
-              active={isActive(item.href)}
-              badge={item.href === "/notifications" ? unread : 0}
-            />
-          ))}
-
-          {can("manage_members") && (
-            <>
-              {expanded && (
-                <div
-                  className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
-                  style={{
-                    color: "color-mix(in srgb, var(--2a-nav-rest) 60%, transparent)",
-                  }}
-                >
-                  Admin
-                </div>
-              )}
-              <NavLink
-                item={ADMIN_ITEM}
-                expanded={expanded}
-                active={isActive(ADMIN_ITEM.href)}
-              />
-              <NavLink
-                item={USERS_ITEM}
-                expanded={expanded}
-                active={isActive(USERS_ITEM.href)}
-              />
-              <NavLink
-                item={STAFF_VISIBILITY_ITEM}
-                expanded={expanded}
-                active={isActive(STAFF_VISIBILITY_ITEM.href)}
-              />
-            </>
-          )}
-
-          {canAccess(me, GATE_MANAGE_ORG_SETTINGS) && (
-            <>
-              <NavLink
-                item={PROFILES_ITEM}
-                expanded={expanded}
-                active={isActive(PROFILES_ITEM.href)}
-              />
-              <NavLink
-                item={PERMISSION_SETS_ITEM}
-                expanded={expanded}
-                active={isActive(PERMISSION_SETS_ITEM.href)}
-              />
-              <NavLink
-                item={WORKFLOWS_ITEM}
-                expanded={expanded}
-                active={isActive(WORKFLOWS_ITEM.href)}
-              />
-              <NavLink
-                item={ORG_SETTINGS_ITEM}
-                expanded={expanded}
-                active={isActive(ORG_SETTINGS_ITEM.href)}
-              />
-              <NavLink
-                item={TA_MODEL_SETTINGS_ITEM}
-                expanded={expanded}
-                active={isActive(TA_MODEL_SETTINGS_ITEM.href)}
-              />
-            </>
-          )}
-          {canAccess(me, GATE_MANAGE_ORG_SETTINGS_STRICT) && (
-            <NavLink
-              item={MODEL_RESEARCH_ITEM}
-              expanded={expanded}
-              active={isActive(MODEL_RESEARCH_ITEM.href)}
-            />
-          )}
-          {canAccess(me, GATE_SUPER_ADMIN) && (
-            <>
-              <NavLink
-                item={RESTRICTED_ACCESS_ITEM}
-                expanded={expanded}
-                active={isActive(RESTRICTED_ACCESS_ITEM.href)}
-              />
-              <NavLink
-                item={TRADING_AUTHORITY_ITEM}
-                expanded={expanded}
-                active={isActive(TRADING_AUTHORITY_ITEM.href)}
-              />
-              <NavLink
-                item={NOTE_TERMS_QUEUE_ITEM}
-                expanded={expanded}
-                active={isActive(NOTE_TERMS_QUEUE_ITEM.href)}
-              />
-              <NavLink
-                item={EDGAR_PIPELINE_ITEM}
-                expanded={expanded}
-                active={isActive(EDGAR_PIPELINE_ITEM.href)}
-              />
-              <NavLink
-                item={NOTE_GOLD_ITEM}
-                expanded={expanded}
-                active={isActive(NOTE_GOLD_ITEM.href)}
-              />
-              <NavLink
-                item={NOTE_RESULTS_ITEM}
-                expanded={expanded}
-                active={isActive(NOTE_RESULTS_ITEM.href)}
-              />
-              <NavLink
-                item={VOL_SURFACE_ITEM}
-                expanded={expanded}
-                active={isActive(VOL_SURFACE_ITEM.href)}
-              />
-              <NavLink
-                item={PLATFORM_ITEM}
-                expanded={expanded}
-                active={isActive(PLATFORM_ITEM.href)}
-              />
-            </>
-          )}
-        </nav>
+        {/* Nav items — sections and master pages from the one menu definition */}
+        <SidebarNav me={me} pathname={pathname} expanded={expanded} unread={unread} />
       </div>
     </aside>
   );

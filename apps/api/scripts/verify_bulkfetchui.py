@@ -765,7 +765,7 @@ async def y_queue_laptop(conn, url, q) -> None:
     run = (res or {}).get("run") or {}
     check(code == 202 and run.get("status") == "queued" and run.get("target") == "laptop",
           "POST runs with no target queues a run on the laptop (the default)", f"HTTP {code} {run.get('status')} {run.get('target')}")
-    check(res.get("worker_online") is False and res.get("start_command") == q.LAPTOP_COMMAND,
+    check(res.get("worker_online") is False and res.get("start_command") == q.laptop_start_command(),
           "worker_online is false and the exact start command is returned", f"{res.get('start_command')}")
     row = await run_row(url, UUID(run["id"])) if run.get("id") else {}
     p = jd(row.get("params"))

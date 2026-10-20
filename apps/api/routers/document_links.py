@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from routers.entities import get_org_id
 from schemas.entities import EntityType
 from services.database import get_pool
+from services.permissions import is_staff
 from services.users import ensure_user
 from services import document_linkage as dl
 
@@ -161,12 +162,20 @@ async def get_record_documents(record_type: str, record_id: UUID, request: Reque
 async def search_documents(request: Request, q: str = "", limit: int = 50):
     """Basic (NON-semantic) document search — filename, category (doc_family), and
     an ILIKE substring match against extracted text. This is NOT the Phase-11
-    semantic/vector search; it is plain metadata/text substring matching."""
+    semantic/vector search; it is plain metadata/text substring matching.
+
+    navregroup: results are scoped to the CALLER exactly as ``/semantic-search``
+    scopes them (staff vs member visibility from the JWT, then restricted
+    access). It used to filter by org only — any member could list every
+    document in the org."""
     org_id = get_org_id(request)
+    staff = is_staff(request)
     limit = max(1, min(int(limit or 50), 200))
     pool = await get_pool()
     async with pool.acquire() as conn:
-        results = await dl.search_documents(conn, org_id, q, limit=limit)
+        user_id = await ensure_user(conn, request)
+        results = await dl.search_documents(
+            conn, org_id, q, pool=pool, user_id=user_id, is_staff=staff, limit=limit)
     return {"query": q, "count": len(results), "results": results}
 
 

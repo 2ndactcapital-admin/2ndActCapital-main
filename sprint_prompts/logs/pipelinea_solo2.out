@@ -1,0 +1,185 @@
+[doppler] hydrated 42 secrets
+
+── Bucket ──
+[PASS] the configured R2 bucket name is valid (R2_BUCKET_NAME / EDGAR_R2_BUCKET)  — configured
+[PASS] the configured bucket holds the existing EDGAR corpus  — bucket='hollisworks-docs' probe='reference/edgar/1000275/0000950103-24-018601/dp222958_fwp-us2085mul.htm' 
+manifest fingerprint before: rows=716953
+
+── [Y] Task 1 findings ──
+[PASS] 1a. the four hand-made objects exist and their DDL is readable from pg_get_*  — found=4
+[FIND] 1a. live DDL  — generated with pg_get_constraintdef/indexdef/viewdef + pg_policies + relacl and recorded verbatim in migrations/edgarindex_discovery_tables.sql (status_reason already existed)
+[PASS] 1b. the pipeline calls the EXISTING extractor, prefilter and fetch functions (and defines no extractor of its own)
+[FIND] 1b. edgar_fetch signatures  — {'fetch_index': "(year: 'int', quarter: 'int', client: 'httpx.AsyncClient | None' = None) -> 'list[FilingMeta]'", 'fetch_filing': "(meta: 'FilingMeta', client: 'httpx.AsyncClient | None' = None) -> 'bytes'", 'store_filing': "(pool, meta: 'FilingMeta', raw_bytes: 'bytes') -> 'str'", 'resolve_filing_documents': "(meta: 'FilingMeta', client: 'httpx.AsyncClient') -> 'FilingMeta'", 'extract_filing_text': "(raw_bytes: 'bytes') -> 'html_text.HtmlExtraction'", 'passes_prefilter': "(text: 'str') -> 'bool'", 'prefilter_hits': "(text: 'str') -> 'list[str]'"}
+[PASS] 1c. RENDER_API_KEY exists in Doppler and resolves the base service for one-off jobs  — service=crn-daln4obl550s73brmiq0
+[FIND] 1c. Render  — RENDER_API_KEY present (name only); base service crn-daln4obl550s73brmiq0 (2ndactcapital-workflow-scheduler: rootDir apps/api, starter plan, Doppler-synced — the API web service is on the free plan)
+[PASS] 1d. DataGrid gained an opt-in serverSide mode; only the EDGAR screens (Edgar*.jsx) pass it  — callers=['EdgarBulkDownload.jsx', 'EdgarCohorts.jsx', 'EdgarPipelineMonitor.jsx']
+[FIND] 1d. DataGrid  — it was client-side only (TanStack sort/filter/paginate over rowData). Extended with `serverSide` (manual sorting/paging, text filters hidden, footer counts totalRows); undefined by default, so existing callers are unchanged
+[PASS] 1e. no note-terms row points at a missing reference_filings row (the fixture was unreferenced before its delete)  — dangling=0
+[FIND] 1e. VERIFY FIXTURE  — 0 note-terms references, no manifest row; code only creates it (verify_edgarcorpus) or filters it (run_note_terms_extraction) — deleted, R2 had no objects
+[PASS] Task 1's five findings reported  — ['1a', '1b', '1c', '1d', '1e']
+
+── [Y] The migration files' definitions match the live objects ──
+  migrations read (5): ['bulkfetch_sources_claims_supplements.sql', 'bulkfetchui_queued_runs.sql', 'edgarcohorts_cohorts_inventory.sql', 'edgarindex_discovery_tables.sql', 'edgarpipelinea_lifecycle.sql']
+[PASS] every live column (name + type) on the 6 tables is declared in the migrations  — missing=[]
+[PASS] every live constraint, index, policy and trigger on those tables is named in the migrations  — checked=70 undeclared=[]
+[PASS] the lifecycle CHECK's value set is identical live, in the file, and in the prompt  — live=['discovered', 'extracted', 'extraction_failed', 'extraction_submitted', 'fetch_failed', 'fetched', 'needs_review', 'not_pricing_supplement', 'not_selected', 'prefilter_skipped', 'ready_for_extraction', 'selected']
+[PASS] the view's live columns are all in its recorded definition, and it is security_invoker  — cols=['accession_number', 'form_type', 'filing_date', 'index_quarter', 'pipeline_status', 'issuer_group', 'credit_entity', 'include_status', 'filer_count', 'filer_names', 'sec_filing_url', 'status_reason', 'document_kind', 'primary_issuer_cik', 'detected_cusip', 'reference_filing_id']
+[PASS] every portfolio edgar function is created in the migrations  — ['edgar_cohort_members_frozen', 'edgar_cohorts_frozen', 'edgar_primary_issuer_cik', 'edgar_recompute_primary_issuer', 'edgar_selection_policies_retire_only', 'structured_note_issuers_recompute']
+
+── [Y] The lifecycle CHECK accepts every listed status and refuses an unknown one ──
+[PASS] all 12 lifecycle statuses accepted  — ['discovered', 'selected', 'not_selected', 'fetched', 'fetch_failed', 'not_pricing_supplement', 'prefilter_skipped', 'ready_for_extraction', 'extraction_submitted', 'extracted', 'needs_review', 'extraction_failed']
+[PASS] an unknown status ('bogus_status') is refused by the CHECK
+
+── [Y] primary_issuer_cik — co-listed resolves to the subsidiary; issuer-group filter < 1s ──
+[PASS] fixture co-listed JPM parent (guarantor) + JPMorgan Chase Financial (issuer) -> the subsidiary  — primary=1665650
+[PASS] a REAL co-listed JPM parent/subsidiary filing resolves to the subsidiary  — {'accession_number': '0001918704-26-029919', 'primary_issuer_cik': '1665650'}
+[PASS] stored primary_issuer_cik equals the rule recomputed per row over all of 2025Q1  — mismatches=0
+[PASS] filtering the FULL manifest by issuer group (count + first page): database execution under one second  — execution=151.4 ms over 3 statements [0.8, 141.7, 8.9] total=128858 direct=128858
+
+── [Y] Policy v1 selects exactly the expected set; version recorded; stored policy immutable ──
+[PASS] the active policy is v1 with the decided rules (read from the table)  — {'order': 'filing_date_desc', 'form_types': ['424B2'], 'filing_date_from': '2019-01-01', 'issuer_include_status': ['yes', 'review']}
+[PASS] selected = issuer 'yes', issuer 'review', co-listed, guarantor-only (and nothing else)  — selected=['9999999999-55-555001', '9999999999-55-555002', '9999999999-55-555007', '9999999999-55-555008']
+[PASS] not_selected = unlisted filer, FWP, filed 2018, issuer include 'no'  — not_selected=['9999999999-55-555003', '9999999999-55-555004', '9999999999-55-555005', '9999999999-55-555006']
+[PASS] each exclusion names the rule that excluded it  — {'9999999999-55-555003': 'policy v1: no listed issuer among the filers', '9999999999-55-555004': 'policy v1: form FWP not in policy', '9999999999-55-555005': 'policy v1: filed before 2019-01-01', '9999999999-55-555006': 'policy v1: issuer 9999999552 include_status no'}
+[PASS] every decided row records policy version 1
+[PASS] the stage's own counts add up to the sample  — {'selected': 4, 'not_selected': 4, 'policy_version': 1}
+[PASS] an edit to stored policy v1 is refused (check_violation from the retire-only trigger)
+[PASS] retiring IS allowed (proven in a rolled-back transaction; v1 still active)  — retired=1 active_after=True
+
+── [Y] Classification rules; a preliminary pricing supplement is never ready; CUSIP rule ──
+[PASS] each document_kind classified from its opening text  — {'pricing_supplement': 'pricing_supplement', 'preliminary_pricing_supplement': 'preliminary_pricing_supplement', 'product_supplement': 'product_supplement', 'underlying_supplement': 'underlying_supplement', 'term_sheet': 'term_sheet', 'other': 'other'}
+[PASS] a preliminary pricing supplement full of payoff keywords is NEVER ready_for_extraction  — not_pricing_supplement, not_pricing_supplement
+[PASS] final pricing supplement -> ready (prefilter passes) / prefilter_skipped; product supplement -> not_pricing_supplement  — ready_for_extraction, prefilter_skipped, not_pricing_supplement
+[PASS] a valid CUSIP is accepted (check digit validates)
+[PASS] a CUSIP with a wrong check digit is rejected
+[PASS] detection skips the bad-check-digit token and takes the valid one; a lone bad one yields nothing  — 037833100, None
+
+── [Y] Incremental discovery over one fixed past day is idempotent; co-listed collapse ──
+[PASS] synthetic daily lines: first load inserts 2 filings + 3 filers, the second inserts nothing  — first=(2, 3) second=(0, 0)
+[PASS] the co-listed pair collapsed to ONE filing with both filers kept, primary issuer computed at load  — {'filer_count': 2, 'primary_issuer_cik': '1665650', 'index_quarter': '2025Q1', 'filers': 2}
+[PASS] 2025-03-14: co-listed index lines collapse (621 424B2/FWP lines -> 419 filings)
+[PASS] 2025-03-14: the first run inserts only what was missing (0), the second inserts nothing  — run1=0/0 run2=0/0
+[PASS] every accession of that day is in the manifest exactly once  — day=419 in_db=419
+
+── [Y] The lease: a second job is refused; an expired lease can be taken over ──
+[PASS] holder A takes the lease; holder B is refused while it is live  — A=True B=False
+[PASS] a JOB started while the lease is held is refused and says why  — refused: another pipeline job holds the lease (holder verify-holder-A, expires 2026-10-19 23:43:51.719858+00:00)
+[PASS] after expiry, B takes the lease over  — holder=verify-holder-B
+[PASS] no session-level advisory lock is used for the job
+
+── [Y] Fetch on a fixed sample, the bad accession, the cap, rate + User-Agent, re-run uploads nothing ──
+[PASS] the sample contains no duplicate accession numbers  — sampled=10 distinct=10 dupes=[]
+[PASS] the real sample contains no fixture accession (the bad accession included)  — fixtures_in_sample=[]
+[PASS] a fixed sample of 10 real 424B2s (up to 2 per group, >= 8) across >= 5 issuer groups, plus the one deliberately bad accession  — n_real=10 groups=['Goldman Sachs', 'JPMorgan', 'Morgan Stanley', 'Royal Bank of Canada', 'UBS']
+[PASS] the select-stage target list holds the bad accession exactly once and no duplicates  — bad_count=1 targets=11 distinct=11 n_real=10
+  [DIAG] BEFORE run 1: 11 of 11 target rows present
+  [DIAG]   0000950103-26-014883: status=discovered policy_v=None primary_issuer_cik=1000275 attempts=0
+  [DIAG]   0000950103-26-014885: status=discovered policy_v=None primary_issuer_cik=1000275 attempts=0
+  [DIAG]   0001193125-26-409250: status=discovered policy_v=None primary_issuer_cik=1419828 attempts=0
+  [DIAG]   0001193125-26-409255: status=discovered policy_v=None primary_issuer_cik=1419828 attempts=0
+  [DIAG]   0001839882-26-048242: status=discovered policy_v=None primary_issuer_cik=1114446 attempts=0
+  [DIAG]   0001839882-26-048308: status=discovered policy_v=None primary_issuer_cik=1114446 attempts=0
+  [DIAG]   0001839882-26-048424: status=discovered policy_v=None primary_issuer_cik=1666268 attempts=0
+  [DIAG]   0001839882-26-048426: status=discovered policy_v=None primary_issuer_cik=1666268 attempts=0
+  [DIAG]   0001918704-26-029798: status=discovered policy_v=None primary_issuer_cik=1665650 attempts=0
+  [DIAG]   0001918704-26-029803: status=discovered policy_v=None primary_issuer_cik=1665650 attempts=0
+  [DIAG]   9999999999-55-555009: status=selected policy_v=1 primary_issuer_cik=1665650 attempts=0
+  [DIAG] pipeline runs BEFORE run 1: total=4; verify-or-live rows=1
+  [DIAG]   {'id': UUID('0d93531f-7bfd-4384-91e9-d62490580f09'), 'trigger_source': 'verify', 'status': 'refused', 'stages': [], 'fetch_cap': 0, 'requested_at': datetime.datetime(2026, 10, 19, 23, 33, 52, 319025, tzinfo=datetime.timezone.utc), 'started_at': None, 'finished_at': datetime.datetime(2026, 10, 19, 23, 33, 52, 41294, tzinfo=datetime.timezone.utc), 'selected': 0}
+  [DIAG] lease rows BEFORE run 1: 2
+  [DIAG]   {'lease_name': 'edgar_pipeline', 'holder': 'ca359cc8-5d17-4864-8ec2-690fba385514', 'acquired_at': datetime.datetime(2026, 10, 19, 16, 33, 53, 530077, tzinfo=datetime.timezone.utc), 'renewed_at': datetime.datetime(2026, 10, 19, 16, 33, 53, 789159, tzinfo=datetime.timezone.utc), 'expires_at': datetime.datetime(2026, 10, 19, 16, 33, 53, 789159, tzinfo=datetime.timezone.utc)}
+  [DIAG]   {'lease_name': 'verify-edgarpipelinea', 'holder': 'verify-holder-B', 'acquired_at': datetime.datetime(2026, 10, 19, 23, 33, 54, 24783, tzinfo=datetime.timezone.utc), 'renewed_at': datetime.datetime(2026, 10, 19, 23, 33, 54, 480776, tzinfo=datetime.timezone.utc), 'expires_at': datetime.datetime(2026, 10, 19, 23, 33, 54, 480776, tzinfo=datetime.timezone.utc)}
+  [DIAG] select stage connection: application_name='Supavisor' backend_pid=2055116 (same object as the verify conn: True); accessions arg=['0000950103-26-014883', '0000950103-26-014885', '0001193125-26-409250', '0001193125-26-409255', '0001839882-26-048242', '0001839882-26-048308', '0001839882-26-048424', '0001839882-26-048426', '0001918704-26-029798', '0001918704-26-029803', '9999999999-55-555009']
+  [DIAG] select stage returned {'selected': 10, 'not_selected': 0, 'policy_version': 1}
+  [DIAG] select stage decided 10: 0000950103-26-014883 discovered->selected, 0000950103-26-014885 discovered->selected, 0001193125-26-409250 discovered->selected, 0001193125-26-409255 discovered->selected, 0001839882-26-048242 discovered->selected, 0001839882-26-048308 discovered->selected, 0001839882-26-048424 discovered->selected, 0001839882-26-048426 discovered->selected, 0001918704-26-029798 discovered->selected, 0001918704-26-029803 discovered->selected
+  [DIAG] targets NOT decided: 9999999999-55-555009 (selected)
+  [DIAG] AFTER run 1: 11 of 11 target rows present
+  [DIAG]   0000950103-26-014883: status=selected policy_v=1 primary_issuer_cik=1000275 attempts=0
+  [DIAG]   0000950103-26-014885: status=selected policy_v=1 primary_issuer_cik=1000275 attempts=0
+  [DIAG]   0001193125-26-409250: status=selected policy_v=1 primary_issuer_cik=1419828 attempts=0
+  [DIAG]   0001193125-26-409255: status=selected policy_v=1 primary_issuer_cik=1419828 attempts=0
+  [DIAG]   0001839882-26-048242: status=selected policy_v=1 primary_issuer_cik=1114446 attempts=0
+  [DIAG]   0001839882-26-048308: status=selected policy_v=1 primary_issuer_cik=1114446 attempts=0
+  [DIAG]   0001839882-26-048424: status=selected policy_v=1 primary_issuer_cik=1666268 attempts=0
+  [DIAG]   0001839882-26-048426: status=selected policy_v=1 primary_issuer_cik=1666268 attempts=0
+  [DIAG]   0001918704-26-029798: status=not_pricing_supplement policy_v=1 primary_issuer_cik=1665650 attempts=1
+  [DIAG]   0001918704-26-029803: status=not_pricing_supplement policy_v=1 primary_issuer_cik=1665650 attempts=1
+  [DIAG]   9999999999-55-555009: status=fetch_failed policy_v=1 primary_issuer_cik=1665650 attempts=1
+[PASS] the fetch cap is honored: cap 3 -> exactly 3 filings attempted (select stage decided the 10 real ones)  — n_real=10 status=succeeded selected=10 attempted=3 err=None
+[PASS] exactly 3 rows left 'selected' (the bad accession, newest, went first, + 2 real); 8 real still 'selected'  — n_real=10 {'0000950103-26-014883': 'selected', '0000950103-26-014885': 'selected', '0001193125-26-409250': 'selected', '0001193125-26-409255': 'selected', '0001839882-26-048242': 'selected', '0001839882-26-048308': 'selected', '0001839882-26-048424': 'selected', '0001839882-26-048426': 'selected', '0001918704-26-029798': 'not_pricing_supplement', '0001918704-26-029803': 'not_pricing_supplement', '9999999999-55-555009': 'fetch_failed'}
+[PASS] a second job fetches the remaining 8 real filings (the failed row's retry is not due yet)  — n_real=10 attempted=8 fetched=8 failed=0 err=None
+[PASS] the bad accession is fetch_failed with a reason, attempt_count 1 and a future retry time  — n_real=10 {'pipeline_status': 'fetch_failed', 'status_reason': "HTTPStatusError: Client error '404 Not Found' for url 'https://www.sec.gov/Archives/edgar/data/1665650/999999999955555009/index.json'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404", 'attempt_count': 1, 'last_attempt_at': datetime.datetime(2026, 10, 19, 23, 34, 3, 700929, tzinfo=datetime.timezone.utc), 'next_attempt_at': datetime.datetime(2026, 10, 20, 5, 34, 3, 700929, tzinfo=datetime.timezone.utc)}
+[PASS] and the run that hit it still finished the other 2 filings in its cap  — n_real=10 run1 fetched=2 failed=1
+[PASS] all 10 real sample filings are linked to a reference_filings row  — n_real=10 linked=10
+[PASS] the bad accession is NOT linked to any reference_filings row  — n_real=10 None
+[PASS] each R2 object exists and is gzipped; sha256(decompressed) = recorded hash; raw/compressed/text sizes match; extracted_text NULL; status past 'fetched'  — n_real=10 []
+[FIND] sample outcomes  — (kind, status) = [('preliminary_pricing_supplement', 'not_pricing_supplement'), ('product_supplement', 'not_pricing_supplement')]; CUSIPs detected on 9/10; bytes uploaded run1+run2 = 469882
+[PASS] a second fetch of the same 10 re-uploads nothing (10 skipped, 0 bytes, R2 LastModified unchanged)  — n_real=10 fetched=10 bytes=0 skipped=10 lastmod_unchanged=True objects=10
+[PASS] measured SEC request rate never exceeded 8 in any 1-second window  — requests=61 peak=6/s
+[PASS] every SEC request carried the declared User-Agent (EDGAR_USER_AGENT)  — distinct=1
+[PASS] each run row's sec_requests equals the requests actually observed for that job  — [(7, 7), (24, 24), (30, 30)]
+
+── [Y] The nightly workflow: no human step; its run completes immediately; job recorded ──
+[PASS] the nightly workflow definition exists in the platform org
+[PASS] its BPMN has a Service Task and NO user/manual/receive task or waiting catch event
+[PASS] its one step is an automated, invocable Service Task whose effective tier does NOT suspend for approval  — effective=[2]
+[PASS] it has a scheduled trigger  — {'id': UUID('8d665425-c421-45b8-aae0-677068b5ef22'), 'schedule_cron': '0 6 * * *', 'timezone': 'UTC', 'is_active': False, 'created_by': UUID('be8165db-84d7-4e69-91d3-62f603530824')}
+[FIND] trigger inactive  — created inactive until this branch is deployed (the deployed build does not register the action) — activate it on /admin/workflows/triggers
+[PASS] the workflow run COMPLETES at once — it does not wait for the job  — status=completed 5.5s
+[PASS] the job is recorded in edgar_pipeline_runs: launched, with its Render job id  — launched job=job-dbbaih0m7kps73e8u8eg err=None
+[FIND] Render job outcome  — render status=succeeded finishedAt=2026-10-19T23:36:12Z; run row now {'status': 'succeeded', 'stop_reason': None, 'error': None}. On a build without edgar_pipeline_job.py (this branch not deployed) the job cannot start — that is a deployment fact, not a launch failure
+
+── [Y] The existing documents are linked and marked fetched, with zero new downloads ──
+[PASS] all 200 pre-existing documents (201 minus the deleted fixture) are linked to a manifest row marked fetched  — {'identity_rows': 200, 'linked': 200, 'rewritten': 0, 'fixture': 0}
+[PASS] none was re-downloaded: still 'identity' encoded, raw HTML key, text in the database
+[PASS] the VERIFY FIXTURE row is gone
+[PASS] their manifest rows say why they are fetched and carry no policy version (none decided them)  — rows=200
+
+── [Y] Monitoring API: super-admin 200; org admin and member 403 on the IDENTICAL request ──
+[PASS] the verify connection's role does NOT bypass RLS  — rolbypassrls=False
+[PASS] GET /api/v1/admin/edgar/filings: super 200 / org admin 403 / member 403  — [('super', 200), ('org_admin', 403), ('member', 403)] 
+[PASS] the filings envelope: is_super_admin true, editable [] (read-only grid), sort keys published
+[PASS] the 403 carries no rows
+[PASS] GET /api/v1/admin/edgar/progress: super 200 / org admin 403 / member 403  — [('super', 200), ('org_admin', 403), ('member', 403)] 
+[PASS] GET /api/v1/admin/edgar/issuers: super 200 / org admin 403 / member 403  — [('super', 200), ('org_admin', 403), ('member', 403)] 
+[PASS] Run now by an org admin: 403 and no run row created  — HTTP 403
+[PASS] a body carrying org_id is refused (extra='forbid')  — HTTP 422
+
+── [Y] Server-side paging: correct totals and pages; sorting and filtering on the full table ──
+[PASS] unfiltered total equals count(*) of the whole manifest  — api=716964 sql=716964
+[PASS] pages 1 and 2 are disjoint and together equal the same ordered query run directly in SQL
+[PASS] the issuer filter narrows: every row matches, and the total is a strict subset  — 128859 < 716964
+[PASS] a page past the end is empty, same total
+[PASS] quarter + form filter: total matches SQL, every row matches (inclusion)  — 6029 vs 6029
+[PASS] and nothing outside the predicate leaked in (exclusion: the complement adds up)
+[PASS] status filter matches SQL  — 200 vs 200
+[PASS] date-range filter: every row inside the range  — total=833
+[PASS] sort by form, both directions, on the full table  — asc first=424B2 desc first=FWP
+[PASS] sort by date ascending starts at the oldest filing
+[PASS] an unknown sort key or status is refused (422), never interpolated
+
+── [Y] Issuer edit: super-admin persists + recomputes; org admin refused, row unchanged ──
+[PASS] before: the PROMOTE filing's primary is JPM parent (its only listed issuer)  — 19617
+[PASS] org admin cannot add an issuer (403, no row)  — HTTP 403
+[PASS] super-admin adds the filer as an issuer; primary_issuer_cik recomputes to it (independent re-read)  — HTTP 201 primary=9999999553 
+[PASS] the SAME edit by an org admin is refused (403) and the row is unchanged  — HTTP 403
+[PASS] the super-admin edit persists (independent re-read)  — HTTP 200 {'include_status': 'yes', 'credit_entity': 'Verify Promoted Credit', 'notes': 'edited by verify'}
+[PASS] fields outside the editable list are refused (422)  — HTTP 422
+[PASS] the issuers envelope publishes the editable fields and an unlisted-filers list with no listed issuer in it
+
+── [Y] Teardown: R2 test objects deleted; fixture rows gone; manifest restored exactly ──
+[PASS] every R2 object under the test prefix is deleted  — deleted=20 left=0
+[PASS] every sample manifest row is restored exactly (all columns)
+[PASS] the sample's reference_filings rows are deleted  — left=0
+[PASS] zero fixture rows remain  — {'filings': 0, 'filers': 0, 'refs': 0, 'issuers': 0, 'runs': 0, 'lease': 0, 'users': 0, 'wf_runs': 0}
+[PASS] the real manifest's fingerprint (row count + md5 of every row) is unchanged  — before=(716953, '29a6830f6e90b952e90f416d0218b8c9') after=(716953, '29a6830f6e90b952e90f416d0218b8c9')
+[PASS] the real issuer table is unchanged
+
+── [Y] npm run build exits 0 ──
+[PASS] npm run build exits 0
+[PASS] the build emitted /admin/edgar-pipeline
+
+======================================================================
+FINDINGS: 8
+TOTAL: 102 PASS, 0 FAIL
+======================================================================
