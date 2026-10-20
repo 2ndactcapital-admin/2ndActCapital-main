@@ -2540,6 +2540,18 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY edgar_cohorts_pkey: (id)
 
+-- ===== portfolio.edgar_fetch_workers =====
+--   worker_id                                text NOT NULL
+--   target                                   text NOT NULL
+--   host                                     text NOT NULL
+--   pid                                      integer
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   heartbeat_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   current_run_id                           uuid
+--   stopped_at                               timestamp with time zone
+--   details                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   PRIMARY KEY edgar_fetch_workers_pkey: (worker_id)
+
 -- ===== portfolio.edgar_index_filing_filers =====
 --   accession_number                         text NOT NULL
 --   cik                                      text NOT NULL
@@ -2703,6 +2715,14 @@
 --   details                                  jsonb NOT NULL DEFAULT '{}'::jsonb
 --   cohort_id                                uuid
 --   run_kind                                 text NOT NULL DEFAULT 'fetch'::text
+--   target                                   text
+--   params                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   queued_at                                timestamp with time zone
+--   worker_id                                text
+--   worker_host                              text
+--   heartbeat_at                             timestamp with time zone
+--   stop_requested                           boolean NOT NULL DEFAULT false
+--   progress                                 jsonb NOT NULL DEFAULT '{}'::jsonb
 --   PRIMARY KEY edgar_pipeline_runs_pkey: (id)
 
 -- ===== portfolio.edgar_selection_policies =====
