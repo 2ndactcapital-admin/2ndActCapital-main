@@ -49,6 +49,7 @@ from schemas.entities import (
 )
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.ownership_read import ownership_edges
 from services.authz import require_any_permission, require_permission
 
 router = APIRouter(tags=["entities"])
@@ -480,12 +481,14 @@ async def create_picker_stub_entity(conn, org_id, entity_type, display_name, cre
     await conn.execute(
         """
         INSERT INTO member_todos (
-            org_id, user_id, kind, category, source, title, detail, priority, status
-        ) VALUES ($1, $2, 'actual', 'crm', 'entity_stub', $3, $4, 5, 'open')
+            org_id, user_id, kind, category, source, title, detail, priority, status,
+            related_type, related_id
+        ) VALUES ($1, $2, 'actual', 'crm', 'entity_stub', $3, $4, 5, 'open', 'entity', $5)
         """,
         org_id, creator,
         f"Complete profile: {display_name}",
         f"Stub entity created via picker. Please complete the {entity_type} profile.",
+        row["id"],  # BUGFIX1 (DASH-02) — the to-do links to the entity it is about
     )
     return row
 
@@ -543,40 +546,35 @@ async def _fetch_active_entity(conn, org_id: str, entity_id: UUID):
     )
 
 
+async def _entity_names(conn, org_id, ids) -> dict:
+    rows = await conn.fetch(
+        "SELECT id, display_name FROM entities WHERE id = ANY($1::uuid[]) AND org_id = $2 "
+        "AND valid_to IS NULL AND system_to IS NULL", list({i for i in ids if i}), org_id)
+    return {r["id"]: r["display_name"] for r in rows}
+
+
 async def _fetch_owners(conn, org_id, entity_id):
-    return await conn.fetch(
-        """
-        SELECT o.id, o.parent_id, o.child_id, o.ownership_pct,
-               o.ownership_type, p.display_name AS parent_name,
-               c.display_name AS child_name
-        FROM entity_ownership o
-        JOIN entities p ON p.id = o.parent_id
-        JOIN entities c ON c.id = o.child_id
-        WHERE o.child_id = $1 AND o.org_id = $2
-          AND o.valid_to IS NULL AND o.system_to IS NULL
-        ORDER BY o.ownership_pct DESC
-        """,
-        entity_id,
-        org_id,
-    )
+    # BUGFIX1 (CRM-02) — from the ONE ownership read, same as the tab.
+    edges = [e for e in await ownership_edges(conn, org_id, [entity_id])
+             if e["child_id"] == entity_id]
+    names = await _entity_names(conn, org_id, [e["parent_id"] for e in edges] + [e["child_id"] for e in edges])
+    out = [{**e, "ownership_pct": float(e["ownership_pct"] or 0),
+            "ownership_type": e["ownership_type"] or "equity",
+            "parent_name": names.get(e["parent_id"]), "child_name": names.get(e["child_id"])}
+           for e in edges]
+    return sorted(out, key=lambda e: -(float(e["ownership_pct"] or 0)))
 
 
 async def _fetch_holdings(conn, org_id, entity_id):
-    return await conn.fetch(
-        """
-        SELECT o.id, o.parent_id, o.child_id, o.ownership_pct,
-               o.ownership_type, p.display_name AS parent_name,
-               c.display_name AS child_name
-        FROM entity_ownership o
-        JOIN entities p ON p.id = o.parent_id
-        JOIN entities c ON c.id = o.child_id
-        WHERE o.parent_id = $1 AND o.org_id = $2
-          AND o.valid_to IS NULL AND o.system_to IS NULL
-        ORDER BY o.ownership_pct DESC
-        """,
-        entity_id,
-        org_id,
-    )
+    # BUGFIX1 (CRM-02) — from the ONE ownership read, same as the tab.
+    edges = [e for e in await ownership_edges(conn, org_id, [entity_id])
+             if e["parent_id"] == entity_id]
+    names = await _entity_names(conn, org_id, [e["parent_id"] for e in edges] + [e["child_id"] for e in edges])
+    out = [{**e, "ownership_pct": float(e["ownership_pct"] or 0),
+            "ownership_type": e["ownership_type"] or "equity",
+            "parent_name": names.get(e["parent_id"]), "child_name": names.get(e["child_id"])}
+           for e in edges]
+    return sorted(out, key=lambda e: -(float(e["ownership_pct"] or 0)))
 
 
 async def _fetch_attributes(conn, org_id, entity_id):
@@ -1029,6 +1027,20 @@ async def add_tax_id(request: Request, entity_id: UUID, body: TaxIdCreate):
         entity = await _fetch_active_entity(conn, org_id, entity_id)
         if entity is None:
             raise HTTPException(status_code=404, detail="Entity not found")
+        # BUGFIX1 (CRM-04) — the same value of the same type and country is
+        # already a current row: refuse instead of writing a second live copy
+        # (James Hargrove had two identical current SSN rows, 4 min apart).
+        dup = await conn.fetchval(
+            """
+            SELECT 1 FROM entity_tax_ids
+            WHERE org_id = $1 AND entity_id = $2 AND tax_id_type::text = $3
+              AND tax_id_country IS NOT DISTINCT FROM $4 AND tax_id_encrypted = $5
+              AND valid_to IS NULL AND system_to IS NULL
+            """,
+            org_id, entity_id, body.tax_id_type.value, body.tax_id_country, encrypted,
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail="This tax ID is already on record for this entity.")
         row = await conn.fetchrow(
             """
             INSERT INTO entity_tax_ids (
@@ -1466,23 +1478,15 @@ async def ownership_graph(request: Request, entity_id: UUID):
             if node_depth >= max_depth:
                 continue
 
-            rows = await conn.fetch(
-                """
-                SELECT id, parent_id, child_id, ownership_pct, ownership_type
-                FROM entity_ownership
-                WHERE (parent_id = $1 OR child_id = $1) AND org_id = $2
-                  AND valid_to IS NULL AND system_to IS NULL
-                """,
-                node,
-                org_id,
-            )
+            # BUGFIX1 (CRM-02) — the ONE ownership read (both tables).
+            rows = await ownership_edges(conn, org_id, [node])
             for r in rows:
                 edges.setdefault(
                     r["id"],
                     GraphEdge(
                         parent_id=r["parent_id"],
                         child_id=r["child_id"],
-                        ownership_pct=float(r["ownership_pct"]),
+                        ownership_pct=float(r["ownership_pct"] or 0),
                         ownership_type=r["ownership_type"],
                     ),
                 )

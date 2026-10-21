@@ -53,6 +53,7 @@ from schemas.marketplace import (
 from schemas.portfolio import TaxonomyPlacementResponse
 from services.audit import write_audit_log
 from services.database import get_pool
+from services import deal_lifecycle as dlc
 from services.deal_creation import insert_deal
 from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
@@ -93,16 +94,11 @@ def log_500(endpoint_name: str):
     return decorator
 
 # Statuses visible to ordinary members.
-MEMBER_VISIBLE_STATUSES = ("active", "under_review")
+MEMBER_VISIBLE_STATUSES = dlc.MEMBER_VISIBLE_STATUSES  # BUGFIX1: one copy
 
-# Allowed status transitions: from -> set(to).
-STATUS_TRANSITIONS = {
-    "draft": {"submitted"},
-    "submitted": {"under_review"},
-    "under_review": {"active"},
-    "active": {"closed"},
-}
-# "any -> archived" is always permitted.
+# Allowed status transitions live in services/deal_lifecycle (BUGFIX1: the ONE
+# lifecycle); re-exported here for existing importers.
+STATUS_TRANSITIONS = dlc.STATUS_TRANSITIONS
 
 # Accreditation values that satisfy the interest compliance gate.
 QUALIFIED_ACCREDITATION = ("self_certified", "third_party_verified")
@@ -416,8 +412,15 @@ async def _resolve_taxonomy_labels(conn, keys) -> dict:
 
 
 def _deal_response(row, *, composite=None, votes=None, user_vote=None,
-                   interested=False, doc_count=0, label_map=None) -> DealResponse:
+                   interested=False, doc_count=0, label_map=None, stages=None) -> DealResponse:
     data = dict(row)
+    if data.get("deal_status") is not None:
+        data["deal_status"] = str(data["deal_status"])
+    # BUGFIX1 — label and order of the deal's ONE lifecycle state (config).
+    stage = next((s for s in (stages or []) if s["status"] == data.get("deal_status")), None)
+    if stage is not None:
+        data["stage_label"] = stage["label"] or stage["status"]
+        data["stage_order"] = stage["order"]
     data["target_raise"] = _f(data.get("target_raise"))
     data["minimum_investment"] = _f(data.get("minimum_investment"))
     data["expected_return_pct"] = _f(data.get("expected_return_pct"))
@@ -445,22 +448,16 @@ def _deal_response(row, *, composite=None, votes=None, user_vote=None,
 # ---------------------------------------------------------------------------
 @router.get("/deals/stage-summary")
 async def get_deal_stage_summary(request: Request):
+    """BUGFIX1 — counts per lifecycle stage (deal_status), in lifecycle order,
+    labelled from the deal_stages config: the SAME services.deal_lifecycle.summary
+    the dashboard snapshot uses. `stage` is the config key (what the Stage
+    filter and column key on); `status` the lifecycle state."""
     org_id = get_org_id(request)
     staff = is_staff(request)
-    conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
-    params: list = [org_id]
-    if not staff:
-        params.append(list(MEMBER_VISIBLE_STATUSES))
-        conditions.append(f"deal_status = ANY(${len(params)})")
-    # Normalize casing so "Sourced" and "sourced" collapse into one segment.
-    query = (
-        f"SELECT LOWER(COALESCE(deal_stage, 'sourced')) AS stage, COUNT(*) AS count "
-        f"FROM deals WHERE {' AND '.join(conditions)} "
-        f"GROUP BY LOWER(COALESCE(deal_stage, 'sourced')) ORDER BY stage"
-    )
     pool = await get_pool()
-    rows = await pool.fetch(query, *params)
-    return [{"stage": r["stage"], "count": r["count"]} for r in rows]
+    async with pool.acquire() as conn:
+        return await dlc.summary(
+            conn, org_id, member_statuses=None if staff else MEMBER_VISIBLE_STATUSES)
 
 
 @router.get("/deals", response_model=list[DealResponse])
@@ -489,8 +486,12 @@ async def list_deals(
         conditions.append(f"deal_status = ANY(${len(params)})")
 
     if deal_stage:
-        params.append(deal_stage)
-        conditions.append(f"deal_stage = ${len(params)}")
+        # BUGFIX1 — the Stage filter is the lifecycle: a config key (or a raw
+        # status) resolves to its deal_status.
+        async with (await get_pool()).acquire() as conn:
+            stage_status = dlc.status_for_key(await dlc.lifecycle(conn, org_id), deal_stage)
+        params.append(stage_status or deal_stage)
+        conditions.append(f"deal_status::text = ${len(params)}")
     if asset_class:
         params.append(asset_class)
         conditions.append(f"asset_class = ${len(params)}")
@@ -531,6 +532,7 @@ async def list_deals(
             if k
         })
         label_map = await _resolve_taxonomy_labels(conn, taxonomy_keys)
+        stages = await dlc.lifecycle(conn, org_id)
 
     return [
         _deal_response(
@@ -541,6 +543,7 @@ async def list_deals(
             interested=r["id"] in interest,
             doc_count=docs.get(r["id"], 0),
             label_map=label_map,
+            stages=stages,
         )
         for r in rows
     ]
@@ -566,7 +569,8 @@ async def create_deal(request: Request, body: DealCreate):
             # — the SAME path Chancery Phase-10 VDR approval uses, so there is
             # never a second, parallel deal-creation mechanism.
             row = await insert_deal(conn, org_id, body, returning=DEAL_SELECT)
-    return _deal_response(row)
+            stages = await dlc.lifecycle(conn, org_id)
+    return _deal_response(row, stages=stages)
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +651,7 @@ async def get_deal(request: Request, deal_id: UUID):
             conn,
             [row.get("asset_super_class"), row.get("asset_class"), row.get("asset_sub_category")],
         )
+        stages = await dlc.lifecycle(conn, org_id)
 
     deal = _deal_response(
         row,
@@ -656,6 +661,7 @@ async def get_deal(request: Request, deal_id: UUID):
         interested=interest,
         doc_count=doc_count,
         label_map=label_map,
+        stages=stages,
     )
     return DealDetail(
         deal=deal,
@@ -707,6 +713,10 @@ async def update_deal(request: Request, deal_id: UUID, body: DealUpdate):
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
     updates = body.model_dump(exclude_unset=True)
+    if any(k in updates for k in ("deal_status", "deal_stage")):
+        raise HTTPException(
+            status_code=400,
+            detail="A deal's stage changes through PUT /deals/{id}/status, not the edit form.")
     if any(k in updates for k in ("asset_super_class", "asset_class", "asset_sub_category")):
         tax_errors = await validate_taxonomy_fields(
             str(org_id),
@@ -725,36 +735,15 @@ async def update_deal(request: Request, deal_id: UUID, body: DealUpdate):
                 raise HTTPException(status_code=404, detail="Deal not found")
 
             # Bi-temporal, FK-safe: archive prior version, then update live row.
-            await conn.execute(
-                """
-                INSERT INTO deals (
-                    org_id, slug, name, description, deal_status,
-                    asset_super_class, asset_class, asset_sub_category,
-                    sponsor_entity_id, sponsor_name_override, target_raise,
-                    minimum_investment, expected_return_pct, term_months,
-                    deal_date, close_date, location, highlights, tags,
-                    is_featured, submitted_by, published_at,
-                    valid_from, valid_to, system_from, system_to,
-                    created_by, created_at, updated_at
-                )
-                SELECT org_id, slug, name, description, deal_status,
-                       asset_super_class, asset_class, asset_sub_category,
-                       sponsor_entity_id, sponsor_name_override, target_raise,
-                       minimum_investment, expected_return_pct, term_months,
-                       deal_date, close_date, location, highlights, tags,
-                       is_featured, submitted_by, published_at,
-                       valid_from, valid_to, system_from, now(),
-                       created_by, created_at, updated_at
-                FROM deals
-                WHERE id = $1 AND org_id = $2
-                  AND valid_to IS NULL AND system_to IS NULL
-                """,
-                deal_id,
-                org_id,
-            )
+            # BUGFIX1 — through the shared copy; the old inline copy kept the
+            # UNIQUE slug (so it always failed) and dropped deal_stage.
+            await dlc.archive_version(conn, org_id, deal_id)
 
+            # BUGFIX1 — deal_status / deal_stage are NOT editable here: the
+            # lifecycle moves only through PUT /deals/{id}/status (transitions,
+            # confirmation, required fields) — this was a backdoor around all three.
             editable = (
-                "name", "description", "deal_status", "deal_stage",
+                "name", "description",
                 "asset_super_class", "asset_class", "asset_sub_category",
                 "sponsor_entity_id", "sponsor_name_override", "target_raise",
                 "minimum_investment", "expected_return_pct", "term_months",
@@ -791,6 +780,11 @@ async def update_deal(request: Request, deal_id: UUID, body: DealUpdate):
 
 @router.put("/deals/{deal_id}/status", response_model=DealResponse)
 async def update_deal_status(request: Request, deal_id: UUID, body: StatusUpdate):
+    """BUGFIX1 — through services.deal_lifecycle.apply_status: transitions,
+    confirmation for Submit / Archive (428 without confirm=true), the configured
+    required fields for Submit (422 naming each), a bi-temporal version, and
+    the deal_stage mirror. Gate unchanged: members may only submit a draft;
+    everything else needs manage_deals."""
     org_id = get_org_id(request)
     target = body.status
     pool = await get_pool()
@@ -800,48 +794,71 @@ async def update_deal_status(request: Request, deal_id: UUID, body: StatusUpdate
             current = await _fetch_deal(conn, org_id, deal_id)
             if current is None:
                 raise HTTPException(status_code=404, detail="Deal not found")
-
-            src = current["deal_status"]
-            allowed = STATUS_TRANSITIONS.get(src, set()) | {"archived"}
-            if target not in allowed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid transition: {src} -> {target}",
-                )
-
-            # Members may only submit a draft; everything else needs manage_deals.
+            src = str(current["deal_status"])
             member_allowed = src == "draft" and target == "submitted"
             if not member_allowed:
                 require_permission(request, "manage_deals")
+            try:
+                updated = await dlc.apply_status(
+                    conn, org_id, deal_id, target, actor=get_user_id(request),
+                    confirm=body.confirm, select=DEAL_SELECT)
+            except dlc.LifecycleError as exc:
+                raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+            stages = await dlc.lifecycle(conn, org_id)
+    return _deal_response(updated, stages=stages)
 
-            set_clauses = ["deal_status = $3", "system_from = now()",
-                           "updated_at = now()"]
-            params: list = [deal_id, org_id, target]
-            if target == "active":
-                set_clauses.append("published_at = now()")
-            if target == "submitted":
-                params.append(get_user_id(request))
-                set_clauses.append(f"submitted_by = ${len(params)}")
 
-            updated = await conn.fetchrow(
-                f"""
-                UPDATE deals SET {', '.join(set_clauses)}
-                WHERE id = $1 AND org_id = $2
-                  AND valid_to IS NULL AND system_to IS NULL
-                RETURNING {DEAL_SELECT}
-                """,
-                *params,
-            )
-            await write_audit_log(
-                conn,
-                org_id=org_id,
-                action="status_change",
-                table_name="deals",
-                record_id=deal_id,
-                old={"deal_status": src},
-                new={"deal_status": target},
-            )
-    return _deal_response(updated)
+@router.post("/deals/{deal_id}/unarchive", response_model=DealResponse)
+async def unarchive_deal(request: Request, deal_id: UUID):
+    """BUGFIX1 (R2-MKT-05) — restore an archived deal to the stage it held
+    before it was archived (from its bi-temporal version, else the audit
+    trail); audited as a status_change with unarchive=true. Same gate as
+    Archive: manage_deals."""
+    require_permission(request, "manage_deals")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            try:
+                updated = await dlc.apply_status(
+                    conn, org_id, deal_id, "archived", actor=get_user_id(request),
+                    unarchive=True, select=DEAL_SELECT)
+            except dlc.LifecycleError as exc:
+                raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+            stages = await dlc.lifecycle(conn, org_id)
+    return _deal_response(updated, stages=stages)
+
+
+@router.get("/deals/{deal_id}/lifecycle")
+async def get_deal_lifecycle(request: Request, deal_id: UUID):
+    """BUGFIX1 — what the deal page needs to drive its lifecycle controls: the
+    ordered stages (labels from config), the configured submit requirements and
+    which of them this deal still lacks. Read gate = the deal's own (404 to a
+    member for a status they cannot see)."""
+    org_id = get_org_id(request)
+    staff = is_staff(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM deals WHERE id = $1 AND org_id = $2 "
+            "AND valid_to IS NULL AND system_to IS NULL", deal_id, org_id)
+        if row is None or (not staff and str(row["deal_status"]) not in MEMBER_VISIBLE_STATUSES):
+            raise HTTPException(status_code=404, detail="Deal not found")
+        stages = await dlc.lifecycle(conn, org_id)
+        missing = await dlc.missing_for_submit(conn, org_id, dict(row))
+        prior = (await dlc.prior_status(conn, org_id, deal_id)
+                 if str(row["deal_status"]) == dlc.ARCHIVED else None)
+    labels = dlc.label_map(stages)
+    return {
+        "deal_id": str(deal_id),
+        "status": str(row["deal_status"]),
+        "label": labels.get(str(row["deal_status"])),
+        "stages": stages,
+        "next": sorted(dlc.STATUS_TRANSITIONS.get(str(row["deal_status"]), set())),
+        "missing_for_submit": missing,
+        "unarchive_to": prior,
+        "unarchive_to_label": labels.get(prior) if prior else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1013,6 +1030,41 @@ async def vote_deal(request: Request, deal_id: UUID, body: VoteRequest):
                 "downvotes": 0,
             }
     return {**summary, "user_vote": user_vote}
+
+
+@router.delete("/deals/{deal_id}/vote")
+@log_500("withdraw_vote")
+async def withdraw_vote(request: Request, deal_id: UUID):
+    """BUGFIX1 (VOTE-01) — withdraw the CALLER'S own vote. Same gate as casting
+    one (vote_deal). Owner-only by construction: the DELETE keys on the
+    caller's own users.id, so no request can remove anyone else's vote; 404 when
+    the caller has no vote on this deal. deal_votes carries no history columns
+    (a vote is a preference, not a record); the withdrawal is audited."""
+    require_permission(request, "vote_deal")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        user_id = await ensure_user(conn, request)
+        async with conn.transaction():
+            deal = await _fetch_deal(conn, org_id, deal_id)
+            if deal is None:
+                raise HTTPException(status_code=404, detail="Deal not found")
+            removed = await conn.fetchrow(
+                "DELETE FROM deal_votes WHERE deal_id = $1 AND user_id = $2 AND org_id = $3 "
+                "RETURNING id, vote",
+                deal_id, user_id, org_id,
+            )
+            if removed is None:
+                raise HTTPException(status_code=404, detail="You have no vote on this deal.")
+            summary = (await _vote_summary(conn, [deal_id])).get(deal_id) or {
+                "vote_count": 0, "upvotes": 0, "downvotes": 0,
+            }
+    await write_audit_log(
+        None, org_id=org_id, action="vote_withdrawn", table_name="deal_votes",
+        record_id=removed["id"], new={"deal_id": str(deal_id), "vote": removed["vote"]},
+        actor=user_id,
+    )
+    return {**summary, "user_vote": None}
 
 
 # ---------------------------------------------------------------------------
@@ -1715,54 +1767,27 @@ async def get_ai_summary(request: Request, deal_id: UUID):
 # ---------------------------------------------------------------------------
 @router.put("/deals/{deal_id}/stage", response_model=DealResponse)
 async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpdate):
+    """BUGFIX1 — "Advance stage" is a lifecycle step: the config key resolves to
+    its deal_status and goes through the same apply_status (transitions,
+    version, mirror). Gate unchanged (manage_deals). Advancing is an explicit
+    button press, so it counts as confirmed; Archive / Submit keep their own."""
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
-        valid = await conn.fetchval(
-            """
-            SELECT 1 FROM config
-            WHERE org_id = $1 AND category = 'deal_stages' AND config_key = $2 LIMIT 1
-            """,
-            org_id,
-            body.stage,
-        )
-        if not valid:
+        stages = await dlc.lifecycle(conn, org_id)
+        target = dlc.status_for_key(stages, body.stage)
+        if target is None:
             raise HTTPException(status_code=400, detail=f"Unknown deal stage: {body.stage}")
-
-        stage_label = await conn.fetchval(
-            """
-            SELECT config_value FROM config
-            WHERE org_id = $1 AND category = 'deal_stages' AND config_key = $2
-            LIMIT 1
-            """,
-            org_id, body.stage,
-        ) or body.stage
-
+        stage_label = dlc.label_map(stages)[target]
         async with conn.transaction():
-            current = await _fetch_deal(conn, org_id, deal_id)
-            if current is None:
-                raise HTTPException(status_code=404, detail="Deal not found")
-
-            updated = await conn.fetchrow(
-                f"""
-                UPDATE deals SET deal_stage = $2, updated_at = now()
-                WHERE id = $1 AND valid_to IS NULL AND system_to IS NULL
-                RETURNING {DEAL_SELECT}
-                """,
-                deal_id,
-                body.stage,
-            )
-            await write_audit_log(
-                conn,
-                org_id=org_id,
-                action="stage_change",
-                table_name="deals",
-                record_id=deal_id,
-                old={"deal_stage": current.get("deal_stage")},
-                new={"deal_stage": body.stage},
-            )
+            try:
+                updated = await dlc.apply_status(
+                    conn, org_id, deal_id, target, actor=get_user_id(request),
+                    confirm=target != dlc.ARCHIVED, select=DEAL_SELECT)
+            except dlc.LifecycleError as exc:
+                raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
         interested = await _deal_interest_user_ids(conn, org_id, deal_id)
 
     # Notify everyone who has indicated interest of the stage change.
@@ -1774,7 +1799,7 @@ async def update_deal_stage(request: Request, deal_id: UUID, body: DealStageUpda
         resource_type="deal", resource_id=deal_id,
         created_by=get_user_id(request),
     )
-    return _deal_response(updated)
+    return _deal_response(updated, stages=stages)
 
 
 # ---------------------------------------------------------------------------
@@ -1802,18 +1827,35 @@ async def list_member_investments(request: Request, deal_id: UUID):
         rows = await conn.fetch(
             f"""
             SELECT {MEMBER_INVESTMENT_SELECT} FROM member_investments
-            WHERE deal_id = $1 AND org_id = $2
+            WHERE deal_id = $1 AND org_id = $2 AND system_to IS NULL
             ORDER BY updated_at DESC NULLS LAST
             """,
             deal_id,
             org_id,
         )
+        # BUGFIX1 (MKT-04) — the member's name (same org, same manage_deals
+        # gate as the rows themselves), never a truncated id.
+        names = await member_display_names(conn, org_id, [r["user_id"] for r in rows])
     return [
         MemberInvestmentResponse(
-            **{**dict(r), "invested_amount": _f(r["invested_amount"])}
+            **{**dict(r), "invested_amount": _f(r["invested_amount"]),
+               "member_name": names.get(r["user_id"])}
         )
         for r in rows
     ]
+
+
+async def member_display_names(conn, org_id, user_ids) -> dict:
+    """users.id -> full_name (else email) for users of THIS org."""
+    ids = [i for i in user_ids if i]
+    if not ids:
+        return {}
+    rows = await conn.fetch(
+        "SELECT id, COALESCE(NULLIF(btrim(full_name), ''), email) AS nm FROM users "
+        "WHERE id = ANY($1::uuid[]) AND org_id = $2",
+        ids, org_id,
+    )
+    return {r["id"]: r["nm"] for r in rows}
 
 
 @router.post(

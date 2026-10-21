@@ -74,7 +74,8 @@ from services.spv_classes import (
     normalize_class_label,
     resolve_class_label,
 )
-from services.spv_rollup import deal_rollup, spv_totals
+from services.spv_visibility import MEMBER_VISIBLE_SPV_STATUSES
+from services.spv_rollup import deal_rollup, spv_commitment_summaries, spv_totals
 from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
 
@@ -90,7 +91,7 @@ SPV_STATUS_TRANSITIONS = {
 }
 
 # Statuses visible to ordinary members.
-MEMBER_VISIBLE_STATUSES = ("open", "closing")
+MEMBER_VISIBLE_STATUSES = MEMBER_VISIBLE_SPV_STATUSES  # services/spv_visibility (BUGFIX1)
 
 # DB column is spv_status; alias to status for the response.
 SPV_SELECT = (
@@ -116,12 +117,23 @@ def _f(v):
     return float(v) if v is not None else None
 
 
-def _spv_response(row) -> SPVResponse:
+def commitment_json(summary: dict | None) -> dict | None:
+    """BUGFIX1 — a commitment_summary as JSON numbers (Decimal -> float)."""
+    if summary is None:
+        return None
+    return {k: (float(v) if v is not None and v.__class__.__name__ == "Decimal" else v)
+            for k, v in summary.items()}
+
+
+def _spv_response(row, commitment: dict | None = None) -> SPVResponse:
     d = dict(row)
     d["status"] = d.pop("spv_status")  # remap DB column name to response field
+    c = commitment_json(commitment)
     return SPVResponse(
         **{
             **d,
+            "commitment": c,
+            "total_committed": c["total_committed"] if c else None,
             "target_raise": _f(d.get("target_raise")),
             "minimum_raise": _f(d.get("minimum_raise")),
             "hard_cap": _f(d.get("hard_cap")),
@@ -265,8 +277,11 @@ async def list_spvs(
         f"LIMIT ${len(params) - 1} OFFSET ${len(params)}"
     )
     pool = await get_pool()
-    rows = await pool.fetch(query, *params)
-    return [_spv_response(r) for r in rows]
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query, *params)
+        # BUGFIX1 (SPV-01) — the ONE committed / % of target function.
+        summaries = await spv_commitment_summaries(conn, org_id, [r["id"] for r in rows])
+    return [_spv_response(r, summaries.get(r["id"])) for r in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -279,11 +294,12 @@ async def get_spv(request: Request, spv_id: UUID):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await _fetch_spv(conn, org_id, spv_id)
+        summaries = await spv_commitment_summaries(conn, org_id, [spv_id]) if row else {}
     if row is None:
         raise HTTPException(status_code=404, detail="SPV not found")
     if not staff and row["spv_status"] not in MEMBER_VISIBLE_STATUSES:
         raise HTTPException(status_code=404, detail="SPV not found")
-    return _spv_response(row)
+    return _spv_response(row, summaries.get(spv_id))
 
 
 # ---------------------------------------------------------------------------
@@ -615,14 +631,18 @@ async def get_captable(request: Request, spv_id: UUID):
             spv_id,
             org_id,
         )
+        # BUGFIX1 (SPV-01) — committed and % of target from the ONE function the
+        # list card and dashboard use (cancelled excluded, never capped).
+        commitment = (await spv_commitment_summaries(conn, org_id, [spv_id])).get(spv_id)
 
-    total_committed = sum(_f(r["commitment_amount"]) or 0 for r in rows)
     total_funded = sum(_f(r["funded_amount"]) or 0 for r in rows)
+    c = commitment_json(commitment) or {}
 
     return CapTableResponse(
         spv_id=spv_id,
         spv_name=spv["name"],
-        total_committed=total_committed,
+        commitment=c or None,
+        total_committed=c.get("total_committed", 0.0),
         total_funded=total_funded,
         target_raise=_f(spv["target_raise"]),
         subscriptions=[

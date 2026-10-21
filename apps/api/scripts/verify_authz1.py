@@ -633,12 +633,19 @@ async def y_staff(conn):
     try:
         for uid in (U_MEMBER, U_STAFF):
             await api(claims_for(uid), "GET", "/api/v1/document-search?q=authz1")
+            # BUGFIX1: semantic search also runs the keyword search (its "not yet
+            # indexed" list) with the same flag — record that call separately so
+            # "search" stays one entry per Document Search request.
+            n0 = len(seen.get("search", []))
             await api(claims_for(uid), "GET", "/api/v1/semantic-search?q=authz1")
+            seen.setdefault("semantic_keyword", []).extend(seen.get("search", [])[n0:])
+            del seen.setdefault("search", [])[n0:]
             await api(claims_for(uid), "POST", "/api/v1/assistant/message", {"message": "authz1 verify"})
     finally:
         document_linkage.search_documents, document_embedding.semantic_search = orig_dl, orig_sem
         assistant_router._run_loop = orig_loop
-    for key, label in (("search", "Document Search"), ("semantic", "semantic search"), ("assistant", "the assistant")):
+    for key, label in (("search", "Document Search"), ("semantic", "semantic search"),
+                       ("semantic_keyword", "semantic search's keyword pass"), ("assistant", "the assistant")):
         check(seen.get(key) == [False, True], f"{label}: member → not staff, investment_staff → staff",
               f"{seen.get(key)}")
     code, me = await api(claims_for(U_MEMBER), "GET", "/api/v1/users/me")

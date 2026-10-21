@@ -3,12 +3,18 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import UserManagement from "@/components/admin/UserManagement";
 import { getAdminUsers, getAdminRoles, getProfiles } from "@/lib/api";
+import { STATUS_FILTER_OPTIONS, listParams } from "@/lib/userManagementModel.mjs";
 
-export default async function AdminUsersPage() {
+// USERMGMT1: the pending-sign-in to-do links here as ?status=pending, so the
+// page honours that filter on first load (only the API's own status values).
+export default async function AdminUsersPage({ searchParams }) {
   const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/admin/users");
   }
+  const params = (await searchParams) || {};
+  const requested = typeof params.status === "string" ? params.status : "";
+  const initialStatus = STATUS_FILTER_OPTIONS.some((o) => o.value === requested) ? requested : "";
 
   let users = [];
   let roles = [];
@@ -16,7 +22,7 @@ export default async function AdminUsersPage() {
   let error = null;
   try {
     [users, roles] = await Promise.all([
-      getAdminUsers({ limit: 200 }),
+      getAdminUsers(listParams({ status: initialStatus })),
       getAdminRoles(),
     ]);
     // SOC Phase A: the profile selector is additive. If the admin lacks profile-
@@ -29,9 +35,9 @@ export default async function AdminUsersPage() {
   return (
     <AppShell user={session.user}>
       <div>
-        <h1 className="text-3xl font-semibold text-navy">User Management</h1>
+        <h1 className="text-3xl font-semibold text-navy">People &amp; Access</h1>
         <p className="mt-1 text-sm text-text-muted">
-          Manage member access and roles
+          Who can sign in, how they sign in, and what they can reach
         </p>
       </div>
 
@@ -45,9 +51,11 @@ export default async function AdminUsersPage() {
         </div>
       ) : (
         <UserManagement
+          key={initialStatus}
           initialUsers={users || []}
           roles={roles || []}
           profiles={profiles || []}
+          initialStatus={initialStatus}
         />
       )}
     </AppShell>

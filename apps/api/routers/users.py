@@ -2,14 +2,19 @@
 
 ``GET  /users/me``   — profile + resolved role / permissions
 ``PATCH /users/me``  — update nav_pinned, assistant_panel_posture
+``PUT  /users/me/contact-email`` — USERMGMT1: a person whose account has no
+real email (a ``<sub>@placeholder.local`` row) tells the admins how to reach
+them. Reachable while PENDING (main.PENDING_ALLOWED_PATHS).
 """
 
 from uuid import UUID
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict
 
-from services import authz
+from services import authz, user_admin
+from services.audit import write_audit_log
 from services.database import get_pool
 from services.users import ensure_user
 
@@ -43,6 +48,11 @@ class MeResponse(BaseModel):
     status: str | None = None
     is_staff: bool = False
     is_super_admin: bool = False
+    # USERMGMT1 — the pending page asks for an address only when the account
+    # has no real one. `contact_email` is what the person typed: UNVERIFIED,
+    # shown to admins, never used for linking or provisioning.
+    email_is_placeholder: bool = False
+    contact_email: str | None = None
 
 
 class MePatch(BaseModel):
@@ -57,7 +67,7 @@ async def get_me(request: Request):
     async with pool.acquire() as conn:
         profile = await conn.fetchrow(
             "SELECT id, email, full_name, role, nav_pinned, assistant_panel_posture, "
-            "is_active, last_login_at "
+            "is_active, last_login_at, contact_email "
             "FROM users WHERE id = $1",
             UUID(principal.user_id),
         )
@@ -86,6 +96,8 @@ async def get_me(request: Request):
         status=principal.status,
         is_staff=principal.is_staff,
         is_super_admin=principal.is_super_admin,
+        email_is_placeholder=user_admin.is_placeholder_email(profile["email"] if profile else None),
+        contact_email=profile["contact_email"] if profile else None,
     )
 
 
@@ -116,4 +128,52 @@ async def patch_me(request: Request, body: MePatch):
             )
 
     # Return the updated profile (re-use get_me logic).
+    return await get_me(request)
+
+
+class ContactEmailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contact_email: str
+
+
+@router.put("/users/me/contact-email", response_model=MeResponse)
+async def set_contact_email(request: Request, body: ContactEmailRequest):
+    """Record how to reach a person whose account has no real email.
+
+    Allowed while pending — this is the one write a pending login may make,
+    and it touches only the caller's OWN row. Refused when the account already
+    has a real email. The value is stored as ``contact_email``: it is NOT
+    ``users.email``, it is never verified, and ``services.users`` never reads
+    it, so typing someone else's address links nothing.
+    """
+    principal = await authz.get_principal(request)
+    email = (body.contact_email or "").strip().lower()
+    if not user_admin.valid_email(email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        current = await conn.fetchrow(
+            "SELECT email, org_id FROM users WHERE id = $1", UUID(principal.user_id)
+        )
+        if current is None:
+            raise HTTPException(status_code=401, detail=authz.NO_USER_DETAIL)
+        if not user_admin.is_placeholder_email(current["email"]):
+            raise HTTPException(
+                status_code=409, detail="Your account already has an email address."
+            )
+        await conn.execute(
+            "UPDATE users SET contact_email = $2, contact_email_at = now(), updated_at = now() "
+            "WHERE id = $1",
+            UUID(principal.user_id), email,
+        )
+        await write_audit_log(
+            conn,
+            org_id=str(current["org_id"]),
+            action="set_contact_email",
+            table_name="users",
+            record_id=UUID(principal.user_id),
+            new={"contact_email_set": True, "verified": False},
+            actor=principal.user_id,
+        )
     return await get_me(request)

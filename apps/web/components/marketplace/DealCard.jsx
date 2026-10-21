@@ -29,7 +29,7 @@ export default function DealCard({ deal }) {
                 <IconStarFilled size={12} /> Featured
               </span>
             )}
-            <StatusBadge status={deal.deal_status} />
+            <StatusBadge status={deal.deal_status} label={deal.stage_label} />
           </div>
           <h3 className="mt-2 truncate text-lg font-medium text-navy">
             {deal.name}

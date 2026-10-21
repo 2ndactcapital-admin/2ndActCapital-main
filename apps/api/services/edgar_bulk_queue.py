@@ -91,7 +91,10 @@ LAPTOP_COMMAND_ENV = "EDGAR_BULK_LAPTOP_WORKER_COMMAND"
 # root, an explicit Doppler project/config and the repo's venv are all needed —
 # a bare `doppler run -- python3 …` from another folder does not work there.
 LAPTOP_COMMAND = ("cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- "
-                  "venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop")
+                  "apps/api/venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop")
+# BUGFIX1 — the API's own venv (apps/api/venv) is the one that works; the
+# repo-root venv/bin/python default did not (Doppler's
+# EDGAR_BULK_LAPTOP_WORKER_COMMAND had been papering over it).
 LAPTOP_TMUX_SESSION = "bulkworker"
 RENDER_COMMAND = "python3 apps/api/scripts/run_bulk_fetch.py --worker --target render"
 RENDER_REFUSAL = "Render worker is not set up — run on Laptop, or see setup steps"

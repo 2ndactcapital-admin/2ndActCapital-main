@@ -98,6 +98,11 @@ class DealResponse(DealBase):
     asset_class_label: str | None = None
     asset_sub_category_label: str | None = None
 
+    # BUGFIX1 — the ONE lifecycle (services/deal_lifecycle.py): the badge, the
+    # Stage column, the summary and the dashboard all render this label.
+    stage_label: str | None = None
+    stage_order: int | None = None
+
 
 # ---------------------------------------------------------------------------
 # Scores
@@ -224,6 +229,8 @@ class DealDetail(BaseModel):
 # ---------------------------------------------------------------------------
 class StatusUpdate(BaseModel):
     status: str
+    # BUGFIX1 — Archive and Submit for Review need an explicit confirmation.
+    confirm: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +283,8 @@ class MemberInvestmentResponse(BaseModel):
     stage: str | None = None
     notes: str | None = None
     invested_amount: float | None = None
+    # BUGFIX1 (MKT-04) — the member's name, never a truncated id.
+    member_name: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -292,6 +301,7 @@ class PortfolioInvestmentResponse(BaseModel):
     deal_id: UUID
     deal_name: str | None = None
     deal_status: str | None = None
+    stage_label: str | None = None  # BUGFIX1 — the deal's lifecycle label
     user_id: UUID
     org_id: UUID
     stage: str | None = None

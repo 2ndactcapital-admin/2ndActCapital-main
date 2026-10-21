@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRequestAuthClient } from "@/lib/authServer";
+import { forwardToApi } from "@/lib/apiForward";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -71,4 +72,24 @@ export async function POST(request) {
     console.error("[vote] fetch threw:", error?.message || error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+}
+
+// BUGFIX1 (VOTE-01) — withdraw the caller's own vote. The API keys the delete
+// on the caller's own user id, so this can never remove anyone else's vote.
+export async function DELETE(request) {
+  let dealId;
+  try {
+    ({ dealId } = await request.json());
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  if (!dealId) {
+    return NextResponse.json({ error: "dealId is required" }, { status: 400 });
+  }
+  const res = await forwardToApi(`/api/v1/deals/${encodeURIComponent(dealId)}/vote`, {
+    method: "DELETE",
+  });
+  if (!res.ok) return res;
+  const summary = await res.json();
+  return NextResponse.json({ ok: true, summary });
 }

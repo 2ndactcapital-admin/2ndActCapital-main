@@ -179,16 +179,20 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 6, "/portfolio/allocation", "Allocation", GATE_SUPER_ADMIN, false),
   // GET /me/ownership-graph is scoped to the caller's own visibility engine.
   tab("main", "portfolio", 7, "/portfolio/ownership-tree", "Ownership tree", null, false),
-  tab("main", "portfolio", 8, "/portfolio-reporting", "Reporting", null, false),
+  // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
+  { ...tab("main", "portfolio", 8, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
   main(60, "/spvs", "SPV Manager", "spv-manager"),
-  main(70, "/insurance", "Insurance", "insurance"),
-  main(80, "/community", "Community", "community"),
+  { ...main(70, "/insurance", "Insurance", "insurance"), comingSoon: true },
+  { ...main(80, "/community", "Community", "community"), comingSoon: true },
   // navregroup Task 3 — both searches now filter by the caller's own
   // visibility (staff visibility / delegate grants, then restricted access).
-  tab("main", "documents", 1, "/admin/document-search", "Search", null, false),
-  tab("main", "documents", 2, "/admin/semantic-search", "Semantic search", null, false),
+  // BUGFIX1 — the group's landing IS its first tab, outside /admin (the old
+  // /admin/* URLs redirect here). Keyword search also covers deal / entity /
+  // SPV attachments, each under its record's own visibility rule.
+  tab("main", "documents", 1, "/documents", "Search", null, false),
+  tab("main", "documents", 2, "/documents/semantic", "Semantic search", null, false),
   main(100, "/notifications", "Notifications", "notifications"),
 
   {
@@ -225,6 +229,17 @@ export const MENU_ITEMS = [
   tab("platform", "structured_notes", 4, "/admin/note-extraction/results", "Accuracy results", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 5, "/admin/pricing/surface", "Volatility surface", GATE_SUPER_ADMIN, true),
 ];
+
+/**
+ * BUGFIX1 — the feature flag for unbuilt pages. An item with `comingSoon: true`
+ * stays IN the definition (its label, href and gate are kept, so the page can
+ * be switched on by deleting the flag) but is never listed: not in the
+ * sidebar, not as a tab, not on /admin. Its URL renders the branded "Coming
+ * soon" page (components/ComingSoon.jsx) instead of a bare 404. To launch a
+ * page: build it, then remove `comingSoon: true` from its entry.
+ */
+export const COMING_SOON = MENU_ITEMS.filter((i) => i.comingSoon).map((i) => i.href);
+const LISTED = MENU_ITEMS.filter((i) => !i.comingSoon);
 
 /** The raw `users.role` on the /users/me payload (NOT the granted user_roles name). */
 export function accountRoleOf(me) {
@@ -292,12 +307,12 @@ export function canAccess(me, gate) {
 
 /** Every menu item `me` can see, in sidebar order. */
 export function visibleMenuItems(me) {
-  return MENU_ITEMS.filter((item) => canAccess(me, item.gate));
+  return LISTED.filter((item) => canAccess(me, item.gate));
 }
 
 /** The subset the /admin landing page lists. */
 export function visibleAdminSections(me) {
-  return MENU_ITEMS.filter((item) => item.adminIndex && canAccess(me, item.gate));
+  return LISTED.filter((item) => item.adminIndex && canAccess(me, item.gate));
 }
 
 // ── navregroup: groups, tabs and sections ──────────────────────────────────
@@ -306,7 +321,7 @@ const groupById = (id) => GROUPS.find((g) => g.id === id) || null;
 
 /** The tabs of `groupId` that `me` can see, in tab order. */
 export function visibleTabs(me, groupId) {
-  return MENU_ITEMS.filter((i) => i.group === groupId && canAccess(me, i.gate)).sort(
+  return LISTED.filter((i) => i.group === groupId && canAccess(me, i.gate)).sort(
     (a, b) => a.tab_order - b.tab_order,
   );
 }
@@ -329,7 +344,7 @@ export function visibleGroups(me, section) {
  * of its visible tabs (for the active state).
  */
 export function visibleSectionEntries(me, section) {
-  const items = MENU_ITEMS.filter(
+  const items = LISTED.filter(
     (i) => i.section === section && i.group === null && canAccess(me, i.gate),
   ).map((i) => ({ kind: "item", key: i.href, order: i.order, label: i.label, icon: i.icon,
     href: i.href, tabHrefs: [i.href] }));

@@ -10,13 +10,16 @@ const STATUS_COLORS = {
   archived: "bg-border text-text-muted",
 };
 
-export default function StatusBadge({ status }) {
+// BUGFIX1 — `label` is the lifecycle label the API resolves from the
+// deal_stages config (DealResponse.stage_label); the badge shows it whenever it
+// is present, so badge, Stage column and summary all say the same word.
+export default function StatusBadge({ status, label }) {
   const color = STATUS_COLORS[status] || "bg-border text-text-secondary";
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${color}`}
     >
-      {humanize(status)}
+      {label || humanize(status)}
     </span>
   );
 }

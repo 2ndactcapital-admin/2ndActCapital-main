@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import EntityPicker from "@/components/EntityPicker";
+import CommitmentProgress from "@/components/spv/CommitmentProgress";
 
 const STATUS_CONFIG = {
   soft: { label: "Soft", bg: "var(--2a-bg-sidebar)", text: "var(--2a-text-muted)" },
@@ -88,32 +89,15 @@ export default function SPVSubscriptionsTab({ spvId, capTable: initialCapTable, 
     return <p className="py-6 text-center text-sm text-[var(--2a-text-muted)]">No cap table data available.</p>;
   }
 
-  const { total_committed, target_raise, subscriptions = [] } = capTable;
-  const pct = target_raise
-    ? Math.min(100, Math.round((total_committed / target_raise) * 100))
-    : null;
+  const { subscriptions = [] } = capTable;
 
   return (
     <div>
       {/* Summary + Add Subscriber */}
       <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-[var(--2a-text)]">
-            {formatCurrency(total_committed)} committed
-          </p>
-          {target_raise && (
-            <p className="text-xs text-[var(--2a-text-muted)]">
-              {pct}% of {formatCurrency(target_raise)} target
-            </p>
-          )}
-          {pct !== null && (
-            <div className="mt-2 h-1.5 w-40 rounded-full bg-[var(--2a-bg-sidebar)]">
-              <div
-                className="h-1.5 rounded-full"
-                style={{ width: `${pct}%`, backgroundColor: "var(--2a-gold)" }}
-              />
-            </div>
-          )}
+        {/* BUGFIX1 (SPV-01) — the server's one commitment summary, never capped. */}
+        <div className="w-64">
+          <CommitmentProgress commitment={capTable.commitment} />
         </div>
         {staff && (
           <button

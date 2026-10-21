@@ -21,8 +21,10 @@ const { default: GroupLanding } = await import("../../components/GroupLanding.js
 const { PERSONAS } = await import("../../../api/scripts/navregroup_personas.mjs");
 const menu = await import("../../lib/menuVisibility.mjs");
 
-const MAIN = ["/dashboard", "/crm", "/marketplace", "/portfolio", "/market", "/spvs", "/insurance",
-  "/community", "/admin/document-search", "/notifications"];
+// BUGFIX1: Insurance and Community are flagged comingSoon (hidden from every
+// menu until built); Documents' first tab is /documents (moved out of /admin).
+const MAIN = ["/dashboard", "/crm", "/marketplace", "/portfolio", "/market", "/spvs",
+  "/documents", "/notifications"];
 const EXPECTED = {
   plain_member: { main: MAIN, org_admin: ["/admin/billing-groups"], platform: [] },
   staff_member: { main: MAIN, org_admin: ["/admin/billing-groups", "/admin/vdr-proposals"], platform: [] },
@@ -93,7 +95,8 @@ test("Sidebar.jsx keeps no item list of its own and imports from menuVisibility"
 test("tab bar: every visible tab of the group, the current one active; none off-group or single-tab", () => {
   const m = tabBarModel(PERSONAS.plain_member, "/portfolio/positions");
   assert.deepEqual(m.tabs.map((t) => t.label),
-    ["Overview", "Positions", "Transactions", "Securities", "Commitments", "Ownership tree", "Reporting"]);
+    // BUGFIX1: Reporting is flagged comingSoon (no page yet) — not a tab.
+    ["Overview", "Positions", "Transactions", "Securities", "Commitments", "Ownership tree"]);
   assert.deepEqual(m.tabs.filter((t) => t.active).map((t) => t.href), ["/portfolio/positions"]);
   const sa = tabBarModel(PERSONAS.super_admin, "/admin/edgar-pipeline");
   assert.deepEqual(sa.tabs.map((t) => t.label),
@@ -103,7 +106,7 @@ test("tab bar: every visible tab of the group, the current one active; none off-
   assert.equal(tabBarModel(PERSONAS.org_admin_manage_org_settings, "/admin/model-research"), null,
     "org admin sees only Model Research in AI Models: no bar");
   const html = renderToStaticMarkup(h(TabBar, { model: m }));
-  assert.equal(hrefsIn(html).length, 7);
+  assert.equal(hrefsIn(html).length, 6);
   assert.match(html, /<a [^>]*aria-current="page"[^>]*>Positions</);
 });
 
@@ -129,8 +132,9 @@ test("group landing redirects to the first visible tab (server side)", async () 
     { kind: "redirect", to: "/admin/profiles" });
   assert.deepEqual(await landing("people", PERSONAS.org_admin_manage_members),
     { kind: "redirect", to: "/admin/users" });
+  // BUGFIX1: the Documents landing IS its first tab, outside /admin.
   assert.deepEqual(await landing("documents", PERSONAS.plain_member),
-    { kind: "redirect", to: "/admin/document-search" });
+    { kind: "redirect", to: "/documents" });
 });
 
 test("group landing with no visible tab renders the refusal, not a redirect", async () => {

@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.ownership_read import ownership_edges
 from services.entity_graph import (
     detect_cycle,
     get_children,
@@ -583,39 +584,54 @@ async def get_entity_ownership(
         as_of_param = None
 
     async with pool.acquire() as conn:
-        owns_rows = await conn.fetch(
-            f"""
-            SELECT {_OWN_FIELDS},
-                   e.id AS cp_id, e.display_name, e.entity_type
-            FROM entity_relationships r
-            JOIN entities e ON e.id = r.to_entity_id
-            WHERE r.from_entity_id = $1
-              AND r.org_id = $2
-              AND r.relationship_type = 'ownership'
-              {time_filter}
-            ORDER BY e.display_name
-            """,
-            entity_id,
-            org_id,
-            *([as_of_param] if as_of_param else []),
-        )
+        if as_of:
+            owns_rows = await conn.fetch(
+                f"""
+                SELECT {_OWN_FIELDS},
+                       e.id AS cp_id, e.display_name, e.entity_type
+                FROM entity_relationships r
+                JOIN entities e ON e.id = r.to_entity_id
+                WHERE r.from_entity_id = $1
+                  AND r.org_id = $2
+                  AND r.relationship_type = 'ownership'
+                  {time_filter}
+                ORDER BY e.display_name
+                """,
+                entity_id, org_id, as_of_param,
+            )
+            owned_by_rows = await conn.fetch(
+                f"""
+                SELECT {_OWN_FIELDS},
+                       e.id AS cp_id, e.display_name, e.entity_type
+                FROM entity_relationships r
+                JOIN entities e ON e.id = r.from_entity_id
+                WHERE r.to_entity_id = $1
+                  AND r.org_id = $2
+                  AND r.relationship_type = 'ownership'
+                  {time_filter}
+                ORDER BY e.display_name
+                """,
+                entity_id, org_id, as_of_param,
+            )
+        else:
+            # BUGFIX1 (CRM-02) — current ownership through the ONE read the
+            # Overview uses (services/ownership_read: both ownership tables).
+            edges = await ownership_edges(conn, org_id, [entity_id])
+            cp_ids = [e["child_id"] if e["parent_id"] == entity_id else e["parent_id"] for e in edges]
+            ents = {r["id"]: r for r in await conn.fetch(
+                "SELECT id, display_name, entity_type FROM entities WHERE id = ANY($1::uuid[]) "
+                "AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL", cp_ids, org_id)}
 
-        owned_by_rows = await conn.fetch(
-            f"""
-            SELECT {_OWN_FIELDS},
-                   e.id AS cp_id, e.display_name, e.entity_type
-            FROM entity_relationships r
-            JOIN entities e ON e.id = r.from_entity_id
-            WHERE r.to_entity_id = $1
-              AND r.org_id = $2
-              AND r.relationship_type = 'ownership'
-              {time_filter}
-            ORDER BY e.display_name
-            """,
-            entity_id,
-            org_id,
-            *([as_of_param] if as_of_param else []),
-        )
+            def _row(e, cp):
+                ent = ents.get(cp) or {}
+                return {"id": e["id"], "ownership_pct": e["ownership_pct"], "notes": e["notes"],
+                        "effective_date": e["effective_date"], "change_reason": e["change_reason"],
+                        "cp_id": cp, "display_name": ent.get("display_name"),
+                        "entity_type": ent.get("entity_type"), "source": e["source"]}
+            owns_rows = sorted((_row(e, e["child_id"]) for e in edges if e["parent_id"] == entity_id),
+                               key=lambda r: r["display_name"] or "")
+            owned_by_rows = sorted((_row(e, e["parent_id"]) for e in edges if e["child_id"] == entity_id),
+                                   key=lambda r: r["display_name"] or "")
 
     def _to_item(row):
         cp = {
@@ -630,6 +646,10 @@ async def get_entity_ownership(
             "notes": row["notes"],
             "effective_date": str(row["effective_date"]) if row.get("effective_date") else None,
             "change_reason": row.get("change_reason"),
+            # BUGFIX1 — only entity_relationships rows are editable through
+            # this tab's endpoints; entity_ownership rows are shown read-only.
+            "source": row.get("source") or "entity_relationships",
+            "editable": (row.get("source") or "entity_relationships") == "entity_relationships",
         }
 
     owned_by_list = [_to_item(r) for r in owned_by_rows]

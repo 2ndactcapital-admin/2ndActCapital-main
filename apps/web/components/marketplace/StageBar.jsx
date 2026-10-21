@@ -10,12 +10,16 @@ const STAGE_COLORS = [
   "#AADAD0",
 ];
 
+// BUGFIX1 — rows come from services/deal_lifecycle.summary: lifecycle order,
+// each with its config `label`; zero-count stages are not drawn.
 export default function StageBar({ stageSummary = [], stages = [] }) {
+  stageSummary = stageSummary.filter((r) => Number(r.count) > 0);
   if (!stageSummary.length) return null;
 
   const labelMap = Object.fromEntries(
     stages.map((s) => [s.config_key, s.config_value])
   );
+  for (const r of stageSummary) if (r.label) labelMap[r.stage] = r.label;
   const total = stageSummary.reduce((s, r) => s + Number(r.count), 0);
   if (!total) return null;
 

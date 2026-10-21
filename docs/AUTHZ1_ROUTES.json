@@ -1,5 +1,5 @@
 {
- "app_route_count": 448,
+ "app_route_count": 452,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -1660,6 +1660,46 @@
    "write": true
   },
   {
+   "after": "authz manage_deals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_deals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.marketplace",
+   "name": "unarchive_deal",
+   "note": "",
+   "path": "/api/v1/deals/{deal_id}/unarchive",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.marketplace",
+   "name": "get_deal_lifecycle",
+   "note": "",
+   "path": "/api/v1/deals/{deal_id}/lifecycle",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "authz score_deal",
    "before": "token-claim score_deal",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
@@ -1699,6 +1739,28 @@
    "module": "routers.marketplace",
    "name": "vote_deal",
    "note": "same permission, now enforced from the DB Principal",
+   "path": "/api/v1/deals/{deal_id}/vote",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz vote_deal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "vote_deal"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.marketplace",
+   "name": "withdraw_vote",
+   "note": "",
    "path": "/api/v1/deals/{deal_id}/vote",
    "public": false,
    "write": true
@@ -2700,6 +2762,28 @@
    "path": "/api/v1/portfolio/positions/{position_id}",
    "public": false,
    "write": true
+  },
+  {
+   "after": "authz view_portfolio",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portfolio_positions",
+   "name": "list_visible_commitments",
+   "note": "",
+   "path": "/api/v1/portfolio/commitments",
+   "public": false,
+   "write": false
   },
   {
    "after": "authz view_portfolio",

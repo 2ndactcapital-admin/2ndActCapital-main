@@ -5,6 +5,7 @@ import { listSPVs } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 import { formatCurrency, formatDate } from "@/lib/format";
 import NewSPVForm from "@/components/spv/NewSPVForm";
+import CommitmentProgress from "@/components/spv/CommitmentProgress";
 
 const STATUS_CONFIG = {
   forming: { label: "Forming", bg: "bg-[var(--2a-bg-sidebar)]", text: "text-[var(--2a-text-muted)]" },
@@ -24,25 +25,6 @@ function StatusPill({ status }) {
     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.bg} ${cfg.text}`}>
       {cfg.label}
     </span>
-  );
-}
-
-function ProgressBar({ committed, target }) {
-  if (!target || target <= 0) return null;
-  const pct = Math.min(100, Math.round((committed / target) * 100));
-  return (
-    <div className="mt-2">
-      <div className="flex justify-between text-xs text-[var(--2a-text-muted)] mb-1">
-        <span>{formatCurrency(committed)} committed</span>
-        <span>{pct}% of {formatCurrency(target)}</span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-[var(--2a-bg-sidebar)]">
-        <div
-          className="h-1.5 rounded-full"
-          style={{ width: `${pct}%`, backgroundColor: "var(--2a-gold)" }}
-        />
-      </div>
-    </div>
   );
 }
 
@@ -105,12 +87,8 @@ export default async function SPVListPage() {
                   </div>
                   <StatusPill status={spv.status} />
                 </div>
-                {spv.target_raise && (
-                  <ProgressBar
-                    committed={spv.total_committed || 0}
-                    target={spv.target_raise}
-                  />
-                )}
+                {/* BUGFIX1 (SPV-01) — same summary as the cap table. */}
+                <CommitmentProgress commitment={spv.commitment} compact />
               </a>
             ))}
           </div>

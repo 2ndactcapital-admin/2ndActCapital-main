@@ -561,6 +561,20 @@ GATE_TOKENS = re.compile(r"require_permission|_require_\w+\(|has_permission|can_
 # not the working tree, so this sprint's scope is still proven.
 LATER_SPRINT_PAGE_CHANGES = {
     "/admin/users": "usermgmt1 (People & Access rebuilt the user management page)",
+    "/spvs": "bugfix1 (SPV-01: the list card renders the one commitment summary)",
+    "/portfolio": "bugfix1 (MKT-01: the status badge shows the lifecycle label)",
+    "/portfolio/commitments": "bugfix1 (PORT-02: the caller's commitments listed above the id lookup)",
+    "/portfolio/positions": "bugfix1 (PORT-01: the empty-holdings explanation)",
+    "/portfolio/securities": "bugfix1 (PORT-01: the empty-holdings explanation)",
+}
+
+# Pages a LATER sprint created where navregroup left a dead (404) link, with the
+# sprint named: BUGFIX1 hid these three from every menu (comingSoon flag) and
+# gave each URL a branded "Coming soon" page instead of the bare 404.
+LATER_SPRINT_NEW_PAGES = {
+    "/community": "bugfix1 (comingSoon page)",
+    "/insurance": "bugfix1 (comingSoon page)",
+    "/portfolio-reporting": "bugfix1 (comingSoon page)",
 }
 
 
@@ -579,6 +593,9 @@ def y_urls_unchanged() -> None:
         before = git_show(rel)
         now_path = REPO / rel
         if (before is not None) != now_path.exists():
+            if before is None and href in LATER_SPRINT_NEW_PAGES:
+                print(f"[INFO] {href}: page added by sprint {LATER_SPRINT_NEW_PAGES[href]}")
+                continue
             existence_diff.append(href)
             continue
         if before is None:

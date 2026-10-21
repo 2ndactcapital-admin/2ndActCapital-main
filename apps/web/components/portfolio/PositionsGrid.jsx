@@ -55,6 +55,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import EmptyHoldingsHint from "@/components/portfolio/EmptyHoldingsHint";
 
 import DataGrid from "@/components/ui/DataGrid";
 import EntityPicker from "@/components/EntityPicker";
@@ -218,6 +219,7 @@ const EMPTY_FILTERS = {
 
 export default function PositionsGrid() {
   const [rows, setRows] = useState([]);
+  const [emptyHint, setEmptyHint] = useState(null);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -242,6 +244,7 @@ export default function PositionsGrid() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || "Could not load positions.");
       setRows(Array.isArray(body.positions) ? body.positions : []);
+      setEmptyHint(body.empty_hint || null); // BUGFIX1 (PORT-01)
       setMeta(body);
     } catch (err) {
       setError(err.message);
@@ -653,6 +656,7 @@ export default function PositionsGrid() {
           className="col-span-3 overflow-auto rounded-lg border bg-white p-3"
           style={CARD}
         >
+          {!loading && rows.length === 0 && <EmptyHoldingsHint hint={emptyHint} />}
           <DataGrid
             gridId="portfolio-positions"
             columnDefs={columnDefs}

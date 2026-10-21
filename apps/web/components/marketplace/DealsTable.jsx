@@ -52,7 +52,7 @@ function buildColumnDefs(staff, stageLabels) {
             </a>
           </div>
           <div className="mt-1">
-            <StatusBadge status={deal.deal_status} />
+            <StatusBadge status={deal.deal_status} label={deal.stage_label} />
           </div>
         </div>
       ),
@@ -70,9 +70,10 @@ function buildColumnDefs(staff, stageLabels) {
         ),
     },
     {
-      field: "deal_stage",
+      // BUGFIX1 — the ONE lifecycle label (server), not the old free-text column.
+      field: "stage_label",
       headerName: "Stage",
-      cell: (value) => stageLabels[value] || value || "—",
+      cell: (value) => value || "—",
     },
     {
       field: "target_raise",

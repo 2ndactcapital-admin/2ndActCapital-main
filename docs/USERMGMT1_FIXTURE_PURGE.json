@@ -1,0 +1,35 @@
+{
+  "ran_at": "2026-10-21",
+  "command": "python3 apps/api/scripts/_usermgmt1_hygiene.py --apply",
+  "fixture_users_before": 26,
+  "orphans_removed": [
+    {"email": "rlscutover_creator@test.local", "script": "verify_rlscutover.py", "why": "teardown deleted by auth0_sub='rlscutover_creator@test.local' but the seed's sub is 'rlscutover_creator' — leaked on every run (teardown fixed this sprint)"},
+    {"email": "udf01bverify-2a45@test.local", "script": "verify_udf01b.py", "why": "script deletes its users in teardown; row survived a crashed teardown"},
+    {"email": "udf01bverify-65c3@test.local", "script": "verify_udf01b.py", "why": "crashed-teardown leftover"},
+    {"email": "udf01bverify-d38f@test.local", "script": "verify_udf01b.py", "why": "crashed-teardown leftover"},
+    {"email": "udf01bverify-d967@test.local", "script": "verify_udf01b.py", "why": "crashed-teardown leftover"},
+    {"email": "udf01bverify-dd6c@test.local", "script": "verify_udf01b.py", "why": "crashed-teardown leftover"},
+    {"email": "udf01bverify-f53b@test.local", "script": "verify_udf01b.py", "why": "crashed-teardown leftover"},
+    {"email": "udf02averify-0f7c@test.local", "script": "verify_udf02a.py", "why": "crashed-teardown leftover"},
+    {"email": "udf02averify-5bb9@test.local", "script": "verify_udf02a.py", "why": "crashed-teardown leftover"},
+    {"email": "udf02averify-61ed@test.local", "script": "verify_udf02a.py", "why": "crashed-teardown leftover"},
+    {"email": "udf02averify-c67e@test.local", "script": "verify_udf02a.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr3_admin@test.local", "script": "verify_workflowmgr3.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr3_member@test.local", "script": "verify_workflowmgr3.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr4_approver@test.local", "script": "verify_workflowmgr4.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr4_assignee@test.local", "script": "verify_workflowmgr4.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr4_member@test.local", "script": "verify_workflowmgr4.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr4_orgadmin@test.local", "script": "verify_workflowmgr4.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr4_starter@test.local", "script": "verify_workflowmgr4.py", "why": "crashed-teardown leftover"},
+    {"email": "wfmgr4_super@test.local", "script": "verify_workflowmgr4.py", "why": "crashed-teardown leftover"}
+  ],
+  "planned": {"public.member_todos": 5, "public.user_permission_sets": 2, "public.user_roles": 6, "public.users": 19, "public.workflow_definitions": 1, "public.workflow_run_steps": 2, "public.workflow_runs": 3, "public.workflow_steps": 2, "public.workflow_triggers": 1, "public.workflow_versions": 2},
+  "deleted": {"public.member_todos": 5, "public.user_permission_sets": 2, "public.user_roles": 6, "public.workflow_run_steps": 2, "public.workflow_triggers": 1, "public.workflow_runs": 3, "public.workflow_steps": 2, "public.workflow_versions": 2, "public.workflow_definitions": 1, "public.users": 19},
+  "foreign_user_references_in_plan": [],
+  "kept_flagged_is_test": [
+    "verify_chancery10@test.local", "verify_chancery11a@test.local", "verify_chancery3b@test.local",
+    "verify_chancery4@test.local", "verify_chancery5@test.local", "verify_chancery6@test.local",
+    "verify_chancery9@test.local"
+  ],
+  "real_users": {"before": 9, "after": 9, "checksum": "unchanged"}
+}

@@ -184,12 +184,41 @@ export async function updateDealStageAction(dealId, prevState, formData) {
   }
 }
 
+// BUGFIX1 (R2-MKT-05) — Archive only with the confirmation the UI collects;
+// the API refuses without it too (428), so the rule holds off-screen as well.
 export async function archiveDealAction(dealId, prevState, formData) {
+  if (formData?.get("confirm") !== "yes") {
+    return { ok: false, error: "Confirm the archive first." };
+  }
   try {
-    await setDealStatus(dealId, "archived");
+    await setDealStatus(dealId, "archived", { confirm: true });
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error.message };
+  }
+}
+
+export async function unarchiveDealAction(dealId, prevState, formData) {
+  try {
+    const { unarchiveDeal } = await import("@/lib/api");
+    await unarchiveDeal(dealId);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+// BUGFIX1 (MKT-03) — Submit an existing draft for review (confirmed in the UI).
+// A refusal names the missing fields (from the org's configured requirements).
+export async function submitDealAction(dealId, prevState, formData) {
+  if (formData?.get("confirm") !== "yes") {
+    return { ok: false, error: "Confirm the submission first." };
+  }
+  try {
+    await setDealStatus(dealId, "submitted", { confirm: true });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message, missing: error.detail?.missing_fields || null };
   }
 }
 
@@ -240,13 +269,14 @@ export async function createDealAction(prevState, formData) {
     return { ok: false, error: error.message };
   }
 
-  // Optionally submit for review immediately.
-  if (formData.get("submit_action") === "submit") {
+  // Optionally submit for review immediately (the form collected the
+  // confirmation). BUGFIX1: a refusal is no longer swallowed — the deal exists
+  // as a draft, and its page says what is missing.
+  if (formData.get("submit_action") === "submit" && formData.get("confirm") === "yes") {
     try {
-      const { setDealStatus } = await import("@/lib/api");
-      await setDealStatus(deal.id, "submitted");
-    } catch {
-      // Non-fatal: deal exists as draft; surface on detail page.
+      await setDealStatus(deal.id, "submitted", { confirm: true });
+    } catch (error) {
+      redirect(`/marketplace/${deal.id}?notice=${encodeURIComponent(error.message)}`);
     }
   }
 

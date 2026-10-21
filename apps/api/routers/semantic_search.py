@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from routers.entities import get_org_id
 from services import document_embedding
+from services import document_linkage as dl
 from services.database import get_pool
 from services.authz import is_staff
 from services.users import ensure_user
@@ -48,4 +49,25 @@ async def semantic_search(request: Request, q: str = "", limit: int = 20):
     except document_embedding.EmbeddingUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return {"query": query, "count": len(results), "results": results}
+    # BUGFIX1 (R2-DOC-03) — say which visible documents matching the words have
+    # NO embedding yet, instead of silently leaving them out: every attachment
+    # (deal / entity / SPV files are never embedded) and any vault document
+    # without a document_embeddings row. Same caller-scoped keyword search, so
+    # nothing outside the caller's visibility can appear here either.
+    async with pool.acquire() as conn:
+        keyword = await dl.search_documents(
+            conn, org_id, query, pool=pool, user_id=user_id, is_staff=staff, limit=50)
+        vault_ids = [r["document_id"] for r in keyword if r.get("source") == "vault"]
+        embedded = {str(r["document_id"]) for r in await conn.fetch(
+            "SELECT DISTINCT document_id FROM document_embeddings "
+            "WHERE org_id = $1 AND document_id = ANY($2::uuid[])", org_id, vault_ids)} if vault_ids else set()
+    not_indexed = [
+        {**r, "index_note": NOT_INDEXED_NOTE}
+        for r in keyword
+        if r.get("source") != "vault" or r["document_id"] not in embedded
+    ]
+    return {"query": query, "count": len(results), "results": results,
+            "not_indexed": not_indexed, "not_indexed_note": NOT_INDEXED_NOTE}
+
+
+NOT_INDEXED_NOTE = "Not yet indexed for meaning search — found by its words only."

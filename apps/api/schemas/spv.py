@@ -60,6 +60,10 @@ class SPVResponse(BaseModel):
     created_by: Optional[UUID]
     created_at: datetime
     updated_at: datetime
+    # BUGFIX1 (SPV-01) — services.spv_rollup.spv_commitment_summaries; the
+    # list card used to read a total_committed this response never had.
+    total_committed: Optional[float] = None
+    commitment: Optional[dict] = None
 
 
 class SubscriptionCreate(BaseModel):
@@ -107,6 +111,8 @@ class CapTableResponse(BaseModel):
     total_funded: float
     target_raise: Optional[float]
     subscriptions: list[CapTableEntry]
+    # BUGFIX1 (SPV-01) — the same summary the list card and dashboard show.
+    commitment: Optional[dict] = None
 
 
 class SPVDocumentResponse(BaseModel):

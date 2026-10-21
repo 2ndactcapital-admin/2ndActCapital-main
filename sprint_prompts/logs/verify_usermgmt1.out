@@ -1,0 +1,174 @@
+[INFO] database via DATABASE_URL (doppler/env)
+[PASS] six pending sign-ins provisioned by the real path and flagged is_test
+
+── [Y] Task 1 — findings (invite flow, tenant client ids/connections, fixtures, mailer) ──
+[PASS] 1a: an invite is a users row (auth0_sub NULL, invite_token); ONLY /enroll/accept writes auth0_sub
+[FIND] 1a invite flow  — POST /admin/invites inserts a users row with auth0_sub NULL + invite_token/invite_status='pending'. The invitee's link opens /enroll; /enroll/accept (provisioning-exempt) writes auth0_sub onto THAT row. Signing in WITHOUT the link never touches the invite row: ensure_user finds no sub, /userinfo gives no VERIFIED email match, so a NEW pending placeholder row is created and stamped last_login_at — that is why the invited rows kept auth0_sub NULL while 'a' row had a last sign-in (it was the pending duplicate). jpl99172 was then linked by hand: its sub is set but invite_status still reads 'pending'.
+[PASS] 1b: AUTH0_CLIENT_ID (2nd Act) is present in Doppler (name only)
+[PASS] 1b: HOLLISWORKS_AUTH0_CLIENT_ID (Platform) is present in Doppler (name only)
+[FIND] 1b connection for 2nd Act  — AUTH0_DB_CONNECTION is NOT set — defaults to Username-Password-Authentication
+[FIND] 1b connection for Platform  — HOLLISWORKS_AUTH0_DB_CONNECTION is NOT set — defaults to Username-Password-Authentication
+[FIND] 1b real account a…0@p…l  — Platform · Email & password (primary)
+[FIND] 1b real account j…a@c…o  — 2nd Act · Email & password (primary)
+[FIND] 1b real account j…a@g…m  — 2nd Act · Email & password (primary); 2nd Act · Google (duplicate_merge)
+[FIND] 1b real account j…2@g…m  — 2nd Act · Email & password (primary)
+[FIND] 1b real account j…1@g…m  — never signed in
+[FIND] 1b real account j…2@g…m  — never signed in
+[FIND] 1b real account j…3@g…m  — never signed in
+[PASS] 1b: every active real account's sign-in method was derived from the DB  — 7
+[FIND] 1c verify_chancery10@test.local  — kept: verify_chancery10.py,verify_sprint10.py; refs none
+[FIND] 1c verify_chancery11a@test.local  — kept: verify_chancery11a.py; refs none
+[FIND] 1c verify_chancery3b@test.local  — kept: verify_chancery3b.py; refs none
+[FIND] 1c verify_chancery4@test.local  — kept: verify_chancery4.py; refs none
+[FIND] 1c verify_chancery5@test.local  — kept: verify_chancery5.py; refs none
+[FIND] 1c verify_chancery6@test.local  — kept: verify_chancery6.py; refs none
+[FIND] 1c verify_chancery9@test.local  — kept: verify_chancery9.py,verify_sprint9.py; refs none
+[PASS] 1c: every remaining @test.local user is traced to a live verify script  — 7 users
+[PASS] 1c: the 19 orphans found before the purge are on record with their scripts  — 19
+[PASS] 1d: an outgoing mailer exists (services/email.py, SES) — resend uses it, delivery reported
+[FIND] 1d mailer  — SES configured=False; the invite path reports 'blocked' with the reason when SES refuses (Textract-only IAM user has no ses:SendEmail)
+
+── [Y] One row per person — reproduced on the OLD query first ──
+[PASS] the f115737 list query JOINs user_roles (read from git)
+[PASS] BEFORE: a user with 2 roles comes back as 2 rows  — 2
+[PASS] AFTER: the same user is ONE row with a roles array of 2  — HTTP 200; 1 rows; ['investment_staff', 'member']
+[PASS] no person appears twice anywhere in the list  — 21
+[PASS] paging counts people (limit=3 → 3 distinct people)  — 3
+
+── [Y] sign_in / never_signed_in / email_is_placeholder / is_test per fixture kind ──
+[PASS] database primary + linked Google identity  — [('2nd Act', 'Email & password', 'primary'), ('2nd Act', 'Google', 'verified_email')]
+[PASS] Google-only login  — [('2nd Act', 'Google', 'primary')]
+[PASS] a Hollisworks-issued identity is labelled Platform  — [('Platform', 'Email & password', 'operator')]
+[PASS] invited, never signed in: never_signed_in true, no sign-in, real email
+[PASS] a signed-in user is not never_signed_in
+[PASS] email_is_placeholder: true for <sub>@placeholder.local rows, false for a real address
+[PASS] is_test mirrors users.is_test (fixture true; the visible control false)
+[PASS] the fixture row really carries is_test = true in the DB
+
+── [Y] Filters — status, role; test and retired hidden by default, shown on request ──
+[PASS] default: ORG A shows only the non-test person (every is_test fixture hidden)  — ['99000000-0000-0000-0000-0000000b1123']
+[PASS] include_test shows fixtures; retired still hidden  — 21
+[PASS] include_retired shows the retired account
+[PASS] status=retired equals the same predicate run in SQL  — 1
+[PASS] status=pending: non-empty, a strict subset, equal to SQL  — 6 of 21
+[PASS] status=deactivated → only the deactivated account
+[PASS] role=investment_staff → exactly the SQL EXISTS set (and the person keeps BOTH roles)  — ['99000000-0000-0000-0000-0000000b1113']
+[PASS] an unknown status filter is a 400, not an empty list  — HTTP 400
+
+── [Y] Password reset — the right tenant/client/connection/email; refusals ──
+[PASS] member: 403 on the identical request; Auth0 not called; no audit row  — HTTP 403
+[PASS] org admin: ONE request to the 2nd Act tenant's /dbconnections/change_password  — HTTP 200
+[PASS] body = {client_id: AUTH0_CLIENT_ID, email: the user's email, connection} (values compared, not printed)
+[PASS] audit_log row on success
+[PASS] refused — Google login: the exact sentence, no Auth0 call, no audit  — HTTP 409: This account signs in with Google — reset the password in Google.
+[PASS] refused — placeholder email: the exact sentence, no Auth0 call, no audit  — HTTP 409: No real email on file. Add the person's email address first.
+[PASS] refused — Platform placeholder: the exact sentence, no Auth0 call, no audit  — HTTP 409: No real email on file. Add the person's email address first.
+[PASS] refused — never signed in, no email: the exact sentence, no Auth0 call, no audit  — HTTP 409: No real email on file. Add the person's email address first.
+[PASS] refused — never signed in, real email: the exact sentence, no Auth0 call, no audit  — HTTP 409: This person has never signed in, so there is no password to reset. Resend their invitation instead.
+[PASS] the list publishes the same refusal sentence per row (and none for a database login)
+[PASS] a Platform database identity resets on the Hollisworks tenant with ITS client id  — HTTP 200
+[PASS] org admin cannot reset a Super Admin's password  — HTTP 403
+[PASS] org_admin without manage_members: 403 (same gate as every user edit)  — HTTP 403
+
+── [Y] Resend invite — rotates invite_token; the new link works, the old one does not ──
+[PASS] member: 403; token unchanged  — HTTP 403
+[PASS] org admin: a NEW token is stored (independent re-read); invite pending, still unclaimed  — HTTP 200
+[PASS] the returned enrollment link is absolute and carries the new token
+[PASS] delivery reported honestly ('skipped' on request); SES never reached
+[PASS] the new link validates; the old link no longer does  — valid / not_found
+[PASS] one audit row on success, and it never contains the token
+[PASS] a person who already signed in has no invitation to resend  — HTTP 409
+
+── [Y] Link pending → existing person ──
+[PASS] the pending fixtures were created by the real provisioning path  — 279c6fbd-7883-49f6-b6cd-e6a53aaa4923 b939ae8b-6e69-403b-b320-c930ad6b5d12 e59b28b7-a0d6-4db4-b4b7-de80dda66ace
+[PASS] the pending sign-in raised an open to-do for the org admins  — 2
+[PASS] the to-do links to People & Access filtered to pending  — /admin/users?status=pending
+[PASS] member: 403; pending row and target unchanged  — HTTP 403
+[PASS] org admin: the login's sub moved onto the target (its auth0_sub was NULL); invite accepted  — HTTP 200
+[PASS] the pending row is retired (kept, sub cleared)
+[PASS] its pending to-dos are closed  — 0
+[PASS] audited on both rows
+[PASS] the login's next request resolves to the target (ensure_user), admitted  — HTTP 200: 99000000-0000-0000-0000-0000000b1117
+[PASS] target already has a sub → a user_identities row, linked_via 'operator'; target's own sub untouched  — HTTP 200; {'user_id': UUID('99000000-0000-0000-0000-0000000b1111'), 'linked_via': 'operator'}
+[PASS] that login now resolves to the existing member
+[PASS] cross-org target refused for an org admin (404 — RLS keeps the other org's user invisible); unchanged  — HTTP 404
+[PASS] cross-org refused even for a Super Admin who can see both (400); unchanged  — HTTP 400
+[PASS] non-super onto a Super Admin refused; nothing changed  — HTTP 403
+[PASS] a Super Admin may link onto a Super Admin  — HTTP 200
+
+── [Y] Edit email — placeholder / never-signed-in only; unique case-insensitively; audited ──
+[PASS] member: 403; email unchanged  — HTTP 403
+[PASS] invalid address: 400; unchanged
+[PASS] org admin: placeholder replaced (independent re-read)  — HTTP 200
+[PASS] audit_log row on success
+[PASS] the same address in another case is refused (409); unchanged  — HTTP 409
+[PASS] an address held in ANOTHER org is refused too (users.email is platform-wide)  — HTTP 409
+[PASS] a normal signed-in account is refused; unchanged  — HTTP 409
+[PASS] after linking, the formerly never-signed-in target is a signed-in account (refused)  — HTTP 409
+
+── [Y] Pending page — asks for an email when none is real; stored as contact_email, never linked ──
+[PASS] /users/me tells the page there is no real email  — HTTP 200
+[PASS] the pending login is still refused on data routes  — HTTP 403
+[PASS] stored as contact_email while pending; users.email untouched; still pending  — HTTP 200
+[PASS] never used for linking: the next request is still the pending row, no identity created  — 43b6a03f-f005-4b22-bcbb-47eb6bb0ab0b vs 43b6a03f-f005-4b22-bcbb-47eb6bb0ab0b
+[PASS] the admins see the contact address on the pending row
+[PASS] an account with a real email cannot set a contact address  — HTTP 409
+[PASS] a pending row whose name/contact equals a member's email shows 'Looks like' that member  — 3
+
+── [Y] Approve / reject / retire — org admin allowed, member 403, unchanged on refusal ──
+[PASS] approve: member 403, still pending
+[PASS] approve: org admin 200, admitted, audited
+[PASS] reject: member 403, still pending
+[PASS] reject: org admin 200, rejected, audited
+[PASS] retire: member 403, unchanged
+[PASS] retire: org admin 200 — anonymized, status retired, row kept, audited  — HTTP 200
+[PASS] the retired account leaves the default list
+
+── [Y] The UI renders exactly the server's actions (real envelope → real component) ──
+[PASS] both callers can read the list  — 200/200
+[PASS] org_admin without manage_members is published no edit action  — ['approve', 'reject']
+[PASS] the admin envelope renders through the real components
+[PASS] the view envelope renders through the real components
+[PASS] view-only envelope: no Manage / reset / resend / link / email control renders anywhere  — ['approve', 'reject']
+[PASS] admin envelope: Manage + reset render for a database login; the Google row renders the refusal instead  — ['edit', 'reset-password'] / ['edit']
+
+── [Y] Test hygiene — orphans removed, kept fixtures flagged, mechanism proven, real users untouched ──
+[INFO] purge on record (per table): {"public.member_todos": 5, "public.user_permission_sets": 2, "public.user_roles": 6, "public.workflow_run_steps": 2, "public.workflow_triggers": 1, "public.workflow_runs": 3, "public.workflow_steps": 2, "public.workflow_versions": 2, "public.workflow_definitions": 1, "public.users": 19}
+[PASS] recorded purge: deleted == planned on every table; no row in the plan touched a non-orphan user
+[PASS] zero of the 19 orphan fixture users remain  — 0
+[PASS] every kept fixture is flagged is_test  — 7/7
+[PASS] no @test.local user anywhere is left un-flagged  — 0
+[PASS] re-classifying today finds no orphan fixture left  — []
+[PASS] a fixture's row that ANOTHER user also touched is found transitively and blocks the purge  — [{'table': 'public.workflow_versions', 'column': 'created_by', 'rows': 1}]
+[INFO] mechanism purge per table: {"public.user_roles": 3, "public.workflow_versions": 1, "public.workflow_definitions": 1, "public.users": 2}
+[PASS] with every referenced user in the set: purged child-before-parent with exact per-table counts  — {'public.user_roles': 3, 'public.workflow_versions': 1, 'public.workflow_definitions': 1, 'public.users': 2}
+[PASS] zero rows referencing the purged fixtures remain  — 0
+[PASS] real users unchanged by the purge (count + checksum)
+
+── [Y] Front end — node tests for the list and actions; npm run build ──
+[PASS] node --test tests/admin tests/nav passes
+[PASS] node test: one row per person: two roles render as two chips on ONE row
+[PASS] node test: a view-only row (actions: []) renders no control at all
+[PASS] node test: pending with a placeholder email asks for a contact address
+[PASS] npm run build exits 0
+
+── [Y] Teardown — zero fixture rows; every touched table at its pre-test count ──
+[INFO] teardown removed: ['public.user_roles: 15', 'public.users: 23', 'public.role_permissions: 64', 'public.roles: 5', 'public.org_ai_spend_cache: 2', 'public.organizations: 2']
+[PASS] zero fixture rows remain (users, orgs, identities, audit rows)  — 0
+[PASS] public.users back at its pre-test count  — 16 → 16
+[PASS] public.user_identities back at its pre-test count  — 1 → 1
+[PASS] public.organizations back at its pre-test count  — 2 → 2
+[PASS] public.roles back at its pre-test count  — 20 → 20
+[PASS] public.user_roles back at its pre-test count  — 11 → 11
+[PASS] public.role_permissions back at its pre-test count  — 203 → 203
+[PASS] public.member_todos back at its pre-test count  — 9 → 9
+[PASS] public.audit_log back at its pre-test count  — 100 → 100
+[PASS] public.workflow_definitions back at its pre-test count  — 3 → 3
+[PASS] public.workflow_versions back at its pre-test count  — 3 → 3
+[PASS] real users unchanged (count + checksum)  — 9 users
+
+── [Y] Regression — flat subprocesses AFTER teardown, VERIFY_NESTED=1 ──
+[PASS] verify_authz1.py: 0 FAIL  — TOTAL: 113 PASS, 0 FAIL; [] 
+[PASS] verify_navregroup.py: 0 FAIL  — TOTAL: 128 PASS, 0 FAIL; [] 
+
+TOTAL: 120 PASS, 0 FAIL
