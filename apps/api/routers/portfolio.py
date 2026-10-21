@@ -14,7 +14,8 @@ from schemas.portfolio import (
 )
 from services.audit import write_audit_log
 from services.database import get_pool
-from services.permissions import get_user_id, require_staff
+from services.permissions import get_user_id
+from services.authz import require_staff
 from services.taxonomy import get_taxonomy_index
 from services.users import ensure_user
 

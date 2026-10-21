@@ -37,12 +37,8 @@ const EXPECTED = {
       "/admin/vdr-proposals"],
     platform: ["/admin/platform", "/admin/restricted-access", "/admin/model-catalog", "/admin/edgar-pipeline"],
   },
-  no_roles: {
-    main: MAIN,
-    org_admin: ["/admin", "/admin/users", "/admin/settings", "/admin/workflows", "/admin/billing-groups",
-      "/admin/vdr-proposals"],
-    platform: [],
-  },
+  // AUTHZ1: no default-allow — a role-less account sees only ungated items.
+  no_roles: { main: MAIN, org_admin: [], platform: [] },
 };
 
 const hrefsIn = (html) => [...html.matchAll(/<a [^>]*?href="([^"]+)"/g)].map((m) => m[1]);

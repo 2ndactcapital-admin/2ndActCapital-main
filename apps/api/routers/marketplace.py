@@ -56,7 +56,8 @@ from services.database import get_pool
 from services.deal_creation import insert_deal
 from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
-from services.permissions import get_user_id, is_staff, require_permission
+from services.permissions import get_user_id
+from services.authz import is_staff, require_permission
 from services.notifications import notification_bus
 from services.org_settings import get_brand_name
 from services.rbac import get_users_by_role

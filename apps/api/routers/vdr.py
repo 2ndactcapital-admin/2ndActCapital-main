@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.database import get_pool
 from services import rbac
-from services.permissions import require_permission
+from services.authz import require_permission
 from services.users import ensure_user
 from services import vdr_analysis as vdr
 

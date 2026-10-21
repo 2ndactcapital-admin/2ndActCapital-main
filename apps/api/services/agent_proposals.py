@@ -149,10 +149,9 @@ async def holds_review_permission(pool, user_id, org_id) -> bool:
     ``REVIEW_PERMISSION`` at all is refused regardless of how empty the
     checker set is).
 
-    Deliberately does NOT reuse ``rbac.has_permission`` — that helper
-    default-allows a user with zero role rows at all (single-admin
-    safety, documented on ``has_permission`` itself), which is the wrong
-    posture here: "a user without the permission is refused regardless" is
+    Deliberately does NOT reuse ``rbac.has_permission`` — before AUTHZ1
+    that helper default-allowed a user with zero role rows (it no longer
+    does), which was the wrong posture here: "a user without the permission is refused regardless" is
     a hard requirement of the maker-checker rule, not a bootstrap
     convenience. This composes the same underlying primitives
     (``load_principal``, ``is_super_admin``, ``get_user_permissions``)

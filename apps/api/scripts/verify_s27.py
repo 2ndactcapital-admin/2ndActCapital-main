@@ -38,6 +38,9 @@ Column names are taken from docs/schema_snapshot.sql:
   org_settings(id, org_id, setting_key, setting_value jsonb, category,
     is_public, updated_at, updated_by, created_at)  -- NOT bitemporal, upsert.
 """
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import json
 import os

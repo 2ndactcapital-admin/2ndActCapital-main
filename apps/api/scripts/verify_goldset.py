@@ -38,6 +38,9 @@ Every fixture value is checked against the table's live CHECK constraints
 """
 from __future__ import annotations
 
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import argparse
 import asyncio
 import json

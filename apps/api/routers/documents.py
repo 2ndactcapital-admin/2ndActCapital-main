@@ -31,6 +31,7 @@ from services.chancery_intake import process_document
 from services.database import get_pool
 from services.users import ensure_user
 from services import vdr_analysis
+from services.authz import require_permission
 
 router = APIRouter(tags=["documents"])
 
@@ -107,6 +108,7 @@ async def intake_documents(
     Reuses the existing drop mechanism entirely; ``is_vdr`` is just a flag on the
     same upload path (no separate VDR upload endpoint).
     """
+    require_permission(request, "manage_documents")  # AUTHZ1
     if not files:
         raise HTTPException(status_code=400, detail="At least one file is required")
 

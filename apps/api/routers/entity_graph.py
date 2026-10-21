@@ -37,7 +37,7 @@ from services.entity_graph import (
     get_parents,
     get_subtree,
 )
-from services.permissions import require_staff
+from services.authz import require_staff
 from services.users import ensure_user
 
 router = APIRouter(tags=["entity_graph"])

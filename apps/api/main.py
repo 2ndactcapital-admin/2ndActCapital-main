@@ -80,7 +80,7 @@ from services.database import (
     set_auth0_sub_context,
     set_rls_context,
 )
-from services.rbac import is_super_admin
+from services.rbac import is_super_admin  # noqa: F401  (re-exported for importers)
 
 API_VERSION = "0.1.0"
 
@@ -231,10 +231,12 @@ def _decode_against(token: str, jwks: dict, *, audience: str, issuer: str) -> di
 def is_hollisworks_claims(claims: dict | None) -> bool:
     """True when a validated token was issued by the Hollisworks tenant.
 
-    Platform staff authenticate against the Hollisworks tenant, so its issuer IS
-    the Super Admin signal (see ``_resolve_is_super_admin`` and
-    ``services.users.ensure_user``). Returns False when Hollisworks is not
-    configured, so the 2nd Act path is never treated as staff.
+    Decides the ORG a token belongs to (``routers.entities.org_id_from_claims``)
+    and which ``/userinfo`` to ask. It is NOT a Super Admin signal (AUTHZ1):
+    super admin comes only from an admitted ``users`` row, and a new
+    Hollisworks login becomes one only when its verified email is in
+    ``PLATFORM_STAFF_EMAILS`` (``services.users``). Returns False when
+    Hollisworks is not configured.
     """
     settings = get_settings()
     if not settings.hollisworks_enabled or not claims:
@@ -336,50 +338,32 @@ ACCOUNT_DEACTIVATED_DETAIL = (
 )
 
 
+# AUTHZ1: paths an authenticated caller may reach WITHOUT an admitted account.
+# /users/me lets a pending login see its own status (the front end renders the
+# "Access pending" page from it). /enroll/accept is where an invitee CLAIMS
+# their pre-created row — provisioning must not run first, or the new login
+# would get a pending row of its own and the claim would hit sub_conflict.
+PENDING_ALLOWED_PATHS = {"/api/v1/users/me"}
+PROVISIONING_EXEMPT_PATHS = {"/api/v1/enroll/accept"}
+
+
+def _is_public(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith("/debug/")
+
+
 async def _resolve_account_state(request: Request) -> tuple[bool, bool]:
-    """``(is_super_admin, is_active)`` for the caller — ONE read, READ-ONLY.
+    """``(is_super_admin, is_active)`` for the caller, from the DB Principal.
 
-    Reads ``users.role`` and ``users.is_active`` by ``auth0_sub`` and reuses
-    ``services.rbac.is_super_admin``. Unlike ``ensure_user`` it never inserts — a
-    brand-new user simply resolves to not-super, which is the safe default.
-
-    ``is_active`` defaults to True when NO row exists: a first-ever request has
-    nothing to be deactivated yet, and ``ensure_user`` is about to create the
-    row (``users.is_active`` is ``NOT NULL DEFAULT true``). Denying here would
-    lock out every new member.
-
-    Future note: once the app connects as the non-bypass ``app_service`` role,
-    this read is itself subject to RLS on ``users`` (RLS enabled, and as of this
-    sprint NO policy) — so it will return nothing and every caller is treated as
-    not-super. That fails safe (deny) and is exactly the ``users`` carve-out a
-    later sprint must design (see ``services.users.ensure_user``).
+    Back-compat for callers of the pre-AUTHZ1 helper. The token issuer is NOT
+    a super-admin signal any more — only an admitted ``users`` row with
+    ``role = 'super_admin'`` is (``services.authz``).
     """
-    claims = getattr(request.state, "user", None) or {}
-    sub = claims.get("sub")
-    if not sub:
+    from services.authz import principal_of
+
+    p = principal_of(request)
+    if p is None:
         return False, True
-
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT role, is_active FROM users WHERE auth0_sub = $1", sub
-        )
-
-    # Hollisworks-tenant identity IS platform staff — recognized directly from the
-    # validated token issuer, before (and independent of) any users-row read, so a
-    # first request establishes Super Admin context without a write race.
-    #
-    # Deliberately does NOT exempt staff from the is_active gate: the Super Admin
-    # escape hatch is about authorisation, and a deactivated account is not an
-    # authorisation question — it is a closed account. A platform admin who
-    # deactivates themselves is locked out, same as anyone else, and is
-    # reactivated by another admin (or by SQL). Making staff the one identity
-    # that cannot be switched off would be the more dangerous default.
-    is_super = is_hollisworks_claims(claims) or (
-        is_super_admin(dict(row)) if row else False
-    )
-    is_active = bool(row["is_active"]) if row else True
-    return is_super, is_active
+    return p.is_super_admin, p.is_active
 
 
 async def _resolve_is_super_admin(request: Request) -> bool:
@@ -394,78 +378,76 @@ async def _resolve_is_super_admin(request: Request) -> bool:
 # has populated request.state.user, which we need to resolve org_id.
 @app.middleware("http")
 async def rls_context_middleware(request: Request, call_next):
-    """Populate the per-task RLS ContextVars (org_id + is_super_admin) so that
-    services.database's acquire() can SET LOCAL them for Row-Level Security.
+    """Resolve the ONE Principal for the request, gate on it, and set the RLS
+    ContextVars (org_id + is_super_admin) for every query the handler runs.
 
-    Fails safe: on any resolution error the context is left at its default
-    (org unset → default-deny, not super-admin). Reuses the existing
-    get_org_id(request) / is_super_admin(principal) logic — nothing reinvented.
+    Sequence (AUTHZ1):
+      1. ``app.current_auth0_sub`` FIRST — the users/user_identities bootstrap
+         leg is what lets the identity read succeed before anything else is
+         known.
+      2. org_id from ``get_org_id`` (UNCHANGED: the issuing tenant decides the
+         org; org isolation is not this sprint's business).
+      3. Resolve + provision the caller under that org context
+         (``services.users.resolve_request_principal``) and cache the
+         Principal on ``request.state.principal`` — the single DB load every
+         gate in every router then reads.
+      4. Gate: no resolvable user → 401; deactivated → 403; not admitted
+         (pending / retired / rejected) → 403 except PENDING_ALLOWED_PATHS.
+      5. RLS context for the handler: is_super_admin from the Principal only.
 
-    This is inert while the app connects as the RLS-bypassing ``postgres`` role
-    (current production). It only takes effect once the connection is switched
-    to the non-bypass ``app_service`` role — a separate, manual step.
-
-    ORDERING (RLS Phase 2): ``app.current_auth0_sub`` is established FIRST, from
-    the raw JWT ``sub``, BEFORE any read of ``users`` — because the identity
-    read below (``_resolve_is_super_admin`` → ``SELECT ... FROM users WHERE
-    auth0_sub = $1``) is itself subject to the ``users`` RLS policy once the app
-    connects as ``app_service``. Only the bootstrap leg (auth0_sub match) lets
-    that self-read succeed when org/role are not yet known. AFTER identity is
-    resolved we set org_id/is_super_admin for the rest of the request. This is a
-    strict ADDITION to the previous sequence — the existing happy path (org +
-    super resolution, default-deny on failure) is unchanged.
+    Public paths carry no claims and skip 3–4 entirely.
     """
+    from services.authz import (
+        ACCESS_PENDING_DETAIL,
+        ACCOUNT_RETIRED_DETAIL,
+        NO_USER_DETAIL,
+        STATUS_PENDING,
+    )
+    from services.users import resolve_request_principal
+
     claims = getattr(request.state, "user", None) or {}
     sub = claims.get("sub")
+    path = request.url.path
 
-    # 1. Bootstrap identity FIRST — before the users read below and before the
-    #    route handler's ensure_user() INSERT. Left unset (→ default-deny) when
-    #    there is no authenticated sub (public routes, missing claim).
     sub_token = set_auth0_sub_context(sub)
 
     org_id = None
     is_super = False
-    if claims:
+    if claims and not _is_public(path) and request.method != "OPTIONS":
         try:
             org_id = get_org_id(request)
         except Exception as exc:  # never block the request on context resolution
             print(f"[rls] org_id resolution failed (default-deny): {exc}")
             org_id = None
-        try:
-            # Reads users by auth0_sub — now permitted by the bootstrap leg,
-            # since app.current_auth0_sub is already set (step 1 above).
-            is_super, is_active = await _resolve_account_state(request)
-        except Exception as exc:
-            print(f"[rls] account state resolution failed (default False/active): {exc}")
-            is_super, is_active = False, True
 
-        # THE ACTIVE-ACCOUNT GATE (user-management sprint, Task 5).
-        #
-        # This is the real session check point, and it is here for a reason: it
-        # is the ONE place every authenticated request already passes through
-        # AFTER the token is validated and BEFORE any route handler runs, and it
-        # already performs exactly the ``users``-by-``auth0_sub`` read the gate
-        # needs — so enforcement costs zero extra queries and cannot be missed by
-        # a new endpoint that forgets to opt in.
-        #
-        # It could NOT go in the Auth0 layer: Auth0 issued the token and knows
-        # nothing about ``users.is_active``, and a token already in a browser
-        # stays valid for its full lifetime, so revoking access has to happen on
-        # OUR side of the boundary. It could not go in ``ensure_user`` either —
-        # that function's contract is "never raises", because every read path
-        # depends on it.
-        #
-        # Deliberately 403 and not 401: the credential is valid, the account is
-        # closed. A 401 would send the frontend into a re-login loop that
-        # re-presents the same working token.
-        if not is_active:
-            reset_auth0_sub_context(sub_token)
-            return JSONResponse(
-                status_code=403, content={"detail": ACCOUNT_DEACTIVATED_DETAIL}
-            )
+        principal = None
+        if path not in PROVISIONING_EXEMPT_PATHS:
+            resolve_tokens = set_rls_context(org_id, False)
+            try:
+                principal = await resolve_request_principal(request)
+            except Exception as exc:
+                print(f"[rls] principal resolution failed (deny): {exc}")
+                principal = None
+            finally:
+                reset_rls_context(resolve_tokens)
 
-    # 2. Now that identity is resolved, set org_id/is_super_admin for the
-    #    remainder of the request's queries.
+            def _deny(code: int, detail: str, **extra):
+                reset_auth0_sub_context(sub_token)
+                return JSONResponse(status_code=code, content={"detail": detail, **extra})
+
+            if principal is None:
+                return _deny(401, NO_USER_DETAIL)
+            # THE ACTIVE-ACCOUNT GATE (user-management sprint): 403 not 401 —
+            # the credential is valid, the account is closed; a 401 would send
+            # the frontend into a re-login loop with the same working token.
+            if not principal.is_active:
+                return _deny(403, ACCOUNT_DEACTIVATED_DETAIL)
+            if not principal.admitted and path not in PENDING_ALLOWED_PATHS:
+                if principal.status == STATUS_PENDING:
+                    return _deny(403, ACCESS_PENDING_DETAIL, status=principal.status)
+                return _deny(403, ACCOUNT_RETIRED_DETAIL, status=principal.status)
+            is_super = principal.is_super_admin
+
     tokens = set_rls_context(org_id, is_super)
     try:
         return await call_next(request)
@@ -517,6 +499,14 @@ async def health() -> dict:
 
 @app.on_event("startup")
 async def _startup() -> None:
+    from services import authz
+
+    if authz.TEST_MODE:
+        print(
+            "[authz] WARNING: AUTHZ_TEST_MODE=1 is set — the UUID-sub stub and "
+            "claim-based test grants are ENABLED. This must never be set in "
+            "production."
+        )
     from services.assistant_actions import register_all
     from services.action_registry import REGISTRY
     from services.brief_blocks import register_brief_blocks

@@ -205,6 +205,41 @@ Pydantic models to make this mechanical, not just a code-review habit.
 one client org) use `owner_scope: 'platform'` with a NULL org_id, not the
 default org id as a stand-in for "platform-wide."
 
+## Authorization — ONE path, no default-allow anywhere (AUTHZ1)
+
+Every API gate reads the request's DB **Principal** from `services/authz.py`
+(loaded once by `main.rls_context_middleware`, cached on
+`request.state.principal`): `require_active`, `require_permission(request,
+name)`, `require_any_permission`, `require_staff`, `require_super_admin`,
+`require_entity_access`. Super Admin first, then exact. **Nothing grants on an
+absent claim, an absent role, or an absent row** — a missing grant is a 403
+naming the permission, an unresolvable user is a 401. Never read `roles` /
+`permissions` off the token; never add a "no roles yet → allow" branch (it is
+what left the app open: real tokens carry no such claims, and `get_user_id`
+used to hand `rbac` a uuid5 phantom id that always looked role-less).
+`get_user_id` now returns the real `users.id`. "Staff" = Super Admin or a role
+in `STAFF_ROLE_NAMES` — DB role membership. Front end: `canPerm` fails closed
+too. Every route and its gate: `docs/AUTHZ1_ROUTES.md` (regenerate with
+`apps/api/scripts/authz1_routes.py`; a new write route needs a stated gate).
+
+**Provisioning** (`services/users.py`): an unknown login is LINKED to an
+existing user only by a verified `/userinfo` email matching exactly one admitted
+user in the org its tenant maps to (`user_identities`); otherwise it is created
+`users.status = 'pending'` — refused everywhere except `/users/me` until an org
+admin approves it in People & Access. **Super admin is never granted by
+issuer**: a Hollisworks-issued login becomes one only if its verified email is
+in the Doppler secret `PLATFORM_STAFF_EMAILS`. Rows are retired
+(`status = 'retired'`), never deleted.
+
+**`AUTHZ_TEST_MODE=1`** (set in `os.environ` before `main` is imported — every
+verify script does it) is the ONLY switch for the UUID-sub stub, claim-based
+test grants (unioned onto DB grants) and the DEV_USER_ID fallback. Never set it
+on Render; the API warns at startup if it is set. A verify fixture user needs
+an explicit role — there is no default-allow to lean on.
+
+Operator, both Auth0 tenants: disable public sign-ups and unused social
+connections.
+
 ## Permission Envelope Pattern (established across every UI sprint)
 
 Every permission-gated API response publishes an envelope, not just data:
@@ -239,7 +274,7 @@ behind a visible button, are both real bugs — proving only one side proves
 nothing about the other.
 
 Super-admin bypass is checked FIRST, before any granular permission lookup,
-via ONE shared helper (`is_super_admin` / `rbac.has_permission`) — never a
+via ONE shared helper (`services.authz` / `rbac.is_super_admin`) — never a
 second, local re-implementation of the same check.
 
 ## Dual-Path Permission Resolution (most-restrictive-wins)

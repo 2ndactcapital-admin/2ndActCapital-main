@@ -428,7 +428,7 @@ async def _require_workflow_permission(
 # exactly the "3 separate permission systems, don't conflate" trap. This
 # reuses `agent_proposals.holds_review_permission` (the SAME role-based
 # check `review_proposal` calls, deliberately NOT `rbac.has_permission`,
-# whose single-admin default-allow would let ANY role-less user through)
+# whose pre-AUTHZ1 default-allow would have let ANY role-less user through)
 # so the outer gate and the inner eligibility check can never disagree about
 # what "holds review_agent_proposals" means.
 # --------------------------------------------------------------------------

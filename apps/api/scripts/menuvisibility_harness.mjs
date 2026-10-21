@@ -125,6 +125,15 @@ function legacyVisible(me) {
 const sameSet = (a, b) =>
   a.length === b.length && a.every((x, i) => x === b[i]);
 
+// AUTHZ1 — the ONLY intended menu change: a role-less account no longer
+// default-allows, so it loses exactly the items the legacy rule showed it
+// through that branch. Written out by hand (not derived from the module).
+const AUTHZ1_LEGACY_LOSS = {
+  no_roles_yet: ["/admin", "/admin/billing-groups", "/admin/custody-import", "/admin/modeling/ta",
+    "/admin/permission-sets", "/admin/profiles", "/admin/settings", "/admin/staff-visibility",
+    "/admin/users", "/admin/vdr-proposals", "/admin/workflows", "/portfolio/transactions"],
+};
+
 const result = {
   allHrefs: hrefs(MENU_ITEMS),
   adminIndexHrefs: hrefs(MENU_ITEMS.filter((i) => i.adminIndex)),
@@ -169,7 +178,13 @@ const result = {
     );
     const now = hrefs(visibleMenuItems(me)).filter((h) => !strictHrefs.has(h));
     const before = legacyVisible(me).filter((h) => !strictHrefs.has(h));
-    return { name, now, before, unchanged: sameSet(now, before) };
+    const lost = before.filter((h) => !now.includes(h)).sort();
+    const expectedLoss = [...(AUTHZ1_LEGACY_LOSS[name] ?? [])].sort();
+    return {
+      name, now, before, unchanged: sameSet(now, before), lost, expected_loss: expectedLoss,
+      // unchanged, OR changed by exactly the AUTHZ1 default-allow removal.
+      authz1_expected: sameSet(lost, expectedLoss) && now.every((h) => before.includes(h)),
+    };
   }),
 
   // Defence in depth: a role gate that forgets to name super_admin must still
@@ -203,8 +218,15 @@ const INTENDED_ADDITIONS = {
   super_admin: ["/portfolio/transactions", "/portfolio/allocation", "/portfolio/ownership-tree", ...DOCS,
     "/admin/workflows/runs", "/admin/workflows/triggers", "/admin/billing-groups", "/admin/custody-import",
     "/admin/vdr-proposals"],
-  no_roles: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
-    "/admin/billing-groups", "/admin/custody-import", "/admin/vdr-proposals"],
+  // AUTHZ1: role-less gains only the ungated pages (no default-allow).
+  no_roles: ["/portfolio/ownership-tree", ...DOCS],
+};
+
+// AUTHZ1 — what a persona loses from the frozen navregroup baseline: only the
+// role-less persona, and only the items it reached through default-allow.
+const AUTHZ1_REMOVALS = {
+  no_roles: ["/admin", "/admin/modeling/ta", "/admin/permission-sets", "/admin/profiles",
+    "/admin/settings", "/admin/staff-visibility", "/admin/users", "/admin/workflows"],
 };
 
 const sorted = (xs) => [...new Set(xs)].sort();
@@ -231,6 +253,9 @@ const personaResults = Object.entries(PERSONAS).map(([name, me]) => {
     intended,
     additions_exact: !!added && JSON.stringify(sorted(added)) === JSON.stringify(intended),
     none_removed: !!removed && removed.length === 0,
+    authz1_removals: sorted(AUTHZ1_REMOVALS[name] ?? []),
+    removals_exact: !!removed
+      && JSON.stringify(sorted(removed)) === JSON.stringify(sorted(AUTHZ1_REMOVALS[name] ?? [])),
     // Every reachable href must be in the sidebar model too (nothing reachable
     // only through a side door the definition does not render).
     after_equals_sidebar_tabs: JSON.stringify(sorted(sidebarHrefs)) === JSON.stringify(after),

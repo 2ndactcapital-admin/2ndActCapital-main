@@ -59,6 +59,7 @@ from services.rbac import (
     require_permission,
 )
 from services.users import ensure_user
+from services import authz
 
 router = APIRouter(tags=["admin"])
 
@@ -111,6 +112,9 @@ class AdminUser(BaseModel):
     # domain rather than stored, so it cannot drift out of sync with the actual
     # state of the row.
     is_deleted: bool = False
+    # AUTHZ1 provisioning lifecycle: 'active' / 'pending' / 'retired' /
+    # 'rejected'. A pending row is a sign-in waiting for approval.
+    status: str = "active"
 
 
 class RoleAssignRequest(BaseModel):
@@ -143,6 +147,23 @@ class AdminUserMutation(BaseModel):
     # DELETE anonymized rather than removed the row — see the module docstring.
     hard_deleted: bool = False
     anonymized: bool = False
+
+
+# AUTHZ1: who may see and decide pending sign-ins in People & Access — a
+# member manager, or the org's own admin (manage_org_settings). Super Admin
+# passes first inside ``authz.require_any_permission``.
+APPROVE_PERMISSIONS = ("manage_members", "manage_org_settings")
+
+
+class PendingApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role_id: UUID
+
+
+async def _require_people_access(request: Request) -> tuple[str, str]:
+    principal = authz.require_any_permission(request, APPROVE_PERMISSIONS)
+    return principal.user_id, get_org_id(request)
 
 
 async def _require_manage_members(request: Request) -> tuple[str, str]:
@@ -226,8 +247,11 @@ async def list_roles(request: Request):
     holders today (confirmed live: Hollisworks) gets one created on first
     view of this screen instead of needing a second manual migration before
     "Organization Admin" is even selectable.
+
+    AUTHZ1: readable by an org admin as well (they pick the role when
+    approving a pending sign-in).
     """
-    _, org_id = await _require_manage_members(request)
+    _, org_id = await _require_people_access(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -243,13 +267,17 @@ async def list_users(
     request: Request,
     search: str | None = None,
     role: str | None = None,
+    status: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    _, org_id = await _require_manage_members(request)
+    _, org_id = await _require_people_access(request)
 
     conditions = ["u.org_id = $1"]
     params: list = [org_id]
+    if status:
+        params.append(status)
+        conditions.append(f"u.status = ${len(params)}")
     if search:
         params.append(f"%{search}%")
         conditions.append(
@@ -272,7 +300,7 @@ async def list_users(
                    r.id AS role_id, r.name AS role,
                    u.profile_id, p.name AS profile_name,
                    u.invite_status, u.role AS account_role,
-                   u.is_active, u.deactivated_at, u.last_login_at
+                   u.is_active, u.deactivated_at, u.last_login_at, u.status
             FROM users u
             LEFT JOIN user_roles ur ON ur.user_id = u.id
             LEFT JOIN roles r ON r.id = ur.role_id
@@ -299,6 +327,7 @@ async def list_users(
             deactivated_at=str(r["deactivated_at"]) if r["deactivated_at"] else None,
             last_login_at=str(r["last_login_at"]) if r["last_login_at"] else None,
             is_deleted=is_anonymized(r["email"]),
+            status=r["status"],
         )
         for r in rows
     ]
@@ -400,6 +429,117 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
         full_name=target["full_name"],
         role=role["name"],
         role_id=role["id"],
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# AUTHZ1 — pending sign-ins: approve (grant a role, admit) or reject
+# ──────────────────────────────────────────────────────────────────────────
+
+async def _pending_target(conn, org_id: str, user_id: UUID):
+    row = await conn.fetchrow(
+        "SELECT id, email, full_name, role, status FROM users WHERE id = $1 AND org_id = $2",
+        user_id, org_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row["status"] != authz.STATUS_PENDING:
+        raise HTTPException(status_code=409, detail=f"User is not pending (status: {row['status']})")
+    return row
+
+
+async def _close_pending_todos(conn, org_id: str, user_id) -> None:
+    from services.workflow_todos import TODO_SOURCE_PENDING_USER
+
+    await conn.execute(
+        """
+        UPDATE member_todos SET status = 'done', updated_at = now()
+        WHERE org_id = $1 AND source = $2 AND related_type = 'users'
+          AND related_id = $3 AND status = 'open'
+        """,
+        org_id, TODO_SOURCE_PENDING_USER, user_id,
+    )
+
+
+@router.post("/admin/users/{user_id}/approve", response_model=AdminUser)
+async def approve_pending_user(request: Request, user_id: UUID, body: PendingApproval):
+    """Admit a pending sign-in by granting it ONE role of this org.
+
+    The role grant and ``status='active'`` land in one transaction, so a
+    pending user is never admitted with no role, and never holds a role while
+    still refused. An ``org_admin`` grant keeps ``users.role`` in lockstep via
+    the shared ``services.rbac`` helpers (CLAUDE.md).
+    """
+    actor_id, org_id = await _require_people_access(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            target = await _pending_target(conn, org_id, user_id)
+            role = await conn.fetchrow(
+                "SELECT id, name FROM roles WHERE id = $1 AND org_id = $2",
+                body.role_id, org_id,
+            )
+            if role is None:
+                raise HTTPException(status_code=400, detail="Unknown role")
+            if role["name"] == ORG_ADMIN_ROLE:
+                from services.rbac import grant_org_admin
+
+                await grant_org_admin(conn, user_id, org_id)
+                await conn.execute(
+                    "UPDATE users SET role = $2 WHERE id = $1 AND role <> 'super_admin'",
+                    user_id, ORG_ADMIN_ROLE,
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    user_id, role["id"],
+                )
+            await conn.execute(
+                "UPDATE users SET status = 'active', updated_at = now() WHERE id = $1",
+                user_id,
+            )
+            await _close_pending_todos(conn, org_id, user_id)
+        await write_audit_log(
+            conn,
+            org_id=org_id,
+            action="approve_pending_user",
+            table_name="users",
+            record_id=user_id,
+            new={"status": "active", "role": role["name"], "approved_by": str(actor_id)},
+            actor=actor_id,
+        )
+    return AdminUser(
+        id=target["id"], email=target["email"], full_name=target["full_name"],
+        role=role["name"], role_id=role["id"], status="active",
+    )
+
+
+@router.post("/admin/users/{user_id}/reject", response_model=AdminUser)
+async def reject_pending_user(request: Request, user_id: UUID):
+    """Decline a pending sign-in. The row is kept (status 'rejected', no
+    roles) so the same login stays refused and the decision is auditable."""
+    actor_id, org_id = await _require_people_access(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            target = await _pending_target(conn, org_id, user_id)
+            await conn.execute(
+                "UPDATE users SET status = 'rejected', updated_at = now() WHERE id = $1",
+                user_id,
+            )
+            await _close_pending_todos(conn, org_id, user_id)
+        await write_audit_log(
+            conn,
+            org_id=org_id,
+            action="reject_pending_user",
+            table_name="users",
+            record_id=user_id,
+            new={"status": "rejected", "rejected_by": str(actor_id)},
+            actor=actor_id,
+        )
+    return AdminUser(
+        id=target["id"], email=target["email"], full_name=target["full_name"],
+        status="rejected",
     )
 
 

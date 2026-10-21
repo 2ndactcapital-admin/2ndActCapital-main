@@ -32,6 +32,9 @@ Schema facts used here:
   users: id, org_id (NOT NULL), auth0_sub, email, role
   entities: id, org_id, display_name (NOT NULL), entity_type
 """
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import os
 import sys

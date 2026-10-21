@@ -32,9 +32,9 @@ async function loadMe() {
  * Client hook exposing the current user's role + permissions.
  * Returns { loading, role, roles, permissions, can(perm) }.
  *
- * Single-admin safety: while RBAC is unpopulated the API returns an empty
- * permissions list AND no roles; `can()` treats "no roles assigned" as
- * default-allow, mirroring the backend so the sole operator is never gated out.
+ * Fail closed (AUTHZ1): `can()` is true only for Super Admin or a permission
+ * the server's DB Principal actually grants. A failed /users/me yields an
+ * empty envelope, which grants nothing.
  */
 export function usePermissions() {
   const [me, setMe] = useState(_cache);
@@ -59,10 +59,10 @@ export function usePermissions() {
   const roles = me?.roles || [];
   const accountRole = me?.account_role || null;
 
-  // Delegates to the single, pure rule in lib/menuVisibility.mjs — which checks
-  // Super Admin FIRST, then the "no roles yet → default-allow" posture, then the
-  // granted permission set. See that module for why the missing super-admin
-  // bypass was a real (not theoretical) lockout.
+  // Delegates to the single, pure rule in lib/menuVisibility.mjs — Super Admin
+  // FIRST, then the granted permission set (no default-allow since AUTHZ1).
+  // See that module for why the missing super-admin bypass was a real (not
+  // theoretical) lockout.
   function can(permission) {
     return canPerm(me, permission);
   }

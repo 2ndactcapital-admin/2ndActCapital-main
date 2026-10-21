@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from services.database import get_pool
 from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
+from services.authz import require_permission
 
 router = APIRouter(tags=["entity-documents"])
 
@@ -92,6 +93,7 @@ async def upload_document(
     tags: list[str] = Form(default=[]),
     file: UploadFile = File(...),
 ):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = _get_org_id(request)
     contents = await file.read()
     file_ext = os.path.splitext(file.filename or "")[-1].lower()
@@ -147,6 +149,7 @@ async def new_document_version(
     tags: list[str] = Form(default=[]),
     file: UploadFile = File(...),
 ):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = _get_org_id(request)
     contents = await file.read()
     file_ext = os.path.splitext(file.filename or "")[-1].lower()
@@ -266,6 +269,7 @@ async def patch_document(
     doc_id: _uuid.UUID,
     body: dict,
 ):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = _get_org_id(request)
     pool = await get_pool()
 
@@ -341,6 +345,7 @@ async def delete_document(
     entity_id: _uuid.UUID,
     doc_id: _uuid.UUID,
 ):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = _get_org_id(request)
     pool = await get_pool()
 

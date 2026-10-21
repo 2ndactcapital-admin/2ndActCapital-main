@@ -1,5 +1,7 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-20 (navregroup.structural — the navigation regrouped into
+Last updated: 2026-10-21 (authz1.structural — one DB-backed, fail-closed
+authorization path; no default-allow; pending provisioning; see the top entry).
+Previously 2026-10-20 (navregroup.structural — the navigation regrouped into
 master pages with tabs rendered from ONE menu definition; Document Search now
 filters by the caller's visibility and the VDR proposals list requires
 manage_deals; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-16 (bulkfetch.structural — a resumable, rate-limited bulk
@@ -305,6 +307,121 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000000000000000000000000000000. AUTHZ1 — one database-backed, fail-closed authorization path for every API route; no default-allow anywhere; safe provisioning (link by verified email or hold as pending — never super admin by issuer); duplicate accounts linked; all verify sections RUN green (2026-10-21)
+
+**Run:** `doppler run -- python3 apps/api/scripts/verify_authz1.py 2>&1 | grep -E "^\[FAIL\]|^TOTAL"`.
+Doppler-hydrated; `/userinfo` mocked. Every section was run against the live
+database in this session, in parts (the 10-minute foreground limit): task 1 /
+scan / reproduce / after / is_staff 28/0 · provisioning / real users / test mode /
+isolation 73/0 · route matrix 23/0 (2,559 requests over 7 personas) · front end
+incl. `npm run build` 45/0 · teardown 16/0 each time. Regressions run flat with
+`VERIFY_NESTED=1`: verify_navregroup 128/0, verify_bulkfetchui2 78/0,
+menu-visibility harness clean. `AUTHZ1_ONLY="a,b"` runs named sections only.
+
+**What was open, in production, before this sprint** (docs/AUTHZ1_ROUTES.md,
+439 routes, **197 writes marked [FIND]**):
+- token-claim helpers (`services.permissions`) allowed whenever the claim was
+  absent — real Auth0 access tokens never carry `roles`/`permissions`, so every
+  spv / marketplace / entity_graph / vdr / investment_profile / portfolio gate
+  was open and every caller was "staff";
+- **every `rbac` gate fed by `get_user_id` was open too**: `get_user_id`
+  returned `uuid5(sub)`, a phantom id with no `users` row, so `has_permission`
+  saw "no roles" → default-allow (billing groups, fee schedules, custody import,
+  altruist, portfolio positions/securities/transactions, udf, profitability,
+  modeling TA, ledger). Gates fed by `ensure_user` default-allowed any role-less
+  user (People & Access, invites, households, staff assignments);
+- ~60 writes had no gate at all (CRM, entity documents, document intake/linking/
+  review, ledger, investment profile, SPV subscriptions);
+- the middleware made any Hollisworks-issued token super admin, and
+  `ensure_user` created every unknown login as a member (or super admin).
+
+**What is true now**
+- `services/authz.py`: ONE `Principal` per request (user, org, status,
+  super/staff flags, roles, permission set) loaded from the DB by
+  `main.rls_context_middleware`, cached on `request.state.principal`. Helpers:
+  `require_authenticated` / `require_active` / `require_permission` /
+  `require_any_permission` / `require_staff` / `require_super_admin` /
+  `require_entity_access`. Super Admin first, then exact; no default-allow.
+  Staff = Super Admin or a role in `STAFF_ROLE_NAMES` (investment_staff, admin,
+  super_admin, owner) — DB role membership, never a claim.
+- `services.permissions` is a shim over it; `get_user_id` returns the real
+  `users.id` (401 when none). `services.rbac.has_permission` lost its no-roles
+  branch; `load_principal` blanks the role of an unadmitted row.
+- Middleware: no resolvable user → 401; deactivated → 403; `status` pending /
+  retired / rejected → 403 everywhere except `GET/PATCH /users/me` (PATCH still
+  refuses). `/enroll/accept` is provisioning-exempt (the invite token claims the
+  pre-created row).
+- Gates added (stated per route in AUTHZ1_ROUTES.md): CRM writes →
+  manage_members (compliance read/write → view_/manage_compliance); entity
+  documents, intake, linking, proposal decisions → manage_documents; document
+  review → per-user `document_visible` (+ manage_documents for corrections and
+  confirm); GL writes → **new `manage_ledger`** permission; investment profile →
+  entity access; SPV subscriptions → entity access + indicate_interest.
+- Schema (`docs/authz1_part1.sql`, applied via MCP, confirmed live):
+  `users.status` (active / pending / retired / rejected, CHECK) and
+  `user_identities` (user_id, org_id, auth0_sub UNIQUE, issuer, email,
+  linked_via; RLS with a policy for all four operations).
+- Provisioning (`services/users.py`): linked sub → primary sub (a placeholder
+  row with a verified email matching exactly one admitted user in the same org
+  is MERGED: sub linked, placeholder retired) → test-mode UUID stub → unknown
+  login: verified-email match links, Hollisworks issuer + verified email in
+  `PLATFORM_STAFF_EMAILS` → super admin, anything else → **pending** with an
+  alert (member_todos) to the org's manage_members / manage_org_settings
+  holders. `touch_last_login` on every path. People & Access lists pending
+  sign-ins with Approve (grants one role, admits) / Decline
+  (`POST /admin/users/{id}/approve|reject`).
+- Task 3 seed (`scripts/_apply_authz1.py`, run live, additive only): baseline
+  member / investment_staff / admin / super_admin roles in both real orgs
+  (admin gained the six permissions "staff implies all" used to grant, plus
+  manage_ledger); every real user granted the role matching `users.role`.
+  Report: `docs/AUTHZ1_REAL_USERS.json` — the only loss is the Google
+  placeholder row's default-allow (34 → 10, member).
+- Front end: `/users/me` returns the Principal's permissions, `status`,
+  `is_staff`, `is_super_admin`; `menuVisibility.canPerm` fails closed (Super
+  Admin first); `AccessGate` renders the "Access pending" page for an
+  unadmitted account.
+- `AUTHZ_TEST_MODE=1` (set in-process by all 190 verify scripts before `main`
+  is imported) is the only switch for the UUID-sub stub, claim-based test
+  grants (UNIONED onto DB grants, never a default) and the DEV_USER_ID
+  fallback. The API prints a warning at startup if it is set.
+
+**Operator steps (not done by the sprint)**
+1. Doppler `PLATFORM_STAFF_EMAILS` already exists in prd (2 entries); confirm
+   it is `jlarizza@gmail.com,jlarizza@culmina.io` and synced to the Render API.
+2. Auth0, BOTH tenants (dev-smmrfubsfscif3t1 = 2nd Act, dev-gy85vzuf6mruzv3j =
+   Hollisworks): disable public sign-ups on the database connection, and disable
+   every social connection that is not in use.
+3. Never set `AUTHZ_TEST_MODE` on Render.
+4. Joe's Google login merges into jlarizza@gmail.com by itself on its next
+   sign-in (needs its verified email from `/userinfo`; neither tenant's client
+   has a Management API grant — both returned 403). Or run
+   `python3 apps/api/scripts/_apply_authz1.py --operator-link-google` after
+   confirming the email in the Auth0 dashboard.
+
+**[FIND]s left open**
+- CRM, ledger and document-link READS are visible to every admitted user in the
+  org (writes are gated); a product decision.
+- `users.email` is UNIQUE platform-wide, so the same person cannot hold rows in
+  two orgs under one address; a second-org login keeps a placeholder email.
+- Joe's Hollisworks row still has its placeholder email, likely for that reason
+  (the 2nd Act row already holds the address). Before AUTHZ1 its back-fill
+  UPDATE would have raised inside `ensure_user`'s try and fallen back to the
+  uuid5 phantom id.
+- An invitee who signs in BEFORE redeeming the invite gets a pending row, and
+  `/enroll/accept` then reports sub_conflict. Not fixed.
+- The /admin/users menu tab is still gated on manage_members; an org admin
+  (manage_org_settings only) reaches pending approvals through the alert link.
+- `resolve_tab_visibility` defaults a tab with no grant row to visible (a
+  display default, not a capability grant).
+- Rows written by real callers before AUTHZ1 carry the uuid5 phantom id in
+  non-FK actor columns (created_by and similar).
+- verify_superadminmenu and any older verify script that relied on
+  default-allow for a role-less fixture will now see 403s. Only navregroup,
+  bulkfetchui2 and the harness were updated and re-run. verify_navregroup's
+  router-scope check is now pinned to its own commit (e97718f).
 
 ---
 

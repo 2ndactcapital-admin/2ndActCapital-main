@@ -1,11 +1,13 @@
 "use server";
 
 import {
+  approvePendingUser,
   assignUserRole,
   deactivateUser,
   deleteUser,
   getAdminUsers,
   reactivateUser,
+  rejectPendingUser,
   updateAdminUser,
 } from "@/lib/api";
 
@@ -69,6 +71,27 @@ export async function reactivateUserAction(userId) {
 export async function deleteUserAction(userId) {
   try {
     const user = await deleteUser(userId);
+    return { ok: true, user };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+// --- Pending sign-ins (AUTHZ1) — gated server-side by manage_members or
+// manage_org_settings; the screen shows the controls only when the user list
+// itself loaded (the same endpoint gate).
+export async function approvePendingUserAction(userId, roleId) {
+  try {
+    const user = await approvePendingUser(userId, roleId);
+    return { ok: true, user };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+export async function rejectPendingUserAction(userId) {
+  try {
+    const user = await rejectPendingUser(userId);
     return { ok: true, user };
   } catch (error) {
     return { ok: false, error: error.message };

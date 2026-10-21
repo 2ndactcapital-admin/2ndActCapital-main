@@ -1,19 +1,59 @@
-"""Database-backed RBAC (Sprint 9).
+"""Database-backed RBAC (Sprint 9; fail-closed since AUTHZ1).
 
 Resolves a user's effective permissions by joining
-``user_roles -> role_permissions -> permissions``. These are the *real* checks
-that replace the token-claim stubs once roles are assigned in the DB.
+``user_roles -> role_permissions -> permissions``. These are the real checks;
+``services.authz`` builds its per-request Principal from the same queries.
 
-Single-admin safety: a user with **no role rows at all** is treated as
-default-allow, mirroring the posture documented in ``services.permissions`` —
-this prevents locking out the sole operator before RBAC is populated. As soon as
-any role is assigned to a user, their permission set becomes authoritative.
+AUTHZ1: there is NO default-allow. A user with no role rows holds no
+permissions. The old "zero roles = allow everything" bootstrap shielded a lone
+operator before RBAC was populated, but it also admitted every brand-new login
+(and, through ``get_user_id``'s uuid5 phantom id, every real caller) to every
+``require_permission`` gate in the app. Super Admin is still checked FIRST.
 """
+
+from uuid import UUID
 
 from fastapi import HTTPException
 
-# Sentinel meaning "this user has no roles assigned yet" (default-allow stage).
-_NO_ROLES = object()
+async def fetch_role_names(conn, user_id, org_id=None) -> list[str]:
+    """Role names ``user_id`` holds — only roles of ``org_id`` when given.
+
+    A role is per-org (``roles.org_id``); filtering here means a grant in one
+    org can never surface in another org's Principal even on a connection
+    whose RLS context would let both through (super admin).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT r.name
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = $1 AND ($2::uuid IS NULL OR r.org_id = $2::uuid)
+        ORDER BY r.name
+        """,
+        user_id, org_id,
+    )
+    return [r["name"] for r in rows]
+
+
+async def fetch_permission_names(conn, user_id, org_id=None) -> set[str]:
+    """Permission names granted to ``user_id`` through roles (of ``org_id``)."""
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT p.name
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        JOIN role_permissions rp ON rp.role_id = ur.role_id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = $1 AND ($2::uuid IS NULL OR r.org_id = $2::uuid)
+        """,
+        user_id, org_id,
+    )
+    return {r["name"] for r in rows}
+
+
+async def fetch_all_permission_names(conn) -> set[str]:
+    """The whole catalog — a Super Admin's effective permission set."""
+    return {r["name"] for r in await conn.fetch("SELECT name FROM permissions")}
 
 
 async def get_user_roles(pool, user_id, org_id) -> list[dict]:
@@ -47,34 +87,20 @@ async def get_user_permissions(pool, user_id, org_id) -> set[str]:
     return {r["name"] for r in rows}
 
 
-async def _has_any_role(pool, user_id) -> bool:
-    async with pool.acquire() as conn:
-        found = await conn.fetchval(
-            "SELECT 1 FROM user_roles WHERE user_id = $1 LIMIT 1", user_id
-        )
-    return found is not None
-
-
 async def has_permission(pool, user_id, org_id, permission_name: str) -> bool:
     """True if the user holds ``permission_name``.
 
     Super Admin (platform staff) always passes — checked FIRST, before any
-    other logic runs. This mirrors the explicit ``is_super_admin`` escape hatch
-    every RLS policy, ``restricted_access`` check, ``staff_visibility`` gate and
-    the Workflow Manager's own permission resolver already carry. Without it, a
-    super_admin who ever picks up *any* row in ``user_roles`` would fall through
-    to the strict per-permission check below and be silently locked out of every
-    endpoint using ``require_permission`` — the "zero roles = default-allow"
-    posture only shields them by the accident of that table being empty.
-
-    Default-allow when the user has no roles assigned (single-admin stage).
+    other logic runs, via the one shared ``is_super_admin`` helper. Then the
+    check is exact: the permission must be granted through a role. There is no
+    branch for "the user has no roles" — that user holds nothing (AUTHZ1).
     """
     async with pool.acquire() as conn:
         principal = await load_principal(conn, user_id)
     if is_super_admin(principal):
         return True
-    if not await _has_any_role(pool, user_id):
-        return True
+    if principal is None:
+        return False
     perms = await get_user_permissions(pool, user_id, org_id)
     return permission_name in perms
 
@@ -108,12 +134,8 @@ async def get_users_with_permission(pool, org_id, permission_name: str) -> list[
     granted role — org_admin role migration (Task 4), used for alert
     recipient fan-out (``services.workflow_todos``).
 
-    Deliberately does NOT apply ``has_permission``'s zero-role default-allow
-    bootstrap: that escape hatch exists to keep a single not-yet-provisioned
-    operator from locking themselves out of a page THEY are trying to reach.
-    It has no sensible meaning for a broadcast recipient list — "everyone
-    with no roles assigned is a recipient" would silently balloon an alert's
-    audience rather than protect anyone.
+    Grants only — the same exact rule ``has_permission`` applies (AUTHZ1
+    removed the zero-role default-allow from both).
     """
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -190,13 +212,7 @@ async def is_org_admin(pool, user, org_id) -> bool:
     must never authorize a different org, and ``has_permission`` itself has
     no org-crossing concept to rely on for that.
 
-    Note this inherits ``has_permission``'s zero-role default-allow bootstrap
-    for a user who has never been assigned ANY role — the same posture that
-    already governs every other ``has_permission``-gated permission in this
-    app (``manage_members`` included). It is not a new risk introduced here;
-    it is the existing single-admin-safety posture extended consistently to
-    this permission. See docs/PROJECT_STATUS.md for the real accounts this
-    currently affects.
+    Exact since AUTHZ1: a user with no roles is not an org admin.
     """
     if _field(user, "org_id") != str(org_id):
         return False
@@ -321,10 +337,25 @@ async def load_principal(conn, user_id) -> dict | None:
     Read from ``users.role`` rather than ``user_roles`` because the
     platform/tenant admin distinction is a property of the account itself,
     not of a per-org role grant.
+
+    A row that is not admitted (``status`` other than 'active', or
+    ``is_active`` false) is returned with ``role`` blanked to None, so
+    ``is_super_admin`` can never pass for a pending, retired or deactivated
+    account no matter what its role string says (AUTHZ1).
     """
+    try:
+        user_uuid = UUID(str(user_id))
+    except (ValueError, TypeError):
+        return None
     row = await conn.fetchrow(
-        "SELECT id, org_id, role FROM users WHERE id = $1", user_id
+        "SELECT id, org_id, role, status, is_active FROM users WHERE id = $1",
+        user_uuid,
     )
     if row is None:
         return None
-    return {"id": str(row["id"]), "org_id": str(row["org_id"]), "role": row["role"]}
+    admitted = row["status"] == "active" and bool(row["is_active"])
+    return {
+        "id": str(row["id"]),
+        "org_id": str(row["org_id"]),
+        "role": row["role"] if admitted else None,
+    }

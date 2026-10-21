@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from routers.entities import get_org_id
 from services import document_embedding
 from services.database import get_pool
-from services.permissions import is_staff
+from services.authz import is_staff
 from services.users import ensure_user
 
 router = APIRouter(tags=["semantic-search"])

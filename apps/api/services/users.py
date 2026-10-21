@@ -1,54 +1,81 @@
-"""User identity sync.
+"""User identity resolution and provisioning (AUTHZ1).
 
-Resolves the authenticated caller to a row in the ``users`` table, creating one
-on first sight. Any write that references ``users(id)`` as a foreign key —
-deal_votes, deal_interest, compliance_override_requests, member_investments,
-notification_recipients — needs a real users row.
+Resolves the authenticated caller to a row in the ``users`` table. Any write
+that references ``users(id)`` as a foreign key needs a real users row, and
+every authorization decision (``services.authz``) is made against that row.
 
-Identity model: the ``users`` table is keyed on ``auth0_sub`` (the raw JWT
-``sub`` string) and its primary key is a DB-generated
-``extensions.uuid_generate_v4()``. The schema qualification is REQUIRED: the
-uuid-ossp functions live only in the ``extensions`` schema, and the application
-role's ``search_path`` is ``"$user", public`` — a bare ``uuid_generate_v4()`` in
-statement text resolves at parse time against that search_path and raises
-``function uuid_generate_v4() does not exist``. Column DEFAULTs are exempt
-because they are name-resolved once at DDL time and stored as a parse tree
-holding the function's OID, not as text.
-The token ``sub`` is NOT a UUID and the v5-derived id from ``get_user_id`` is
-only a last-resort fallback — it never matches a v4 PK, which is why FK inserts
-were failing. ``ensure_user`` therefore resolves strictly by ``auth0_sub`` and
-returns the **DB-generated** id, which is the value callers must use for FKs.
+Identity model: ``users.auth0_sub`` is a user's PRIMARY Auth0 identity; extra
+logins (a second connection, the other tenant's sub in the same org) live in
+``user_identities`` and resolve to the same user. The primary key is a
+DB-generated ``extensions.uuid_generate_v4()``. The schema qualification is
+REQUIRED: the uuid-ossp functions live only in the ``extensions`` schema, and
+the application role's ``search_path`` is ``"$user", public`` — a bare
+``uuid_generate_v4()`` in statement text resolves at parse time against that
+search_path and raises ``function uuid_generate_v4() does not exist``. Column
+DEFAULTs are exempt because they are name-resolved once at DDL time.
+
+PROVISIONING RULES (AUTHZ1 — no login becomes a user with access by itself):
+
+  Known sub
+    1. ``user_identities.auth0_sub`` → that user (a linked second login).
+    2. ``users.auth0_sub`` → that user. If the row still carries the
+       ``<sub>@placeholder.local`` address, ask ``/userinfo``: a VERIFIED email
+       that matches exactly one other admitted user in the same org merges the
+       duplicate — the sub is linked to that user and this row is RETIRED
+       (never deleted; its references are kept). Otherwise the real email is
+       back-filled when no other row already holds it.
+  AUTHZ_TEST_MODE only
+    3. ``sub`` is a UUID equal to a ``users.id`` → that row (verify stubs).
+  Unknown sub
+    4. A verified ``/userinfo`` email matching exactly one admitted user in the
+       org the issuing tenant maps to → LINK (``user_identities``).
+    5. A Hollisworks-issued login whose verified email is in
+       ``PLATFORM_STAFF_EMAILS`` → created ``super_admin``, active.
+    6. Anything else → created ``status='pending'`` with no roles; refused
+       everywhere but /users/me until an org admin approves it.
+
+  Super admin is NEVER granted by issuer alone, and existing rows are never
+  promoted or demoted by this module. ``touch_last_login`` runs on every
+  resolution path.
 """
 
+from __future__ import annotations
+
+import os
 from uuid import UUID
 
 import httpx
-from fastapi import Request
+from fastapi import HTTPException, Request
 
-from services.permissions import get_user_id
 from routers.entities import HOLLISWORKS_ORG_ID, get_org_id
 
 PLACEHOLDER_EMAIL_SUFFIX = "@placeholder.local"
 
+# Doppler secret (prd + dev). Comma-separated, case-insensitive. Seed value —
+# the operator sets it; this code never falls back to it:
+#   PLATFORM_STAFF_EMAILS=jlarizza@gmail.com,jlarizza@culmina.io
+PLATFORM_STAFF_EMAILS_ENV = "PLATFORM_STAFF_EMAILS"
+
 # How stale ``users.last_login_at`` may get before the next authenticated
-# request refreshes it. ``ensure_user`` runs on EVERY request, not only at
-# login, so an unconditional UPDATE would mean a row write (and a row lock, and
-# WAL) per API call for every active member. Throttling makes the column a
-# truthful "last seen, to within this window" without that cost — which is all
-# an admin screen needs. Expressed as a Postgres interval literal; the
-# comparison is made with the DATABASE clock, never the app server's.
+# request refreshes it. Resolution runs on EVERY request, so an unconditional
+# UPDATE would be a row write per API call. Postgres interval literal; the
+# comparison uses the DATABASE clock.
 LOGIN_TOUCH_INTERVAL = "5 minutes"
 
-# Subs whose /userinfo lookup has already been attempted in this process. An
-# Auth0 outage (or a token without the openid scope) must not make every
-# subsequent request retry the call — one attempt per sub per process is enough
-# to back-fill, and a restart retries.
+# Subs whose placeholder back-fill / duplicate-merge lookup has already been
+# attempted in this process — an Auth0 outage must not make every request
+# retry /userinfo. Unknown subs are NOT cached: provisioning needs the answer.
 _userinfo_attempted: set[str] = set()
 
 
 def placeholder_email(sub: str) -> str:
-    """The synthetic address ``ensure_user`` falls back to when no real one is known."""
+    """The synthetic address used when no real one is known (or it is taken)."""
     return f"{sub}{PLACEHOLDER_EMAIL_SUFFIX}"
+
+
+def platform_staff_emails() -> set[str]:
+    raw = os.environ.get(PLATFORM_STAFF_EMAILS_ENV) or ""
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 
 def _claims(request: Request) -> dict:
@@ -56,7 +83,6 @@ def _claims(request: Request) -> dict:
 
 
 def _as_uuid(value) -> str | None:
-    """Return the value as a canonical UUID string, or None if it isn't one."""
     try:
         return str(UUID(str(value)))
     except (ValueError, TypeError):
@@ -68,36 +94,32 @@ def _bearer_token(request: Request) -> str | None:
     return token if scheme.lower() == "bearer" and token else None
 
 
-async def fetch_auth0_identity(request: Request, claims: dict) -> tuple[str | None, str | None]:
-    """Return ``(email, full_name)`` from the issuing tenant's ``/userinfo``.
+def _is_hollisworks(claims: dict) -> bool:
+    try:
+        from main import is_hollisworks_claims
 
-    WHY THIS EXISTS. ``ensure_user`` reads ``claims.get("email")`` off the
-    **access token**, but an Auth0 access token minted for a custom API audience
-    carries only ``sub``/``iss``/``aud``/``azp``/``scope`` — ``email`` and
-    ``name`` live in the **ID token**, which the API never sees. So the email
-    claim was ALWAYS absent and every row a real login created got the
-    ``{sub}@placeholder.local`` fallback. The live database proves it: the one
-    row created by a real Auth0 login holds
-    ``auth0|6a3af4c9a1c6aeb8baddf3eb@placeholder.local``. A row does exist, but
-    it is unfindable by the person's actual address and renders as noise in
-    /admin/users.
+        return is_hollisworks_claims(claims)
+    except Exception:
+        return False
 
-    ``/userinfo`` is the trustworthy fix — it returns the verified profile for
-    exactly the sub the presented access token was issued to, needs no Auth0
-    dashboard change (the ``openid profile email`` scope is already requested),
-    and cannot be spoofed by the caller the way a client-supplied header could.
 
-    The URL is derived from the token's **validated** ``iss`` claim, and only
-    after checking it against the issuers this API is configured to accept — a
-    claim is never used to choose an outbound host on its own.
+async def fetch_auth0_profile(request: Request, claims: dict) -> dict | None:
+    """The issuing tenant's ``/userinfo`` profile, or None.
 
-    Best-effort by contract: any failure returns ``(None, None)`` and the caller
-    keeps the placeholder. Identity resolution must never break a read path.
+    An access token minted for a custom API audience carries only
+    ``sub``/``iss``/``aud``/``azp``/``scope``; ``email``/``email_verified``/
+    ``name`` live in the ID token, which the API never sees. ``/userinfo``
+    returns the profile for exactly the sub the presented token was issued to.
+    The URL comes from the VALIDATED ``iss``, and only if it is one of the
+    issuers this API accepts — a claim never chooses an outbound host alone.
+
+    Best-effort: any failure returns None. This is the single function the
+    verify script mocks.
     """
     token = _bearer_token(request)
     issuer = claims.get("iss")
     if not token or not issuer:
-        return None, None
+        return None
 
     from main import get_settings
 
@@ -106,7 +128,7 @@ async def fetch_auth0_identity(request: Request, claims: dict) -> tuple[str | No
     if settings.hollisworks_enabled:
         allowed.add(settings.hollisworks_issuer)
     if issuer not in allowed:
-        return None, None
+        return None
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -118,31 +140,32 @@ async def fetch_auth0_identity(request: Request, claims: dict) -> tuple[str | No
         profile = response.json()
     except Exception as exc:
         print(f"[users] /userinfo lookup failed for sub={claims.get('sub')!r}: {exc}")
-        return None, None
+        return None
+    return profile if isinstance(profile, dict) else None
 
+
+async def fetch_auth0_identity(request: Request, claims: dict) -> tuple[str | None, str | None]:
+    """``(email, full_name)`` from ``/userinfo`` — kept for routers/enroll."""
+    profile = await fetch_auth0_profile(request, claims) or {}
     email = (profile.get("email") or "").strip() or None
-    full_name = (
-        profile.get("name") or profile.get("nickname") or email or None
-    )
+    full_name = profile.get("name") or profile.get("nickname") or email or None
     return email, full_name
 
 
+def _verified_email(profile: dict | None) -> str | None:
+    if not profile or profile.get("email_verified") is not True:
+        return None
+    email = (profile.get("email") or "").strip()
+    return email or None
+
+
 async def touch_last_login(conn, user_id) -> bool:
-    """Stamp ``users.last_login_at`` for ``user_id``. Returns True if it wrote.
+    """Stamp ``users.last_login_at`` (throttled). Returns True if it wrote.
 
-    THE HOOK. ``ensure_user`` is the one function every authenticated request
-    passes through to resolve its identity, and its ``auth0_sub`` lookup /
-    ``ON CONFLICT DO UPDATE`` is precisely "this person has just presented a
-    valid token" — i.e. a login. Putting the stamp anywhere else would either
-    miss a tenant (the two Auth0 clients have separate callback routes) or need
-    a new call site on every future endpoint.
-
-    Throttled by :data:`LOGIN_TOUCH_INTERVAL`: the predicate is evaluated by
-    Postgres, so a row that was stamped inside the window costs an UPDATE that
-    matches zero rows rather than a real write. NULL always writes, so a first
-    login is recorded immediately.
-
-    Never raises — a failure to record "last seen" must not fail the request.
+    Called on EVERY resolution path — by primary sub, linked identity, merge,
+    link, creation and the test-mode UUID stub — so "Last sign-in" is true for
+    every way a person can arrive (the culmina.io row read "Never" because its
+    path skipped the stamp). Never raises.
     """
     try:
         status = await conn.execute(
@@ -161,141 +184,219 @@ async def touch_last_login(conn, user_id) -> bool:
         return False
 
 
-async def ensure_user(conn, request: Request) -> str:
-    """Return the caller's ``users.id``, inserting the row if it does not exist.
+async def _admitted_match(conn, org_id, email: str, *, exclude_id=None) -> list:
+    """Admitted users in ``org_id`` with this email (case-insensitive).
 
-    Resolution order:
-      1. By ``auth0_sub`` — the canonical key (raw JWT ``sub`` string).
-      2. If ``sub`` is itself a UUID that matches an existing row id (the verify
-         scripts stub ``sub`` = a seeded user's UUID), use that row.
-      3. Insert a new row, letting Postgres generate the id
-         (``extensions.uuid_generate_v4()`` — schema-qualified; see the module
-         docstring for why a bare call breaks under the app role's
-         search_path); return the generated id.
-
-    Never raises — on unexpected error it falls back to the token-derived id so
-    read paths are unaffected (the traceback below is the signal in the logs).
+    An invited-but-unredeemed row (``invite_status='pending'``) is never a link
+    target: it must be claimed with its invite token, not by email alone.
     """
+    return await conn.fetch(
+        """
+        SELECT id FROM users
+        WHERE org_id = $1 AND lower(email) = lower($2)
+          AND status = 'active' AND is_active
+          AND COALESCE(invite_status, '') <> 'pending'
+          AND ($3::uuid IS NULL OR id <> $3::uuid)
+        """,
+        org_id, email, exclude_id,
+    )
+
+
+async def _email_taken(conn, email: str, *, exclude_id=None) -> bool:
+    """``users.email`` is UNIQUE platform-wide — across orgs, too."""
+    return bool(await conn.fetchval(
+        "SELECT 1 FROM users WHERE lower(email) = lower($1) "
+        "AND ($2::uuid IS NULL OR id <> $2::uuid) LIMIT 1",
+        email, exclude_id,
+    ))
+
+
+async def _link_identity(conn, *, user_id, org_id, sub, issuer, email, via) -> None:
+    await conn.execute(
+        """
+        INSERT INTO user_identities (user_id, org_id, auth0_sub, issuer, email, linked_via)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (auth0_sub) DO NOTHING
+        """,
+        user_id, org_id, sub, issuer or "", email, via,
+    )
+
+
+async def _notify_pending(conn, *, org_id, user_id, email) -> None:
+    try:
+        from services.workflow_todos import create_pending_user_alerts
+
+        await create_pending_user_alerts(conn, org_id=org_id, pending_user_id=user_id, email=email)
+    except Exception as exc:  # noqa: BLE001 — a failed alert never fails a login
+        print(f"[users] pending-user alert failed for {user_id!r}: {exc}")
+
+
+async def resolve_identity(conn, request: Request) -> tuple[str | None, str]:
+    """``(users.id, path)`` for the caller, provisioning per the module rules.
+
+    ``path`` is one of identity / sub / merged / test_uuid / linked /
+    created_super_admin / created_pending / none. Returns ``(None, 'none')``
+    when there is no sub or the resolution failed — the caller turns that
+    into a 401. Never returns a phantom or dev id.
+    """
+    from services.authz import STATUS_PENDING, STATUS_RETIRED, TEST_MODE
+
     claims = _claims(request)
     sub = claims.get("sub")
-    org_id = get_org_id(request)
-
     if not sub:
-        return get_user_id(request)
+        return None, "none"
+    org_id = get_org_id(request)
+    issuer = claims.get("iss") or ""
 
-    # Hollisworks-tenant identity IS platform staff → role 'super_admin'. Detected
-    # from the validated token issuer (lazy import avoids a circular import with
-    # main). Non-Hollisworks callers are unaffected and stay 'member'.
-    try:
-        from main import is_hollisworks_claims
+    # 1. A linked second login.
+    linked = await conn.fetchrow(
+        "SELECT user_id FROM user_identities WHERE auth0_sub = $1", sub
+    )
+    if linked:
+        await touch_last_login(conn, linked["user_id"])
+        return str(linked["user_id"]), "identity"
 
-        is_staff = is_hollisworks_claims(claims)
-    except Exception:
-        is_staff = False
-    role = "super_admin" if is_staff else "member"
-
-    try:
-        # 1. Canonical lookup by auth0_sub.
-        by_sub = await conn.fetchrow(
-            "SELECT id, role, email, org_id FROM users WHERE auth0_sub = $1", sub
-        )
-        if by_sub:
-            # Promote an existing Hollisworks staff row if it predates this
-            # mapping. Never demotes and never touches non-staff rows.
-            if is_staff and by_sub["role"] != "super_admin":
+    # 2. The primary sub.
+    by_sub = await conn.fetchrow(
+        "SELECT id, email, org_id, status FROM users WHERE auth0_sub = $1", sub
+    )
+    if by_sub:
+        await touch_last_login(conn, by_sub["id"])
+        if (
+            by_sub["email"] == placeholder_email(sub)
+            and by_sub["status"] != STATUS_RETIRED
+            and sub not in _userinfo_attempted
+        ):
+            _userinfo_attempted.add(sub)
+            profile = await fetch_auth0_profile(request, claims)
+            email = _verified_email(profile)
+            if email and str(by_sub["org_id"]) == str(org_id):
+                matches = await _admitted_match(conn, org_id, email, exclude_id=by_sub["id"])
+                if len(matches) == 1:
+                    target = matches[0]["id"]
+                    async with conn.transaction():
+                        await _link_identity(conn, user_id=target, org_id=org_id, sub=sub,
+                                             issuer=issuer, email=email, via="duplicate_merge")
+                        await conn.execute(
+                            "UPDATE users SET status = $2, updated_at = now() WHERE id = $1",
+                            by_sub["id"], STATUS_RETIRED,
+                        )
+                    await touch_last_login(conn, target)
+                    return str(target), "merged"
+            real = email or ((profile or {}).get("email") or "").strip() or None
+            if real and not await _email_taken(conn, real, exclude_id=by_sub["id"]):
+                name = (profile or {}).get("name") or (profile or {}).get("nickname")
                 await conn.execute(
-                    "UPDATE users SET role = 'super_admin' WHERE id = $1",
-                    by_sub["id"],
+                    "UPDATE users SET email = $2, full_name = COALESCE($3, full_name), "
+                    "updated_at = now() WHERE id = $1",
+                    by_sub["id"], real, name,
                 )
-            # Same shape, for org. A staff row created BEFORE the org fix holds
-            # 2nd Act's org_id (get_org_id had no issuer branch, so every token
-            # fell through to the default). Fixing only new inserts would fix
-            # nothing — the Hollisworks org has no users, so every affected row
-            # already exists. Scoped strictly to Hollisworks-issued identities;
-            # a 2nd Act row is never touched by this branch.
-            if is_staff and str(by_sub["org_id"]) != HOLLISWORKS_ORG_ID:
-                await conn.execute(
-                    "UPDATE users SET org_id = $2, updated_at = now() WHERE id = $1",
-                    by_sub["id"], HOLLISWORKS_ORG_ID,
-                )
-            await touch_last_login(conn, by_sub["id"])
-            # Back-fill a row still carrying the synthetic address. Rows created
-            # before this fix ALL hold `{sub}@placeholder.local`, because the
-            # access token never carried an email claim (see
-            # `fetch_auth0_identity`). One attempt per sub per process.
-            if by_sub["email"] == placeholder_email(sub) and sub not in _userinfo_attempted:
-                _userinfo_attempted.add(sub)
-                real_email, real_name = await fetch_auth0_identity(request, claims)
-                if real_email:
-                    await conn.execute(
-                        """
-                        UPDATE users
-                        SET email = $2,
-                            full_name = COALESCE($3, full_name),
-                            updated_at = now()
-                        WHERE id = $1
-                        """,
-                        by_sub["id"], real_email, real_name,
-                    )
-            return str(by_sub["id"])
+        return str(by_sub["id"]), "sub"
 
-        # 2. Verify scripts stub sub = a seeded user's UUID id.
+    # 3. Verify-script stub: sub = a seeded users.id. Test mode only.
+    if TEST_MODE:
         maybe_uuid = _as_uuid(sub)
         if maybe_uuid:
-            by_id = await conn.fetchrow(
-                "SELECT id FROM users WHERE id = $1", maybe_uuid
-            )
+            by_id = await conn.fetchrow("SELECT id FROM users WHERE id = $1", UUID(maybe_uuid))
             if by_id:
                 await touch_last_login(conn, by_id["id"])
-                return str(by_id["id"])
+                return str(by_id["id"]), "test_uuid"
 
-        # 3. Create the user; the DB generates the v4 id.
-        # An Auth0 access token minted for a custom API audience carries NO
-        # email/name claims — they live in the ID token, which this API never
-        # sees — so these lookups essentially always miss. Ask the issuing
-        # tenant's /userinfo for the real profile before falling back.
-        email = claims.get("email")
-        full_name = claims.get("name") or claims.get("nickname")
-        if not email and sub not in _userinfo_attempted:
-            _userinfo_attempted.add(sub)
-            email, resolved_name = await fetch_auth0_identity(request, claims)
-            full_name = full_name or resolved_name
+    # 4–6. Unknown login.
+    profile = await fetch_auth0_profile(request, claims)
+    verified = _verified_email(profile)
+    any_email = verified or ((profile or {}).get("email") or "").strip() or None
+    full_name = (
+        (profile or {}).get("name") or (profile or {}).get("nickname") or any_email or "Member"
+    )
 
-        # users.email is NOT NULL, so a deterministic placeholder keeps the
-        # insert legal when /userinfo is unavailable. The back-fill on the
-        # by_sub path above repairs such a row on a later request.
-        email = email or placeholder_email(sub)
-        full_name = full_name or claims.get("email") or "Member"
-        inserted = await conn.fetchrow(
-            """
-            INSERT INTO users (
-                id, org_id, email, full_name, auth0_sub, role, last_login_at
-            )
-            VALUES (extensions.uuid_generate_v4(), $1, $2, $3, $4, $5, now())
-            ON CONFLICT (auth0_sub) DO UPDATE
-                SET email = COALESCE(
-                    NULLIF(EXCLUDED.email, EXCLUDED.auth0_sub || '@placeholder.local'),
-                    users.email
-                ),
-                role = CASE
-                    WHEN EXCLUDED.role = 'super_admin' THEN 'super_admin'
-                    ELSE users.role
-                END,
-                -- The other half of the last_login_at hook (see
-                -- `touch_last_login`). This branch fires when a row appeared
-                -- between the lookup above and this insert, which is still a
-                -- login.
-                last_login_at = now()
-            RETURNING id
-            """,
-            org_id, email, full_name, sub, role,
-        )
-        if inserted:
-            return str(inserted["id"])
-    except Exception as exc:
-        import traceback
+    if verified:
+        matches = await _admitted_match(conn, org_id, verified)
+        if len(matches) == 1:
+            target = matches[0]["id"]
+            await _link_identity(conn, user_id=target, org_id=org_id, sub=sub,
+                                 issuer=issuer, email=verified, via="verified_email")
+            await touch_last_login(conn, target)
+            return str(target), "linked"
 
-        print(f"ERROR in ensure_user (sub={sub!r}): {exc}")
-        print(traceback.format_exc())
+    staff = bool(
+        verified
+        and _is_hollisworks(claims)
+        and str(org_id) == HOLLISWORKS_ORG_ID
+        and verified.lower() in platform_staff_emails()
+    )
+    role = "super_admin" if staff else "member"
+    status = "active" if staff else STATUS_PENDING
+    email = any_email if any_email and not await _email_taken(conn, any_email) else placeholder_email(sub)
 
-    return get_user_id(request)
+    inserted = await conn.fetchrow(
+        """
+        INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, last_login_at)
+        VALUES (extensions.uuid_generate_v4(), $1, $2, $3, $4, $5, $6, now())
+        ON CONFLICT (auth0_sub) DO UPDATE SET last_login_at = now()
+        RETURNING id, status
+        """,
+        org_id, email, full_name, sub, role, status,
+    )
+    if inserted is None:
+        return None, "none"
+    if inserted["status"] == STATUS_PENDING:
+        await _notify_pending(conn, org_id=org_id, user_id=inserted["id"], email=any_email or email)
+    return str(inserted["id"]), ("created_super_admin" if staff else "created_pending")
+
+
+async def resolve_request_principal(request: Request):
+    """Resolve (and provision) the caller, load the Principal, cache it.
+
+    Runs under the RLS context the caller has set (the middleware sets the
+    token's org + the bootstrap sub before calling this). Returns None when
+    the token resolves to no user.
+    """
+    from services.authz import load_principal
+    from services.database import get_pool
+
+    cached = getattr(request.state, "principal", None)
+    if cached is not None:
+        return cached
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            user_id, via = await resolve_identity(conn, request)
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            print(f"ERROR resolving identity (sub={_claims(request).get('sub')!r}): {exc}")
+            print(traceback.format_exc())
+            return None
+        if user_id is None:
+            return None
+        principal = await load_principal(conn, user_id, claims=_claims(request), resolved_via=via)
+    request.state.principal = principal
+    return principal
+
+
+async def ensure_user(conn, request: Request) -> str:
+    """Return the caller's ``users.id``.
+
+    The middleware has already resolved the Principal for every authenticated
+    request, so this is normally a cache read. Without one it resolves on
+    ``conn``. An unresolvable caller is a 401 — except under AUTHZ_TEST_MODE,
+    where the old token-derived fallback id is kept for verify scripts.
+    """
+    principal = getattr(request.state, "principal", None)
+    if principal is not None:
+        return principal.user_id
+    try:
+        user_id, _ = await resolve_identity(conn, request)
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR in ensure_user (sub={_claims(request).get('sub')!r}): {exc}")
+        user_id = None
+    if user_id:
+        return user_id
+    from services.authz import NO_USER_DETAIL, TEST_MODE
+
+    if TEST_MODE:
+        from services.permissions import get_user_id
+
+        return get_user_id(request)
+    raise HTTPException(status_code=401, detail=NO_USER_DETAIL)
