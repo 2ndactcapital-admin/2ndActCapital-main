@@ -2192,6 +2192,18 @@
 --   added_by                                 uuid
 --   PRIMARY KEY trusted_contacts_pkey: (id)
 
+-- ===== user_identities =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   user_id                                  uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   auth0_sub                                text NOT NULL
+--   issuer                                   text NOT NULL
+--   email                                    text
+--   linked_via                               text NOT NULL DEFAULT 'verified_email'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE user_identities_auth0_sub_key: (auth0_sub)
+--   PRIMARY KEY user_identities_pkey: (id)
+
 -- ===== user_notification_preferences =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -2239,6 +2251,7 @@
 --   deactivated_at                           timestamp with time zone
 --   deactivated_by                           uuid
 --   last_login_at                            timestamp with time zone
+--   status                                   text NOT NULL DEFAULT 'active'::text
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
 --   UNIQUE users_invite_token_key: (invite_token)
