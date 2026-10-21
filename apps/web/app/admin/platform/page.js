@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import PlatformSettings from "@/components/admin/PlatformSettings";
 import { getHostSession } from "@/lib/authServer";
 import { loadTheme } from "@/lib/themeServer";
+import { labelFor } from "@/lib/menuVisibility";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ export default async function PlatformSettingsPage() {
   return (
     <AppShell user={session.user}>
       <div>
-        <h1 className="text-3xl font-semibold text-navy">Platform Settings</h1>
+        <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/platform")}</h1>
         <p className="mt-1 text-sm text-text-muted">
           Manage every client organization and its branding
         </p>

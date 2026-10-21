@@ -10,6 +10,13 @@
 import {
   addEdgarIssuer,
   copyEdgarCohort,
+  edgarBulkRunAction,
+  getEdgarBulkInstitutions,
+  getEdgarBulkRuns,
+  getEdgarBulkWorkers,
+  previewEdgarBulk,
+  queueEdgarBulkRun,
+  queueEdgarRefreshIndex,
   createEdgarCohort,
   createEdgarTemplateStudy,
   getEdgarCohort,
@@ -127,4 +134,44 @@ export async function runCohortAction(id, body) {
 
 export async function loadInventoryRunAction(id) {
   return wrap(() => getEdgarInventoryRun(id));
+}
+
+// ── Bulk download (bulkfetchui). Queued runs only — the worker process does the
+// downloading, never the API and never this server. Failures keep the API's
+// structured detail (the Render refusal's setup anchor, the last indexed date).
+
+async function wrapDetail(fn) {
+  try {
+    return { ok: true, payload: await fn() };
+  } catch (error) {
+    return { ...fail(error), detail: error.detail ?? null };
+  }
+}
+
+export async function loadBulkInstitutionsAction() {
+  return wrapDetail(() => getEdgarBulkInstitutions());
+}
+
+export async function previewBulkAction(params) {
+  return wrapDetail(() => previewEdgarBulk(params));
+}
+
+export async function queueBulkRunAction({ params, target }) {
+  return wrapDetail(() => queueEdgarBulkRun({ params, target }));
+}
+
+export async function queueRefreshIndexAction({ to, target }) {
+  return wrapDetail(() => queueEdgarRefreshIndex({ to: to || null, target }));
+}
+
+export async function loadBulkRunsAction(params) {
+  return wrapDetail(() => getEdgarBulkRuns(params));
+}
+
+export async function bulkRunAction(id, action) {
+  return wrapDetail(() => edgarBulkRunAction(id, action));
+}
+
+export async function loadBulkWorkersAction() {
+  return wrapDetail(() => getEdgarBulkWorkers());
 }

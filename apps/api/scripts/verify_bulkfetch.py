@@ -1291,14 +1291,18 @@ REGRESSION_TIMEOUT = {"verify_notefix2.py": 1800}
 
 
 def y_regression() -> None:
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     section("[Y] Regression: verify_edgarpipelinea.py, verify_edgarcohorts.py and verify_notefix2.py, "
             "ONCE each as flat subprocesses, AFTER this script's own teardown")
     log_dir = REPO / "sprint_prompts" / "logs"
+    env = os.environ | {"VERIFY_NESTED": "1"}
     for name in ("verify_edgarpipelinea.py", "verify_edgarcohorts.py", "verify_notefix2.py"):
         timeout = REGRESSION_TIMEOUT.get(name, 600)
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
-                                  text=True, timeout=timeout, cwd=str(REPO))
+                                  text=True, timeout=timeout, cwd=str(REPO), env=env)
             out = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after {timeout}s: {(exc.stdout or b'')[-300:]!r}"

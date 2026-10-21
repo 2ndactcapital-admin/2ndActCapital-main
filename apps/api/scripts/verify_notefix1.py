@@ -614,11 +614,14 @@ async def y_task5_supersede(conn, filing_id: UUID) -> None:
 
 
 async def y_regression() -> None:
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     section("[Y] Regression: verify_notefields.py and verify_goldset.py, run ONCE each as flat subprocesses")
     for name in ("verify_notefields.py", "verify_goldset.py"):
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
-                                  text=True, timeout=600, cwd=str(REPO))
+                                  text=True, timeout=600, cwd=str(REPO), env=os.environ | {"VERIFY_NESTED": "1"})
             out = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after 600s: {(exc.stdout or b'')[-300:]!r}"

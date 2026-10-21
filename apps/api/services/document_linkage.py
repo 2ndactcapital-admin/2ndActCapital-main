@@ -319,17 +319,58 @@ async def list_documents_for_panel(conn, org_id, record_type, record_id) -> list
 # ---------------------------------------------------------------------------
 # Phase 9 Task 4 — basic (NON-semantic) document search
 # ---------------------------------------------------------------------------
-async def search_documents(conn, org_id, query, *, limit=50) -> list[dict]:
+async def search_documents(conn, org_id, query, *, pool, user_id, is_staff,
+                           limit=50) -> list[dict]:
     """BASIC metadata search — filename, ``doc_family`` (category), and a plain
     ILIKE substring match against ``document_extractions.extracted_text``. This is
     deliberately NOT semantic/vector search (that is Phase 11's INDEX/RETRIEVE
     work) — it is case-insensitive substring matching and nothing more. Empty /
     whitespace-only query returns ``[]``. ``matched_on`` reports which field(s)
-    hit so the UI can be honest about why a result appeared."""
+    hit so the UI can be honest about why a result appeared.
+
+    navregroup: scoped to the CALLER. Until this sprint the search filtered by
+    org only, so any member could find any document in the org by filename. It
+    now applies the SAME visibility as semantic search —
+    ``document_embedding.visible_entity_ids`` (staff visibility OR the member's
+    delegate grants, then the restricted-access filter) and the same per-document
+    rule (``document_embedding.document_visible``: an entity document needs its
+    entity in the allowed set; an org-general document is staff-only). The caller
+    arguments are required so no new call site can forget them.
+    """
+    from services.document_embedding import visible_entity_ids
+
     q = (query or "").strip()
     if not q:
         return []
+    allowed = await visible_entity_ids(pool, org_id, user_id, is_staff)
+    return await _search_rows(conn, org_id, q, limit,
+                              scope=(bool(is_staff), sorted(allowed)))
+
+
+async def search_documents_org_wide(conn, org_id, query, *, limit=50) -> list[dict]:
+    """The PRE-navregroup behaviour: every matching document in the org, with no
+    per-caller visibility. Kept for internal callers whose subject is matching,
+    not access (verify_chancery9's filename/text/cross-org checks, and
+    verify_navregroup's reproduction of the original leak). NEVER expose this
+    from an endpoint — ``search_documents`` is the caller-scoped one."""
+    q = (query or "").strip()
+    if not q:
+        return []
+    return await _search_rows(conn, org_id, q, limit, scope=None)
+
+
+async def _search_rows(conn, org_id, q, limit, *, scope) -> list[dict]:
+    # scope: None = org-wide; else (is_staff, allowed_entity_ids). The SQL
+    # predicate is document_embedding.document_visible, applied in the query so
+    # LIMIT counts only rows the caller may see.
     like = f"%{q}%"
+    visibility_sql = ""
+    args = [org_id, like, limit]
+    if scope is not None:
+        visibility_sql = """
+          AND ((d.entity_id IS NULL AND $4::boolean)
+               OR d.entity_id = ANY($5::uuid[]))"""
+        args += [scope[0], scope[1]]
     rows = await conn.fetch(
         """
         SELECT d.id, d.original_filename, d.status, d.doc_family, d.mime_type,
@@ -351,11 +392,11 @@ async def search_documents(conn, org_id, query, *, limit=50) -> list[dict]:
                    WHERE x.document_id = d.id AND x.org_id = d.org_id
                      AND x.extracted_text ILIKE $2
                )
-          )
+          )""" + visibility_sql + """
         ORDER BY d.created_at DESC
         LIMIT $3
         """,
-        org_id, like, limit,
+        *args,
     )
     results = []
     for r in rows:

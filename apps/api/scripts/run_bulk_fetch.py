@@ -19,6 +19,19 @@ MODES (one per invocation)
   --reprocess-fetched    classify every row stuck at 'fetched' from its stored text (no SEC request).
   --selection-v2         Wells Fargo / Deutsche Bank prefilter v2: print what moves, by year; without
                          --dry-run it then activates policy v2 and moves exactly those rows.
+  --worker               serve runs QUEUED from the EDGAR Pipeline screen's "Bulk download" tab
+                         (bulkfetchui): heartbeat every 30 s, claim the oldest queued run for --target,
+                         execute it with the same Runner as a CLI run, write progress every 100 filings.
+                         One run at a time across all workers (8/s SEC budget). Ctrl-C or the screen's
+                         Stop: in-flight filings finish, the run is marked 'stopped' (Requeue resumes it).
+
+FLAGS (worker)
+  --target laptop|render  which queue to serve (default laptop; 'render' is the entrypoint of a future
+                         Render background worker — see docs/PROJECT_STATUS.md, BULKFETCH UI)
+  --poll-seconds N       seconds between claim attempts when idle (default 15)
+  --once                 claim at most one queued run, execute it, exit
+
+    tmux new -s bulkworker 'doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --worker --target laptop'
 
 FLAGS (fetch)
   --source NAME          a row of portfolio.edgar_sources (default structured_notes)
@@ -68,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--refresh-index", action="store_true")
     mode.add_argument("--reprocess-fetched", action="store_true")
     mode.add_argument("--selection-v2", action="store_true")
+    mode.add_argument("--worker", action="store_true")
+    p.add_argument("--target", choices=("laptop", "render"), default="laptop")
+    p.add_argument("--poll-seconds", type=float, default=15)
+    p.add_argument("--once", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--source", default="structured_notes")
     p.add_argument("--banks", default="")
@@ -110,6 +127,8 @@ async def main(argv: list[str]) -> int:
         print("DATABASE_URL is not set. Run under: doppler run -- python3 apps/api/scripts/run_bulk_fetch.py ...")
         return 2
     url = url.replace("postgresql+asyncpg://", "postgresql://")
+    if args.worker:
+        return await _worker(url, args)
     conc = max(1, args.concurrency)
     pool = await asyncpg.create_pool(url, statement_cache_size=0, min_size=1, max_size=conc + 3)
     log = edgar_pipeline.RequestLog()
@@ -189,6 +208,42 @@ async def main(argv: list[str]) -> int:
     finally:
         await client.aclose()
         await pool.close()
+
+
+async def _worker(url: str, args) -> int:
+    """--worker: the queue's executor (services.edgar_bulk_queue.Worker), which
+    runs every claimed bulk_fetch run through the same edgar_bulk.Runner as the
+    CLI path above."""
+    from services import edgar_bulk_queue as q
+    from services import edgar_fetch
+
+    import asyncpg
+
+    edgar_fetch.user_agent()   # loud failure before heartbeating as a worker that cannot fetch
+    pool = await asyncpg.create_pool(url, statement_cache_size=0, min_size=1, max_size=q.MAX_CONCURRENCY + 4)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _on_signal():
+        if not stop.is_set():
+            print("\nStopping: finishing in-flight filings; the run will be marked 'stopped' "
+                  "(Requeue on the screen resumes it).")
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _on_signal)
+        except (NotImplementedError, RuntimeError):
+            pass
+    worker = q.Worker(pool, target=args.target, poll_seconds=args.poll_seconds, stop_event=stop)
+    print(f"worker {worker.worker_id}: serving the {args.target} queue (poll {args.poll_seconds:g}s, "
+          f"heartbeat {q.HEARTBEAT_SECONDS}s){' — once' if args.once else ''}. Ctrl-C to stop.")
+    try:
+        n = await worker.run(once=args.once)
+    finally:
+        await pool.close()
+    print(f"worker {worker.worker_id}: executed {n} run(s); exiting.")
+    return 0
 
 
 if __name__ == "__main__":

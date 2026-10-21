@@ -2540,6 +2540,18 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY edgar_cohorts_pkey: (id)
 
+-- ===== portfolio.edgar_fetch_workers =====
+--   worker_id                                text NOT NULL
+--   target                                   text NOT NULL
+--   host                                     text NOT NULL
+--   pid                                      integer
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   heartbeat_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   current_run_id                           uuid
+--   stopped_at                               timestamp with time zone
+--   details                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   PRIMARY KEY edgar_fetch_workers_pkey: (worker_id)
+
 -- ===== portfolio.edgar_index_filing_filers =====
 --   accession_number                         text NOT NULL
 --   cik                                      text NOT NULL
@@ -2566,6 +2578,8 @@
 --   fetched_at                               timestamp with time zone
 --   primary_issuer_cik                       text
 --   selected_by_cohort_id                    uuid
+--   claimed_by                               uuid
+--   claimed_until                            timestamp with time zone
 --   PRIMARY KEY edgar_index_filings_pkey: (accession_number)
 
 -- ===== portfolio.edgar_inventory_concepts =====
@@ -2701,6 +2715,14 @@
 --   details                                  jsonb NOT NULL DEFAULT '{}'::jsonb
 --   cohort_id                                uuid
 --   run_kind                                 text NOT NULL DEFAULT 'fetch'::text
+--   target                                   text
+--   params                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   queued_at                                timestamp with time zone
+--   worker_id                                text
+--   worker_host                              text
+--   heartbeat_at                             timestamp with time zone
+--   stop_requested                           boolean NOT NULL DEFAULT false
+--   progress                                 jsonb NOT NULL DEFAULT '{}'::jsonb
 --   PRIMARY KEY edgar_pipeline_runs_pkey: (id)
 
 -- ===== portfolio.edgar_selection_policies =====
@@ -2712,6 +2734,19 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   retired_at                               timestamp with time zone
 --   PRIMARY KEY edgar_selection_policies_pkey: (version)
+
+-- ===== portfolio.edgar_sources =====
+--   name                                     text NOT NULL
+--   description                              text NOT NULL
+--   form_types                               ARRAY NOT NULL
+--   filer_source                             text NOT NULL
+--   filer_include_status                     ARRAY
+--   filer_ciks                               ARRAY
+--   classifier                               text NOT NULL
+--   is_active                                boolean NOT NULL DEFAULT true
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY edgar_sources_pkey: (name)
 
 -- ===== portfolio.external_references =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2928,6 +2963,22 @@
 --   system_to                                timestamp with time zone
 --   account_id                               uuid
 --   PRIMARY KEY positions_pkey: (id)
+
+-- ===== portfolio.reference_filing_supplements =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   reference_filing_id                      uuid NOT NULL
+--   supplement_kind                          text NOT NULL DEFAULT 'product_supplement'::text
+--   resolution_method                        text NOT NULL
+--   supplement_accession                     text
+--   supplement_cik                           text
+--   supplement_document                      text
+--   supplement_url                           text
+--   supplement_reference_filing_id           uuid
+--   reference_text                           text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   UNIQUE reference_filing_supplements_one_per_kind: (reference_filing_id, supplement_kind)
+--   PRIMARY KEY reference_filing_supplements_pkey: (id)
 
 -- ===== portfolio.reference_filings =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()

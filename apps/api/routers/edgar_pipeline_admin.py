@@ -20,6 +20,16 @@
     POST /admin/edgar/cohorts/{id}/runs                run kind 'fetch' (cap optional); 'extract' reserved for B2
     GET  /admin/edgar/inventory/{run_id}               template-study concepts + per-issuer label dictionary
 
+  Bulk download (bulkfetchui) — QUEUED runs, executed by a worker process, never by the API:
+    GET  /admin/edgar/bulk/institutions                issuer groups, their filer entities, selected counts by year
+    POST /admin/edgar/bulk/preview                     the dry run: counts per institution/year/entity, ETA, storage
+    POST /admin/edgar/bulk/runs                        queue a bulk_fetch run (target laptop | render)
+    POST /admin/edgar/bulk/runs/refresh-index          queue a refresh_index run
+    GET  /admin/edgar/bulk/runs | /admin/edgar/bulk/runs/{id}   status, progress, ETA, "worker lost"
+    POST /admin/edgar/bulk/runs/{id}/stop | /cancel | /requeue
+    GET  /admin/edgar/bulk/workers                     last heartbeat per target; Render detection (read-only)
+                                                       + laptop_start_command, laptop_instructions (the dialog's steps)
+
 Everything here is GLOBAL public SEC reference data (the manifest, the issuer
 table, the pipeline runs) — no org_id is read or accepted anywhere. The gate is
 ``services.rbac.is_super_admin`` on the caller's principal, the same shape as
@@ -36,6 +46,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from services import edgar_bulk_queue as bulkq
 from services import edgar_cohorts as cohorts
 from services import edgar_inventory as inventory
 from services import edgar_pipeline, edgar_pipeline_admin as admin
@@ -456,3 +467,157 @@ async def edgar_inventory_run(run_id: UUID, request: Request):
             "permissions": _permissions(can_write=False),
             "vocabularies": {"editable": [], "inline_editable": []},
         }
+
+
+# ── Bulk download (bulkfetchui) ─────────────────────────────────────────────
+class BulkParams(BaseModel):
+    """The screen's choices. Range checks (8/s ceiling, concurrency, dates
+    against the index) live in services.edgar_bulk_queue.validate_params so
+    the preview and the queue refuse identically."""
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    banks: list[str] = Field(default_factory=list)
+    date_from: str | None = Field(default=None, alias="from")
+    date_to: str | None = Field(default=None, alias="to")
+    kinds: list[str] = Field(default_factory=lambda: list(bulkq.DEFAULT_KINDS))
+    peek: bool = True
+    keep_preliminaries: bool = False
+    concurrency: int = bulkq.DEFAULT_CONCURRENCY
+    max_rps: int = 8
+
+    def as_params(self) -> dict:
+        return {"banks": self.banks, "from": self.date_from, "to": self.date_to, "kinds": self.kinds,
+                "peek": self.peek, "keep_preliminaries": self.keep_preliminaries,
+                "concurrency": self.concurrency, "max_rps": self.max_rps}
+
+
+class BulkRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    params: BulkParams
+    target: Literal["laptop", "render"] = bulkq.DEFAULT_TARGET
+
+
+class RefreshIndexCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    to: str | None = None
+    target: Literal["laptop", "render"] = bulkq.DEFAULT_TARGET
+
+
+def _bulk_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, bulkq.BulkQueueError):
+        return HTTPException(status_code=exc.status, detail={"message": str(exc), **exc.extra})
+    return HTTPException(status_code=422, detail={"message": str(exc)})
+
+
+_BULK_ERRORS = (bulkq.BulkQueueError, ValueError)
+
+
+def _bulk_vocab(can_write: bool) -> dict:
+    return {
+        "editable": [],
+        "inline_editable": [],
+        "kinds": bulkq.KIND_OPTIONS,
+        "default_kinds": bulkq.DEFAULT_KINDS if can_write else [],
+        "targets": bulkq.TARGET_LABELS,
+        "default_target": bulkq.DEFAULT_TARGET,
+        "statuses": bulkq.STATUS_LABELS,
+        "run_kinds": bulkq.RUN_KIND_LABELS,
+        "max_rps": 8,
+        "default_concurrency": bulkq.DEFAULT_CONCURRENCY,
+        "max_concurrency": bulkq.MAX_CONCURRENCY,
+        "render_refusal": bulkq.RENDER_REFUSAL,
+    }
+
+
+@router.get("/admin/edgar/bulk/institutions")
+async def edgar_bulk_institutions(request: Request):
+    await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await bulkq.institutions(conn)
+    return {**result, "permissions": _permissions(can_write=True), "vocabularies": _bulk_vocab(True)}
+
+
+@router.post("/admin/edgar/bulk/preview")
+async def edgar_bulk_preview(body: BulkParams, request: Request):
+    """The dry run for the screen. Read-only: writes nothing."""
+    await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await bulkq.preview(conn, body.as_params())
+        except _BULK_ERRORS as exc:
+            raise _bulk_error(exc) from exc
+
+
+@router.post("/admin/edgar/bulk/runs", status_code=202)
+async def edgar_bulk_queue_run(body: BulkRunCreate, request: Request):
+    """QUEUE a bulk download for a worker. Laptop: always queued (with
+    worker_online=false and the start command when no worker is heartbeating;
+    worker_online=true and worker_host when one is). Every response carries
+    laptop_start_command (setting EDGAR_BULK_LAPTOP_WORKER_COMMAND, else the
+    working default). Render: 409 and nothing queued unless a Render worker is configured AND
+    alive."""
+    actor_id = await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await bulkq.queue_bulk_run(conn, body.params.as_params(), target=body.target,
+                                              requested_by=actor_id)
+        except _BULK_ERRORS as exc:
+            raise _bulk_error(exc) from exc
+
+
+@router.post("/admin/edgar/bulk/runs/refresh-index", status_code=202)
+async def edgar_bulk_queue_refresh(body: RefreshIndexCreate, request: Request):
+    actor_id = await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await bulkq.queue_refresh_index(conn, to=body.to, target=body.target, requested_by=actor_id)
+        except _BULK_ERRORS as exc:
+            raise _bulk_error(exc) from exc
+
+
+@router.get("/admin/edgar/bulk/runs")
+async def edgar_bulk_runs(request: Request, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100)):
+    await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await bulkq.list_runs(conn, page=page, page_size=page_size)
+    return {**result, "permissions": _permissions(can_write=True), "vocabularies": _bulk_vocab(True)}
+
+
+@router.get("/admin/edgar/bulk/runs/{run_id}")
+async def edgar_bulk_run(run_id: UUID, request: Request):
+    await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return {"run": await bulkq.get_run(conn, run_id)}
+        except _BULK_ERRORS as exc:
+            raise _bulk_error(exc) from exc
+
+
+_RUN_ACTIONS = {"stop": bulkq.request_stop, "cancel": bulkq.cancel, "requeue": bulkq.requeue}
+
+
+@router.post("/admin/edgar/bulk/runs/{run_id}/{action}")
+async def edgar_bulk_run_action(run_id: UUID, action: str, request: Request):
+    await _require_super_admin(request)
+    if action not in _RUN_ACTIONS:
+        raise HTTPException(status_code=404, detail=f"unknown run action {action!r}; one of {sorted(_RUN_ACTIONS)}")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return {"run": await _RUN_ACTIONS[action](conn, run_id)}
+        except _BULK_ERRORS as exc:
+            raise _bulk_error(exc) from exc
+
+
+@router.get("/admin/edgar/bulk/workers")
+async def edgar_bulk_workers(request: Request):
+    await _require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await bulkq.workers_state(conn)
+    return {**result, "permissions": _permissions(can_write=True), "vocabularies": _bulk_vocab(True)}

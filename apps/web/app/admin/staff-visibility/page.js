@@ -8,6 +8,7 @@ import {
   getStaffTeams,
   listEntities,
 } from "@/lib/api";
+import { labelFor } from "@/lib/menuVisibility";
 
 // SOC Phase 2 admin screen: create teams, manage members, and assign a user or
 // team to an entity. This only POPULATES the assignment data the staff-
@@ -37,7 +38,7 @@ export default async function StaffVisibilityPage() {
   return (
     <AppShell user={session.user}>
       <div>
-        <h1 className="text-3xl font-semibold text-navy">Staff Visibility</h1>
+        <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/staff-visibility")}</h1>
         <p className="mt-1 text-sm text-text-muted">
           Teams and entity assignments for staff visibility
         </p>

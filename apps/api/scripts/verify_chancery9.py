@@ -294,11 +294,11 @@ async def run_assertions(conn, uid):
 
     # A6 — basic search: filename AND extracted_text match; unrelated → nothing
     print("\n--- Assertion 6: basic search (filename + extracted_text; miss) ---")
-    by_name = await dl.search_documents(conn, ORG_A, FILENAME_TOKEN)
+    by_name = await dl.search_documents_org_wide(conn, ORG_A, FILENAME_TOKEN)
     name_hit = next((r for r in by_name if r["document_id"] == DOC_SEARCH_ID), None)
-    by_text = await dl.search_documents(conn, ORG_A, TEXT_TOKEN)
+    by_text = await dl.search_documents_org_wide(conn, ORG_A, TEXT_TOKEN)
     text_hit = next((r for r in by_text if r["document_id"] == DOC_SEARCH_ID), None)
-    miss = await dl.search_documents(conn, ORG_A, UNRELATED_TOKEN)
+    miss = await dl.search_documents_org_wide(conn, ORG_A, UNRELATED_TOKEN)
     miss_ids = {r["document_id"] for r in miss}
     name_ok = bool(name_hit) and "filename" in name_hit["matched_on"]
     text_ok = bool(text_hit) and "extracted_text" in text_hit["matched_on"]
@@ -319,8 +319,8 @@ async def run_assertions(conn, uid):
     print("\n--- Assertion 7a: app-layer org scoping (different org sees nothing) ---")
     a_spv = await dl.list_documents_for_record(conn, ORG_A, "spv", SPV_RECORD_ID)
     b_spv = await dl.list_documents_for_record(conn, ORG_B, "spv", SPV_RECORD_ID)
-    a_search = await dl.search_documents(conn, ORG_A, TEXT_TOKEN)
-    b_search = await dl.search_documents(conn, ORG_B, TEXT_TOKEN)
+    a_search = await dl.search_documents_org_wide(conn, ORG_A, TEXT_TOKEN)
+    b_search = await dl.search_documents_org_wide(conn, ORG_B, TEXT_TOKEN)
     if a_spv and a_search and not b_spv and not b_search:
         ok("different org_id sees no linked docs and no search results",
            f"ORG_A(record={len(a_spv)},search={len(a_search)}) ORG_B(record=0,search=0)")
@@ -376,12 +376,12 @@ async def rls_isolation_checks():
         a_spv = await as_org(
             ORG_A, lambda: dl.list_documents_for_record(conn, ORG_A, "spv", SPV_RECORD_ID))
         a_search = await as_org(
-            ORG_A, lambda: dl.search_documents(conn, ORG_A, TEXT_TOKEN))
+            ORG_A, lambda: dl.search_documents_org_wide(conn, ORG_A, TEXT_TOKEN))
         # Cross-org (ORG_B): even asking for ORG_A's data, RLS returns nothing.
         b_spv = await as_org(
             ORG_B, lambda: dl.list_documents_for_record(conn, ORG_A, "spv", SPV_RECORD_ID))
         b_search = await as_org(
-            ORG_B, lambda: dl.search_documents(conn, ORG_A, TEXT_TOKEN))
+            ORG_B, lambda: dl.search_documents_org_wide(conn, ORG_A, TEXT_TOKEN))
 
         if a_spv and a_search and not b_spv and not b_search:
             ok("cross-org: linked docs + search visible in-org, invisible to another org",

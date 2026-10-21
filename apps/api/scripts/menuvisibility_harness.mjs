@@ -7,17 +7,30 @@
  * the shipped rule behaves as asserted, not that a test agrees with itself.
  * Same discipline as authhostconfig_harness.mjs.
  *
- * Prints one JSON object on stdout; verify_superadminmenu.py reads it.
+ * Prints one JSON object on stdout; verify_superadminmenu.py reads it, and
+ * verify_navregroup.py reads its `navregroup` block (persona snapshot against
+ * docs/NAVREGROUP_BASELINE.json, server-gate cross-check, group/tab rules).
  */
 
+import { readFileSync } from "node:fs";
+
 import {
+  GROUPS,
   MENU_ITEMS,
   canAccess,
   canPerm,
   isSuperAdmin,
+  landingDecision,
+  landingFor,
+  visibleAdminGroups,
   visibleAdminSections,
+  visibleGroups,
   visibleMenuItems,
+  visibleSections,
+  visibleTabs,
 } from "../../web/lib/menuVisibility.mjs";
+import { PERSONAS } from "./navregroup_personas.mjs";
+import { SERVER_GATES, serverAllows } from "./navregroup_server_gates.mjs";
 
 // ── Fixtures — shaped exactly like a /api/v1/users/me response ──────────────
 
@@ -164,6 +177,119 @@ const result = {
   gateOmittingSuperAdmin: canAccess(SUPER_ADMIN_NO_PROFILES, {
     roles: ["org_admin"],
   }),
+};
+
+// ── navregroup — persona snapshot against the frozen baseline + group rules ──
+//
+// The baseline (docs/NAVREGROUP_BASELINE.json) was computed by
+// navregroup_baseline.mjs from the PRE-sprint Sidebar.jsx + menuVisibility.mjs at
+// a pinned commit. "After" is what the ONE definition now makes reachable: every
+// visible item (a standalone item via the sidebar, a tab via its group's sidebar
+// entry and tab bar) — the /admin cards link only to those same tabs.
+const BASELINE = JSON.parse(
+  readFileSync(new URL("../../../docs/NAVREGROUP_BASELINE.json", import.meta.url), "utf8"),
+);
+
+// The previously unlisted pages each persona now gains, written out by hand —
+// each one behind the page's real server gate (navregroup_server_gates.mjs).
+const DOCS = ["/admin/document-search", "/admin/semantic-search"];
+const INTENDED_ADDITIONS = {
+  plain_member: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
+    "/admin/billing-groups", "/admin/custody-import"],
+  staff_member: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
+    "/admin/billing-groups", "/admin/custody-import", "/admin/vdr-proposals"],
+  org_admin_manage_members: ["/portfolio/ownership-tree", ...DOCS],
+  org_admin_manage_org_settings: ["/portfolio/ownership-tree", ...DOCS],
+  super_admin: ["/portfolio/transactions", "/portfolio/allocation", "/portfolio/ownership-tree", ...DOCS,
+    "/admin/workflows/runs", "/admin/workflows/triggers", "/admin/billing-groups", "/admin/custody-import",
+    "/admin/vdr-proposals"],
+  no_roles: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
+    "/admin/billing-groups", "/admin/custody-import", "/admin/vdr-proposals"],
+};
+
+const sorted = (xs) => [...new Set(xs)].sort();
+const minus = (a, b) => a.filter((x) => !b.includes(x));
+
+const personaResults = Object.entries(PERSONAS).map(([name, me]) => {
+  const baseline = BASELINE.personas[name]?.reachable ?? null;
+  const after = sorted([
+    ...visibleMenuItems(me).map((i) => i.href),
+    ...visibleAdminGroups(me).flatMap((g) => g.tabs.map((t) => t.href)),
+  ]);
+  const sidebarHrefs = visibleSections(me).flatMap((s) => s.entries.flatMap((e) => e.tabHrefs));
+  const removed = baseline ? minus(baseline, after) : null;
+  const added = baseline ? minus(after, baseline) : null;
+  const intended = sorted(INTENDED_ADDITIONS[name]);
+  const refusedAfter = after.filter((h) => !serverAllows(me, h));
+  const refusedBefore = (baseline ?? []).filter((h) => !serverAllows(me, h));
+  return {
+    name,
+    baseline_count: baseline?.length ?? 0,
+    after_count: after.length,
+    removed,
+    added: added ? sorted(added) : null,
+    intended,
+    additions_exact: !!added && JSON.stringify(sorted(added)) === JSON.stringify(intended),
+    none_removed: !!removed && removed.length === 0,
+    // Every reachable href must be in the sidebar model too (nothing reachable
+    // only through a side door the definition does not render).
+    after_equals_sidebar_tabs: JSON.stringify(sorted(sidebarHrefs)) === JSON.stringify(after),
+    unknown_server_gate: after.filter((h) => !(h in SERVER_GATES)),
+    refused_after: refusedAfter,
+    refused_before: refusedBefore,
+    // No NEW refusal: a href the server refuses is only tolerated when the same
+    // persona already had it before the sprint (a pre-existing [FIND]).
+    new_refusals: minus(refusedAfter, refusedBefore),
+    additions_refused: (added ?? []).filter((h) => !serverAllows(me, h)),
+  };
+});
+
+const tabHrefs = new Set(MENU_ITEMS.map((i) => i.href));
+const groupResults = Object.entries(PERSONAS).flatMap(([name, me]) =>
+  GROUPS.map((g) => {
+    const tabs = visibleTabs(me, g.id).map((t) => t.href);
+    const shown = visibleGroups(me, g.section).some((x) => x.id === g.id);
+    const decision = landingDecision(me, g.id);
+    return {
+      persona: name,
+      group: g.id,
+      visible_tabs: tabs.length,
+      shown_iff_tab: shown === tabs.length > 0,
+      landing_is_first: landingFor(me, g.id) === (tabs[0] ?? null),
+      decision: decision.kind,
+      decision_ok: tabs.length > 0
+        ? decision.kind === "redirect" && decision.href === tabs[0]
+        : decision.kind === "refuse",
+      // A redirect always lands on a TAB page, never on a landing route, so a
+      // landing cannot bounce to another landing (or itself).
+      redirect_target_is_tab: decision.kind !== "redirect"
+        || (tabHrefs.has(decision.href) && !GROUPS.some((x) => x.landing === decision.href && x.id !== g.id)),
+    };
+  }),
+);
+
+// A group whose landing IS one of its tab hrefs has no route of its own, so that
+// tab must be the first visible tab for EVERY persona that sees the group.
+const landingIsTabGroups = GROUPS.filter((g) => tabHrefs.has(g.landing)).map((g) => ({
+  group: g.id,
+  landing: g.landing,
+  ok: Object.values(PERSONAS).every(
+    (me) => visibleTabs(me, g.id).length === 0 || landingFor(me, g.id) === g.landing,
+  ),
+}));
+
+result.navregroup = {
+  baseline_ref: BASELINE.ref,
+  personas: personaResults,
+  groups: groupResults,
+  refusal_pairs: groupResults.filter((r) => r.decision === "refuse").map((r) => `${r.persona}:${r.group}`),
+  landing_is_tab_groups: landingIsTabGroups,
+  every_item_has_section: MENU_ITEMS.every((i) => ["main", "org_admin", "platform"].includes(i.section)),
+  every_group_item_known: MENU_ITEMS.every((i) => i.group === null || GROUPS.some((g) => g.id === i.group)),
+  every_group_has_tab: GROUPS.every((g) => MENU_ITEMS.some((i) => i.group === g.id)),
+  labels: Object.fromEntries(MENU_ITEMS.map((i) => [i.href, i.label])),
+  group_labels: Object.fromEntries(GROUPS.map((g) => [g.id, g.label])),
+  group_landings: Object.fromEntries(GROUPS.map((g) => [g.id, g.landing])),
 };
 
 process.stdout.write(JSON.stringify(result, null, 2));

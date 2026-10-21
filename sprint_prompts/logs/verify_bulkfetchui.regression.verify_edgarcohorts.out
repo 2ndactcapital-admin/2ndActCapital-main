@@ -1,0 +1,206 @@
+[doppler] hydrated 42 secrets
+manifest fingerprint before: rows=716953
+
+── [Y] Task 1 findings ──
+[PASS] 1a: select_stage takes an explicit accession list
+[FIND] 1a: the default fetch queue only takes 'selected' rows (and due 'fetch_failed'); the lifecycle CHECK required a policy version on every decided row. A cohort-chosen filing is now marked selected_by_cohort_id with selection_policy_version cleared, and the CHECK accepts either one (never both: edgar_index_filings_one_selector_chk)
+[PASS] 1a: the decided-row CHECK accepts a cohort id  — CHECK (((pipeline_status = 'discovered'::text) OR ((pipeline_status = 'fetched'::text) AND (reference_filing_id IS NOT NULL)) OR (selection_policy_version IS NOT NULL) OR (selected_by_cohort_id IS NOT NULL)))
+[PASS] 1b: the Filings endpoint's filters go through one where-builder the cohort builder reuses
+[FIND] 1b: Filings tab filters = issuer_group, form_type, status, document_kind, quarter, date_from, date_to (GET /admin/edgar/filings, server-side). Ticks are kept client-side as a Set of accession numbers, independent of the page, so they survive paging, sorting and filtering
+[FIND] 1c: available non-Claude chat models in platform_model_catalog: ['deepseek-v3.2', 'gpt-5-mini', 'gpt-5-nano', 'gpt-oss-120b', 'mistral-small-24b']
+[PASS] 1d: run_note_extraction_pilot.py accepts --cohort
+[PASS] 1d: run_note_extraction_eval.py accepts --cohort
+[PASS] 1d: sample_gold_set.py accepts --cohort
+
+── [Y] Cohorts from a filter, by hand, stratified freeze exactly the expected members ──
+[PASS] filter cohort freezes exactly group A's filings, newest first  — expected 12 got 12
+[PASS] the co-listed filing (two filer rows) appears exactly once  — filer rows=2
+[PASS] the saved cohort records its member_count and is sealed
+[PASS] the definition that built it is stored
+[PASS] hand cohort freezes the ticked filings once each, in the order ticked  — ['9999999999-58-580003', '9999999999-58-580012', '9999999999-58-580011']
+[PASS] a hand-built cohort is recorded as hand_picked
+[PASS] stratified preview: per-stratum counts = min(N, available) per group x era  — preview={'VERIFY Cohorts A | 2019-2021': 2, 'VERIFY Cohorts A | 2022-2023': 2, 'VERIFY Cohorts A | 2024-2026': 2, 'VERIFY Cohorts B | 2019-2021': 1, 'VERIFY Cohorts B | 2022-2023': 2, 'VERIFY Cohorts B | 2024-2026': 2} expected={'VERIFY Cohorts A | 2019-2021': 2, 'VERIFY Cohorts A | 2022-2023': 2, 'VERIFY Cohorts A | 2024-2026': 2, 'VERIFY Cohorts B | 2019-2021': 1, 'VERIFY Cohorts B | 2022-2023': 2, 'VERIFY Cohorts B | 2024-2026': 2}
+[PASS] the stratified preview's per-stratum counts equal the saved members  — saved={'VERIFY Cohorts A | 2019-2021': 2, 'VERIFY Cohorts A | 2022-2023': 2, 'VERIFY Cohorts A | 2024-2026': 2, 'VERIFY Cohorts B | 2019-2021': 1, 'VERIFY Cohorts B | 2022-2023': 2, 'VERIFY Cohorts B | 2024-2026': 2}
+[PASS] every stratified member belongs to the stratum it is labelled with
+[PASS] stratified members are unique by accession
+[PASS] re-previewing the same definition picks the same members the save froze
+[PASS] newest N takes the N newest  — ['9999999999-58-580016', '9999999999-58-580015', '9999999999-58-580014']
+[PASS] oldest N takes the N oldest  — ['9999999999-58-580012', '9999999999-58-580013']
+
+── [Y] Random sampling: same seed -> same members; different seed -> different ──
+[PASS] random N=4 draws 4 fixture filings  — ['9999999999-58-580005', '9999999999-58-580009', '9999999999-58-580016', '9999999999-58-580014']
+[PASS] the same seed gives the same members, in the same order
+[PASS] a different seed gives a different member set  — seed11=['9999999999-58-580005', '9999999999-58-580009', '9999999999-58-580014', '9999999999-58-580016'] seed12=['9999999999-58-580002', '9999999999-58-580009', '9999999999-58-580013', '9999999999-58-580015']
+[PASS] the seed is recorded in the definition
+
+── [Y] A saved cohort cannot be edited; 'copy and edit' creates a new one ──
+[PASS] the database refuses to rename the cohort on a saved cohort  — edgar cohort 0c8dab6f-10ed-4f62-bf57-e0f1a64a39fc is frozen: a saved cohort never changes. Copy it to make a new one.
+[PASS] the database refuses to change a member's stratum on a saved cohort  — edgar cohort 0c8dab6f-10ed-4f62-bf57-e0f1a64a39fc is frozen: its members never change (refused UPDATE). Copy it to make 
+[PASS] the database refuses to add a member on a saved cohort  — edgar cohort 0c8dab6f-10ed-4f62-bf57-e0f1a64a39fc is frozen: its members never change (refused INSERT). Copy it to make 
+[PASS] the database refuses to remove a member on a saved cohort  — edgar cohort 0c8dab6f-10ed-4f62-bf57-e0f1a64a39fc is frozen: its members never change (refused DELETE). Copy it to make 
+[PASS] PATCH on a saved cohort is refused with 409 (even for super-admin)  — HTTP 409 cohort 0c8dab6f-10ed-4f62-bf57-e0f1a64a39fc is frozen: a saved cohort never changes. Use POST /admin/edgar/cohorts/0c8dab6f-10ed-4f62-bf57-e0f1a64a39fc/copy to make a new one.
+[PASS] the cohort and its members are unchanged after every attempt
+[PASS] copy and edit returns a NEW cohort  — HTTP 201 {'cohort': {'id': 'f6d4fd65-fef6-41f3-b282-c7565947147c', 'name': 'VERIFY edgarcohorts hand copy', 'purpose': None, 'kind': 'copy', 'definition': {'added': ['9999999999-58-580013'], 'source': 'copy', 
+[PASS] the copy = source members minus removed plus added (a duplicate add ignored)  — ['9999999999-58-580003', '9999999999-58-580011', '9999999999-58-580013']
+[PASS] the copy records what it was copied from
+[PASS] the source cohort is untouched by the copy
+
+── [Y] The size limit refuses an oversized cohort ──
+[PASS] a hand list of 50,001 filings is refused before any query
+[PASS] the real manifest is larger than the limit (so 'all' must be refused)  — 716,953
+[PASS] saving 'all filings' is refused (422) and creates nothing  — HTTP 422 this definition selects more than 50,000 filings; narrow the filters or sample
+[PASS] the preview of the same definition says too_large  — HTTP 200
+
+── [Y] Super-admin 200; org admin and member 403 on the IDENTICAL request (create, read, run) ──
+[PASS] the verify connection's role does NOT bypass RLS  — rolbypassrls=False
+[PASS] CREATE: super 201 / org admin 403 / member 403  — [('org_admin', 403), ('member', 403), ('super', 201)]
+[PASS] only the super-admin's request created a cohort  — 9->10
+[PASS] a body carrying org_id is refused (extra='forbid')  — HTTP 422
+[PASS] READ /api/v1/admin/edgar/cohorts: super 200 / org admin 403 / member 403  — [('super', 200), ('org_admin', 403), ('member', 403)]
+[PASS] the 403 carries no data
+[PASS] READ /api/v1/admin/edgar/cohorts/{id}: super 200 / org admin 403 / member 403  — [('super', 200), ('org_admin', 403), ('member', 403)]
+[PASS] the 403 carries no data
+[PASS] READ /api/v1/admin/edgar/cohorts/{id}/members: super 200 / org admin 403 / member 403  — [('super', 200), ('org_admin', 403), ('member', 403)]
+[PASS] the 403 carries no data
+[PASS] the cohorts envelope publishes editable [] (a cohort is never edited) and can_write for super-admin
+[PASS] RUN: super 202 / org admin 403 / member 403  — [('org_admin', 403), ('member', 403), ('super', 202)]
+[PASS] only the super-admin's request recorded a run  — 0->1
+[PASS] the run records its cohort id, run kind 'fetch' and the single fetch stage  — status=launched 
+[PASS] run kind 'extract' is accepted by the API shape but refused until B2 (422)  — HTTP 422 run kind 'extract' is reserved for sprint B2 and cannot be launched yet
+[PASS] the launch went through the (replaced) Render starter exactly once
+
+── [Y] Regression: mark_selected_by_cohort no longer raises AmbiguousParameterError — reproduced on the pre-fix text, then the fixed path with a cohort id present and absent ──
+[PASS] regression pre-state: one undecided, one policy-excluded, one policy-selected filing  — {'9999999999-58-580017': 'discovered', '9999999999-58-580010': 'not_selected', '9999999999-58-580006': 'selected'}
+[PASS] REPRODUCED: the pre-fix statement raises AmbiguousParameterError for $2  — AmbiguousParameterError: inconsistent types deduced for parameter $2
+DETAIL:  text versus uuid
+[PASS] cohort id present: the undecided and the policy-excluded filings are marked (True)  — {'9999999999-58-580017': True, '9999999999-58-580010': True, '9999999999-58-580006': False}
+[PASS] cohort id present: a policy-selected filing is not marked (False)  — False
+[PASS] cohort id present: 9999999999-58-580017 persisted selected_by_cohort_id = the cohort and the uuid rendered as text in status_reason  — 5543b103-3c3c-4dae-8866-ff80b0ad881c 'selected by cohort 5543b103-3c3c-4dae-8866-ff80b0ad881c'
+[PASS] cohort id present: 9999999999-58-580010 persisted selected_by_cohort_id = the cohort and the uuid rendered as text in status_reason  — 5543b103-3c3c-4dae-8866-ff80b0ad881c 'selected by cohort 5543b103-3c3c-4dae-8866-ff80b0ad881c (policy had said: policy v1: form FWP not in policy)'
+[PASS] cohort id present: the policy's earlier reason is kept after the cohort's
+[PASS] cohort id absent: the fixed statement prepares (no AmbiguousParameterError)  — CheckViolationError: new row for relation "edgar_index_filings" violates check constraint "edgar_index_filings_decided_has_policy_chk"
+[PASS] cohort id absent: the database refuses a selection with no selector (decided_has_policy_chk)  — CheckViolationError: new row for relation "edgar_index_filings" violates check constraint "edgar_index_filings_decided_has_policy_chk"
+[PASS] every regression write was rolled back: the three filings are unchanged, all columns  — changed=[]
+[PASS] cohort_members_page with no status filter returns every member  — 2
+[PASS] cohort_members_page with a status filter returns the strict subset with that status  — 1 ['9999999999-58-580017']
+
+── [Y] Fetching a cohort: exactly its members, in cohort order; a not-selected member is fetched and records selection by cohort; filings outside the cohort untouched ──
+[PASS] pre-state: an FWP the policy did not select, an undecided filing, a policy-selected one, one past fetch  — {'9999999999-58-580006': 'selected', '9999999999-58-580010': 'not_selected', '9999999999-58-580017': 'discovered', '9999999999-58-580001': 'selected', '9999999999-58-580008': 'ready_for_extraction'}
+[PASS] the fetch stage attempted exactly the eligible members, in cohort order  — order=['9999999999-58-580006', '9999999999-58-580010', '9999999999-58-580017', '9999999999-58-580001'] expected=['9999999999-58-580006', '9999999999-58-580010', '9999999999-58-580017', '9999999999-58-580001']
+[PASS] a member already past fetch is skipped
+[PASS] 9999999999-58-580010 (not_selected by the policy) was fetched and records selected_by_cohort_id = the cohort, no policy version  — 24e448bb-2a6c-41d4-9bf5-8c3f2cd4ad4c vNone
+[PASS] 9999999999-58-580017 (discovered by the policy) was fetched and records selected_by_cohort_id = the cohort, no policy version  — 24e448bb-2a6c-41d4-9bf5-8c3f2cd4ad4c vNone
+[PASS] a member the POLICY selected keeps its policy provenance (no cohort mark)
+[PASS] every fixture filing outside the cohort (and the skipped member) is unchanged, all columns  — changed=[]
+[PASS] the run row records its cohort id, succeeded, attempted/fetched = the eligible members  — succeeded attempted=4 queue empty
+[PASS] the run's details count the members marked as selected by the cohort  — {'cohort_id': '24e448bb-2a6c-41d4-9bf5-8c3f2cd4ad4c', 'marked_by_cohort': 2}
+[PASS] the Cohorts tab's counts by status match the database  — api={'not_pricing_supplement': 4, 'ready_for_extraction': 1} sql={'not_pricing_supplement': 4, 'ready_for_extraction': 1}
+[PASS] the Cohorts tab lists the run under its cohort
+[PASS] the members grid pages server-side in cohort order  — total=5
+
+── [Y] A cohort run is refused while another job holds the lease ──
+[PASS] another holder takes the (verify) lease
+[PASS] the cohort job is refused while the lease is held  — refused: another pipeline job holds the lease (holder verify-other-job, expires 2026-10-19 16:57:40.367486+00:00)
+[PASS] nothing was fetched and no manifest row changed
+[PASS] launching a cohort run while another job is in progress is refused (recorded, with the cohort id)  — refused: another pipeline job is in progress (recent_launch: a666fc2f-5a22-4a4b-aafc-4700214fd03e)
+
+── [Y] The default policy's behavior is unchanged ──
+[PASS] select_stage (at seed) decided the fixtures exactly as policy v1's rules say  — {'selected': 15, 'not_selected': 1, 'policy_version': 1}
+[PASS] policy decisions still carry the policy's own reason and version
+[PASS] the selection policies table is unchanged
+[PASS] pre-state: three policy-selected fixtures
+[PASS] the default fetch order is still newest first  — ['9999999999-58-580013', '9999999999-58-580002', '9999999999-58-580012']
+[PASS] a default (non-cohort) fetch never marks selection by cohort
+[PASS] 'Run default policy now' still records the full discover/select/fetch run with no cohort  — HTTP 202 refused
+[PASS] the Progress tab's button label comes from the envelope: 'Run default policy now (newest first)'
+
+── [Y] B1's pilot and harness in dry-run with --cohort plan exactly the cohort's ready members ──
+[PASS] the cohort's ready members (SQL, cohort order) are the expected fixtures
+[PASS] pilot --dry-run --cohort plans exactly the cohort's ready members, in cohort order
+[PASS] harness --dry-run --cohort plans exactly the cohort's ready members, in cohort order
+[PASS] the gold-set sampler proposes candidates from the cohort's ready members only  — pool 4
+[PASS] the dry runs made zero proxy calls
+
+── [Y] The template-study preset covers every 'yes' issuer and all three eras ──
+[PASS] the preset previews  — HTTP 200 {'definition': {'source': 'filter', 'filters': {'include_status': ['yes'], 'form_type': '424B2'}, 'sampling': {'method': 'stratified', 'seed': 1, 'stratify_by': 'issuer_era', 'per_stratum': 8}}, 'matc
+[PASS] per stratum: min(8, available) for every 'yes' issuer group x era (derived in SQL)  — strata=54 expected=54
+[PASS] every 'yes' issuer group with 424B2 filings is in the preset  — missing=[]
+[PASS] all three eras appear  — ['2019-2021', '2022-2023', '2024-2026']
+[PASS] the preview count is the sum of its strata and excludes the test's fixtures
+
+── [Y] Inventory: dry run makes zero model calls; mocked run stores items with provenance; a fabricated quote is rejected and counted; terms pages stop before risk factors ──
+[PASS] terms pages keep the terms and payout examples and stop before risk factors, licence text and tax  — sections_included=['coupon_call', 'hypothetical_examples', 'key_terms'] truncated=False
+[PASS] payout examples placed AFTER the risk section are still kept; the risk text is not  — [{'name': 'opening', 'klass': 'keep', 'heading': ''}, {'name': 'key_terms', 'klass': 'keep', 'heading': 'Key Terms'}, {'name': 'coupon_call', 'klass': 'keep', 'heading': 'Coupon Barrier: 68.00% of the Initial Level'}, {'name': 'risk_factors', 'klass': 'drop', 'heading': 'Selected Risk Considerations'}, {'name': 'hypothetical_examples', 'klass': 'keep', 'heading': 'Hypothetical Examples'}, {'name': 'license', 'klass': 'drop', 'heading': 'License Agreement'}, {'name': 'tax', 'klass': 'drop', 'heading': 'Material U.S. Federal Income Tax Consequences'}]
+[PASS] the terms-page size and token estimate are recorded
+[PASS] sanity: the pricing_date extension field is present in the field spec list
+[PASS] the run-time model choice takes the available, non-Claude, proxy-served entry  — chosen=verify-edgarcohorts-model
+[PASS] a Claude catalog entry is never eligible, even when the proxy serves it
+[PASS] asking for a Claude model by name is refused (BLOCKED)
+[FIND] live eligible inventory models: ['deepseek-v3.2', 'gpt-5-mini', 'gpt-5-nano', 'gpt-oss-120b', 'mistral-small-24b']  — claude-haiku: Claude models are ruled out for this work; claude-sonnet: Claude models are ruled out for this work; gemini-2.5-flash-lite: availability disabled; qwen2.5-7b: availability disabled; voyage-3.5: embedding provider
+[PASS] the dry run plans every ready pricing supplement (fewer than 4 per issuer here) plus the product supplement
+[PASS] the dry run made ZERO model calls
+[PASS] the dry run wrote no inventory run
+[PASS] the mocked run completes every planned document  — completed None
+[PASS] one inventory call per document and ONE grouping call  — {'inventory': 5, 'grouping': 1}
+[PASS] every item with a real quote is stored  — items=17 expected=17
+[PASS] each fabricated quote is REJECTED and counted (one per document)  — rejected=5
+[PASS] no stored item carries a fabricated quote
+[PASS] each rejection is recorded on its document with the quote and the reason
+[PASS] every item records the model, the provider-reported model and its call id
+[PASS] every document records provider-reported model, the serving deployment and its cost
+[PASS] the run's spend = its documents' costs plus the grouping call  — run=0.065425 docs=0.056999999999999995
+[PASS] token counts are recorded per document
+[PASS] per-document facts stored: product family, program supplement, payout table, issue size
+[PASS] every stored quote's offsets point at that quote in the filing text
+[PASS] misleading-label flags are stored with their note
+[PASS] a mapping to an existing registry field is kept; NEW leaves the mapping empty
+[FIND] plausible_mapping rejected a legitimate mapping before the fix: 'Trigger Value' -> barrier_pct shares no vocabulary with barrier_pct's own key/label/description — the synonym 'trigger' lives only on the sibling protection_type field's description
+[PASS] FIXED: 'Trigger Value' (a real synonym for a barrier level) now maps to barrier_pct
+[PASS] a mapping with no relationship in meaning at all is still rejected
+
+── [Y] Concept grouping keeps every original label and quote attached; the label dictionary is produced ──
+[PASS] every item is attached to a concept
+[PASS] each concept's labels are exactly its items' original labels, and its frequency their count
+[PASS] the model-assisted grouping merged 'Pricing Date' and 'Trade Date' into one concept, keeping both labels
+[PASS] no item is counted twice or lost across concepts
+[PASS] every item still carries its original label and quote
+[PASS] the concept carries every misleading-label flag
+[PASS] the per-issuer label dictionary covers every issuer x label  — HTTP 200 got=10 expected=10
+[PASS] the Cohorts-tab concepts grid lists every concept
+[PASS] the inventory grid is super-admin only (org admin 403)
+[PASS] docs/TEMPLATE_STUDY.md renders v2's section-coverage layout (overall and per-bank)
+[PASS] the concepts table documents its own bank-count ranking and includes the merged Pricing/Trade Date concept
+[PASS] docs/TEMPLATE_STUDY.md has a dedicated misleading-label-flags section
+[PASS] docs/TEMPLATE_STUDY.md renders the per-issuer label dictionary
+
+── [Y] The spending cap stops a run cleanly ──
+[PASS] the capped run returns normally (no exception)
+[PASS] the run stops as 'stopped_spend_cap' with the reason, and is finished  — stopped_spend_cap
+[PASS] exactly the documents that fit under the cap were read; the call that would cross it was never made  — done=1 calls={'inventory': 1, 'grouping': 0}
+[PASS] recorded spend never exceeds the cap  — 0.011418 <= 0.011418999999999999
+[PASS] with no eligible model the run reports BLOCKED and writes nothing
+
+── [Y] No Claude model, OpenRouter route, provider key or direct provider call in application code ──
+[PASS] apps/api/services/edgar_inventory.py: none found  — []
+[PASS] apps/api/services/edgar_cohorts.py: none found  — []
+[PASS] apps/api/services/edgar_pipeline.py: none found  — []
+[PASS] apps/api/routers/edgar_pipeline_admin.py: none found  — []
+[PASS] apps/api/scripts/run_edgar_inventory.py: none found  — []
+[PASS] apps/api/edgar_pipeline_job.py: none found  — []
+[PASS] apps/api/services/note_extraction/selection.py: none found  — []
+[PASS] apps/web/components/admin/EdgarCohorts.jsx: none found  — []
+[PASS] apps/web/components/admin/EdgarPipelineMonitor.jsx: none found  — []
+[PASS] the inventory pass makes its calls only through the proxy chokepoint (proxy.chat); no HTTP client of its own
+
+── [Y] Teardown: fixtures gone; manifest rows restored exactly ──
+[PASS] zero fixture rows remain  — {'filings': 0, 'filers': 0, 'refs': 0, 'issuers': 0, 'cohorts': 0, 'members': 0, 'runs': 0, 'inventory_runs': 0, 'items': 0, 'lease': 0, 'catalog': 0, 'users': 0}
+[PASS] the real manifest's fingerprint (row count + md5 of every row) is unchanged  — before=(716953, '29a6830f6e90b952e90f416d0218b8c9') after=(716953, '29a6830f6e90b952e90f416d0218b8c9')
+
+── [Y] npm run build exits 0 ──
+[PASS] npm run build exits 0
+[PASS] the build emitted /admin/edgar-pipeline
+
+======================================================================
+FINDINGS: 5
+TOTAL: 157 PASS, 0 FAIL
+======================================================================

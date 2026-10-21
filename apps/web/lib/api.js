@@ -32,8 +32,16 @@ async function parseError(res) {
   } catch {
     // non-JSON body
   }
-  const error = new Error(detail || `Request failed (${res.status})`);
+  // A structured detail ({message, ...extra}) keeps its message as the error
+  // text and its fields on error.detail (bulkfetchui: the Render refusal and
+  // "Refresh the index first" carry a setup anchor / the last indexed date).
+  const message =
+    typeof detail === "string"
+      ? detail
+      : detail?.message ?? (detail ? JSON.stringify(detail) : null);
+  const error = new Error(message || `Request failed (${res.status})`);
   error.status = res.status;
+  error.detail = detail && typeof detail === "object" ? detail : null;
   return error;
 }
 
@@ -763,6 +771,21 @@ export const runEdgarCohort = (id, body) =>
   fetchAPI(`/api/v1/admin/edgar/cohorts/${encodeURIComponent(id)}/runs`, { method: "POST", body });
 export const getEdgarInventoryRun = (id) =>
   fetchAPI(`/api/v1/admin/edgar/inventory/${encodeURIComponent(id)}`);
+// bulkfetchui — the "Bulk download" tab: queued runs executed by a worker.
+export const getEdgarBulkInstitutions = () => fetchAPI("/api/v1/admin/edgar/bulk/institutions");
+export const previewEdgarBulk = (body) =>
+  fetchAPI("/api/v1/admin/edgar/bulk/preview", { method: "POST", body });
+export const queueEdgarBulkRun = (body) =>
+  fetchAPI("/api/v1/admin/edgar/bulk/runs", { method: "POST", body });
+export const queueEdgarRefreshIndex = (body) =>
+  fetchAPI("/api/v1/admin/edgar/bulk/runs/refresh-index", { method: "POST", body });
+export const getEdgarBulkRuns = (params) =>
+  fetchAPI("/api/v1/admin/edgar/bulk/runs", { searchParams: params });
+export const getEdgarBulkRun = (id) =>
+  fetchAPI(`/api/v1/admin/edgar/bulk/runs/${encodeURIComponent(id)}`);
+export const edgarBulkRunAction = (id, action) =>
+  fetchAPI(`/api/v1/admin/edgar/bulk/runs/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+export const getEdgarBulkWorkers = () => fetchAPI("/api/v1/admin/edgar/bulk/workers");
 
 // noteextractb1 — gold-set review, evaluation results, distribution participants (Super Admin).
 export const getGoldCandidates = (params) =>

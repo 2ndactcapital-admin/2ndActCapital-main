@@ -925,6 +925,9 @@ def check_task3_credentials() -> None:
 # Task 4 (last bullet) — regression: Sprints 1-4's own verify scripts
 # ═══════════════════════════════════════════════════════════════════════════
 def check_regression() -> None:
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     for label, script in (
         ("1", "verify_altruist_sprint1_openapi_connection.py"),
         ("2", "verify_altruist_sprint2_identity_resolution.py"),
@@ -935,6 +938,7 @@ def check_regression() -> None:
             out = subprocess.run(
                 ["doppler", "run", "--", "python3", str(HERE / script)],
                 cwd=str(API_DIR), capture_output=True, text=True, timeout=180,
+                env=os.environ | {"VERIFY_NESTED": "1"},
             )
         except Exception as exc:  # noqa: BLE001
             R.bad(f"5-REGR-{label}", f"could not run {script}", repr(exc))

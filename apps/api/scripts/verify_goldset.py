@@ -1127,10 +1127,13 @@ async def y_scorer(conn, specs, run_id, proposed):
 
 
 def y_regression():
+    if os.environ.get("VERIFY_NESTED") == "1":
+        print("[SKIP] nested run: regression section skipped (parent runs it)")
+        return
     section("[Y] Regression: verify_notefields.py, run ONCE as a flat subprocess")
     try:
         proc = subprocess.run([sys.executable, str(HERE.parent / "verify_notefields.py")], capture_output=True,
-                              text=True, timeout=180, cwd=str(REPO))
+                              text=True, timeout=180, cwd=str(REPO), env=os.environ | {"VERIFY_NESTED": "1"})
         out = proc.stdout + proc.stderr
     except subprocess.TimeoutExpired as exc:
         out = f"TIMEOUT after 180s: {(exc.stdout or b'')[-300:]!r}"

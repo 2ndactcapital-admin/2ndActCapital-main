@@ -1,0 +1,149 @@
+[doppler] hydrated 42 secrets
+[PASS] the verify connection's role does NOT bypass RLS  — app_service
+[PASS] no fixture rows before the run  — {"portfolio.edgar_fetch_workers": 0, "portfolio.edgar_pipeline_lease": 0, "portfolio.reference_filing_supplements": 0, "portfolio.edgar_index_filing_filers": 0, "portfolio.edgar_index_filings": 0, "portfolio.reference_filings": 0, "portfolio.edgar_pipeline_runs": 0, "portfolio.structured_note_issuers": 0, "public.users": 0, "public.organizations": 0, "public.roles": 0}
+[PASS] every fixture pipeline_status is a live CHECK value  — []
+[PASS] fixture run values (trigger_source 'verify', status 'queued', targets) are live CHECK values
+
+── [Y] Task 1 — the five discovery findings are reported ──
+[PASS] docs/BULKFETCHUI_DISCOVERY.md reports 1a..1e in order  — ['1a', '1b', '1c', '1d', '1e']
+[PASS] 1a names the reused functions (plan_scope, scope_counts, estimate, Runner)  — **this sprint factors out `plan_scope(...)`**
+[PASS] 1b names the run table and its CHECK values  — **The bulk Runner already writes `portfolio.edgar_pipeline_runs`**
+[PASS] 1c states the refresh cost  — **12 weekday
+index files = 12 SEC requests**
+[PASS] 1d names the API gate  — `_require_super_admin(request)`
+[PASS] 1e names the read-only Render call  — `GET https://api.render.com/v1/services/{serviceId}`
+
+── [Y] Schema — new columns/values live and declared in the migration; old values still accepted; RLS on ──
+[PASS] every new run column is live AND declared in the migration  — missing live []; undeclared []
+[PASS] status CHECK keeps every old value and adds queued/stopped/cancelled  — ['cancelled', 'failed', 'launch_failed', 'launched', 'launching', 'queued', 'refused', 'running', 'stopped', 'succeeded']
+[PASS] run_kind adds bulk_fetch/refresh_index; target is laptop|render  — ['bulk_fetch', 'extract', 'fetch', 'refresh_index'] / ['laptop', 'render']
+[PASS] the new CHECK values are declared in the migration file
+[PASS] an insert with each pre-existing status is still accepted (rolled back)  — ['failed', 'launch_failed', 'launched', 'launching', 'refused', 'running', 'succeeded']
+[PASS] a queued bulk_fetch row without a target is refused  — new row for relation "edgar_pipeline_runs" violates check constraint "edgar_pipeline_runs_queued_tar
+[PASS] RLS is on for both tables  — {'edgar_pipeline_runs': True, 'edgar_fetch_workers': True}
+[PASS] edgar_fetch_workers has a policy for every operation  — ['DELETE', 'INSERT', 'SELECT', 'UPDATE']
+[PASS] a partial index serves the queued-run claim by target  — CREATE INDEX edgar_pipeline_runs_queued_idx ON portfolio.edgar_pipeline_runs USING btree (target, queued_at) WHERE (status = 'queued'::text)
+
+── [Y] Preconditions — no real worker online, no real bulk run running (they would race the fixtures) ──
+[PASS] no real worker is heartbeating (stop it: tmux attach -t bulkworker, Ctrl-C)  — []
+[PASS] no real queued-kind run is running  — []
+[PASS] fixture users.role values satisfy the live CHECK  — []
+
+── [Y] Institutions endpoint — fixture groups with their filer entities; per-year counts equal SQL ──
+[PASS] GET institutions lists each fixture group  — HTTP 200
+[PASS] Alpha lists both its filer entities with name and CIK  — [('990920001', 'VERIFY BFUI Alpha Filer 1'), ('990920002', 'VERIFY BFUI Alpha Filer 2')]
+[PASS] per-entity per-year counts equal SQL and the fixtures created  — api {('990920001', '2025'): 3, ('990920001', '2026'): 2, ('990920002', '2025'): 1, ('990920003', '2026'): 4} | sql {('990920002', '2025'): 1, ('990920001', '2025'): 3, ('990920003', '2026'): 4, ('990920001', '2026'): 2}
+[PASS] the group's per-year totals sum its entities  — {'2025': 4, '2026': 2}
+
+── [Y] Preview — counts equal SQL on fixtures; To past the index refused with the date; writes nothing; live < 2 s ──
+[PASS] preview total equals SQL and the 10 fixture filings in range  — HTTP 200 total 10
+[PASS] per institution × year equals SQL  — {('VERIFY BFUI Alpha', '2025'): 4, ('VERIFY BFUI Alpha', '2026'): 2, ('VERIFY BFUI Beta', '2026'): 4}
+[PASS] per filer entity equals SQL  — {'990920001': 5, '990920002': 1, '990920003': 4}
+[PASS] the preview carries ETA, storage and monthly cost  — eta 4s, 0.0 GB, $0.0
+[PASS] a To after the last indexed date is refused with 'Refresh the index first' and the date  — HTTP 409: Refresh the index first — the index ends on 2026-10-01, and To is 2026-10-02.
+[PASS] the preview wrote nothing (run table and fixture rows unchanged, no claims)  — runs 3->3; 12 fixture rows
+    live preview JPMorgan 2025: 4686 ms end to end (server-side 2644 ms), total 18860, SQL 18860
+[PASS] live preview for JPMorgan 2025 equals a direct SQL count (read-only)  — 18860 vs 18860
+[FAIL] live preview returns under 2 s  — measured 4.686 s
+
+── [Y] Queue on laptop with no worker heartbeat — queued, worker_online false, the start command returned ──
+[PASS] POST runs with no target queues a run on the laptop (the default)  — HTTP 202 queued laptop
+[PASS] worker_online is false and the exact start command is returned  — doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --worker --target laptop
+[PASS] an independent re-read shows the queued row with its params  — queued {'to': '2025-12-31', 'from': '2025-01-01', 'peek': True, 'banks': ['VERIFY BFUI Alpha'], 'kinds': ['final'], 'source': 'structured_notes', 'max_rps': 8, 'concurrency': 6, 'keep_preliminaries': False}
+
+── [Y] Render — 409 and nothing queued when not set up; queued with target 'render' when configured + alive ──
+[PASS] not configured: 409 with the refusal message and the setup anchor  — HTTP 409: Render worker is not set up — run on Laptop, or see setup steps
+[PASS] zero runs queued (count before and after)  — 1 -> 1
+[PASS] with no service id configured, Render is not even read
+[PASS] configured but no Render heartbeat in 5 minutes: still 409, nothing queued  — HTTP 409; 1 -> 1
+[PASS] configured + alive (mocked): the same request queues with target 'render'  — HTTP 202; render queued
+[PASS] GET workers reports Render configured and online  — None
+
+── [Y] Worker --once — claims only its own target's run, executes via the CLI code path, writes progress ──
+[PASS] the laptop worker executed exactly the laptop run  — [{'run_id': UUID('e5f119a2-1639-4aed-9d28-f6c1c06ee556'), 'status': 'fenced'}]
+[PASS] it ran through edgar_bulk.Runner.run — the CLI's own code path (recorded by the mock)  — [{'run_id': UUID('e5f119a2-1639-4aed-9d28-f6c1c06ee556'), 'banks': ['VERIFY BFUI WorkL'], 'fn': 'Runner.run', 't0': 255113.673410359, 't1': 255122.794923039}]
+[PASS] independent re-read: 'succeeded', progress done 5 (final), counters written, worker recorded  — succeeded done 5 fetched 5
+[PASS] progress was written every PROGRESS_EVERY filings while running (2 here) and once on finish  — mid-run writes at done=[2, 4]
+[PASS] every fixture filing of the run was stored and released  — ['ready_for_extraction']
+[PASS] the render-target run was NOT claimed by the laptop worker  — queued
+[PASS] a --target render worker claims and completes the render run (the future Render entrypoint)  — succeeded
+
+── [Y] Two workers — one queued run claimed by exactly one (SKIP LOCKED); never two runs at once; <= 8/s ──
+[PASS] one queued run, two workers at once: executed by exactly one  — a 0, b 1, by verify-bfui:laptop-b
+[PASS] while a run is running, a second worker claims nothing (one bulk run at a time)  — worker verify-bfui:laptop-d: waiting — run 1a2368a7-093c-425a-9edf-9812c8eb831e is running on worker verify-bfui:laptop-c (laptop); one bulk
+[PASS] after the first finished, the second ran — the two runs never overlapped (in-process clock)  — t1 (255166.048777393, 255178.338359972) / t2 (255183.509037573, 255192.243675877)
+[PASS] combined SEC requests across both workers: busiest 1-second window 8  — 64 requests
+
+── [Y] Stop — stop_requested mid-run -> 'stopped', in-flight finished; requeue resumes, nothing fetched twice ──
+[PASS] POST stop mid-run (via the API) -> the run closes 'stopped'  — stop HTTP [200]; stopped
+[PASS] in-flight filings finished (each stored row complete), the rest unclaimed and still 'selected'  — done 5, left 5, half-done []
+[PASS] requeue a stopped run -> queued  — HTTP 200
+[PASS] the requeued run resumed and finished every filing  — succeeded
+[PASS] no fixture filing was fetched twice (one full download each)  — [1]
+[PASS] the resume processed only the remainder; the stopped attempt's progress is kept as 'previous'  — now 5, previous 5
+
+── [Y] Stale heartbeat — 'worker lost', requeue allowed; cancel only on queued runs ──
+[PASS] a worker claimed the run  — running
+[PASS] a running run with a stale heartbeat shows 'worker lost' and offers Requeue  — worker_lost
+[PASS] cancel is refused on a running (lost) run  — HTTP 409
+[PASS] requeue of a worker-lost run is allowed  — HTTP 200
+[PASS] the lost worker, if it wakes, is fenced (its heartbeat matches no row)
+[PASS] cancel works on the queued run  — HTTP 200
+[PASS] cancel again (now cancelled) is refused  — HTTP 409
+
+── [Y] refresh_index — queued from the API and executed by the worker with mocked index files ──
+[PASS] POST runs/refresh-index queues a refresh_index run  — HTTP 202
+[PASS] the worker executed it: 3 new filings from the mocked daily files  — succeeded 3
+[PASS] selection applied to the new rows only (424B2 in, FWP out)  — {'9999999999-92-000047': 'selected', '9999999999-92-000048': 'not_selected', '9999999999-92-000049': 'selected'}
+[PASS] one mocked index request per weekday; the last indexed date did not move  — 6 requests
+
+── [Y] Permission gate on every new endpoint — org admin refused, super admin admitted, identical request ──
+[PASS] the refused user is a REAL org admin (an org_admin user_roles grant)
+[PASS] GET /api/v1/admin/edgar/bulk/institutions: org admin 403 (nothing written), super admin 200  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 200
+[PASS] POST /api/v1/admin/edgar/bulk/preview: org admin 403 (nothing written), super admin 200  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 200
+[PASS] POST /api/v1/admin/edgar/bulk/runs: org admin 403 (nothing written), super admin 202  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 202
+[PASS] POST /api/v1/admin/edgar/bulk/runs/refresh-index: org admin 403 (nothing written), super admin 202  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 202
+[PASS] GET /api/v1/admin/edgar/bulk/runs: org admin 403 (nothing written), super admin 200  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 200
+[PASS] GET /api/v1/admin/edgar/bulk/runs/{id}: org admin 403 (nothing written), super admin 200  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 200
+[PASS] POST /api/v1/admin/edgar/bulk/runs/{id}/stop: org admin 403 (nothing written), super admin 409  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 409
+[PASS] POST /api/v1/admin/edgar/bulk/runs/{id}/cancel: org admin 403 (nothing written), super admin 200  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 200
+[PASS] POST /api/v1/admin/edgar/bulk/runs/{id}/requeue: org admin 403 (nothing written), super admin 409  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 409
+[PASS] GET /api/v1/admin/edgar/bulk/workers: org admin 403 (nothing written), super admin 200  — org admin HTTP 403: {'detail': 'Super Admin access required'}; super HTTP 200
+
+── [Y] No AI model calls; the Render client made reads only ──
+[PASS] the mocked model clients recorded no call  — []
+[PASS] every Render API call was a GET (no write)  — 1 calls, methods ['GET']
+[PASS] services/edgar_bulk_queue.py imports no model client
+[PASS] services/edgar_bulk.py imports no model client
+[PASS] edgar_bulk_queue.py has no Render write call in its source  — []
+
+── [Y] Front end — the tab, the Run on radio (Laptop default), the Render refusal, worker status; build 0 ──
+[PASS] EdgarPipelineMonitor has the Bulk download tab  — { key: "bulk", label: "Bulk download" }
+[PASS] the Run on radio offers Laptop then Render  — ['laptop', 'render']
+[PASS] the radio's default is the server's default_target, which is 'laptop'  — setTarget(v.default_target ?? null)
+[PASS] the component renders the server's Render refusal text inline with the setup link
+[PASS] the worker status (laptop host / start command with Copy; Render 'not set up') is present
+[PASS] node tests for the tab's logic pass (envelope fed to the render logic; fails closed)  — # pass 6
+[PASS] npm run build exits 0
+[PASS] the built output contains the Bulk download component  — 2 chunk(s)
+
+── [Y] PROJECT_STATUS records the sprint ──
+[PASS] docs/PROJECT_STATUS.md has the BULKFETCH UI entry  — ## 00000000000000000000000000000000000000000000000. BULKFETCH UI — "Bulk download" tab on 
+[PASS] PROJECT_STATUS covers tmux new -s bulkworker
+[PASS] PROJECT_STATUS covers --worker --target render
+[PASS] PROJECT_STATUS covers ~$7/month
+[PASS] PROJECT_STATUS covers EDGAR_BULK_RENDER_WORKER_SERVICE_ID
+[PASS] PROJECT_STATUS covers Queued-run lifecycle
+[PASS] PROJECT_STATUS covers Measured preview time
+
+── [Y] Teardown: zero fixture rows; every touched table at its pre-test count; real gold untouched ──
+[PASS] zero fixture rows remain  — {"portfolio.edgar_fetch_workers": 0, "portfolio.edgar_pipeline_lease": 0, "portfolio.reference_filing_supplements": 0, "portfolio.edgar_index_filing_filers": 0, "portfolio.edgar_index_filings": 0, "portfolio.reference_filings": 0, "portfolio.edgar_pipeline_runs": 0, "portfolio.structured_note_issuers": 0, "public.users": 0, "public.organizations": 0, "public.roles": 0}
+[PASS] every touched table is back at its exact pre-test count  — {}
+[PASS] existing note_gold_values rows unchanged (count and checksum)  — (79, 'c6856a43442076e0ca22ef6a828da128') -> (79, 'c6856a43442076e0ca22ef6a828da128')
+
+── [Y] Regression: verify_bulkfetch.py, verify_edgarpipelinea.py, verify_edgarcohorts.py — ONCE each, flat subprocesses, AFTER this script's own teardown ──
+[PASS] verify_bulkfetch.py still reports 0 FAIL  — TOTAL: 103 PASS, 0 FAIL
+[FAIL] verify_edgarpipelinea.py still reports 0 FAIL  — TIMEOUT after 600s: b''
+[PASS] verify_edgarcohorts.py still reports 0 FAIL  — TOTAL: 157 PASS, 0 FAIL
+
+TOTAL: 106 PASS, 2 FAIL
