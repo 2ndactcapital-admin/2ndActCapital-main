@@ -1,5 +1,5 @@
 {
- "app_route_count": 443,
+ "app_route_count": 448,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -4130,7 +4130,7 @@
    "write": false
   },
   {
-   "after": "any(manage_members|manage_org_settings); any(manage_members|manage_org_settings)",
+   "after": "any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
@@ -4236,6 +4236,94 @@
    "name": "reject_pending_user",
    "note": "",
    "path": "/api/v1/admin/users/{user_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_members",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin",
+   "name": "send_password_reset",
+   "note": "",
+   "path": "/api/v1/admin/users/{user_id}/password-reset",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_members",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin",
+   "name": "resend_invite",
+   "note": "",
+   "path": "/api/v1/admin/users/{user_id}/resend-invite",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_members",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin",
+   "name": "link_pending_login",
+   "note": "",
+   "path": "/api/v1/admin/users/{user_id}/link",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_members",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.admin",
+   "name": "update_user_email",
+   "note": "",
+   "path": "/api/v1/admin/users/{user_id}/email",
    "public": false,
    "write": true
   },
@@ -5446,7 +5534,8 @@
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "pending_allowed": true,
+    "rule": "self"
    },
    "find": false,
    "methods": [
@@ -5474,6 +5563,25 @@
    "name": "patch_me",
    "note": "own preferences",
    "path": "/api/v1/users/me",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "pending_allowed": true,
+    "rule": "self"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.users",
+   "name": "set_contact_email",
+   "note": "own row only (USERMGMT1 contact email; reachable while pending, never used for linking)",
+   "path": "/api/v1/users/me/contact-email",
    "public": false,
    "write": true
   },

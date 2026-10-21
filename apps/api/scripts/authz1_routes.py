@@ -72,6 +72,10 @@ SELF_SCOPED = {
     "routers.marketing": "public by design (anonymous lead)",
     "routers.altruist_webhook": "public, HMAC-signed",
 }
+# Per-route note where the module's SELF_SCOPED reason does not fit.
+SELF_SCOPED_ROUTES = {
+    ("PUT", "/api/v1/users/me/contact-email"): "own row only (USERMGMT1 contact email; reachable while pending, never used for linking)",
+}
 
 
 def _flat(routes, prefix=""):
@@ -237,14 +241,18 @@ def before_effect(g) -> str:
     return "OPEN for a role-less user (default-allow)"
 
 
-def expect(route, g) -> dict:
+def expect(route, g, pending_allowed: bool = False) -> dict:
     """The after-gate rule the matrix asserts. ``rule`` is one of:
     public | super | perm (all of ``perms``, or any of ``any_of``) | staff |
     org_admin | scoped (entity/document — gate passes, data 404s) | workflow |
     active (any admitted user) | mixed (several branches — only the global
-    rules are asserted)."""
+    rules are asserted). ``self`` is an own-row route a pending login may also
+    reach (``main.PENDING_ALLOWED_PATHS`` and no ``require_active``);
+    anonymous is still a 401."""
     if route["path"] in PUBLIC or route["path"].startswith("/debug/"):
         return {"rule": "public"}
+    if pending_allowed:
+        return {"rule": "self", "pending_allowed": True}
     distinct = len(g["perms"])
     if g["super"]:
         return {"rule": "super"}
@@ -266,13 +274,15 @@ def expect(route, g) -> dict:
 
 
 PUBLIC: set = set()
+PENDING_ALLOWED: set = set()
 
 
 def build():
-    global PUBLIC
+    global PUBLIC, PENDING_ALLOWED
     import main
 
     PUBLIC = set(main.PUBLIC_PATHS)
+    PENDING_ALLOWED = set(main.PENDING_ALLOWED_PATHS)
     routes = app_routes()
     rows = []
     for r in routes:
@@ -282,6 +292,7 @@ def build():
         after_src = expanded(r["module"], r["name"], None)
         gb, ga = gates(r["module"], before_src), gates(r["module"], after_src)
         write = any(m != "GET" for m in r["methods"])
+        pending_allowed = r["path"] in PENDING_ALLOWED and "require_active(" not in (after_src or "")
         public = r["path"] in PUBLIC or r["path"].startswith("/debug/")
         eff = "public" if public else ("new route" if before_src is None else before_effect(gb))
         find = write and not public and eff.startswith("OPEN")
@@ -295,12 +306,12 @@ def build():
             else:
                 note = FEATURE_GATES.get(r["module"]) or SELF_SCOPED.get(r["module"]) or ""
         elif not public and describe(ga, after=True) == "none beyond auth" and write:
-            note = SELF_SCOPED.get(r["module"], "")
+            note = SELF_SCOPED_ROUTES.get((",".join(r["methods"]), r["path"])) or SELF_SCOPED.get(r["module"], "")
         rows.append({
             **r, "write": write, "public": public,
             "before": "public" if public else ("—" if before_src is None else describe(gb)),
             "before_effect": eff, "after": "public" if public else describe(ga, after=True),
-            "find": find, "note": note, "expect": expect(r, ga),
+            "find": find, "note": note, "expect": expect(r, ga, pending_allowed),
         })
     return routes, rows
 
@@ -324,7 +335,8 @@ def render(routes, rows) -> str:
         "and default-allowed; an rbac gate fed `ensure_user` default-allowed any role-less user. "
         "After AUTHZ1 every gate reads the DB Principal (`services.authz`) with no default-allow; "
         "every authenticated route additionally requires an admitted account (pending / retired / "
-        "rejected → 403) except `GET /api/v1/users/me`, and an unresolvable user is a 401.",
+        "rejected → 403) except `GET /api/v1/users/me` and `PUT /api/v1/users/me/contact-email` "
+        "(own row only), and an unresolvable user is a 401.",
         "",
         "| Method | Path | Router | R/W | Gate before | Production effect before | Gate after | Notes |",
         "|---|---|---|---|---|---|---|---|",

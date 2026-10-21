@@ -533,7 +533,7 @@ def expectation(persona: str, rule: dict, method: str) -> str:
         return "allow" if persona == "staff" else "deny"
     if kind == "org_admin":
         return "allow" if persona == "org_admin" else "deny"
-    return "allow"   # active / scoped
+    return "allow"   # active / scoped / self
 
 
 async def y_matrix(conn):
@@ -556,7 +556,10 @@ async def y_matrix(conn):
             # Public paths and the provisioning-exempt invite claim are open by design.
             if public or path == "/api/v1/enroll/accept":
                 return
-            exp = "me" if (path == "/api/v1/users/me" and method == "GET") else "pending"
+            # A self-scoped route a pending login may reach (rule "self", e.g. USERMGMT1's
+            # PUT /users/me/contact-email): a write is never fired; anonymous is still 401.
+            exp = "me" if (rule.get("pending_allowed") or (path == "/api/v1/users/me" and method == "GET")) \
+                else "pending"
         else:
             if public:
                 return
