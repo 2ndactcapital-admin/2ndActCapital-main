@@ -26,7 +26,9 @@ from routers.entities import get_org_id
 from services import chancery_workflow_bridge
 from services import document_review as review
 from services import storage
+from services.authz import require_active, require_permission
 from services.database import get_pool
+from services.document_embedding import document_visible, visible_entity_ids
 from services.users import ensure_user
 
 router = APIRouter(tags=["document-review"])
@@ -48,6 +50,27 @@ class ClassificationCorrection(BaseModel):
     notes: str | None = None
 
 
+async def _require_document_visible(request: Request, pool, org_id, document_id) -> None:
+    """AUTHZ1 per-user visibility: the SAME rule as Document Search
+    (navregroup's ``document_visible`` over ``visible_entity_ids``) — an
+    entity document is visible iff its entity is in the caller's visibility
+    set; an org-general document is visible to staff only. Before AUTHZ1 any
+    login in the org could open any document's review payload and download
+    it. 404, not 403, so an out-of-scope id is not disclosed."""
+    principal = require_active(request)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT entity_id FROM documents WHERE id = $1 AND org_id = $2",
+            document_id, org_id,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    staff = principal.is_super_admin or principal.is_staff
+    allowed = await visible_entity_ids(pool, org_id, principal.user_id, staff)
+    if not document_visible(row["entity_id"], allowed, staff):
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
 def _raise(err: "review.ReviewError"):
     raise HTTPException(status_code=err.status_code, detail=err.detail)
 
@@ -56,6 +79,7 @@ def _raise(err: "review.ReviewError"):
 async def get_review(document_id: UUID, request: Request):
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_document_visible(request, pool, org_id, document_id)  # AUTHZ1
     async with pool.acquire() as conn:
         try:
             return await review.get_review_payload(conn, org_id, document_id)
@@ -65,8 +89,10 @@ async def get_review(document_id: UUID, request: Request):
 
 @router.post("/documents/{document_id}/corrections", status_code=201)
 async def submit_correction(document_id: UUID, body: FieldCorrection, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_document_visible(request, pool, org_id, document_id)  # AUTHZ1
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
         try:
@@ -85,8 +111,10 @@ async def submit_correction(document_id: UUID, body: FieldCorrection, request: R
 async def submit_classification_correction(
     document_id: UUID, body: ClassificationCorrection, request: Request
 ):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_document_visible(request, pool, org_id, document_id)  # AUTHZ1
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
         try:
@@ -103,8 +131,10 @@ async def submit_classification_correction(
 
 @router.post("/documents/{document_id}/confirm")
 async def confirm(document_id: UUID, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_document_visible(request, pool, org_id, document_id)  # AUTHZ1
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
         try:
@@ -133,6 +163,7 @@ async def download(document_id: UUID, request: Request,
     stored file (e.g. Phase-1-only intake that never reached STORE)."""
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_document_visible(request, pool, org_id, document_id)  # AUTHZ1
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT storage_key FROM documents WHERE id = $1 AND org_id = $2",

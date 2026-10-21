@@ -37,6 +37,7 @@ from services.database import get_pool
 from services.ledger import coa as coa_svc
 from services.ledger import posting as posting_svc
 from services.permissions import get_user_id
+from services.authz import require_permission
 
 router = APIRouter(tags=["ledger"])
 
@@ -95,6 +96,7 @@ async def list_accounts(
 
 @router.post("/ledger/accounts", status_code=201)
 async def create_account(request: Request, body: AccountCreate):
+    require_permission(request, "manage_ledger")  # AUTHZ1
     org_id = get_org_id(request)
     user_id = get_user_id(request)
     pool = await get_pool()
@@ -112,6 +114,7 @@ async def create_account(request: Request, body: AccountCreate):
 
 @router.patch("/ledger/accounts/{account_id}")
 async def update_account(request: Request, account_id: UUID, body: AccountUpdate):
+    require_permission(request, "manage_ledger")  # AUTHZ1
     org_id = get_org_id(request)
     user_id = get_user_id(request)
     pool = await get_pool()
@@ -136,6 +139,7 @@ async def update_account(request: Request, account_id: UUID, body: AccountUpdate
 
 @router.post("/ledger/entries", status_code=201)
 async def build_entry(request: Request, body: EntryCreate):
+    require_permission(request, "manage_ledger")  # AUTHZ1
     user_id = get_user_id(request)
     pool = await get_pool()
     try:
@@ -158,6 +162,7 @@ async def build_entry(request: Request, body: EntryCreate):
 
 @router.post("/ledger/entries/{entry_id}/post")
 async def post_entry(request: Request, entry_id: UUID):
+    require_permission(request, "manage_ledger")  # AUTHZ1
     user_id = get_user_id(request)
     pool = await get_pool()
 
@@ -186,6 +191,7 @@ async def post_entry(request: Request, entry_id: UUID):
 
 @router.post("/ledger/entries/{entry_id}/reverse")
 async def reverse_entry(request: Request, entry_id: UUID, body: ReverseRequest):
+    require_permission(request, "manage_ledger")  # AUTHZ1
     if not body.reason or not body.reason.strip():
         raise HTTPException(status_code=400, detail="reason is required")
 

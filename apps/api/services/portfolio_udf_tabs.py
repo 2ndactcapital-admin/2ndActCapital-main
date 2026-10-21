@@ -408,11 +408,9 @@ async def resolve_tab_visibility(conn, *, tab_id: str, org_id: str, user_id: str
     """Is this tab visible to this user? Most-restrictive-wins across both
     grantee paths; no grant row at all defaults to VISIBLE.
 
-    This default is directionally consistent with ``rbac.has_permission``'s
-    own "no roles assigned yet -> default allow" bootstrap posture (absence
-    of a restriction does not manufacture one), but it is NOT the same
-    mechanism: ``rbac``'s default-allow triggers on the USER having zero
-    roles anywhere; this one triggers on the TAB having zero grant rows for
+    (``rbac.has_permission`` used to default-allow a user with zero roles;
+    AUTHZ1 removed that. This default is a DISPLAY default, not a capability
+    grant — reaching the record at all is gated elsewhere.) It triggers on the TAB having zero grant rows for
     this user specifically, and a user who is on the losing end of some
     OTHER tab's restriction is unaffected. ``services.profiles`` (the third
     permission system, profile/permission-set CAPABILITY grants) is the

@@ -43,6 +43,9 @@ this script's own teardown left zero fixture rows.
 """
 from __future__ import annotations
 
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import json
 import os
@@ -70,6 +73,7 @@ MENU = WEB_DIR / "lib" / "menuVisibility.mjs"
 HARNESS = HERE.parent / "menuvisibility_harness.mjs"
 BASELINE_GEN = HERE.parent / "navregroup_baseline.mjs"
 BASELINE_REF = "e581844"   # the commit this sprint started from (pinned: HEAD moves)
+NAVREGROUP_REF = "e97718f"  # navregroup's own commit — the "after" side of scope checks
 
 TAG = "navregroup-verify"
 TOKEN = "nvrgrpverifytoken"          # in every fixture filename; asserted unused first
@@ -467,7 +471,9 @@ def y_persona_snapshot() -> None:
     personas = nav.get("personas") or []
     check(len(personas) == 6, "six personas compared", f"{len(personas)}")
     for p in personas:
-        check(p["none_removed"] is True, f"{p['name']}: no href removed", f"removed {p['removed']}")
+        check(p["removals_exact"] is True,
+              f"{p['name']}: no href removed except AUTHZ1's default-allow removal",
+              f"removed {p['removed']}; AUTHZ1 expected {p['authz1_removals']}")
         check(p["additions_exact"] is True and len(p["intended"]) > 0,
               f"{p['name']}: the additions are exactly the listed intended ones",
               f"added {p['added']}; intended {p['intended']}")
@@ -588,7 +594,12 @@ def y_urls_unchanged() -> None:
         before = git_show(rel)
         if before is None:
             continue
-        b, a = len(GATE_TOKENS.findall(before)), len(GATE_TOKENS.findall(router.read_text(encoding="utf-8")))
+        # Pinned to navregroup's own commit, not the working tree: later sprints
+        # (AUTHZ1 added gates to nine routers) legitimately move HEAD, and a
+        # check of THIS sprint's scope must not read their changes as drift.
+        c2, own, _ = run_cmd(["git", "show", f"{NAVREGROUP_REF}:{rel}"], REPO, timeout=60)
+        own = own if c2 == 0 else router.read_text(encoding="utf-8")
+        b, a = len(GATE_TOKENS.findall(before)), len(GATE_TOKENS.findall(own))
         expected = 1 if router.name == "vdr.py" else 0
         if a - b != expected:
             drift.append(f"{router.name}: {b}->{a}")
@@ -668,8 +679,8 @@ async def y_docsearch(conn, url) -> None:
          "semantic search behaves the same")
     check(m_ids < s_ids, "identical request, different caller: the member's set is a strict, non-empty subset of staff's",
           f"{len(m_ids)} < {len(s_ids)}")
-    find("real API tokens carry no roles claim, so is_staff() is True for every real caller",
-         "in production both searches take the staff path; see docs/NAVREGROUP_DISCOVERY.md")
+    find("AUTHZ1: is_staff now comes from the DB Principal (role membership), not a token claim",
+         "before AUTHZ1 real tokens carried no roles claim and every real caller took the staff path")
 
 
 async def y_vdr() -> None:
@@ -757,7 +768,9 @@ def regression_harness_existing() -> None:
     check(all(h in sa["visibleAdmin"] for h in d["adminIndexHrefs"]), "/admin index agrees for super admin")
     check(d["gateOmittingSuperAdmin"] is True, "a role gate omitting super_admin still admits platform staff")
     for reg in d["regressions"]:
-        check(reg["unchanged"] is True, f"REGRESSION — {reg['name']}'s menu matches the legacy rule")
+        check(reg["unchanged"] is True or reg.get("authz1_expected") is True,
+              f"REGRESSION — {reg['name']}'s menu matches the legacy rule (or differs by exactly AUTHZ1's "
+              "default-allow removal)", f"lost {reg.get('lost')}")
 
 
 def regression_bulkfetchui2() -> None:

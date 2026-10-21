@@ -25,6 +25,9 @@ No fixtures touch posted ledger data, so no triggers are disabled here (the
 Sprint 22 disable/re-enable dance is unnecessary and would be a needless
 privilege escalation). Assertion 10 re-checks the unique index regardless.
 """
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import os
 import re

@@ -879,3 +879,53 @@ async def create_market_data_batch_failure_alert(
             )
         )
     return ids
+
+
+# ── AUTHZ1: a pending login needs an administrator ─────────────────────────
+#
+# services.users creates an unknown, unmatched login as status='pending' and
+# tells the person "an administrator has been notified". This is that
+# notification: one todo per member-management holder in the org (either
+# manage_members or manage_org_settings — the two permissions that may
+# approve), keyed on the pending user so a repeated sign-in refreshes one todo
+# instead of stacking. No recipient → a findable audit_log row, same as every
+# other alert kind here.
+
+TODO_SOURCE_PENDING_USER = "authz_pending_user"
+PENDING_USER_ALERT_UNDELIVERED_ACTION = "authz_pending_user_alert_undelivered"
+_PEOPLE_CONSOLE_PATH = "/admin/users?status=pending"
+
+
+async def create_pending_user_alerts(conn, *, org_id, pending_user_id, email) -> list:
+    pool = await get_pool()
+    recipients = set(await get_users_with_permission(pool, org_id, "manage_members"))
+    recipients |= await _org_admin_recipients(org_id)
+    recipients.discard(str(pending_user_id))
+    if not recipients:
+        await _record_undelivered_alert(
+            conn,
+            org_id=org_id,
+            source=TODO_SOURCE_PENDING_USER,
+            related_type="users",
+            related_id=pending_user_id,
+            reason="pending sign-in with no resolvable approver in the org",
+            action=PENDING_USER_ALERT_UNDELIVERED_ACTION,
+        )
+        return []
+    ids = []
+    for uid in sorted(recipients):
+        ids.append(
+            await _upsert_todo(
+                conn,
+                org_id=org_id,
+                user_id=uid,
+                source=TODO_SOURCE_PENDING_USER,
+                related_type="users",
+                related_id=pending_user_id,
+                title="New sign-in awaiting access",
+                detail=f"{email or 'A new login'} signed in and is waiting for an administrator to approve or reject access.",
+                priority=4,
+                action_key=_PEOPLE_CONSOLE_PATH,
+            )
+        )
+    return ids

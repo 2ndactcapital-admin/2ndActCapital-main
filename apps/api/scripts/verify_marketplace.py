@@ -11,6 +11,9 @@ Covers: config dimensions, deal list with aggregates, deal detail, create
 interest compliance gate (403), and document upload to R2.
 """
 
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import io
 import os

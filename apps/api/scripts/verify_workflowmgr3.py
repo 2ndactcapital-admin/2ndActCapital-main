@@ -18,6 +18,9 @@ Pass/fail only. No interactive prompts. Teardown at start AND at end.
 
 Run:  python3 apps/api/scripts/verify_workflowmgr3.py
 """
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import inspect
 import os

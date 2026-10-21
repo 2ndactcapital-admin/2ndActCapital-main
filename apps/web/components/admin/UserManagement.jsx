@@ -2,10 +2,12 @@
 
 import { useMemo, useState, useTransition } from "react";
 import {
+  approvePendingUserAction,
   assignRoleAction,
   deactivateUserAction,
   deleteUserAction,
   reactivateUserAction,
+  rejectPendingUserAction,
   searchUsersAction,
   updateUserAction,
 } from "@/lib/adminActions";
@@ -33,6 +35,10 @@ function statusLabel(user) {
   // still carry an invite status, so checking in the other order would report
   // the wrong thing.
   if (user.is_deleted) return "Deleted";
+  // AUTHZ1 provisioning states come before the invite/active reading.
+  if (user.status === "pending") return "Awaiting approval";
+  if (user.status === "rejected") return "Rejected";
+  if (user.status === "retired") return "Retired (linked to another account)";
   if (user.is_active === false) return "Deactivated";
   // invite_status is NULL for an ordinary enrolled account.
   if (!user.invite_status) return "Active";
@@ -527,6 +533,73 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
   );
 }
 
+// AUTHZ1 — sign-ins that matched no existing member wait here for an admin.
+// The list itself is the server's: rows come from GET /admin/users, whose gate
+// is the same one approve/reject enforce.
+function PendingSignIns({ users, roles, onDecided }) {
+  const [choice, setChoice] = useState({});
+  const [error, setError] = useState(null);
+  const [busy, startTransition] = useTransition();
+  const pendingUsers = users.filter((u) => u.status === "pending");
+  if (pendingUsers.length === 0) return null;
+
+  function decide(u, approve) {
+    setError(null);
+    startTransition(async () => {
+      const res = approve
+        ? await approvePendingUserAction(u.id, choice[u.id])
+        : await rejectPendingUserAction(u.id);
+      if (res.ok) onDecided({ ...u, ...res.user });
+      else setError(res.error);
+    });
+  }
+
+  return (
+    <div className="mt-6 rounded-lg border bg-bg-card p-5" style={{ borderColor: "#ece8dd" }}>
+      <h2 className="text-lg font-semibold text-navy">Awaiting approval</h2>
+      <p className="mt-1 text-sm text-text-muted">
+        These sign-ins matched no existing member. Grant a role to admit one, or decline it.
+      </p>
+      {error && <p className="mt-2 text-sm text-[#9B2335]">{error}</p>}
+      <ul className="mt-3 divide-y divide-border">
+        {pendingUsers.map((u) => (
+          <li key={u.id} className="flex flex-wrap items-center gap-3 py-3">
+            <span className="min-w-56 text-sm text-text-primary">
+              {u.full_name || "—"} <span className="text-text-muted">{u.email}</span>
+            </span>
+            <select
+              value={choice[u.id] || ""}
+              onChange={(e) => setChoice((c) => ({ ...c, [u.id]: e.target.value }))}
+              className="rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm"
+            >
+              <option value="">Choose a role…</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>{roleLabel(r.name)}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy || !choice[u.id]}
+              onClick={() => decide(u, true)}
+              className="rounded-md bg-navy px-3 py-1.5 text-sm font-medium text-bg-app disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => decide(u, false)}
+              className="rounded-md border border-border px-3 py-1.5 text-sm text-text-primary disabled:opacity-50"
+            >
+              Decline
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function UserManagement({
   initialUsers = [],
   roles = [],
@@ -617,7 +690,8 @@ export default function UserManagement({
 
   return (
     <div className="mt-6">
-      <div className="flex flex-wrap items-center gap-3">
+      <PendingSignIns users={users} roles={roles} onDecided={onSaved} />
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <input
           type="search"
           placeholder="Search name or email…"

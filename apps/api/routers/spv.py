@@ -66,7 +66,8 @@ from schemas.spv import (
 from services.transaction_types import get_types as get_txn_types
 from services.audit import write_audit_log
 from services.database import get_pool
-from services.permissions import get_user_id, is_staff, require_permission
+from services.permissions import get_user_id
+from services.authz import is_staff, require_entity_access, require_permission
 from services.spv_classes import (
     ClassLabelError,
     deal_class_state,
@@ -452,10 +453,20 @@ async def set_form_entity(request: Request, spv_id: UUID, body: SPVFormEntityUpd
 # ---------------------------------------------------------------------------
 # Subscribe to SPV
 # ---------------------------------------------------------------------------
+async def _require_subscribe(request: Request, pool, entity_id) -> None:
+    """AUTHZ1: staff subscribe any entity in the org; a member subscribes only
+    an entity in their own visibility scope, and needs indicate_interest. Was
+    ungated — any login could subscribe any entity in the org."""
+    principal = await require_entity_access(request, pool, entity_id)
+    if not (principal.is_super_admin or principal.is_staff):
+        require_permission(request, "indicate_interest")
+
+
 @router.post("/spvs/{spv_id}/subscriptions", response_model=SubscriptionResponse, status_code=201)
 async def subscribe_to_spv(request: Request, spv_id: UUID, body: SubscriptionCreate):
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_subscribe(request, pool, body.entity_id)  # AUTHZ1
 
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
@@ -537,6 +548,7 @@ async def amend_subscription(
             )
             if old is None:
                 raise HTTPException(status_code=404, detail="Active subscription not found")
+            await _require_subscribe(request, pool, old["entity_id"])  # AUTHZ1
 
             # Step 1 — close the old row.
             await conn.execute(

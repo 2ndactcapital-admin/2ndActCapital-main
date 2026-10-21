@@ -7,12 +7,10 @@
  *
  * Gate kinds and how a /users/me-shaped persona is evaluated against them:
  *   session          any valid session (FastAPI middleware 401s otherwise)
- *   rbac:<perm>      services.rbac.has_permission — Super Admin first, then a
- *                    role-less user default-allows, then the role-axis grant
- *   token:<perm>     services.permissions.require_permission — token claims:
- *                    no permissions claim → allow; the permission → allow; a
- *                    staff role (investment_staff/admin/super_admin/owner) → allow.
- *                    Personas' token claims are taken to mirror roles/permissions.
+ *   rbac:<perm>      services.rbac.has_permission — Super Admin first, then the
+ *                    role-axis grant. (AUTHZ1 removed the role-less default-allow.)
+ *   token:<perm>     formerly services.permissions token claims; since AUTHZ1 the
+ *                    same DB Principal check as rbac (services.authz).
  *   profile:<a|b>    services.profiles.user_has_permission (profile + permission
  *                    sets ONLY, no default-allow), Super Admin first. Personas
  *                    carry `profile_permissions` (none do → Super Admin only).
@@ -63,7 +61,6 @@ export const SERVER_GATES = {
   "/admin/note-extraction/results": "super_admin",
 };
 
-const STAFF_ROLES = new Set(["investment_staff", "admin", "super_admin", "owner"]);
 const isSuper = (me) => me?.account_role === "super_admin";
 
 /** True when the page's server gate would serve `me`. Unknown href → false. */
@@ -74,11 +71,7 @@ export function serverAllows(me, href) {
   if (gate === "super_admin") return isSuper(me);
   const [kind, arg] = gate.split(":");
   const perms = me?.permissions ?? [];
-  const roles = me?.roles ?? [];
-  if (kind === "rbac") return isSuper(me) || roles.length === 0 || perms.includes(arg);
-  if (kind === "token") {
-    return perms.length === 0 || perms.includes(arg) || roles.some((r) => STAFF_ROLES.has(r));
-  }
+  if (kind === "rbac" || kind === "token") return isSuper(me) || perms.includes(arg);
   if (kind === "profile") {
     const granted = me?.profile_permissions ?? [];
     return isSuper(me) || arg.split("|").some((p) => granted.includes(p));

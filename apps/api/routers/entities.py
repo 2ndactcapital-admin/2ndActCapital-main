@@ -49,6 +49,7 @@ from schemas.entities import (
 )
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.authz import require_any_permission, require_permission
 
 router = APIRouter(tags=["entities"])
 
@@ -249,6 +250,7 @@ async def list_entities(
 
 @router.post("/entities", response_model=EntityOut, status_code=201)
 async def create_entity(request: Request, body: EntityCreate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -490,6 +492,7 @@ async def create_picker_stub_entity(conn, org_id, entity_type, display_name, cre
 
 @router.post("/entities/stub", response_model=EntityOut, status_code=201)
 async def create_entity_stub(request: Request, body: EntityStubCreate):
+    require_any_permission(request, ("manage_members", "manage_portfolio"))  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -713,6 +716,7 @@ async def get_entity_full(request: Request, entity_id: UUID):
 
 @router.put("/entities/{entity_id}", response_model=EntityOut)
 async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -846,6 +850,7 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
     "/entities/{entity_id}/attributes", response_model=AttributeOut, status_code=201
 )
 async def add_attribute(request: Request, entity_id: UUID, body: AttributeCreate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -900,6 +905,7 @@ async def create_note(
     body: NoteCreate,
     background_tasks: BackgroundTasks,
 ):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -952,6 +958,7 @@ async def apply_note_updates(
     entity_updates patch editable entity columns; new_attributes are added as
     entity_attributes rows. Only known-editable columns are applied.
     """
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     editable = {
@@ -1008,6 +1015,7 @@ async def apply_note_updates(
     "/entities/{entity_id}/tax-ids", response_model=TaxIdResponse, status_code=201
 )
 async def add_tax_id(request: Request, entity_id: UUID, body: TaxIdCreate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -1048,6 +1056,7 @@ async def add_tax_id(request: Request, entity_id: UUID, body: TaxIdCreate):
     "/entities/{entity_id}/addresses", response_model=AddressResponse, status_code=201
 )
 async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1095,6 +1104,7 @@ async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
 async def update_address(
     request: Request, entity_id: UUID, addr_id: UUID, body: AddressUpdate
 ):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1183,6 +1193,7 @@ async def update_address(
     status_code=201,
 )
 async def add_employment(request: Request, entity_id: UUID, body: EmploymentCreate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     if body.employer_id == entity_id:
         raise HTTPException(
@@ -1226,6 +1237,7 @@ async def add_employment(request: Request, entity_id: UUID, body: EmploymentCrea
 async def update_employment(
     request: Request, entity_id: UUID, emp_id: UUID, body: EmploymentUpdate
 ):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1294,6 +1306,7 @@ async def update_employment(
 async def add_social_profile(
     request: Request, entity_id: UUID, body: SocialProfileCreate
 ):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1325,7 +1338,8 @@ async def add_social_profile(
 
 
 # ---------------------------------------------------------------------------
-# Compliance (advisor access — stub check, always allow for now)
+# Compliance — read needs view_compliance, write manage_compliance (AUTHZ1;
+# was "stub check, always allow for now")
 # ---------------------------------------------------------------------------
 COMPLIANCE_COLUMNS = (
     "id, entity_id, kyc_status, kyc_verified_date, ofac_screen_status, "
@@ -1339,6 +1353,7 @@ COMPLIANCE_COLUMNS = (
     "/entities/{entity_id}/compliance", response_model=ComplianceRecordResponse
 )
 async def get_compliance(request: Request, entity_id: UUID):
+    require_permission(request, "view_compliance")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1362,6 +1377,7 @@ async def get_compliance(request: Request, entity_id: UUID):
 async def update_compliance(
     request: Request, entity_id: UUID, body: ComplianceRecordUpdate
 ):
+    require_permission(request, "manage_compliance")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     updates = body.model_dump(exclude_unset=True)
@@ -1502,6 +1518,7 @@ async def ownership_graph(request: Request, entity_id: UUID):
 # ---------------------------------------------------------------------------
 @router.post("/entity-ownership", response_model=OwnershipOut, status_code=201)
 async def create_ownership(request: Request, body: OwnershipCreate):
+    require_permission(request, "manage_members")  # AUTHZ1
     org_id = get_org_id(request)
     if body.parent_id == body.child_id:
         raise HTTPException(status_code=400, detail="An entity cannot own itself")

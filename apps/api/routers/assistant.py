@@ -20,7 +20,7 @@ from services.audit import write_audit_log
 from services.database import get_pool
 from services.extraction import call_claude_with_tools
 from services.org_settings import get_brand_name
-from services.permissions import is_staff
+from services.authz import is_staff
 from services.rbac import get_user_permissions
 from services.users import ensure_user
 

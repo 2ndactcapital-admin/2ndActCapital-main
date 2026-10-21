@@ -37,6 +37,9 @@ without `doppler run --` still works — see main().)
 """
 from __future__ import annotations
 
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import io
 import contextlib

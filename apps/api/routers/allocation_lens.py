@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from routers.entities import get_org_id
 from services.allocation_lens import aggregate_allocation
 from services.database import get_pool
-from services.permissions import is_staff
+from services.authz import is_staff
 from services.users import ensure_user
 
 router = APIRouter(tags=["allocation-lens"])

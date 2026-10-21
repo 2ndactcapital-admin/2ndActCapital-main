@@ -27,9 +27,9 @@ from pydantic import BaseModel, Field
 from routers.entities import get_org_id
 from schemas.entities import EntityType
 from services.database import get_pool
-from services.permissions import is_staff
 from services.users import ensure_user
 from services import document_linkage as dl
+from services.authz import is_staff, require_permission
 
 router = APIRouter(tags=["document-links"])
 
@@ -59,6 +59,7 @@ def _raise(err: "dl.LinkageError"):
 # ── Task 2 — manual linkage ─────────────────────────────────────────────────
 @router.post("/documents/{document_id}/entity-links", status_code=201)
 async def link_entities(document_id: UUID, body: EntityLinkCreate, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -75,6 +76,7 @@ async def link_entities(document_id: UUID, body: EntityLinkCreate, request: Requ
 
 @router.delete("/documents/{document_id}/entity-links/{entity_id}")
 async def unlink_entity(document_id: UUID, entity_id: UUID, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -88,6 +90,7 @@ async def unlink_entity(document_id: UUID, entity_id: UUID, request: Request):
 
 @router.post("/documents/{document_id}/record-links", status_code=201)
 async def link_record(document_id: UUID, body: RecordLinkCreate, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -182,6 +185,7 @@ async def search_documents(request: Request, q: str = "", limit: int = 50):
 # ── Task 3 — K-1 auto-linkage trigger ───────────────────────────────────────
 @router.post("/documents/{document_id}/auto-link-k1")
 async def auto_link_k1(document_id: UUID, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -204,6 +208,7 @@ async def list_proposals(request: Request):
 @router.post("/document-link-proposals/{proposal_id}/approve")
 async def approve_proposal(proposal_id: UUID, request: Request,
                            body: ProposalApprove | None = None):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     body = body or ProposalApprove()
     pool = await get_pool()
@@ -222,6 +227,7 @@ async def approve_proposal(proposal_id: UUID, request: Request,
 
 @router.post("/document-link-proposals/{proposal_id}/reject")
 async def reject_proposal(proposal_id: UUID, request: Request):
+    require_permission(request, "manage_documents")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:

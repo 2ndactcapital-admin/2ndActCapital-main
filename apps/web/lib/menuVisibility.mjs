@@ -44,9 +44,8 @@ export const GATE_MANAGE_MEMBERS = { perm: "manage_members" };
 export const GATE_MANAGE_ORG_SETTINGS = { perm: "manage_org_settings" };
 export const GATE_SUPER_ADMIN = { roles: [SUPER_ADMIN] };
 // modelresearch.structural — the same permission as GATE_MANAGE_ORG_SETTINGS,
-// but STRICT: it fails CLOSED. `canPerm` default-allows when `roles` is empty,
-// and usePermissions substitutes `{ roles: [], permissions: [] }` whenever
-// /users/me fails, so a lost envelope there reads as "allowed". A strict gate
+// but STRICT: it fails CLOSED. (Before AUTHZ1 `canPerm` default-allowed when
+// `roles` was empty; it no longer does, so the two now agree.) A strict gate
 // passes only for Super Admin or an explicitly listed permission. No envelope,
 // a malformed one, or a role-less account all hide the item.
 export const GATE_MANAGE_ORG_SETTINGS_STRICT = {
@@ -56,8 +55,8 @@ export const GATE_MANAGE_ORG_SETTINGS_STRICT = {
 
 // navregroup — the read gate of every "manage_portfolio"-family screen
 // (positions, transactions, securities, billing groups, custody import) is
-// rbac.has_permission("view_portfolio"); canPerm mirrors it exactly, including
-// the role-less default-allow branch.
+// rbac.has_permission("view_portfolio"); canPerm mirrors it exactly (no
+// default-allow on either side since AUTHZ1).
 export const GATE_VIEW_PORTFOLIO = { perm: "view_portfolio" };
 // navregroup Task 3 — GET /vdr-proposals now requires manage_deals, the same
 // permission approve/reject always required. There is no separate read key.
@@ -238,18 +237,29 @@ export function isSuperAdmin(me) {
 }
 
 /**
- * Effective permission check.
+ * True unless /users/me says the account is NOT admitted (AUTHZ1: 'pending',
+ * 'retired', 'rejected'). Such an account is refused by every API but
+ * /users/me, so it sees no gated item — the shell renders the pending page.
+ */
+export function isAdmitted(me) {
+  if (!me || typeof me !== "object") return false;
+  return me.status === undefined || me.status === null || me.status === "active";
+}
+
+/**
+ * Effective permission check — fail closed (AUTHZ1).
  *
  * 1. Super Admin passes, FIRST, before anything else.
- * 2. Otherwise, a user with NO granted roles default-allows (single-admin
- *    safety, mirroring services.rbac.has_permission).
- * 3. Otherwise the granted permission set is authoritative.
+ * 2. Otherwise the permission must be in the /users/me `permissions` array,
+ *    which is the server's DB Principal. There is NO "no roles → allow"
+ *    branch any more: the backend lost it in AUTHZ1 (services.rbac,
+ *    services.authz), and a menu that kept it would show a role-less user
+ *    every link the server now refuses.
  */
 export function canPerm(me, permission) {
+  if (!isAdmitted(me)) return false;
   if (isSuperAdmin(me)) return true;
-  const roles = me?.roles ?? [];
-  if (roles.length === 0) return true;
-  return (me?.permissions ?? []).includes(permission);
+  return Array.isArray(me?.permissions) && me.permissions.includes(permission);
 }
 
 /**
@@ -259,6 +269,7 @@ export function canPerm(me, permission) {
  */
 export function canPermStrict(me, permission) {
   if (!me || typeof me !== "object") return false;
+  if (!isAdmitted(me)) return false;
   if (isSuperAdmin(me)) return true;
   if (!Array.isArray(me.permissions)) return false;
   return me.permissions.includes(permission);

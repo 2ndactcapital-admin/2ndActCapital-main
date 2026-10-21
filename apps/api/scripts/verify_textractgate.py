@@ -26,6 +26,9 @@ on-disk temp artifact (none is written in the happy path) is removed at start
 and at end.
 """
 
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import glob
 import io
 import os

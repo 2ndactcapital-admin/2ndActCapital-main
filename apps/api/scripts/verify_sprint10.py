@@ -20,6 +20,9 @@ Checks:
   8. POST /extract + PUT extraction review -> advisor_reviewed=true
 """
 
+import os as _authz_os
+_authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
+
 import asyncio
 import os
 import sys

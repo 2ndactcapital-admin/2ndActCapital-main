@@ -30,7 +30,7 @@ from services.ownership_tree import (
     parse_edge_types,
     staff_tree,
 )
-from services.permissions import require_staff
+from services.authz import require_staff
 from services.users import ensure_user
 
 router = APIRouter(tags=["ownership_graph"])

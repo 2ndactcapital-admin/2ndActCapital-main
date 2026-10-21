@@ -327,6 +327,18 @@ export const deleteUser = (userId) =>
 export const getUserManagementSettings = () =>
   fetchAPI("/api/v1/admin/users/settings");
 
+// --- Admin: pending sign-ins (AUTHZ1) ---
+// A new login that matched no existing member is held as status 'pending'.
+// Approving grants exactly one role of the caller's own org and admits it;
+// rejecting keeps the row (status 'rejected') so the same login stays refused.
+export const approvePendingUser = (userId, roleId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/approve`, {
+    method: "POST",
+    body: { role_id: roleId },
+  });
+export const rejectPendingUser = (userId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/reject`, { method: "POST" });
+
 // --- Admin: invites (Multi-tenant Sprint 2 backend, wired to the UI here) ---
 // POST /admin/invites is what actually creates the users row. NOTE the body:
 // email / full_name / role ONLY. `org_id` is deliberately absent — the backend

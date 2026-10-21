@@ -1,117 +1,60 @@
-"""Authorization helpers: roles, permissions, and user identity.
+"""Back-compat shim over :mod:`services.authz` (AUTHZ1).
 
-Auth0 RBAC, when enabled, places a ``permissions`` array and (via a login
-Action) a namespaced ``roles`` claim on the access token. This module reads
-those claims off ``request.state.user``.
+This module used to read ``roles`` / ``permissions`` claims off the access
+token and **default to allow / staff when no claim was present**. Real Auth0
+access tokens never carry those claims, so every check here passed for every
+real caller. It now delegates to the one database-backed path in
+``services.authz``; nothing in this module grants on an absent claim.
 
-Current stage: RBAC is not yet configured in the Auth0 tenant, and the platform
-is operated by a single admin. To avoid locking that operator out — and to keep
-the in-process verification scripts (which stub the token with no claims) green
-— the helpers **default to allow / staff when no RBAC claim is present**. As
-soon as a ``permissions`` or ``roles`` claim appears on the token, the checks
-become real. This mirrors the existing ``DEFAULT_ORG_ID`` fallback and the
-"compliance stub — always allow for now" pattern elsewhere in the API.
+``get_user_id`` returns the request's real ``users.id`` (the Principal's).
+The old fallbacks — a namespaced/UUID ``sub`` claim, a uuid5 derived from
+``sub``, the ``DEV_USER_ID`` constant — exist only under ``AUTHZ_TEST_MODE``.
+In production an unresolvable identity is a 401: the uuid5 phantom id matched
+no ``users`` row, so every ``rbac`` gate fed it saw "no roles" and allowed.
 """
 
 from uuid import UUID, uuid5, NAMESPACE_URL
 
 from fastapi import HTTPException, Request
 
-# Namespaced custom claims (set by an Auth0 login Action).
-ROLES_CLAIMS = (
-    "roles",
-    "https://2ndactcapital.com/roles",
-    "https://api.2ndactcapital.com/roles",
-)
-PERMISSIONS_CLAIMS = (
-    "permissions",
-    "https://2ndactcapital.com/permissions",
-    "https://api.2ndactcapital.com/permissions",
-)
+from services import authz
+from services.authz import STAFF_ROLE_NAMES as STAFF_ROLES  # noqa: F401  (kept for importers)
+
 USER_ID_CLAIMS = (
     "https://2ndactcapital.com/user_id",
     "https://api.2ndactcapital.com/user_id",
     "user_id",
 )
 
-# Roles that count as "investment_staff and above".
-STAFF_ROLES = {"investment_staff", "admin", "super_admin", "owner"}
-
-# Stable dev user used when the token carries no resolvable UUID identity.
+# Test-mode-only fallback identity (AUTHZ_TEST_MODE=1). Never used in production.
 DEV_USER_ID = "00000000-0000-0000-0000-0000000000aa"
 
 
-def _claims(request: Request) -> dict:
-    return getattr(request.state, "user", None) or {}
-
-
-def _first_list_claim(claims: dict, keys) -> list[str] | None:
-    """Return the first present claim as a list, or None if no claim exists."""
-    for key in keys:
-        if key in claims and claims[key] is not None:
-            value = claims[key]
-            if isinstance(value, str):
-                return [value]
-            if isinstance(value, (list, tuple)):
-                return [str(v) for v in value]
-    return None
-
-
-def get_roles(request: Request) -> list[str] | None:
-    return _first_list_claim(_claims(request), ROLES_CLAIMS)
-
-
-def get_permissions(request: Request) -> list[str] | None:
-    return _first_list_claim(_claims(request), PERMISSIONS_CLAIMS)
-
-
 def is_staff(request: Request) -> bool:
-    """True for investment_staff and above.
-
-    Defaults to True when no roles claim is present (single-admin dev stage).
-    """
-    roles = get_roles(request)
-    if roles is None:
-        return True
-    return any(r in STAFF_ROLES for r in roles)
+    return authz.is_staff(request)
 
 
 def has_permission(request: Request, permission: str) -> bool:
-    """Check a fine-grained permission.
-
-    Defaults to True when the token carries no permissions claim (RBAC not yet
-    configured). Once permissions are present, the check is exact.
-    """
-    perms = get_permissions(request)
-    if perms is None:
-        return True
-    if permission in perms:
-        return True
-    # Staff roles implicitly hold all marketplace permissions.
-    return is_staff(request)
+    return authz.has_permission(request, permission)
 
 
 def require_permission(request: Request, permission: str) -> None:
-    if not has_permission(request, permission):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Permission required: {permission}",
-        )
+    authz.require_permission(request, permission)
 
 
 def require_staff(request: Request) -> None:
-    if not is_staff(request):
-        raise HTTPException(status_code=403, detail="Staff access required")
+    authz.require_staff(request)
 
 
 def get_user_id(request: Request) -> str:
-    """Resolve a stable UUID for the current user.
+    """The caller's real ``users.id``; 401 when there is none (production)."""
+    principal = authz.principal_of(request)
+    if principal is not None:
+        return principal.user_id
+    if not authz.TEST_MODE:
+        raise HTTPException(status_code=401, detail=authz.NO_USER_DETAIL)
 
-    Order: an explicit namespaced ``user_id`` claim, else the ``sub`` claim if
-    it is already a UUID, else a deterministic UUIDv5 derived from ``sub`` so a
-    given Auth0 user always maps to the same id, else the dev fallback.
-    """
-    claims = _claims(request)
+    claims = getattr(request.state, "user", None) or {}
     for key in USER_ID_CLAIMS:
         value = claims.get(key)
         if value:
@@ -119,12 +62,10 @@ def get_user_id(request: Request) -> str:
                 return str(UUID(str(value)))
             except (ValueError, TypeError):
                 continue
-
     sub = claims.get("sub")
     if sub:
         try:
             return str(UUID(str(sub)))
         except (ValueError, TypeError):
             return str(uuid5(NAMESPACE_URL, str(sub)))
-
     return DEV_USER_ID

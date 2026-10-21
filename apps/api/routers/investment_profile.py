@@ -31,7 +31,8 @@ from services.extraction import (
     extract_all_for_entity,
     resolve_model,
 )
-from services.permissions import get_user_id, require_staff
+from services.permissions import get_user_id
+from services.authz import require_entity_access, require_staff
 from services.users import ensure_user
 
 router = APIRouter(tags=["investment-profile"])
@@ -166,6 +167,7 @@ async def _upsert_one(conn, org_id, entity_id: UUID, ans: AnswerIn):
     "/investment-profile/{entity_id}/answers", response_model=list[AnswerOut]
 )
 async def get_answers(request: Request, entity_id: UUID):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     rows = await pool.fetch(
@@ -201,6 +203,7 @@ async def get_answers(request: Request, entity_id: UUID):
     status_code=201,
 )
 async def upsert_answer(request: Request, entity_id: UUID, body: AnswerIn):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -218,6 +221,7 @@ async def upsert_answer(request: Request, entity_id: UUID, body: AnswerIn):
 async def bulk_upsert_answers(
     request: Request, entity_id: UUID, body: list[AnswerIn]
 ):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     results = []
@@ -317,6 +321,7 @@ async def _run_entity_extraction(org_id, entity_id):
     response_model=ConversationOut | None,
 )
 async def get_conversation(request: Request, entity_id: UUID):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -332,6 +337,7 @@ async def get_conversation(request: Request, entity_id: UUID):
     response_model=ConversationOut,
 )
 async def start_conversation(request: Request, entity_id: UUID):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -382,6 +388,7 @@ async def conversation_message(
     body: ConversationMessageIn,
     background_tasks: BackgroundTasks,
 ):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -507,6 +514,7 @@ async def conversation_message(
 async def complete_conversation(
     request: Request, entity_id: UUID, background_tasks: BackgroundTasks
 ):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -569,6 +577,7 @@ async def run_extraction(request: Request, entity_id: UUID):
     response_model=list[ExtractionOut],
 )
 async def get_extractions(request: Request, entity_id: UUID):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     rows = await pool.fetch(
@@ -775,6 +784,7 @@ async def generate_brief(request: Request, entity_id: UUID):
     "/investment-profile/{entity_id}/brief", response_model=BriefOut | None
 )
 async def get_brief(request: Request, entity_id: UUID):
+    await require_entity_access(request, await get_pool(), entity_id)  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     row = await pool.fetchrow(
