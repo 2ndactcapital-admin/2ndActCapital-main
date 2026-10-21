@@ -556,6 +556,14 @@ GATE_TOKENS = re.compile(r"require_permission|_require_\w+\(|has_permission|can_
                          r"|require_staff|is_org_admin")
 
 
+# Sampled pages a LATER sprint changed on purpose, with the sprint named. For
+# these the heading-only check reads navregroup's own commit (NAVREGROUP_REF),
+# not the working tree, so this sprint's scope is still proven.
+LATER_SPRINT_PAGE_CHANGES = {
+    "/admin/users": "usermgmt1 (People & Access rebuilt the user management page)",
+}
+
+
 def y_urls_unchanged() -> None:
     section("[Y] Every pre-existing URL keeps its page and its server gate (member, org admin, super admin)")
     stored = json.loads(BASELINE_JSON.read_text(encoding="utf-8"))
@@ -575,7 +583,12 @@ def y_urls_unchanged() -> None:
             continue
         if before is None:
             continue
-        code, diff, _ = run_cmd(["git", "diff", BASELINE_REF, "--", rel], REPO, timeout=60)
+        later = LATER_SPRINT_PAGE_CHANGES.get(href)
+        if later:
+            print(f"[INFO] {href}: intended change by sprint {later} — checked at {NAVREGROUP_REF}")
+            code, diff, _ = run_cmd(["git", "diff", BASELINE_REF, NAVREGROUP_REF, "--", rel], REPO, timeout=60)
+        else:
+            code, diff, _ = run_cmd(["git", "diff", BASELINE_REF, "--", rel], REPO, timeout=60)
         lines = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
         if any(not allowed_heading_edit.match(ln) for ln in lines):
             changed_pages.append(href)
