@@ -133,7 +133,7 @@ export default function EntityDetailTabs({ full, graph }) {
 
         {/* Ownership */}
         <div className={active === "ownership" ? "" : "hidden"}>
-          <OwnershipTab entityId={entity.id} />
+          <OwnershipTab entityId={entity.id} graph={graph} />
         </div>
 
         {/* Compliance */}

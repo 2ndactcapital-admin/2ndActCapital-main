@@ -1,7 +1,12 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-21 (authz1.structural — one DB-backed, fail-closed
-authorization path; no default-allow; pending provisioning; see the top entry).
-Previously 2026-10-20 (navregroup.structural — the navigation regrouped into
+Last updated: 2026-10-21 (bugfix1.structural — HollisMuse rounds 1–2: one
+SPV-totals function, one deal lifecycle, search over attachments, dead menu
+items flagged comingSoon, EDGAR peek before download; verify WRITTEN, not yet
+run; see the top entry). Previously 2026-10-21 (usermgmt1.structural — People & Access shows one row
+per person with how they sign in; password reset / resend invite / link a
+pending login / edit email; users.is_test; 19 orphan fixtures removed; verify
+WRITTEN, not yet run; see the top entry). Previously 2026-10-21 (authz1.structural — one DB-backed, fail-closed
+authorization path; no default-allow; pending provisioning). Previously 2026-10-20 (navregroup.structural — the navigation regrouped into
 master pages with tabs rendered from ONE menu definition; Document Search now
 filters by the caller's visibility and the VDR proposals list requires
 manage_deals; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-16 (bulkfetch.structural — a resumable, rate-limited bulk
@@ -310,6 +315,246 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000000000000000000000. BUGFIX1 — HollisMuse rounds 1–2: one SPV-totals function, one deal lifecycle, Document Search over attachments, dead menu items flagged, CRM and Portfolio agree, EDGAR peek decides before downloading, polish; verify WRITTEN, not yet run (2026-10-21)
+
+**Run:** `doppler run -- python3 apps/api/scripts/verify_bugfix1.py 2>&1 | grep -E "^\[FAIL\]|^\[FIND\]|^\[INFO\] real|^TOTAL"`.
+Written, **not run** (standing rule). SEC and R2 are mocked. Regressions
+(`verify_authz1.py`, `verify_navregroup.py`, `verify_bulkfetchui2.py`) run
+flat after teardown with `VERIFY_NESTED=1`. Run in this session: `node --test
+tests/` 298/0 (10 new in `tests/bugfix1/`), `npm run build` exit 0,
+`authz1_routes.py` regenerated (4 new routes, each gated; no existing gate
+changed), the two operator scripts below as dry runs. Discovery:
+`docs/BUGFIX1_DISCOVERY.md` (1a–1f).
+
+**Real records the verify run changes (each printed):** the repairs in
+`apps/api/scripts/_bugfix1_repairs.py` (dry run in this session: 9 deals'
+`deal_stage` mirror — e.g. Stonegate `'active'` → `'deal_stage_4'`, Project
+Atlas (Hollisworks, no config) `'sourced'` → `'draft'` — each a system-axis
+restatement with an audit row, `deal_status` untouched; and the duplicate
+James Hargrove SSN row 9cff06ec closed with `valid_to = now()`), and
+TEST-Submit Test restored to `submitted` through `POST
+/deals/{id}/unarchive`. Not applied in this session — the verify run (or
+`_bugfix1_repairs.py --apply`) applies them.
+
+- **SPV-01 / DASH-03 — the ONE SPV-totals function:**
+  `services/spv_rollup.spv_commitment_summaries` (pure core
+  `commitment_summary`). Committed = live subscriptions excluding
+  `cancelled`; soft = `soft`, hard = every other live status; percent of
+  target never capped (`over_target` flag, labels published with it). Used by
+  `GET /spvs` (list card), `GET /spvs/{id}` and `/captable` (cap table), and
+  the dashboard SPV card (now one line per SPV with its current state, not
+  the last five status events). One renderer: `components/spv/
+  CommitmentProgress.jsx` + `lib/spvCommitment.mjs`. [FIND] the ledger /
+  deal roll-up (`_SUBSCRIPTION_TOTALS`) and the assistant's SPV list still
+  count cancelled subscriptions — not changed (ledger semantics).
+- **MKT-01 / DASH-01 / MKT-03 / R2-MKT-05 — the deal lifecycle source:**
+  `services/deal_lifecycle.py`. State = `deals.deal_status` (enum); order and
+  labels = the org's `deal_stages` config paired with the enum by
+  `display_order` (Sourced = draft … Archived); `deals.deal_stage` is a
+  mirror holding the config key, written in the same statement. Every move is
+  `apply_status` (transitions, a system-axis version via `archive_version`,
+  audit with `from` and `version_id`). Badge, Stage column
+  (`DealResponse.stage_label`), Marketplace summary and dashboard snapshot all
+  read `deal_lifecycle.summary`/`lifecycle`. Submit for Review requires
+  `confirm=true` (428) and the fields in the new org setting
+  `marketplace.submit_required_fields` (422 naming each). Archive requires
+  `confirm=true`; `POST /deals/{id}/unarchive` (manage_deals, same as
+  Archive) restores the prior stage from the version history, else the audit
+  trail. `GET /deals/{id}/lifecycle` drives the pipeline controls. `PUT
+  /deals/{id}` no longer edits `deal_status`/`deal_stage` (it was a backdoor;
+  its history copy also failed on the UNIQUE slug — fixed via
+  `archive_version`, `slug` NULL on versions). Members' investments show
+  `member_name`. `DELETE /deals/{id}/vote` withdraws the caller's own vote
+  (vote_deal; keyed on the caller's users.id, so owner-only by construction).
+  Hollisworks has no `deal_stages` config: its labels fall back to the status
+  value. The config's first label is "Sourced" (the draft state) — a config
+  choice, now shown consistently.
+- **R2-DOC-03 — search coverage and visibility rule:** keyword search covers
+  `documents` + `deal_documents` + `entity_documents` + `spv_documents`
+  (`document_linkage._search_attachments`): file name / title, category /
+  type, and text where it exists (`deal_documents.extracted_data` only). Each
+  result carries `source`/`source_label`/`parent_name`/`href`. Rule per row,
+  in SQL: deal — the deal's own read rule (staff any status; others only
+  `deal_lifecycle.MEMBER_VISIBLE_STATUSES` and only approved +
+  visible_to_members documents); entity — `visible_entity_ids` (+ restricted
+  access); SPV — `spv_visibility.MEMBER_VISIBLE_SPV_STATUSES` AND the
+  anchor entity (subscription entity, else vehicle) in `visible_entity_ids`
+  (most restrictive). Semantic search adds `not_indexed` (the caller's
+  keyword matches with no embedding — every attachment) labelled "Not yet
+  indexed for meaning search"; no embedding pipeline added. Documents moved
+  out of /admin: `/documents` (Search) and `/documents/semantic`; the old
+  `/admin/document-search` and `/admin/semantic-search` redirect. [FIND]
+  entity and SPV attachments have no extracted text anywhere — searchable by
+  name and category only.
+- **Dead links — the feature flag:** `comingSoon: true` on a MENU_ITEMS entry
+  in `apps/web/lib/menuVisibility.mjs` (`COMING_SOON` lists them). Flagged:
+  Community, Insurance, Portfolio → Reporting — never listed in any menu;
+  their URLs render `components/ComingSoon.jsx` via `lib/comingSoonPage.js`.
+  To launch a page, build it and delete the flag. `/fee-schedules` redirects
+  to `/fee-schedules/chat`. navregroup's harness, node test and URL check
+  carry the BUGFIX1 removals/pages as named allowances.
+- **CRM-02:** every CRM ownership read goes through
+  `services/ownership_read.ownership_edges` (both `entity_ownership` and
+  `entity_relationships`, one edge per pair) — Overview tree, `/full`
+  owners/holdings, and the Ownership tab's lists; the tab renders the
+  Overview's own tree (the `/ownership-graph` path is defined twice and
+  `routers/ownership_tree.py`'s copy is unreachable). Rows from
+  `entity_ownership` are read-only on the tab. [FIND] two ownership tables
+  remain — consolidating them is a data-model change, not done here.
+  **CRM-04:** true duplicates — repaired (above); `POST
+  /entities/{id}/tax-ids` now 409s an identical current value.
+- **PORT-01:** `GET /portfolio/positions` and `/securities` return
+  `empty_hint` (`services/holdings_hint.py`) when the grid is empty and the
+  caller has investments: "Holdings appear here once account data is
+  imported from the custodian." + link to `/portfolio`. **PORT-02:** new `GET
+  /portfolio/commitments` (view_portfolio — the projection's own gate;
+  filtered to `visible_entity_ids` via the position owner): name, fund,
+  commitment, called, remaining; rows open the existing projection; the id
+  lookup stays below.
+- **EDGAR — the peek decides first:** `peek` streams (`SecClient.
+  open_stream`) and classifies the first 16 KB for a 206 AND a 200; a skip
+  closes the stream unread (no full read, no R2 write); a wanted 200 is read
+  to the end in place (no second GET). A cover the peek cannot read that
+  turns out (full text) to be an unwanted kind is recorded
+  (`record_kind_skip`) and not stored. **Preliminary R2 cleanup command:**
+  `doppler run -p hollisworks -c prd -- apps/api/venv/bin/python
+  apps/api/scripts/cleanup_preliminary_r2.py` (dry run: 910 filings, 1,820
+  objects, 34,468,879 bytes on 2026-10-21) then `--apply` (deletes both
+  objects, clears `r2_key`/`text_r2_key`; skips any filing referenced from a
+  table other than edgar_index_filings). Institutions table:
+  `components/admin/InstitutionPicker.jsx` — header row (Institution,
+  Entities, years shown, Total), right-aligned numbers. Laptop worker default
+  now `apps/api/venv/bin/python` (`edgar_bulk_queue.LAPTOP_COMMAND`;
+  verify_bulkfetchui2's expected default updated).
+- **DASH-02:** every to-do carries `href` (`services/todo_links.todo_href`);
+  stub to-dos now store `related_type='entity'`; older ones link to the CRM
+  search for their name. **R2-ASSIST-03:** `services/assistant_transcript.py`
+  — only the final turn (or a READ handler's text) is the reply;
+  tool-calling turns are stored `_display.internal` with their narration and
+  never formatted; `disclosures` are no longer sent; italic / tool-phrase
+  lines are stripped. **FIRM-01:** `/firm-search` title and masthead come
+  from `lib/firmSearchBrand.js` — the host tenant's `brand.name` (2nd Act on
+  its own host); the platform org's brand only on the marketing apex.
+
+**Note:** this branch's working tree also holds USERMGMT1's implementation
+files, uncommitted — the usermgmt1 "merge" (62364b4) contains only its verify
+fixes. Commit both together or separately with care.
+
+---
+
+## 0000000000000000000000000000000000000000000000000000. USERMGMT1 — People & Access: one row per person, how each person signs in, password reset / resend invite / link a pending login / edit email, test accounts hidden, 19 orphan fixtures removed; verify WRITTEN, not yet run (2026-10-21)
+
+**Run:** `doppler run -- python3 apps/api/scripts/verify_usermgmt1.py 2>&1 | grep -E "^\[FAIL\]|^\[FIND\]|^TOTAL"`.
+Written, **not run** (standing rule). Auth0 is mocked entirely (JWT,
+`/userinfo`, `/dbconnections/change_password`); SES is replaced by a recorder
+that fails the run if called. Regressions (`verify_authz1.py`,
+`verify_navregroup.py`) run flat after teardown with `VERIFY_NESTED=1`. Run in
+this session: `node --test tests/admin tests/nav` 30/0, `npm run build` exit 0,
+`authz1_routes.py --check` CURRENT.
+
+**Why the list was confusing.** `GET /admin/users` JOINed `user_roles`, so a
+person with N roles was N rows (and LIMIT paged over the duplicates). It now
+returns one row per person with `roles: [{id, name}]`, `sign_in` (one entry
+per login: tenant "2nd Act" / "Platform", method from the Auth0 sub prefix —
+`auth0|` = "Email & password", `google-oauth2|` = "Google" — and how it was
+linked), `never_signed_in`, `email_is_placeholder`, `is_test`,
+`contact_email`, `likely_match` (pending rows) and `actions` — the controls
+THIS caller may use on THIS row, decided server-side; the screen renders a
+control only when its key is there (fails closed). Filters: `status`
+(active / pending / deactivated / retired / rejected), `role` (EXISTS, so the
+person keeps every role), `include_test`, `include_retired` (both off by
+default). The response stays a bare list (unchanged shape for verify_authz1).
+
+**The actions** (all behind `_require_manage_members` — the same gate as every
+other user edit — the same org rule, and only a Super Admin acts on a Super
+Admin; each audited in `audit_log`):
+- `POST /admin/users/{id}/password-reset` — see the mechanism below.
+- `POST /admin/users/{id}/resend-invite` — invited and never signed in only;
+  rotates `invite_token` (the old link stops working), re-opens the invite with
+  the org's `invite.expiry_days`, returns the new enrollment link. Delivery goes
+  through the existing SES mailer and is reported honestly; SES is still
+  blocked, so the screen shows the link to copy.
+- `POST /admin/users/{id}/link {target_user_id}` — see "linking" below.
+- `PATCH /admin/users/{id}/email` — only for a placeholder email or an account
+  that never signed in; unique case-insensitively ACROSS orgs (`users.email` is
+  platform-wide; the check uses the super-admin RLS carve-out transaction-locally
+  and restores it). **It does not change the Auth0 login's email.**
+- Approve / Decline (existing endpoints) are surfaced with an explanation of
+  what pending means and a "Looks like <person>" suggestion (same email, or the
+  pending row's name / contact address equal to a member's email).
+- DELETE is still anonymization, now labelled "Retire (keeps history)", and it
+  also sets `status = 'retired'` so the row leaves the default list.
+
+**Password reset — the mechanism and its limits.** There is no Auth0
+Management API grant on either tenant. The API calls the tenant's PUBLIC
+`POST https://<tenant>/dbconnections/change_password {client_id, email,
+connection}` (`services/user_admin.py`; the one outbound call is
+`post_change_password`). Client ids: Doppler `AUTH0_CLIENT_ID` (2nd Act) and
+`HOLLISWORKS_AUTH0_CLIENT_ID` (Platform). Connection: `AUTH0_DB_CONNECTION` /
+`HOLLISWORKS_AUTH0_DB_CONNECTION`, **neither is set**, so it defaults to Auth0's
+standard `Username-Password-Authentication` — set them if a tenant's database
+connection has another name. Limits: Auth0 answers 200 whether or not anyone
+matched, so the screen says "requested", never "sent"; it only reaches a login
+whose Auth0 email equals `users.email`; a Google login is refused ("reset the
+password in Google"); a placeholder email ("No real email on file") and a
+never-signed-in account ("Resend their invitation instead") are refused too.
+**Operator check:** confirm the API's Render service actually receives
+`AUTH0_CLIENT_ID` / `HOLLISWORKS_AUTH0_CLIENT_ID` from Doppler — without them
+the action answers 503 naming the missing variable.
+
+**How to link a duplicate login.** When someone signs in a way that does not
+match their account (e.g. without the invite link, or with Google instead of
+email), they land in "Awaiting approval". In People & Access, pick the existing
+person in that row's "Link to an existing person…" list (pre-selected when the
+row says "Looks like …") and press **Link sign-in**. The login's sub moves onto
+that person — into `users.auth0_sub` if it is empty (an invited person who
+never used the link), otherwise as a `user_identities` row with
+`linked_via = 'operator'` — the pending row is retired (kept, never deleted)
+and its to-dos close. Their next request resolves to the existing account.
+Refused across orgs and, for anyone but a Super Admin, onto a Super Admin.
+
+**Pending page.** It now explains the wait, and when the account has no real
+email it asks for one: `PUT /users/me/contact-email` (added to
+`PENDING_ALLOWED_PATHS`; own row only; refused when a real email exists) stores
+an UNVERIFIED `contact_email` shown to admins — `services.users` never reads it,
+so typing someone else's address links nothing. The pending to-do already links
+to `/admin/users?status=pending`; the page now honours that filter.
+
+**Test accounts.** `users.is_test` + `contact_email` (`docs/usermgmt1_part1.sql`,
+applied via MCP): a trigger flags every `@test.local` address on insert / email
+change (the domain every verify script seeds with), so new fixtures are hidden
+with no per-script change; `services.test_accounts.mark_test_user` flags any
+other. `scripts/_usermgmt1_hygiene.py` classifies each fixture by FINDING the
+script that seeds it and removes orphans with every dependent row (plan read
+transitively from pg_constraint, refused if any row touches a user outside the
+set, one transaction, exact per-table counts). Run live 2026-10-21
+(`docs/USERMGMT1_FIXTURE_PURGE.json`): 26 fixtures → **19 orphans removed**
+(rlscutover 1, udf01b 6, udf02a 4, wfmgr3 2, wfmgr4 6; with them 5 member_todos,
+2 user_permission_sets, 6 user_roles, 1 workflow definition + 2 versions +
+2 steps + 3 runs + 2 run steps + 1 trigger); **7 chancery seeds kept**, flagged
+`is_test`; real users 9 → 9, checksum unchanged.
+
+**Findings.**
+- [FIND] `verify_rlscutover.py` seeded `auth0_sub = 'rlscutover_creator'` but
+  tore down (and looked up `created_by`) by `'rlscutover_creator@test.local'`,
+  so its user leaked on EVERY run. Fixed.
+- [FIND] The invited jpl99172x rows kept `auth0_sub` NULL because signing in
+  without the invite link never touches the invite row: the login matched no
+  VERIFIED email, so provisioning created a new pending placeholder row (which
+  is what carried the `last_login_at`). Link now fixes this in one click.
+  jpl99172's row was linked by hand and still reads `invite_status = 'pending'`;
+  the list ignores invite status once a person has signed in.
+- [FIND] An org admin holding only `manage_org_settings` can approve / decline
+  but not use the new actions (they need `manage_members`, like every user
+  edit). Unchanged rule; the list publishes no edit action for such a caller.
+- [FIND] Role assignment (`PUT …/role`) still REPLACES all roles with one; the
+  screen now warns when a person holds several.
+- [FIND] Old source-string checks in `verify_usermanagementfinish.py` (T7) look
+  for `lastLoginLabel(u.last_login_at)` in UserManagement.jsx; that rendering
+  moved to `components/admin/PeopleParts.jsx`, so that stale check will fail.
+
+---
+
 ## 000000000000000000000000000000000000000000000000000. AUTHZ1 — one database-backed, fail-closed authorization path for every API route; no default-allow anywhere; safe provisioning (link by verified email or hold as pending — never super admin by issuer); duplicate accounts linked; all verify sections RUN green (2026-10-21)
 
 **Run:** `doppler run -- python3 apps/api/scripts/verify_authz1.py 2>&1 | grep -E "^\[FAIL\]|^TOTAL"`.
@@ -544,7 +789,10 @@ regressions). Task 1's findings: **docs/BULKFETCHUI2_DISCOVERY.md**.
 `EDGAR_BULK_RENDER_WORKER_SERVICE_ID`. **Not set in Doppler today**; unset (or blank) means the default,
 which is the command that actually works on the laptop:
 
-    cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop
+    cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- apps/api/venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop
+
+(BUGFIX1, 2026-10-21: corrected from the repo-root `venv/bin/python`, which did not work; the API's own
+`apps/api/venv` is the working interpreter.)
 
 The old default `doppler run -- python3 apps/api/scripts/run_bulk_fetch.py --worker --target laptop` did not
 work there: wrong folder, no explicit Doppler project/config, and not the repo venv. One source,

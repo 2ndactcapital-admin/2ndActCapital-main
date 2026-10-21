@@ -13,6 +13,7 @@ from schemas.portfolio import (
     TargetAllocationWrite,
 )
 from services.audit import write_audit_log
+from services import deal_lifecycle as dlc
 from services.database import get_pool
 from services.permissions import get_user_id
 from services.authz import require_staff
@@ -167,8 +168,13 @@ async def get_my_investments(request: Request):
             user_id,
             org_id,
         )
+        labels = dlc.label_map(await dlc.lifecycle(conn, org_id))  # BUGFIX1
     return [
-        PortfolioInvestmentResponse(**{**dict(r), "invested_amount": _f(r["invested_amount"])})
+        PortfolioInvestmentResponse(**{
+            **dict(r), "invested_amount": _f(r["invested_amount"]),
+            "deal_status": str(r["deal_status"]) if r["deal_status"] is not None else None,
+            "stage_label": labels.get(str(r["deal_status"])) if r["deal_status"] is not None else None,
+        })
         for r in rows
     ]
 

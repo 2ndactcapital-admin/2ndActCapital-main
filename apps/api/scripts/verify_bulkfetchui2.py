@@ -76,10 +76,11 @@ DIALOG_JSX = WEB_DIR / "components" / "admin" / "LaptopWorkerDialog.jsx"
 BULK_LOGIC = WEB_DIR / "lib" / "edgarBulkDownload.mjs"
 NODE_TEST = "tests/edgar/laptopDialog.test.mjs"
 
-# The command that works on Joe's laptop (CONFIRMED FACTS, 2026-10-20) — the
-# expected default, written out here independently of the module's constant.
+# The command that works on Joe's laptop — the expected default, written out
+# here independently of the module's constant. BUGFIX1 (2026-10-21): the working
+# interpreter is apps/api/venv/bin/python, not the repo-root venv.
 EXPECTED_DEFAULT = ("cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- "
-                    "venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop")
+                    "apps/api/venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop")
 SETTING = "EDGAR_BULK_LAPTOP_WORKER_COMMAND"
 SENTINEL_COMMAND = "cd /tmp/verify-bfui2 && echo verify-bfui2-sentinel --worker --target laptop"
 

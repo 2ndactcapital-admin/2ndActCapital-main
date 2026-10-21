@@ -6,21 +6,7 @@
 // semantic/vector search (Phase 11). Rule 5: calls the Next route, not FastAPI.
 
 import { useState } from "react";
-import { formatDate } from "@/lib/format";
-
-const MATCH_LABEL = {
-  filename: "filename",
-  category: "category",
-  extracted_text: "text",
-};
-
-function MatchTag({ kind }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-bg-app px-2 py-0.5 text-[10px] font-medium text-text-muted">
-      {MATCH_LABEL[kind] || kind}
-    </span>
-  );
-}
+import SearchResultList from "@/components/documents/SearchResultList";
 
 export default function DocumentSearch() {
   const [query, setQuery] = useState("");
@@ -80,37 +66,13 @@ export default function DocumentSearch() {
           <p className="text-sm text-[#9B2335]">{error}</p>
         ) : results === null ? (
           <p className="text-sm text-text-muted">
-            Enter a term above to search this organization's documents.
+            Enter a term above to search the documents you can see: the document
+            vault and the files attached to deals, entities and SPVs.
           </p>
         ) : results.length === 0 ? (
           <p className="text-sm text-text-muted">No documents matched your search.</p>
         ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border bg-bg-card">
-            {results.map((d) => (
-              <li key={d.document_id} className="px-4 py-3">
-                <a
-                  href={`/admin/document-review/${d.document_id}`}
-                  className="group flex flex-wrap items-center justify-between gap-3"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-navy group-hover:underline">
-                      {d.original_filename || "Untitled document"}
-                    </p>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
-                      {d.doc_family && <span className="capitalize">{d.doc_family}</span>}
-                      {d.doc_family && d.created_at && <span>·</span>}
-                      {d.created_at && <span>{formatDate(d.created_at)}</span>}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    {(d.matched_on || []).map((m) => (
-                      <MatchTag key={m} kind={m} />
-                    ))}
-                  </div>
-                </a>
-              </li>
-            ))}
-          </ul>
+          <SearchResultList results={results} />
         )}
       </div>
     </div>

@@ -36,6 +36,9 @@ export const SERVER_GATES = {
   "/notifications": "session",
   "/admin/document-search": "session",
   "/admin/semantic-search": "session",
+  // BUGFIX1 — Documents moved out of /admin (the old URLs redirect here).
+  "/documents": "session",
+  "/documents/semantic": "session",
   "/admin": "session",
   "/admin/users": "rbac:manage_members",
   "/admin/staff-visibility": "rbac:manage_members",

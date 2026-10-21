@@ -10,6 +10,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
+from services import deal_lifecycle as dlc
+from services.spv_rollup import spv_commitment_summaries
+from services.todo_links import todo_href
+
 
 @dataclass
 class BriefBlock:
@@ -79,7 +83,8 @@ async def _needs_attention_handler(pool, user_id: str, org_id: str) -> dict | No
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, title, detail, action_key, action_params, priority, source
+            SELECT id, title, detail, action_key, action_params, priority, source,
+                   related_type, related_id
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
               AND kind = 'actual'
@@ -91,7 +96,14 @@ async def _needs_attention_handler(pool, user_id: str, org_id: str) -> dict | No
         )
     if not rows:
         return None
-    return {"items": [_row_to_dict(r) for r in rows]}
+    return {"items": [_todo_item(r) for r in rows]}
+
+
+def _todo_item(row) -> dict:
+    """BUGFIX1 (DASH-02) — every to-do carries the href where it is resolved."""
+    d = _row_to_dict(row)
+    d["href"] = todo_href(row)
+    return d
 
 
 async def _new_deals_handler(pool, user_id: str, org_id: str) -> dict | None:
@@ -102,7 +114,7 @@ async def _new_deals_handler(pool, user_id: str, org_id: str) -> dict | None:
             FROM deals
             WHERE org_id = $1
               AND deal_status IN ('submitted', 'under_review', 'active')
-              AND valid_to IS NULL
+              AND valid_to IS NULL AND system_to IS NULL
             ORDER BY published_at DESC NULLS LAST, created_at DESC
             LIMIT 5
             """,
@@ -138,7 +150,8 @@ async def _on_horizon_handler(pool, user_id: str, org_id: str) -> dict | None:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, title, detail, action_key, action_params, priority, source
+            SELECT id, title, detail, action_key, action_params, priority, source,
+                   related_type, related_id
             FROM member_todos
             WHERE user_id = $1 AND org_id = $2
               AND kind = 'anticipated'
@@ -150,60 +163,70 @@ async def _on_horizon_handler(pool, user_id: str, org_id: str) -> dict | None:
         )
     if not rows:
         return None
-    return {"items": [_row_to_dict(r) for r in rows]}
+    return {"items": [_todo_item(r) for r in rows]}
 
 
 async def _pipeline_snapshot_handler(pool, user_id: str, org_id: str) -> dict | None:
+    """BUGFIX1 (DASH-01) — the SAME services.deal_lifecycle.summary the
+    Marketplace summary bar uses (staff-only block: no member narrowing), so
+    the two can no longer count in two vocabularies. The old query also
+    lacked `system_to IS NULL` and would have counted closed versions."""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT deal_status, count(*) AS count
-            FROM deals
-            WHERE org_id = $1 AND valid_to IS NULL
-            GROUP BY deal_status
-            ORDER BY deal_status
-            """,
-            org_id,
-        )
-    by_status = {r["deal_status"]: int(r["count"]) for r in rows}
-    if not by_status:
+        stages = await dlc.summary(conn, org_id)
+    total = sum(s["count"] for s in stages)
+    if not total:
         return None
-    return {"by_status": by_status, "total": sum(by_status.values())}
+    return {
+        "stages": stages,
+        "by_status": {s["status"]: s["count"] for s in stages if s["count"]},
+        "total": total,
+    }
 
 
 async def _spv_activity_handler(pool, user_id: str, org_id: str) -> dict | None:
+    """BUGFIX1 (DASH-03) — ONE line per SPV with its CURRENT state (it listed
+    the last five spv_status_history EVENTS, so one SPV created then opened
+    appeared twice), with committed / % of target from the same
+    spv_commitment_summaries the cap table and list card use."""
     async with pool.acquire() as conn:
-        recent = await conn.fetch(
+        spvs = await conn.fetch(
             """
-            SELECT s.name AS spv_name, ssh.from_status, ssh.to_status, ssh.changed_at
-            FROM spv_status_history ssh
-            JOIN spvs s ON s.id = ssh.spv_id
-            WHERE ssh.org_id = $1
-            ORDER BY ssh.changed_at DESC
+            SELECT s.id, s.name, s.spv_status,
+                   (SELECT max(ssh.changed_at) FROM spv_status_history ssh
+                     WHERE ssh.spv_id = s.id AND ssh.org_id = s.org_id) AS changed_at
+            FROM spvs s
+            WHERE s.org_id = $1 AND s.spv_status NOT IN ('closed', 'cancelled')
+            ORDER BY changed_at DESC NULLS LAST, s.created_at DESC
             LIMIT 5
             """,
             org_id,
         )
-        soft_count = await conn.fetchval(
-            """
-            SELECT count(*)
-            FROM spv_subscriptions
-            WHERE org_id = $1
-              AND subscription_status = 'soft'
-              AND valid_to IS NULL
-            """,
-            org_id,
-        )
-    changes = [
-        {
-            "spv_name": r["spv_name"],
-            "from": r["from_status"],
-            "to": r["to_status"],
+        summaries = await spv_commitment_summaries(conn, org_id, [r["id"] for r in spvs])
+    if not spvs:
+        return None
+    items = []
+    for r in spvs:
+        c = summaries.get(r["id"]) or {}
+        items.append({
+            "spv_id": str(r["id"]),
+            "spv_name": r["name"],
+            "status": r["spv_status"],
             "changed_at": r["changed_at"].isoformat() if r["changed_at"] else None,
-        }
-        for r in recent
-    ]
-    return {"recent_changes": changes, "soft_subscriptions": int(soft_count or 0)}
+            "commitment": _jsonable(c),
+        })
+    soft = sum(int((summaries.get(r["id"]) or {}).get("soft_count", 0)) for r in spvs)
+    return {"spvs": items, "soft_subscriptions": soft}
+
+
+def _jsonable(d: dict) -> dict:
+    out = {}
+    for k, v in (d or {}).items():
+        if v is not None and v.__class__.__name__ == "Decimal":
+            v = float(v)
+        elif v is not None and v.__class__.__name__ == "UUID":
+            v = str(v)
+        out[k] = v
+    return out
 
 
 # ---------------------------------------------------------------------------

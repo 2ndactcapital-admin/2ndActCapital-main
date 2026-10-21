@@ -99,7 +99,7 @@ const CSS = `
 .fs-msg.ok{ background:var(--holly-tint); color:var(--holly-deep); border:1px solid #D7E2DA; }
 `;
 
-export default function FirmSearchClient({ intent }) {
+export default function FirmSearchClient({ intent, brand = "", supportEmail = null }) {
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null); // { kind: "err"|"ok", text }
@@ -146,7 +146,9 @@ export default function FirmSearchClient({ intent }) {
     } catch {
       setMsg({
         kind: "err",
-        text: "Something went wrong. Please try again, or email hello@hollisworks.com.",
+        text: supportEmail
+          ? `Something went wrong. Please try again, or email ${supportEmail}.`
+          : "Something went wrong. Please try again.",
       });
     } finally {
       setLoading(false);
@@ -165,7 +167,7 @@ export default function FirmSearchClient({ intent }) {
 
       <header className="fs-mast">
         <a className="fs-mark" href="/">
-          Hollisworks<span className="dot">.</span>
+          {brand}<span className="dot">.</span>
         </a>
       </header>
 

@@ -2252,6 +2252,9 @@
 --   deactivated_by                           uuid
 --   last_login_at                            timestamp with time zone
 --   status                                   text NOT NULL DEFAULT 'active'::text
+--   is_test                                  boolean NOT NULL DEFAULT false
+--   contact_email                            text
+--   contact_email_at                         timestamp with time zone
 --   UNIQUE users_auth0_sub_key: (auth0_sub)
 --   UNIQUE users_email_key: (email)
 --   UNIQUE users_invite_token_key: (invite_token)

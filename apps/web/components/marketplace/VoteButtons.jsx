@@ -21,6 +21,20 @@ async function castVote(dealId, vote) {
   }
 }
 
+// BUGFIX1 (VOTE-01) — withdraw the caller's own vote.
+async function withdrawVote(dealId) {
+  try {
+    const res = await fetch("/api/marketplace/vote", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId }),
+    });
+    return await res.json().catch(() => ({}));
+  } catch (error) {
+    return { ok: false, error: error?.message };
+  }
+}
+
 export default function VoteButtons({
   dealId,
   initialUpvotes = 0,
@@ -43,6 +57,20 @@ export default function VoteButtons({
         setUpvotes(res.summary.upvotes ?? 0);
         setDownvotes(res.summary.downvotes ?? 0);
         setUserVote(res.summary.user_vote ?? null);
+      }
+    });
+  }
+
+  function withdraw(e) {
+    e?.preventDefault();
+    e?.stopPropagation();
+    if (pending) return;
+    startTransition(async () => {
+      const res = await withdrawVote(dealId);
+      if (res.ok && res.summary) {
+        setUpvotes(res.summary.upvotes ?? 0);
+        setDownvotes(res.summary.downvotes ?? 0);
+        setUserVote(null);
       }
     });
   }
@@ -76,6 +104,16 @@ export default function VoteButtons({
         <IconThumbDown size={iconSize} stroke={2} />
         <span className="tabular-nums">{downvotes}</span>
       </button>
+      {userVote ? (
+        <button
+          type="button"
+          onClick={withdraw}
+          disabled={pending}
+          className="text-xs text-text-muted underline underline-offset-2 hover:text-navy disabled:opacity-60"
+        >
+          Withdraw vote
+        </button>
+      ) : null}
     </div>
   );
 }

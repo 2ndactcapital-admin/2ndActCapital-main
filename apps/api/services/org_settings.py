@@ -115,6 +115,16 @@ DEFAULT_SETTINGS: dict[str, object] = {
     # naming
     "naming.member_label": "Member",
     "naming.deal_label": "Deal",
+    # marketplace — BUGFIX1 (MKT-03): the fields a deal must carry before it can
+    # be submitted for review, each with the label its refusal names. An org
+    # overrides the list in org_settings; the code holds no second copy.
+    "marketplace.submit_required_fields": [
+        {"field": "name", "label": "Deal name"},
+        {"field": "description", "label": "Description"},
+        {"field": "asset_super_class", "label": "Asset class"},
+        {"field": "target_raise", "label": "Target raise"},
+        {"field": "minimum_investment", "label": "Minimum investment"},
+    ],
     # ai — which model each call path uses (mini-bedrock sprint). Resolved by
     # services/extraction.resolve_model so switching a client (or the whole
     # platform, e.g. a future AWS Bedrock move) to another model or provider is

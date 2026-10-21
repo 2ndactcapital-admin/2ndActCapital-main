@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import EntityPicker from "@/components/EntityPicker";
-import EntityGraphNavigator from "@/components/graph/EntityGraphNavigator";
+import OwnershipTree from "@/components/crm/OwnershipTree";
 
 function formatPct(val) {
   if (val == null) return "—";
@@ -34,6 +34,10 @@ function OwnershipRow({ item, onEdit, onDelete }) {
             <p className="text-xs text-text-muted">as of {formatDate(item.effective_date)}</p>
           )}
         </div>
+        {/* BUGFIX1 — rows from the other ownership table are read-only here. */}
+        {item.editable === false ? (
+          <span className="text-xs text-text-muted">Recorded on the entity's ownership register</span>
+        ) : (
         <div className="flex gap-2">
           <button
             type="button"
@@ -50,6 +54,7 @@ function OwnershipRow({ item, onEdit, onDelete }) {
             Remove
           </button>
         </div>
+        )}
       </div>
     </div>
   );
@@ -342,7 +347,7 @@ function HistorySection({ entityId }) {
   );
 }
 
-export default function OwnershipTab({ entityId }) {
+export default function OwnershipTab({ entityId, graph = null }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -398,14 +403,23 @@ export default function OwnershipTab({ entityId }) {
   // on-screen at every hop. Its own Owns / Owned-by reverse toggle is preserved
   // from Sprint A — nothing rebuilt here. Rendered above the loading/error gate
   // so it shows even while the edit list is still fetching.
+  // BUGFIX1 (CRM-02) — the SAME tree, from the SAME payload, as the Overview
+  // (GET /entities/{id}/ownership-graph via services/ownership_read). The
+  // EntityGraphNavigator that used to sit here asked that URL for a `tree` it
+  // never returns (a second, shadowed route of the same path), so it always
+  // said "No ownership tree data available".
+  const hasEdges = (graph?.edges || []).length > 0;
   const graphSection = (
-    <section>
-      <EntityGraphNavigator
-        apiBase={`/api/entities/${entityId}/ownership-graph`}
-        title="Ownership & Beneficiary Tree"
-        emptyMessage="No ownership tree data available for this entity."
-        nodeQuery="tab=ownership"
-      />
+    <section className="rounded-lg border bg-bg-card p-6" style={{ borderColor: "#ece8dd" }}>
+      <h3 className="text-sm font-semibold text-text-secondary">Ownership tree</h3>
+      {hasEdges ? (
+        <div className="mt-4 space-y-6">
+          <OwnershipTree graph={graph} rootId={entityId} direction="up" title="Owned by" />
+          <OwnershipTree graph={graph} rootId={entityId} direction="down" title="Owns" />
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-text-muted">No ownership recorded for this entity.</p>
+      )}
     </section>
   );
 

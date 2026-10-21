@@ -100,8 +100,9 @@ export default function MemberInvestmentTracker({
                     ?.config_value || inv.stage || "—";
                 return (
                   <tr key={inv.id}>
-                    <td className="px-3 py-3 font-mono text-xs text-text-muted">
-                      {String(inv.user_id).slice(0, 8)}…
+                    {/* BUGFIX1 (MKT-04) — the member's name from the API. */}
+                    <td className="px-3 py-3 text-sm text-text-primary">
+                      {inv.member_name || "Unnamed member"}
                     </td>
                     <td className="px-3 py-3">
                       <span className="rounded-md bg-gold-light px-2 py-0.5 text-xs font-medium text-navy">

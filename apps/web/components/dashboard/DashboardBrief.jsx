@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { formatCurrency } from "@/lib/format";
+// BUGFIX1 — the to-do row and the two staff cards live in briefParts.jsx (no
+// hooks) so node tests render the real markup.
+import { PipelineBlock, SPVActivityBlock, TodoItem, TodoTitle } from "@/components/dashboard/briefParts";
 
 // ---------------------------------------------------------------------------
 // Narration
@@ -29,38 +32,6 @@ function Narration({ text }) {
 // ---------------------------------------------------------------------------
 // Block cards
 // ---------------------------------------------------------------------------
-
-function TodoItem({ item, onDismiss, onComplete }) {
-  return (
-    <div className="flex items-start justify-between gap-3 py-2 border-b border-[var(--2a-bg-sidebar)] last:border-0">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-[var(--2a-text)] truncate">{item.title}</p>
-        {item.detail && (
-          <p className="text-xs text-[var(--2a-text-muted)] mt-0.5">{item.detail}</p>
-        )}
-      </div>
-      <div className="flex gap-1.5 shrink-0">
-        {item.action_key && (
-          <a
-            href={item.action_key}
-            className="rounded px-2.5 py-1 text-xs font-medium"
-            style={{ background: "var(--2a-navy)", color: "var(--2a-bg)" }}
-          >
-            {item.action_params || "View"}
-          </a>
-        )}
-        <button
-          type="button"
-          onClick={() => onDismiss(item.id)}
-          className="rounded px-2 py-1 text-xs text-[var(--2a-text-muted)] hover:text-[var(--2a-text)] transition-colors"
-          title="Dismiss"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  );
-}
 
 function NeedsAttentionBlock({ data, onDismiss }) {
   if (!data?.items?.length) return null;
@@ -150,7 +121,7 @@ function OnHorizonBlock({ data, onDismiss }) {
         {data.items.map((item) => (
           <div key={item.id} className="flex items-start justify-between gap-3 py-2 border-b border-[var(--2a-bg-sidebar)] last:border-0">
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-[var(--2a-text-secondary)] truncate">{item.title}</p>
+              <p className="text-sm text-[var(--2a-text-secondary)] truncate"><TodoTitle item={item} /></p>
               {item.detail && (
                 <p className="text-xs text-[var(--2a-text-muted)] mt-0.5">{item.detail}</p>
               )}
@@ -165,51 +136,6 @@ function OnHorizonBlock({ data, onDismiss }) {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function PipelineBlock({ data }) {
-  if (!data?.by_status) return null;
-  return (
-    <div className="rounded-lg border border-[#ece8dd] bg-white p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--2a-gold)] mb-3">
-        Pipeline snapshot
-      </h3>
-      <dl className="grid grid-cols-2 gap-3">
-        {Object.entries(data.by_status).map(([status, count]) => (
-          <div key={status}>
-            <dt className="text-xs text-[var(--2a-text-muted)] capitalize">{status.replace(/_/g, " ")}</dt>
-            <dd className="text-lg font-medium text-[var(--2a-text)] tabular-nums">{count}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-function SPVActivityBlock({ data }) {
-  if (!data) return null;
-  return (
-    <div className="rounded-lg border border-[#ece8dd] bg-white p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--2a-gold)] mb-3">
-        SPV activity
-      </h3>
-      {data.soft_subscriptions > 0 && (
-        <p className="text-sm text-[var(--2a-text-secondary)] mb-3">
-          {data.soft_subscriptions} soft subscription{data.soft_subscriptions !== 1 ? "s" : ""} pending
-        </p>
-      )}
-      {data.recent_changes?.length > 0 && (
-        <div className="space-y-1.5">
-          {data.recent_changes.map((ch, i) => (
-            <div key={i} className="text-xs text-[var(--2a-text-muted)]">
-              <span className="font-medium text-[var(--2a-text)]">{ch.spv_name}</span>
-              {" · "}{ch.from ? `${ch.from} → ` : ""}{ch.to}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -293,7 +219,7 @@ export default function DashboardBrief({ greeting }) {
   }
 
   const visibleBlocks = blocks.filter(
-    (b) => (b.data?.items?.length || b.data?.by_status || b.data?.soft_subscriptions !== undefined)
+    (b) => (b.data?.items?.length || b.data?.stages || b.data?.by_status || b.data?.spvs?.length)
   );
 
   return (

@@ -343,8 +343,13 @@ async def search_documents(conn, org_id, query, *, pool, user_id, is_staff,
     if not q:
         return []
     allowed = await visible_entity_ids(pool, org_id, user_id, is_staff)
-    return await _search_rows(conn, org_id, q, limit,
-                              scope=(bool(is_staff), sorted(allowed)))
+    scope = (bool(is_staff), sorted(allowed))
+    # BUGFIX1 (R2-DOC-03) — the vault (public.documents) AND the three attachment
+    # tables, each row under the rule its own record uses (see _search_attachments).
+    rows = await _search_rows(conn, org_id, q, limit, scope=scope)
+    rows += await _search_attachments(conn, org_id, q, limit, scope=scope)
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return rows[:limit]
 
 
 async def search_documents_org_wide(conn, org_id, query, *, limit=50) -> list[dict]:
@@ -357,6 +362,139 @@ async def search_documents_org_wide(conn, org_id, query, *, limit=50) -> list[di
     if not q:
         return []
     return await _search_rows(conn, org_id, q, limit, scope=None)
+
+
+# BUGFIX1 (R2-DOC-03) — where each kind of document lives, and its label.
+SOURCE_LABELS = {"vault": "Document vault", "deal": "Deal", "entity": "Entity", "spv": "SPV"}
+
+
+async def _search_attachments(conn, org_id, q, limit, *, scope) -> list[dict]:
+    """Keyword search over deal_documents, entity_documents and spv_documents —
+    the three tables Document Search never looked at (R2-DOC-03: 0 vault rows
+    live, while the attachments were all in these). Matches the file name /
+    title, the category / type, and extracted text where it exists (only
+    deal_documents has any: `extracted_data`). Every row is filtered by the
+    SAME rule its own record uses, applied in SQL so LIMIT counts only visible
+    rows:
+
+      deal    — the deal must be live and visible to the caller exactly as
+                GET /deals/{id} decides: staff see every status; anyone else
+                only MEMBER_VISIBLE_STATUSES, and then only documents that are
+                approved AND visible_to_members (GET /deals/{id}'s own filter).
+      entity  — the entity must be in visible_entity_ids (staff visibility or
+                the member's delegate grants, then restricted access).
+      spv     — GET /spvs/{id}/documents' rule (staff, or a member while the SPV
+                is open/closing) AND, most-restrictive-wins, the document's
+                anchor entity (its subscription's entity, else the SPV's
+                vehicle entity) in visible_entity_ids when it has one.
+
+    scope None = org-wide (internal callers only, like search_documents_org_wide).
+    """
+    from services.deal_lifecycle import MEMBER_VISIBLE_STATUSES as DEAL_MEMBER
+    from services.spv_visibility import MEMBER_VISIBLE_SPV_STATUSES as SPV_MEMBER
+
+    like = f"%{q}%"
+    staff = True if scope is None else bool(scope[0])
+    allowed = None if scope is None else list(scope[1])
+    out: list[dict] = []
+
+    # deal attachments
+    rows = await conn.fetch(
+        """
+        SELECT dd.id, dd.deal_id AS parent_id, dl.name AS parent_name,
+               dd.file_name AS name, dd.document_type AS category, dd.file_type AS mime_type,
+               dd.status, dd.created_at,
+               (dd.file_name ILIKE $2) AS match_filename,
+               (COALESCE(dd.document_type, '') ILIKE $2) AS match_category,
+               (COALESCE(dd.extracted_data::text, '') ILIKE $2) AS match_text,
+               (dd.extracted_data IS NOT NULL) AS has_text
+        FROM deal_documents dd
+        JOIN deals dl ON dl.id = dd.deal_id AND dl.org_id = dd.org_id
+         AND dl.valid_to IS NULL AND dl.system_to IS NULL
+        WHERE dd.org_id = $1
+          AND (dd.file_name ILIKE $2 OR COALESCE(dd.document_type, '') ILIKE $2
+               OR COALESCE(dd.extracted_data::text, '') ILIKE $2)
+          AND ($4::boolean
+               OR (dl.deal_status::text = ANY($5::text[])
+                   AND dd.status = 'approved' AND dd.visible_to_members = true))
+        ORDER BY dd.created_at DESC
+        LIMIT $3
+        """,
+        org_id, like, limit, staff, list(DEAL_MEMBER),
+    )
+    out += [_attachment_result("deal", r, f"/marketplace/{r['parent_id']}?tab=documents") for r in rows]
+
+    # entity attachments
+    rows = await conn.fetch(
+        """
+        SELECT ed.id, ed.entity_id AS parent_id,
+               COALESCE(e.display_name, e.legal_name) AS parent_name,
+               COALESCE(ed.title, ed.file_name) AS name, ed.file_name AS file_name,
+               ed.doc_category AS category, ed.content_type AS mime_type,
+               ed.status, ed.created_at,
+               (COALESCE(ed.title, '') ILIKE $2 OR COALESCE(ed.file_name, '') ILIKE $2) AS match_filename,
+               (COALESCE(ed.doc_category, '') ILIKE $2) AS match_category,
+               false AS match_text, false AS has_text
+        FROM entity_documents ed
+        JOIN entities e ON e.id = ed.entity_id AND e.org_id = ed.org_id
+         AND e.valid_to IS NULL AND e.system_to IS NULL
+        WHERE ed.org_id = $1
+          AND (COALESCE(ed.title, '') ILIKE $2 OR COALESCE(ed.file_name, '') ILIKE $2
+               OR COALESCE(ed.doc_category, '') ILIKE $2)
+          AND ($4::uuid[] IS NULL OR ed.entity_id = ANY($4::uuid[]))
+        ORDER BY ed.created_at DESC
+        LIMIT $3
+        """,
+        org_id, like, limit, allowed,
+    )
+    out += [_attachment_result("entity", r, f"/crm/{r['parent_id']}?tab=documents") for r in rows]
+
+    # SPV attachments
+    rows = await conn.fetch(
+        """
+        SELECT sd.id, sd.spv_id AS parent_id, sp.name AS parent_name,
+               sd.title AS name, sd.doc_type AS category, NULL::text AS mime_type,
+               sd.status, sd.created_at,
+               (COALESCE(sd.title, '') ILIKE $2) AS match_filename,
+               (COALESCE(sd.doc_type, '') ILIKE $2) AS match_category,
+               false AS match_text, false AS has_text
+        FROM spv_documents sd
+        JOIN spvs sp ON sp.id = sd.spv_id AND sp.org_id = sd.org_id
+        LEFT JOIN spv_subscriptions sub ON sub.id = sd.subscription_id AND sub.org_id = sd.org_id
+        WHERE sd.org_id = $1
+          AND (COALESCE(sd.title, '') ILIKE $2 OR COALESCE(sd.doc_type, '') ILIKE $2)
+          AND ($4::boolean OR sp.spv_status = ANY($5::text[]))
+          AND ($6::uuid[] IS NULL
+               OR COALESCE(sub.entity_id, sp.vehicle_entity_id) IS NULL
+               OR COALESCE(sub.entity_id, sp.vehicle_entity_id) = ANY($6::uuid[]))
+        ORDER BY sd.created_at DESC
+        LIMIT $3
+        """,
+        org_id, like, limit, staff, list(SPV_MEMBER), allowed,
+    )
+    out += [_attachment_result("spv", r, f"/spvs/{r['parent_id']}?tab=documents") for r in rows]
+    return out
+
+
+def _attachment_result(source: str, r, href: str) -> dict:
+    matched_on = [label for flag, label in (
+        (r["match_filename"], "filename"), (r["match_category"], "category"),
+        (r["match_text"], "extracted_text")) if flag]
+    return {
+        "document_id": str(r["id"]),
+        "source": source,
+        "source_label": SOURCE_LABELS[source],
+        "parent_id": str(r["parent_id"]),
+        "parent_name": r["parent_name"],
+        "href": href,
+        "original_filename": r["name"],
+        "status": r["status"],
+        "doc_family": r["category"],
+        "mime_type": r["mime_type"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "matched_on": matched_on,
+        "has_extracted_text": bool(r["has_text"]),
+    }
 
 
 async def _search_rows(conn, org_id, q, limit, *, scope) -> list[dict]:
@@ -409,6 +547,11 @@ async def _search_rows(conn, org_id, q, limit, *, scope) -> list[dict]:
         ]
         results.append({
             "document_id": str(r["id"]),
+            "source": "vault",
+            "source_label": SOURCE_LABELS["vault"],
+            "parent_id": None,
+            "parent_name": None,
+            "href": f"/admin/document-review/{r['id']}",
             "original_filename": r["original_filename"],
             "status": r["status"],
             "doc_family": r["doc_family"],

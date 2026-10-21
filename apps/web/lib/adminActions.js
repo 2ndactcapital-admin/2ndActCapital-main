@@ -6,9 +6,13 @@ import {
   deactivateUser,
   deleteUser,
   getAdminUsers,
+  linkPendingUser,
   reactivateUser,
   rejectPendingUser,
+  resendUserInvite,
+  sendPasswordReset,
   updateAdminUser,
+  updateUserEmail,
 } from "@/lib/api";
 
 // Assign a role to a user (admin only — enforced server-side by manage_members).
@@ -96,4 +100,29 @@ export async function rejectPendingUserAction(userId) {
   } catch (error) {
     return { ok: false, error: error.message };
   }
+}
+
+// --- People & Access actions (USERMGMT1) ---
+async function wrap(call) {
+  try {
+    return { ok: true, result: await call() };
+  } catch (error) {
+    return { ok: false, error: error.message, status: error.status };
+  }
+}
+
+export async function sendPasswordResetAction(userId) {
+  return wrap(() => sendPasswordReset(userId));
+}
+
+export async function resendInviteAction(userId) {
+  return wrap(() => resendUserInvite(userId));
+}
+
+export async function linkPendingUserAction(userId, targetUserId) {
+  return wrap(() => linkPendingUser(userId, targetUserId));
+}
+
+export async function updateUserEmailAction(userId, email) {
+  return wrap(() => updateUserEmail(userId, email));
 }

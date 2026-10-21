@@ -478,6 +478,48 @@ class SecClient:
             return r
         raise SecRequestFailed(f"failed after {self.attempts} attempts ({last}) from {url}")
 
+    async def open_stream(self, url: str, *, range_bytes: int | None = None) -> httpx.Response:
+        """BUGFIX1 — the same request as get(), same limiter slot, same retries,
+        but the body is NOT read: the caller reads as much as it needs and must
+        `await r.aclose()`. The peek uses it so a server that ignores Range
+        (200 + the whole document) costs 16 KB, not the whole document."""
+        headers = {"User-Agent": edgar_fetch.user_agent()}
+        if range_bytes:
+            headers["Range"] = f"bytes=0-{int(range_bytes) - 1}"
+            headers["Accept-Encoding"] = "identity"
+        last: str = ""
+        for attempt in range(self.attempts):
+            await edgar_fetch._limiter.acquire()
+            self.requests += 1
+            t = time.monotonic()
+            try:
+                r = await self.client.send(self.client.build_request("GET", url, headers=headers), stream=True)
+            except httpx.TransportError as exc:
+                self.seconds += time.monotonic() - t
+                last = f"{type(exc).__name__}: {exc}"
+                if attempt + 1 < self.attempts:
+                    self.retries += 1
+                    await self.sleep(self.backoff_base * 2 ** attempt)
+                continue
+            self.seconds += time.monotonic() - t
+            if r.status_code in RETRY_STATUSES:
+                await r.aclose()
+                last = f"HTTP {r.status_code}"
+                if attempt + 1 < self.attempts:
+                    delay = self.backoff_base * 2 ** attempt
+                    try:
+                        delay = max(delay, min(float(r.headers.get("Retry-After") or 0), RETRY_AFTER_CAP))
+                    except ValueError:
+                        pass
+                    self.retries += 1
+                    await self.sleep(delay)
+                continue
+            if r.status_code >= 400:
+                await r.aclose()
+                raise SecRequestFailed(f"HTTP {r.status_code} (not retried) from {url}")
+            return r
+        raise SecRequestFailed(f"failed after {self.attempts} attempts ({last}) from {url}")
+
 
 # ═══ The peek ═══════════════════════════════════════════════════════════════
 
@@ -490,6 +532,7 @@ class PeekResult:
     kind: str
     reason: str
     body: bytes
+    complete: bool = False  # body is the WHOLE document (a 200 the caller chose to finish reading)
 
 
 def classify_peek_bytes(body: bytes, classify) -> tuple[str, str]:
@@ -498,19 +541,47 @@ def classify_peek_bytes(body: bytes, classify) -> tuple[str, str]:
     return classify(text)
 
 
-async def peek(sec: SecClient, url: str, classify, nbytes: int = PEEK_BYTES) -> PeekResult:
-    r = await sec.get(url, range_bytes=nbytes)
-    body = r.content
-    total = None
-    m = _CONTENT_RANGE_RE.search(r.headers.get("Content-Range") or "")
-    if m:
-        total = int(m.group(1))
-    honoured = r.status_code == 206
-    if honoured:
-        kind, reason = classify_peek_bytes(body, classify)
-    else:
-        kind, reason = classify(edgar_fetch.extract_filing_text(body).text if body else "")
-    return PeekResult(r.status_code, len(body), total if honoured else len(body), honoured, kind, reason, body)
+async def peek(sec: SecClient, url: str, classify, nbytes: int = PEEK_BYTES,
+               decide: Callable[[str], str] | None = None) -> PeekResult:
+    """Classify a document from its first `nbytes`, BEFORE any full download.
+
+    BUGFIX1 — run e3fde9c0 got a 200 (Range ignored) on all 1071 peeks; the old
+    code read the whole body, never asked peek_decision, and stored every
+    preliminary. Now the body is streamed: only the first `nbytes` are read and
+    classified, whatever the status. For a 206 that is the whole response. For a
+    200, `decide(kind)` is asked: 'skip' closes the stream unread (no full read,
+    no R2 write); 'fetch' keeps reading the SAME response to the end
+    (`complete=True`), so a wanted filing costs no second request."""
+    r = await sec.open_stream(url, range_bytes=nbytes)
+    try:
+        honoured = r.status_code == 206
+        # 4 KB pieces: the peek consumes ~PEEK_BYTES and then stops, however
+        # large the transport's own chunks are.
+        chunks = r.aiter_bytes(chunk_size=4096)
+        buf = bytearray()
+        async for chunk in chunks:
+            buf += chunk
+            if len(buf) >= nbytes:
+                break
+        head = bytes(buf[:nbytes])
+        kind, reason = classify_peek_bytes(head, classify)
+        total = None
+        m = _CONTENT_RANGE_RE.search(r.headers.get("Content-Range") or "")
+        if m:
+            total = int(m.group(1))
+        if honoured:
+            return PeekResult(r.status_code, len(buf), total, True, kind, reason, bytes(buf))
+        try:
+            total = int(r.headers.get("Content-Length") or 0) or None
+        except ValueError:
+            total = None
+        if decide is not None and decide(kind) == "fetch":
+            async for chunk in chunks:
+                buf += chunk
+            return PeekResult(r.status_code, len(buf), len(buf), False, kind, reason, bytes(buf), True)
+        return PeekResult(r.status_code, len(buf), total, False, kind, reason, head)
+    finally:
+        await r.aclose()
 
 
 def wanted_document_kinds(cli_kinds: list[str]) -> set[str]:
@@ -952,6 +1023,21 @@ async def record_peek_skip(conn, run_id, row: dict, p: PeekResult) -> None:
             row["accession_number"], p.kind, f"{p.kind}: {p.reason}", p.bytes_received, run_id)
 
 
+async def record_kind_skip(conn, run_id, row: dict, kind: str, reason: str, nbytes: int) -> None:
+    """BUGFIX1 — a filing downloaded in full (its cover was unreadable in the
+    peek) whose full text is a kind the run did not ask for: recorded with its
+    kind and the same status a peek skip gets, and never written to R2."""
+    async with platform_scope(conn):
+        await conn.execute(
+            """UPDATE portfolio.edgar_index_filings
+                  SET pipeline_status = 'not_pricing_supplement', document_kind = $2,
+                      status_reason = left('peek: ' || $3 || ' (full text, ' || $4::int::text
+                                           || ' bytes read; not stored)', 1500),
+                      last_attempt_at = now(), claimed_by = NULL, claimed_until = NULL
+                WHERE accession_number = $1 AND claimed_by = $5""",
+            row["accession_number"], kind, f"{kind}: {reason}", nbytes, run_id)
+
+
 async def record_fetch_failed(conn, row: dict, reason: str) -> None:
     """fetch_failed with the reason; not scheduled for the nightly retry —
     ``--retry-failed`` brings it back into a bulk run."""
@@ -1190,23 +1276,40 @@ class Runner:
         if not meta.primary_document:
             raise edgar_pipeline.EdgarPipelineError("the filing's folder index lists no HTML or text document")
         raw: bytes | None = None
+        peek_kind: str | None = None
         if o.peek:
-            p = await peek(self.sec, meta.source_url, self.scope.source.classify)
+            # BUGFIX1 — the decision is made on the first PEEK_BYTES for a 206 AND
+            # a 200 alike; a 200 the decision keeps is read to the end in place.
+            def decide(kind: str) -> str:
+                return peek_decision(kind, self.wanted, o.keep_preliminaries)
+            p = await peek(self.sec, meta.source_url, self.scope.source.classify, decide=decide)
             s.bytes_downloaded += p.bytes_received
             if not p.honoured:
                 s.peek_range_ignored += 1
-                raw = p.body                      # the server sent the whole document: use it
-            elif peek_decision(p.kind, self.wanted, o.keep_preliminaries) == "skip":
+            if decide(p.kind) == "skip":
                 self._tick("sec", time.monotonic() - t)
                 await record_peek_skip(conn, s.run_id, row, p)
                 if p.total_size:
                     s.bytes_saved_by_peek += max(0, p.total_size - p.bytes_received)
                 return {"status": "not_pricing_supplement", "document_kind": p.kind, "peek_skipped": True}
-            elif p.kind == "other":
+            peek_kind = p.kind
+            if p.kind == "other":
                 s.peek_fallthrough += 1
+            if p.complete:
+                raw = p.body                      # the 200 was read to the end: no second GET
         if raw is None:
             raw = (await self.sec.get(meta.source_url)).content
             s.bytes_downloaded += len(raw)
+        if peek_kind == "other":
+            # BUGFIX1 — a cover the peek could not read ('other') was fully
+            # downloaded; if the WHOLE text says it is a kind not asked for
+            # (e.g. a preliminary), record it like a peek skip and write
+            # nothing to R2 — the kinds filter now holds after the full fetch too.
+            full_kind, full_reason = self.scope.source.classify(edgar_fetch.extract_filing_text(raw).text)
+            if peek_decision(full_kind, self.wanted, o.keep_preliminaries) == "skip":
+                self._tick("sec", time.monotonic() - t)
+                await record_kind_skip(conn, s.run_id, row, full_kind, full_reason, len(raw))
+                return {"status": "not_pricing_supplement", "document_kind": full_kind, "peek_skipped": True}
         header = await self.sec.get(f"{meta.archive_base}/{meta.accession_number}-index-headers.html")
         fn = edgar_fetch._FILE_NUMBER_RE.search(header.text)
         meta.file_number = fn.group(1).strip() if fn else None
@@ -1586,3 +1689,84 @@ async def apply_selection_v2(conn, plan: dict, *, activate_policy: bool = True,
                 acc, plan["ciks"], version, reason)
             ready += int(res.split()[-1])
     return {"version": version, "selected": int(sel.split()[-1]), "ready_for_extraction": ready}
+
+
+# ═══ BUGFIX1 — remove preliminaries already stored in R2 ═══════════════════
+#
+# Run e3fde9c0 (and every peek-on run before BUGFIX1) stored every preliminary
+# in full: the SEC ignored Range, and a 200 skipped the kinds decision. These
+# functions find those stored preliminaries and remove their two R2 objects,
+# then clear reference_filings.r2_key / text_r2_key (reference_filings has no
+# history columns; the row itself and the index row's document_kind/status
+# stay, so the filing is still recorded as a preliminary). A filing whose
+# reference_filings row is referenced from any table other than
+# edgar_index_filings (found from pg_constraint) is left alone and reported.
+# Driven by scripts/cleanup_preliminary_r2.py — dry run first.
+
+PRELIMINARY_KIND = "preliminary_pricing_supplement"
+
+
+async def _reference_filing_dependents(conn) -> list[tuple[str, str]]:
+    rows = await conn.fetch(
+        """
+        SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+        WHERE c.contype::text = 'f' AND c.confrelid = 'portfolio.reference_filings'::regclass
+        """)
+    return [(r["tbl"], r["col"]) for r in rows
+            if r["tbl"] not in ("portfolio.edgar_index_filings", "edgar_index_filings")]
+
+
+async def plan_preliminary_cleanup(conn) -> dict:
+    """Stored preliminaries: {rows, count, bytes, skipped_referenced}. Read only."""
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            """
+            SELECT rf.id, rf.accession_number, rf.r2_key, rf.text_r2_key,
+                   COALESCE(rf.compressed_byte_size, rf.byte_size, 0)
+                   + COALESCE(rf.text_compressed_byte_size, rf.text_byte_size, 0) AS bytes
+            FROM portfolio.reference_filings rf
+            JOIN portfolio.edgar_index_filings f ON f.reference_filing_id = rf.id
+            WHERE f.document_kind = $1
+              AND (rf.r2_key IS NOT NULL OR rf.text_r2_key IS NOT NULL)
+            ORDER BY rf.accession_number
+            """,
+            PRELIMINARY_KIND)
+        deps = await _reference_filing_dependents(conn)
+        referenced: set = set()
+        ids = [r["id"] for r in rows]
+        for tbl, col in deps:
+            if ids:
+                hit = await conn.fetch(
+                    f'SELECT DISTINCT "{col}" AS id FROM {tbl} WHERE "{col}" = ANY($1::uuid[])', ids)
+                referenced |= {h["id"] for h in hit}
+    keep = [dict(r) for r in rows if r["id"] not in referenced]
+    return {
+        "rows": keep,
+        "count": len(keep),
+        "objects": sum(1 for r in keep for k in (r["r2_key"], r["text_r2_key"]) if k),
+        "bytes": int(sum(int(r["bytes"] or 0) for r in keep)),
+        "skipped_referenced": [str(i) for i in referenced],
+    }
+
+
+async def apply_preliminary_cleanup(conn, plan: dict, *, bucket: str, deleter=None) -> dict:
+    """Delete each planned filing's R2 objects, then clear its keys. One
+    filing at a time: a failed delete leaves that row's keys in place."""
+    delete = deleter or (lambda key: storage.delete_object(key, bucket=bucket))
+    done, failed = 0, []
+    for r in plan["rows"]:
+        try:
+            for key in (r["r2_key"], r["text_r2_key"]):
+                if key:
+                    await asyncio.to_thread(delete, key)
+        except Exception as exc:  # noqa: BLE001 — report, keep going
+            failed.append({"accession_number": r["accession_number"], "error": str(exc)[:200]})
+            continue
+        async with platform_scope(conn):
+            await conn.execute(
+                "UPDATE portfolio.reference_filings SET r2_key = NULL, text_r2_key = NULL, "
+                "updated_at = now() WHERE id = $1", r["id"])
+        done += 1
+    return {"cleared": done, "failed": failed}

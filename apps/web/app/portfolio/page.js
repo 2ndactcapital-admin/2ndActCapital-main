@@ -140,7 +140,7 @@ export default async function PortfolioPage({ searchParams }) {
                               {inv.deal_name || inv.deal_id}
                             </p>
                             {inv.deal_status && (
-                              <StatusBadge status={inv.deal_status} />
+                              <StatusBadge status={inv.deal_status} label={inv.stage_label} />
                             )}
                           </div>
                           <div className="mt-2">

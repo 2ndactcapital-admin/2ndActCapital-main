@@ -19,6 +19,7 @@ import {
   getAISummary,
   getMemberInvestments,
   getDealClasses,
+  getDealLifecycle,
 } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 import {
@@ -73,6 +74,7 @@ export default async function DealDetailPage({ params, searchParams }) {
     investmentStagesRes,
     documentStatusesRes,
     dealClassesRes,
+    lifecycleRes,
   ] = await Promise.allSettled([
     staff ? getConfig("deal_scoring") : Promise.resolve([]),
     listInvestorEntities(),
@@ -83,6 +85,7 @@ export default async function DealDetailPage({ params, searchParams }) {
     staff ? getConfig("investment_stages") : Promise.resolve([]),
     staff ? getConfig("document_statuses") : Promise.resolve([]),
     getDealClasses(id),
+    staff ? getDealLifecycle(id) : Promise.resolve(null),
   ]);
 
   const dimensions =
@@ -117,6 +120,9 @@ export default async function DealDetailPage({ params, searchParams }) {
       : [];
 
   const sponsor = detail.sponsor_name || deal.sponsor_name_override;
+  // BUGFIX1 — the ONE lifecycle envelope for the pipeline controls (staff).
+  const lifecycle = lifecycleRes.status === "fulfilled" ? lifecycleRes.value : null;
+  const notice = typeof sp.notice === "string" ? sp.notice : null;
 
   return (
     <AppShell user={session.user}>
@@ -130,6 +136,9 @@ export default async function DealDetailPage({ params, searchParams }) {
 
       <div className="-mx-8 mt-3 border-b border-border bg-bg-app px-8 pb-6">
         <h1 className="text-3xl font-semibold text-navy">{deal.name}</h1>
+        {notice && (
+          <p className="mt-2 text-sm text-[#9B2335]" role="status">{notice}</p>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {deal.asset_class_label && (
             <span className="rounded-md bg-gold-light px-2 py-1 text-xs font-medium text-navy">
@@ -141,7 +150,7 @@ export default async function DealDetailPage({ params, searchParams }) {
               {deal.asset_super_class_label}
             </span>
           )}
-          <StatusBadge status={deal.deal_status} />
+          <StatusBadge status={deal.deal_status} label={deal.stage_label} />
         </div>
         {sponsor && (
           <p className="mt-2 text-sm text-text-secondary">{sponsor}</p>
@@ -271,7 +280,7 @@ export default async function DealDetailPage({ params, searchParams }) {
               <DealStagePipeline
                 dealId={deal.id}
                 deal={deal}
-                stages={dealStages}
+                lifecycle={lifecycle}
               />
               <MemberInvestmentTracker
                 dealId={deal.id}

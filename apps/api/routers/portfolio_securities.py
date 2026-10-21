@@ -72,6 +72,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
+from services.holdings_hint import empty_holdings_hint
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -534,6 +535,9 @@ async def get_securities(
                 offset=offset,
             )
             taxonomy = await taxonomy_labels(conn, org_id)
+            # BUGFIX1 (PORT-01) — say why an empty grid is empty.
+            result["empty_hint"] = await empty_holdings_hint(
+                conn, org_id, user_id, int(result.get("total") or 0))
         except PortfolioError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

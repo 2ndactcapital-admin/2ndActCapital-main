@@ -176,3 +176,83 @@ async def deal_rollup(conn, org_id, deal_id) -> dict:
         "totals": totals,
         "classes": classes,
     }
+
+
+# ═══ BUGFIX1 (SPV-01) — the ONE committed / % of target computation ═════════
+#
+# Three screens showed three numbers for the same SPV: the cap table summed
+# every live subscription and capped the percentage at 100 in the browser
+# (134% displayed as 100%); the list card read `total_committed`, a field the
+# list endpoint never returned ($0 / 0%); the dashboard card showed no money at
+# all and counted soft subscriptions org-wide. Every one of them now calls
+# spv_commitment_summaries, and the percentage is never capped.
+#
+# Soft vs hard: a 'soft' subscription is an indication (insert default); any
+# other live status except 'cancelled' ('pending', 'signed', 'funded') is a
+# hard commitment. 'cancelled' is not committed money and is excluded — the
+# old cap-table sum counted it.
+
+SOFT_STATUSES = ("soft",)
+EXCLUDED_STATUSES = ("cancelled",)
+
+# Labels for the two kinds, published in every response that carries a
+# summary so the three screens never word them differently.
+COMMITMENT_LABELS = {
+    "soft": "Soft (indicated)",
+    "hard": "Hard (signed or funded)",
+    "over_target": "over target",
+}
+
+_COMMITMENT_SUMMARY_SQL = """
+    SELECT s.id AS spv_id, s.target_raise,
+      COALESCE(SUM(sub.commitment_amount) FILTER (
+        WHERE sub.subscription_status = ANY($3::text[])), 0) AS soft_committed,
+      COALESCE(SUM(sub.commitment_amount) FILTER (
+        WHERE NOT sub.subscription_status = ANY($3::text[])), 0) AS hard_committed,
+      COUNT(sub.id) FILTER (WHERE sub.subscription_status = ANY($3::text[])) AS soft_count,
+      COUNT(sub.id) FILTER (WHERE NOT sub.subscription_status = ANY($3::text[])) AS hard_count
+    FROM spvs s
+    LEFT JOIN spv_subscriptions sub
+      ON sub.spv_id = s.id AND sub.org_id = s.org_id AND sub.valid_to IS NULL
+     AND NOT COALESCE(sub.subscription_status, '') = ANY($4::text[])
+    WHERE s.org_id = $1 AND s.id = ANY($2::uuid[])
+    GROUP BY s.id, s.target_raise
+"""
+
+
+def commitment_summary(target_raise, soft_committed, hard_committed,
+                       soft_count: int = 0, hard_count: int = 0) -> dict:
+    """Pure: the committed total, its split, and the UNCAPPED percent of target
+    (None when there is no positive target). 134% stays 134%."""
+    soft = _dec(soft_committed)
+    hard = _dec(hard_committed)
+    total = soft + hard
+    target = _dec(target_raise) if target_raise is not None else None
+    pct = None
+    if target is not None and target > 0:
+        pct = int((total * 100 / target).to_integral_value(rounding="ROUND_HALF_UP"))
+    return {
+        "total_committed": total,
+        "soft_committed": soft,
+        "hard_committed": hard,
+        "soft_count": int(soft_count or 0),
+        "hard_count": int(hard_count or 0),
+        "target_raise": target,
+        "pct_of_target": pct,
+        "over_target": bool(target is not None and target > 0 and total > target),
+        "labels": COMMITMENT_LABELS,
+    }
+
+
+async def spv_commitment_summaries(conn, org_id, spv_ids) -> dict:
+    """{spv_id: commitment_summary(...)} for every id in this org."""
+    ids = [i for i in spv_ids if i]
+    if not ids:
+        return {}
+    rows = await conn.fetch(_COMMITMENT_SUMMARY_SQL, org_id, ids,
+                            list(SOFT_STATUSES), list(EXCLUDED_STATUSES))
+    return {
+        r["spv_id"]: commitment_summary(r["target_raise"], r["soft_committed"],
+                                        r["hard_committed"], r["soft_count"], r["hard_count"])
+        for r in rows
+    }

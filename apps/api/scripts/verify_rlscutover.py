@@ -263,7 +263,7 @@ async def main() -> int:
             await pg_conn.execute(
                 """INSERT INTO workflow_definitions (id, org_id, name, description, created_by)
                    VALUES ($1, $2, 'rlscutover fixture', 'Task 6 post-cutover tick proof',
-                           (SELECT id FROM users WHERE auth0_sub = 'rlscutover_creator@test.local'))
+                           (SELECT id FROM users WHERE auth0_sub = 'rlscutover_creator'))
                    ON CONFLICT (id) DO NOTHING""",
                 def_id, org_id,
             )
@@ -273,7 +273,7 @@ async def main() -> int:
                       change_summary, is_current,
                       created_by)
                    VALUES ($1, $2, $3, 1, $4, 'v1', true,
-                           (SELECT id FROM users WHERE auth0_sub = 'rlscutover_creator@test.local'))
+                           (SELECT id FROM users WHERE auth0_sub = 'rlscutover_creator'))
                    ON CONFLICT (id) DO NOTHING""",
                 VER[def_id], def_id, org_id, trivial_bpmn(f"p_{def_id.hex[:8]}"),
             )
@@ -283,7 +283,7 @@ async def main() -> int:
                      (id, workflow_definition_id, org_id, trigger_type, schedule_cron,
                       timezone, is_active, created_by, occurrence_count)
                    VALUES ($1, $2, $3, 'scheduled', $4, 'UTC', true,
-                           (SELECT id FROM users WHERE auth0_sub = 'rlscutover_creator@test.local'), 0)
+                           (SELECT id FROM users WHERE auth0_sub = 'rlscutover_creator'), 0)
                    ON CONFLICT (id) DO NOTHING""",
                 trig_id, def_id, org_id, due_cron,
             )
@@ -334,7 +334,10 @@ async def main() -> int:
         await pg_conn.execute("DELETE FROM workflow_triggers WHERE id = ANY($1)", [T_A, T_B])
         await pg_conn.execute("DELETE FROM workflow_versions WHERE id = ANY($1)", list(VER.values()))
         await pg_conn.execute("DELETE FROM workflow_definitions WHERE id = ANY($1)", [D_A, D_B])
-        await pg_conn.execute("DELETE FROM users WHERE auth0_sub = 'rlscutover_creator@test.local'")
+        # USERMGMT1: the seed's auth0_sub is 'rlscutover_creator' (the EMAIL is
+        # '…@test.local'), so the old predicate matched nothing and the
+        # fixture user leaked on every run.
+        await pg_conn.execute("DELETE FROM users WHERE auth0_sub = 'rlscutover_creator'")
 
         leftover = await pg_conn.fetchval(
             "SELECT count(*) FROM entities WHERE id = ANY($1)", [ENT_2NDACT, ENT_HOLLIS]

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.action_registry import REGISTRY, AssistantAction
 from services.audit import write_audit_log
+from services.assistant_transcript import FALLBACK_REPLY, is_internal, user_visible_text
 from services.database import get_pool
 from services.extraction import call_claude_with_tools
 from services.org_settings import get_brand_name
@@ -110,9 +111,10 @@ async def _run_loop(
         stop_reason = response.get("stop_reason")
         content: list[dict] = response.get("content", [])
 
-        # Extract any text from this turn
+        # Extract any text from this turn. BUGFIX1: text that rides along with
+        # a tool call is narration — only the final turn's text is the reply.
         turn_text = _extract_text(content)
-        if turn_text:
+        if turn_text and stop_reason != "tool_use":
             final_text = turn_text
 
         if stop_reason == "end_turn":
@@ -133,14 +135,17 @@ async def _run_loop(
         if stop_reason == "tool_use":
             tool_calls = [b for b in content if b.get("type") == "tool_use"]
 
-            # Store the assistant message that contains the tool_use blocks
+            # Store the assistant message that contains the tool_use blocks.
+            # BUGFIX1: kept in the conversation record as INTERNAL (narration
+            # and tool use) — never formatted into the visible transcript.
             current.append({"role": "assistant", "content": content})
             new_messages.append(
                 {
                     "role": "assistant",
                     "content": content,
                     "_display": {
-                        "text": final_text,
+                        "internal": True,
+                        "narration": turn_text,
                         "disclosures": [],  # filled after tool results
                         "render": None,
                     },
@@ -186,7 +191,8 @@ async def _run_loop(
                         "action_key": action.key,
                         "params": {**tool_input, **preview},
                         "options": action.options,
-                        "rationale": final_text or "I would like to propose this action.",
+                        "rationale": user_visible_text(final_text or turn_text)
+                        or "I would like to propose this action.",
                     }
                     break  # stop the loop on first WRITE
 
@@ -254,6 +260,15 @@ async def _run_loop(
             )
             break
 
+    # BUGFIX1 — the reply as the member sees it; the last stored assistant
+    # message carries the same cleaned text (disclosures stay internal).
+    final_text = user_visible_text(final_text) or (
+        "" if proposed_action else FALLBACK_REPLY)
+    for m in reversed(new_messages):
+        d = m.get("_display")
+        if m["role"] == "assistant" and isinstance(d, dict) and not d.get("internal"):
+            d["text"] = final_text
+            break
     return {
         "message": final_text,
         "new_messages": new_messages,
@@ -323,12 +338,20 @@ def _format_conversation(row: dict) -> dict:
             if isinstance(content, str):
                 display_messages.append({"role": "user", "text": content})
         else:
+            # BUGFIX1 — tool-calling turns (incl. ones stored before this fix)
+            # are internal; disclosures are never shown; narration lines are
+            # stripped from older stored replies too.
+            if m.get("role") == "assistant" and is_internal(m):
+                continue
             d = m["_display"]
+            text = user_visible_text(d.get("text", ""))
+            if not text and not d.get("render"):
+                continue
             display_messages.append(
                 {
                     "role": "assistant",
-                    "text": d.get("text", ""),
-                    "disclosures": d.get("disclosures") or [],
+                    "text": text,
+                    "disclosures": [],
                     "render": d.get("render"),
                 }
             )
@@ -424,7 +447,8 @@ async def post_message(request: Request, body: MessageBody):
     return {
         "conversation_id": conv_id,
         "message": result["message"],
-        "disclosures": result["disclosures"],
+        # BUGFIX1 — tool usage is not shown to the member (kept in the record).
+        "disclosures": [],
         "render": result["render"],
         "proposed_action": result["proposed_action"],
     }

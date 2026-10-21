@@ -200,8 +200,14 @@ export const createDeal = (body) =>
   fetchAPI("/api/v1/deals", { method: "POST", body });
 export const updateDeal = (id, body) =>
   fetchAPI(`/api/v1/deals/${id}`, { method: "PUT", body });
-export const setDealStatus = (id, status) =>
-  fetchAPI(`/api/v1/deals/${id}/status`, { method: "PUT", body: { status } });
+// BUGFIX1 — Archive and Submit for Review need confirm=true (428 otherwise).
+export const setDealStatus = (id, status, { confirm = false } = {}) =>
+  fetchAPI(`/api/v1/deals/${id}/status`, { method: "PUT", body: { status, confirm } });
+export const unarchiveDeal = (id) =>
+  fetchAPI(`/api/v1/deals/${id}/unarchive`, { method: "POST" });
+export const getDealLifecycle = (id) => fetchAPI(`/api/v1/deals/${id}/lifecycle`);
+export const withdrawDealVote = (id) =>
+  fetchAPI(`/api/v1/deals/${id}/vote`, { method: "DELETE" });
 export const upsertDealScore = (id, body) =>
   fetchAPI(`/api/v1/deals/${id}/scores`, { method: "POST", body });
 export const voteDeal = (id, vote) =>
@@ -338,6 +344,27 @@ export const approvePendingUser = (userId, roleId) =>
   });
 export const rejectPendingUser = (userId) =>
   fetchAPI(`/api/v1/admin/users/${userId}/reject`, { method: "POST" });
+
+// --- Admin: People & Access actions (USERMGMT1) ---
+// Each is gated server-side exactly like the other user edits (manage_members;
+// a Super Admin target needs a Super Admin caller). No org_id anywhere.
+export const sendPasswordReset = (userId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/password-reset`, { method: "POST" });
+export const resendUserInvite = (userId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/resend-invite`, {
+    method: "POST",
+    body: { send_email: true },
+  });
+export const linkPendingUser = (userId, targetUserId) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/link`, {
+    method: "POST",
+    body: { target_user_id: targetUserId },
+  });
+export const updateUserEmail = (userId, email) =>
+  fetchAPI(`/api/v1/admin/users/${userId}/email`, {
+    method: "PATCH",
+    body: { email },
+  });
 
 // --- Admin: invites (Multi-tenant Sprint 2 backend, wired to the UI here) ---
 // POST /admin/invites is what actually creates the users row. NOTE the body:

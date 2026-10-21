@@ -12,6 +12,8 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from services.todo_links import todo_href
+
 from routers.entities import get_org_id
 from services.brief_blocks import BRIEF_REGISTRY
 from services.database import get_pool
@@ -212,6 +214,7 @@ async def list_todos(request: Request):
                 d[k] = d[k].isoformat()
         if d.get("due_date") is not None:
             d["due_date"] = d["due_date"].isoformat()
+        d["href"] = todo_href(row)  # BUGFIX1 (DASH-02)
         return d
 
     items = [_fmt(r) for r in rows]

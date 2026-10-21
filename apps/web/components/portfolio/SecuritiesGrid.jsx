@@ -45,6 +45,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import EmptyHoldingsHint from "@/components/portfolio/EmptyHoldingsHint";
 
 import DataGrid from "@/components/ui/DataGrid";
 import AssetDetailPane from "@/components/portfolio/AssetDetailPane";
@@ -236,6 +237,7 @@ const EMPTY_FILTERS = {
 
 export default function SecuritiesGrid() {
   const [rows, setRows] = useState([]);
+  const [emptyHint, setEmptyHint] = useState(null);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -259,6 +261,7 @@ export default function SecuritiesGrid() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || body.detail || "Could not load assets.");
       setRows(Array.isArray(body.assets) ? body.assets : []);
+      setEmptyHint(body.empty_hint || null); // BUGFIX1 (PORT-01)
       setMeta(body);
     } catch (err) {
       setError(err.message);
@@ -661,6 +664,7 @@ export default function SecuritiesGrid() {
           className="col-span-3 overflow-auto rounded-lg border bg-white p-3"
           style={CARD}
         >
+          {!loading && rows.length === 0 && <EmptyHoldingsHint hint={emptyHint} />}
           <DataGrid
             gridId="portfolio-securities"
             columnDefs={columnDefs}

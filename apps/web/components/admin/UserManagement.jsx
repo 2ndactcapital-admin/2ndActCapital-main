@@ -6,13 +6,32 @@ import {
   assignRoleAction,
   deactivateUserAction,
   deleteUserAction,
+  linkPendingUserAction,
   reactivateUserAction,
   rejectPendingUserAction,
+  resendInviteAction,
   searchUsersAction,
+  sendPasswordResetAction,
   updateUserAction,
+  updateUserEmailAction,
 } from "@/lib/adminActions";
 import { setUserProfileAction } from "@/lib/permissionActions";
 import { createInviteAction, revokeInviteAction } from "@/lib/inviteActions";
+import {
+  ACTION,
+  STATUS_FILTER_OPTIONS,
+  can,
+  displayEmail,
+  listParams,
+  roleLabel,
+  statusLabel,
+} from "@/lib/userManagementModel.mjs";
+import { PendingPanel, RoleChips, SignInActions, UserRow } from "@/components/admin/PeopleParts";
+
+// USERMGMT1 — one row per person. GET /admin/users returns each person once,
+// with every role, how they sign in, and the actions THIS caller may take on
+// that row (`actions`); every control below renders only when the server
+// named it. Test accounts and retired accounts are hidden unless asked for.
 
 // The two account roles POST /admin/invites accepts (services.invites
 // ALLOWED_INVITE_ROLES). 'super_admin' is deliberately NOT invitable — platform
@@ -21,48 +40,6 @@ const INVITE_ROLES = [
   { value: "member", label: "Member" },
   { value: "org_admin", label: "Organization Admin" },
 ];
-
-function roleLabel(name) {
-  if (!name) return "—";
-  return name
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
-function statusLabel(user) {
-  // Most specific state first. An anonymized row is also inactive and may also
-  // still carry an invite status, so checking in the other order would report
-  // the wrong thing.
-  if (user.is_deleted) return "Deleted";
-  // AUTHZ1 provisioning states come before the invite/active reading.
-  if (user.status === "pending") return "Awaiting approval";
-  if (user.status === "rejected") return "Rejected";
-  if (user.status === "retired") return "Retired (linked to another account)";
-  if (user.is_active === false) return "Deactivated";
-  // invite_status is NULL for an ordinary enrolled account.
-  if (!user.invite_status) return "Active";
-  return roleLabel(user.invite_status);
-}
-
-// Absolute date + a coarse relative hint. `last_login_at` is stamped by
-// services.users.touch_last_login on the first authenticated request in each
-// 5-minute window, so it is "last seen" to within that window — precise to the
-// second would overstate it.
-function lastLoginLabel(value) {
-  if (!value) return "Never";
-  const when = new Date(value);
-  if (Number.isNaN(when.getTime())) return "—";
-  const days = Math.floor((Date.now() - when.getTime()) / 86400000);
-  const date = when.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  if (days <= 0) return `${date} (today)`;
-  if (days === 1) return `${date} (yesterday)`;
-  return `${date} (${days}d ago)`;
-}
 
 function InviteModal({ profiles, onClose, onInvited }) {
   const [email, setEmail] = useState("");
@@ -114,8 +91,10 @@ function InviteModal({ profiles, onClose, onInvited }) {
         {invite ? (
           <>
             <p className="mt-3 text-sm text-text-secondary">
-              {invite.email} has been added as a pending member. Email delivery
-              is not yet enabled, so share this enrollment link directly.
+              {invite.email} has been invited.{" "}
+              {invite.email_delivery?.sent
+                ? "The invitation was emailed; the link is also below."
+                : "Email delivery is not available, so share this enrollment link directly."}
             </p>
             <div className="mt-3 rounded-md border border-border bg-bg-app p-3">
               <p className="break-all font-mono text-xs text-text-primary">
@@ -225,25 +204,24 @@ function InviteModal({ profiles, onClose, onInvited }) {
   );
 }
 
-function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClose }) {
+function ManageModal({ user, roles, profiles, onClose, onSaved, onSavedAndClose }) {
+  const currentRoles = Array.isArray(user.roles) ? user.roles : [];
   const [roleId, setRoleId] = useState(user.role_id || "");
-  // SOC Phase A: the profile is a NEW, separate, additive field — independent
-  // of the account role above. "" means no profile assigned.
+  // SOC Phase A: the profile is separate from, and additive to, the role.
   const [profileId, setProfileId] = useState(user.profile_id || "");
-  // User-management sprint: the first admin-editable users-row field. Before
-  // this there was no edit endpoint for the row at all — only role and profile
-  // assignment, which write other tables.
   const [fullName, setFullName] = useState(user.full_name || "");
   const [error, setError] = useState(null);
-  // Two-step confirm for the destructive action. No window.confirm(): the
-  // standing rule is no interactive prompts, and a native dialog cannot explain
-  // that "delete" anonymizes rather than removes.
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [notice, setNotice] = useState(null);
+  // Two-step confirm for Retire. No window.confirm(): a native dialog cannot
+  // explain that retiring keeps the row.
+  const [confirmingRetire, setConfirmingRetire] = useState(false);
+  const [signInResult, setSignInResult] = useState(null);
+  const [signInError, setSignInError] = useState(null);
   const [pending, startTransition] = useTransition();
 
-  const deleted = !!user.is_deleted;
+  const retired = !!user.is_deleted || user.status === "retired";
   const active = user.is_active !== false;
+  const editable = can(user, ACTION.edit);
 
   function runLifecycle(action, describe) {
     setError(null);
@@ -262,13 +240,24 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
         is_active: res.user.is_active,
         deactivated_at: res.user.deactivated_at,
         is_deleted: !!res.user.anonymized || user.is_deleted,
-        // An anonymized account keeps no grants (the backend deletes its
-        // user_roles / user_permission_sets rows), so the row must not keep
-        // rendering the ones it used to hold.
         ...(res.user.anonymized
-          ? { role: null, role_id: null, profile_id: null, profile_name: null }
+          ? { status: "retired", actions: [], role: null, role_id: null, roles: [], profile_id: null, profile_name: null }
           : {}),
       });
+    });
+  }
+
+  function runSignIn(call, after) {
+    setSignInError(null);
+    setSignInResult(null);
+    startTransition(async () => {
+      const res = await call();
+      if (!res.ok) {
+        setSignInError(res.error || "The request was refused.");
+        return;
+      }
+      setSignInResult(res.result);
+      if (after) after(res.result);
     });
   }
 
@@ -285,8 +274,6 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
     setError(null);
     startTransition(async () => {
       let updated = { ...user };
-
-      // Persist a name change only when it actually changed.
       if (trimmedName !== (user.full_name || "")) {
         const res = await updateUserAction(user.id, { fullName: trimmedName });
         if (!res.ok) {
@@ -295,19 +282,21 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
         }
         updated = { ...updated, full_name: res.user.full_name };
       }
-
-      // Persist a role change only when it actually changed (role logic
-      // unchanged from the original screen).
+      // PUT /admin/users/{id}/role replaces the person's roles with this one,
+      // so it is sent only when the selection actually changed.
       if (roleId !== (user.role_id || "")) {
         const res = await assignRoleAction(user.id, roleId);
         if (!res.ok) {
           setError(res.error || "Could not update role.");
           return;
         }
-        updated = { ...updated, role: res.user.role, role_id: res.user.role_id };
+        updated = {
+          ...updated,
+          role: res.user.role,
+          role_id: res.user.role_id,
+          roles: [{ id: res.user.role_id, name: res.user.role }],
+        };
       }
-
-      // Persist a profile change independently.
       if (profileId !== (user.profile_id || "")) {
         const res = await setUserProfileAction(user.id, profileId || null);
         if (!res.ok) {
@@ -315,119 +304,113 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
           return;
         }
         const match = profiles.find((p) => p.id === profileId);
-        updated = {
-          ...updated,
-          profile_id: profileId || null,
-          profile_name: match ? match.name : null,
-        };
+        updated = { ...updated, profile_id: profileId || null, profile_name: match ? match.name : null };
       }
-
       onSavedAndClose(updated);
     });
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-navy/30 p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/30 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-lg border bg-bg-card p-6"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border bg-bg-card p-6"
         style={{ borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-semibold text-navy">Edit Member</h3>
+        <h3 className="text-base font-semibold text-navy">{user.full_name || "Member"}</h3>
         <div className="mt-3 rounded-md border border-border bg-bg-app p-3 text-sm">
-          <p className="text-text-muted">{user.email}</p>
-          <p className="mt-1 text-xs text-text-muted">
-            Last sign-in: {lastLoginLabel(user.last_login_at)}
-          </p>
-          <p className="mt-1 text-xs text-text-muted">
-            Status: {statusLabel(user)}
-          </p>
+          <p className="text-text-muted">{displayEmail(user)}</p>
+          {user.contact_email ? (
+            <p className="mt-1 text-xs text-text-muted">Gave {user.contact_email} (unverified)</p>
+          ) : null}
+          <p className="mt-1 text-xs text-text-muted">Status: {statusLabel(user)}</p>
+          <div className="mt-2"><RoleChips user={user} /></div>
         </div>
 
-        <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
-          Name
-        </label>
-        <input
-          type="text"
-          value={fullName}
-          disabled={deleted}
-          onChange={(e) => setFullName(e.target.value)}
-          placeholder="Full name"
-          className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy disabled:opacity-60"
+        {editable && !retired ? (
+          <>
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">Name</label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Full name"
+              className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+            />
+
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">Role</label>
+            <select
+              value={roleId}
+              onChange={(e) => setRoleId(e.target.value)}
+              className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+            >
+              <option value="">Select a role…</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>{roleLabel(r.name)}</option>
+              ))}
+            </select>
+            {currentRoles.length > 1 ? (
+              <p className="mt-1 text-xs text-text-muted">
+                This person holds {currentRoles.length} roles. Choosing a different role replaces all of them.
+              </p>
+            ) : null}
+
+            <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">Profile</label>
+            <select
+              value={profileId}
+              onChange={(e) => setProfileId(e.target.value)}
+              className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+            >
+              <option value="">No profile</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </>
+        ) : null}
+
+        <SignInActions
+          user={user}
+          busy={pending}
+          result={signInResult}
+          error={signInError}
+          onReset={() => runSignIn(() => sendPasswordResetAction(user.id))}
+          onResend={() =>
+            runSignIn(
+              () => resendInviteAction(user.id),
+              (r) => onSaved({ ...user, invite_status: r.invite_status, invite_expires_at: r.invite_expires_at }),
+            )
+          }
+          onSaveEmail={(email) =>
+            runSignIn(
+              () => updateUserEmailAction(user.id, email),
+              (r) => onSaved({ ...user, email: r.email, email_is_placeholder: false }),
+            )
+          }
         />
 
-        <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
-          Role
-        </label>
-        <select
-          value={roleId}
-          onChange={(e) => setRoleId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
-        >
-          <option value="">Select a role…</option>
-          {roles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {roleLabel(r.name)}
-            </option>
-          ))}
-        </select>
-
-        <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-text-muted">
-          Profile
-        </label>
-        <select
-          value={profileId}
-          onChange={(e) => setProfileId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
-        >
-          <option value="">No profile</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-xs text-text-muted">
-          Additive permission persona — separate from the account role.
-        </p>
-
-        {/* ── Account lifecycle ───────────────────────────────────────── */}
         <div className="mt-6 border-t border-border pt-4">
-          <p
-            className="text-xs font-semibold uppercase"
-            style={{ letterSpacing: "0.22em", color: "var(--2a-gold)" }}
-          >
+          <p className="text-xs font-semibold uppercase" style={{ letterSpacing: "0.22em", color: "var(--2a-gold)" }}>
             Account
           </p>
-
-          {deleted ? (
+          {retired ? (
             <p className="mt-2 text-sm text-text-muted">
-              This account has been anonymized. Its identifying details were
-              cleared and its sign-in was severed; the row itself is retained so
-              the audit trail and every record it created still resolve.
+              This account is retired. Its sign-in no longer works; the row is kept so the audit trail and
+              every record it created still resolve.
             </p>
-          ) : (
+          ) : editable ? (
             <>
               <p className="mt-2 text-sm text-text-secondary">
                 {active
                   ? "Deactivating takes effect immediately — the member's next request is refused, even on a session they already hold."
                   : "This account is deactivated. The member cannot sign in or use an existing session."}
               </p>
-
               <div className="mt-3 flex flex-wrap gap-2">
                 {active ? (
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() =>
-                      runLifecycle(
-                        () => deactivateUserAction(user.id),
-                        () => "Account deactivated.",
-                      )
-                    }
+                    onClick={() => runLifecycle(() => deactivateUserAction(user.id), () => "Account deactivated.")}
                     className="rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-60"
                     style={{ borderColor: "#9B2335", color: "#9B2335" }}
                   >
@@ -437,73 +420,60 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() =>
-                      runLifecycle(
-                        () => reactivateUserAction(user.id),
-                        () => "Account reactivated.",
-                      )
-                    }
+                    onClick={() => runLifecycle(() => reactivateUserAction(user.id), () => "Account reactivated.")}
                     className="rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-60"
                     style={{ borderColor: "#2D6A4F", color: "#2D6A4F" }}
                   >
                     Reactivate
                   </button>
                 )}
-
-                {confirmingDelete ? (
-                  <>
+                {can(user, ACTION.retire) ? (
+                  confirmingRetire ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          runLifecycle(
+                            () => deleteUserAction(user.id),
+                            () => "Account retired. The row was kept so existing records still resolve.",
+                          )
+                        }
+                        className="rounded-md px-3 py-1.5 text-sm font-medium text-bg-app disabled:opacity-60"
+                        style={{ background: "#9B2335" }}
+                      >
+                        {pending ? "Working…" : "Confirm — retire"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingRetire(false)}
+                        className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-border"
+                      >
+                        Keep account
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
                       disabled={pending}
-                      onClick={() =>
-                        runLifecycle(
-                          () => deleteUserAction(user.id),
-                          (u) =>
-                            u.anonymized
-                              ? "Account anonymized. The row was retained so existing records still resolve."
-                              : "Account removed.",
-                        )
-                      }
-                      className="rounded-md px-3 py-1.5 text-sm font-medium text-bg-app disabled:opacity-60"
-                      style={{ background: "#9B2335" }}
+                      onClick={() => setConfirmingRetire(true)}
+                      className="rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-60"
+                      style={{ borderColor: "#9B2335", color: "#9B2335" }}
                     >
-                      {pending ? "Working…" : "Confirm — anonymize"}
+                      Retire (keeps history)
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmingDelete(false)}
-                      className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-border"
-                    >
-                      Keep account
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => setConfirmingDelete(true)}
-                    className="rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-60"
-                    style={{ borderColor: "#9B2335", color: "#9B2335" }}
-                  >
-                    Delete
-                  </button>
-                )}
+                  )
+                ) : null}
               </div>
-
-              {confirmingDelete && (
-                // Stated plainly, because the button says "Delete" and the
-                // backend does something else — and the difference matters to
-                // whoever clicks it.
+              {confirmingRetire ? (
                 <p className="mt-3 text-sm text-text-secondary">
-                  Deleting <strong>anonymizes</strong> this account rather than
-                  removing it. Their name and email are replaced, their sign-in
-                  is severed and every role and permission grant is revoked — but
-                  the row is kept, because deals, documents, entities and the
-                  audit log reference it. This cannot be undone.
+                  Retiring clears this person&apos;s name and email, ends their sign-in and removes every role and
+                  permission. The row itself is kept, because deals, documents, entities and the audit log
+                  reference it. This cannot be undone.
                 </p>
-              )}
+              ) : null}
             </>
-          )}
+          ) : null}
         </div>
 
         {error && <p className="mt-3 text-sm text-[#9B2335]">{error}</p>}
@@ -515,9 +485,9 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
             onClick={onClose}
             className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border"
           >
-            {deleted ? "Close" : "Cancel"}
+            {retired || !editable ? "Close" : "Cancel"}
           </button>
-          {!deleted && (
+          {editable && !retired ? (
             <button
               type="button"
               onClick={save}
@@ -526,76 +496,9 @@ function EditRoleModal({ user, roles, profiles, onClose, onSaved, onSavedAndClos
             >
               {pending ? "Saving…" : "Save"}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
-    </div>
-  );
-}
-
-// AUTHZ1 — sign-ins that matched no existing member wait here for an admin.
-// The list itself is the server's: rows come from GET /admin/users, whose gate
-// is the same one approve/reject enforce.
-function PendingSignIns({ users, roles, onDecided }) {
-  const [choice, setChoice] = useState({});
-  const [error, setError] = useState(null);
-  const [busy, startTransition] = useTransition();
-  const pendingUsers = users.filter((u) => u.status === "pending");
-  if (pendingUsers.length === 0) return null;
-
-  function decide(u, approve) {
-    setError(null);
-    startTransition(async () => {
-      const res = approve
-        ? await approvePendingUserAction(u.id, choice[u.id])
-        : await rejectPendingUserAction(u.id);
-      if (res.ok) onDecided({ ...u, ...res.user });
-      else setError(res.error);
-    });
-  }
-
-  return (
-    <div className="mt-6 rounded-lg border bg-bg-card p-5" style={{ borderColor: "#ece8dd" }}>
-      <h2 className="text-lg font-semibold text-navy">Awaiting approval</h2>
-      <p className="mt-1 text-sm text-text-muted">
-        These sign-ins matched no existing member. Grant a role to admit one, or decline it.
-      </p>
-      {error && <p className="mt-2 text-sm text-[#9B2335]">{error}</p>}
-      <ul className="mt-3 divide-y divide-border">
-        {pendingUsers.map((u) => (
-          <li key={u.id} className="flex flex-wrap items-center gap-3 py-3">
-            <span className="min-w-56 text-sm text-text-primary">
-              {u.full_name || "—"} <span className="text-text-muted">{u.email}</span>
-            </span>
-            <select
-              value={choice[u.id] || ""}
-              onChange={(e) => setChoice((c) => ({ ...c, [u.id]: e.target.value }))}
-              className="rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm"
-            >
-              <option value="">Choose a role…</option>
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>{roleLabel(r.name)}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={busy || !choice[u.id]}
-              onClick={() => decide(u, true)}
-              className="rounded-md bg-navy px-3 py-1.5 text-sm font-medium text-bg-app disabled:opacity-50"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => decide(u, false)}
-              className="rounded-md border border-border px-3 py-1.5 text-sm text-text-primary disabled:opacity-50"
-            >
-              Decline
-            </button>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -604,83 +507,60 @@ export default function UserManagement({
   initialUsers = [],
   roles = [],
   profiles = [],
+  initialStatus = "",
 }) {
   const [users, setUsers] = useState(initialUsers);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(initialStatus);
+  const [showTest, setShowTest] = useState(false);
+  const [showRetired, setShowRetired] = useState(false);
   const [editing, setEditing] = useState(null);
   const [inviting, setInviting] = useState(false);
+  const [pendingError, setPendingError] = useState(null);
   const [pending, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
-    return users.filter((u) => {
-      if (roleFilter && u.role !== roleFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        const hay = `${u.full_name || ""} ${u.email || ""}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [users, search, roleFilter]);
+    if (!search) return users;
+    const q = search.toLowerCase();
+    return users.filter((u) =>
+      `${u.full_name || ""} ${u.email || ""} ${u.contact_email || ""}`.toLowerCase().includes(q),
+    );
+  }, [users, search]);
 
-  function refetch(nextSearch, nextRole) {
+  const pendingUsers = users.filter((u) => u.status === "pending");
+
+  function refetch(next = {}) {
+    const params = listParams({
+      search,
+      role: roleFilter,
+      status: statusFilter,
+      showTest,
+      showRetired,
+      ...next,
+    });
     startTransition(async () => {
-      const res = await searchUsersAction({
-        search: nextSearch || undefined,
-        role: nextRole || undefined,
-      });
+      const res = await searchUsersAction(params);
       if (res.ok) setUsers(res.users || []);
     });
   }
 
-  function onInvited(invite) {
-    // Show the new pending account immediately. The shape matches what
-    // GET /admin/users returns for the same row (invite_status 'pending',
-    // account_role from users.role, no granted user_roles row yet).
-    setUsers((prev) => [
-      {
-        id: invite.id,
-        email: invite.email,
-        full_name: invite.full_name,
-        role: null,
-        role_id: null,
-        // The invite may carry a profile now; reflect what was actually granted
-        // rather than assuming none.
-        profile_id: invite.profile_id || null,
-        profile_name:
-          profiles.find((p) => p.id === invite.profile_id)?.name || null,
-        invite_status: invite.invite_status,
-        account_role: invite.role,
-        is_active: true,
-        last_login_at: null,
-        is_deleted: false,
-      },
-      ...prev,
-    ]);
+  function onInvited() {
+    // Re-read: the new row's actions and sign-in state come from the server.
+    refetch();
   }
 
   function onRevoke(user) {
     startTransition(async () => {
       const res = await revokeInviteAction(user.id);
       if (!res.ok) return;
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === user.id ? { ...u, invite_status: "revoked" } : u,
-        ),
-      );
+      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, invite_status: "revoked" } : u)));
     });
   }
 
   function onSaved(updated) {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === updated.id ? { ...u, ...updated } : u)),
-    );
-    // A lifecycle action reports its result INSIDE the modal, so keep it open
-    // and refresh it from the merged row; only an explicit Save closes it.
-    setEditing((cur) =>
-      cur && cur.id === updated.id ? { ...cur, ...updated } : cur,
-    );
+    setUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, ...updated } : u)));
+    setEditing((cur) => (cur && cur.id === updated.id ? { ...cur, ...updated } : cur));
   }
 
   function onSavedAndClose(updated) {
@@ -688,33 +568,86 @@ export default function UserManagement({
     setEditing(null);
   }
 
+  function decide(call) {
+    setPendingError(null);
+    startTransition(async () => {
+      const res = await call();
+      if (!res.ok) {
+        setPendingError(res.error);
+        return;
+      }
+      refetch();
+    });
+  }
+
   return (
     <div className="mt-6">
-      <PendingSignIns users={users} roles={roles} onDecided={onSaved} />
+      <PendingPanel
+        pending={pendingUsers}
+        users={users}
+        roles={roles}
+        busy={pending}
+        error={pendingError}
+        onApprove={(u, roleId) => decide(() => approvePendingUserAction(u.id, roleId))}
+        onReject={(u) => decide(() => rejectPendingUserAction(u.id))}
+        onLink={(u, targetId) => decide(() => linkPendingUserAction(u.id, targetId))}
+      />
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <input
           type="search"
           placeholder="Search name or email…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          onBlur={() => refetch(search, roleFilter)}
+          onBlur={() => refetch()}
           className="w-64 rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
         />
+        <select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            refetch({ status: e.target.value });
+          }}
+          className="rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
+        >
+          {STATUS_FILTER_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
         <select
           value={roleFilter}
           onChange={(e) => {
             setRoleFilter(e.target.value);
-            refetch(search, e.target.value);
+            refetch({ role: e.target.value });
           }}
           className="rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
         >
           <option value="">All roles</option>
           {roles.map((r) => (
-            <option key={r.id} value={r.name}>
-              {roleLabel(r.name)}
-            </option>
+            <option key={r.id} value={r.name}>{roleLabel(r.name)}</option>
           ))}
         </select>
+        <label className="flex items-center gap-1.5 text-sm text-text-secondary">
+          <input
+            type="checkbox"
+            checked={showRetired}
+            onChange={(e) => {
+              setShowRetired(e.target.checked);
+              refetch({ showRetired: e.target.checked });
+            }}
+          />
+          Show retired
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-text-secondary">
+          <input
+            type="checkbox"
+            checked={showTest}
+            onChange={(e) => {
+              setShowTest(e.target.checked);
+              refetch({ showTest: e.target.checked });
+            }}
+          />
+          Show test accounts
+        </label>
         {pending && <span className="text-xs text-text-muted">Loading…</span>}
         <button
           type="button"
@@ -725,17 +658,14 @@ export default function UserManagement({
         </button>
       </div>
 
-      <div
-        className="mt-4 overflow-hidden rounded-lg border bg-bg-card"
-        style={{ borderColor: "#ece8dd" }}
-      >
+      <div className="mt-4 overflow-hidden rounded-lg border bg-bg-card" style={{ borderColor: "#ece8dd" }}>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">Email</th>
-              <th className="px-4 py-3 font-medium">Role</th>
-              <th className="px-4 py-3 font-medium">Profile</th>
+              <th className="px-4 py-3 font-medium">Roles</th>
+              <th className="px-4 py-3 font-medium">Signs in with</th>
               <th className="px-4 py-3 font-medium">Last Sign-in</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 text-right font-medium">Actions</th>
@@ -744,80 +674,21 @@ export default function UserManagement({
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td
-                  colSpan={7}
-                  className="px-4 py-10 text-center text-text-muted"
-                >
-                  No members found.
-                </td>
+                <td colSpan={7} className="px-4 py-10 text-center text-text-muted">No members found.</td>
               </tr>
             ) : (
-              filtered.map((u) => (
-                <tr
-                  key={u.id}
-                  className="border-b border-border last:border-b-0"
-                >
-                  <td className="px-4 py-3 font-medium text-text-primary">
-                    {u.full_name || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-text-secondary">{u.email}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center rounded-full bg-gold-light px-2.5 py-0.5 text-xs font-medium text-navy">
-                      {roleLabel(u.role)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-text-secondary">
-                    {u.profile_name || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-text-secondary">
-                    {lastLoginLabel(u.last_login_at)}
-                  </td>
-                  <td
-                    className="px-4 py-3"
-                    style={{
-                      color:
-                        u.is_deleted || u.is_active === false
-                          ? "#9B2335"
-                          : "var(--2a-text)",
-                    }}
-                  >
-                    {statusLabel(u)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {u.invite_status === "pending" && (
-                      <button
-                        type="button"
-                        onClick={() => onRevoke(u)}
-                        className="mr-4 text-sm font-medium text-[#9B2335] hover:underline"
-                      >
-                        Revoke
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setEditing(u)}
-                      className="text-sm font-medium text-navy hover:underline"
-                    >
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              ))
+              filtered.map((u) => <UserRow key={u.id} user={u} onEdit={setEditing} onRevoke={onRevoke} />)
             )}
           </tbody>
         </table>
       </div>
 
       {inviting && (
-        <InviteModal
-          profiles={profiles}
-          onClose={() => setInviting(false)}
-          onInvited={onInvited}
-        />
+        <InviteModal profiles={profiles} onClose={() => setInviting(false)} onInvited={onInvited} />
       )}
 
       {editing && (
-        <EditRoleModal
+        <ManageModal
           user={editing}
           roles={roles}
           profiles={profiles}

@@ -60,6 +60,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
+from services.holdings_hint import empty_holdings_hint
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -386,6 +387,9 @@ async def get_positions(
             # an inline reassignment picker without a second round-trip. Rule 1:
             # the vocabulary comes from config, never from the frontend.
             result["taxonomy"] = await taxonomy_labels(conn, org_id)
+            # BUGFIX1 (PORT-01) — say why an empty grid is empty.
+            result["empty_hint"] = await empty_holdings_hint(
+                conn, org_id, user_id, int(result.get("total") or 0))
         except PortfolioError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -558,3 +562,66 @@ async def patch_position(
 
 
 __all__ = ["router"]
+
+
+# ── BUGFIX1 (PORT-02) — the caller's visible commitments ─────────────────────
+@router.get("/portfolio/commitments")
+async def list_visible_commitments(request: Request, limit: int = Query(default=200, ge=1, le=500)):
+    """Current commitments the caller may see: the commitment's position owner
+    must be in the caller's visible entity set (document_embedding.
+    visible_entity_ids — staff visibility or the member's delegate grants, then
+    restricted access; the same rule Document Search and the ownership tree
+    use). Gate: view_portfolio, the same permission the projection screen it
+    opens requires. /portfolio/commitments used to be an id lookup only."""
+    from services.authz import is_staff
+    from services.document_embedding import visible_entity_ids
+
+    org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    allowed = sorted(await visible_entity_ids(pool, org_id, user_id, is_staff(request)))
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT c.id, c.commitment_amount, c.called_to_date, c.unfunded,
+                   c.distributed_to_date, c.commitment_date, c.vintage_year,
+                   p.owner_entity_id, e.display_name AS owner_name,
+                   a.id AS asset_id, a.name AS fund_name
+            FROM portfolio.commitments c
+            JOIN portfolio.positions p ON p.id = c.position_id AND p.org_id = c.org_id
+            LEFT JOIN entities e ON e.id = p.owner_entity_id AND e.org_id = c.org_id
+              AND e.valid_to IS NULL AND e.system_to IS NULL
+            LEFT JOIN portfolio.assets a ON a.id = p.asset_id AND a.org_id = c.org_id
+              AND a.system_to IS NULL
+            WHERE c.org_id = $1 AND c.valid_to IS NULL AND c.system_to IS NULL
+              AND p.owner_entity_id = ANY($2::uuid[])
+            ORDER BY e.display_name NULLS LAST, a.name NULLS LAST, c.commitment_date DESC NULLS LAST
+            LIMIT $3
+            """,
+            org_id, allowed, limit,
+        )
+
+    def _n(v):
+        return str(v) if v is not None else None
+
+    def _amt(v):
+        # Fixed-point, never str(Decimal): a stored 1.00E+6 would print as "1.00E+6".
+        return format(v, "f") if v is not None else None
+
+    out = []
+    for r in rows:
+        called = r["called_to_date"]
+        remaining = r["unfunded"]
+        if remaining is None and r["commitment_amount"] is not None:
+            remaining = r["commitment_amount"] - (called or 0)
+        out.append({
+            "id": str(r["id"]),
+            "name": r["owner_name"],
+            "owner_entity_id": _n(r["owner_entity_id"]),
+            "fund": r["fund_name"],
+            "asset_id": _n(r["asset_id"]),
+            "commitment": _amt(r["commitment_amount"]),
+            "called": _amt(called),
+            "remaining": _amt(remaining),
+            "vintage_year": r["vintage_year"],
+            "href": f"/portfolio/commitments/{r['id']}",
+        })
+    return {"rows": out, "count": len(out)}

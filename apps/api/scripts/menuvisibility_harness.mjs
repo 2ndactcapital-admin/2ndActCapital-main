@@ -207,7 +207,9 @@ const BASELINE = JSON.parse(
 
 // The previously unlisted pages each persona now gains, written out by hand —
 // each one behind the page's real server gate (navregroup_server_gates.mjs).
-const DOCS = ["/admin/document-search", "/admin/semantic-search"];
+// BUGFIX1 moved the two Documents tabs from /admin/* to /documents (the old URLs
+// redirect), so the addition is now these hrefs.
+const DOCS = ["/documents", "/documents/semantic"];
 const INTENDED_ADDITIONS = {
   plain_member: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
     "/admin/billing-groups", "/admin/custody-import"],
@@ -228,6 +230,15 @@ const AUTHZ1_REMOVALS = {
   no_roles: ["/admin", "/admin/modeling/ta", "/admin/permission-sets", "/admin/profiles",
     "/admin/settings", "/admin/staff-visibility", "/admin/users", "/admin/workflows"],
 };
+
+// BUGFIX1 — the comingSoon feature flag (menuVisibility.mjs COMING_SOON) hides
+// the three menu entries whose pages were never built (404). Every persona that
+// had them at the baseline loses exactly these, and nothing else.
+const BUGFIX1_COMING_SOON = ["/community", "/insurance", "/portfolio-reporting"];
+for (const [name] of Object.entries(PERSONAS)) {
+  const had = (BASELINE.personas[name]?.reachable ?? []).filter((h) => BUGFIX1_COMING_SOON.includes(h));
+  AUTHZ1_REMOVALS[name] = [...(AUTHZ1_REMOVALS[name] ?? []), ...had];
+}
 
 const sorted = (xs) => [...new Set(xs)].sort();
 const minus = (a, b) => a.filter((x) => !b.includes(x));

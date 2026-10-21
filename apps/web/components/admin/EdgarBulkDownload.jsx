@@ -25,6 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import InstitutionPicker from "@/components/admin/InstitutionPicker";
 
 import LaptopWorkerDialog, { CopyButton } from "@/components/admin/LaptopWorkerDialog";
 import DataGrid from "@/components/ui/DataGrid";
@@ -113,102 +114,6 @@ function Command({ text }) {
 
 // ─── Institutions ───────────────────────────────────────────────────────────
 
-function InstitutionPicker({ rows, selected, onToggle, onAll, onNone }) {
-  const [search, setSearch] = useState("");
-  const [open, setOpen] = useState(() => new Set());
-  const needle = search.trim().toLowerCase();
-  const shown = rows.filter(
-    (r) =>
-      !needle ||
-      r.name.toLowerCase().includes(needle) ||
-      r.filers.some((f) => f.name.toLowerCase().includes(needle) || f.cik.includes(needle)),
-  );
-  const years = useMemo(() => [...new Set(rows.flatMap((r) => Object.keys(r.years)))].sort().slice(-3), [rows]);
-
-  function toggleOpen(name) {
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }
-
-  return (
-    <div className={`${CARD} p-4`}>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <h3 className="mr-auto text-sm font-semibold text-[var(--2a-navy)]">Institutions</h3>
-        <input
-          className={`${CONTROL} w-48`}
-          placeholder="Search institutions, entities, CIKs"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <button type="button" className={GHOST} onClick={() => onAll(shown.map((r) => r.name))}>
-          Select all
-        </button>
-        <button type="button" className={GHOST} onClick={onNone}>
-          Select none
-        </button>
-      </div>
-      <p className="mb-2 text-[11px] text-[var(--2a-text-muted)]">
-        Selected filings still to fetch, by year ({years.join(", ")} shown).
-      </p>
-      <ul className="max-h-80 overflow-y-auto">
-        {shown.map((r) => (
-          <li key={r.name} className="border-t border-[var(--2a-border)] py-1.5">
-            <div className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                aria-label={`Select ${r.name}`}
-                checked={selected.has(r.name)}
-                onChange={() => onToggle(r.name)}
-              />
-              <button
-                type="button"
-                className="text-left text-[var(--2a-text)] hover:text-[var(--2a-navy)]"
-                onClick={() => toggleOpen(r.name)}
-                aria-expanded={open.has(r.name)}
-              >
-                <span className="mr-1 inline-block w-3 text-[var(--2a-text-muted)]">{open.has(r.name) ? "▾" : "▸"}</span>
-                {r.name}
-                <span className="ml-1 text-[var(--2a-text-muted)]">
-                  ({r.filers.length} {r.filers.length === 1 ? "entity" : "entities"})
-                </span>
-              </button>
-              <span className="ml-auto flex gap-3 tabular-nums text-[var(--2a-text-secondary)]">
-                {years.map((y) => (
-                  <span key={y} title={y}>
-                    {fmtInt(r.years[y] ?? 0)}
-                  </span>
-                ))}
-              </span>
-            </div>
-            {open.has(r.name) && (
-              <table className="ml-8 mt-1 w-[calc(100%-2rem)] text-[11px]">
-                <tbody>
-                  {r.filers.map((f) => (
-                    <tr key={f.cik}>
-                      <td className="py-0.5 text-[var(--2a-text-secondary)]">{f.name}</td>
-                      <td className="py-0.5 tabular-nums text-[var(--2a-text-muted)]">CIK {f.cik}</td>
-                      <td className="py-0.5 text-[var(--2a-text-muted)]">{f.role ?? ""}</td>
-                      {years.map((y) => (
-                        <td key={y} className="py-0.5 text-right tabular-nums text-[var(--2a-text)]">
-                          {fmtInt(f.years[y] ?? 0)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </li>
-        ))}
-        {!shown.length && <li className="py-3 text-xs text-[var(--2a-text-muted)]">No institution matches.</li>}
-      </ul>
-    </div>
-  );
-}
 
 // ─── Preview ────────────────────────────────────────────────────────────────
 

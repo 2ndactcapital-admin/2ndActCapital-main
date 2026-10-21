@@ -338,6 +338,8 @@ class OwnershipOut(BaseModel):
     ownership_type: str
     parent_name: str | None = None
     child_name: str | None = None
+    # BUGFIX1 (CRM-02) — which table the edge lives in (services/ownership_read).
+    source: str | None = None
 
 
 # ---------------------------------------------------------------------------

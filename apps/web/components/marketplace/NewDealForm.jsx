@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import { IconPlus, IconX } from "@tabler/icons-react";
 import { createDealAction } from "@/lib/marketplaceActions";
+import ConfirmSubmit from "@/components/ui/ConfirmSubmit";
 import { searchEntitiesAction } from "@/lib/crmActions";
 import TaxonomySelector from "@/components/TaxonomySelector";
 
@@ -187,15 +188,17 @@ export default function NewDealForm({ taxonomy = null }) {
         >
           {pending ? "Saving…" : "Save as Draft"}
         </button>
-        <button
-          type="submit"
+        {/* BUGFIX1 (MKT-03) — confirmed; the server checks the configured
+            required fields and names any that are missing. */}
+        <ConfirmSubmit
+          label="Submit for Review"
+          question="Create this deal and submit it for review?"
+          confirmLabel="Yes, submit"
           name="submit_action"
           value="submit"
-          disabled={pending}
+          pending={pending}
           className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60"
-        >
-          Submit for Review
-        </button>
+        />
       </div>
     </form>
   );

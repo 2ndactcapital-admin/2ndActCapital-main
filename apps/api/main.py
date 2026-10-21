@@ -343,7 +343,9 @@ ACCOUNT_DEACTIVATED_DETAIL = (
 # "Access pending" page from it). /enroll/accept is where an invitee CLAIMS
 # their pre-created row — provisioning must not run first, or the new login
 # would get a pending row of its own and the claim would hit sub_conflict.
-PENDING_ALLOWED_PATHS = {"/api/v1/users/me"}
+# USERMGMT1: /users/me/contact-email lets a pending login with no real email
+# leave an address for the admins (its own row only; never used for linking).
+PENDING_ALLOWED_PATHS = {"/api/v1/users/me", "/api/v1/users/me/contact-email"}
 PROVISIONING_EXEMPT_PATHS = {"/api/v1/enroll/accept"}
 
 
