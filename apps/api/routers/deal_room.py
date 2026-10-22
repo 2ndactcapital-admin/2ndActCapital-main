@@ -12,12 +12,23 @@ helpers below):
   _require_grid_scope     the access grid: Super Admin (all), manage_deals or
                           manage_org_settings (the firm), a publisher user or
                           delegate of ≥1 deal (those deals) — else 403
-  _require_signature_reader  a signed copy: its signer, or a manager of its deal
+  _require_signature_reader  a signed copy (HTML or PDF): its signer, or a manager
+                          of its deal
+  _require_publisher_manager  a publisher's master NDA: Super Admin, manage_deals
+                          or manage_org_settings in its org, or a user acting
+                          for that publisher entity — else 403 (404 off-org)
+  _library_target         the firm template library: manage_org_settings (org
+                          admin) for the firm's own templates; platform
+                          templates need Super Admin as well
   require_permission / require_any_permission / require_super_admin / require_active
                           as named on each route
 
 Existing marketplace routes and their gates are untouched; publisher and
-delegate editing lives here. org_id is only ever the caller's (get_org_id) or
+delegate editing lives here.
+
+DEALROOM2 adds: agreement versions (keep / require re-signing), uploaded PDF
+agreements with a page viewer, the firm template library, the master NDA, and
+the signed copy as a PDF with a certificate page. org_id is only ever the caller's (get_org_id) or
 the deal row's own — never a body or path value. Request models forbid extras.
 """
 
@@ -31,12 +42,14 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
 from services import deal_room as R
+from services import deal_room_library as L
+from services import deal_room_pdf as P
 from services import deal_room_templates as T
 from services import storage
 from services.authz import (
@@ -161,7 +174,36 @@ class AccessRequest(_Body):
 class SignRequest(_Body):
     typed_name: str
     consent: bool
-    rendered_text_sha256: str
+    rendered_text_sha256: str | None = None   # a template agreement: the text's hash
+    file_sha256: str | None = None            # an uploaded PDF: the file's hash
+
+
+class NewVersion(_Body):
+    field_values: dict | None = None
+    exhibit_document_id: UUID | None = None
+    resign_policy: str | None = None          # keep | resign (required once signed)
+
+
+class MasterNdaSet(_Body):
+    deal_agreement_id: UUID
+    scope: str = "all"
+    deal_ids: list[UUID] = []
+    accepted_min_version: int | None = None
+
+
+class LibraryCreate(_Body):
+    scope: str = "org"                        # org | platform (Super Admin)
+    source_template_id: UUID | None = None    # copy this one …
+    key: str | None = None
+    title: str | None = None                  # … or write a new one
+    body: str | None = None
+    fields: list[dict] | None = None
+
+
+class LibraryEdit(_Body):
+    title: str | None = None
+    body: str | None = None
+    fields: list[dict] | None = None
 
 
 class Decision(_Body):
@@ -254,6 +296,34 @@ async def _require_signature_reader(request: Request, conn, signature_id):
     return principal, dict(sig)
 
 
+async def _require_publisher_manager(request: Request, conn, entity_id):
+    """A publisher entity's own settings (its master NDA): Super Admin first;
+    manage_deals / manage_org_settings in its org; a user acting for it."""
+    principal = require_active(request)
+    org = await conn.fetchval("SELECT org_id FROM entity_publishers WHERE entity_id = $1 AND revoked_at IS NULL",
+                              UUID(str(entity_id)))
+    if org is None or (str(org) != str(principal.org_id) and not principal.is_super_admin):
+        raise HTTPException(status_code=404, detail="Publisher not found")
+    if principal.is_super_admin or principal.has("manage_deals") or principal.has("manage_org_settings"):
+        return principal, org
+    if UUID(str(entity_id)) in await R.publisher_entities_for_user(conn, org, principal.user_id):
+        return principal, org
+    raise HTTPException(status_code=403, detail="Only this publisher's users or staff can set its master NDA.")
+
+
+async def _library_target(request: Request, conn, template_id):
+    """One library template: the firm's own (manage_org_settings in that firm)
+    or a platform template (Super Admin only). Another firm's is a 404."""
+    principal = require_permission(request, "manage_org_settings")
+    t = await L.get(conn, template_id)
+    if t is None or (t["org_id"] is not None and str(t["org_id"]) != str(principal.org_id)
+                     and not principal.is_super_admin):
+        raise HTTPException(status_code=404, detail="Template not found")
+    if t["org_id"] is None:
+        require_super_admin(request)
+    return principal, t
+
+
 # ── Context ────────────────────────────────────────────────────────────────
 @router.get("/deal-room/me")
 async def deal_room_me(request: Request):
@@ -277,6 +347,7 @@ async def deal_room_me(request: Request):
         "can_self_enrol": bool(person and person not in acts and principal.has("submit_deal")),
         "has_access_grid": bool(principal.is_super_admin or principal.has("manage_deals")
                                 or principal.has("manage_org_settings") or managed),
+        "can_manage_library": bool(principal.is_super_admin or principal.has("manage_org_settings")),
     }
 
 
@@ -477,7 +548,8 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
         is_open = manage or f["id"] in open_ids
         reason = None
         if not is_open:
-            key = {"revoked": "revoked", "declined": "declined", "not_eligible": "not_eligible"}.get(status) \
+            key = {"revoked": "revoked", "declined": "declined", "not_eligible": "not_eligible",
+                   "resign_required": "resign_required"}.get(status) \
                 or (eff if status in ("requested", "signed_awaiting", "granted") else "view")
             reason = lab.get(f"deal_room_lock_{key}")
         entry = {
@@ -497,8 +569,15 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
             entry["named"] = named.get(f["id"], [])
         out_folders.append(entry)
 
-    agreements = await R.agreements_of(conn, deal["id"], published_only=not manage)
-    mine = await R.my_signatures(conn, deal["id"], principal.user_id)
+    agreements = await R.required_agreements(conn, deal, published_only=not manage)
+    state = await R.signature_state(conn, deal, agreements, principal.user_id,
+                                    access["entity_id"] if access else None,
+                                    access["resign_after"] if access else None)
+    nsigs = {}
+    if manage and agreements:
+        nsigs = {r["deal_agreement_id"]: int(r["n"]) for r in await conn.fetch(
+            "SELECT deal_agreement_id, count(*) AS n FROM deal_signatures WHERE deal_agreement_id = ANY($1::uuid[]) "
+            "GROUP BY deal_agreement_id", [a["id"] for a in agreements])}
     sponsor = None
     if settings["sponsor_display"] == "code_name":
         sponsor = settings["code_name"]
@@ -535,22 +614,33 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
             "decided_at": access["decided_at"].isoformat() if access["decided_at"] else None,
         },
         "agreements": [
-            {"id": str(a["id"]), "title": a["title"], "template_key": a["template_key"],
+            {"id": str(a["id"]), "title": a["title"], "kind": a["kind"], "template_key": a["template_key"],
              "template_version": a["template_version"], "template_status": a["template_status"],
-             "sort_order": a["sort_order"], "status": a["status"],
-             "signed_at": mine[a["id"]]["signed_at"].isoformat() if a["id"] in mine else None,
-             "signature_id": str(mine[a["id"]]["id"]) if a["id"] in mine else None,
+             "sort_order": a["sort_order"], "status": a["status"], "current_version": a["current_version"],
+             "is_master": bool(a.get("is_master")), "virtual": bool(a.get("virtual")),
+             "signed_at": state[a["id"]]["signed_at"].isoformat() if state[a["id"]]["ok"] else None,
+             "signature_id": str(state[a["id"]]["signature_id"]) if state[a["id"]]["ok"] else None,
+             "signed_version": state[a["id"]]["version"],
+             "covered_by_master": state[a["id"]]["covered"], "stale": state[a["id"]]["stale"],
              **({"field_values": a["field_values"], "exhibit_document_id": str(a["exhibit_document_id"])
                  if a["exhibit_document_id"] else None,
                  "fields": [f for f in a["fields"] if f["source"] in (T.SOURCE_PUBLISHER, T.SOURCE_DEAL)],
+                 "file_sha256": a["file_sha256"], "signatures": nsigs.get(a["id"], 0),
                  "blockers": R.publish_blockers(a, await R.agreement_values(conn, deal, a))} if manage else {})}
             for a in agreements],
         "vocabularies": {**R.vocabularies(lab),
-                         "editable": ["deal", "settings", "folders", "documents", "agreements", "delegates"]
+                         "editable": ["deal", "settings", "folders", "documents", "agreements", "delegates",
+                                      "versions", "master_nda"]
                          if manage else []},
     }
     if manage:
         envelope["settings"] = _jsonable(settings)
+        master = await R.live_master(conn, deal.get("publisher_entity_id"))
+        envelope["publisher_entity_id"] = str(deal["publisher_entity_id"]) if deal.get("publisher_entity_id") else None
+        envelope["master_nda"] = None if master is None else {
+            **_jsonable({k: master[k] for k in ("id", "deal_agreement_id", "scope", "accepted_min_version")}),
+            "deal_ids": [str(d) for d in master["deal_ids"]],
+            "covers_this_deal": (await R.master_for_deal(conn, deal)) is not None}
         envelope["delegates"] = [
             {"user_id": str(r["user_id"]), "name": r["name"]} for r in await conn.fetch(
                 "SELECT d.user_id, COALESCE(u.full_name, u.email) AS name FROM deal_delegates d "
@@ -807,14 +897,18 @@ async def download_room_document(request: Request, deal_id: UUID, doc_id: UUID):
 # ── Agreements ─────────────────────────────────────────────────────────────
 @router.get("/deal-room/templates")
 async def list_templates(request: Request):
-    require_active(request)
+    """Templates a deal may require: platform (not retired) for everyone; the
+    firm's ACTIVE library templates only for callers who publish or manage
+    deals in the firm (DEALROOM2 — a member never sees the firm library)."""
+    principal = require_active(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, key, version, title, scope, status, fields, source_path FROM agreement_templates "
-            "WHERE status <> 'retired' ORDER BY key, version")
-    return {"templates": [{**_jsonable(dict(r)), "fields": json.loads(r["fields"]) if isinstance(r["fields"], str)
-                           else r["fields"]} for r in rows]}
+        firm = bool(principal.is_super_admin or principal.has("manage_deals") or principal.has("manage_org_settings")
+                    or await R.publisher_entities_for_user(conn, principal.org_id, principal.user_id)
+                    or await R.managed_deal_ids(conn, principal.org_id, principal.user_id))
+        rows = await L.usable(conn, principal.org_id, include_firm=firm)
+    return {"templates": [_jsonable({k: r[k] for k in ("id", "key", "version", "title", "scope", "status", "fields",
+                                                       "source_path")}) for r in rows]}
 
 
 @router.post("/deal-room/deals/{deal_id}/agreements", status_code=201)
@@ -823,8 +917,7 @@ async def add_agreement(request: Request, deal_id: UUID, body: AgreementCreate):
     async with pool.acquire() as conn:
         async with conn.transaction():
             principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
-            if not await conn.fetchval("SELECT 1 FROM agreement_templates WHERE id = $1 AND status <> 'retired'",
-                                       body.template_id):
+            if await L.usable_for_deal(conn, body.template_id, deal["org_id"]) is None:
                 raise HTTPException(status_code=404, detail="Template not found")
             if body.exhibit_document_id and not await conn.fetchval(
                     "SELECT 1 FROM deal_documents WHERE id = $1 AND deal_id = $2 AND deleted_at IS NULL",
@@ -868,14 +961,12 @@ async def edit_agreement(request: Request, deal_id: UUID, agreement_id: UUID, bo
             a = await _agreement(conn, deal_id, agreement_id)
             if a["status"] != "draft":
                 raise HTTPException(status_code=409, detail=(
-                    "A published agreement is fixed; new versions with re-signing come in Phase 2."))
+                    "A published agreement is fixed: save a new version (POST …/agreements/{id}/versions) and "
+                    "choose whether existing signers keep access or must re-sign."))
+            if a["kind"] == "upload" and changes.get("field_values"):
+                raise HTTPException(status_code=422, detail="An uploaded agreement has no fill-in fields.")
             # system-axis history copy, then the live row (id kept for signatures)
-            await conn.execute(
-                "INSERT INTO deal_agreements (org_id, deal_id, template_id, sort_order, field_values, "
-                "exhibit_document_id, status, created_by, created_at, system_from, system_to, history_of) "
-                "SELECT org_id, deal_id, template_id, sort_order, field_values, exhibit_document_id, 'withdrawn', "
-                "created_by, created_at, system_from, now(), id FROM deal_agreements WHERE id = $1",
-                agreement_id)
+            await R.archive_agreement(conn, agreement_id)
             merged = {**(a["field_values"] or {}), **(changes.get("field_values") or {})}
             await conn.execute(
                 "UPDATE deal_agreements SET field_values = $2::jsonb, sort_order = COALESCE($3, sort_order), "
@@ -904,6 +995,10 @@ async def publish_agreement(request: Request, deal_id: UUID, agreement_id: UUID)
             await conn.execute("UPDATE deal_agreements SET status = 'published', published_at = now(), "
                                "published_by = $2, system_from = now() WHERE id = $1",
                                agreement_id, UUID(str(principal.user_id)))
+            try:  # version 1 — the immutable snapshot investors sign
+                await R.ensure_version(conn, await R.agreement_by_id(conn, agreement_id), actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
             await R.audit(conn, org_id=deal["org_id"], actor=principal.user_id, action="deal_room.agreement_publish",
                           resource_id=agreement_id, payload={"template_key": a["template_key"]})
     return {"id": str(agreement_id), "status": "published"}
@@ -941,20 +1036,46 @@ async def render_agreement(request: Request, deal_id: UUID, agreement_id: UUID):
     pool = await get_pool()
     async with pool.acquire() as conn:
         principal, deal, _ = await _require_deal_viewer(request, conn, deal_id)
-        access = await R.live_access(conn, deal_id, principal.user_id)
-        if access is None or access["status"] not in ("requested", "signed_awaiting", "granted"):
-            raise HTTPException(status_code=409, detail="Request access and pass the eligibility check first.")
-        a = next((x for x in await R.agreements_of(conn, deal_id, published_only=True)
-                  if str(x["id"]) == str(agreement_id)), None)
-        if a is None:
-            raise HTTPException(status_code=404, detail="Agreement not found")
+        access, a = await _investor_agreement(conn, deal, principal, agreement_id)
         try:
+            v = await R.get_version(conn, a["version_id"]) if a.get("version_id") else None
+            exhibit = await _exhibit_info(conn, v)
+            if a["kind"] == "upload":
+                if v is None:
+                    raise R.DealRoomError(409, "This agreement has no published version yet.")
+                return {"id": str(agreement_id), "kind": "upload", "title": a["title"], "version": v["version"],
+                        "file_name": v["file_name"], "file_sha256": v["file_sha256"], "page_count": v["page_count"],
+                        "fill_in_fields": False, "exhibit": exhibit}
             text, sha = await R.render_for_signer(conn, deal, a, entity_id=access["entity_id"],
                                                   user_id=principal.user_id, on=date.today())
         except R.DealRoomError as exc:
             raise _http(exc) from exc
-    return {"id": str(agreement_id), "title": a["title"], "template_status": a["template_status"],
-            "text": text, "rendered_text_sha256": sha}
+    return {"id": str(agreement_id), "kind": "template", "title": a["title"],
+            "template_status": (v or a)["template_status"], "version": v["version"] if v else None,
+            "text": text, "rendered_text_sha256": sha, "exhibit": exhibit}
+
+
+async def _investor_agreement(conn, deal, principal, agreement_id):
+    """An agreement this investor may read: one of the deal's required
+    (published) agreements, once they have requested access."""
+    access = await R.live_access(conn, deal["id"], principal.user_id)
+    if access is None or access["status"] not in ("requested", "signed_awaiting", "granted", "resign_required"):
+        raise HTTPException(status_code=409, detail="Request access and pass the eligibility check first.")
+    a = next((x for x in await R.required_agreements(conn, deal) if str(x["id"]) == str(agreement_id)), None)
+    if a is None:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    return access, a
+
+
+async def _exhibit_info(conn, v) -> dict | None:
+    """Exhibit A (e.g. the joinder's Underlying NDA PDF) — shown before signing."""
+    if not v or not v.get("exhibit_document_id"):
+        return None
+    _, data = await R.read_document_bytes(conn, v["exhibit_document_id"])
+    if v.get("exhibit_sha256") and R.sha256_bytes(data) != v["exhibit_sha256"]:
+        raise R.DealRoomError(409, "Exhibit A no longer matches the hash recorded on this version.")
+    return {"document_id": str(v["exhibit_document_id"]), "sha256": R.sha256_bytes(data),
+            "page_count": R.pdf_page_count(data)}
 
 
 @router.post("/deal-room/deals/{deal_id}/agreements/{agreement_id}/sign", status_code=201)
@@ -970,7 +1091,7 @@ async def sign_agreement(request: Request, deal_id: UUID, agreement_id: UUID, bo
                 caller = principal
                 out = await R.sign(conn, principal=caller, deal=deal, agreement_id=agreement_id,
                                    typed_name=body.typed_name, consent=body.consent,
-                                   shown_sha256=body.rendered_text_sha256, ip=ip,
+                                   shown_sha256=body.file_sha256 or body.rendered_text_sha256, ip=ip,
                                    user_agent=request.headers.get("user-agent"), today=date.today())
             except R.DealRoomError as exc:
                 raise _http(exc) from exc
@@ -981,6 +1102,7 @@ async def sign_agreement(request: Request, deal_id: UUID, agreement_id: UUID, bo
                           f"Your access to {deal['name']} is open.")
     return {"signature_id": str(out["signature"]["id"]), "record_sha256": out["signature"]["record_sha256"],
             "signed_at": out["signature"]["signed_at"].isoformat(), "complete": out["complete"],
+            "version": out["version"], "document_sha256": out["signature"]["document_sha256"],
             "status": access.get("status"), "level_granted": access.get("level_granted")}
 
 
@@ -1010,10 +1132,8 @@ async def signed_copy(request: Request, signature_id: UUID):
     pool = await get_pool()
     async with pool.acquire() as conn:
         _, sig = await _require_signature_reader(request, conn, signature_id)
-        title = await conn.fetchval("SELECT title FROM agreement_templates WHERE id = $1", sig["template_id"])
-        status = await conn.fetchval("SELECT status FROM agreement_templates WHERE id = $1", sig["template_id"])
-        entity = await conn.fetchval("SELECT display_name FROM entities WHERE id = $1 AND valid_to IS NULL "
-                                     "AND system_to IS NULL", sig["entity_id"])
+        ctx = await _signature_context(conn, sig)
+        title, status, entity = ctx["title"], ctx["template_status"], ctx["entity_name"]
     esc = html.escape
     draft = '<p class="draft">Template marked DRAFT — pending counsel review.</p>' if status == "draft" else ""
     page = (
@@ -1022,12 +1142,68 @@ async def signed_copy(request: Request, signature_id: UUID):
         f"<pre>{esc(sig['rendered_text'])}</pre><div class='sig'>"
         f"<p>Signed electronically by <strong>{esc(sig['typed_name'])}</strong> for {esc(entity or '')} "
         f"on {esc(sig['signed_at'].isoformat())}, having agreed to sign electronically.</p>"
-        f"<p>Template {esc(str(title or ''))} v{sig['template_version']} · signature {esc(str(sig['id']))}</p>"
+        f"<p>{esc(str(title or ''))} — version {esc(str(ctx['version'] or sig['template_version'] or ''))} · "
+        f"signature {esc(str(sig['id']))}</p>"
+        f"<p>Document SHA-256 <code>{esc(sig.get('document_sha256') or sig['rendered_text_sha256'])}</code></p>"
         f"<p>Rendered text SHA-256 <code>{esc(sig['rendered_text_sha256'])}</code><br>"
         f"Record SHA-256 <code>{esc(sig['record_sha256'])}</code><br>"
         f"Chain {esc(sig['chain'])} #{sig['chain_seq']}, previous <code>{esc(sig['prev_signature_sha256'] or '—')}"
         f"</code></p></div></main></body></html>")
     return HTMLResponse(page)
+
+
+async def _signature_context(conn, sig) -> dict:
+    """What a signed copy names besides the row itself: the agreement's title
+    and version (from the immutable version, or the template for a Phase 1
+    row), the signer, the investing entity, the deal."""
+    v = await R.get_version(conn, sig["agreement_version_id"]) if sig.get("agreement_version_id") else None
+    t = await conn.fetchrow("SELECT key, title, status FROM agreement_templates WHERE id = $1",
+                            sig["template_id"]) if sig.get("template_id") else None
+    signer = await conn.fetchrow("SELECT full_name, email FROM users WHERE id = $1", sig["user_id"])
+    entity = await conn.fetchval("SELECT COALESCE(legal_name, display_name) FROM entities WHERE id = $1 "
+                                 "AND valid_to IS NULL AND system_to IS NULL", sig["entity_id"])
+    deal_name = await conn.fetchval("SELECT name FROM deals WHERE id = $1 AND valid_to IS NULL AND system_to IS NULL",
+                                    sig["deal_id"])
+    return {
+        "title": (v["title"] if v else None) or (t["title"] if t else None),
+        "template_status": v["template_status"] if v else (t["status"] if t else None),
+        "template_key": (v["template_key"] if v else None) or (t["key"] if t else None),
+        "version": v["version"] if v else None, "kind": v["kind"] if v else "template",
+        "version_row": v, "exhibit_sha256": v["exhibit_sha256"] if v else None,
+        "signer_name": signer["full_name"] if signer else None, "signer_email": signer["email"] if signer else None,
+        "entity_name": entity, "deal_name": deal_name,
+        "verify_ref": (f"GET /api/v1/deal-room/signatures/verify?chain={sig['chain']} (Super Admin) recomputes the "
+                       f"{sig['chain']} chain; position #{sig['chain_seq']} must carry record SHA-256 "
+                       f"{sig['record_sha256']}. Signature id {sig['id']}."),
+    }
+
+
+@router.get("/deal-room/signatures/{signature_id}/pdf")
+async def signed_copy_pdf(request: Request, signature_id: UUID):
+    """The signed copy as a PDF — the agreement (rendered text, or the uploaded
+    PDF itself), Exhibit A when there is one, then a certificate page. Built on
+    demand from the signature row (never stored); same gate as the HTML copy."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        _, sig = await _require_signature_reader(request, conn, signature_id)
+        ctx = await _signature_context(conn, sig)
+        v = ctx.pop("version_row")
+        doc_pdf = exhibit_pdf = None
+        try:
+            if v is not None and v["kind"] == "upload":
+                _, doc_pdf = await R.read_document_bytes(conn, v["document_id"])
+                if R.sha256_bytes(doc_pdf) != sig["document_sha256"]:
+                    raise R.DealRoomError(409, "The stored file no longer matches the signed document's hash.")
+            if v is not None and v.get("exhibit_document_id"):
+                _, exhibit_pdf = await R.read_document_bytes(conn, v["exhibit_document_id"])
+                if v.get("exhibit_sha256") and R.sha256_bytes(exhibit_pdf) != v["exhibit_sha256"]:
+                    raise R.DealRoomError(409, "The stored Exhibit A no longer matches its recorded hash.")
+        except R.DealRoomError as exc:
+            raise _http(exc) from exc
+    pdf = await run_in_threadpool(P.build, sig, ctx, document_pdf=doc_pdf, exhibit_pdf=exhibit_pdf)
+    name = f"signed-{str(sig['id'])[:8]}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @router.get("/deal-room/my-access")
@@ -1049,20 +1225,39 @@ async def my_access(request: Request):
             """, UUID(str(principal.user_id)))
         sigs = await conn.fetch(
             """
-            SELECT s.id, s.deal_id, s.signed_at, s.typed_name, t.title, t.version
-            FROM deal_signatures s JOIN agreement_templates t ON t.id = s.template_id
+            SELECT s.id, s.deal_id, s.signed_at, s.typed_name, COALESCE(v.title, t.title) AS title,
+                   COALESCE(v.version, 1) AS version, t.version AS template_version, v.kind,
+                   COALESCE(s.document_sha256, s.rendered_text_sha256) AS document_sha256,
+                   e.display_name AS entity_name
+            FROM deal_signatures s
+            LEFT JOIN agreement_versions v ON v.id = s.agreement_version_id
+            LEFT JOIN agreement_templates t ON t.id = s.template_id
+            LEFT JOIN entities e ON e.id = s.entity_id AND e.valid_to IS NULL AND e.system_to IS NULL
             WHERE s.user_id = $1 ORDER BY s.signed_at
             """, UUID(str(principal.user_id)))
+        to_sign: dict = {}
+        for r in rows:
+            if r["status"] != "resign_required":
+                continue
+            deal = await R.fetch_deal(conn, r["deal_id"])
+            if deal is None:
+                continue
+            reqs, state = await R.access_state(conn, dict(deal), principal.user_id)
+            to_sign[r["deal_id"]] = [{"agreement_id": str(a["id"]), "title": a["title"],
+                                      "version": a["current_version"]} for a in reqs if not state[a["id"]]["ok"]]
     by_deal: dict = {}
     for s in sigs:
         by_deal.setdefault(s["deal_id"], []).append({
-            "signature_id": str(s["id"]), "title": s["title"], "version": s["version"],
-            "signed_at": s["signed_at"].isoformat(), "copy_href": f"/api/deal-room/signatures/{s['id']}/copy"})
+            "signature_id": str(s["id"]), "title": s["title"], "version": s["version"], "kind": s["kind"] or "template",
+            "entity_name": s["entity_name"], "document_sha256": s["document_sha256"],
+            "signed_at": s["signed_at"].isoformat(), "copy_href": f"/api/deal-room/signatures/{s['id']}/copy",
+            "pdf_href": f"/api/deal-room/signatures/{s['id']}/pdf"})
     return {"rows": [{
         "deal_id": str(r["deal_id"]), "deal_name": r["deal_name"], "status": r["status"],
         "status_label": lab.get(f"deal_room_status_{r['status']}"), "level_granted": r["level_granted"],
         "level_label": lab.get(f"deal_room_level_{r['level_granted']}") if r["level_granted"] else None,
         "entity_name": r["entity_name"], "since": r["valid_from"].isoformat(),
+        "to_sign": to_sign.get(r["deal_id"], []),
         "signatures": by_deal.get(r["deal_id"], [])} for r in rows]}
 
 
@@ -1131,6 +1326,7 @@ async def access_grid(
         rows = await conn.fetch(
             f"""
             SELECT a.id, a.deal_id, a.user_id, a.entity_id, a.status, a.level_granted, a.decided_at, a.reason,
+                   a.prior_level, a.resign_after,
                    a.valid_from AS since, d.name AS deal_name, d.publisher_entity_id,
                    COALESCE(pe.display_name, '—') AS publisher_name, o.name AS firm_name,
                    COALESCE(u.full_name, u.email) AS investor_name, e.display_name AS entity_name,
@@ -1141,26 +1337,53 @@ async def access_grid(
             ORDER BY group_label, {order} {'DESC' if desc else 'ASC'} NULLS LAST, a.id
             LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
             """, *params_page)
-        deal_ids = list({r["deal_id"] for r in rows})
-        agreements = await conn.fetch(
-            """
-            SELECT a.id, a.deal_id, a.sort_order, t.key, t.title FROM deal_agreements a
-            JOIN agreement_templates t ON t.id = a.template_id
-            WHERE a.deal_id = ANY($1::uuid[]) AND a.status = 'published' AND a.system_to IS NULL
-            ORDER BY a.sort_order
-            """, deal_ids) if deal_ids else []
-        sigs = await conn.fetch(
-            "SELECT deal_id, user_id, deal_agreement_id, signed_at FROM deal_signatures WHERE deal_id = ANY($1::uuid[])",
-            deal_ids) if deal_ids else []
+        # per deal: its requirements (own agreements + a covering master NDA);
+        # per row: what satisfies each, by version (signature_state — the same
+        # rule signing and approval use)
+        reqs_by_deal: dict = {}
+        states: dict = {}
+        for r in rows:
+            if r["deal_id"] not in reqs_by_deal:
+                deal_row = await R.fetch_deal(conn, r["deal_id"])
+                reqs_by_deal[r["deal_id"]] = (dict(deal_row), await R.required_agreements(conn, dict(deal_row))) \
+                    if deal_row else (None, [])
+            deal_row, reqs = reqs_by_deal[r["deal_id"]]
+            states[r["id"]] = await R.signature_state(conn, deal_row, reqs, r["user_id"], r["entity_id"],
+                                                      r["resign_after"]) if deal_row else {}
         lab = await R.labels(conn, principal.org_id)
-    signed = {(s["deal_id"], s["user_id"], s["deal_agreement_id"]): s["signed_at"] for s in sigs}
+
+    def col_key(a):
+        return "master_nda" if a.get("is_master") else (a["template_key"] or f"upload:{a['id']}")
+
     columns: list[dict] = []
-    for a in agreements:
-        if a["key"] not in {c["key"] for c in columns}:
-            columns.append({"key": a["key"], "title": a["title"]})
+    for _, reqs in reqs_by_deal.values():
+        for a in reqs:
+            if col_key(a) not in {c["key"] for c in columns}:
+                columns.append({"key": col_key(a), "title": "Master NDA" if a.get("is_master") else a["title"]})
     out_rows = []
     for r in rows:
-        req = {a["key"]: a["id"] for a in agreements if a["deal_id"] == r["deal_id"]}
+        reqs = reqs_by_deal[r["deal_id"]][1]
+        st = states[r["id"]]
+        by_key = {col_key(a): a for a in reqs}
+        cells, detail = {}, {}
+        for c in columns:
+            a = by_key.get(c["key"])
+            if a is None:
+                cells[c["key"]] = "n/a"
+                continue
+            x = st[a["id"]]
+            cells[c["key"]] = x["signed_at"].isoformat() if x["ok"] else None
+            if x["covered"]:
+                label = f"covered by master NDA signed {x['signed_at'].date().isoformat()}"
+            elif x["ok"]:
+                label = f"v{x['version']} · {x['signed_at'].date().isoformat()}"
+            elif x["stale"]:
+                label = f"signed v{x['last_version']} — v{a['current_version']} needed"
+            else:
+                label = None
+            detail[c["key"]] = {"signed_at": x["signed_at"].isoformat() if x["ok"] else None,
+                                "version": x["version"], "current_version": a["current_version"],
+                                "covered_by_master": x["covered"], "stale": x["stale"], "label": label}
         out_rows.append({
             "id": str(r["id"]), "deal_id": str(r["deal_id"]), "deal_name": r["deal_name"],
             "publisher_entity_id": str(r["publisher_entity_id"]) if r["publisher_entity_id"] else None,
@@ -1171,11 +1394,11 @@ async def access_grid(
                             "verified_date": r["accreditation_verified_date"].isoformat()
                             if r["accreditation_verified_date"] else None,
                             "kyc_status": r["kyc_status"], "ofac_screen_status": r["ofac_screen_status"]},
-            "agreements": {k: (signed[(r["deal_id"], r["user_id"], aid)].isoformat()
-                               if (r["deal_id"], r["user_id"], aid) in signed else None) if aid else "n/a"
-                           for k, aid in ((c["key"], req.get(c["key"])) for c in columns)},
+            "agreements": cells, "agreement_detail": detail,
+            "covered_by_master": next((d["label"] for d in detail.values() if d["covered_by_master"]), None),
             "level_granted": r["level_granted"],
             "level_label": lab.get(f"deal_room_level_{r['level_granted']}") if r["level_granted"] else None,
+            "prior_level": r["prior_level"],
             "status": r["status"], "status_label": lab.get(f"deal_room_status_{r['status']}"),
             "decided_by": r["decided_by_name"], "decided_at": r["decided_at"].isoformat() if r["decided_at"] else None,
             "reason": r["reason"], "group": r["group_label"]})
@@ -1185,7 +1408,7 @@ async def access_grid(
         "permissions": {"can_read": True, "can_write": True, "is_super_admin": bool(principal.is_super_admin),
                         "read_permission": "deal publisher / delegate / manage_deals / manage_org_settings",
                         "write_permission": "deal publisher / delegate / manage_deals / manage_org_settings"},
-        "vocabularies": {**R.vocabularies(lab), "group_by": list(GROUPS), "actions": ["approve", "decline", "revoke"],
+        "vocabularies": {**R.vocabularies(lab), "group_by": list(GROUPS), "actions": list(R.DECIDE_ACTIONS),
                          "grant_levels": [v for v in R.vocabularies(lab)["levels"] if v["key"] in R.GRANT_LEVELS],
                          "editable": ["status"], "inline_editable": []},
     }
@@ -1193,7 +1416,7 @@ async def access_grid(
 
 @router.post("/deal-room/access/decide")
 async def decide_access(request: Request, body: Decision):
-    """approve (choose level) / decline (reason) / revoke — single or bulk.
+    """approve (choose level) / decline (reason) / revoke / require_resign — single or bulk.
     Every row is re-checked against the caller's scope; every change is
     audited in its own transaction with the change."""
     pool = await get_pool()
@@ -1216,6 +1439,10 @@ async def decide_access(request: Request, body: Decision):
                 if new["status"] == "granted":
                     await _notify(pool, dict(deal), [new["user_id"]], "deal_access_granted", "Deal room open",
                                   f"Your access to {deal['name']} is open.")
+                elif new["status"] == "resign_required":
+                    await _notify(pool, dict(deal), [new["user_id"]], "deal_access_resign_required",
+                                  "Re-signing required", f"Sign the agreements for {deal['name']} again to reopen "
+                                                         "its data room.")
             except R.DealRoomError as exc:
                 results.append({"id": str(access_id), "ok": False, "status_code": exc.status, "detail": exc.detail})
     if all(not r["ok"] for r in results):
@@ -1233,3 +1460,350 @@ async def verify_signature_chain(request: Request, chain: str = Query("platform"
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await R.verify_chain(conn, chain)
+
+
+# ── DEALROOM2: uploaded agreements, versions, the page viewer ──────────────
+async def _store_agreement_pdf(conn, deal, file: UploadFile, data: bytes, actor) -> dict:
+    """An uploaded agreement PDF: validated (PDF only), stored in R2 under the
+    deal, recorded as a deal document outside every folder (it is read only
+    through the agreement), its SHA-256 computed from the bytes received."""
+    if (file.filename or "").lower().endswith((".docx", ".doc")):
+        raise R.DealRoomError(415, "Only PDF agreements can be uploaded: there is no pure-Python DOCX to PDF "
+                                   "conversion that keeps the document's layout. Save it as PDF first.")
+    pages = R.pdf_page_count(data)
+    bucket = os.environ.get("R2_BUCKET_NAME", storage.DEFAULT_BUCKET)
+    key = f"deals/{deal['id']}/agreements/{uuid.uuid4()}_{file.filename or 'agreement.pdf'}"
+    await run_in_threadpool(storage.upload_bytes, key, data, "application/pdf", bucket)
+    doc_id = await conn.fetchval(
+        """
+        INSERT INTO deal_documents (org_id, deal_id, folder_id, file_name, file_type, file_size_bytes, document_type,
+            r2_key, r2_bucket, processing_status, uploaded_by, status, reviewed_by, reviewed_at, visible_to_members)
+        VALUES ($1, $2, NULL, $3, 'application/pdf', $4, 'deal_agreement', $5, $6, 'pending', $7, 'approved', $7,
+                now(), false)
+        RETURNING id
+        """, deal["org_id"], deal["id"], file.filename or "agreement.pdf", len(data), key, bucket,
+        UUID(str(actor)))
+    return {"document_id": doc_id, "file_sha256": R.sha256_bytes(data), "page_count": pages,
+            "file_name": file.filename}
+
+
+@router.post("/deal-room/deals/{deal_id}/agreements/upload", status_code=201)
+async def upload_agreement(request: Request, deal_id: UUID, file: UploadFile = File(...),
+                           title: str = Form(...), sort_order: int | None = Form(None)):
+    """The publisher's own agreement as a PDF (draft until published). No
+    fill-in fields: the investor signs the document as uploaded."""
+    pool = await get_pool()
+    data = await file.read()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            if not title.strip():
+                raise HTTPException(status_code=422, detail="Give the agreement a title.")
+            try:
+                stored = await _store_agreement_pdf(conn, deal, file, data, principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            order = sort_order if sort_order is not None else int(await conn.fetchval(
+                "SELECT COALESCE(max(sort_order), 0) + 1 FROM deal_agreements WHERE deal_id = $1 "
+                "AND system_to IS NULL AND status <> 'withdrawn'", deal_id))
+            aid = await conn.fetchval(
+                "INSERT INTO deal_agreements (org_id, deal_id, template_id, sort_order, kind, title, document_id, "
+                "file_sha256, created_by) VALUES ($1, $2, NULL, $3, 'upload', $4, $5, $6, $7) RETURNING id",
+                deal["org_id"], deal_id, order, title.strip(), stored["document_id"], stored["file_sha256"],
+                UUID(str(principal.user_id)))
+            await R.audit(conn, org_id=deal["org_id"], actor=principal.user_id, action="deal_room.agreement_upload",
+                          resource_id=aid, payload={"file_sha256": stored["file_sha256"],
+                                                    "page_count": stored["page_count"],
+                                                    "file_name": stored["file_name"]})
+    return {"id": str(aid), "kind": "upload", "sort_order": order, "file_sha256": stored["file_sha256"],
+            "page_count": stored["page_count"], "fill_in_fields": False}
+
+
+async def _after_version(pool, deal, out) -> dict:
+    users = list({a["user_id"] for a in out["affected"]})
+    if users:
+        await _notify(pool, deal, users, "deal_access_resign_required", "Re-signing required",
+                      f"An agreement for {deal['name']} changed. Sign the new version to reopen the data room.")
+    v = out["version"]
+    return {"version": v["version"], "version_id": str(v["id"]), "policy": out["policy"],
+            "signatures": out["signatures"], "file_sha256": v["file_sha256"],
+            "affected": [{"deal_id": str(a["deal_id"]), "user_id": str(a["user_id"])} for a in out["affected"]]}
+
+
+@router.post("/deal-room/deals/{deal_id}/agreements/{agreement_id}/versions", status_code=201)
+async def new_agreement_version(request: Request, deal_id: UUID, agreement_id: UUID, body: NewVersion):
+    """A new version of a PUBLISHED template agreement (changed field values or
+    Exhibit A). Once anyone has signed, resign_policy is required: keep or
+    resign."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            if body.exhibit_document_id and not await conn.fetchval(
+                    "SELECT 1 FROM deal_documents WHERE id = $1 AND deal_id = $2 AND deleted_at IS NULL",
+                    body.exhibit_document_id, deal_id):
+                raise HTTPException(status_code=404, detail="Exhibit document not found on this deal")
+            try:
+                out = await R.new_version(conn, deal, agreement_id, actor=principal.user_id,
+                                          policy=body.resign_policy, field_values=body.field_values,
+                                          exhibit_document_id=body.exhibit_document_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return await _after_version(pool, deal, out)
+
+
+@router.post("/deal-room/deals/{deal_id}/agreements/{agreement_id}/versions/file", status_code=201)
+async def replace_agreement_file(request: Request, deal_id: UUID, agreement_id: UUID, file: UploadFile = File(...),
+                                 resign_policy: str | None = Form(None)):
+    """Replace an uploaded agreement's PDF. A draft is replaced in place; a
+    published one gets a new version (keep / resign once signed)."""
+    pool = await get_pool()
+    data = await file.read()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            a = await _agreement(conn, deal_id, agreement_id)
+            if a["kind"] != "upload":
+                raise HTTPException(status_code=422, detail="Only an uploaded agreement takes a replacement file.")
+            if a["status"] == "published" and resign_policy not in R.RESIGN_POLICIES:
+                nsig = int(await conn.fetchval("SELECT count(*) FROM deal_signatures WHERE deal_agreement_id = $1",
+                                               a["id"]))
+                if nsig:  # refuse BEFORE anything is stored
+                    raise HTTPException(status_code=422, detail={
+                        "message": f"This agreement has {nsig} signature(s). Choose 'keep' (existing signers stay) "
+                                   "or 'resign' (they must sign the new version).",
+                        "signatures": nsig, "choices": list(R.RESIGN_POLICIES)})
+            try:
+                stored = await _store_agreement_pdf(conn, deal, file, data, principal.user_id)
+                if a["status"] == "draft":
+                    await R.archive_agreement(conn, agreement_id)
+                    await conn.execute("UPDATE deal_agreements SET document_id = $2, file_sha256 = $3, "
+                                       "system_from = now() WHERE id = $1", agreement_id, stored["document_id"],
+                                       stored["file_sha256"])
+                    return {"version": None, "status": "draft", "file_sha256": stored["file_sha256"],
+                            "page_count": stored["page_count"], "affected": []}
+                out = await R.new_version(conn, deal, agreement_id, actor=principal.user_id, policy=resign_policy,
+                                          new_file=stored)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return await _after_version(pool, deal, out)
+
+
+@router.get("/deal-room/deals/{deal_id}/agreements/{agreement_id}/versions")
+async def list_agreement_versions(request: Request, deal_id: UUID, agreement_id: UUID):
+    """Every version of an agreement and how many signatures each carries."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        _, deal, _ = await _require_deal_manager(request, conn, deal_id)
+        a = await _agreement(conn, deal_id, agreement_id)
+        counts = {r["v"]: int(r["n"]) for r in await conn.fetch(
+            "SELECT COALESCE(agreement_version_id::text, 'v1-legacy') AS v, count(*) AS n FROM deal_signatures "
+            "WHERE deal_agreement_id = $1 GROUP BY 1", a["id"])}
+        rows = await R.versions_of(conn, a["id"])
+    return {"agreement_id": str(a["id"]), "title": a["title"], "kind": a["kind"], "rows": [
+        {"id": str(v["id"]), "version": v["version"], "resign_policy": v["resign_policy"],
+         "created_at": v["created_at"].isoformat(), "file_sha256": v["file_sha256"], "file_name": v["file_name"],
+         "page_count": v["page_count"], "template_key": v["template_key"], "template_version": v["template_version"],
+         "field_values": v["field_values"], "exhibit_sha256": v["exhibit_sha256"],
+         "signatures": counts.get(str(v["id"]), 0) + (counts.get("v1-legacy", 0) if v["version"] == 1 else 0)}
+        for v in rows]}
+
+
+@router.get("/deal-room/deals/{deal_id}/agreements/{agreement_id}/pages/{page}")
+async def agreement_page(request: Request, deal_id: UUID, agreement_id: UUID, page: int,
+                         part: str = Query("document")):
+    """One page of an uploaded agreement (or of Exhibit A) as PNG, for the
+    in-app viewer: the investor reads every page before Sign enables. Managers
+    may preview drafts; investors see only the current published version."""
+    if part not in ("document", "exhibit") or page < 1:
+        raise HTTPException(status_code=422, detail="part must be document or exhibit; pages start at 1")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+        if rights.can_manage:
+            a = await R.agreement_by_id(conn, agreement_id)
+            if a is None or str(a["deal_id"]) != str(deal_id):
+                a = next((x for x in await R.required_agreements(conn, deal) if str(x["id"]) == str(agreement_id)),
+                         None)
+            if a is None:
+                raise HTTPException(status_code=404, detail="Agreement not found")
+        else:
+            _, a = await _investor_agreement(conn, deal, principal, agreement_id)
+        v = await R.get_version(conn, a["version_id"]) if a.get("version_id") else None
+        doc_id = (v or a).get("exhibit_document_id") if part == "exhibit" else (v or a).get("document_id")
+        if not doc_id:
+            raise HTTPException(status_code=404, detail="No such document on this agreement")
+        try:
+            _, data = await R.read_document_bytes(conn, doc_id)
+            want = (v or {}).get("exhibit_sha256") if part == "exhibit" else (v or a).get("file_sha256")
+            if want and R.sha256_bytes(data) != want:
+                raise R.DealRoomError(409, "The stored file no longer matches its recorded hash.")
+        except R.DealRoomError as exc:
+            raise _http(exc) from exc
+    try:
+        png = await run_in_threadpool(P.page_png, data, page - 1)
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail="No such page") from exc
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+# ── DEALROOM2: the master NDA ──────────────────────────────────────────────
+def _master_out(m) -> dict | None:
+    if m is None:
+        return None
+    return {**_jsonable({k: m[k] for k in ("id", "publisher_entity_id", "deal_agreement_id", "scope",
+                                            "accepted_min_version", "created_at")}),
+            "deal_ids": [str(d) for d in m["deal_ids"]]}
+
+
+@router.get("/deal-room/publishers/{entity_id}/master-nda")
+async def get_master_nda(request: Request, entity_id: UUID):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _require_publisher_manager(request, conn, entity_id)
+        return {"master_nda": _master_out(await R.live_master(conn, entity_id))}
+
+
+@router.put("/deal-room/publishers/{entity_id}/master-nda")
+async def put_master_nda(request: Request, entity_id: UUID, body: MasterNdaSet):
+    """Mark one published agreement as the publisher's master NDA, covering all
+    their deals or selected ones. Replaces any previous master (history kept)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, org = await _require_publisher_manager(request, conn, entity_id)
+            try:
+                m = await R.set_master(conn, org_id=org, publisher_entity_id=entity_id,
+                                       deal_agreement_id=body.deal_agreement_id, scope=body.scope,
+                                       deal_ids=body.deal_ids, accepted_min_version=body.accepted_min_version,
+                                       actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            await R.audit(conn, org_id=org, actor=principal.user_id, action="deal_room.master_nda_set",
+                          resource_id=m["id"], payload=body.model_dump())
+    return {"master_nda": _master_out(m)}
+
+
+@router.delete("/deal-room/publishers/{entity_id}/master-nda")
+async def delete_master_nda(request: Request, entity_id: UUID):
+    """Stop using a master NDA for future requests. Signatures and access
+    already granted are untouched."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, org = await _require_publisher_manager(request, conn, entity_id)
+            if not await R.revoke_master(conn, entity_id, actor=principal.user_id):
+                raise HTTPException(status_code=404, detail="No master NDA is set")
+            await R.audit(conn, org_id=org, actor=principal.user_id, action="deal_room.master_nda_revoke",
+                          resource_id=entity_id, payload={})
+    return {"revoked": True}
+
+
+# ── DEALROOM2: the firm template library ───────────────────────────────────
+def _library_row(t: dict, principal) -> dict:
+    platform = t["org_id"] is None
+    editable = t["status"] == "draft" and not int(t.get("in_use") or 0)
+    can = principal.is_super_admin if platform else True
+    return {**L.jsonable({k: t[k] for k in ("id", "key", "version", "title", "body", "fields", "scope", "status",
+                                            "based_on_id", "created_at", "published_at")}),
+            "in_use": int(t.get("in_use") or 0), "can_edit": bool(can and editable),
+            "can_publish": bool(can and t["status"] == "draft"),
+            "can_add_version": bool(can and t["status"] != "draft"), "can_copy": bool(platform)}
+
+
+@router.get("/deal-room/library")
+async def get_library(request: Request):
+    """The firm's library (its own templates, every version) beside the
+    platform templates. Org admins (manage_org_settings) and Super Admin."""
+    principal = require_permission(request, "manage_org_settings")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await L.library(conn, principal.org_id)
+        lab = await R.labels(conn, principal.org_id)
+    return {"rows": [_library_row(t, principal) for t in rows],
+            "permissions": {"can_read": True, "can_write": True, "is_super_admin": bool(principal.is_super_admin),
+                            "can_write_platform": bool(principal.is_super_admin),
+                            "read_permission": "manage_org_settings", "write_permission": "manage_org_settings"},
+            "vocabularies": {"editable": ["title", "body", "fields"], "inline_editable": [],
+                             "sources": list(L.SOURCES), "types": list(L.TYPES),
+                             "agreement_kinds": R.vocabularies(lab)["agreement_kinds"]}}
+
+
+@router.post("/deal-room/library", status_code=201)
+async def create_library_template(request: Request, body: LibraryCreate):
+    """Copy a platform template into the firm's library, or write a new one
+    (draft, version 1). scope 'platform' is Super Admin only."""
+    principal = require_permission(request, "manage_org_settings")
+    if body.scope not in ("org", "platform"):
+        raise HTTPException(status_code=422, detail="scope must be org or platform")
+    if body.scope == "platform":
+        require_super_admin(request)
+    org_id = None if body.scope == "platform" else get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            try:
+                if body.source_template_id:
+                    if org_id is None:
+                        raise R.DealRoomError(422, "Copying is into a firm library (scope org).")
+                    t = await L.copy_to_firm(conn, org_id=org_id, source_id=body.source_template_id, key=body.key,
+                                             actor=principal.user_id)
+                else:
+                    t = await L.create(conn, org_id=org_id, key=body.key or "", title=body.title or "",
+                                       body=body.body or "", fields=body.fields or [], actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            await R.audit(conn, org_id=principal.org_id, actor=principal.user_id, action="deal_room.template_create",
+                          resource_id=t["id"], payload={"scope": body.scope, "key": t["key"],
+                                                        "based_on": body.source_template_id})
+    return _library_row({**t, "in_use": 0}, principal)
+
+
+@router.patch("/deal-room/library/{template_id}")
+async def edit_library_template(request: Request, template_id: UUID, body: LibraryEdit):
+    changes = body.model_dump(exclude_unset=True)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, t = await _library_target(request, conn, template_id)
+            try:
+                t = await L.edit(conn, t, changes)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            await R.audit(conn, org_id=principal.org_id, actor=principal.user_id, action="deal_room.template_edit",
+                          resource_id=t["id"], payload={"changed": sorted(changes)})
+    return _library_row({**t, "in_use": 0}, principal)
+
+
+@router.post("/deal-room/library/{template_id}/versions", status_code=201)
+async def add_library_version(request: Request, template_id: UUID):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, t = await _library_target(request, conn, template_id)
+            try:
+                t = await L.add_version(conn, t, actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            await R.audit(conn, org_id=principal.org_id, actor=principal.user_id, action="deal_room.template_version",
+                          resource_id=t["id"], payload={"key": t["key"], "version": t["version"]})
+    return _library_row({**t, "in_use": 0}, principal)
+
+
+@router.post("/deal-room/library/{template_id}/publish")
+async def publish_library_template(request: Request, template_id: UUID):
+    """draft → active; the firm's previous active version of the key retires
+    (kept forever — deals already using it keep their own snapshot)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, t = await _library_target(request, conn, template_id)
+            try:
+                t = await L.publish(conn, t, actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            await R.audit(conn, org_id=principal.org_id, actor=principal.user_id, action="deal_room.template_publish",
+                          resource_id=t["id"], payload={"key": t["key"], "version": t["version"]})
+            n = await L.in_use(conn, t["id"])
+    return _library_row({**t, "in_use": n}, principal)
+

@@ -150,6 +150,21 @@
 --   self_approval_reason                     text
 --   PRIMARY KEY agent_proposals_pkey: (id)
 
+-- ===== agreement_templates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   key                                      text NOT NULL
+--   version                                  integer NOT NULL
+--   title                                    text NOT NULL
+--   body                                     text NOT NULL
+--   fields                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   scope                                    text NOT NULL
+--   org_id                                   uuid
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   source_path                              text
+--   source_sha256                            text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY agreement_templates_pkey: (id)
+
 -- ===== ai_decision_log =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -536,6 +551,41 @@
 --   PRIMARY KEY dashboard_briefs_pkey: (id)
 --   UNIQUE dashboard_briefs_user_id_key: (user_id)
 
+-- ===== deal_access =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   entity_id                                uuid
+--   status                                   text NOT NULL
+--   level_granted                            text
+--   eligibility                              jsonb
+--   decided_by                               uuid
+--   decided_at                               timestamp with time zone
+--   reason                                   text
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY deal_access_pkey: (id)
+
+-- ===== deal_agreements =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   template_id                              uuid NOT NULL
+--   sort_order                               integer NOT NULL
+--   field_values                             jsonb NOT NULL DEFAULT '{}'::jsonb
+--   exhibit_document_id                      uuid
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   published_at                             timestamp with time zone
+--   published_by                             uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   history_of                               uuid
+--   PRIMARY KEY deal_agreements_pkey: (id)
+
 -- ===== deal_ai_summaries =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -551,6 +601,17 @@
 --   is_current                               boolean NOT NULL DEFAULT true
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY deal_ai_summaries_pkey: (id)
+
+-- ===== deal_delegates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   granted_by                               uuid
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   revoked_at                               timestamp with time zone
+--   revoked_by                               uuid
+--   PRIMARY KEY deal_delegates_pkey: (id)
 
 -- ===== deal_documents =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -574,7 +635,38 @@
 --   review_notes                             text
 --   reviewed_at                              timestamp with time zone
 --   visible_to_members                       boolean NOT NULL DEFAULT false
+--   folder_id                                uuid
+--   deleted_at                               timestamp with time zone
+--   deleted_by                               uuid
 --   PRIMARY KEY deal_documents_pkey: (id)
+
+-- ===== deal_folder_named =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   folder_id                                uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   added_by                                 uuid
+--   added_at                                 timestamp with time zone NOT NULL DEFAULT now()
+--   removed_at                               timestamp with time zone
+--   removed_by                               uuid
+--   PRIMARY KEY deal_folder_named_pkey: (id)
+
+-- ===== deal_folders =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   key                                      text NOT NULL
+--   label                                    text
+--   sort_order                               integer NOT NULL
+--   access_level                             text NOT NULL
+--   parent_id                                uuid
+--   is_standard                              boolean NOT NULL DEFAULT false
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   history_of                               uuid
+--   PRIMARY KEY deal_folders_pkey: (id)
 
 -- ===== deal_interest =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -594,6 +686,19 @@
 --   UNIQUE deal_interest_deal_id_user_id_key: (deal_id, user_id)
 --   PRIMARY KEY deal_interest_pkey: (id)
 
+-- ===== deal_room_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   eligibility_rule                         text NOT NULL DEFAULT 'accredited'::text
+--   approval_mode                            text NOT NULL DEFAULT 'automatic'::text
+--   sponsor_display                          text NOT NULL DEFAULT 'name'::text
+--   code_name                                text
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY deal_room_settings_pkey: (id)
+
 -- ===== deal_scores =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -611,6 +716,28 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE deal_scores_deal_id_dimension_key: (deal_id, dimension)
 --   PRIMARY KEY deal_scores_pkey: (id)
+
+-- ===== deal_signatures =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   deal_agreement_id                        uuid NOT NULL
+--   template_id                              uuid NOT NULL
+--   template_version                         integer NOT NULL
+--   rendered_text                            text NOT NULL
+--   rendered_text_sha256                     text NOT NULL
+--   user_id                                  uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   typed_name                               text NOT NULL
+--   consent                                  boolean NOT NULL
+--   signed_at                                timestamp with time zone NOT NULL
+--   ip                                       text
+--   user_agent                               text
+--   chain                                    text NOT NULL
+--   chain_seq                                bigint NOT NULL
+--   prev_signature_sha256                    text
+--   record_sha256                            text NOT NULL
+--   PRIMARY KEY deal_signatures_pkey: (id)
 
 -- ===== deal_votes =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -656,6 +783,7 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   deal_stage                               text DEFAULT 'sourced'::text
+--   publisher_entity_id                      uuid
 --   PRIMARY KEY deals_pkey: (id)
 --   UNIQUE deals_slug_key: (slug)
 
@@ -1059,6 +1187,29 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_ownership_pkey: (id)
+
+-- ===== entity_publisher_users =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   granted_by                               uuid
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   revoked_at                               timestamp with time zone
+--   revoked_by                               uuid
+--   PRIMARY KEY entity_publisher_users_pkey: (id)
+
+-- ===== entity_publishers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   is_house                                 boolean NOT NULL DEFAULT false
+--   note                                     text
+--   granted_by                               uuid
+--   granted_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   revoked_at                               timestamp with time zone
+--   revoked_by                               uuid
+--   PRIMARY KEY entity_publishers_pkey: (id)
 
 -- ===== entity_relationships =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()

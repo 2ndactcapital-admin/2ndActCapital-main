@@ -21,6 +21,9 @@ export function canWrite(envelope) {
  *   sign          eligible; `next` is the first unsigned agreement in order
  *   awaiting      every agreement signed, publisher approves
  *   granted | declined | revoked
+ * DEALROOM2: resign_required behaves like requested (sign what is no longer
+ * satisfied — the server sends signed_at only for a signature that still
+ * counts) and carries `resign: true`.
  */
 export function investorStep(envelope) {
   if (!envelope) return { step: "unavailable" };
@@ -28,11 +31,14 @@ export function investorStep(envelope) {
   const access = envelope.my_access;
   if (!access) return { step: "request" };
   const s = access.status;
-  if (s === "requested") {
+  if (s === "requested" || s === "resign_required") {
     const pending = (envelope.agreements || [])
       .filter((a) => !a.signed_at)
       .sort((a, b) => a.sort_order - b.sort_order);
-    return pending.length ? { step: "sign", next: pending[0], remaining: pending.length } : { step: "awaiting" };
+    const resign = s === "resign_required";
+    if (!pending.length) return { step: "awaiting", resign };
+    return resign ? { step: "sign", next: pending[0], remaining: pending.length, resign }
+      : { step: "sign", next: pending[0], remaining: pending.length };
   }
   if (s === "signed_awaiting") return { step: "awaiting" };
   if (s === "not_eligible") return { step: "not_eligible", missing: access.missing || [] };
@@ -94,6 +100,8 @@ export function gridActions(envelope) {
 /** Cell text for one grid row and column. */
 export function gridCell(row, col) {
   if (col.agreementKey) {
+    const d = row.agreement_detail?.[col.agreementKey];
+    if (d?.label) return d.label;
     const v = row.agreements?.[col.agreementKey];
     if (v === "n/a") return "n/a";
     return v ? v.slice(0, 10) : "—";
@@ -117,4 +125,76 @@ export function groupRows(rows) {
     else groups.push({ label: r.group, rows: [r] });
   }
   return groups;
+}
+
+// ── DEALROOM2 ──────────────────────────────────────────────────────────────
+
+/** True when a scrolling viewer has been read to its end (a 4px tolerance
+ *  for sub-pixel rounding). Takes the element's three scroll measurements. */
+export function isScrolledToEnd({ scrollTop = 0, clientHeight = 0, scrollHeight = 0 } = {}) {
+  if (!(scrollHeight > 0)) return false;
+  return scrollTop + clientHeight >= scrollHeight - 4;
+}
+
+/**
+ * Whether the Sign button is enabled. Every agreement needs consent and a
+ * typed name; an uploaded PDF (and any Exhibit A) also needs the reader to
+ * have scrolled to the last page first.
+ */
+export function signEnabled({ needsScroll = false, scrolledToEnd = false, consent = false, name = "", busy = false } = {}) {
+  if (busy || consent !== true || String(name).trim().length < 2) return false;
+  return needsScroll ? scrolledToEnd === true : true;
+}
+
+/** The hash the Sign request carries: the PDF's for an upload, the text's
+ *  for a template agreement. */
+export function signPayload(doc, { name, consent }) {
+  const base = { typed_name: name, consent };
+  return doc?.kind === "upload" ? { ...base, file_sha256: doc.file_sha256 }
+    : { ...base, rendered_text_sha256: doc?.rendered_text_sha256 };
+}
+
+/** Page image URLs for the in-app viewer (document pages, then Exhibit A). */
+export function viewerPages(dealId, doc) {
+  const out = [];
+  const base = `/api/deal-room/deals/${dealId}/agreements/${doc?.id}/pages`;
+  if (doc?.kind === "upload") {
+    for (let i = 1; i <= (doc.page_count || 0); i += 1) out.push({ src: `${base}/${i}?part=document`, label: `Page ${i}` });
+  }
+  for (let i = 1; i <= (doc?.exhibit?.page_count || 0); i += 1) {
+    out.push({ src: `${base}/${i}?part=exhibit`, label: `Exhibit A — page ${i}` });
+  }
+  return out;
+}
+
+/** A signed agreement line for the investor (room panel and My deal access). */
+export function signatureLine(a) {
+  if (a.covered_by_master) return `${a.title} — covered by your master NDA signed ${String(a.signed_at).slice(0, 10)}`;
+  const v = a.signed_version ?? a.version;
+  return `${a.title}${v ? ` (v${v})` : ""} — signed ${String(a.signed_at).slice(0, 10)}`;
+}
+
+/** Manager controls for one agreement: what the server lets them do. */
+export function agreementControls(envelope, a) {
+  if (!canWrite(envelope)) return [];
+  const out = [];
+  if (a.status === "draft") out.push("publish");
+  if (a.status === "published" && !a.virtual) {
+    out.push(a.kind === "upload" ? "replace_file" : "new_version");
+    if (!a.is_master) out.push("make_master");
+  }
+  return out;
+}
+
+
+/** Library row controls: none unless the envelope says can_write === true,
+ *  then exactly the row's own server flags. */
+export function libraryActions(envelope, row) {
+  if (!canWrite(envelope) || !row) return [];
+  const out = [];
+  if (row.can_copy === true) out.push("copy");
+  if (row.can_edit === true) out.push("edit");
+  if (row.can_publish === true) out.push("publish");
+  if (row.can_add_version === true) out.push("add_version");
+  return out;
 }

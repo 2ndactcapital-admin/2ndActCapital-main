@@ -203,7 +203,7 @@ def gates(module, src: str) -> dict:
         g["self_read_org"] = True
     # DEALROOM1 — routers.deal_room's scope gates (services.deal_room.deal_rights).
     if re.search(r"_require_deal_(manager|viewer)\(|_require_grid_scope\(|_require_publisher_or_staff\("
-                 r"|_require_signature_reader\(", src):
+                 r"|_require_signature_reader\(|_require_publisher_manager\(", src):
         g["deal_room"] = True
     if g["rbac"] and "get_user_id(request)" in src:
         g["phantom"] = True

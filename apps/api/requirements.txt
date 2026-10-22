@@ -40,3 +40,10 @@ psutil>=5.9
 # network blocked). PINNED: its table classifiers change between releases.
 # License: MIT.
 edgartools==5.59.1
+# DEALROOM2 — the signed-copy PDF and its certificate page. Both are pure
+# Python (py3-none-any wheels; Render has no system PDF libraries): reportlab
+# draws the text pages + certificate, pypdf appends an uploaded agreement's own
+# pages. Page images for the agreement viewer use pypdfium2, already present
+# as pdfplumber's dependency. Pillow (reportlab's dependency) is already here.
+reportlab==4.4.4
+pypdf==6.1.1

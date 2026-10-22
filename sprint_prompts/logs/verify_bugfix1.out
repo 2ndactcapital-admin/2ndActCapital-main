@@ -1,0 +1,196 @@
+[INFO] database via DATABASE_URL (doppler/env)
+[INFO] connected as app_service (rolbypassrls=False)
+
+── [Y] Task 1 — findings 1a–1f reported, each with its file and query ──
+[PASS] 1a reported in docs/BUGFIX1_DISCOVERY.md with its file and query  — needs ('routers/spv.py', 'Math.min(100', 'spv_status_history')
+[PASS] 1b reported in docs/BUGFIX1_DISCOVERY.md with its file and query  — needs ('deal_status', 'deal_stage', 'deal_stages')
+[PASS] 1c reported in docs/BUGFIX1_DISCOVERY.md with its file and query  — needs ('deal_documents', 'entity_documents', 'spv_documents')
+[PASS] 1d reported in docs/BUGFIX1_DISCOVERY.md with its file and query  — needs ('entity_ownership', 'entity_relationships', 'entity_tax_ids')
+[PASS] 1e reported in docs/BUGFIX1_DISCOVERY.md with its file and query  — needs ('services/edgar_bulk.py', 'peek_range_ignored', 'e3fde9c0')
+[PASS] 1f reported in docs/BUGFIX1_DISCOVERY.md with its file and query  — needs ('fee-schedules',)
+[FIND] 1e: run e3fde9c0 — every peek came back 200 (Range ignored), so no peek decision ran  — peek_range_ignored=1071, peek_skipped=0, sec_requests=3222
+
+── [Y] SPV-01 — one committed / % of target function on all three surfaces (134%) ──
+[PASS] BEFORE: the list endpoint's SELECT had no committed column (card read undefined → $0 / 0%)
+[PASS] BEFORE: the cap table's Math.min(100, …) showed 100% for $1,340,000 of $1,000,000  — 1340000.0 → 100%
+[PASS] BEFORE: the cap-table component capped the percentage at 100
+[PASS] AFTER: SPV list card → $1,340,000 / 134%  — {"total_committed": 1340000.0, "soft_committed": 1340000.0, "hard_committed": 0.0, "soft_count": 2, "hard_count": 0, "target_raise": 1000000.0, "pct_of_target": 134, "over_target": true, "labels": {"soft": "Soft (indicated)", "hard": "Hard (signed or funded)", "over_target": "over target"}}
+[PASS] AFTER: cap table → 134% with over_target  — {"total_committed": 1340000.0, "soft_committed": 1340000.0, "hard_committed": 0.0, "soft_count": 2, "hard_count": 0, "target_raise": 1000000.0, "pct_of_target": 134, "over_target": true, "labels": {"soft": "Soft (indicated)", "hard": "Hard (signed or funded)", "over_target": "over target"}}
+[PASS] AFTER: dashboard SPV card → 134%  — {"total_committed": 1340000.0, "soft_committed": 1340000.0, "hard_committed": 0.0, "soft_count": 2, "hard_count": 0, "target_raise": 1000000.0, "pct_of_target": 134, "over_target": true, "labels": {"soft": "Soft (indicated)", "hard": "Hard (signed or funded)", "over_target": "over target"}}
+[PASS] the three surfaces carry the IDENTICAL summary (one function, soft/hard labels included)
+[PASS] soft vs hard split and labelled the same everywhere
+[PASS] a member sees the same 134% on the list card
+[PASS] the member is still refused the cap table (manage_deals)  — HTTP 403
+
+── [Y] DASH-03 — one line per SPV, its current state ──
+[PASS] BEFORE: the old event query lists the fixture SPV twice (created + opened)
+[PASS] AFTER: one line, current state 'open'  — [{"spv_id": "99000000-0000-0000-0000-0000000bf140", "spv_name": "BF1 SPV", "status": "open", "changed_at": "2026-10-21T23:06:43.164611+00:00", "commitment": {"total_committed": 1340000.0, "soft_committed": 1340000.0, "hard_committed": 0.0, "soft_count": 2, "hard_count": 0, "target_raise": 1000000.0, "pct_of_target": 134, "over_target": true, "labels": {"soft": "Soft (indicated)", "hard": "Hard (si
+[PASS] no SPV appears twice on the card  — ['99000000-0000-0000-0000-0000000bf140', '99000000-0000-0000-0000-0000000bf141']
+[PASS] soft subscriptions counted from the same summaries (2)  — 2
+
+── [Y] MKT-01 / DASH-01 — one lifecycle: badge, Stage column, summary, dashboard agree ──
+[PASS] BEFORE: the old summary query puts every fixture deal (six states) in ONE 'sourced' bucket  — [{"stage": "sourced", "n": 8}]
+[PASS] badge / Stage column: every fixture deal's stage_label is its config label  — {"draft": "Sourced", "submitted": "Submitted", "under_review": "Under Review", "active": "Active", "closed": "Closed", "archived": "Archived"}
+[PASS] Marketplace summary: one row per lifecycle state, counts equal direct SQL  — [{"status": "draft", "stage": "deal_stage_1", "label": "Sourced", "order": 1, "count": 2}, {"status": "submitted", "stage": "deal_stage_2", "label": "Submitted", "order": 2, "count": 1}, {"status": "under_review", "stage": "deal_stage_3", "label": "Under Review", "order": 3, "count": 2}, {"status": "active", "stage": "deal_stage_4", "label": "Active", "order": 4, "count": 1}, {"status": "closed", 
+[PASS] summary labels and order come from the deal_stages config
+[PASS] dashboard snapshot == Marketplace summary (same function)
+[PASS] a member's summary covers only the statuses a member may see  — [{"status": "under_review", "stage": "deal_stage_3", "label": "Under Review", "order": 3, "count": 2}, {"status": "active", "stage": "deal_stage_4", "label": "Active", "order": 4, "count": 1}]
+[PASS] Stage filter deal_stage_4 returns the Active deal and not the draft
+
+── [Y] Real deals — lifecycle mirror repaired (each reported, bi-temporal) ──
+[PASS] every real live deal's deal_stage now names its status's config key (re-read)  — 0 restated, 0 left
+[PASS] each restatement left a closed system-axis version (id kept on the live row)  — 0/0
+[PASS] the repair never changed a deal_status (each deal vs its own version)  — 9 restated; moved: []
+
+── [Y] MKT-03 / R2-MKT-05 — submit validation, archive confirmation, un-archive ──
+[PASS] Submit refuses a deal missing a required field, naming it  — HTTP 422 {"detail": {"message": "Before submitting for review, complete: Asset class, Target raise, Minimum investment.", "missing_fields": [{"field": "asset_super_class", "label": "Asset class"}, {"field": "target_raise", "label": "Target raise"}, {"field": "minimum_investment", "label": "Minimum investment"}]}}
+[PASS] …and the deal stays a draft (re-read)  — draft
+[PASS] Submit without confirm=true is refused (428)  — HTTP 428
+[PASS] Archive without confirmation is refused and changes nothing  — HTTP 428; under_review->under_review
+[PASS] confirmed Archive archives (re-read)  — HTTP 200 archived
+[PASS] the lifecycle envelope offers Un-archive back to the prior stage  — {"deal_id": "99000000-0000-0000-0000-0000000bf138", "status": "archived", "label": "Archived", "stages": [{"status": "draft", "key": "deal_stage_1", "label": "Sourced", "order": 1}, {"status": "submitted", "key": "deal_stage_2", "label": "Submitted", "order": 2}, {"status": "under_review", "key": "deal_stage_3", "label": "Under Review", "order": 3}, {"status": "active", "key": "deal_stage_4", "lab
+[PASS] a member is refused Un-archive (manage_deals, same as Archive)  — HTTP 403
+[PASS] Un-archive restores the prior stage, mirror included (re-read)  — HTTP 200 {'deal_status': 'under_review', 'deal_stage': 'deal_stage_3'}
+[PASS] the un-archive is audited (status_change, unarchive=true, from archived)  — {"from": "archived", "unarchive": true, "version_id": "42f44428-1fb5-4399-8a38-8754ccb56604", "deal_status": "under_review"}
+[PASS] archive and un-archive each left a bi-temporal version (newest: archived, then under_review)  — ['archived', 'under_review']
+[PASS] the generic edit can no longer jump the lifecycle (deal_status refused)  — HTTP 400
+
+── [Y] TEST-Submit Test — restored through the Un-archive endpoint ──
+[INFO] TEST-Submit Test before: submitted
+[INFO] TEST-Submit Test after: submitted
+[PASS] TEST-Submit Test is back at 'submitted' (independent re-read)  — HTTP 200 {"note": "already restored by an earlier run"}
+
+── [Y] MKT-04 / VOTE-01 — member names; vote withdraw by its owner only ──
+[PASS] BEFORE: the Pipeline tab printed a truncated user id
+[PASS] AFTER: the member's name is returned  — {"id": "62017da7-2a7a-446d-b65c-7d1f1703526d", "deal_id": "99000000-0000-0000-0000-0000000bf133", "user_id": "99000000-0000-0000-0000-0000000bf113", "org_id": "99000000-0000-0000-0000-0000000bf101", "stage": "investment_stage_1", "notes": null, "invested_amount": null, "member_name": "BUGFIX1 Member", "created_at": "2026-10-21T23:06:43.164611Z", "updated_at": "2026-10-21T23:06:43.164611Z"}
+[PASS] a member is still refused the member-investment list  — HTTP 403
+[PASS] the owner withdraws their vote; the other member's vote stays (re-read)  — HTTP 200 {UUID('99000000-0000-0000-0000-0000000bf114')}
+[PASS] withdrawing again: 404 (no vote of theirs) — never someone else's  — HTTP 404
+[PASS] the other member's vote is untouched  — {UUID('99000000-0000-0000-0000-0000000bf114')}
+[PASS] another org's member cannot reach the deal (404)  — HTTP 404
+
+── [Y] R2-DOC-03 — search covers deal / entity / SPV attachments under each record's rule ──
+[PASS] BEFORE: the vault-only query finds none of the six org-A attachments  — 0
+[PASS] member finds the deal, entity and SPV attachment by name  — ['99000000-0000-0000-0000-0000000bf150', '99000000-0000-0000-0000-0000000bf153', '99000000-0000-0000-0000-0000000bf156']
+[PASS] each labelled with its source (Deal / Entity / SPV)
+[PASS] each links to the record it lives on
+[PASS] member never sees a draft deal's, another entity's, a restricted entity's, a restricted SPV's or another org's attachment  — set()
+[PASS] member's set equals the same predicates run directly in SQL  — 3
+[PASS] member finds the deal attachment by its extracted text  — {"99000000-0000-0000-0000-0000000bf150": {"document_id": "99000000-0000-0000-0000-0000000bf150", "source": "deal", "source_label": "Deal", "parent_id": "99000000-0000-0000-0000-0000000bf133", "parent_name": "BF1 Deal active", "href": "/marketplace/99000000-0000-0000-0000-0000000bf133?tab=documents", "original_filename": "bf1tok7q-deal.txt", "status": "approved", "doc_family": "memo", "mime_type": 
+[FIND] entity_documents and spv_documents have no extracted-text column and no extraction runs on them  — they are searchable by name and category only; text search covers deal_documents.extracted_data
+[PASS] staff sees every assigned record's attachment incl. the draft deal's; not the restricted one  — ['99000000-0000-0000-0000-0000000bf150', '99000000-0000-0000-0000-0000000bf151', '99000000-0000-0000-0000-0000000bf153', '99000000-0000-0000-0000-0000000bf155', '99000000-0000-0000-0000-0000000bf156']
+[PASS] identical request: member's set is a strict subset of staff's
+[PASS] the other org sees only its own attachment  — ['99000000-0000-0000-0000-0000000bf152']
+[PASS] semantic search lists the caller's unembedded matches as 'not yet indexed for meaning search'  — {"query": "bf1tok7q", "count": 0, "results": [], "not_indexed": [{"document_id": "99000000-0000-0000-0000-0000000bf150", "source": "deal", "source_label": "Deal", "parent_id": "99000000-0000-0000-0000-0000000bf133", "parent_name": "BF1 Deal active", "href": "/marketplace/99000000-0000-0000-0000-0000000bf133?tab=documents", "original_filename": "bf1tok7q-deal.txt", "status": "approved", "doc_family
+
+── [Y] Dead links — hidden from every menu, 'Coming soon' at their URLs; /fee-schedules resolved ──
+[PASS] node --test tests/bugfix1 passes
+[PASS] node test: DEAD-LINKS: comingSoon items are absent from every persona's menu; the page says Coming soon
+[PASS] /community renders the Coming soon page (was 404)
+[PASS] /insurance renders the Coming soon page (was 404)
+[PASS] /portfolio-reporting renders the Coming soon page (was 404)
+[PASS] /fee-schedules routes to its only page, the fee schedule assistant
+[PASS] the feature flag lives in the ONE menu definition
+
+── [Y] CRM-02 — the Ownership tab shows what the Overview shows ──
+[PASS] BEFORE: the tab's table (entity_relationships) holds nothing for the fixture
+[PASS] Overview, Ownership tab list and tree all show Mine 40% + Trust 60%  — [('99000000-0000-0000-0000-0000000bf120', 40.0), ('99000000-0000-0000-0000-0000000bf124', 60.0)] | [('99000000-0000-0000-0000-0000000bf120', 40.0), ('99000000-0000-0000-0000-0000000bf124', 60.0)] | [('99000000-0000-0000-0000-0000000bf120', 40.0), ('99000000-0000-0000-0000-0000000bf124', 60.0)]
+[PASS] rows from the other table are shown read-only (no edit control the endpoint cannot honour)
+
+── [Y] CRM-04 — duplicate current tax IDs ──
+[PASS] a second identical tax ID is refused (409); one row  — 201/409, rows 1
+[PASS] no entity has two identical current tax-ID rows (re-read)  — 0 closed
+[PASS] James Hargrove: one current SSN row; the duplicate is closed, not deleted  — {"cur": 1, "tot": 2}
+
+── [Y] PORT-01 / PORT-02 ──
+[PASS] BEFORE condition reproduced: holdings empty while the member has an investment
+[PASS] AFTER: the empty grid explains why and links to the investments  — {"message": "Holdings appear here once account data is imported from the custodian.", "href": "/portfolio", "href_label": "View your investments", "investment_count": 1}
+[PASS] the Securities grid carries the same hint
+[PASS] no hint when there are holdings
+[PASS] member: only the commitment on their own entity  — {'99000000-0000-0000-0000-0000000bf163'}
+[PASS] staff: both assigned entities' commitments
+[PASS] other org: none of these
+[PASS] a role-less user is refused (view_portfolio)  — HTTP 403
+[PASS] row: name, fund, commitment, called, remaining  — {"id": "99000000-0000-0000-0000-0000000bf163", "name": "BF1 Mine", "owner_entity_id": "99000000-0000-0000-0000-0000000bf120", "fund": "BF1 Fund III", "asset_id": "99000000-0000-0000-0000-0000000bf160", "commitment": "1000000", "called": "250000", "remaining": "750000", "vintage_year": null, "href": "/portfolio/commitments/99000000-0000-0000-0000-0000000bf163"}
+
+── [Y] EDGAR — the peek decides BEFORE the full download (mocked SEC and R2) ──
+[PASS] a preliminary (206) is recorded with its kind, ONE peek request, no full GET, no store  — {'status': 'not_pricing_supplement', 'document_kind': 'preliminary_pricing_supplement', 'peek_skipped': True}; doc GETs 1
+[PASS] a preliminary (200 (Range ignored)) is recorded with its kind, ONE peek request, no full GET, no store  — {'status': 'not_pricing_supplement', 'document_kind': 'preliminary_pricing_supplement', 'peek_skipped': True}; doc GETs 1
+[PASS] a Range-ignored preliminary costs the peek's bytes, not the document  — 154361
+[PASS] a final (206) continues to the full fetch and store
+[PASS] a final (200) continues to the full fetch and store
+[PASS] a 200 final is read to the end in place (no second document GET)  — 1
+[PASS] a preliminary whose cover the peek cannot read is caught on its full text and NOT stored
+[PASS] nothing was written to R2
+[PASS] only the mocked SEC was addressed  — [{'url': 'https://www.sec.gov/Archives/edgar/data/99001/000990000126000001/index.json', 'range': None}]
+
+── [Y] EDGAR — preliminary R2 cleanup: dry run reports, changes nothing ──
+[PASS] dry run: count and bytes reported, reference_filings unchanged  — 910 filings, 1820 objects, 34468879 bytes
+[PASS] --apply (mocked deleter): both objects deleted, then both keys cleared
+
+── [Y] EDGAR — Institutions table header; laptop worker default ──
+[PASS] the worker default command uses apps/api/venv/bin/python  — cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- apps/api/venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --worker --target laptop
+[PASS] node test: the Institutions table renders a header row (Institution, Entities, years, Total)
+
+── [Y] DASH-02 / R2-ASSIST-03 / FIRM-01 ──
+[PASS] each to-do carries the link where it is resolved  — {"Complete profile: BF1 Stub": "/crm?q=BF1%20Stub", "Complete profile: BF1 Mine": "/crm/99000000-0000-0000-0000-0000000bf120"}
+[PASS] GET /dashboard/todos publishes the same href
+[PASS] a stored transcript shows no tool narration, no italic system line, no disclosures  — ['There are 4 deals.']
+[PASS] narration lines are stripped server-side
+[PASS] the reply is the final answer; the narration is kept, internal  — "You have 2 deals."
+[PASS] BEFORE: /firm-search hard-coded Hollisworks; AFTER: the host's brand
+[PASS] a tenant host (the 2nd Act site) reads its own org branding; only the marketing apex uses the platform's
+[PASS] on the 2nd Act host the tenant resolves to 2nd Act, whose brand.name is used  — 2nd Act Capital
+
+── [Y] Every changed endpoint keeps its gate — identical request, three callers ──
+[PASS] no existing route's gate changed (AUTHZ1_ROUTES.json before vs now)  — []
+[PASS] the four new routes each carry a gate  — [((('DELETE',), '/api/v1/deals/{deal_id}/vote'), 'authz vote_deal'), ((('GET',), '/api/v1/deals/{deal_id}/lifecycle'), 'none beyond auth'), ((('GET',), '/api/v1/portfolio/commitments'), 'authz view_portfolio'), ((('POST',), '/api/v1/deals/{deal_id}/unarchive'), 'authz manage_deals')]
+[PASS] authz1_routes.py --check: the route doc is current  — CURRENT
+
+[PASS] GET /api/v1/spvs/99000000-0000-0000-0000-0000000bf140/captable: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 403, 'super': 200}
+[PASS] GET /api/v1/deals/stage-summary: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 200, 'super': 200}
+[PASS] GET /api/v1/deals/99000000-0000-0000-0000-0000000bf133/member-investments: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 403, 'super': 200}
+[PASS] GET /api/v1/deals/99000000-0000-0000-0000-0000000bf130/lifecycle: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 404, 'super': 200}
+[PASS] POST /api/v1/deals/99000000-0000-0000-0000-0000000bf133/unarchive: org admin / member / super admin as gated  — {'orgadmin': 400, 'member': 403, 'super': 400}
+[PASS] GET /api/v1/portfolio/commitments: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 200, 'super': 200}
+[PASS] GET /api/v1/document-search: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 200, 'super': 200}
+[PASS] GET /api/v1/dashboard/todos: org admin / member / super admin as gated  — {'orgadmin': 200, 'member': 200, 'super': 200}
+
+── [Y] Front end — node tests; npm run build ──
+[PASS] node --test tests/ passes (0 fail)
+[PASS] npm run build exits 0
+
+── [Y] Teardown — zero fixture rows; every touched table at its pre-test count ──
+[INFO] teardown removed: ['portfolio.commitments: 2', 'portfolio.positions: 2', 'portfolio.assets: 1', 'public.deal_votes: 1', 'public.delegate_grants: 1', 'public.member_investments: 2', 'public.staff_assignments: 5', 'public.user_roles: 7', 'public.users: 8', 'public.deal_documents: 3', 'public.spv_documents: 2', 'public.spv_status_history: 2', 'public.spv_subscriptions: 2', 'public.spvs: 2', 'public.deals: 20', 'public.entity_documents: 3', 'public.entity_ownership: 2', 'public.entity_tax_ids: 1', 'public.entities: 6', 'public.role_permissions: 96', 'public.roles: 6', 'public.org_ai_spend_cache: 2', 'public.organizations: 2']
+[PASS] zero fixture rows remain  — 0
+[PASS] public.users at its pre-test count  — 16 → 16
+[PASS] public.organizations at its pre-test count  — 2 → 2
+[PASS] public.deals at its pre-test count  — 19 → 19
+[PASS] public.audit_log at its pre-test count  — 111 → 111
+[PASS] public.entity_tax_ids at its pre-test count  — 3 → 3
+[PASS] public.config at its pre-test count  — 296 → 296
+[PASS] public.member_todos at its pre-test count  — 9 → 9
+[PASS] public.deal_votes at its pre-test count  — 3 → 3
+[PASS] public.member_investments at its pre-test count  — 1 → 1
+[PASS] public.spvs at its pre-test count  — 2 → 2
+[PASS] public.spv_subscriptions at its pre-test count  — 3 → 3
+[PASS] public.spv_documents at its pre-test count  — 3 → 3
+[PASS] public.deal_documents at its pre-test count  — 1 → 1
+[PASS] public.entity_documents at its pre-test count  — 1 → 1
+[PASS] public.entities at its pre-test count  — 37 → 37
+[PASS] public.entity_ownership at its pre-test count  — 2 → 2
+[PASS] public.roles at its pre-test count  — 20 → 20
+[PASS] public.user_roles at its pre-test count  — 11 → 11
+[PASS] public.delegate_grants at its pre-test count  — 0 → 0
+[PASS] public.staff_assignments at its pre-test count  — 2 → 2
+[PASS] portfolio.commitments at its pre-test count  — 0 → 0
+[PASS] portfolio.positions at its pre-test count  — 0 → 0
+[PASS] portfolio.assets at its pre-test count  — 0 → 0
+[PASS] real note_gold_values unchanged (count + checksum)  — 79 rows
+
+── [Y] Regression — flat subprocesses AFTER teardown, VERIFY_NESTED=1 ──
+[PASS] verify_authz1.py: 0 FAIL  — TOTAL: 114 PASS, 0 FAIL; [] 
+[PASS] verify_navregroup.py: 0 FAIL  — TOTAL: 127 PASS, 0 FAIL; [] 
+[PASS] verify_bulkfetchui2.py: 0 FAIL  — TOTAL: 78 PASS, 0 FAIL; [] 
+
+TOTAL: 144 PASS, 0 FAIL
