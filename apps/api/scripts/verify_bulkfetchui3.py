@@ -105,6 +105,7 @@ DOWNLOADED_SET = ("fetched", "fetch_failed", "not_pricing_supplement", "prefilte
 
 GS_FINAL = "0001193125-26-410827"            # "Pricing Supplement No. 26,690 dated September 29, 2026"
 GS_PROSPECTUS_FINAL = "0001193125-26-203976"  # "Prospectus Supplement No. 23,980 dated April 30, 2026"
+GS_PRELIM = "0000950170-25-001364"           # real GS preliminary: "Subject to Completion. Dated January 3, 2025."
 GS_SAMPLES = ["0001193125-26-410827", "0001193125-26-203976", "0001193125-26-267914", "0001193125-26-230908",
               "0001193125-26-008800", "0001193125-26-138073", "0001193125-26-204373", "0000950103-26-006519",
               "0001193125-26-041209", "0001193125-26-221826"]
@@ -816,6 +817,23 @@ async def y_schedule(conn, url) -> None:
         os.environ.pop(sch.AUTO_REFRESH_ENV, None)
 
 
+PRE_BULKFETCHUI3_REF = "99dc9e1^"   # the commit before the bulkfetchui3 classifier change
+
+
+def _pre_bulkfetchui3_pipeline():
+    """services/edgar_pipeline.py as it was before bulkfetchui3, loaded as its own module."""
+    import importlib.util
+    src = subprocess.run(["git", "show", f"{PRE_BULKFETCHUI3_REF}:apps/api/services/edgar_pipeline.py"],
+                         cwd=str(API_DIR), capture_output=True, text=True, check=True).stdout
+    path = pathlib.Path(tempfile.mkdtemp()) / "edgar_pipeline_pre_bulkfetchui3.py"
+    path.write_text(src, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("edgar_pipeline_pre_bulkfetchui3", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod      # dataclasses resolve their module through sys.modules
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def y_classifier() -> None:
     section("[Y] Classifier: GS image-cover finals → pricing_supplement; existing cases unchanged; true others stay")
     from services import edgar_pipeline as p
@@ -845,15 +863,33 @@ def y_classifier() -> None:
     check(got == {k2: k2 for k2 in cases}, "every existing classifier case keeps its kind", f"{got}")
     filler = " lorem" * 900   # pushes the cover line past the 4,000-character opening
     never = {
-        "preliminary_pricing_supplement": "GS Finance Corp. notes" + filler
-            + " Subject to Completion. Pricing Supplement No. 1,234 dated May 1, 2026",
         "product_supplement": "Product Supplement No. 4-I To prospectus" + filler + " Pricing Supplement No. 1 dated May 1, 2026",
         "underlying_supplement": "Underlying Supplement No. 1-I" + filler + " Pricing Supplement No. 1 dated May 1, 2026",
         "term_sheet": "Term sheet" + filler + " Pricing Supplement No. 1 dated May 1, 2026",
     }
     got2 = {k2: p.classify_document(v)[0] for k2, v in never.items()}
     check(got2 == {k2: k2 for k2 in never},
-          "the cover-line rule never turns a preliminary / product / underlying / term sheet into a final", f"{got2}")
+          "the cover-line rule never turns a product / underlying / term sheet into a final", f"{got2}")
+    # A real GS preliminary (0000950170-25-001364): the original classifier (the commit before
+    # bulkfetchui3, pinned so a later merge cannot move it) and this one must agree on it.
+    old_p = _pre_bulkfetchui3_pipeline()
+    prelim_text = (FIXTURE_TEXTS / f"{GS_PRELIM}.txt").read_text(encoding="utf-8")
+    k_old, k_new = old_p.classify_document(prelim_text)[0], p.classify_document(prelim_text)[0]
+    check(k_old == k_new == "preliminary_pricing_supplement",
+          f"{GS_PRELIM} (real GS preliminary): original and new classifier agree → preliminary_pricing_supplement",
+          f"old {k_old} / new {k_new}")
+    # Image-cover preliminaries: no title phrase in the opening, a numbered dated cover line,
+    # and "Subject to Completion" past the opening (before or after the cover line).
+    image_prelims = {
+        "marker before cover line": "GS Finance Corp. notes" + filler
+            + " Subject to Completion. Dated May 1, 2026. Pricing Supplement No. 1,234 dated May 1, 2026",
+        "marker after cover line": "GS Finance Corp. notes" + filler
+            + " Pricing Supplement No. 1,234 dated May 1, 2026 ... Subject to Completion",
+    }
+    got3 = {k2: (p.classify_document(v)[0], p.decide_status(v)[0]) for k2, v in image_prelims.items()}
+    check(all(k3 != "pricing_supplement" and st != "ready_for_extraction" for k3, st in got3.values()),
+          "an image-cover preliminary ('Subject to Completion' in the text, no title phrase) never becomes a final",
+          f"{got3}")
     far = "GS Finance Corp. notes" + " lorem" * 2500 + " Pricing Supplement No. 1 dated May 1, 2026"
     check(p.classify_document(far)[0] == "other", "a cover line beyond 12,000 characters does not count")
 

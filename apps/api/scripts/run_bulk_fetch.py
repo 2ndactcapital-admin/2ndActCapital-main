@@ -129,7 +129,6 @@ async def main(argv: list[str]) -> int:
     from services import edgar_fetch, edgar_pipeline
 
     import asyncpg
-    import httpx
 
     url = await _database_url()
     if not url:
@@ -143,15 +142,23 @@ async def main(argv: list[str]) -> int:
     conc = max(1, args.concurrency)
     pool = await asyncpg.create_pool(url, statement_cache_size=0, min_size=1, max_size=conc + 3)
     log = edgar_pipeline.RequestLog()
-    client = httpx.AsyncClient(timeout=edgar_fetch.REQUEST_TIMEOUT, follow_redirects=True,
-                               event_hooks={"request": [log]})
+    client = None   # created only by the modes that call SEC (index refresh, peek test, fetch)
+
+    def sec_client():
+        nonlocal client
+        if client is None:
+            import httpx
+            client = httpx.AsyncClient(timeout=edgar_fetch.REQUEST_TIMEOUT, follow_redirects=True,
+                                       event_hooks={"request": [log]})
+        return client
+
     try:
         async with pool.acquire() as conn:
             if args.refresh_index:
                 if not args.dry_run:
                     edgar_fetch.user_agent()
                     edgar_fetch.set_rate_limit(eb.check_rate(args.max_rps, args.allow_above_8))
-                await eb.refresh_index(conn, client, through=args.date_to, dry_run=args.dry_run)
+                await eb.refresh_index(conn, sec_client(), through=args.date_to, dry_run=args.dry_run)
                 return 0
             if args.reprocess_fetched:
                 await eb.reprocess_fetched(conn, bucket=edgar_pipeline.r2_bucket(), dry_run=args.dry_run)
@@ -187,7 +194,7 @@ async def main(argv: list[str]) -> int:
             if args.peek_test is not None:
                 edgar_fetch.user_agent()
                 edgar_fetch.set_rate_limit(rate)
-                await eb.peek_test(conn, scope, args.peek_test, client)
+                await eb.peek_test(conn, scope, args.peek_test, sec_client())
                 return 0
         edgar_fetch.user_agent()   # loud failure before any claim if the User-Agent is missing
         opts = eb.RunOptions(
@@ -210,20 +217,21 @@ async def main(argv: list[str]) -> int:
                 loop.add_signal_handler(sig, _on_signal)
             except (NotImplementedError, RuntimeError):
                 pass
-        runner = eb.Runner(pool, opts, client=client, stop_event=stop)
+        runner = eb.Runner(pool, opts, client=sec_client(), stop_event=stop)
         stats = await runner.run()
         return 0 if stats.stop_reason is None or stop.is_set() else 1
     except eb.BulkUsageError as exc:
         print(f"ERROR: {exc}")
         return 2
     finally:
-        await client.aclose()
+        if client is not None:
+            await client.aclose()
         await pool.close()
 
 
 async def _reclassify_other(url: str, args) -> int:
-    """--reclassify-other: stored text only. No httpx client is created on
-    this path at all, so it cannot make an SEC request."""
+    """--reclassify-other: stored text only. No HTTP client is created or
+    passed on this path at all, so it cannot make an SEC request."""
     from services import edgar_bulk as eb
     from services import edgar_pipeline
 
