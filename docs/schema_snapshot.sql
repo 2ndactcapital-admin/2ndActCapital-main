@@ -163,7 +163,37 @@
 --   source_path                              text
 --   source_sha256                            text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   based_on_id                              uuid
+--   created_by                               uuid
+--   published_at                             timestamp with time zone
+--   published_by                             uuid
 --   PRIMARY KEY agreement_templates_pkey: (id)
+
+-- ===== agreement_versions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   deal_agreement_id                        uuid NOT NULL
+--   version                                  integer NOT NULL
+--   kind                                     text NOT NULL
+--   title                                    text NOT NULL
+--   template_id                              uuid
+--   template_key                             text
+--   template_version                         integer
+--   template_status                          text
+--   body                                     text
+--   fields                                   jsonb
+--   field_values                             jsonb NOT NULL DEFAULT '{}'::jsonb
+--   exhibit_document_id                      uuid
+--   exhibit_sha256                           text
+--   document_id                              uuid
+--   file_name                                text
+--   file_sha256                              text
+--   page_count                               integer
+--   resign_policy                            text NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY agreement_versions_pkey: (id)
 
 -- ===== ai_decision_log =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -566,13 +596,15 @@
 --   created_by                               uuid
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
+--   prior_level                              text
+--   resign_after                             timestamp with time zone
 --   PRIMARY KEY deal_access_pkey: (id)
 
 -- ===== deal_agreements =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
---   template_id                              uuid NOT NULL
+--   template_id                              uuid
 --   sort_order                               integer NOT NULL
 --   field_values                             jsonb NOT NULL DEFAULT '{}'::jsonb
 --   exhibit_document_id                      uuid
@@ -584,6 +616,10 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   history_of                               uuid
+--   kind                                     text NOT NULL DEFAULT 'template'::text
+--   title                                    text
+--   document_id                              uuid
+--   file_sha256                              text
 --   PRIMARY KEY deal_agreements_pkey: (id)
 
 -- ===== deal_ai_summaries =====
@@ -686,6 +722,27 @@
 --   UNIQUE deal_interest_deal_id_user_id_key: (deal_id, user_id)
 --   PRIMARY KEY deal_interest_pkey: (id)
 
+-- ===== deal_master_nda_deals =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   master_id                                uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY deal_master_nda_deals_pkey: (id)
+
+-- ===== deal_master_ndas =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   publisher_entity_id                      uuid NOT NULL
+--   deal_agreement_id                        uuid NOT NULL
+--   scope                                    text NOT NULL
+--   accepted_min_version                     integer
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   revoked_at                               timestamp with time zone
+--   revoked_by                               uuid
+--   PRIMARY KEY deal_master_ndas_pkey: (id)
+
 -- ===== deal_room_settings =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -722,8 +779,8 @@
 --   org_id                                   uuid NOT NULL
 --   deal_id                                  uuid NOT NULL
 --   deal_agreement_id                        uuid NOT NULL
---   template_id                              uuid NOT NULL
---   template_version                         integer NOT NULL
+--   template_id                              uuid
+--   template_version                         integer
 --   rendered_text                            text NOT NULL
 --   rendered_text_sha256                     text NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -737,6 +794,9 @@
 --   chain_seq                                bigint NOT NULL
 --   prev_signature_sha256                    text
 --   record_sha256                            text NOT NULL
+--   agreement_version_id                     uuid
+--   document_sha256                          text
+--   record_version                           smallint NOT NULL DEFAULT 1
 --   PRIMARY KEY deal_signatures_pkey: (id)
 
 -- ===== deal_votes =====
