@@ -1,0 +1,93 @@
+424B2 1 gs-20260611.htm 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-284538
+GS Finance Corp.
+$419,000
+Autocallable Contingent Coupon Equity-Linked Notes due 2029
+guaranteed by
+The Goldman Sachs Group, Inc.
+If the closing price of any of the common stock of Broadcom Inc., a Class A subordinate voting share of Shopify Inc. or the common stock of Western Digital Corporation on any observation date is less than 50% of its initial price, you will not receive a coupon on the applicable payment date. The amount that you will be paid on your notes is based on the performances of the index stocks. The notes will mature on the stated maturity date (June 14, 2029), unless automatically called on any observation date, commencing in June 2027 to and including May 2029. Your notes will be automatically called if the closing price of each index stock on any such observation date is greater than or equal to its initial price ($392.16 with respect to the common stock of Broadcom Inc., $110.42 with respect to a Class A subordinate voting share of Shopify Inc. and $517.72 with respect to the common stock of Western Digital Corporation (which in each case is an intra-day price or the closing price of one share of such index stock on the trade date (June 9, 2026))). If your notes are automatically called, you will receive a payment on the next payment date (the third business day after the relevant observation date) equal to the face amount of your notes plus a coupon (as described below).
+Observation dates are the 9th day of each month, commencing in July 2026 and ending in June 2029. If on any observation date the closing price of each index stock is greater than or equal to 50% of its initial price, you will receive on the applicable payment date a coupon for each $1,000 face amount of your notes equal to (i) the product of $18.584 (1.8584% monthly, or the potential for up to approximately 22.3% per annum) times the number of observation dates that have occurred up to and including the relevant observation date minus (ii) the sum of all coupons previously paid, if any.
+If your notes have not been automatically called, your payment on the stated maturity date will depend on whether a trigger event has occurred. A trigger event will occur if the closing price of all of the index stocks are less than their respective initial price on the determination date (the final observation date, June 11, 2029).
+If a trigger event has not occurred, at maturity you will receive the face amount of your notes. Accordingly, if the closing price of any index stock on the determination date (its final price) is greater than its initial price, you will receive the face amount of your notes, regardless of the performance of the other index stocks. In addition, if the closing price of each index stock on the determination date is greater than or equal to 50% of its initial price, you will also receive the final coupon.
+If a trigger event has occurred, at maturity you will receive an amount based on the performance of the index stock with the lowest index stock return (the percentage increase or decrease in the closing price of such index stock on the determination date from its initial price). This amount will not exceed the face amount of your notes and could be significantly less than the face amount of your notes. If the closing price of each index stock on the determination date is greater than or equal to 50% of its initial price, you will also receive the final coupon.
+At maturity, for each $1,000 face amount of your notes, you will receive an amount in cash equal to:
+•
+if a trigger event has not occurred, $1,000, plus the final coupon if the final price of each index stock is greater than or equal to 50% of its initial price; or
+•
+if a trigger event has occurred, either:
+o
+if the final price of each index stock is greater than or equal to 50% of its initial price, $1,000 plus a coupon calculated as described above; or
+o
+if the final price of any index stock is less than 50% of its initial price, the sum of (i) $1,000 plus (ii) the product of (a) the lesser performing index stock return times (b) $1,000. You will receive less than 50% of the face amount of your notes and no coupon.
+You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc. See page S- 20 .
+The estimated value of your notes at the time the terms of your notes are set on the trade date is equal to approximately $910 per $1,000 face amount. For a discussion of the estimated value and the price at which Goldman Sachs & Co. LLC would initially buy or sell your notes, if it makes a market in the notes, see the following page.
+Original issue date:
+June 12, 2026
+Original issue price:
+100% of the face amount
+Underwriting discount:
+1.75% of the face amount*
+Net proceeds to the issuer:
+98.25% of the face amount
+* See “Supplemental Plan of Distribution” on page S-41 for additional information regarding the fees comprising the underwriting discount.
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+Prospectus Supplement No. 25,216 dated June 9, 2026.
+The issue price, underwriting discount and net proceeds listed above relate to the notes we sell initially. We may decide to sell additional notes after the date of this prospectus supplement, at issue prices and with underwriting discounts and net proceeds that differ from the amounts set forth above. The return (whether positive or negative) on your investment in notes will depend in part on the issue price you pay for such notes.
+GS Finance Corp. may use this prospectus in the initial sale of the notes. In addition, Goldman Sachs & Co. LLC or any other affiliate of GS Finance Corp. may use this prospectus in a market-making transaction in a note after its initial sale. Unless GS Finance Corp. or its agent informs the purchaser otherwise in the confirmation of sale, this prospectus is being used in a market-making transaction.
+Estimated Value of Your Notes
+The estimated value of your notes at the time the terms of your notes are set on the trade date (as determined by reference to pricing models used by Goldman Sachs & Co. LLC (GS&Co.) and taking into account our credit spreads) is equal to approximately $910 per $1,000 face amount, which is less than the original issue price. The value of your notes at any time will reflect many factors and cannot be predicted; however, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would initially buy or sell notes (if it makes a market, which it is not obligated to do) and the value that GS&Co. will initially use for account statements and otherwise is equal to approximately the estimated value of your notes at the time of pricing, plus an additional amount (initially equal to $72.5 per $1,000 face amount).
+Prior to June 14, 2027, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market, which it is not obligated to do) will equal approximately the sum of (a) the then-current estimated value of your notes (as determined by reference to GS&Co.’s pricing models) plus (b) any remaining additional amount (the additional amount will decline to zero on a straight-line basis from the time of pricing through June 13, 2027). On and after June 14, 2027, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market) will equal approximately the then-current estimated value of your notes determined by reference to such pricing models.
+About Your Prospectus
+The notes are part of the Medium-Term Notes, Series F program of GS Finance Corp. and are fully and unconditionally guaranteed by The Goldman Sachs Group, Inc. This prospectus includes this prospectus supplement and the accompanying documents listed below. This prospectus supplement constitutes a supplement to the documents listed below, does not set forth all of the terms of your notes and therefore should be read in conjunction with such documents:
+•
+Prospectus supplement dated February 14, 2025
+•
+Prospectus dated February 14, 2025
+The information in this prospectus supplement supersedes any conflicting information in the documents listed above. In addition, some of the terms or features described in the listed documents may not apply to your notes.
+We refer to the notes we are offering by this prospectus supplement as the “offered notes” or the “notes”. Each of the offered notes has the terms described below. Please note that in this prospectus supplement, references to “GS Finance Corp.”, “we”, “our” and “us” mean only GS Finance Corp. and do not include its subsidiaries or affiliates, references to “The Goldman Sachs Group, Inc.”, our parent company, mean only The Goldman Sachs Group, Inc. and do not include its subsidiaries or affiliates and references to “Goldman Sachs” mean The Goldman Sachs Group, Inc. together with its consolidated subsidiaries and affiliates, including us. The notes will be issued under the senior debt indenture, dated as of October 10, 2008, as supplemented by the First Supplemental Indenture, dated as of February 20, 2015, each among us, as issuer, The Goldman Sachs Group, Inc., as guarantor, and The Bank of New York Mellon, as trustee. This indenture, as so supplemented and as further supplemented thereafter, is referred to as the “GSFC 2008 indenture” in the accompanying prospectus supplement.
+The notes will be issued in book-entry form and represented by master note no. 3, dated March 22, 2021.
+S- 2
+Terms AND CONDITIONS
+CUSIP / ISIN: 40054RVV0 / US40054RVV04
+Company (Issuer): GS Finance Corp.
+Guarantor: The Goldman Sachs Group, Inc.
+Index stocks (each individually, an index stock): the common stock of Broadcom Inc. (current Bloomberg ticker: “AVGO UW”), a Class A subordinate voting share of Shopify Inc.(current Bloomberg ticker: “SHOP UW”) and the common stock of Western Digital Corporation (current Bloomberg ticker: “WDC UW”), as each may be replaced or adjusted from time to time as provided herein
+Face amount: $419,000 in the aggregate on the original issue date; the aggregate face amount may be increased if the company, at its sole option, decides to sell an additional amount on a date subsequent to the trade date
+Authorized denominations : $1,000 or any integral multiple of $1,000 in excess thereof
+Principal amount: Subject to redemption by the company as provided under “— Company’s redemption right (automatic call feature)” below, on the stated maturity date, in addition to the final coupon, if any, the company will pay, for each $1,000 of the outstanding face amount, an amount, if any, in cash equal to the cash settlement amount.
+Cash settlement amount :
+•
+if a trigger event has not occurred, $1,000; or
+•
+if a trigger event has occurred, either:
+o
+if the final index stock price of each index stock is greater than or equal to its trigger buffer price, $1,000; or
+o
+if the final index stock price of any index stock is less than its trigger buffer price, the sum of (i) $1,000 plus (ii) the product of (a) the lesser performing index stock return times (b) $1,000
+Company’s redemption right (automatic call feature): if a redemption event occurs, then the outstanding face amount will be automatically redeemed in whole and the company will pay, in addition to the coupon then due, an amount in cash on the following call payment date, for each $1,000 of the outstanding face amount, equal to $1,000
+Redemption event: a redemption event will occur if, as measured on any call observation date, the closing price of each index stock is greater than or equal to its initial index stock price
+Initial index stock price: $392.16 with respect to the common stock of Broadcom Inc., $110.42 with respect to a Class A subordinate voting share of Shopify Inc. and $517.72 with respect to the common stock of Western Digital Corporation. The initial index stock price of each an index stock is intra-day price or the closing price of one share of such index stock on the trade date.
+Final index stock price: with respect to an index stock, the closing price of one share of such index stock on the determination date, subject to adjustment as provided in “— Consequences of a market disruption event or a non-trading day” and “— Anti-dilution adjustments” below
+Index stock return: with respect to an index stock, the quotient of (i) its final index stock price minus its initial index stock price divided by (ii) its initial index stock price, expressed as a percentage
+Lesser performing index stock return: the index stock return of the lesser performing index stock
+Lesser performing index stock: the index stock with the lowest index stock return
+Trigger event: the final index stock price of each index stock is less than its initial index stock price
+Trigger buffer price : for each index stock, 50% of its initial index stock price
+Coupon: subject to the company’s redemption right, on each coupon payment date, for each $1,000 of the outstanding face amount, the company will pay an amount in cash equal to:
+●
+if the closing price of each index stock on the related coupon observation date is greater than or equal to its coupon trigger price, (i) the product of $18.584 (1.8584% monthly, or the potential for up to approximately 22.3% per annum) times the number of coupon observation dates that have occurred up to and including the relevant coupon observation date minus (ii) the sum of all coupons previously paid, if any; or
+●
+if the closing price of any index stock on the related coupon observation date is less than its coupon trigger price, $0
+S- 3
+The coupon paid on any coupon payment date will be paid to the person in whose name this note is registered as of the close of business on the regular record date for such coupon payment date. If the coupon is due at maturity but on a day that is not a coupon payment date, the coupon will be paid to the person entitled to receive the principal of this note.
+Coupon trigger price: for each index stock, 50% of its initial index stock price
+Trade date: June 9, 2026
+Original issue date: June 12, 2026
+Determination date: the last coupon observation date, June 11, 2029, subject to adjustment as described under “— Coupon observation dates” below.
+Stated maturity date: June 14, 2029, unless that day is not a business day, in which case the stated maturity date will be postponed to the next following business day. The stated maturity date will also be postponed if the determination date is postponed as described under “— Determination date” above. In such a case, the stated maturity date will be postponed by the same number of business day(s) from but excluding the originally scheduled determination date to and including the actual determination date.
+Call observation dates: each coupon observation date, commencing in June 2027 and ending in May 2029, subject to adjustment as described under “ — Coupon observation dates” below
+Call payment dates: the third business day after each call observation date, subject to adjustment as provided under “— Call observation dates” above
+Coupon observation dates: the 9th day of each month, commencing in July 2026 and ending in June 2029, unless the calculation agent determines that, with respect to any index stock, a market disruption event occurs or is continuing on that day or that day is not otherwise a trading day.
+In the event the originally scheduled coupon observation

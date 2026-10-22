@@ -279,6 +279,12 @@ services:
         sync: false
       - key: EDGAR_USER_AGENT
         sync: false
+      # bulkfetchui3 — the weekday EDGAR index refresh this tick runs after
+      # 10:30 UTC (services/edgar_index_schedule.py). OPTIONAL: unset = ON.
+      # Set to 0 / false / off to stop it. It needs EDGAR_USER_AGENT (above)
+      # and DATABASE_URL; no R2.
+      - key: EDGAR_INDEX_AUTO_REFRESH
+        sync: false
       # The one workflow_invocable action today is litellm.reload_model_cost_map,
       # which is exactly the kind of thing a schedule exists to run.
       - key: LITELLM_BASE_URL

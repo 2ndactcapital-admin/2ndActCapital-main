@@ -1,0 +1,14 @@
+# The regression suite scripts/run_regressions.sh runs, one after another.
+# One apps/api/scripts/verify_*.py name per line; # starts a comment.
+# Run on the operator's schedule (weekly / before a big push), not in a sprint.
+verify_authz1.py
+verify_usermgmt1.py
+verify_navregroup.py
+verify_bugfix1.py
+verify_dealroom1.py
+verify_dealroom2.py
+verify_bulkfetch.py
+verify_bulkfetchui.py
+verify_bulkfetchui2.py
+verify_bulkfetchui3.py
+verify_edgarpipelinea.py

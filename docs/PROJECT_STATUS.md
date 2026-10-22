@@ -1,5 +1,10 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-22 (dealroom2.structural — Marketplace Deal Room Phase 2:
+Last updated: 2026-10-22 (bulkfetchui3.structural — Bulk download: sortable
+full-height Institutions table with Downloaded / Stored + Refresh, Refresh
+index in the Institutions box, weekday automatic index refresh (operator must
+deploy the cron service), GS image-cover finals classified, --reclassify-other,
+scripts/run_regressions.sh; verify WRITTEN, not yet run; see the top entry).
+Previously 2026-10-22 (dealroom2.structural — Marketplace Deal Room Phase 2:
 immutable agreement versions with keep / require-re-signing, uploaded PDF
 agreements with a page viewer, the firm template library, the master NDA, the
 signed copy as a PDF with a certificate page; schema APPLIED live; verify
@@ -322,6 +327,105 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000000000000000000000000000000000000. BULKFETCH UI 3 — Bulk download: sortable full-height Institutions table with Downloaded / Stored and Refresh; Refresh index moved into the Institutions box; a weekday automatic index refresh; GS image-cover finals no longer 'other' + a reclassify command; zero-byte downloads retried; scripts/run_regressions.sh; verify WRITTEN, not yet run (2026-10-22)
+
+Discovery: `docs/BULKFETCHUI3_DISCOVERY.md` (1a–1d, with SQL and live totals).
+
+**Bulk download tab.** `InstitutionPicker` — every header sorts (click toggles
+asc/desc, `aria-sort`, an arrow on the sorted column; numeric for counts,
+case-insensitive for names; filer sub-rows sort the same way under their
+institution; default Institution ascending). New columns **Downloaded** and
+**Stored** after Total (labels + one-line explanations from the envelope's
+`vocabularies.institution_columns`). The card fills the Institutions box (xl:
+as tall as the right-hand column, table scrolls inside with a sticky header;
+below xl: max 70vh); no `max-h-80`. Header row: Institutions, search, Select
+all, Select none, **Refresh** (re-reads with `?fresh=1`, "as of h:mm"), then —
+only when writable — **Refresh index** with "Index loaded through <date>."
+(removed from the Time frame card); it reads "Index refresh queued" / "Index
+refreshing" and is disabled while such a run is active. Counts re-read every
+60 s only while a bulk run is queued or running.
+
+**API.** `GET /admin/edgar/bulk/institutions[?fresh=1]` (same route, same super
+admin gate; `fresh=1` bypasses the 60 s cache) now returns per institution and
+per filer `downloaded` and `stored` (all years, the same scope as Total) and
+`as_of`. Downloaded = pipeline_status in fetched, fetch_failed,
+not_pricing_supplement, prefilter_skipped, ready_for_extraction (+ the later
+extraction statuses); Stored = the reference_filings row still has `r2_key` or
+`text_r2_key`. Live 2026-10-22: all institutions 21,877 downloaded / 11,667
+stored; Goldman Sachs 12,496 / 6,120; Wells Fargo 1,092 / 1,092; Jefferies
+1,217 / 602. No route added; `authz1_routes.py --check` CURRENT.
+
+**Weekday automatic index refresh** (`services/edgar_index_schedule.py`, called
+from `apps/api/workflow_scheduler_tick.py` AFTER the workflow tick — not inside
+`run_scheduler_tick`, which verify scripts call directly). Monday–Friday, the
+first tick at or after 10:30 UTC refreshes the index through yesterday and
+writes an `edgar_pipeline_runs` row (run_kind refresh_index, trigger_source
+**'schedule'**, target 'render', counts in details). Once per UTC day by a
+partial unique index on `details->>'schedule_date'`; a failure is recorded on
+the row (and the tick exits 1 so Render shows it) and holds only that day. Off
+switch: `EDGAR_INDEX_AUTO_REFRESH=0` (default on). SEC rate capped at 2/s. The
+runs table shows it as "Refresh index (Scheduled)" with no Stop / Requeue.
+Migration `apps/api/migrations/bulkfetchui3_scheduled_index_refresh.sql` —
+**APPLIED live** by the sprint (CHECK widened + the unique index).
+
+**OPEN — operator:**
+1. Deploy this commit to the Render cron service
+   `2ndactcapital-workflow-scheduler` (Manual Deploy). Whether that service is
+   actually running is NOT provable from the repo or the database (no scheduled
+   trigger has ever fired) — check its recent runs in the Render dashboard; if
+   it does not exist, create it from `render.yaml` and give it its OWN Doppler
+   sync (hollisworks / prd).
+2. Confirm `EDGAR_USER_AGENT` and `DATABASE_URL` are set on it.
+   `EDGAR_INDEX_AUTO_REFRESH` is optional (unset = on).
+3. Next weekday after 10:30 UTC, look for a "Refresh index (Scheduled)" row on
+   the Bulk download tab. None = the tick is not running.
+
+**Classifier.** Goldman Sachs finals render the cover title "Pricing
+Supplement" as an image, so the opening had no title phrase → 'other' →
+not_pricing_supplement. New rule (`edgar_pipeline._classify_cover_line`): when
+the opening has no title phrase, a `(pricing|prospectus) supplement no. <n>
+dated <Month D, YYYY>` line in the first 12,000 characters, with no preliminary
+marker in that window, makes it a `pricing_supplement`. Measured on all 3,243
+stored 'other' rows: 3,129 GS match (2,210 "Pricing Supplement No.", 919
+"Prospectus Supplement No." — the equity-linked series), 55 GS FWPs / summary
+supplements stay other, zero matches from any other issuer.
+
+**Reclassify command** (stored text only — no HTTP client on this path):
+
+    # dry run (default): counts by issuer and old→new kind, 10 example accessions
+    cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- \
+        apps/api/venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --reclassify-other
+
+    # write
+    cd /mnt/c/Users/Joe/2ndActCapital && doppler run -p hollisworks -c prd -- \
+        apps/api/venv/bin/python -u apps/api/scripts/run_bulk_fetch.py --reclassify-other --apply
+
+Optional `--issuer-cik 1419828`, `--accessions A,B`, `--from` / `--to`. Each
+changed row moves to the status the normal decision gives it (active policy
+version stamped), `status_reason 'reclassified:other→<kind>; …'`; rows with
+no stored text are listed and left alone; a second `--apply` changes nothing.
+NOT run on real rows by the sprint — the operator runs it.
+
+**Zero-byte downloads.** Before: recorded fetch_failed with `next_attempt_at
+NULL` — never retried. Now `EmptyDocumentError` → attempt_count + 1,
+`next_attempt_at = now() + 15 min`, gives up after 5 attempts; the bulk scope
+takes fetch_failed rows whose retry is due (the nightly queue already did).
+
+**Regression runner.** `scripts/run_regressions.sh` runs every script in
+`scripts/regression_set.txt` one after another (`VERIFY_NESTED=1`, 1200 s
+timeout, doppler prd, logs in `sprint_prompts/logs/regressions/<date>/`), one
+line per script and a summary; exits 1 on any failure, 2 (nothing run) if a
+laptop bulk worker is heartbeating. Policy (docs/SPRINT_WORKFLOW_STANDARD.md):
+no full regression inside a sprint verify; one directly-affected prior script
+only when shared code changes.
+
+    bash scripts/run_regressions.sh
+
+**Verify:** `apps/api/scripts/verify_bulkfetchui3.py` — WRITTEN, not run (the
+sprint does not run verifies or `npm run build`). It re-runs
+`verify_bulkfetch.py` once (shared classifier). `node --test tests/` was run in
+the sprint: 323 / 323 pass.
 
 ## 0000000000000000000000000000000000000000000000000000000. DEALROOM2 — Marketplace Deal Room Phase 2: immutable agreement versions (keep signers / require re-signing → resign_required, prior level restored), uploaded PDF agreements read page by page before Sign, the firm template library, the master NDA, the signed copy as a PDF with a certificate page; verify WRITTEN, not yet run (2026-10-22)
 

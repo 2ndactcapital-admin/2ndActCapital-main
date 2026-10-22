@@ -1,0 +1,74 @@
+424B2 1 woaat048_prelim.htm 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-269296
+The information in this preliminary pricing supplement is not complete and may be changed. This preliminary pricing supplement is not an offer to sell nor does it seek an offer to buy these securities in any jurisdiction where the offer or sale is not permitted.
+Subject to Completion. Dated January 3, 2025.
+GS Finance Corp.
+$
+Autocallable Equity-Linked Notes due 2029
+guaranteed by
+The Goldman Sachs Group, Inc.
+Payment at Maturity: The amount that you will be paid on your notes at maturity, if they have not been automatically called, is based on the performance of the underlier with the lowest underlier return. You could lose a significant portion of your investment in the notes.
+Automatic Call: The notes will be automatically called on the call payment date if the closing level of each underlier is greater than or equal to its initial underlier level on the call observation date.
+Interest: The notes do not bear interest.
+The terms included in the “Key Terms” table below are expected to be as indicated, but such terms will be set on the trade date. You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc. See page PS-8.
+Key Terms
+Company (Issuer) / Guarantor:
+GS Finance Corp. / The Goldman Sachs Group, Inc.
+Aggregate face amount:
+$
+Automatic call feature:
+The notes will be automatically called if the closing level of each underlier is greater than or equal to its initial underlier level on the call observation date. In that case, the company will pay, for each $1,000 of the outstanding face amount, an amount in cash on the call payment date equal to $1,300.
+Cash settlement amount:
+subject to the automatic call feature, on the stated maturity date, the company will pay, for each $1,000 face amount of the notes, an amount in cash equal to:
+•
+if the final underlier level of each underlier is greater than its initial underlier level: $1,000 + ($1,000 × the upside participation rate × the lesser performing underlier return);
+•
+if the final underlier level of each underlier is greater than or equal to its buffer level but the final underlier level of any underlier is equal to or less than its initial underlier level: $1,000; or
+•
+if the final underlier level of any underlier is less than its buffer level:
+$1,000 + ($1,000 × the buffer rate × (the lesser performing underlier return + the buffer amount))
+Underliers:
+the common stock of Apple Inc. (current Bloomberg ticker: “AAPL UW”), the common stock of Amazon.com, Inc. (current Bloomberg ticker: “AMZN UW”) and the common stock of Tesla, Inc. (current Bloomberg ticker: “TSLA UW”)
+Upside participation rate:
+375%
+Buffer level:
+for each underlier, 75% of its initial underlier level
+Buffer amount:
+25%
+Buffer rate:
+100%
+Initial underlier level:
+with respect to an underlier, an intra-day level or the closing level of such underlier on the trade date
+Final underlier level:
+with respect to an underlier, the closing level of such underlier on the determination date*
+Underlier return:
+with respect to an underlier: (its final underlier level - its initial underlier level) ÷ its initial underlier level
+Lesser performing underlier return:
+the underlier return of the lesser performing underlier (the underlier with the lowest underlier return)
+Calculation agent:
+Goldman Sachs & Co. LLC (“GS&Co.”)
+CUSIP / ISIN:
+40058GE64 / US40058GE645
+* subject to adjustment as described in the accompanying general terms supplement
+Our estimated value of the notes on trade date / Additional amount / Additional amount end date:
+$905 to $955 per $1,000 face amount, which is less than the original issue price. The additional amount is $ and the additional amount end date is . See “The Estimated Value of Your Notes At the Time the Terms of Your Notes Are Set On the Trade Date Is Less Than the Original Issue Price Of Your Notes.”
+Original issue price
+Underwriting discount
+Net proceeds to the issuer
+100% of the face amount
+% of the face amount 1
+% of the face amount
+1 See "Supplemental Plan of Distribution; Conflicts of Interest" on page PS-15 for additional information regarding the fees comprising the underwriting discount.
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+Pricing Supplement No. dated , 2025.
+Key Terms (continued)
+Trade date:
+January 31, 2025
+Original issue date:
+February 7, 2025
+Determination date:
+January 31, 2029*
+Stated maturity date:
+February 7, 2029*

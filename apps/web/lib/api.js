@@ -811,7 +811,9 @@ export const runEdgarCohort = (id, body) =>
 export const getEdgarInventoryRun = (id) =>
   fetchAPI(`/api/v1/admin/edgar/inventory/${encodeURIComponent(id)}`);
 // bulkfetchui — the "Bulk download" tab: queued runs executed by a worker.
-export const getEdgarBulkInstitutions = () => fetchAPI("/api/v1/admin/edgar/bulk/institutions");
+// bulkfetchui3 — fresh=true is the Institutions card's Refresh: bypasses the API's 60 s cache.
+export const getEdgarBulkInstitutions = ({ fresh = false } = {}) =>
+  fetchAPI(`/api/v1/admin/edgar/bulk/institutions${fresh ? "?fresh=1" : ""}`);
 export const previewEdgarBulk = (body) =>
   fetchAPI("/api/v1/admin/edgar/bulk/preview", { method: "POST", body });
 export const queueEdgarBulkRun = (body) =>

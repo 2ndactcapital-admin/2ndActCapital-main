@@ -59,6 +59,16 @@ per-org local time is resolved inside services/workflow_schedule.py instead.
 The 5-minute cadence and the module's 60-minute lookback are a matched pair:
 the lookback must comfortably exceed the tick interval, or an occurrence
 falling between two ticks would be missed.
+
+WEEKDAY EDGAR INDEX REFRESH (bulkfetchui3). After the workflow tick, the same
+process runs ``services.edgar_index_schedule.maybe_refresh_index``: once per
+weekday, the first tick at or after 10:30 UTC refreshes the EDGAR filing index
+through yesterday and records an edgar_pipeline_runs row (trigger_source
+'schedule'). It lives HERE, in the entrypoint, not inside
+``run_scheduler_tick`` — verify scripts call that function directly and must
+never reach the SEC. Once-per-day is enforced by a unique index, a failure is
+recorded on the run row (exit code 1, so Render shows it), and
+EDGAR_INDEX_AUTO_REFRESH=0 turns it off.
 """
 from __future__ import annotations
 
@@ -69,6 +79,7 @@ import sys
 import asyncpg
 
 from services.database import close_pool, get_pool
+from services.edgar_index_schedule import maybe_refresh_index
 from services.workflow_scheduler import run_scheduler_tick
 
 
@@ -91,16 +102,27 @@ async def main() -> int:
               file=sys.stderr)
         return 2
 
+    index = {"action": "not_run"}
     try:
         pool = await get_pool()
         result = await run_scheduler_tick(conn, pool)
+        # Its own step, after the workflow tick: a problem here can never stop
+        # a workflow trigger from firing.
+        try:
+            index = await maybe_refresh_index(conn)
+        except Exception as exc:  # noqa: BLE001
+            index = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        if index["action"] in ("succeeded", "failed"):
+            print(f"[scheduler] edgar index refresh: {index}")
     finally:
         await conn.close()
         await close_pool()
 
     for err in result.errors:
         print(f"[scheduler] unresolved: {err}", file=sys.stderr)
-    return 1 if result.errors else 0
+    if index["action"] == "failed":
+        print(f"[scheduler] edgar index refresh failed: {index.get('error')}", file=sys.stderr)
+    return 1 if result.errors or index["action"] == "failed" else 0
 
 
 if __name__ == "__main__":

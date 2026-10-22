@@ -114,6 +114,11 @@ class EdgarPipelineError(RuntimeError):
     """A pipeline failure that is not about one filing."""
 
 
+class EmptyDocumentError(EdgarPipelineError):
+    """BULKFETCHUI3 — the main document downloaded as zero bytes: a transient
+    SEC/transport glitch, not a property of the filing, so it is retried."""
+
+
 class EdgarPipelineConfigError(EdgarPipelineError):
     """Required configuration is missing or invalid. Nothing was attempted."""
 
@@ -163,6 +168,20 @@ _TITLE_PATTERNS = (
     ("underlying_supplement", re.compile(r"underlying supplement")),
     ("term_sheet", re.compile(r"term sheet")),
 )
+# BULKFETCHUI3 — the cover LINE of a final whose cover TITLE is an image. Goldman
+# Sachs (GS Finance Corp.) finals render "Pricing Supplement" as a picture, so
+# the opening has no title phrase; their text still carries the cover's bottom
+# line "Pricing Supplement No. 26,690 dated September 29, 2026." — or, for the
+# equity-linked series that shares the same counter, "Prospectus Supplement
+# No. 23,980 dated April 30, 2026." — just past OPENING_CHARS (measured on all
+# 3,243 stored 'other' rows, 2026-10-22: 2,210 + 919 GS matches at 2.3K-8.5K
+# characters; ZERO matches from any other issuer; zero with a preliminary
+# marker). Looked for only when the opening has no title phrase, and only
+# without a preliminary marker anywhere in the same window.
+COVER_LINE_CHARS = 12000
+_COVER_LINE_RE = re.compile(
+    r"\b(pricing|prospectus) supplement no\.\s*\d[\d,]*\s+dated\s+[a-z]+\.?\s+\d{1,2},\s*\d{4}"
+)
 DOCUMENT_KINDS = (
     "pricing_supplement",
     "preliminary_pricing_supplement",
@@ -200,8 +219,19 @@ def classify_document(text: str) -> tuple[str, str]:
         if m and (best is None or m.start() < best[0]):
             best = (m.start(), kind, m.group(0))
     if best is None:
-        return "other", "no title phrase in the opening"
+        return _classify_cover_line(text)
     return best[1], f"first title phrase {best[2]!r} at {best[0]}"
+
+
+def _classify_cover_line(text: str) -> tuple[str, str]:
+    """BULKFETCHUI3 — no title phrase in the opening: a numbered, dated
+    "Pricing/Prospectus Supplement No. N dated <date>" cover line in the first
+    COVER_LINE_CHARS makes it a final; anything else stays 'other'."""
+    window = " ".join(text[: COVER_LINE_CHARS * 3].split()).lower()[:COVER_LINE_CHARS]
+    m = _COVER_LINE_RE.search(window)
+    if m is None or _PRELIMINARY_RE.search(window):
+        return "other", "no title phrase in the opening"
+    return "pricing_supplement", f"cover line {m.group(0)!r} at {m.start()} (title is an image)"
 
 
 def decide_status(text: str, extra_strong=()) -> tuple[str, str, str]:
@@ -786,7 +816,7 @@ async def store_fetched(conn, meta: edgar_fetch.FilingMeta, raw: bytes, *, bucke
     ``timings`` (optional) accumulates seconds per step: extract, upload, db.
     """
     if not raw:
-        raise EdgarPipelineError("the main document downloaded as zero bytes")
+        raise EmptyDocumentError("the main document downloaded as zero bytes")
 
     def _tick(step: str, since: float) -> float:
         now = time.monotonic()

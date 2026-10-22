@@ -226,3 +226,75 @@ export function laptopDialogSteps(workers, online) {
     collapsed: steps.filter((s) => s.section === "start"),
   };
 }
+
+// ─── bulkfetchui3: the Institutions table ──────────────────────────────────
+
+/** While a bulk run is queued or running, the Institutions counts re-read this often. */
+export const INSTITUTIONS_REFRESH_MS = 60000;
+
+/** Sort keys: "name", "entities", "total", "downloaded", "stored", or "year:<YYYY>". */
+export const DEFAULT_INSTITUTION_SORT = { key: "name", dir: "asc" };
+
+/** Click a header: the same column flips direction; a new column starts ascending. */
+export function nextSort(sort, key) {
+  if (sort?.key === key) return { key, dir: sort.dir === "asc" ? "desc" : "asc" };
+  return { key, dir: "asc" };
+}
+
+function rowCount(r, years) {
+  return r.total ?? years.reduce((s, y) => s + (r.years?.[y] ?? 0), 0);
+}
+
+/** The value a row (institution or filer) sorts by: a lowercased string for
+ * names, a number for every count. A filer has no Entities count (0). */
+export function sortValue(row, key, years = []) {
+  if (key === "name") return String(row.name ?? "").toLowerCase();
+  if (key === "entities") return Array.isArray(row.filers) ? row.filers.length : 0;
+  if (key === "total") return Number(rowCount(row, years)) || 0;
+  if (key === "downloaded" || key === "stored") return Number(row[key] ?? 0) || 0;
+  if (key.startsWith("year:")) return Number(row.years?.[key.slice(5)] ?? 0) || 0;
+  return 0;
+}
+
+/** Comparator for one sort: numeric for counts, case-insensitive for names;
+ * ties fall back to the name (ascending) so the order is stable. */
+export function compareBy(sort, years = []) {
+  const sign = sort?.dir === "desc" ? -1 : 1;
+  const key = sort?.key ?? "name";
+  return (a, b) => {
+    const va = sortValue(a, key, years);
+    const vb = sortValue(b, key, years);
+    let c = typeof va === "string" ? va.localeCompare(vb) : va - vb;
+    if (c === 0 && key !== "name") c = sortValue(a, "name").localeCompare(sortValue(b, "name"));
+    return sign * c;
+  };
+}
+
+/** Institutions sorted, each with its filers sorted the same way among themselves. */
+export function sortInstitutions(rows, sort, years = []) {
+  const cmp = compareBy(sort, years);
+  return [...(rows ?? [])].sort(cmp).map((r) => ({ ...r, filers: [...(r.filers ?? [])].sort(cmp) }));
+}
+
+/** "Index refreshing" / "Index refresh queued" / null, from the runs payload. */
+export function indexRefreshState(runsPayload) {
+  const rows = (runsPayload?.rows ?? []).filter((r) => r.run_kind === "refresh_index");
+  if (rows.some((r) => r.status === "running" && r.display_status !== "worker_lost")) return "running";
+  if (rows.some((r) => r.status === "queued")) return "queued";
+  return null;
+}
+
+/** True while a BULK download (not an index refresh) is queued or running. */
+export function bulkRunsActive(runsPayload) {
+  return (runsPayload?.rows ?? []).some(
+    (r) => r.run_kind === "bulk_fetch" && (r.status === "queued" || r.status === "running"),
+  );
+}
+
+/** "h:mm" for the Refresh button's "as of" note. */
+export function fmtAsOf(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}

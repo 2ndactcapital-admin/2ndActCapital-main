@@ -17,6 +17,11 @@ MODES (one per invocation)
                          yesterday), then apply the active selection policy to the NEW rows only.
                          With --dry-run: print the date span and the number of index files only.
   --reprocess-fetched    classify every row stuck at 'fetched' from its stored text (no SEC request).
+  --reclassify-other     (bulkfetchui3) re-classify every row recorded as document_kind 'other' from its
+                         stored text (no SEC request, no HTTP client) and move each changed row to the
+                         status the normal decision gives it, status_reason 'reclassified:other→<kind>'.
+                         DRY RUN by default (counts by issuer and old→new kind, 10 examples); --apply
+                         writes. Optional --issuer-cik LIST, --accessions LIST, --from / --to.
   --selection-v2         Wells Fargo / Deutsche Bank prefilter v2: print what moves, by year; without
                          --dry-run it then activates policy v2 and moves exactly those rows.
   --worker               serve runs QUEUED from the EDGAR Pipeline screen's "Bulk download" tab
@@ -80,12 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--peek-test", type=int, metavar="N")
     mode.add_argument("--refresh-index", action="store_true")
     mode.add_argument("--reprocess-fetched", action="store_true")
+    mode.add_argument("--reclassify-other", action="store_true")
     mode.add_argument("--selection-v2", action="store_true")
     mode.add_argument("--worker", action="store_true")
     p.add_argument("--target", choices=("laptop", "render"), default="laptop")
     p.add_argument("--poll-seconds", type=float, default=15)
     p.add_argument("--once", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--apply", action="store_true", help="--reclassify-other only: write (default is a dry run)")
+    p.add_argument("--issuer-cik", default="", help="--reclassify-other only: primary issuer CIKs, comma-separated")
+    p.add_argument("--accessions", default="", help="--reclassify-other only: accession numbers, comma-separated")
     p.add_argument("--source", default="structured_notes")
     p.add_argument("--banks", default="")
     p.add_argument("--from", dest="date_from", type=_date)
@@ -120,7 +129,6 @@ async def main(argv: list[str]) -> int:
     from services import edgar_fetch, edgar_pipeline
 
     import asyncpg
-    import httpx
 
     url = await _database_url()
     if not url:
@@ -129,18 +137,28 @@ async def main(argv: list[str]) -> int:
     url = url.replace("postgresql+asyncpg://", "postgresql://")
     if args.worker:
         return await _worker(url, args)
+    if args.reclassify_other:
+        return await _reclassify_other(url, args)
     conc = max(1, args.concurrency)
     pool = await asyncpg.create_pool(url, statement_cache_size=0, min_size=1, max_size=conc + 3)
     log = edgar_pipeline.RequestLog()
-    client = httpx.AsyncClient(timeout=edgar_fetch.REQUEST_TIMEOUT, follow_redirects=True,
-                               event_hooks={"request": [log]})
+    client = None   # created only by the modes that call SEC (index refresh, peek test, fetch)
+
+    def sec_client():
+        nonlocal client
+        if client is None:
+            import httpx
+            client = httpx.AsyncClient(timeout=edgar_fetch.REQUEST_TIMEOUT, follow_redirects=True,
+                                       event_hooks={"request": [log]})
+        return client
+
     try:
         async with pool.acquire() as conn:
             if args.refresh_index:
                 if not args.dry_run:
                     edgar_fetch.user_agent()
                     edgar_fetch.set_rate_limit(eb.check_rate(args.max_rps, args.allow_above_8))
-                await eb.refresh_index(conn, client, through=args.date_to, dry_run=args.dry_run)
+                await eb.refresh_index(conn, sec_client(), through=args.date_to, dry_run=args.dry_run)
                 return 0
             if args.reprocess_fetched:
                 await eb.reprocess_fetched(conn, bucket=edgar_pipeline.r2_bucket(), dry_run=args.dry_run)
@@ -176,7 +194,7 @@ async def main(argv: list[str]) -> int:
             if args.peek_test is not None:
                 edgar_fetch.user_agent()
                 edgar_fetch.set_rate_limit(rate)
-                await eb.peek_test(conn, scope, args.peek_test, client)
+                await eb.peek_test(conn, scope, args.peek_test, sec_client())
                 return 0
         edgar_fetch.user_agent()   # loud failure before any claim if the User-Agent is missing
         opts = eb.RunOptions(
@@ -199,15 +217,36 @@ async def main(argv: list[str]) -> int:
                 loop.add_signal_handler(sig, _on_signal)
             except (NotImplementedError, RuntimeError):
                 pass
-        runner = eb.Runner(pool, opts, client=client, stop_event=stop)
+        runner = eb.Runner(pool, opts, client=sec_client(), stop_event=stop)
         stats = await runner.run()
         return 0 if stats.stop_reason is None or stop.is_set() else 1
     except eb.BulkUsageError as exc:
         print(f"ERROR: {exc}")
         return 2
     finally:
-        await client.aclose()
+        if client is not None:
+            await client.aclose()
         await pool.close()
+
+
+async def _reclassify_other(url: str, args) -> int:
+    """--reclassify-other: stored text only. No HTTP client is created or
+    passed on this path at all, so it cannot make an SEC request."""
+    from services import edgar_bulk as eb
+    from services import edgar_pipeline
+
+    import asyncpg
+
+    conn = await asyncpg.connect(url, statement_cache_size=0)
+    try:
+        await eb.reclassify_other(
+            conn, bucket=edgar_pipeline.r2_bucket(), apply=args.apply and not args.dry_run,
+            issuer_ciks=eb.parse_bank_names(args.issuer_cik) or None,
+            accessions=eb.parse_bank_names(args.accessions) or None,
+            date_from=args.date_from, date_to=args.date_to)
+    finally:
+        await conn.close()
+    return 0
 
 
 async def _worker(url: str, args) -> int:
