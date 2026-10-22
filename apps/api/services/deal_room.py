@@ -25,6 +25,22 @@ chain). ``record_sha256`` = SHA-256 of the canonical JSON of the record
 INCLUDING ``prev_signature_sha256``; ``verify_chain_rows`` recomputes every link
 and reports the first break.
 
+DEALROOM2 (Phase 2). Every agreement an investor can sign is an immutable
+``agreement_versions`` row: a template agreement's version snapshots the
+template's title, body and fields plus the publisher's field values (and the
+Exhibit A file hash); an uploaded agreement's version is the PDF's SHA-256.
+Publishing creates version 1; changing a published agreement creates the next
+version with the publisher's choice — ``keep`` (existing signers stay) or
+``resign`` (only the investors whose requirement is no longer met move to
+``resign_required``: folders above public close until they sign, and signing
+restores ``prior_level``). A signature counts when its version is at or above
+the agreement's floor (the latest ``initial``/``resign`` version; for a master
+NDA, the publisher's accepted version) and it was signed after the access
+row's ``resign_after`` (the bulk "require re-sign"). A publisher's master NDA
+is one published agreement that also counts on every covered deal for the SAME
+investing entity (``deal_master_ndas``). Signature rows keep their Phase 1
+canonical record (``record_version`` 1); Phase 2 rows hash a wider record (2).
+
 The custody cliff: nothing here is agent-reachable. Signing is the signer's own
 request (typed name + consent) — no action-registry entry exists for it.
 """
@@ -60,7 +76,12 @@ MIGRATED_RESTRICTED_KEY = "09_other_restricted"
 LEVELS = ("public", "after_agreements", "after_approval", "named_only")
 LEVEL_RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
 GRANT_LEVELS = ("after_agreements", "after_approval")
-STATUSES = ("viewing", "requested", "not_eligible", "signed_awaiting", "granted", "declined", "revoked")
+STATUSES = ("viewing", "requested", "not_eligible", "signed_awaiting", "granted", "declined", "revoked",
+            "resign_required")
+RESIGN_POLICIES = ("keep", "resign")
+MASTER_SCOPES = ("all", "selected")
+AGREEMENT_KINDS = ("template", "upload")
+SIGNABLE_STATUSES = ("requested", "resign_required")
 ELIGIBILITY_RULES = ("none", "accredited", "qualified_purchaser", "qualified_client")
 APPROVAL_MODES = ("automatic", "publisher")
 SPONSOR_DISPLAY = ("name", "code_name")
@@ -118,6 +139,9 @@ def vocabularies(lab: dict) -> dict:
         "eligibility_rules": vocab(lab, "deal_room_rule_", ELIGIBILITY_RULES),
         "approval_modes": vocab(lab, "deal_room_approval_", APPROVAL_MODES),
         "sponsor_display": vocab(lab, "deal_room_sponsor_", SPONSOR_DISPLAY),
+        "resign_policies": vocab(lab, "deal_room_resign_", RESIGN_POLICIES),
+        "master_scopes": vocab(lab, "deal_room_master_scope_", MASTER_SCOPES),
+        "agreement_kinds": vocab(lab, "deal_room_kind_", AGREEMENT_KINDS),
     }
 
 
@@ -486,7 +510,8 @@ async def evaluate_eligibility(conn, entity_id, rule: str, *, today: date | None
 
 # ── Access state (valid-axis restatement) ──────────────────────────────────
 ACCESS_COLS = ("id, org_id, deal_id, user_id, entity_id, status, level_granted, eligibility, decided_by, "
-               "decided_at, reason, valid_from")
+               "decided_at, reason, valid_from, prior_level, resign_after")
+_CARRY = object()
 
 
 async def live_access(conn, deal_id, user_id):
@@ -496,7 +521,10 @@ async def live_access(conn, deal_id, user_id):
 
 
 async def set_access(conn, org_id, deal_id, user_id, *, status, actor, entity_id=None, level=None,
-                     eligibility=None, decided_by=None, reason=None):
+                     eligibility=None, decided_by=None, reason=None, prior_level=None, resign_after=_CARRY):
+    """Valid-axis restatement of the live row. ``resign_after`` (the bulk
+    "require re-sign" cut-off) carries forward unless given; ``prior_level``
+    is kept only on a resign_required row (CHECK)."""
     prev = await conn.fetchrow(
         f"UPDATE deal_access SET valid_to = now() WHERE deal_id = $1 AND user_id = $2 AND valid_to IS NULL "
         f"RETURNING {ACCESS_COLS}", _uuid(deal_id), _uuid(user_id))
@@ -506,15 +534,18 @@ async def set_access(conn, org_id, deal_id, user_id, *, status, actor, entity_id
         eligibility = prev["eligibility"]
     if isinstance(eligibility, (dict, list)):
         eligibility = json.dumps(eligibility, default=str)
+    if resign_after is _CARRY:
+        resign_after = prev["resign_after"] if prev is not None else None
     row = await conn.fetchrow(
         f"""
         INSERT INTO deal_access (org_id, deal_id, user_id, entity_id, status, level_granted, eligibility,
-                                 decided_by, decided_at, reason, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, CASE WHEN $9 THEN now() END, $10, $11)
+                                 decided_by, decided_at, reason, created_by, prior_level, resign_after)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, CASE WHEN $9 THEN now() END, $10, $11, $12, $13)
         RETURNING {ACCESS_COLS}
         """, _uuid(org_id), _uuid(deal_id), _uuid(user_id), _uuid(entity_id), status,
         level if status == "granted" else None, eligibility, _uuid(decided_by),
-        status in ("granted", "declined", "revoked", "not_eligible", "signed_awaiting"), reason, _uuid(actor))
+        status in ("granted", "declined", "revoked", "not_eligible", "signed_awaiting", "resign_required"), reason,
+        _uuid(actor), prior_level if status == "resign_required" else None, resign_after)
     return prev, row
 
 
@@ -579,27 +610,170 @@ async def close_todos(conn, deal_id, investor_id, kinds) -> None:
 
 
 # ── Agreements ─────────────────────────────────────────────────────────────
-AGREEMENT_COLS = ("a.id, a.deal_id, a.org_id, a.template_id, a.sort_order, a.field_values, a.exhibit_document_id, "
-                  "a.status, a.published_at, t.key AS template_key, t.version AS template_version, t.title, "
-                  "t.body, t.fields, t.status AS template_status")
+# A deal agreement is the stable "slot" (system-axis: its id never changes);
+# what is signed is its current agreement_versions row. A template's title is
+# the template's; an upload's is the publisher's.
+AGREEMENT_COLS = (
+    "a.id, a.deal_id, a.org_id, a.template_id, a.sort_order, a.field_values, a.exhibit_document_id, "
+    "a.status, a.published_at, a.kind, a.document_id, a.file_sha256, "
+    "t.key AS template_key, t.version AS template_version, COALESCE(t.title, a.title) AS title, "
+    "t.body, t.fields, t.status AS template_status, cv.id AS version_id, cv.version AS current_version, "
+    "(SELECT max(f.version) FROM agreement_versions f WHERE f.deal_agreement_id = a.id "
+    " AND f.resign_policy IN ('initial', 'resign')) AS floor_version")
+AGREEMENT_FROM = (
+    "FROM deal_agreements a LEFT JOIN agreement_templates t ON t.id = a.template_id "
+    "LEFT JOIN LATERAL (SELECT v.id, v.version FROM agreement_versions v WHERE v.deal_agreement_id = a.id "
+    "ORDER BY v.version DESC LIMIT 1) cv ON true")
+
+
+def _agreement_dict(r) -> dict:
+    d = dict(r)
+    for k in ("field_values", "fields"):
+        if isinstance(d.get(k), str):
+            d[k] = json.loads(d[k])
+    d["fields"] = d.get("fields") or []
+    d["field_values"] = d.get("field_values") or {}
+    return d
 
 
 async def agreements_of(conn, deal_id, *, published_only: bool) -> list[dict]:
     rows = await conn.fetch(
         f"""
-        SELECT {AGREEMENT_COLS} FROM deal_agreements a JOIN agreement_templates t ON t.id = a.template_id
+        SELECT {AGREEMENT_COLS} {AGREEMENT_FROM}
         WHERE a.deal_id = $1 AND a.system_to IS NULL AND a.status <> 'withdrawn'
           AND ($2::boolean IS FALSE OR a.status = 'published')
         ORDER BY a.sort_order, a.created_at
         """, _uuid(deal_id), published_only)
-    out = []
-    for r in rows:
-        d = dict(r)
-        for k in ("field_values", "fields"):
-            if isinstance(d[k], str):
-                d[k] = json.loads(d[k])
-        out.append(d)
-    return out
+    return [_agreement_dict(r) for r in rows]
+
+
+async def agreement_by_id(conn, agreement_id) -> dict | None:
+    r = await conn.fetchrow(f"SELECT {AGREEMENT_COLS} {AGREEMENT_FROM} WHERE a.id = $1 AND a.system_to IS NULL",
+                            _uuid(agreement_id))
+    return _agreement_dict(r) if r else None
+
+
+async def archive_agreement(conn, agreement_id) -> None:
+    """System-axis history copy of the live row (status 'withdrawn', history_of
+    = the live id); the live id is kept for signatures and versions."""
+    await conn.execute(
+        """
+        INSERT INTO deal_agreements (org_id, deal_id, template_id, sort_order, field_values, exhibit_document_id,
+                                     status, created_by, created_at, system_from, system_to, history_of,
+                                     kind, title, document_id, file_sha256)
+        SELECT org_id, deal_id, template_id, sort_order, field_values, exhibit_document_id, 'withdrawn',
+               created_by, created_at, system_from, now(), id, kind, title, document_id, file_sha256
+        FROM deal_agreements WHERE id = $1 AND system_to IS NULL
+        """, _uuid(agreement_id))
+
+
+VERSION_COLS = ("id, org_id, deal_id, deal_agreement_id, version, kind, title, template_id, template_key, "
+                "template_version, template_status, body, fields, field_values, exhibit_document_id, exhibit_sha256, "
+                "document_id, file_name, file_sha256, page_count, resign_policy, created_by, created_at")
+
+
+async def get_version(conn, version_id) -> dict | None:
+    r = await conn.fetchrow(f"SELECT {VERSION_COLS} FROM agreement_versions WHERE id = $1", _uuid(version_id))
+    return _agreement_dict(r) if r else None
+
+
+async def versions_of(conn, agreement_id) -> list[dict]:
+    rows = await conn.fetch(f"SELECT {VERSION_COLS} FROM agreement_versions WHERE deal_agreement_id = $1 "
+                            "ORDER BY version", _uuid(agreement_id))
+    return [_agreement_dict(r) for r in rows]
+
+
+def version_doc(v: dict) -> dict:
+    """A version in the shape the template renderer reads."""
+    return {"id": v["deal_agreement_id"], "kind": v["kind"], "title": v["title"], "body": v["body"],
+            "fields": v["fields"], "field_values": v["field_values"], "template_key": v["template_key"],
+            "exhibit_document_id": v["exhibit_document_id"]}
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+async def read_document_bytes(conn, document_id) -> tuple[dict, bytes]:
+    """A deal document's bytes from R2 (services.storage — mocked by verify)."""
+    import asyncio
+
+    from services import storage
+
+    doc = await conn.fetchrow("SELECT id, file_name, r2_key, r2_bucket FROM deal_documents WHERE id = $1",
+                              _uuid(document_id))
+    if doc is None:
+        raise DealRoomError(404, "Document not found")
+    data = await asyncio.to_thread(storage.download_bytes, doc["r2_key"], doc["r2_bucket"])
+    return dict(doc), data
+
+
+def pdf_page_count(data: bytes) -> int:
+    """Pages in a PDF; DealRoomError(415) when the bytes are not a readable PDF."""
+    import io
+
+    if not data.startswith(b"%PDF-"):
+        raise DealRoomError(415, "Only PDF agreements can be uploaded (DOCX and other formats are not supported).")
+    try:
+        from pypdf import PdfReader
+
+        n = len(PdfReader(io.BytesIO(data)).pages)
+    except Exception as exc:  # noqa: BLE001
+        raise DealRoomError(415, f"The PDF could not be read: {type(exc).__name__}") from exc
+    if n < 1:
+        raise DealRoomError(415, "The PDF has no pages.")
+    return n
+
+
+async def create_version(conn, agreement: dict, *, policy: str, actor) -> dict:
+    """Snapshot the live agreement as its next immutable version."""
+    n = int(agreement.get("current_version") or 0) + 1
+    policy = "initial" if n == 1 else policy
+    exhibit_sha = None
+    if agreement.get("exhibit_document_id"):
+        _, data = await read_document_bytes(conn, agreement["exhibit_document_id"])
+        exhibit_sha = sha256_bytes(data)
+    if agreement["kind"] == "template":
+        t = await conn.fetchrow("SELECT id, key, version, title, body, fields, status FROM agreement_templates "
+                                "WHERE id = $1", agreement["template_id"])
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO agreement_versions (org_id, deal_id, deal_agreement_id, version, kind, title, template_id,
+                template_key, template_version, template_status, body, fields, field_values, exhibit_document_id,
+                exhibit_sha256, resign_policy, created_by)
+            VALUES ($1, $2, $3, $4, 'template', $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15, $16)
+            RETURNING {VERSION_COLS}
+            """, agreement["org_id"], agreement["deal_id"], agreement["id"], n, t["title"], t["id"], t["key"],
+            t["version"], t["status"], t["body"],
+            t["fields"] if isinstance(t["fields"], str) else json.dumps(t["fields"]),
+            json.dumps(agreement.get("field_values") or {}), agreement.get("exhibit_document_id"), exhibit_sha,
+            policy, _uuid(actor))
+    else:
+        doc, data = await read_document_bytes(conn, agreement["document_id"])
+        if sha256_bytes(data) != agreement["file_sha256"]:
+            raise DealRoomError(409, "The stored file no longer matches the hash recorded at upload.")
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO agreement_versions (org_id, deal_id, deal_agreement_id, version, kind, title, field_values,
+                document_id, file_name, file_sha256, page_count, exhibit_document_id, exhibit_sha256, resign_policy,
+                created_by)
+            VALUES ($1, $2, $3, $4, 'upload', $5, '{{}}'::jsonb, $6, $7, $8, $9, $10, $11, $12, $13)
+            RETURNING {VERSION_COLS}
+            """, agreement["org_id"], agreement["deal_id"], agreement["id"], n, agreement["title"],
+            agreement["document_id"], doc["file_name"], agreement["file_sha256"], pdf_page_count(data),
+            agreement.get("exhibit_document_id"), exhibit_sha, policy, _uuid(actor))
+    return _agreement_dict(row)
+
+
+async def ensure_version(conn, agreement: dict, *, actor) -> dict:
+    """A published agreement always has a current version (one published
+    before DEALROOM2 gets version 1 on first use). Returns the agreement with
+    version_id / current_version set."""
+    if agreement.get("version_id") or agreement["status"] != "published":
+        return agreement
+    v = await create_version(conn, agreement, policy="initial", actor=actor)
+    return {**agreement, "version_id": v["id"], "current_version": v["version"],
+            "floor_version": agreement.get("floor_version") or 1}
 
 
 async def _entity(conn, entity_id):
@@ -681,7 +855,10 @@ async def agreement_values(conn, deal, agreement: dict, *, entity_id=None, signe
 
 
 def publish_blockers(agreement: dict, values: dict) -> list[dict]:
-    """Deal-side required fields with no value — what blocks publishing."""
+    """Deal-side required fields with no value — what blocks publishing. An
+    uploaded agreement has no fill-in fields."""
+    if agreement.get("kind") == "upload":
+        return []
     miss = T.missing_fields(agreement, values, sources={T.SOURCE_PUBLISHER, T.SOURCE_DEAL, T.SOURCE_DEAL_RECORD})
     if agreement["template_key"] == "platform_joinder" and T._truthy(values.get("underlying_nda_attached")) \
             and not agreement.get("exhibit_document_id"):
@@ -698,20 +875,216 @@ async def signer_row(conn, user_id):
 
 
 async def render_for_signer(conn, deal, agreement, *, entity_id, user_id, on: date) -> tuple[str, str]:
+    """The text a template agreement's signer reads — from its CURRENT VERSION
+    (immutable snapshot) when it has one, else from the live row (a draft)."""
+    src = agreement
+    if agreement.get("version_id"):
+        src = version_doc(await get_version(conn, agreement["version_id"]))
+    if src.get("kind") == "upload":
+        raise DealRoomError(422, "An uploaded agreement is read as its PDF, not as text.")
+    if agreement.get("deal_id") and str(agreement["deal_id"]) != str(deal["id"]):
+        # a master NDA signed on a covered deal reads as it was written: for
+        # its own (home) deal and publisher, not the covered deal's name
+        home = await fetch_deal(conn, agreement["deal_id"])
+        deal = dict(home) if home else deal
     signer = await signer_row(conn, user_id)
-    vals = await agreement_values(conn, deal, agreement, entity_id=entity_id,
+    vals = await agreement_values(conn, deal, src, entity_id=entity_id,
                                   signer=dict(signer) if signer else None, signing_date=on)
-    miss = T.missing_fields(agreement, vals)
+    miss = T.missing_fields(src, vals)
     if miss:
         raise DealRoomError(422, blocked_message(miss))
-    text = T.render(agreement, vals)
+    text = T.render(src, vals)
     return text, T.text_sha256(text)
 
 
+def upload_statement(v: dict) -> str:
+    """deal_signatures.rendered_text for an uploaded agreement: what was signed,
+    named by its file hash (the PDF itself is the document)."""
+    lines = [f"Signed document: {v['title']} (version {v['version']})",
+             f"File: {v['file_name']}", f"File SHA-256: {v['file_sha256']}",
+             f"Pages: {v['page_count']}"]
+    if v.get("exhibit_sha256"):
+        lines.append(f"Exhibit A SHA-256: {v['exhibit_sha256']}")
+    return "\n".join(lines) + "\n"
+
+
+# ── Master NDA ─────────────────────────────────────────────────────────────
+MASTER_COLS = "id, org_id, publisher_entity_id, deal_agreement_id, scope, accepted_min_version, created_at"
+
+
+async def live_master(conn, publisher_entity_id) -> dict | None:
+    if not publisher_entity_id:
+        return None
+    m = await conn.fetchrow(f"SELECT {MASTER_COLS} FROM deal_master_ndas WHERE publisher_entity_id = $1 "
+                            "AND revoked_at IS NULL", _uuid(publisher_entity_id))
+    if m is None:
+        return None
+    out = dict(m)
+    out["deal_ids"] = [r["deal_id"] for r in await conn.fetch(
+        "SELECT deal_id FROM deal_master_nda_deals WHERE master_id = $1", m["id"])]
+    return out
+
+
+async def master_for_deal(conn, deal) -> dict | None:
+    """The publisher's master NDA when it covers this deal (scope all, or the
+    deal is selected)."""
+    m = await live_master(conn, deal.get("publisher_entity_id"))
+    if m is None:
+        return None
+    if m["scope"] == "all" or _uuid(deal["id"]) in m["deal_ids"]:
+        return m
+    return None
+
+
+async def master_deal_ids(conn, master: dict) -> list[UUID]:
+    """Every live deal a master NDA covers (its home deal included)."""
+    home = await conn.fetchval("SELECT deal_id FROM deal_agreements WHERE id = $1", master["deal_agreement_id"])
+    if master["scope"] == "all":
+        ids = [r["id"] for r in await conn.fetch(
+            "SELECT id FROM deals WHERE publisher_entity_id = $1 AND valid_to IS NULL AND system_to IS NULL",
+            master["publisher_entity_id"])]
+    else:
+        ids = list(master["deal_ids"])
+    return list(dict.fromkeys([home, *ids]))
+
+
+async def set_master(conn, *, org_id, publisher_entity_id, deal_agreement_id, scope, deal_ids,
+                     accepted_min_version, actor) -> dict:
+    if scope not in MASTER_SCOPES:
+        raise DealRoomError(422, "scope must be 'all' or 'selected'")
+    a = await agreement_by_id(conn, deal_agreement_id)
+    if a is None or a["status"] != "published":
+        raise DealRoomError(404, "Published agreement not found")
+    home = await fetch_deal(conn, a["deal_id"])
+    if home is None or str(home["publisher_entity_id"]) != str(publisher_entity_id):
+        raise DealRoomError(422, "The master NDA must be a published agreement on one of this publisher's deals.")
+    if accepted_min_version is not None and not (1 <= int(accepted_min_version) <= int(a["current_version"] or 1)):
+        raise DealRoomError(422, "accepted_min_version must name an existing version of the agreement.")
+    selected = [_uuid(d) for d in (deal_ids or [])]
+    if scope == "selected":
+        if not selected:
+            raise DealRoomError(422, "Choose at least one deal for a selected-deals master NDA.")
+        own = {r["id"] for r in await conn.fetch(
+            "SELECT id FROM deals WHERE id = ANY($1::uuid[]) AND publisher_entity_id = $2 AND valid_to IS NULL "
+            "AND system_to IS NULL", selected, _uuid(publisher_entity_id))}
+        if own != set(selected):
+            raise DealRoomError(422, "Every selected deal must be one of this publisher's deals.")
+    await conn.execute("UPDATE deal_master_ndas SET revoked_at = now(), revoked_by = $2 WHERE publisher_entity_id = $1 "
+                       "AND revoked_at IS NULL", _uuid(publisher_entity_id), _uuid(actor))
+    mid = await conn.fetchval(
+        "INSERT INTO deal_master_ndas (org_id, publisher_entity_id, deal_agreement_id, scope, accepted_min_version, "
+        "created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id", _uuid(org_id), _uuid(publisher_entity_id),
+        a["id"], scope, accepted_min_version, _uuid(actor))
+    if scope == "selected":
+        for d in selected:
+            await conn.execute("INSERT INTO deal_master_nda_deals (org_id, master_id, deal_id) VALUES ($1, $2, $3)",
+                               _uuid(org_id), mid, d)
+    return await live_master(conn, publisher_entity_id)
+
+
+async def revoke_master(conn, publisher_entity_id, *, actor) -> bool:
+    res = await conn.execute("UPDATE deal_master_ndas SET revoked_at = now(), revoked_by = $2 "
+                             "WHERE publisher_entity_id = $1 AND revoked_at IS NULL",
+                             _uuid(publisher_entity_id), _uuid(actor))
+    return not res.endswith(" 0")
+
+
+# ── Requirements and what satisfies them ───────────────────────────────────
+async def required_agreements(conn, deal, *, published_only: bool = True) -> list[dict]:
+    """The deal's own agreements plus — when the publisher's master NDA covers
+    this deal and lives on another deal — the master, first. Each carries
+    ``is_master`` (and ``master``)."""
+    own = await agreements_of(conn, deal["id"], published_only=published_only)
+    for a in own:
+        a["is_master"], a["virtual"] = False, False
+    m = await master_for_deal(conn, deal)
+    if m is None:
+        # the master's own home deal requires it whatever its scope
+        m = await live_master(conn, deal.get("publisher_entity_id"))
+        if m is None or not any(a["id"] == m["deal_agreement_id"] for a in own):
+            return own
+    hit = next((a for a in own if a["id"] == m["deal_agreement_id"]), None)
+    if hit is not None:
+        hit["is_master"], hit["master"] = True, m
+        return own
+    a = await agreement_by_id(conn, m["deal_agreement_id"])
+    if a is None or a["status"] != "published":
+        return own
+    a.update({"is_master": True, "master": m, "virtual": True, "sort_order": 0})
+    return [a, *own]
+
+
+def floor_of(a: dict) -> int:
+    """The lowest version a signature may carry and still count."""
+    f = int(a.get("floor_version") or 1)
+    if a.get("is_master"):
+        mv = a["master"].get("accepted_min_version")
+        f = max(f, int(mv) if mv is not None else int(a.get("current_version") or 1))
+    return f
+
+
+async def signature_state(conn, deal, reqs: list[dict], user_id, entity_id, resign_after=None) -> dict:
+    """{agreement_id: {...}} — whether each requirement is met for this signer.
+    Own agreements: the user's signature on this deal. A master NDA: a
+    signature by the same investing ENTITY on any deal. Either must be at or
+    above the agreement's floor and (when set) after ``resign_after``."""
+    own_ids = [a["id"] for a in reqs if not a.get("is_master")]
+    master_ids = [a["id"] for a in reqs if a.get("is_master")]
+    rows = await conn.fetch(
+        """
+        SELECT s.id, s.deal_id, s.deal_agreement_id, s.signed_at, s.entity_id, s.user_id,
+               COALESCE(v.version, 1) AS version
+        FROM deal_signatures s LEFT JOIN agreement_versions v ON v.id = s.agreement_version_id
+        WHERE (s.deal_id = $1 AND s.user_id = $2 AND s.deal_agreement_id = ANY($3::uuid[]))
+           OR ($5::uuid IS NOT NULL AND s.entity_id = $5 AND s.deal_agreement_id = ANY($4::uuid[]))
+        ORDER BY s.signed_at DESC, s.chain_seq DESC
+        """, _uuid(deal["id"]), _uuid(user_id), own_ids, master_ids, _uuid(entity_id))
+    out = {}
+    for a in reqs:
+        if a.get("is_master"):
+            cands = [r for r in rows if r["deal_agreement_id"] == a["id"] and r["entity_id"] == _uuid(entity_id)]
+        else:
+            cands = [r for r in rows if r["deal_agreement_id"] == a["id"] and r["deal_id"] == _uuid(deal["id"])
+                     and r["user_id"] == _uuid(user_id)]
+        fl = floor_of(a)
+        valid = [r for r in cands if int(r["version"]) >= fl and (resign_after is None or r["signed_at"] > resign_after)]
+        best = valid[0] if valid else None
+        latest = cands[0] if cands else None
+        out[a["id"]] = {
+            "ok": best is not None, "signature_id": best["id"] if best else None,
+            "signed_at": best["signed_at"] if best else None, "version": int(best["version"]) if best else None,
+            "current_version": a.get("current_version"), "floor": fl,
+            "covered": bool(best and a.get("is_master") and best["deal_id"] != _uuid(deal["id"])),
+            "stale": latest is not None and best is None,
+            "last_version": int(latest["version"]) if latest else None,
+            "is_master": bool(a.get("is_master")),
+        }
+    return out
+
+
+async def access_state(conn, deal, user_id, access=None) -> tuple[list[dict], dict]:
+    access = access if access is not None else await live_access(conn, deal["id"], user_id)
+    reqs = await required_agreements(conn, deal)
+    state = await signature_state(conn, deal, reqs, user_id, access["entity_id"] if access else None,
+                                  access["resign_after"] if access else None)
+    return reqs, state
+
+
+async def all_signed(conn, deal_id, user_id) -> bool:
+    deal = await fetch_deal(conn, deal_id)
+    if deal is None:
+        return False
+    _, state = await access_state(conn, dict(deal), user_id)
+    return all(s["ok"] for s in state.values())
+
+
 # ── Signatures and the chain ───────────────────────────────────────────────
+# record_version 1 = the Phase 1 canonical record (FIXED — every Phase 1 row's
+# record_sha256 was computed over exactly these fields); 2 adds the version.
 CANON_FIELDS = ("chain", "chain_seq", "consent", "deal_agreement_id", "deal_id", "entity_id", "ip", "org_id",
                 "prev_signature_sha256", "rendered_text_sha256", "signed_at", "template_id", "template_version",
                 "typed_name", "user_agent", "user_id")
+CANON_FIELDS_V2 = tuple(sorted(CANON_FIELDS + ("agreement_version_id", "document_sha256", "record_version")))
 
 
 def _canon_value(k, v):
@@ -721,15 +1094,23 @@ def _canon_value(k, v):
         return v.astimezone(timezone.utc).isoformat()
     if isinstance(v, UUID):
         return str(v)
-    if k in ("chain_seq", "template_version"):
+    if k in ("chain_seq", "template_version", "record_version"):
         return int(v)
     if k == "consent":
         return bool(v)
     return str(v)
 
 
+def _record_version(row) -> int:
+    try:
+        return int(row["record_version"] or 1)
+    except (KeyError, IndexError):
+        return 1
+
+
 def canonical_record(row) -> str:
-    return json.dumps({k: _canon_value(k, row[k]) for k in CANON_FIELDS}, sort_keys=True,
+    fields = CANON_FIELDS_V2 if _record_version(row) == 2 else CANON_FIELDS
+    return json.dumps({k: _canon_value(k, row[k]) for k in fields}, sort_keys=True,
                       separators=(",", ":"), ensure_ascii=False)
 
 
@@ -740,8 +1121,9 @@ def record_sha256(row) -> str:
 def verify_chain_rows(rows) -> dict:
     """Recompute a chain (rows in chain_seq order). Reports the FIRST break:
     a text hash that no longer matches its text, a record hash that no longer
-    matches its record, a prev link that does not name the previous record,
-    or a gap in the sequence."""
+    matches its record (Phase 1 or Phase 2 canonical form, by record_version),
+    a Phase 2 document hash the text does not account for, a prev link that
+    does not name the previous record, or a gap in the sequence."""
     prev_sha, expect_seq = None, 1
     for r in rows:
         problem = None
@@ -751,6 +1133,9 @@ def verify_chain_rows(rows) -> dict:
             problem = "prev_signature_sha256 does not name the previous record"
         elif hashlib.sha256(r["rendered_text"].encode("utf-8")).hexdigest() != r["rendered_text_sha256"]:
             problem = "rendered text no longer matches rendered_text_sha256"
+        elif _record_version(r) == 2 and not (r["document_sha256"] == r["rendered_text_sha256"]
+                                              or (r["document_sha256"] or "-") in r["rendered_text"]):
+            problem = "document_sha256 is neither the text's hash nor named in the signed statement"
         elif record_sha256(r) != r["record_sha256"]:
             problem = "record_sha256 does not match the record"
         if problem:
@@ -762,7 +1147,8 @@ def verify_chain_rows(rows) -> dict:
 
 SIGNATURE_COLS = ("id, org_id, deal_id, deal_agreement_id, template_id, template_version, rendered_text, "
                   "rendered_text_sha256, user_id, entity_id, typed_name, consent, signed_at, ip, user_agent, "
-                  "chain, chain_seq, prev_signature_sha256, record_sha256")
+                  "chain, chain_seq, prev_signature_sha256, record_sha256, agreement_version_id, document_sha256, "
+                  "record_version")
 
 
 async def verify_chain(conn, chain: str) -> dict:
@@ -783,61 +1169,85 @@ async def my_signatures(conn, deal_id, user_id) -> dict:
     return {r["deal_agreement_id"]: dict(r) for r in rows}
 
 
+async def insert_signature(conn, rec: dict) -> dict:
+    """Append one record to its chain (the insert trigger re-checks the head)."""
+    head = await conn.fetchrow("SELECT seq, sha FROM deal_signatures_chain_head($1)", rec["chain"])
+    rec["chain_seq"] = (int(head["seq"]) if head and head["seq"] else 0) + 1
+    rec["prev_signature_sha256"] = head["sha"] if head and head["sha"] else None
+    rec["record_sha256"] = record_sha256(rec)
+    cols = [c.strip() for c in SIGNATURE_COLS.split(",") if c.strip() != "id"]
+    row = await conn.fetchrow(
+        f"INSERT INTO deal_signatures ({', '.join(cols)}) VALUES ({', '.join(f'${i + 1}' for i in range(len(cols)))}) "
+        f"RETURNING id, signed_at, record_sha256, chain, chain_seq, agreement_version_id, document_sha256",
+        *[rec.get(c) for c in cols])
+    return dict(row)
+
+
 async def sign(conn, *, principal, deal, agreement_id, typed_name, consent, shown_sha256, ip, user_agent,
                today: date | None = None) -> dict:
-    """The investor's own act. Returns {signature, access, complete}."""
+    """The investor's own act. ``shown_sha256`` is the hash of what they were
+    shown: the rendered text (template) or the PDF file (upload). Returns
+    {signature, access, complete}."""
     if consent is not True:
         raise DealRoomError(422, "Tick 'I agree to sign electronically' to sign.")
     if not (typed_name or "").strip() or len(typed_name.strip()) < 2:
         raise DealRoomError(422, "Type your full name to sign.")
     access = await live_access(conn, deal["id"], principal.user_id)
-    if access is None or access["status"] != "requested":
+    if access is None or access["status"] not in SIGNABLE_STATUSES:
         raise DealRoomError(409, "Request access to this deal (and pass its eligibility check) before signing.")
-    agreements = await agreements_of(conn, deal["id"], published_only=True)
-    target = next((a for a in agreements if str(a["id"]) == str(agreement_id)), None)
+    reqs, state = await access_state(conn, deal, principal.user_id, access)
+    target = next((a for a in reqs if str(a["id"]) == str(agreement_id)), None)
     if target is None:
         raise DealRoomError(404, "Agreement not found")
-    signed = await my_signatures(conn, deal["id"], principal.user_id)
-    if target["id"] in signed:
-        raise DealRoomError(409, "You have already signed this agreement.")
-    for a in agreements:
+    if state[target["id"]]["ok"]:
+        raise DealRoomError(409, "Already covered by your master NDA signature." if state[target["id"]]["covered"]
+                            else "You have already signed this agreement.")
+    for a in reqs:
         if a["id"] == target["id"]:
             break
-        if a["id"] not in signed:
+        if not state[a["id"]]["ok"]:
             raise DealRoomError(409, f"Sign '{a['title']}' first — agreements are signed in order.")
     signer = await signer_row(conn, principal.user_id)
     if not signer or not (signer["full_name"] or "").strip():
         raise DealRoomError(422, "Your account has no full name on file, so a signature cannot be matched to it.")
     if _norm_name(typed_name) != _norm_name(signer["full_name"]):
         raise DealRoomError(422, "Type your full name exactly as it appears on your account.")
-    on = today or datetime.now(timezone.utc).date()
-    text, sha = await render_for_signer(conn, deal, target, entity_id=access["entity_id"],
-                                        user_id=principal.user_id, on=on)
-    if shown_sha256 != sha:
-        raise DealRoomError(409, {"message": "The agreement changed since you opened it. Please read it again.",
-                                  "rendered_text_sha256": sha})
-    chain = "test" if signer["is_test"] else "platform"
-    head = await conn.fetchrow("SELECT seq, sha FROM deal_signatures_chain_head($1)", chain)
+    target = await ensure_version(conn, target, actor=principal.user_id)
+    v = await get_version(conn, target["version_id"])
+    if v["kind"] == "template":
+        on = today or datetime.now(timezone.utc).date()
+        text, sha = await render_for_signer(conn, deal, target, entity_id=access["entity_id"],
+                                            user_id=principal.user_id, on=on)
+        doc_sha = sha
+        if shown_sha256 != sha:
+            raise DealRoomError(409, {"message": "The agreement changed since you opened it. Please read it again.",
+                                      "rendered_text_sha256": sha})
+    else:
+        doc_sha = v["file_sha256"]
+        if shown_sha256 != doc_sha:
+            raise DealRoomError(409, {"message": "The document changed since you opened it. Please read it again.",
+                                      "file_sha256": doc_sha})
+        text = upload_statement(v)
+        sha = T.text_sha256(text)
     rec = {
         "org_id": _uuid(deal["org_id"]), "deal_id": _uuid(deal["id"]), "deal_agreement_id": target["id"],
-        "template_id": target["template_id"], "template_version": int(target["template_version"]),
+        "template_id": v["template_id"], "template_version": v["template_version"],
         "rendered_text": text, "rendered_text_sha256": sha, "user_id": _uuid(principal.user_id),
         "entity_id": access["entity_id"], "typed_name": typed_name.strip(), "consent": True,
         "signed_at": datetime.now(timezone.utc), "ip": ip, "user_agent": (user_agent or "")[:500] or None,
-        "chain": chain, "chain_seq": (int(head["seq"]) if head and head["seq"] else 0) + 1,
-        "prev_signature_sha256": head["sha"] if head and head["sha"] else None,
+        "chain": "test" if signer["is_test"] else "platform",
+        "agreement_version_id": v["id"], "document_sha256": doc_sha, "record_version": 2,
     }
-    rec["record_sha256"] = record_sha256(rec)
-    cols = [c.strip() for c in SIGNATURE_COLS.split(",") if c.strip() != "id"]
-    row = await conn.fetchrow(
-        f"INSERT INTO deal_signatures ({', '.join(cols)}) VALUES ({', '.join(f'${i + 1}' for i in range(len(cols)))}) "
-        f"RETURNING id, signed_at, record_sha256, chain, chain_seq",
-        *[rec[c] for c in cols])
-    complete = all(a["id"] in signed or a["id"] == target["id"] for a in agreements)
+    row = await insert_signature(conn, rec)
+    complete = all(state[a["id"]]["ok"] or a["id"] == target["id"] for a in reqs)
     new_access = access
     if complete:
-        new_access = await apply_approval(conn, deal, principal.user_id, actor=principal.user_id)
-    return {"signature": dict(row), "complete": complete, "access": dict(new_access) if new_access else None}
+        if access["status"] == "resign_required":
+            new_access = await restore_after_resign(conn, deal, access, actor=principal.user_id)
+        else:
+            new_access = await apply_approval(conn, deal, principal.user_id, actor=principal.user_id)
+    return {"signature": row, "complete": complete, "access": dict(new_access) if new_access else None,
+            "version": v["version"]}
 
 
 async def apply_approval(conn, deal, user_id, *, actor):
@@ -862,12 +1272,126 @@ async def apply_approval(conn, deal, user_id, *, actor):
     return row
 
 
+async def restore_after_resign(conn, deal, access, *, actor):
+    """Re-signing done: the access level the investor had comes back; a row
+    that was still awaiting approval goes back through approval."""
+    if access["prior_level"]:
+        _, row = await set_access(conn, deal["org_id"], deal["id"], access["user_id"], status="granted",
+                                  level=access["prior_level"], actor=actor, reason="re-signed")
+        await audit(conn, org_id=deal["org_id"], actor=actor, action="deal_access.resign_restore",
+                    resource_id=row["id"], payload={"deal_id": deal["id"], "user_id": access["user_id"],
+                                                    "level": access["prior_level"]})
+    else:
+        row = await apply_approval(conn, deal, access["user_id"], actor=actor)
+    await close_todos(conn, deal["id"], access["user_id"], ["resign"])
+    return row
+
+
+async def require_resign(conn, deal, user_id, *, actor, reason: str, cutoff: bool) -> dict:
+    """granted / signed_awaiting → resign_required, keeping the level to
+    restore. ``cutoff`` (the bulk grid action) also makes every signature made
+    before now stop counting for this investor on this deal."""
+    cur = await live_access(conn, deal["id"], user_id)
+    if cur is None or cur["status"] not in ("granted", "signed_awaiting"):
+        raise DealRoomError(409, "Only granted or awaiting access can be sent back for re-signing.")
+    kw = {"resign_after": datetime.now(timezone.utc)} if cutoff else {}
+    _, row = await set_access(conn, deal["org_id"], deal["id"], user_id, status="resign_required", actor=actor,
+                              prior_level=cur["level_granted"], decided_by=actor, reason=reason, **kw)
+    await audit(conn, org_id=deal["org_id"], actor=actor, action="deal_access.require_resign", resource_id=row["id"],
+                payload={"deal_id": deal["id"], "user_id": user_id, "from": cur["status"],
+                         "prior_level": cur["level_granted"], "reason": reason, "cutoff": cutoff})
+    await close_todos(conn, deal["id"], user_id, ["approve_request"])
+    await add_todo(conn, deal["org_id"], user_id, kind="resign", deal=deal, investor_id=user_id,
+                   title=f"Re-sign: {deal['name']}",
+                   detail=f"{reason} Sign the updated agreement to reopen the data room.",
+                   action_href=f"/marketplace/{deal['id']}?tab=documents")
+    return dict(row)
+
+
+async def resign_affected(conn, agreement: dict, *, actor, reason: str) -> list[dict]:
+    """After a 'resign' version: every live granted / awaiting investor on the
+    agreement's deal (and, for a master NDA, every covered deal) whose
+    requirement is no longer met moves to resign_required. Nobody else."""
+    deal_ids = [agreement["deal_id"]]
+    m = await conn.fetchrow(f"SELECT {MASTER_COLS} FROM deal_master_ndas WHERE deal_agreement_id = $1 "
+                            "AND revoked_at IS NULL", agreement["id"])
+    if m is not None:
+        deal_ids = await master_deal_ids(conn, await live_master(conn, m["publisher_entity_id"]))
+    affected = []
+    for did in deal_ids:
+        deal = await fetch_deal(conn, did)
+        if deal is None:
+            continue
+        deal = dict(deal)
+        rows = await conn.fetch(f"SELECT {ACCESS_COLS} FROM deal_access WHERE deal_id = $1 AND valid_to IS NULL "
+                                "AND status IN ('granted', 'signed_awaiting')", _uuid(did))
+        for acc in rows:
+            _, state = await access_state(conn, deal, acc["user_id"], acc)
+            if all(s["ok"] for s in state.values()):
+                continue
+            await require_resign(conn, deal, acc["user_id"], actor=actor, reason=reason, cutoff=False)
+            affected.append({"deal_id": did, "user_id": acc["user_id"]})
+    return affected
+
+
+async def new_version(conn, deal, agreement_id, *, actor, policy: str | None, field_values=None,
+                      exhibit_document_id=None, new_file: dict | None = None) -> dict:
+    """Change a PUBLISHED agreement: the live row moves (system-axis history
+    kept), the next immutable version is written, and — when it has
+    signatures — the publisher's choice applies: keep or resign."""
+    a = await agreement_by_id(conn, agreement_id)
+    if a is None or str(a["deal_id"]) != str(deal["id"]) or a["status"] == "withdrawn":
+        raise DealRoomError(404, "Agreement not found")
+    if a["status"] != "published":
+        raise DealRoomError(409, "A draft agreement is edited in place; versions start when it is published.")
+    nsig = int(await conn.fetchval("SELECT count(*) FROM deal_signatures WHERE deal_agreement_id = $1", a["id"]))
+    if nsig and policy not in RESIGN_POLICIES:
+        raise DealRoomError(422, {"message": f"This agreement has {nsig} signature(s). Choose 'keep' (existing "
+                                             "signers stay) or 'resign' (they must sign the new version).",
+                                  "signatures": nsig, "choices": list(RESIGN_POLICIES)})
+    policy = policy if policy in RESIGN_POLICIES else "keep"
+    a = await ensure_version(conn, a, actor=actor)
+    if a["kind"] == "template":
+        if new_file is not None:
+            raise DealRoomError(422, "A template agreement takes field values, not a file.")
+        merged = {**(a["field_values"] or {}), **(field_values or {})}
+        probe = {**a, "field_values": merged, "exhibit_document_id": exhibit_document_id or a["exhibit_document_id"]}
+        miss = publish_blockers(probe, await agreement_values(conn, deal, probe))
+        if miss:
+            raise DealRoomError(422, {"message": blocked_message(miss), "missing": miss})
+        await archive_agreement(conn, a["id"])
+        await conn.execute("UPDATE deal_agreements SET field_values = $2::jsonb, exhibit_document_id = $3, "
+                           "system_from = now() WHERE id = $1", a["id"], json.dumps(merged),
+                           probe["exhibit_document_id"])
+    else:
+        if new_file is None and exhibit_document_id is None:
+            raise DealRoomError(422, "Upload the replacement PDF.")
+        if field_values:
+            raise DealRoomError(422, "An uploaded agreement has no fill-in fields.")
+        await archive_agreement(conn, a["id"])
+        await conn.execute("UPDATE deal_agreements SET document_id = COALESCE($2, document_id), "
+                           "file_sha256 = COALESCE($3, file_sha256), exhibit_document_id = COALESCE($4, "
+                           "exhibit_document_id), system_from = now() WHERE id = $1", a["id"],
+                           (new_file or {}).get("document_id"), (new_file or {}).get("file_sha256"),
+                           exhibit_document_id)
+    live = await agreement_by_id(conn, a["id"])
+    v = await create_version(conn, live, policy=policy, actor=actor)
+    affected = []
+    if policy == "resign":
+        affected = await resign_affected(conn, live, actor=actor,
+                                         reason=f"'{live['title']}' changed (version {v['version']}).")
+    await audit(conn, org_id=deal["org_id"], actor=actor, action="deal_room.agreement_version",
+                resource_id=a["id"], payload={"version": v["version"], "policy": policy, "signatures": nsig,
+                                              "affected": affected})
+    return {"version": v, "policy": policy, "signatures": nsig, "affected": affected}
+
+
 async def request_access(pool, conn, *, principal, deal, entity_id) -> dict:
     """Investor step 2–3: choose an investing entity → eligibility → result."""
     cur = await live_access(conn, deal["id"], principal.user_id)
     if cur is not None and cur["status"] in ("revoked", "declined"):
         raise DealRoomError(409, "The publisher has closed your access to this deal. Contact them to reopen it.")
-    if cur is not None and cur["status"] in ("granted", "signed_awaiting"):
+    if cur is not None and cur["status"] in ("granted", "signed_awaiting", "resign_required"):
         return {"access": dict(cur), "eligibility": cur["eligibility"]}
     allowed = {e["id"] for e in await investing_entities(pool, conn, principal.org_id, principal.user_id)}
     if str(entity_id) not in allowed:
@@ -889,26 +1413,31 @@ async def request_access(pool, conn, *, principal, deal, entity_id) -> dict:
     _, row = await set_access(conn, deal["org_id"], deal["id"], principal.user_id, status="requested",
                               entity_id=entity_id, eligibility=elig, actor=principal.user_id)
     await close_todos(conn, deal["id"], principal.user_id, ["not_eligible"])
-    if not await agreements_of(conn, deal["id"], published_only=True):
+    # nothing to sign — or everything already satisfied (a master NDA the same
+    # entity signed on another of this publisher's deals) → approval now
+    _, state = await access_state(conn, deal, principal.user_id, row)
+    if all(s["ok"] for s in state.values()):
         row = await apply_approval(conn, deal, principal.user_id, actor=principal.user_id)
     return {"access": dict(row), "eligibility": elig}
 
 
 # ── Decisions (the grid) ───────────────────────────────────────────────────
-async def all_signed(conn, deal_id, user_id) -> bool:
-    agreements = await agreements_of(conn, deal_id, published_only=True)
-    signed = await my_signatures(conn, deal_id, user_id)
-    return all(a["id"] in signed for a in agreements)
+DECIDE_ACTIONS = ("approve", "decline", "revoke", "require_resign")
 
 
 async def decide(conn, *, actor, access_id, action: str, level: str | None, reason: str | None) -> dict:
-    """approve (choose level) / decline (reason) / revoke. Caller has checked the
-    actor manages the row's deal. Signatures are never touched."""
+    """approve (choose level) / decline (reason) / revoke / require_resign.
+    Caller has checked the actor manages the row's deal. Signatures are never
+    touched."""
     row = await conn.fetchrow(f"SELECT {ACCESS_COLS} FROM deal_access WHERE id = $1 AND valid_to IS NULL",
                               _uuid(access_id))
     if row is None:
         raise DealRoomError(404, "Access request not found (it may have changed — reload).")
     status = row["status"]
+    if action == "require_resign":
+        deal = await fetch_deal(conn, row["deal_id"])
+        return await require_resign(conn, dict(deal), row["user_id"], actor=actor, cutoff=True,
+                                    reason=(reason or "").strip() or "The publisher asked you to sign again.")
     if action == "approve":
         if level not in GRANT_LEVELS:
             raise DealRoomError(422, "Choose the level to grant: after_agreements or after_approval.")
@@ -924,11 +1453,11 @@ async def decide(conn, *, actor, access_id, action: str, level: str | None, reas
             raise DealRoomError(409, "Already declined.")
         new_status, level = "declined", None
     elif action == "revoke":
-        if status not in ("granted", "signed_awaiting", "requested"):
+        if status not in ("granted", "signed_awaiting", "requested", "resign_required"):
             raise DealRoomError(409, "Only open or granted access can be revoked.")
         new_status, level = "revoked", None
     else:
-        raise DealRoomError(422, "action must be approve, decline or revoke")
+        raise DealRoomError(422, "action must be approve, decline, revoke or require_resign")
     _, new = await set_access(conn, row["org_id"], row["deal_id"], row["user_id"], status=new_status,
                               level=level, decided_by=actor, actor=actor, reason=(reason or None))
     await audit(conn, org_id=row["org_id"], actor=actor, action=f"deal_access.{action}", resource_id=new["id"],

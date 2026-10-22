@@ -9,6 +9,11 @@
  * filters, sorts and pages. Approve / decline / revoke — single or bulk —
  * render only from `gridActions(envelope)`, i.e. only when the envelope says
  * `can_write === true`; every label comes from the envelope's vocabularies.
+ *
+ * DEALROOM2: each agreement cell shows the version signed (or "covered by
+ * master NDA signed <date>", or the stale version) from the row's
+ * `agreement_detail`; the status filter includes resign_required (from the
+ * vocabulary); "Require re-sign" is a bulk action like the others.
  */
 
 import { useCallback, useState } from "react";
@@ -132,6 +137,10 @@ export default function AccessGrid({ initialEnvelope }) {
           {actions.includes("decline") && (
             <button type="button" disabled={busy || !selected.length || !reason.trim()} onClick={() => decide("decline")}
               className="rounded border border-navy px-3 py-1.5 text-navy disabled:opacity-50">Decline</button>
+          )}
+          {actions.includes("require_resign") && (
+            <button type="button" disabled={busy || !selected.length} onClick={() => decide("require_resign")}
+              className="rounded border border-navy px-3 py-1.5 text-navy disabled:opacity-50">Require re-sign</button>
           )}
           {actions.includes("revoke") && (
             <button type="button" disabled={busy || !selected.length} onClick={() => decide("revoke")}

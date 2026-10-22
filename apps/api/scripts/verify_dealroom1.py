@@ -238,6 +238,10 @@ async def purge_fixture_signatures() -> int:
             await op.execute("SELECT set_config('dealroom.signature_teardown', 'fixture', true)")
             status = await op.execute(
                 "DELETE FROM deal_signatures WHERE org_id = ANY($1::uuid[]) AND chain = 'test'", FIXTURE_ORGS)
+            # DEALROOM2: publishing now writes immutable agreement_versions rows
+            # (no app_service DELETE policy + a trigger) — same fixture path.
+            if await op.fetchval("SELECT to_regclass('public.agreement_versions') IS NOT NULL"):
+                await op.execute("DELETE FROM agreement_versions WHERE org_id = ANY($1::uuid[])", FIXTURE_ORGS)
         return int(status.rsplit(" ", 1)[-1])
     finally:
         await op.close()
@@ -971,7 +975,8 @@ async def y_grid(conn):
     row = next((r for r in body.get("rows", []) if r["id"] in want_unsigned), {})
     check(set(row.get("agreements", {})) >= {"platform_nda", "platform_joinder"},
           "one column per required agreement (signed date or —)", dumps(row.get("agreements")))
-    check(body.get("permissions", {}).get("can_write") is True and body["vocabularies"]["actions"] ==
+    # DEALROOM2 appends "require_resign" — the Phase 1 three stay first, in order.
+    check(body.get("permissions", {}).get("can_write") is True and body["vocabularies"]["actions"][:3] ==
           ["approve", "decline", "revoke"], "the envelope publishes can_write and the actions")
 
     # decline with reason, revoke — immediate, audited, signatures kept

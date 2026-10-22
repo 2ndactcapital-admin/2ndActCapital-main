@@ -4,8 +4,8 @@ import { getRequestAuthClient } from "@/lib/authServer";
 // DEALROOM1 — the browser's only way to the deal-room API (Rule 5: client
 // components never call FastAPI). Forwards /api/deal-room/<path> to
 // /api/v1/deal-room/<path> with the caller's own token, read with the
-// host-aware Auth0 client. JSON, multipart uploads and the signed-copy HTML
-// pass through unchanged; no org_id is ever added on this side.
+// host-aware Auth0 client. JSON, multipart uploads, the signed-copy HTML and
+// (DEALROOM2) PDF / page-image bytes pass through unchanged; no org_id is ever added on this side.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function forward(request, { params }) {
@@ -46,6 +46,16 @@ async function forward(request, { params }) {
   const rtype = res.headers.get("content-type") || "";
   if (rtype.startsWith("text/html")) {
     return new NextResponse(await res.text(), { status: res.status, headers: { "content-type": rtype } });
+  }
+  // DEALROOM2: the signed-copy PDF and the agreement viewer's page images pass
+  // through as bytes, with the API's own disposition / cache headers.
+  if (res.ok && (rtype.startsWith("application/pdf") || rtype.startsWith("image/"))) {
+    const headers = { "content-type": rtype };
+    for (const h of ["content-disposition", "cache-control"]) {
+      const v = res.headers.get(h);
+      if (v) headers[h] = v;
+    }
+    return new NextResponse(await res.arrayBuffer(), { status: res.status, headers });
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

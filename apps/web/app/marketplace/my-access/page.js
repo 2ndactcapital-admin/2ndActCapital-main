@@ -28,6 +28,11 @@ export default async function MyDealAccessPage() {
           Manage access to the deals you publish →
         </a>
       )}
+      {me?.can_manage_library === true && (
+        <a href="/marketplace/library" className="ml-6 mt-3 inline-block text-sm text-navy hover:underline">
+          Agreement template library →
+        </a>
+      )}
       <div className="mt-6">
         {error ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">

@@ -1,5 +1,9 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-22 (dealroom1.structural — Marketplace Deal Room Phase 1:
+Last updated: 2026-10-22 (dealroom2.structural — Marketplace Deal Room Phase 2:
+immutable agreement versions with keep / require-re-signing, uploaded PDF
+agreements with a page viewer, the firm template library, the master NDA, the
+signed copy as a PDF with a certificate page; schema APPLIED live; verify
+WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (dealroom1.structural — Marketplace Deal Room Phase 1:
 publishers, delegates, nine-folder data room, DRAFT NDA + joinder with in-house
 e-signature, eligibility, automatic approval, the access grid; schema and
 migration APPLIED live; verify WRITTEN, not yet run; see the top entry).
@@ -316,6 +320,73 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 0000000000000000000000000000000000000000000000000000000. DEALROOM2 — Marketplace Deal Room Phase 2: immutable agreement versions (keep signers / require re-signing → resign_required, prior level restored), uploaded PDF agreements read page by page before Sign, the firm template library, the master NDA, the signed copy as a PDF with a certificate page; verify WRITTEN, not yet run (2026-10-22)
+
+**Run:** `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_dealroom2.py 2>&1 | grep -E "^\[FAIL\]|^\[FIND\]|^TOTAL"`.
+Written, **not run** (standing rule). R2 is mocked in memory. The regressions
+(`verify_dealroom1.py`, `verify_authz1.py`) run ONCE each, flat, after teardown,
+with `VERIFY_NESTED=1`. The teardown needs the operator DSN
+`DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP` for signatures, agreement versions
+and non-draft templates. Design: `docs/DEAL_ROOM.md` § Phase 2. Discovery:
+`docs/DEALROOM2_DISCOVERY.md` (1a–1d).
+
+**Applied live (2026-10-22):** `docs/dealroom2_part1.sql` via
+`apps/api/scripts/_apply_dealroom2.py --schema`, on the operator DSN, because
+the MCP refuses NOT NULL relaxations. Before it was applied, the live DB held 0
+deal agreements, 0 signatures and 0 access rows, so there was nothing to
+backfill. It added:
+- `agreement_versions` (immutable) and `deal_master_ndas` / `_deals`
+- `deal_agreements.kind/title/document_id/file_sha256`
+- `deal_signatures.agreement_version_id/document_sha256/record_version`
+- `deal_access.prior_level/resign_after` and status `resign_required`
+- the template guard trigger
+- 8 label rows per org
+
+**Run in this session:**
+- `node --test tests/` 314/0 (8 new in `tests/dealroom/dealroom2.test.mjs`).
+- `authz1_routes.py` regenerated: 14 new `/deal-room` routes, each gated;
+  `--check` CURRENT; no existing gate changed.
+- reportlab 4.4.4 + pypdf 6.1.1 installed into `apps/api/venv` and pinned in
+  requirements.
+
+**`npm run build` NOT run** (laptop memory; standing rule) — the verify runs it.
+
+**Findings:**
+- [FIND] The template body was read LIVE at every render, and
+  `agreement_templates` was UPDATE-able. A body edit would have silently changed
+  what later signers saw, under the same `template_version`. Two fixes:
+  - Versions now snapshot the body.
+  - A trigger fixes the text of every non-draft template.
+- [FIND] The Phase 1 canonical record is fixed, because every existing row's
+  hash depends on it. Phase 2 rows hash a wider record, selected by
+  `record_version`. The verifier handles both.
+- [FIND] DOCX → PDF has no pure-Python path that keeps layout, so uploads are
+  **PDF only** (415 otherwise).
+- [FIND] An upload's signature still needs a `rendered_text`, because the column
+  is NOT NULL and the verifier hashes it. It stores a statement naming the
+  document and its file hash, and `document_sha256` holds the file hash.
+- [FIND] A master NDA signed on a covered deal renders for its HOME deal, so the
+  text names the deal it was written for, not the covered one.
+- [FIND] The bulk grid "require re-sign" needed a cut-off (`resign_after`), not a
+  version: re-signing the SAME version must count again only when it is signed
+  after the cut-off.
+- [FIND] `verify_dealroom1.py` needed two named changes:
+  - Its privileged purge also deletes fixture `agreement_versions`. Publishing
+    now writes them, and app_service cannot delete them, so its teardown would
+    otherwise fail.
+  - Its grid-actions check accepts the Phase 2 superset (`require_resign`
+    appended).
+- `docs/schema_snapshot.sql` was not refreshed. The refresh skill pushes, so
+  that is left to the operator.
+
+**Follow-ups:**
+- Counsel review of the templates still gates outside publishers.
+- The master NDA UI sets scope `all`, or "selected = this deal". The API takes
+  any list of the publisher's deals.
+- Phase 3 is unchanged.
 
 ---
 

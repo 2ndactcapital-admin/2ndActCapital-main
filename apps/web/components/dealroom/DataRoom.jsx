@@ -12,10 +12,19 @@
  * says `permissions.can_write === true` (lib/dealRoom.canWrite) — no fallback.
  * Every label comes from the envelope's vocabularies (config). The browser only
  * ever calls /api/deal-room/* (the Next proxy), never FastAPI.
+ *
+ * DEALROOM2: an uploaded PDF (and Exhibit A) is read page by page in
+ * AgreementViewer and Sign stays disabled until the last page is reached;
+ * a resign_required investor is shown what changed and signs the new
+ * version; signed agreements list their version and a PDF copy; managers
+ * upload PDFs, save new versions (keep signers / require re-signing) and set
+ * the publisher's master NDA — every control behind can_write === true.
  */
 
 import { useState } from "react";
-import { canWrite, folderRows, investorStep } from "@/lib/dealRoom.mjs";
+import { agreementControls, canWrite, folderRows, investorStep, signatureLine, signEnabled, signPayload }
+  from "@/lib/dealRoom.mjs";
+import AgreementViewer from "@/components/dealroom/AgreementViewer";
 
 const CARD = "rounded-[6px] border border-[#ece8dd] bg-white";
 
@@ -124,9 +133,11 @@ export function InvestorPanel({ envelope, onChange }) {
   const [doc, setDoc] = useState(null);
   const [name, setName] = useState("");
   const [consent, setConsent] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const state = investorStep(envelope);
+  const needsScroll = doc?.kind === "upload" || Boolean(doc?.exhibit);
   const dealId = envelope?.deal?.id;
   const access = envelope?.my_access;
 
@@ -182,24 +193,27 @@ export function InvestorPanel({ envelope, onChange }) {
 
       {state.step === "sign" && (
         <div className="mt-3 space-y-3 text-sm">
+          {state.resign && (
+            <p className="text-[#9B2335]" data-testid="resign-notice">
+              An agreement for this deal has changed. Sign the new version to reopen the folders you had.
+            </p>
+          )}
           <p className="text-text-secondary">
             {state.remaining} agreement{state.remaining > 1 ? "s" : ""} to sign, in order. Next: <strong>{state.next.title}</strong>
           </p>
           {!doc && (
             <button type="button" disabled={busy}
               className="rounded border border-navy px-4 py-2 text-sm font-medium text-navy"
-              onClick={() => act(async () => setDoc(await call(`deals/${dealId}/agreements/${state.next.id}/render`)))}>
+              onClick={() => act(async () => {
+                setScrolled(false);
+                setDoc(await call(`deals/${dealId}/agreements/${state.next.id}/render`));
+              })}>
               Read the agreement
             </button>
           )}
           {doc && (
             <>
-              {doc.template_status === "draft" && (
-                <p className="text-xs text-[#9B2335]">Template marked DRAFT — pending counsel review.</p>
-              )}
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded border border-border bg-bg-app p-4 font-sans text-sm text-text-primary">
-                {doc.text}
-              </pre>
+              <AgreementViewer dealId={dealId} doc={doc} onScrolledToEnd={() => setScrolled(true)} />
               <label className="block text-text-secondary">
                 Type your full name
                 <input className="mt-1 block w-full rounded border border-border px-2 py-1.5" value={name}
@@ -209,12 +223,13 @@ export function InvestorPanel({ envelope, onChange }) {
                 <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
                 I agree to sign electronically
               </label>
-              <button type="button" disabled={busy || !consent || name.trim().length < 2}
+              <button type="button" data-testid="sign-button"
+                disabled={!signEnabled({ needsScroll, scrolledToEnd: scrolled, consent, name, busy })}
                 className="rounded bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 onClick={() => act(async () => {
-                  await call(`deals/${dealId}/agreements/${state.next.id}/sign`, { method: "POST", body: {
-                    typed_name: name, consent, rendered_text_sha256: doc.rendered_text_sha256 } });
-                  setDoc(null); setName(""); setConsent(false);
+                  await call(`deals/${dealId}/agreements/${state.next.id}/sign`, { method: "POST",
+                    body: signPayload(doc, { name, consent }) });
+                  setDoc(null); setName(""); setConsent(false); setScrolled(false);
                   await onChange?.();
                 })}>Sign</button>
             </>
@@ -236,15 +251,145 @@ export function InvestorPanel({ envelope, onChange }) {
         <ul className="mt-4 space-y-1 border-t border-border pt-3 text-xs text-text-muted">
           {envelope.agreements.filter((a) => a.signature_id).map((a) => (
             <li key={a.id}>
-              {a.title} — signed {a.signed_at.slice(0, 10)} ·{" "}
+              {signatureLine(a)} ·{" "}
               <a className="text-navy hover:underline" href={`/api/deal-room/signatures/${a.signature_id}/copy`}
-                target="_blank" rel="noopener">signed copy</a>
+                target="_blank" rel="noopener">signed copy</a> ·{" "}
+              <a className="text-navy hover:underline" href={`/api/deal-room/signatures/${a.signature_id}/pdf`}>PDF</a>
             </li>
           ))}
         </ul>
       )}
       {error && <p className="mt-3 text-sm text-[#9B2335]" role="alert">{error}</p>}
     </section>
+  );
+}
+
+function AgreementManager({ envelope, a, run }) {
+  const v = envelope.vocabularies || {};
+  const dealId = envelope.deal.id;
+  const controls = agreementControls(envelope, a);
+  const [pending, setPending] = useState({});
+  const [policy, setPolicy] = useState("");
+  const [scope, setScope] = useState("all");
+  const [file, setFile] = useState(null);
+  const kindLabel = (v.agreement_kinds || []).find((k) => k.key === a.kind)?.label || a.kind;
+  const needsPolicy = (a.signatures || 0) > 0;
+  const policySelect = needsPolicy && (
+    <label className="mt-2 block text-xs text-text-secondary">
+      {a.signatures} signature{a.signatures === 1 ? "" : "s"} on this agreement — existing signers:
+      <select aria-label={`Re-signing for ${a.title}`} className="mt-1 block w-full rounded border border-border bg-white px-2 py-1 text-sm"
+        value={policy} onChange={(e) => setPolicy(e.target.value)}>
+        <option value="">Choose…</option>
+        {(v.resign_policies || []).map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+      </select>
+    </label>
+  );
+  return (
+    <li className="rounded border border-border p-3" data-agreement={a.title}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-navy">{a.sort_order}. {a.title}{" "}
+          <span className="text-xs text-text-muted">
+            {kindLabel}{a.current_version ? ` · v${a.current_version}` : ""} · {a.status}
+            {a.is_master ? " · master NDA" : ""}{a.virtual ? " (from another deal)" : ""}
+          </span>
+        </span>
+        {controls.includes("publish") && (
+          <button type="button" className="text-xs font-medium text-navy hover:underline"
+            onClick={() => run(() => call(`deals/${dealId}/agreements/${a.id}/publish`, { method: "POST" }))}>
+            Publish
+          </button>
+        )}
+      </div>
+      {a.kind === "upload" && (
+        <p className="mt-1 text-xs text-text-muted">Uploaded PDF — optional fill-in fields are not supported for uploads.</p>
+      )}
+      {a.kind !== "upload" && !a.virtual && (a.fields || []).map((f) => (
+        <label key={f.key} className="mt-2 block text-xs text-text-secondary">
+          {f.label}
+          <input className="mt-1 block w-full rounded border border-border px-2 py-1 text-sm"
+            defaultValue={a.field_values?.[f.key] ?? f.default ?? ""}
+            onBlur={(e) => {
+              const value = f.type === "flag" ? ["on", "true", "yes", "1"].includes(e.target.value.toLowerCase())
+                : e.target.value;
+              if (a.status === "draft") {
+                run(() => call(`deals/${dealId}/agreements/${a.id}`, { method: "PATCH",
+                  body: { field_values: { [f.key]: value } } }));
+              } else {
+                setPending((p) => ({ ...p, [f.key]: value }));
+              }
+            }} />
+        </label>
+      ))}
+      {a.status === "draft" && (a.blockers || []).length > 0 && (
+        <p className="mt-2 text-xs text-[#9B2335]">Missing before publishing: {a.blockers.map((b) => b.label).join(", ")}</p>
+      )}
+      {controls.includes("new_version") && (
+        <div className="mt-2" data-testid="new-version">
+          {policySelect}
+          <button type="button" disabled={!Object.keys(pending).length || (needsPolicy && !policy)}
+            className="mt-2 rounded border border-navy px-3 py-1 text-xs font-medium text-navy disabled:opacity-50"
+            onClick={() => run(async () => {
+              await call(`deals/${dealId}/agreements/${a.id}/versions`, { method: "POST",
+                body: { field_values: pending, resign_policy: policy || null } });
+              setPending({});
+            })}>Save as version {(a.current_version || 0) + 1}</button>
+        </div>
+      )}
+      {controls.includes("replace_file") && (
+        <div className="mt-2" data-testid="replace-file">
+          <input type="file" accept="application/pdf,.pdf" aria-label={`Replacement PDF for ${a.title}`}
+            className="text-xs" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          {policySelect}
+          <button type="button" disabled={!file || (needsPolicy && !policy)}
+            className="mt-2 rounded border border-navy px-3 py-1 text-xs font-medium text-navy disabled:opacity-50"
+            onClick={() => run(async () => {
+              const form = new FormData();
+              form.append("file", file, file.name);
+              if (policy) form.append("resign_policy", policy);
+              await call(`deals/${dealId}/agreements/${a.id}/versions/file`, { method: "POST", form });
+              setFile(null);
+            })}>Replace PDF (version {(a.current_version || 0) + 1})</button>
+        </div>
+      )}
+      {controls.includes("make_master") && envelope.publisher_entity_id && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="make-master">
+          <select aria-label="Master NDA scope" className="rounded border border-border bg-white px-2 py-1"
+            value={scope} onChange={(e) => setScope(e.target.value)}>
+            {(v.master_scopes || []).map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+          <button type="button" className="rounded border border-navy px-3 py-1 font-medium text-navy"
+            onClick={() => run(() => call(`publishers/${envelope.publisher_entity_id}/master-nda`, { method: "PUT",
+              body: { deal_agreement_id: a.id, scope, deal_ids: scope === "selected" ? [dealId] : [] } }))}>
+            Use as master NDA
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function UploadAgreement({ dealId, run }) {
+  const [title, setTitle] = useState("");
+  const [file, setFile] = useState(null);
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-2 text-xs text-text-secondary" data-testid="upload-agreement">
+      <label>Your own agreement (PDF only)
+        <input className="mt-1 block rounded border border-border px-2 py-1 text-sm" placeholder="Title" value={title}
+          onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <input type="file" accept="application/pdf,.pdf" aria-label="Agreement PDF"
+        onChange={(e) => setFile(e.target.files?.[0] || null)} />
+      <button type="button" disabled={!file || title.trim().length < 2}
+        className="rounded border border-navy px-3 py-1.5 font-medium text-navy disabled:opacity-50"
+        onClick={() => run(async () => {
+          const form = new FormData();
+          form.append("file", file, file.name);
+          form.append("title", title);
+          await call(`deals/${dealId}/agreements/upload`, { method: "POST", form });
+          setTitle(""); setFile(null);
+        })}>Upload agreement</button>
+      <span className="w-full text-text-muted">Uploaded agreements are signed exactly as uploaded — no fill-in fields.</span>
+    </div>
   );
 }
 
@@ -293,39 +438,23 @@ function ManagerPanel({ envelope, templates, onChange, setError }) {
 
       <section className={`${CARD} p-5`}>
         <h3 className="text-base font-semibold text-navy">Agreements</h3>
+        {envelope.master_nda && (
+          <p className="mt-2 text-xs text-text-muted" data-testid="master-nda-status">
+            Master NDA set for this publisher ({(v.master_scopes || []).find((m) => m.key === envelope.master_nda.scope)?.label
+              || envelope.master_nda.scope}){envelope.master_nda.covers_this_deal ? " — it covers this deal." : "."}
+          </p>
+        )}
         <ol className="mt-3 space-y-3 text-sm">
           {(envelope.agreements || []).map((a) => (
-            <li key={a.id} className="rounded border border-border p-3">
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-navy">{a.sort_order}. {a.title} <span className="text-xs text-text-muted">v{a.template_version} · {a.status}</span></span>
-                {a.status === "draft" && (
-                  <button type="button" className="text-xs font-medium text-navy hover:underline"
-                    onClick={() => run(() => call(`deals/${dealId}/agreements/${a.id}/publish`, { method: "POST" }))}>
-                    Publish
-                  </button>
-                )}
-              </div>
-              {a.status === "draft" && (a.fields || []).map((f) => (
-                <label key={f.key} className="mt-2 block text-xs text-text-secondary">
-                  {f.label}
-                  <input className="mt-1 block w-full rounded border border-border px-2 py-1 text-sm"
-                    defaultValue={a.field_values?.[f.key] ?? f.default ?? ""}
-                    onBlur={(e) => run(() => call(`deals/${dealId}/agreements/${a.id}`, {
-                      method: "PATCH", body: { field_values: { [f.key]: f.type === "flag"
-                        ? ["on", "true", "yes", "1"].includes(e.target.value.toLowerCase()) : e.target.value } } }))} />
-                </label>
-              ))}
-              {a.status === "draft" && (a.blockers || []).length > 0 && (
-                <p className="mt-2 text-xs text-[#9B2335]">Missing before publishing: {a.blockers.map((b) => b.label).join(", ")}</p>
-              )}
-            </li>
+            <AgreementManager key={a.id} envelope={envelope} a={a} run={run} />
           ))}
         </ol>
+        <UploadAgreement dealId={dealId} run={run} />
         <div className="mt-3 flex flex-wrap gap-2">
           {(templates || []).map((t) => (
             <button key={t.id} type="button" className="rounded border border-navy px-3 py-1.5 text-xs font-medium text-navy"
               onClick={() => run(() => call(`deals/${dealId}/agreements`, { method: "POST", body: { template_id: t.id } }))}>
-              Require {t.title} (v{t.version}{t.status === "draft" ? ", DRAFT" : ""})
+              Require {t.title} (v{t.version}{t.scope === "org" ? ", firm library" : ""}{t.status === "draft" ? ", DRAFT" : ""})
             </button>
           ))}
         </div>
