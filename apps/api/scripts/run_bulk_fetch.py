@@ -17,6 +17,11 @@ MODES (one per invocation)
                          yesterday), then apply the active selection policy to the NEW rows only.
                          With --dry-run: print the date span and the number of index files only.
   --reprocess-fetched    classify every row stuck at 'fetched' from its stored text (no SEC request).
+  --reclassify-other     (bulkfetchui3) re-classify every row recorded as document_kind 'other' from its
+                         stored text (no SEC request, no HTTP client) and move each changed row to the
+                         status the normal decision gives it, status_reason 'reclassified:other→<kind>'.
+                         DRY RUN by default (counts by issuer and old→new kind, 10 examples); --apply
+                         writes. Optional --issuer-cik LIST, --accessions LIST, --from / --to.
   --selection-v2         Wells Fargo / Deutsche Bank prefilter v2: print what moves, by year; without
                          --dry-run it then activates policy v2 and moves exactly those rows.
   --worker               serve runs QUEUED from the EDGAR Pipeline screen's "Bulk download" tab
@@ -80,12 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--peek-test", type=int, metavar="N")
     mode.add_argument("--refresh-index", action="store_true")
     mode.add_argument("--reprocess-fetched", action="store_true")
+    mode.add_argument("--reclassify-other", action="store_true")
     mode.add_argument("--selection-v2", action="store_true")
     mode.add_argument("--worker", action="store_true")
     p.add_argument("--target", choices=("laptop", "render"), default="laptop")
     p.add_argument("--poll-seconds", type=float, default=15)
     p.add_argument("--once", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--apply", action="store_true", help="--reclassify-other only: write (default is a dry run)")
+    p.add_argument("--issuer-cik", default="", help="--reclassify-other only: primary issuer CIKs, comma-separated")
+    p.add_argument("--accessions", default="", help="--reclassify-other only: accession numbers, comma-separated")
     p.add_argument("--source", default="structured_notes")
     p.add_argument("--banks", default="")
     p.add_argument("--from", dest="date_from", type=_date)
@@ -129,6 +138,8 @@ async def main(argv: list[str]) -> int:
     url = url.replace("postgresql+asyncpg://", "postgresql://")
     if args.worker:
         return await _worker(url, args)
+    if args.reclassify_other:
+        return await _reclassify_other(url, args)
     conc = max(1, args.concurrency)
     pool = await asyncpg.create_pool(url, statement_cache_size=0, min_size=1, max_size=conc + 3)
     log = edgar_pipeline.RequestLog()
@@ -208,6 +219,26 @@ async def main(argv: list[str]) -> int:
     finally:
         await client.aclose()
         await pool.close()
+
+
+async def _reclassify_other(url: str, args) -> int:
+    """--reclassify-other: stored text only. No httpx client is created on
+    this path at all, so it cannot make an SEC request."""
+    from services import edgar_bulk as eb
+    from services import edgar_pipeline
+
+    import asyncpg
+
+    conn = await asyncpg.connect(url, statement_cache_size=0)
+    try:
+        await eb.reclassify_other(
+            conn, bucket=edgar_pipeline.r2_bucket(), apply=args.apply and not args.dry_run,
+            issuer_ciks=eb.parse_bank_names(args.issuer_cik) or None,
+            accessions=eb.parse_bank_names(args.accessions) or None,
+            date_from=args.date_from, date_to=args.date_to)
+    finally:
+        await conn.close()
+    return 0
 
 
 async def _worker(url: str, args) -> int:

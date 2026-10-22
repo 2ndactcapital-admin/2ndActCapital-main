@@ -139,19 +139,18 @@ Report findings, THEN CONTINUE IMMEDIATELY in the same response.
   - <cross-org isolation, proven both directions>
   - <permission gate proven both ways: refuses the wrong caller,
     admits the right one, on the identical request>
-  - Regression check: re-run every PRIOR sprint's own verify script
-    and confirm they all still report clean. Every real sprint
-    prompt from Sprint 4 onward has included this, and it matters —
-    it's caught real cross-sprint breakage more than once. Each
-    prior script is invoked as its own subprocess with a real
-    timeout (180s has been the observed default); as the sprint
-    count grows, so does this chain's total runtime and its
-    exposure to the stuck-transaction failure mode described below
-    — a FAIL here is not automatically a real regression, see below
-    before assuming the worst.
-    IMPORTANT: invoke each prior script EXACTLY ONCE, flat — never
-    let a predecessor's own regression chain re-run inside yours
-    (see "regression-chain nesting" below).
+  - Regression: NOT part of a normal sprint's verify (Joe, 2026-10-22).
+    Every verify instead runs the cheap guards: its own checks plus
+    `authz1_routes.py --check` (every route gated, no gate changed).
+    EXCEPTION: a sprint that changes something shared — auth/authz,
+    RLS, a table or service other features read — re-runs the ONE
+    most directly affected prior verify, EXACTLY ONCE, flat, after
+    teardown, with VERIFY_NESTED=1 and a 1200 s timeout. Name that
+    script in the prompt; never "every prior script".
+    The full suite runs separately, on the operator's schedule
+    (weekly / before a big push): scripts/run_regressions.sh, every
+    verify_*.py one after another, one summary line each. Failures
+    go to the backlog.
 
 === TASK N+1: UPDATE PROJECT STATUS ===
 Update docs/PROJECT_STATUS.md [and any relevant design doc].
@@ -226,7 +225,7 @@ If instead the real work is sitting as uncommitted changes directly on local `ma
 - **A "fresh run" leg is not guaranteed to actually be fresh**: a leg labeled "fresh run" has come back having inherited a much older, unrelated conversation's context (evidenced by an implausibly high cached-token count for a small prompt, and responses referencing instructions never given this session). Don't re-run blind — resume that exact leg's session directly with an explicit, unambiguous instruction to proceed: `claude --resume <session_id> --permission-mode acceptEdits --dangerously-skip-permissions -p "THERE IS NO HUMAN AVAILABLE. Proceed immediately into Task 1 of <sprint description> and continue through Task 5 without stopping again." --output-format json > <file>.json 2>&1`. Since this bypasses `run_sprint.sh` entirely, Part 4 (merge) must then be done fully manually — there's no Step 4 auto-push to rely on or distrust.
 - **A `-p` session can fabricate an "I'll wait for the background process and report back" completion.** No such notification mechanism exists in this tool. Seen four times now, always on commands that genuinely take several minutes. **The fourth occurrence consumed an entire sprint**: the session wrote an exploration script, launched it, then stopped with "I'll pause here and wait for the exploration script's completion notification before continuing" — 45 turns, no verify script, nothing committed. It happened *despite* this gotcha already being documented, because the mitigation lived only here rather than in the prompt itself. **The rule is now part of the STANDING RULES template above and must appear in every prompt.** Recovery is cheap: resume the session (`claude --resume <session_id>`) with an explicit instruction that no such mechanism exists and to run everything synchronously — the earlier work is not lost.
 - **`run_sprint.sh`'s Step 3 does NOT invoke verify scripts through `doppler run --`.** This directly contradicts the "Local execution — always through Doppler" rule below, and the failure is misleading: a script relying on ambient env vars fails with a credential error (`InvalidPasswordError: password authentication failed`) that looks like a rotated-password problem rather than a missing-wrapper problem. Scripts that hydrate Doppler internally over HTTPS (the pattern in `verify_rlscutover.py` / `verify_tamodel1.py` — they announce `[INFO] hydrated N secrets from Doppler over HTTPS`) work fine under the wrapper; scripts that don't will fail on any DB access. **Every new verify script should hydrate its own secrets.** If one fails this way, re-run it manually with `doppler run -- venv/bin/python apps/api/scripts/verify_<name>.py` — the sprint's real work is usually already correct and only the verification needs re-running.
-- **Regression-chain nesting compounds multiplicatively, not linearly.** When a verify script re-runs its predecessor's *full* script as its own regression gate, and that predecessor does the same to *its* predecessor, the earliest script re-executes once per depth level — 4× in a 4-deep chain, turning a ~5 minute verify into ~45. The durable fix is to state a predecessor's baseline as a CONFIRMED REAL FACT in the next prompt rather than instructing the sprint to re-run it.
+- **Regression-chain nesting compounds multiplicatively, not linearly.** When a verify script re-runs its predecessor's *full* script as its own regression gate, and that predecessor does the same to *its* predecessor, the earliest script re-executes once per depth level — 4× in a 4-deep chain, turning a ~5 minute verify into ~45. The durable fix is to state a predecessor's baseline as a CONFIRMED REAL FACT in the next prompt rather than instructing the sprint to re-run it. Since 2026-10-22 regressions are out of per-sprint verifies by default (see REAL PROOF in the skeleton); VERIFY_NESTED=1 stays the guard for the one allowed exception.
 - **`ANTHROPIC_API_KEY` and Claude Code's OAuth session actively conflict, and the failure is silent-then-expensive.** The key takes precedence, breaks `/refresh-schema` (which needs the OAuth session), and — discovered the hard way — routes an entire sprint's ordinary `claude -p` work through paid API billing instead of the Max plan, with no warning until credits run out mid-run. If `/refresh-schema` starts failing for no apparent reason, check whether `ANTHROPIC_API_KEY` is set in the shell.
 - **venv/PATH cross-contamination**: `pip`/`python` on PATH can silently resolve to a DIFFERENT worktree's venv if one was activated earlier in the same shell and never deactivated — the `(venv)` prompt prefix doesn't say which one. Verify with `which pip`/`which python`, or just call `./venv/bin/pip` / `./venv/bin/python` directly by relative path to sidestep PATH entirely.
 - **A stray untracked file at the merge target silently aborts `git merge`**: no ambiguity in the error, but if `git push` runs right after without checking, it can succeed by pushing whatever commits were already local — giving a false impression the merge happened. Always confirm `git log --oneline -3` shows a real merge/sprint commit before pushing.

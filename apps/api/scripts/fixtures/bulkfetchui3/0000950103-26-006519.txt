@@ -1,0 +1,91 @@
+424B2 1 dp245994_424b2-spar0028.htm FORM 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-284538
+GS Finance Corp.
+$14,411,000
+Autocallable Contingent Coupon S&P 500 ® Futures 40% VT Adaptive Response 6% Decrement Index (USD) ER-Linked Notes due 2031
+guaranteed by
+The Goldman Sachs Group, Inc.
+If the closing level of the S&P 500 ® Futures 40% VT Adaptive Response 6% Decrement Index (USD) ER on any monthly coupon observation date is less than 60% of the initial underlier level, you will not receive a coupon on the applicable payment date. The amount that you will be paid on your notes is based on the performance of the index. The notes will mature on the stated maturity date (April 28, 2031), unless automatically called on any quarterly call observation date (the coupon observation dates occurring in January, April, July and October of each year, commencing in April 2027 to and including January 2031). Your notes will be automatically called if the closing level of the index on any such call observation date is greater than or equal to the initial underlier level (the lowest of the closing levels of the index during the observation period (which is each scheduled trading day from and including April 23, 2026 to and including May 15, 2026)). If your notes are automatically called, you will receive a payment on the next payment date (the third business day after the relevant call observation date) equal to the face amount of your notes plus a coupon (as described below).
+Coupon observation dates are the 23rd day of each month, commencing in May 2026 and ending in April 2031. If on any coupon observation date the closing level of the index is greater than or equal to 60% of the initial underlier level, you will receive on the applicable payment date a coupon for each $1,000 face amount of your notes equal to $11.667 (1.1667% monthly, or the potential for up to approximately 14% per annum).
+The index attempts to provide exposure to the S&P 500 ® Futures Excess Return Index with a rules-based overlay that adjusts exposure to the S&P 500 ® Futures Excess Return Index on a daily basis. The objective of these rules, taken collectively, is to create an index that provides for volatility-adjusted exposure to the S&P 500 ® Futures Excess Return Index, coupled with further adjustments based on calendar-based signals and price patterns, subject to a maximum exposure of 500% and a maximum daily change in leverage of 100%. In addition, the index is subject to a daily decrement of 6.0% per annum.
+The S&P 500 ® Futures Excess Return Index tracks the performance of E-mini S&P 500 futures contracts, not the S&P 500 ® Index. Generally, the return on an investment in a futures contract is correlated with, but not the same as, the return on buying and holding the securities underlying such contract.
+The index is subject to risks associated with the use of significant leverage. Investors should be aware that the use of leverage will magnify and accelerate any negative performance of the index. The index is also subject to a cap on the maximum daily change in leverage of 100%, which may result in the index leveraging up more slowly in the event of a market rally, and/or deleveraging more slowly in the event of a market sell-off, compared to an identical index that does not cap the amount of daily leverage change.
+In addition, a per annum deduction that is a fixed 6.0% of the index level, also known as a decrement, is deducted daily, even when the index is not fully invested. The deduction of the decrement has the effect of offsetting positive returns, and worsening negative returns, on the performance of the index, and the inclusion of the decrement means the index will trail the performance of an identical index without such a decrement feature. In addition, the index may be significantly uninvested in the S&P 500 ® Futures Excess Return Index on any given day, and, in that case, will realize only a portion of any gains in the appreciation of the S&P 500 ® Futures Excess Return Index or the E-mini S&P 500 futures contracts on that day and any uninvested portion will earn no return.
+The index attempts to provide exposure to the S&P 500 ® Futures Excess Return Index. The S&P 500 ® Futures Excess Return Index tracks futures contracts on the S&P 500 ® Index and is likely to underperform the total return performance of the S&P 500 ® Index because of an implicit financing cost.
+The description above is only a summary. For a more detailed description of the index, see “Index Summary” beginning on page PS-3.
+The amount that you will be paid on your notes at maturity, if the notes have not been automatically called , in addition to the final coupon, if any, is based on the performance of the index. The underlier return is the percentage increase or decrease in the closing level of the index on the determination date (the final coupon observation date, April 23, 2031) from the initial underlier level.
+At maturity, for each $1,000 face amount of your notes, you will receive an amount in cash equal to:
+·
+if the underlier return is greater than or equal to -40% (the final underlier level is greater than or equal to 60% of the initial underlier level), $1,000 plus a coupon calculated as described above;
+·
+if the underlier return is less than -40% (the final underlier level is less than 60% of the initial underlier level), but greater than or equal to -‍50% (the final underlier level is greater than or equal to 50% of the initial underlier level), $1,000 (you will not receive a coupon); or
+·
+if the underlier return is less than -50% (the final underlier level is less than 50% of the initial underlier level), the sum of (i) $1,000 plus (ii) the product of (a) the underlier return times (b) $1,000. You will receive less than 50% of the face amount of your notes and no coupon.
+You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc., as well as risks associated with the index, including the use of leverage and a decrement. See page PS-14.
+The estimated value of your notes at the time the terms of your notes are set on the trade date is equal to approximately $943 per $1,000 face amount. For a discussion of the estimated value and the price at which Goldman Sachs & Co. LLC would initially buy or sell your notes, if it makes a market in the notes, see the following page.
+Original issue date:
+May 1, 2026
+Original issue price:
+100% of the face amount
+Underwriting discount:
+1% of the face amount
+Net proceeds to the issuer:
+99% of the face amount
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+Pricing Supplement No. 24,142 dated April 28, 2026.
+The issue price, underwriting discount and net proceeds listed above relate to the notes we sell initially. We may decide to sell additional notes after the date of this pricing supplement, at issue prices and with underwriting discounts and net proceeds that differ from the amounts set forth above. The return (whether positive or negative) on your investment in notes will depend in part on the issue price you pay for such notes.
+GS Finance Corp. may use this prospectus in the initial sale of the notes. In addition, Goldman Sachs & Co. LLC or any other affiliate of GS Finance Corp. may use this prospectus in a market-making transaction in a note after its initial sale. Unless GS Finance Corp. or its agent informs the purchaser otherwise in the confirmation of sale, this prospectus is being used in a market-making transaction.
+Estimated Value of Your Notes
+The estimated value of your notes at the time the terms of your notes are set on the trade date (as determined by reference to pricing models used by Goldman Sachs & Co. LLC (GS&Co.) and taking into account our credit spreads) is equal to approximately $943 per $1,000 face amount, which is less than the original issue price. The value of your notes at any time will reflect many factors and cannot be predicted; however, the price (not including GS&Co. ’ s customary bid and ask spreads) at which GS&Co. would initially buy or sell notes (if it makes a market, which it is not obligated to do) and the value that GS&Co. will initially use for account statements and otherwise is equal to approximately the estimated value of your notes at the time of pricing, plus an additional amount (initially equal to $47 per $1,000 face amount).
+Prior to April 28, 2027, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market, which it is not obligated to do) will equal approximately the sum of (a) the then-current estimated value of your notes (as determined by reference to GS&Co.’s pricing models) plus (b) any remaining additional amount (the additional amount will decline to zero on a straight-line basis from the time of pricing through April 27, 2027). On and after April 28, 2027, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market) will equal approximately the then-current estimated value of your notes determined by reference to such pricing models.
+About Your Prospectus
+The notes are part of the Medium-Term Notes, Series F program of GS Finance Corp. and are fully and unconditionally guaranteed by The Goldman Sachs Group, Inc. This prospectus includes this pricing supplement and the accompanying documents listed below. This pricing supplement constitutes a supplement to the documents listed below, does not set forth all of the terms of your notes and therefore should be read in conjunction with such documents:
+● S&P 500 ® Futures Adaptive Response Indices Supplement No. 1 dated February 18, 2025
+● April 2026 S&P 500 ® Futures 40% VT Adaptive Response 6% Decrement Index (USD) ER Supplement Addendum dated April 8, 2026
+● General terms supplement no. 17,745 dated January 20, 2026
+● Prospectus supplement dated February 14, 2025
+● Prospectus dated February 14, 2025
+The information in this pricing supplement supersedes any conflicting information in the documents listed above. In addition, some of the terms or features described in the listed documents may not apply to your notes.
+We refer to the notes we are offering by this pricing supplement as the “offered notes” or the “notes”. Each of the offered notes has the terms described below. Please note that in this pricing supplement, references to “GS Finance Corp.”, “we”, “our” and “us” mean only GS Finance Corp. and do not include its subsidiaries or affiliates, references to “The Goldman Sachs Group, Inc.”, our parent company, mean only The Goldman Sachs Group, Inc. and do not include its subsidiaries or affiliates and references to “Goldman Sachs” mean The Goldman Sachs Group, Inc. together with its consolidated subsidiaries and affiliates, including us. The notes will be issued under the senior debt indenture, dated as of October 10, 2008, as supplemented by the First Supplemental Indenture, dated as of February 20, 2015, each among us, as issuer, The Goldman Sachs Group, Inc., as guarantor, and The Bank of New York Mellon, as trustee. This indenture, as so supplemented and as further supplemented thereafter, is referred to as the “GSFC 2008 indenture” in the accompanying prospectus supplement.
+The notes will be issued in book-entry form and represented by master note no. 3, dated March 22, 2021.
+PS- 2
+Index Summary
+This section contains only a brief summary description of the index and does not describe all of its important features in detail. The index is complex and before investing in the notes, you must carefully review the more detailed description of the index contained in the S&P 500 ® Futures Adaptive Response Indices Supplement No. 1 dated February 18, 2025, as well as the risk factors related to the index under “Additional Risk Factors Specific to Your Notes – Additional Risks Related to the Underlier” herein.
+All information contained in this pricing supplement regarding the S&P 500 ® Futures 40% VT Adaptive Response 6% Decrement Index (USD) ER set forth in the table below (the “ index ”), including, without limitation, its constituents, method of calculation and changes in their components, has been derived from publicly available information and other information provided by S&P Dow Jones Indices (the “ index sponsor ” and “ index calculation agent ”), without independent verification. This information reflects the policies of, and is subject to change by, the index sponsor. The index was developed by the index sponsor, in coordination with an affiliate of GS Finance Corp. The index is maintained by the index sponsor and is calculated and published by the index calculation agent. The index sponsor has no obligation to continue to publish, and may discontinue the publication of, the index. We also refer to the index as the “ underlier ” in this pricing supplement.
+Index
+Bloomberg Ticker
+Underlying Asset
+Underlying Futures Index
+Reference Index
+Volatility Target
+Maximum Leverage
+Decrement Factor
+Live Date
+S&P 500 ® Futures 40% VT Adaptive Response 6% Decrement Index (USD) ER
+SPAR4V6
+Unfunded rolling position in E-mini S&P 500 futures
+S&P 500 ® Futures Excess Return Index
+S&P 500 ® Index
+40%
+500%
+6%
+December 27, 2024
+The index was established on the live date set forth in the table above. The index is reported by the Bloomberg Professional ® service (“ Bloomberg ”) under the ticker symbol set forth in the table above.
+Summary Overview
+The Index
+The index attempts to provide exposure to the underlying futures index, the S&P 500 ® Futures Excess Return Index, with a rules-based overlay that adjusts exposure to the underlying futures index on a daily basis. The index uses three primary rules to provide these adjustments:
+·
+leverage is applied to the weight of the underlying futures index to attempt to achieve a predefined volatility target (the volatility target for the index is set forth in the table above) (the “ volatility target ”), with a maximum exposure to the underlying futures index of 500% and a cap on the maximum daily change in exposure of 100%;
+·
+a base index is calculated for the index (“ base index ”), which is designed to adjust exposure to the underlying futures index using certain calendar-based signals and price patterns (collectively, the “ signals ”) in an attempt to overweight or underweight exposures depending on market conditions, including:
+o
+a “mean reversion signal,” which is based upon the assumption that in the short-term, the underlying futures index will increase or decrease in value in the opposite direction of the short-term historical increases or decreases in its value;
+o
+a “Federal Open Market Committee schedule (“ FOMC ”) signal,” which is based on the assumption that equities may outperform going into and on the days on which there is a scheduled release of a statement by the FOMC to announce monetary policies (an “ FOMC statement day ”); and
+PS- 3
+o
+“turn-of-the-month signals,” which are based on the assumption that equities may mean revert during the final days of a given month if equities performed negatively that month while the first days of a new month generally yield positive returns for equity securities;
+·
+a per annum deduction that is a fixed percentage of the index level, also known as a decrement, is applied daily, which has the effect of offsetting positive returns, and worsening negative returns, on the performance of the index and will result in a drag on the perfor

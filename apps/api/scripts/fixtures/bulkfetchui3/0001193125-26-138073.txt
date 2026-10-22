@@ -1,0 +1,96 @@
+424B2 1 gs-20260401.htm 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-284538
+GS Finance Corp.
+$6,225,000
+Autocallable Buffered S&P 500 ® Index-Linked Notes due 2028
+guaranteed by
+The Goldman Sachs Group, Inc.
+The notes do not bear interest. The notes will mature on the stated maturity date (March 30, 2028) unless they are automatically called on the call observation date (April 9, 2027). Your notes will be automatically called on the call observation date if the closing level of the S&P 500 ® Index on such date is greater than or equal to the initial index level of 6,368.85 (which is the closing level of the index on March 27, 2026 and is higher than the closing level of the index on the trade date (March 30, 2026)), resulting in a payment on the call payment date (April 14, 2027) for each $1,000 face amount of your notes equal to $1,110.
+If your notes are not automatically called, the amount that you will be paid on your notes on the stated maturity date will be based on the performance of the index as measured from March 27, 2026 (the date the initial index level was set) to and including the determination date (March 27, 2028).
+If the final index level on the determination date is greater than or equal to the initial index level, the return on your notes will be positive and you will receive the greater of (i) the threshold settlement amount of $1,220 for each $1,000 face amount of your notes and (ii) the sum of (a) the $1,000 face amount plus (a) the product of (1) $1,000 times (2) 1.5 times (3) the index return. The index return is the percentage increase or decrease in the final index level from the initial index level.
+If the final index level declines by up to 15% from the initial index level, you will receive the face amount of your notes.
+If the final index level declines by more than 15% from the initial index level, the return on your notes will be negative and you will lose approximately 1.1765% of the face amount of your notes for every 1% that the final index level has declined below 85% of the initial index level. See page PS- 3 . You could lose a significant portion of the face amount of your notes.
+If your notes are not automatically called on the call observation date, at maturity, for each $1,000 face amount of your notes, you will receive an amount in cash equal to:
+●
+if the index return is positive or zero (the final index level is greater than or equal to the initial index level), the greater of (i) the threshold settlement amount and (ii) the sum of (a) $1,000 plus (b) the product of (1) $1,000 times (2) 1.5 times (3) the index return;
+●
+if the index return is negative but not below -15% (the final index level is less than the initial index level, but not by more than 15%), $1,000; or
+●
+if the index return is negative and is below -15% (the final index level is less than the initial index level by more than 15%), the sum of (i) $1,000 plus (ii) the product of (a) the buffer rate of approximately 117.65% (see page PS- 3 ) times (b) the sum of the index return plus 15% times (c) $1,000. You will receive less than the face amount of your notes.
+You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc. See page PS- 11 .
+The estimated value of your notes at the time the terms of your notes are set on the trade date is equal to approximately $979 per $1,000 face amount. For a discussion of the estimated value and the price at which Goldman Sachs & Co. LLC would initially buy or sell your notes, if it makes a market in the notes, see the following page.
+Original issue date:
+April 2, 2026
+Original issue price:
+100% of the face amount
+Underwriting discount:
+1.5% of the face amount 1
+Net proceeds to the issuer:
+98.5% of the face amount
+1 This includes a selling concession of up to 1.5%.
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+JPMorgan
+Placement Agent
+Pricing Supplement No. 23,598 dated March 30, 2026.
+The issue price, underwriting discount and net proceeds listed above relate to the notes we sell initially. We may decide to sell additional notes after the date of this pricing supplement, at issue prices and with underwriting discounts and net proceeds that differ from the amounts set forth above. The return (whether positive or negative) on your investment in notes will depend in part on the issue price you pay for such notes.
+GS Finance Corp. may use this prospectus in the initial sale of the notes. In addition, Goldman Sachs & Co. LLC or any other affiliate of GS Finance Corp. may use this prospectus in a market-making transaction in a note after its initial sale. Unless GS Finance Corp. or its agent informs the purchaser otherwise in the confirmation of sale, this prospectus is being used in a market-making transaction.
+Estimated Value of Your Notes
+The estimated value of your notes at the time the terms of your notes are set on the trade date (as determined by reference to pricing models used by Goldman Sachs & Co. LLC (GS&Co.) and taking into account our credit spreads) is equal to approximately $979 per $1,000 face amount, which is less than the original issue price. The value of your notes at any time will reflect many factors and cannot be predicted; however, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would initially buy or sell notes (if it makes a market, which it is not obligated to do) and the value that GS&Co. will initially use for account statements and otherwise is equal to approximately the estimated value of your notes at the time of pricing, plus an additional amount (initially equal to $16 per $1,000 face amount).
+Prior to June 30, 2026, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market, which it is not obligated to do) will equal approximately the sum of (a) the then-current estimated value of your notes (as determined by reference to GS&Co.’s pricing models) plus (b) any remaining additional amount (the additional amount will decline to zero on a straight-line basis from the time of pricing through June 29, 2026). On and after June 30, 2026, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market) will equal approximately the then-current estimated value of your notes determined by reference to such pricing models.
+About Your Prospectus
+The notes are part of the Medium-Term Notes, Series F program of GS Finance Corp. and are fully and unconditionally guaranteed by The Goldman Sachs Group, Inc. This prospectus includes this pricing supplement and the accompanying documents listed below. This pricing supplement constitutes a supplement to the documents listed below, does not set forth all of the terms of your notes and therefore should be read in conjunction with such documents:
+●
+General terms supplement no. 17,745 dated January 20, 2026
+●
+Underlier supplement no. 48 dated March 24, 2026
+●
+Prospectus supplement dated February 14, 2025
+●
+Prospectus dated February 14, 2025
+The information in this pricing supplement supersedes any conflicting information in the documents listed above. In addition, some of the terms or features described in the listed documents may not apply to your notes.
+We refer to the notes we are offering by this pricing supplement as the “offered notes” or the “notes”. Each of the offered notes has the terms described below. Please note that in this pricing supplement, references to “GS Finance Corp.”, “we”, “our” and “us” mean only GS Finance Corp. and do not include its subsidiaries or affiliates, references to “The Goldman Sachs Group, Inc.”, our parent company, mean only The Goldman Sachs Group, Inc. and do not include its subsidiaries or affiliates and references to “Goldman Sachs” mean The Goldman Sachs Group, Inc. together with its consolidated subsidiaries and affiliates, including us. The notes will be issued under the senior debt indenture, dated as of October 10, 2008, as supplemented by the First Supplemental Indenture, dated as of February 20, 2015, each among us, as issuer, The Goldman Sachs Group, Inc., as guarantor, and The Bank of New York Mellon, as trustee. This indenture, as so supplemented and as further supplemented thereafter, is referred to as the “GSFC 2008 indenture” in the accompanying prospectus supplement.
+The notes will be issued in book-entry form and represented by master note no. 3, dated March 22, 2021.
+PS- 2
+TERMS AND CONDITIONS
+CUSIP / ISIN: 40058YW57 / US40058YW574
+Company (Issuer): GS Finance Corp.
+Guarantor: The Goldman Sachs Group, Inc.
+Underlier: the S&P 500 ® Index (current Bloomberg symbol: “SPX Index”), or any successor underlier, as it may be modified, replaced or adjusted from time to time as provided herein
+Face amount: $6,225,000 in the aggregate on the original issue date; the aggregate face amount may be increased if the company, at its sole option, decides to sell an additional amount on a date subsequent to the trade date
+Authorized denominations: $10,000 or any integral multiple of $1,000 in excess thereof
+Principal amount: Subject to redemption by the company as provided under “— Company’s redemption right (automatic call feature)” below, on the stated maturity date the company will pay, for each $1,000 of the outstanding face amount, an amount, if any, in cash equal to the cash settlement amount.
+Cash settlement amount :
+●
+if the final underlier level is greater than or equal to the initial underlier level, the greater of (i) the threshold settlement amount and (ii) the sum of (a) $1,000 plus (b) the product of (1) $1,000 times (2) the upside participation rate times (3) the underlier return;
+●
+if the final underlier level is less than the initial underlier level, but greater than or equal to the buffer level, $1,000; or
+●
+if the final underlier level is less than the buffer level, the sum of (i) $1,000 plus (ii) the product of (a) $1,000 times (b) the buffer rate times (c) the sum of the underlier return plus the buffer amount
+Company’s redemption right (automatic call feature): if a redemption event occurs, then the outstanding face amount will be automatically redeemed in whole and the company will pay an amount in cash on the call payment date, for each $1,000 of the outstanding face amount, equal to $1,110
+Redemption event: a redemption event will occur if, as measured on the call observation date, the closing level of the underlier is greater than or equal to the initial underlier level
+Initial underlier level: 6,368.85 (which is the closing level of the underlier on March 27, 2026 and is higher than the closing level of the underlier on the trade date)
+Final underlier level: the closing level of the underlier on the determination date, subject to adjustment as provided in “— Consequences of a market disruption event or a non-trading day” and “— Discontinuance or modification of the underlier” below
+Threshold settlement amount: $1,220
+Upside participation rate: 150%
+Underlier return: the quotient of (i) the final underlier level minus the initial underlier level divided by (ii) the initial underlier level, expressed as a percentage
+Buffer level: 85% of the initial underlier level
+Buffer rate : the quotient of the initial underlier level divided by the buffer level, which equals approximately 117.65%
+Buffer amount: 15%
+Trade date: March 30, 2026
+Original issue date: April 2, 2026
+Determination date: March 27, 2028, unless the calculation agent determines that a market disruption event occurs or is continuing on such day or such day is not a trading day. In that event, the determination date will be the first following trading day on which the calculation agent determines that no market disruption event occurs or is continuing. In no event, however, will the determination date be
+PS- 3
+postponed to a date later than the originally scheduled stated maturity date or, if the originally scheduled stated maturity date is not a business day, later than the first business day after the originally scheduled stated maturity date. If a market disruption event occurs or is continuing on the day that is the last possible determination date or such last possible day is not a trading day, that day will nevertheless be the determination date.
+Stated maturity date: March 30, 2028, unless that day is not a business day, in which case the stated maturity date will be postponed to the next following business day. The stated maturity date will also be postponed if the determination date is postponed as described under “— Determination date” above. In such a case, the stated maturity date will be postponed by the same number of business day(s) from but excluding the originally scheduled determination date to and including the actual determination date.
+Call observation date: April 9, 2027, unless the calculation agent determines that a market disruption event occurs or is continuing on that day or that day is not otherwise a trading day. In that event, the call observation date will be the first following trading day on which the calculation agent determines that no market disruption event occurs or is continuing. In no event, however, will the call observation date be postponed to a date later than the originally scheduled call payment date or, if the originally scheduled call payment date is not a business day, later than the first business day after the originally scheduled call payment date. On such last possible call observation date, if a market disruption event occurs or is continuing or if such last possible day is not a trading day, that day will nevertheless be the call observation date.
+Call payment date: April 14, 2027, or, if such day is not a business day, the next succeeding business day. If the call observation date is postponed as described under “— Call observation date” above, the call payment date will be postponed by the same number of business day(s) from but excluding the applicable originally scheduled call observation date to and including the actual call observation date.
+Closing level: for any given trading day, the official closing level of the underlier or any successor underlier published by the underlier sponsor on such trading day.
+Trading day: a day on which the respective principal securities markets for all of the underlier stocks are open for trading, the underlier sponsor is open for business and the underlier is calculated and published by the underlier sponsor
+Successor underlier: any substitute underlier approved by the calculation agent as a successor underlier as provided under “— Discontinuance or modification of the underlier” below
+Underlier sponsor: at any time, the person or entity, including any successor sponsor, that determines and publishes the underlier as then in effect. The notes are not sponsored, endorsed, sold or promoted by the underlier sponsor or any of its affiliates and the underlier sponsor and its affiliates make no representation regarding the advisability of investing in the notes.
+Underlier stocks: at any time, the stocks that comprise the underlier as then in effect, after giving effect to any additions, deletions or substitutions
+Market disruption event: With respect to any given trading day, any of the following will be a market disruption event with respect to the underlier:
+●
+a suspension, absence or material limitation of trading in underlier stocks constituting 20% or more, by weight, of s

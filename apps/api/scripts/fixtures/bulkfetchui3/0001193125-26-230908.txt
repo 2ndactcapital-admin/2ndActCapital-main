@@ -1,0 +1,285 @@
+424B2 1 gs-20260519.htm 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-284538
+GS Finance Corp.
+$2,729,000
+Callable Contingent Coupon Index-Linked Notes due 2031
+guaranteed by
+The Goldman Sachs Group, Inc.
+Payment at Maturity: The amount that you will be paid on your notes at maturity, if they have not been redeemed by us, in addition to the final coupon, if any, is based on the performance of the underlier with the lowest underlier return. You could lose your entire investment in the notes.
+Coupon Payments: The notes will pay a contingent quarterly coupon on a coupon payment date if the closing level of each underlier is greater than or equal to its coupon trigger level on the related coupon observation date.
+Company's Redemption Right: Prior to the stated maturity date, we may redeem your notes at our option on any coupon payment date commencing in November 2026.
+You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc. See page PS-8.
+Key Terms
+Company (Issuer) / Guarantor:
+GS Finance Corp. / The Goldman Sachs Group, Inc.
+Aggregate face amount:
+$2,729,000
+Cash settlement amount:
+subject to the company’s redemption right, on the stated maturity date, in addition to any coupon then due, the company will pay, for each $1,000 face amount of the notes, an amount in cash equal to:
+•
+if the final underlier level of each underlier is greater than or equal to its trigger buffer level: $1,000; or
+•
+if the final underlier level of any underlier is less than its trigger buffer level:
+$1,000 + ($1,000 × the lesser performing underlier return)
+Underliers:
+the Russell 2000 ® Index (current Bloomberg symbol: “RTY Index”) and the S&P 500 ® Index (current Bloomberg symbol: “SPX Index”)
+Coupon trigger level:
+for each underlier, 55% of its initial underlier level
+Trigger buffer level:
+for each underlier, 55% of its initial underlier level
+Initial underlier level:
+2,793.299 with respect to the Russell 2000 ® Index and 7,408.50 with respect to the S&P 500 ® Index. The initial underlier level of each underlier is an intra-day level or the closing level of such underlier on the trade date
+Final underlier level:
+with respect to an underlier, the closing level of such underlier on the determination date*
+Underlier return:
+with respect to an underlier: (its final underlier level - its initial underlier level) ÷ its initial underlier level
+Lesser performing underlier return:
+the underlier return of the lesser performing underlier (the underlier with the lowest underlier return)
+Calculation agent:
+Goldman Sachs & Co. LLC (“GS&Co.”)
+CUSIP / ISIN:
+40059DM61 / US40059DM619
+* subject to adjustment as described in the accompanying general terms supplement
+Our estimated value of the notes on trade date / Additional amount / Additional amount end date:
+$964 per $1,000 face amount, which is less than the original issue price. The additional amount is $16.5 and the additional amount end date is August 14, 2026. See “The Estimated Value of Your Notes At the Time the Terms of Your Notes Are Set On the Trade Date Is Less Than the Original Issue Price Of Your Notes.”
+Original issue price
+Underwriting discount
+Net proceeds to the issuer
+100% of the face amount
+1.5% of the face amount 1
+98.5% of the face amount
+1 In addition to the 1.5%, the underwriting discount paid by us also includes a structuring fee of up to 0.45% of the face amount. See "Supplemental Plan of Distribution; Conflicts of Interest".
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+Pricing Supplement No. 24,246 dated May 15, 2026.
+Key Terms (continued)
+Coupon:
+subject to the company’s redemption right, on each coupon payment date, the company will pay, for each $1,000 of the outstanding face amount, an amount in cash equal to:
+•
+if the closing level of each underlier on the related coupon observation date is greater than or equal to its coupon trigger level: $16.625 (1.6625% quarterly, or the potential for up to 6.65% per annum); or
+•
+if the closing level of any underlier on the related coupon observation date is less than its coupon trigger level: $0
+Company's redemption right:
+The company may redeem the notes, at its option, in whole but not in part, on each coupon payment date commencing in November 2026 and ending in February 2031, subject to at least three business days’ prior notice to the holder of your notes and the trustee. In that case, the company will pay, for each $1,000 of the outstanding face amount, an amount in cash on the following coupon payment date equal to $1,000 (along with the coupon then due, if any).
+Trade date:
+May 15, 2026
+Original issue date:
+May 20, 2026
+Determination date:
+the last coupon observation date, May 15, 2031*
+Stated maturity date:
+May 20, 2031*
+Coupon observation dates*
+Coupon payment dates*
+August 17, 2026
+August 20, 2026
+November 17, 2026
+November 20, 2026
+February 17, 2027
+February 22, 2027
+May 17, 2027
+May 20, 2027
+August 17, 2027
+August 20, 2027
+November 17, 2027
+November 22, 2027
+February 16, 2028
+February 22, 2028
+May 17, 2028
+May 22, 2028
+August 16, 2028
+August 21, 2028
+November 15, 2028
+November 20, 2028
+February 14, 2029
+February 20, 2029
+May 16, 2029
+May 21, 2029
+August 15, 2029
+August 20, 2029
+November 15, 2029
+November 20, 2029
+February 14, 2030
+February 20, 2030
+May 15, 2030
+May 20, 2030
+August 15, 2030
+August 20, 2030
+November 15, 2030
+November 20, 2030
+February 14, 2031
+February 20, 2031
+May 15, 2031
+May 20, 2031
+* subject to adjustment as described in the accompanying general terms supplement
+PS- 2
+The issue price, underwriting discount and net proceeds listed above relate to the notes we sell initially. We may decide to sell additional notes after the date of this pricing supplement, at issue prices and with underwriting discounts and net proceeds that differ from the amounts set forth above. The return (whether positive or negative) on your investment in notes will depend in part on the issue price you pay for such notes.
+GS Finance Corp. may use this prospectus in the initial sale of the notes. In addition, Goldman Sachs & Co. LLC or any other affiliate of GS Finance Corp. may use this prospectus in a market-making transaction in a note after its initial sale. Unless GS Finance Corp. or its agent informs the purchaser otherwise in the confirmation of sale, this prospectus is being used in a market-making transaction.
+About Your Prospectus
+The notes are part of the Medium-Term Notes, Series F program of GS Finance Corp. and are fully and unconditionally guaranteed by The Goldman Sachs Group, Inc. This prospectus includes this pricing supplement and the accompanying documents listed below. This pricing supplement constitutes a supplement to the documents listed below, does not set forth all of the terms of your notes and therefore should be read in conjunction with such documents:
+•
+General terms supplement no. 17,745 dated January 20, 2026
+•
+Underlier supplement no. 48 dated March 24, 2026
+•
+Prospectus supplement dated February 14, 2025
+•
+Prospectus dated February 14, 2025
+The information in this pricing supplement supersedes any conflicting information in the documents listed above. In addition, some of the terms or features described in the listed documents may not apply to your notes.
+We have not authorized anyone to provide any information or to make any representations other than those contained in or incorporated by reference in this pricing supplement and the accompanying documents listed above. We take no responsibility for, and can provide no assurance as to the reliability of, any other information that others may provide. This pricing supplement and the accompanying documents listed above are an offer to sell only the notes offered hereby, but only under circumstances and in jurisdictions where it is lawful to do so. The information contained in this pricing supplement and the accompanying documents listed above is current only as of the respective dates of such documents.
+We refer to the notes we are offering by this pricing supplement as the “offered notes” or the “notes”. Each of the offered notes has the terms described below. Please note that in this pricing supplement, references to “GS Finance Corp.”, “we”, “our” and “us” mean only GS Finance Corp. and do not include its subsidiaries or affiliates, references to “The Goldman Sachs Group, Inc.”, our parent company, mean only The Goldman Sachs Group, Inc. and do not include its subsidiaries or affiliates and references to “Goldman Sachs” mean The Goldman Sachs Group, Inc. together with its consolidated subsidiaries and affiliates, including us. The notes will be issued under the senior debt indenture, dated as of October 10, 2008, as supplemented by the First Supplemental Indenture, dated as of February 20, 2015, each among us, as issuer, The Goldman Sachs Group, Inc., as guarantor, and The Bank of New York Mellon, as trustee. This indenture, as so supplemented and as further supplemented thereafter, is referred to as the “GSFC 2008 indenture” in the accompanying prospectus supplement.
+The notes will be issued in book-entry form and represented by master note no. 3, dated March 22, 2021.
+PS- 3
+HYPOTHETICAL EXAMPLES
+The following examples are provided for purposes of illustration only. The examples should not be taken as an indication or prediction of future investment results and merely are intended to illustrate (i) the impact that the various hypothetical closing levels of the underliers on a coupon observation date could have on the coupon payable, if any, on the related coupon payment date and (ii) the impact that the various hypothetical closing levels of the lesser performing underlier on the determination date could have on the cash settlement amount at maturity assuming all other variables remain constant and are not intended to predict the closing levels of the underliers.
+The information in the following examples reflects hypothetical rates of return on the offered notes assuming that they are purchased on the original issue date at the face amount and held to the stated maturity date or date of early redemption. If you sell your notes in a secondary market prior to the stated maturity date or date of early redemption, as the case may be, your return will depend upon the market value of your notes at the time of sale, which may be affected by a number of factors that are not reflected in the examples below, such as interest rates, the volatility of the underliers, the creditworthiness of GS Finance Corp., as issuer, and the creditworthiness of The Goldman Sachs Group, Inc., as guarantor. The information in the examples also reflects the key terms and assumptions in the box below.
+Key Terms and Assumptions
+Face amount
+$1,000
+Coupon
+$16.625 (1.6625% quarterly, or the potential for up to 6.65% per annum)
+Coupon trigger level
+with respect to each underlier, 55% of its initial underlier level
+Trigger buffer level
+with respect to each underlier, 55% of its initial underlier level
+Neither a market disruption event nor a non-trading day occurs on any originally scheduled coupon observation date or the originally scheduled determination date
+No change in or affecting any of the underlier stocks or the method by which the applicable underlier sponsor calculates any underlier
+Notes purchased on original issue date at the face amount and held to the stated maturity date or date of early redemption
+For these reasons, the actual performance of the underliers over the life of your notes, the actual underlier levels on any coupon observation date, as well as the coupon payable, if any, on each coupon payment date, may bear little relation to the hypothetical examples shown below or to the historical underlier levels shown elsewhere in this pricing supplement.
+Also, the hypothetical examples shown below do not take into account the effects of applicable taxes.
+PS- 4
+Hypothetical Coupon Payments
+The examples below show the hypothetical coupon, if any, that we would pay on each coupon payment date with respect to each $1,000 face amount of the notes if the hypothetical closing level of each underlier on the applicable coupon observation date was the percentage of its initial underlier level shown.
+Scenario 1
+Coupon Observation Date
+Hypothetical Closing Level of the Russell 2000 ® Index (as Percentage of Initial Underlier Level)
+Hypothetical Closing Level of the S&P 500 ® Index (as Percentage of Initial Underlier Level)
+Hypothetical Coupon
+1
+125.000%
+65.000%
+$16.625
+2
+45.000%
+125.000%
+$0.000
+3
+60.000%
+65.000%
+$16.625
+4
+45.000%
+45.000%
+$0.000
+5
+45.000%
+45.000%
+$0.000
+6
+65.000%
+60.000%
+$16.625
+7
+75.000%
+35.000%
+$0.000
+8
+85.000%
+25.000%
+$0.000
+9
+75.000%
+35.000%
+$0.000
+10
+65.000%
+45.000%
+$0.000
+11
+85.000%
+25.000%
+$0.000
+12 - 20
+45.000%
+45.000%
+$0.000
+Total Hypothetical
+Coupons
+$49.875
+In Scenario 1, the hypothetical closing level of each underlier has increased or decreased relative to the initial underlier level on each hypothetical coupon observation date. On the coupon payment dates relating to coupon observation dates on which the hypothetical closing level of each underlier is greater than or equal to its coupon trigger level, you will receive a coupon payment. However, on the coupon payment dates relating to coupon observation dates on which the hypothetical closing level of at least one underlier is less than its coupon trigger level, you will not receive a coupon payment.
+Scenario 2
+Coupon Observation Date
+Hypothetical Closing Level of the Russell 2000 ® Index (as Percentage of Initial Underlier Level)
+Hypothetical Closing Level of the S&P 500 ® Index (as Percentage of Initial Underlier Level)
+Hypothetical Coupon
+1
+125.000%
+35.000%
+$0.000
+2
+45.000%
+125.000%
+$0.000
+3
+65.000%
+45.000%
+$0.000
+4
+65.000%
+50.000%
+$0.000
+5
+105.000%
+45.000%
+$0.000
+6
+60.000%
+45.000%
+$0.000
+7
+75.000%
+35.000%
+$0.000
+8
+85.000%
+25.000%
+$0.000
+9
+75.000%
+35.000%
+$0.000
+10
+65.000%
+45.000%
+$0.000
+11
+85.000%
+25.000%
+$0.000
+12 - 20
+45.000%
+45.000%
+$0.000
+Total Hypothetical
+Coupons
+$0.000
+In Scenario 2, the hypothetical closing level of each underlier has increased or decreased relative to the initial underlier level on each hypothetical coupon observation date. However, you will not receive a coupon payment on any coupon payment date because in each case the hypothetical closing level of at least one underlier on the related coupon observation date is less than its coupon trigger level. The overall return you earn on your notes will be less than zero.
+PS- 5
+Scenario 3
+Coupon Observation Date
+Hypothetical Closing Level of the Russell 2000 ® Index (as Percentage of Initial Underlier Level)
+Hypothetical Closing Level of the S&P 500 ® Index (as Percentage of Initial Underlier Level)
+Hypothetical Coupon
+1
+45.000%
+45.000%
+$0.000
+2
+110.000%
+110.000%
+$16.625
+Total Hypothetical
+Coupons
+$16.625
+In Scenario 3, the hypothetical closing level of each underlier is less than its coupon trigger level on the first hypothetical coupon observation date, but increases to a level that is greater than its initial underlier level on the second hypothetical coupon observation date. Further, we also exercise our early redemption right with respect to a redemption on the second hypothetical coupon payment date (which is also the first hypothetical date with respect to which we could exercise such right). Therefore, on the second hypothetical coupon payment date (the redemption date), in addition to the coupon payment, you will receive an amount in cash equal to $1,000 f

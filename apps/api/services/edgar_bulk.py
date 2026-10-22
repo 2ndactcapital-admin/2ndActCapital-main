@@ -79,6 +79,7 @@ LEASE_PREFIX = "bulk_fetch:"
 LEASE_TTL_SECONDS = 10 * 60
 PROGRESS_EVERY = 100
 DEFAULT_STOP_AFTER = 50
+ZERO_BYTE_RETRY_SECONDS = 15 * 60   # a zero-byte download is retried by the next run after this
 RUNTIME_CAP_SECONDS = 7 * 86400     # the run row's cap column must be > 0; a CLI run is operator-stopped
 
 # Measured (Task 1a) — the dry-run's ETA and storage model.
@@ -266,7 +267,9 @@ _SCOPE_WHERE = """
     AND f.filing_date BETWEEN $3::date AND $4::date
     AND (f.pipeline_status = ANY($5::text[])
          OR ($6::boolean AND f.pipeline_status = 'not_pricing_supplement'
-             AND f.reference_filing_id IS NULL AND f.status_reason LIKE 'peek:%'))
+             AND f.reference_filing_id IS NULL AND f.status_reason LIKE 'peek:%')
+         OR (f.pipeline_status = 'fetch_failed'
+             AND f.next_attempt_at IS NOT NULL AND f.next_attempt_at <= now()))
 """
 
 
@@ -1038,17 +1041,30 @@ async def record_kind_skip(conn, run_id, row: dict, kind: str, reason: str, nbyt
             row["accession_number"], kind, f"{kind}: {reason}", nbytes, run_id)
 
 
-async def record_fetch_failed(conn, row: dict, reason: str) -> None:
-    """fetch_failed with the reason; not scheduled for the nightly retry —
-    ``--retry-failed`` brings it back into a bulk run."""
+async def record_fetch_failed(conn, row: dict, reason: str, *, retry: bool = False) -> None:
+    """fetch_failed with the reason. By default not scheduled for any retry —
+    ``--retry-failed`` brings it back into a bulk run.
+
+    BULKFETCHUI3 — ``retry=True`` (a zero-byte download, a transport glitch):
+    ``next_attempt_at`` is set ZERO_BYTE_RETRY_SECONDS ahead, so the next bulk
+    run's scope (``_SCOPE_WHERE``: fetch_failed with a due next_attempt_at) and
+    the nightly queue both take it again; after MAX_FETCH_ATTEMPTS attempts it
+    gives up (next_attempt_at NULL), the nightly pipeline's own rule."""
     async with platform_scope(conn):
         await conn.execute(
             """UPDATE portfolio.edgar_index_filings
-                  SET pipeline_status = 'fetch_failed', status_reason = left($2, 1500),
-                      attempt_count = attempt_count + 1, last_attempt_at = now(), next_attempt_at = NULL,
+                  SET pipeline_status = 'fetch_failed',
+                      status_reason = left(CASE WHEN $3 AND attempt_count + 1 >= $4
+                                                THEN 'giving up after ' || (attempt_count + 1)::text
+                                                     || ' attempts — ' || $2
+                                                ELSE $2 END, 1500),
+                      attempt_count = attempt_count + 1, last_attempt_at = now(),
+                      next_attempt_at = CASE WHEN $3 AND attempt_count + 1 < $4
+                                             THEN now() + make_interval(secs => $5) END,
                       claimed_by = NULL, claimed_until = NULL
                 WHERE accession_number = $1""",
-            row["accession_number"], reason)
+            row["accession_number"], reason, retry, edgar_pipeline.MAX_FETCH_ATTEMPTS,
+            float(ZERO_BYTE_RETRY_SECONDS))
 
 
 # ═══ The runner ═════════════════════════════════════════════════════════════
@@ -1239,7 +1255,8 @@ class Runner:
             if _is_storage_error(exc):
                 raise
             reason = f"bulk fetch: {type(exc).__name__}: {exc}"
-            await record_fetch_failed(conn, row, reason)
+            await record_fetch_failed(conn, row, reason,
+                                      retry=isinstance(exc, edgar_pipeline.EmptyDocumentError))
             async with self._lock:
                 s.failed += 1
                 s.done += 1
@@ -1568,6 +1585,115 @@ async def reprocess_fetched(conn, *, bucket: str | None = None, downloader=None,
         + "; kinds: " + ", ".join(f"{k} {v}" for k, v in kinds.most_common())
         + (" — DRY RUN, nothing written" if dry_run else ""))
     return {"rows": len(rows), "moves": dict(moves), "kinds": dict(kinds)}
+
+
+# ═══ --reclassify-other (bulkfetchui3) ══════════════════════════════════════
+
+RECLASSIFY_CONCURRENCY = 8
+RECLASSIFY_EXAMPLES = 10
+
+
+async def reclassify_other(conn, *, bucket: str | None = None, downloader=None, apply: bool = False,
+                           issuer_ciks: list[str] | None = None, accessions: list[str] | None = None,
+                           date_from: date | None = None, date_to: date | None = None, out=print) -> dict:
+    """Re-classify every row recorded as document_kind 'other' from its STORED
+    text (the classifier now reads a final's cover line when its title is an
+    image — edgar_pipeline._classify_cover_line) and move each changed row to
+    the status the normal decision gives it, exactly as reprocess_fetched
+    does: a row the active policy would not select becomes not_selected, the
+    rest get decide_status's answer, both stamped with the active policy
+    version. status_reason starts 'reclassified:other→<new kind>'.
+
+    No SEC request is ever made: this function has no HTTP client at all.
+    A row with no stored text is listed and left alone. DRY RUN unless
+    ``apply``. Idempotent: an applied row is no longer 'other', so a second
+    apply finds nothing to change."""
+    policy = await edgar_pipeline.active_policy(conn)
+    where, args = ["f.document_kind = 'other'",
+                   "(f.claimed_until IS NULL OR f.claimed_until <= now())"], []
+    for cond, val in (("f.primary_issuer_cik = ANY(${}::text[])", issuer_ciks),
+                      ("f.accession_number = ANY(${}::text[])", accessions),
+                      ("f.filing_date >= ${}::date", date_from),
+                      ("f.filing_date <= ${}::date", date_to)):
+        if val is not None:
+            args.append(list(val) if isinstance(val, (list, tuple)) else val)
+            where.append(cond.format(len(args)))
+    async with platform_scope(conn):
+        rows = await conn.fetch(
+            f"""SELECT f.accession_number, f.form_type, f.filing_date, f.primary_issuer_cik, f.pipeline_status,
+                       i.include_status, i.issuer_group, r.id AS ref_id, r.extracted_text, r.text_r2_key,
+                       r.r2_key, r.content_encoding
+                  FROM portfolio.edgar_index_filings f
+                  LEFT JOIN portfolio.reference_filings r ON r.id = f.reference_filing_id
+                  LEFT JOIN portfolio.structured_note_issuers i ON i.filer_cik = f.primary_issuer_cik
+                 WHERE {' AND '.join(where)}
+                 ORDER BY f.filing_date DESC, f.accession_number DESC""", *args)
+    sem = asyncio.Semaphore(RECLASSIFY_CONCURRENCY)
+
+    async def text_of(r: dict) -> str:
+        if not (r["extracted_text"] or r["text_r2_key"] or r["r2_key"]):
+            return ""
+        async with sem:
+            return await stored_text(r, bucket=bucket, downloader=downloader)
+
+    rows = [dict(r) for r in rows]
+    texts = await asyncio.gather(*(text_of(r) for r in rows))
+    moves: Counter = Counter()          # (issuer group, "other→kind") -> n
+    statuses: Counter = Counter()
+    examples: list[dict] = []
+    no_text: list[str] = []
+    unchanged = 0
+    changed = 0
+    for r, text in zip(rows, texts):
+        if not text.strip():
+            no_text.append(r["accession_number"])
+            continue
+        kind, _ = edgar_pipeline.classify_document(text)
+        if kind == "other":
+            unchanged += 1
+            continue
+        excl = policy_exclusion(policy["rules"], r["form_type"], r["filing_date"], r["primary_issuer_cik"],
+                                r["include_status"])
+        if excl:
+            status, reason = "not_selected", f"policy v{policy['version']}: {excl}"
+        else:
+            status, reason, kind = edgar_pipeline.decide_status(
+                text, edgar_pipeline.prefilter_terms_for(policy["rules"], r["issuer_group"]))
+        reason = f"reclassified:other→{kind}; {reason}; from stored text (bulkfetchui3)"
+        moves[(r["issuer_group"] or "(no group)", f"other→{kind}")] += 1
+        statuses[f"{r['pipeline_status']}→{status}"] += 1
+        if len(examples) < RECLASSIFY_EXAMPLES:
+            examples.append({"accession_number": r["accession_number"], "issuer_group": r["issuer_group"],
+                             "new_kind": kind, "new_status": status})
+        changed += 1
+        if not apply:
+            continue
+        cusip = edgar_pipeline.detect_cusip(text)
+        async with platform_scope(conn):
+            await conn.execute(
+                """UPDATE portfolio.edgar_index_filings
+                      SET pipeline_status = $2, status_reason = left($3, 1500), document_kind = $4,
+                          detected_cusip = COALESCE(detected_cusip, $5),
+                          -- a cohort-chosen row keeps its cohort provenance (one_selector_chk)
+                          selection_policy_version = CASE WHEN selected_by_cohort_id IS NULL THEN $6
+                                                          ELSE selection_policy_version END
+                    WHERE accession_number = $1 AND document_kind = 'other'""",
+                r["accession_number"], status, reason, kind, cusip, policy["version"])
+    out(f"reclassify-other: {len(rows)} row(s) with document_kind 'other'; {changed} change kind, "
+        f"{unchanged} stay 'other', {len(no_text)} have no stored text (left alone)"
+        + ("" if apply else " — DRY RUN, nothing written"))
+    for (grp, mv), n in sorted(moves.items()):
+        out(f"  {grp:<28} {mv:<40} {n:>6,}")
+    for mv, n in statuses.most_common():
+        out(f"  status {mv}: {n:,}")
+    for e in examples:
+        out(f"  e.g. {e['accession_number']}  {e['issuer_group'] or '(no group)'}  → {e['new_kind']} / "
+            f"{e['new_status']}")
+    if no_text:
+        out(f"  no stored text: {', '.join(no_text[:20])}{' …' if len(no_text) > 20 else ''}")
+    return {"rows": len(rows), "changed": changed, "unchanged": unchanged, "no_text": no_text,
+            "moves": {f"{g}|{m}": n for (g, m), n in moves.items()}, "statuses": dict(statuses),
+            "examples": examples, "applied": apply, "policy_version": policy["version"]}
 
 
 # ═══ Selection v2 for Wells Fargo / Deutsche Bank (Task 6) ══════════════════

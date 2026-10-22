@@ -124,6 +124,9 @@ STATUS_LABELS = {
     "stopped": "Stopped", "cancelled": "Cancelled", "worker_lost": "Worker lost",
 }
 RUN_KIND_LABELS = {"bulk_fetch": "Bulk download", "refresh_index": "Refresh index"}
+# bulkfetchui3 — the weekday automatic index refresh writes trigger_source 'schedule'.
+TRIGGER_SOURCE_LABELS = {"manual": "From the screen", "cli": "Command line", "schedule": "Scheduled",
+                         "nightly": "Nightly", "verify": "Verification"}
 
 
 class BulkQueueError(RuntimeError):
@@ -285,12 +288,50 @@ async def preview(conn, raw: dict) -> dict:
 
 _INSTITUTIONS_CACHE: dict = {}
 
+# BULKFETCHUI3 — "Downloaded" = every filing the fetch stage has HANDLED: peeked
+# and skipped (not_pricing_supplement, status_reason 'peek:…', no stored row),
+# fetched and decided (fetched / not_pricing_supplement / prefilter_skipped /
+# ready_for_extraction) or failed (fetch_failed). 'selected' is still to do and
+# 'discovered' / 'not_selected' were never offered to a fetch, so all three are
+# excluded. The later extraction statuses are included: a filing only reaches
+# them after it was fetched. "Stored" = the filing's reference_filings row
+# still holds an R2 object (r2_key or text_r2_key) — a kind the run did not keep
+# never gets one, and the preliminary cleanup clears both keys.
+DOWNLOADED_STATUSES = ("fetched", "fetch_failed", "not_pricing_supplement", "prefilter_skipped",
+                       "ready_for_extraction", "extraction_submitted", "extracted", "needs_review",
+                       "extraction_failed")
+INSTITUTION_COLUMNS = {
+    "downloaded": {"label": "Downloaded",
+                   "help": "Handled by a bulk download: fetched, peeked or failed (all years)"},
+    "stored": {"label": "Stored",
+               "help": "Kept in storage, by the document kinds chosen at the time (all years)"},
+}
+# One pass over the handled rows of the catalog's CIKs, all years (the same
+# scope as Total). Served by a BitmapAnd of edgar_index_filings_queue_idx
+# (pipeline_status) and edgar_index_filings_primary_issuer_idx (measured
+# 2026-10-22: 478 ms cold for the three biggest programs, 12,069 rows).
+DOWNLOADED_STORED_SQL = """
+    SELECT f.primary_issuer_cik AS cik,
+           count(*)::int AS downloaded,
+           count(*) FILTER (WHERE r.r2_key IS NOT NULL OR r.text_r2_key IS NOT NULL)::int AS stored
+      FROM portfolio.edgar_index_filings f
+      LEFT JOIN portfolio.reference_filings r ON r.id = f.reference_filing_id
+     WHERE f.pipeline_status = ANY($3::text[])
+       AND f.form_type = ANY($2::text[])
+       AND f.primary_issuer_cik = ANY($1::text[])
+     GROUP BY 1"""
+
 
 async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache: bool = True) -> dict:
     """Every institution (issuer group) the source can fetch, with its filer
     entities (name, CIK, role) and SELECTED counts by year. One index-only scan
     (edgar_index_filings_selected_count_idx); cached for 60 s because a live
-    bulk run's claims keep dirtying the visibility map."""
+    bulk run's claims keep dirtying the visibility map.
+
+    BULKFETCHUI3 — plus ``downloaded`` and ``stored`` per filer and per
+    institution (DOWNLOADED_STORED_SQL, all years) and ``as_of`` (the database
+    clock when the numbers were read). ``use_cache=False`` is the screen's
+    Refresh (``?fresh=1``): it reads now and replaces the cached entry."""
     hit = _INSTITUTIONS_CACHE.get(source_name)
     if use_cache and hit and time.monotonic() - hit[0] < INSTITUTIONS_CACHE_SECONDS:
         return hit[1]
@@ -306,9 +347,13 @@ async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache:
                   AND f.primary_issuer_cik = ANY($1::text[])
                 GROUP BY 1, 2""",
             ciks, list(source.form_types))
+        handled = await conn.fetch(DOWNLOADED_STORED_SQL, ciks, list(source.form_types),
+                                   list(DOWNLOADED_STATUSES))
+        as_of = await conn.fetchval("SELECT now()")
     by_cik: dict[str, dict[int, int]] = {}
     for r in rows:
         by_cik.setdefault(r["cik"], {})[r["y"]] = r["n"]
+    done = {r["cik"]: (r["downloaded"], r["stored"]) for r in handled}
     out = []
     for name in sorted(catalog, key=str.casefold):
         inst = catalog[name]
@@ -318,12 +363,17 @@ async def institutions(conn, *, source_name: str = eb.DEFAULT_SOURCE, use_cache:
             fy = by_cik.get(f.cik, {})
             for y, n in fy.items():
                 years[y] = years.get(y, 0) + n
+            d, st = done.get(f.cik, (0, 0))
             filers.append({"cik": f.cik, "name": f.filer_name, "role": f.filer_role,
                            "credit_entity": f.credit_entity,
-                           "years": {str(y): n for y, n in sorted(fy.items())}, "total": sum(fy.values())})
+                           "years": {str(y): n for y, n in sorted(fy.items())}, "total": sum(fy.values()),
+                           "downloaded": d, "stored": st})
         out.append({"name": name, "filers": filers, "years": {str(y): n for y, n in sorted(years.items())},
-                    "total": sum(years.values())})
-    result = {"source": source.name, "rows": out, "last_indexed_date": str(await eb.last_indexed_date(conn))}
+                    "total": sum(years.values()),
+                    "downloaded": sum(f["downloaded"] for f in filers),
+                    "stored": sum(f["stored"] for f in filers)})
+    result = {"source": source.name, "rows": out, "last_indexed_date": str(await eb.last_indexed_date(conn)),
+              "as_of": as_of.isoformat()}
     _INSTITUTIONS_CACHE[source_name] = (time.monotonic(), result)
     return result
 
@@ -616,7 +666,8 @@ def run_out(r: dict) -> dict:
         total = r.get("fetch_cap")
     return {
         "id": str(r["id"]), "run_kind": r["run_kind"], "status": status, "display_status": display,
-        "target": r.get("target"), "params": params, "requested_by": r.get("requested_by"),
+        "target": r.get("target"), "trigger_source": r.get("trigger_source"), "params": params,
+        "requested_by": r.get("requested_by"),
         "queued_at": r.get("queued_at"), "started_at": r.get("started_at"), "finished_at": r.get("finished_at"),
         "worker_id": r.get("worker_id"), "worker_host": r.get("worker_host"),
         "heartbeat_at": r.get("heartbeat_at"), "stop_requested": bool(r.get("stop_requested")),
@@ -625,9 +676,11 @@ def run_out(r: dict) -> dict:
         "failed": progress.get("failed", r.get("fetch_failed", 0)), "failures": progress.get("failures", []),
         "stop_reason": r.get("stop_reason"), "error": r.get("error"),
         "actions": {
-            "stop": status == "running",
+            "stop": status == "running" and r.get("trigger_source") != "schedule",
             "cancel": status == "queued",
-            "requeue": status in ("stopped", "failed") or lost,
+            # A scheduled refresh ran in the cron process, not a worker queue:
+            # requeuing it would wait for a worker forever. Tomorrow's tick retries.
+            "requeue": (status in ("stopped", "failed") or lost) and r.get("trigger_source") != "schedule",
         },
     }
 

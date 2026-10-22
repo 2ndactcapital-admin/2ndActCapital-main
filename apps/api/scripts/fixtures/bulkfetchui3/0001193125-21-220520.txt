@@ -1,0 +1,85 @@
+424B2 1 d139734d424b2.htm FINAL PROSPECTUS SUPPLEMENT
+Table of Contents
+Filed Pursuant to Rule 424(b)(2)
+File No. 333-236148
+Prospectus Supplement to Prospectus Dated February 25, 2020
+Wells Fargo & Company
+50,000,000 Depositary Shares, Each Representing a 1/1,000th Interest
+in a Share of Non-Cumulative Perpetual Class A Preferred Stock, Series DD
+Wells Fargo & Company is offering 50,000,000 depositary shares, each representing a 1/1,000th interest in a share of Non-Cumulative Perpetual Class A Preferred Stock, Series DD, no par value, with a liquidation preference amount of $25,000 per share (equivalent to $25 per depositary share) (the “ Series DD Preferred Stock ”). Each depositary share entitles the holder, through the depositary, to a proportional fractional interest in all rights, powers and preferences of the Series DD Preferred Stock represented by the depositary share.
+Dividends on the Series DD Preferred Stock, when, as and if declared by our board of directors or a duly authorized committee of the board, will accrue and be payable on the liquidation preference amount of $25,000 per share, on a non-cumulative basis, quarterly in arrears on the 15 th day of March, June, September and December of each year, commencing on September 15, 2021, at a rate per annum equal to 4.25%. If our board of directors or a duly authorized committee of the board has not declared a dividend on the Series DD Preferred Stock before the dividend payment date for any dividend period, such dividend shall not be cumulative and shall not accrue or be payable for such dividend period, and we will have no obligation to pay dividends for such dividend period, whether or not dividends on the Series DD Preferred Stock are declared for any future dividend period.
+The Series DD Preferred Stock may be redeemed by us at our option in whole, or in part, on September 15, 2026, or on any dividend payment date thereafter, at a redemption price equal to $25,000 per share of Series DD Preferred Stock (equivalent to $25 per depositary share), plus an amount equal to any declared and unpaid dividends, without accumulation of any undeclared dividends. The Series DD Preferred Stock may also be redeemed by us at our option in whole, but not in part, prior to September 15, 2026, upon the occurrence of a “regulatory capital treatment event,” as described herein, at a redemption price equal to $25,000 per share of Series DD Preferred Stock (equivalent to $25 per depositary share), plus an amount equal to any declared and unpaid dividends, without accumulation of any undeclared dividends.
+We intend to file an application to list the depositary shares on the New York Stock Exchange (the “ NYSE ”) under the symbol “WFCPrD”. If the application is approved, we expect trading of the depositary shares on the NYSE to begin within the 30-day period after the initial delivery of the depositary shares.
+The depositary shares are our unsecured securities, and all payments are subject to our credit risk. If we default on our obligations, you could lose some or all of your investment. The depositary shares are not savings accounts, deposits or other obligations of any bank or non-bank subsidiary of Wells Fargo & Company and are not insured by the Federal Deposit Insurance Corporation, the Deposit Insurance Fund or any other governmental agency.
+Neither the Securities and Exchange Commission nor any state securities commission or other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus supplement or the accompanying prospectus. Any representation to the contrary is a criminal offense.
+Investing in the depositary shares involves risks. See “ Risk Factors ” beginning on page S-10.
+Public Offering Price
+Underwriting
+Discount (1)
+Proceeds, before
+expenses, to
+Wells Fargo (1)
+Per Depositary Share (2)
+$
+25.0000
+$
+0.6199
+(2)
+$
+24.3801
+(2)
+Total (2)
+$
+1,250,000,000.0000
+$30,995,751.2500
+$1,219,004,248.7500
+(1)
+Reflects 15,589,300 depositary shares sold to institutional investors, for which the underwriters received an underwriting discount of $0.2500 per depositary share ($3,897,325.0000 in the aggregate), and 34,410,700 depositary shares sold to retail investors, for which the underwriters received an underwriting discount of $0.7875 per depositary share ($27,098,426.2500 in the aggregate).
+(2)
+Rounded to four decimals. See footnote (1) for actual depository share numbers.
+The underwriters expect to deliver the depositary shares in book-entry form through the facilities of The Depository Trust Company for the accounts of its participants, including Euroclear Bank S.A./N.V., as operator of the Euroclear System, and Clearstream Banking, société anonyme , on July 27, 2021.
+Because our affiliate, Wells Fargo Securities, LLC, is participating in sales of the depositary shares, the offering is being conducted in compliance with the Financial Industry Regulatory Authority (“ FINRA ”) Rule 5121, as administered by FINRA.
+Sole Book Running Manager
+Wells Fargo Securities
+Joint Lead Managers
+BofA Securities
+J.P. Morgan
+Morgan Stanley
+RBC Capital Markets
+UBS Investment Bank
+Citigroup
+Goldman Sachs & Co. LLC
+TD Securities
+Prospectus Supplement dated July 20, 2021
+Table of Contents
+ABOUT THIS PROSPECTUS SUPPLEMENT
+You should read this prospectus supplement along with the accompanying prospectus, any related free writing prospectus prepared by us or on our behalf and the documents incorporated by reference in this prospectus supplement and the accompanying prospectus. These documents contain information you should consider when making your investment decision. Neither we, nor any underwriters, have authorized anyone to provide you with any information other than that contained or incorporated by reference in this prospectus supplement or the accompanying prospectus. We take no responsibility for, and can provide no assurance as to the reliability of, any information that others may give you.
+This prospectus supplement and the accompanying prospectus do not constitute an offer to sell or a solicitation of an offer to buy any securities other than the depositary shares. This prospectus supplement and the accompanying prospectus may only be used where it is legal to sell the depositary shares and do not constitute an offer to sell or a solicitation of an offer to buy such depositary shares in any circumstances in which such offer or solicitation is unlawful. The distribution of this prospectus supplement and the accompanying prospectus and the offering of the depositary shares in certain jurisdictions may be restricted by law. Persons into whose possession this prospectus supplement and the accompanying prospectus come should inform themselves about and observe any such restrictions.
+Information contained or incorporated by reference in this prospectus supplement and the accompanying prospectus may change after the date on the front of the applicable document. You should not interpret the delivery of this prospectus supplement and the accompanying prospectus, or the offering and sale of the depositary shares, as an indication that there has been no change in our affairs since those dates.
+WELLS FARGO & COMPANY
+We are a diversified, community-based financial services company organized under the laws of the State of Delaware and registered as a financial holding company and a bank holding company under the Bank Holding Company Act of 1956, as amended. Founded in 1852 and headquartered in San Francisco, we provide banking, investment and mortgage products and services, as well as consumer and commercial finance, through our four reportable operating segments: consumer banking and lending, commercial banking, corporate and investment banking, and wealth and investment management. When we refer to “ Wells Fargo ,” “ we ,” “ our ” and “ us ” in this prospectus supplement we mean only Wells Fargo & Company, and not Wells Fargo & Company together with any of its subsidiaries, unless the context indicates otherwise.
+We are a separate and distinct legal entity from our banking and other subsidiaries. A significant source of funds to pay dividends on our common and preferred stock and debt service on our debt is dividends from our subsidiaries. Various federal and state statutes and regulations limit the amount of dividends that our banking and other subsidiaries may pay to us without regulatory approval.
+S-2
+Table of Contents
+SUMMARY
+The following information about the depositary shares and the Series DD Preferred Stock summarizes, and should be read in conjunction with, the information contained in this prospectus supplement and in the accompanying prospectus. It may not contain all the information that is important to you. You should carefully read this prospectus supplement and the accompanying prospectus to understand fully the terms of the depositary shares and other considerations that are important to you in making a decision about whether to invest in the depositary shares. To the extent the information in this prospectus supplement is inconsistent with the information in the accompanying prospectus, you should rely on the information in this prospectus supplement. You should pay special attention to the “Risk Factors” section of this prospectus supplement to determine whether an investment in the depositary shares is appropriate for you.
+Issuer
+Wells Fargo & Company
+Securities Offered
+We are offering 50,000,000 depositary shares, each representing a 1/1,000th interest in a share of Series DD Preferred Stock. Each holder of depositary shares will be entitled, through the depositary, in proportion to the applicable fraction of a share of Series DD Preferred Stock represented by such depositary shares, to all the rights, powers and preferences of the Series DD Preferred Stock represented thereby, including dividend, voting, redemption and liquidation rights, and subject to the limitations, qualifications and restrictions thereof.
+We may elect from time to time to issue additional shares of Series DD Preferred Stock and depositary shares representing interests in such shares, without notice to, or consent from, the existing holders of Series DD Preferred Stock or holders of the depositary shares, and all those additional shares would be deemed to form a single series with the Series DD Preferred Stock, described by this prospectus supplement and the accompanying prospectus.
+Ranking
+The Series DD Preferred Stock will rank equally with our parity stock (as defined below in “Description of the Series DD Preferred Stock—Dividends”) as to payment of dividends and distribution of assets upon our liquidation, dissolution or winding up. The Series DD Preferred Stock will rank senior to our common stock, and any of our other stock that is expressly made junior to the Series DD Preferred Stock, as to payment of dividends and/or distribution of assets upon our liquidation, dissolution or winding up. We may, from time to time, create and issue additional shares of preferred stock and shares of preference stock ranking equally with the Series DD Preferred Stock as to dividends and/or distribution of assets upon our liquidation, dissolution or winding up. We may also create and issue shares of preferred stock and preference stock ranking senior to the Series DD Preferred
+S-3
+Table of Contents
+Stock as to dividends and/or distribution of assets upon our liquidation, dissolution or winding up with the requisite consent of the holders of the Series DD Preferred Stock and our parity stock entitled to vote thereon. In addition, we may, from time to time, issue additional shares of preferred stock that rank junior to the Series DD Preferred Stock.
+Dividends
+Dividends on the Series DD Preferred Stock, when, as and if declared by our board of directors or a duly authorized committee of the board, will accrue and be payable out of legally available funds on the liquidation preference amount of $25,000 per share, on a non-cumulative basis, quarterly in arrears on the 15 th day of March, June, September and December of each year, commencing on September 15, 2021, at a rate per annum equal to 4.25%; provided that dividends not declared with respect to any dividend period (as defined below) shall not be cumulative. Any dividends paid with respect to the Series DD Preferred Stock will be distributed to holders of the depositary shares in the manner described under “Description of the Depositary Shares—Dividends and Other Distributions.”
+A “ dividend period ” is the period from, and including, a dividend payment date (as defined below) to, but excluding, the next dividend payment date, except for the initial dividend period, which will be the period from, and including, July 27, 2021 to, but excluding, September 15, 2021.
+If our board of directors or a duly authorized committee of the board has not declared a dividend on the Series DD Preferred Stock before the dividend payment date for any dividend period, such dividend shall not be cumulative and shall not accrue or be payable for such dividend period, and we will have no obligation to pay dividends for such dividend period, whether or not dividends on the Series DD Preferred Stock are declared for any future dividend period.
+So long as any shares of Series DD Preferred Stock remain outstanding,
+(1) no dividend shall be declared and paid or set aside for payment and no distribution shall be declared and made or set aside for payment on any common stock, and no shares of common stock shall be repurchased, redeemed or otherwise acquired for consideration by us, directly or indirectly, nor shall any monies be paid to or
+S-4
+Table of Contents
+made available for a sinking fund for the redemption of any such common stock by us (other than (i) a dividend payable in common stock or (ii) the acquisition of shares of common stock in exchange for, or through application of proceeds of the sale of, shares of common stock);
+(2) no dividend shall be declared and paid or set aside for payment and no distribution shall be declared and made or set aside for payment on any junior stock (as defined below in “Description of the Series DD Preferred Stock—Dividends”) other than common stock, and no shares of junior stock other than common stock shall be repurchased, redeemed or otherwise acquired for consideration by us, directly or indirectly, nor shall any monies be paid to or made available for a sinking fund for the redemption of any such junior stock other than common stock by us (other than (i) a dividend payable solely in shares of junior stock, (ii) any dividend in connection with the implementation of a stockholder rights plan, or the redemption or repurchase of any rights under any such plan, (iii) any dividend in the form of stock, warrants, options or other rights where the dividend stock or stock issuable upon exercise of such warrants, options or other rights is the same stock as that on which the dividend is being paid or ranks equally with or junior to such stock, (iv) as a result of a reclassification of junior stock other than common stock for or into other junior stock, (v) the exchange or conversion of one share of junior stock other than common stock for or into another share of junior stock, (vi) through the use of proceeds of a substantially contemporaneous sale of other shares of junior stock, (vii) any purchase, redemption or other acquisition of junior stock other than common stock pursuant to any employee, consultant or director incentive or benefit plan or arrangement (including any employment, severance or consulting arrangements) of ours or of any of our subsidiaries adopted before or after the date of this prospectus supplement, (viii) any purchase of fractional interests in shares of our junior stock other than common stock pursuant to the conversion or exchange provisions of such junior stock other than common stock or the securities being converted or exchanged, (ix) the

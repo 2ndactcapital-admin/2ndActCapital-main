@@ -148,8 +148,8 @@ async function wrapDetail(fn) {
   }
 }
 
-export async function loadBulkInstitutionsAction() {
-  return wrapDetail(() => getEdgarBulkInstitutions());
+export async function loadBulkInstitutionsAction({ fresh = false } = {}) {
+  return wrapDetail(() => getEdgarBulkInstitutions({ fresh: fresh === true }));
 }
 
 export async function previewBulkAction(params) {

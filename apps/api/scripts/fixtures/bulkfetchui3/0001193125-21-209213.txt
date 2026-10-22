@@ -1,0 +1,187 @@
+424B2 1 d185524d424b2.htm PROSPECTUS SUPPLEMENT
+Table of Contents
+CALCULATION OF REGISTRATION FEE
+Title of Each Class of Securities to be Registered
+Maximum
+Aggregate
+Offering Price
+Amount of
+Registration
+Fee (1)(2)
+$1,250,000,000 1.653% Senior Notes due 2026
+$1,250,000,000
+$136,375
+$1,000,000,000 2.172% Senior Notes due 2028
+$1,000,000,000
+$109,100
+$1,000,000,000 2.608% Senior Notes due 2031
+$1,000,000,000
+$109,100
+(1)
+Calculated in accordance with Rule 457(r) of the U.S. Securities Act of 1933, as amended.
+(2)
+Pursuant to Rule 457(p) of the Securities Act of 1933, as amended (the “Securities Act”), the registrant is offsetting in full the aggregate registration fee of $354,575 against the same amount of fees paid with respect to $3,250,000,000 aggregate principal amount of unsold securities registered pursuant to its Registration Statement on Form F-3, File No. 333-229191. The unsold securities were offered pursuant to a prospectus supplement dated March 23, 2021 and filed with the Commission pursuant to Rule 424(b)(2), and the registration fee with respect thereto was paid in connection with the filing of prospectus supplement pursuant to Rule 456(b)(1)(i) and Rule 457(r). The offering of the unsold securities was subsequently terminated, and the unsold securities were deregistered pursuant to an automatically effective post-effective amendment to the Registration Statement filed with the Commission on July 6, 2021.
+Table of Contents
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-229191
+PROSPECTUS SUPPLEMENT
+to Prospectus dated January 11, 2019.
+$3,250,000,000
+$1,250,000,000 1.653% Senior Notes due 2026
+$1,000,000,000 2.172% Senior Notes due 2028
+$1,000,000,000 2.608% Senior Notes due 2031
+Nomura Holdings, Inc., a joint stock corporation incorporated with limited liability under the laws of Japan (“Nomura Holdings, Inc.” or the “Issuer”), will issue the above-listed senior notes (collectively, the “Notes”) pursuant to a senior debt indenture dated January 16, 2020 (the “Indenture”). Nomura Securities International, Inc. and other broker-dealers may use this prospectus supplement and the accompanying prospectus in connection with market-making transactions in the Notes after their initial sale. The senior fixed rate notes due July 14, 2026 (the “5-year Notes”) will bear interest commencing on July 12, 2021 at the rate of 1.653% per annum payable semi-annually in arrears on January 14 and July 14 of each year, subject to adjustments as described herein, with the first interest payment to be made on January 14, 2022 (long first coupon) and the last payment to be made on July 14, 2026. The senior fixed rate notes due July 14, 2028 (the “7-year Notes”) will bear interest commencing on July 12, 2021 at the rate of 2.172% per annum payable semi-annually in arrears on January 14 and July 14 of each year, subject to adjustments as described herein, with the first interest payment to be made on January 14, 2022 (long first coupon) and the last payment to be made on July 14, 2028. The senior fixed rate notes due July 14, 2031 (the “10-year Notes”) will bear interest commencing on July 12, 2021 at the rate of 2.608% per annum payable semi-annually in arrears on January 14 and July 14 of each year, subject to adjustments as described herein, with the first interest payment to be made on January 14, 2022 (long first coupon) and the last payment to be made on July 14, 2031.
+Nomura Holdings, Inc. may at its option, subject to the prior confirmation of the Financial Services Agency of Japan (the “FSA”) (if such confirmation is required under the Financial Instruments and Exchange Act of Japan (Act No. 25 of 1948, as amended, the “Financial Instruments and Exchange Act”) or any other applicable laws and regulations then in effect), call all, but not less than all, of the relevant series of the Notes for redemption, upon the occurrence of certain changes in Japanese tax law, subject to certain conditions. See “Description of Senior Debt Securities Issued under the Senior Debt Indenture between Nomura Holdings, Inc. and Citibank, N.A.—Optional Tax Redemption” in the accompanying prospectus. The Notes will not otherwise be redeemable by Nomura Holdings, Inc. prior to the stated maturity. The Notes will not be subject to any sinking fund. Each series of the Notes will be represented by one or more global notes deposited with a custodian for and registered in the name of a nominee of The Depository Trust Company (“DTC”), as depositary. Beneficial interests in the Notes will be shown on, and transfers thereof will be effected only through, records maintained by DTC and its direct and indirect participants, including Euroclear Bank SA/NV (“Euroclear”) and Clearstream Banking S.A. (“Clearstream”). The Notes will be issued only in registered form in minimum denominations of $200,000 and integral multiples of $1,000 in excess thereof.
+The Notes will be direct, unconditional, unsubordinated and unsecured obligations of Nomura Holdings, Inc. and rank pari passu and without preference among themselves and with all other unsecured obligations, other than subordinated obligations of Nomura Holdings, Inc. (except for statutorily preferred exceptions) from time to time outstanding. Each series of the Notes is intended to qualify as total loss-absorbing capacity (“TLAC”) debt under the TLAC regulations in Japan applicable to Nomura Holdings, Inc. See “Risk Factors—Risks Relating to the Notes—The Notes will be structurally subordinated to indebtedness and other liabilities of our subsidiaries, including Nomura Securities Co., Ltd. and Nomura Financial Products & Services, Inc.” and other risk factors in relation to TLAC regulations in the same section of this prospectus supplement.
+Approval-in-principle has been received for the listing and quotation of the Notes on the Singapore Exchange Securities Trading Limited (the “SGX-ST”). The SGX-ST assumes no responsibility for the correctness of any of the statements made, opinions expressed or reports contained herein. Approval in-principle for the listing and quotation of the Notes on the SGX-ST is not to be taken as an indication of the merits of Nomura Holdings, Inc., its subsidiaries and associated companies or the Notes.
+Investing in the Notes involves risks. You should carefully consider the risk factors set forth in “Item 3. Key Information—D. Risk Factors” of our most recent annual report on Form 20-F filed with the U.S. Securities and Exchange Commission (the “SEC”) and in the “ Risk Factors ” section beginning on page S-13 of this prospectus supplement before making any decision to invest in the Notes.
+Per 5-year
+Note
+Per 7-year
+Note
+Per 10-year
+Note
+Total
+Public offering price (1)
+100.000
+%
+100.000
+%
+100.000
+%
+$
+3,250,000,000
+Underwriting commissions (2)
+0.350
+%
+0.400
+%
+0.450
+%
+$
+12,875,000
+Proceeds, before expenses, to Nomura Holdings, Inc. (1)
+99.650
+%
+99.600
+%
+99.550
+%
+$
+3,237,125,000
+(1)
+Plus accrued interest from July 12, 2021, if settlement occurs after that date.
+(2)
+For additional underwriting compensation information, see “Underwriting (Conflicts of Interest).”
+Neither the SEC nor any other regulatory body has approved or disapproved of the Notes or passed upon the accuracy or adequacy of this prospectus supplement or the accompanying prospectus. Any representation to the contrary is a criminal offense.
+The Notes offered by this prospectus supplement and the accompanying prospectus are being offered by the underwriters, subject to prior sale, withdrawal, cancellation or modification of the offer without notice, to delivery to and acceptance by the underwriters and to certain further conditions. It is expected that the Notes will be delivered in book-entry form only, on or about July 12, 2021, through the facilities of DTC and its participants, including Euroclear and Clearstream.
+Joint Lead Managers and Joint Bookrunners
+Nomura
+Citigroup
+SMBC NIKKO
+BBVA
+BofA Securities
+Crédit Agricole CIB
+Natixis
+Rabo Securities
+Société Générale
+Corporate & Investment Banking
+Standard Chartered Bank
+Co-Managers
+BMO Capital Markets
+BNP PARIBAS
+BNY Mellon Capital Markets, LLC
+Deutsche Bank Securities
+ING
+IMI - Intesa Sanpaolo
+Mizuho Securities
+Morgan Stanley
+Scotiabank
+Swedbank
+UBS Investment Bank
+UniCredit Capital Markets
+Prospectus Supplement dated July 6, 2021.
+Table of Contents
+TABLE OF CONTENTS
+Prospectus Supplement
+Page
+About This Prospectus Supplement
+S-v
+Cautionary Statement Regarding Forward-Looking Statements
+S-vi
+Presentation of Financial and Other Information
+S-vi
+Prospectus Supplement Summary
+S-1
+Summary Risk Factors
+S-2
+The Offering
+S-4
+Risk Factors
+S-13
+Use of Proceeds
+S-20
+Capitalization and Indebtedness
+S-21
+Selected Financial and Other Information
+S-22
+Description of the Notes
+S-24
+Taxation
+S-29
+Benefit Plan Investor Considerations
+S-30
+Underwriting (Conflicts of Interest)
+S-31
+Experts
+S-38
+Legal Matters
+S-39
+Enforcement of Civil Liabilities
+S-39
+Where You Can Find More Information
+S-39
+Prospectus
+Page
+Nomura Holdings, Inc.
+1
+Senior Debt Securities
+1
+Risk Factors
+2
+Use of Proceeds
+8
+Capitalization and Indebtedness
+9
+Description of Senior Debt Securities Issued under the Senior Debt Indentures between Nomura Holdings, Inc. and Deutsche Bank Trust Company Americas
+10
+Description of Senior Debt Securities Issued under the Senior Debt Indenture between Nomura Holdings, Inc. and Citibank, N.A.
+34
+Legal Ownership and Book-Entry Issuance
+55
+Taxation
+60
+Plan of Distribution (Conflicts of Interest)
+76
+Legal Matters
+79
+Experts
+79
+Enforcement of Civil Liabilities
+79
+Clearance and Settlement
+80
+Benefit Plan Investor Considerations
+84
+No dealer, salesperson or other person is authorized to give any information or to represent anything not contained in this prospectus supplement and the accompanying prospectus. You must not rely on any unauthorized information or representations. This prospectus supplement and the accompanying prospectus are an offer to sell only the securities they describe, but only under circumstances and in jurisdictions where it is lawful to do so. The information contained in this prospectus supplement is current only as of its date.
+S-ii
+Table of Contents
+The Notes have not been and will not be registered under the Financial Instruments and Exchange Act and are subject to the Act on Special Measures Concerning Taxation of Japan (Act No. 26 of 1957, as amended, the “Special Taxation Measures Act”). The Notes may not be offered or sold, directly or indirectly, in Japan or to, or for the benefit of, any resident of Japan (which term as used herein means any person resident in Japan, including any corporation or other entity organized under the laws of Japan), or to others for re-offering or re-sale, directly or indirectly, in Japan or to, or for the benefit of, any resident of Japan, except pursuant to an exemption from the registration requirements of, and otherwise in compliance with, the Financial Instruments and Exchange Act and any other applicable laws, regulations and governmental guidelines of Japan. See “Underwriting (Conflicts of Interest).” In addition, the Notes are not, as part of the distribution by the underwriters, dealers and agents under the underwriting agreement relating to the Notes, at any time, to be directly or indirectly offered or sold to, or for the benefit of, any person other than a beneficial owner that is, (i) for Japanese tax purposes, neither (x) an individual resident of Japan or a Japanese corporation, nor (y) an individual non-resident of Japan or a non-Japanese corporation that in either case is a person having a special relationship with us as described in Article 6, paragraph 4 of the Special Taxation Measures Act (a “specially-related person of ours”) (excluding an underwriter designated in Article 6, paragraph 12, item 1 of the Special Taxation Measures Act which purchases unsubscribed portions of the Notes from the other underwriters) or (ii) a Japanese financial institution, designated in Article 3-2-2, paragraph 29 of the Order for Enforcement of the Act on Special Measures Concerning Taxation of Japan (Cabinet Order No. 43 of 1957, as amended, the “Cabinet Order”). BY SUBSCRIBING FOR THE NOTES, THE INVESTOR WILL BE DEEMED TO HAVE REPRESENTED THAT IT IS A BENEFICIAL OWNER THAT IS, (I) FOR JAPANESE TAX PURPOSES, NEITHER (X) AN INDIVIDUAL RESIDENT OF JAPAN OR A JAPANESE CORPORATION, NOR (Y) AN INDIVIDUAL NON-RESIDENT OF JAPAN OR A NON-JAPANESE CORPORATION THAT IN EITHER CASE IS A SPECIALLY-RELATED PERSON OF OURS (EXCLUDING AN UNDERWRITER DESIGNATED IN ARTICLE 6, PARAGRAPH 12, ITEM 1 OF THE SPECIAL TAXATION MEASURES ACT WHICH PURCHASES UNSUBSCRIBED PORTIONS OF THE NOTES FROM THE OTHER UNDERWRITERS) OR (II) A JAPANESE FINANCIAL INSTITUTION, DESIGNATED IN ARTICLE 3-2-2, PARAGRAPH 29 OF THE CABINET ORDER.
+Interest payments on the Notes will be subject to Japanese withholding tax unless it is established that such Notes are held by or for the account of a beneficial owner that is (i) for Japanese tax purposes, neither (x) an individual resident of Japan or a Japanese corporation, nor (y) an individual non-resident of Japan or a non-Japanese corporation that in either case is a specially-related person of ours, (ii) a Japanese designated financial institution as described in Article 6, paragraph 11 of the Special Taxation Measures Act which complies with the requirement for tax exemption under that paragraph or (iii) a Japanese public corporation, financial institution, financial instruments business operator or certain other entity which has received such payments through a Japanese payment handling agent, as provided in Article 3-3, paragraph 6 of the Special Taxation Measures Act, in compliance with the requirement for tax exemption under that paragraph.
+Interest payments on the Notes to an individual resident of Japan, to a Japanese corporation, or to an individual non-resident of Japan or a non-Japanese corporation that in either case is a specially-related person of ours (except for the Japanese designated financial institution and the Japanese public corporation, financial institution, financial instruments business operator and certain other entity described in the preceding paragraph) will be subject to deduction in respect of Japanese income tax at a rate of 15.315% of the amount of such interest.
+PROHIBITION OF SALES TO EEA RETAIL INVESTORS — The Notes are not intended to be offered, sold or otherwise made available to and should not be offered, sold or otherwise made available to any retail investor in the European Economic Area (the “EEA”). For these purposes, a retail investor means a person who is one (or more) of: (i) a retail client as defined in point (11) of Article 4(1) of Directive 2014/65/EU, as amended (“MiFID II”); (ii) a customer within the meaning of Directive (EU) 2016/97, (as amended, the “Insurance Distribution Directive”), where that customer would not qualify as a professional client as defined in point (10) of Article 4(1) of MiFID II; or (iii) not a qualified investor as defined in Regulation (EU) 2017/1129 (as amended, the “Prospectus Regulation”). Consequently no key information document required by Regulation
+S-iii
+Table of Contents
+(EU) No 1286/2014, (as amended, the “PRIIPs Regulation”), for offering or selling the Notes or otherwise making them available to retail investors in the EEA has been prepared and therefore offering or selling the Notes or otherwise making them available to any retail investor in the EEA may be unlawful under the PRIIPs Regulation.
+Notwithstanding the above paragraph, in the case where the Issuer subsequently prepares and publishes a key information document under the PRIIPs Regulation in respect of the Notes, then following such publication, the prohibition on the offering, sale or otherwise making available the Notes to a retail investor as described in the above paragraph and in such legend shall no longer apply.
+PROHIBITION OF SALES T

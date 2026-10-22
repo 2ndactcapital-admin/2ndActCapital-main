@@ -18,6 +18,13 @@
  * component holds no copy of the start command). "Show these steps" beside the
  * Laptop radio opens it without queuing.
  *
+ * bulkfetchui3 — the Institutions card holds Refresh (re-reads the counts with
+ * ?fresh=1, "as of h:mm") and, when writable, Refresh index with its "Index
+ * loaded through" note (moved out of the Time frame card); the button reads
+ * "Index refresh queued" / "Index refreshing" and is disabled while such a run
+ * is active. While a BULK run is queued or running the counts re-read every
+ * 60 s (alongside the runs table's 10 s refresh).
+ *
  * Every label (document kinds, targets, statuses, the Render refusal) comes
  * from the response envelope (Rule 1). Write controls render only inside a
  * `permissions.can_write === true` check (lib/edgarBulkDownload.mjs canWrite)
@@ -30,11 +37,14 @@ import InstitutionPicker from "@/components/admin/InstitutionPicker";
 import LaptopWorkerDialog, { CopyButton } from "@/components/admin/LaptopWorkerDialog";
 import DataGrid from "@/components/ui/DataGrid";
 import {
+  INSTITUTIONS_REFRESH_MS,
   LAPTOP_DIALOG_RECHECK_MS,
   PRESETS,
   buildParams,
+  bulkRunsActive,
   canWrite,
   fmtDuration,
+  indexRefreshState,
   laptopStatus,
   presetRange,
   previewReady,
@@ -254,13 +264,17 @@ function RunsTable({ runsPayload, pageIndex, onPage, loading, onAction, pendingA
   const targets = vocab.targets ?? {};
   const kindsLabel = vocab.kinds ?? {};
   const runKinds = vocab.run_kinds ?? {};
+  const triggerSources = vocab.trigger_sources ?? {};
   const columns = [
     { field: "started_at", headerName: "Started", enableSorting: false, cell: (v, row) => fmtWhen(v || row.queued_at) },
     {
       field: "run_kind",
       headerName: "Institutions",
       enableSorting: false,
-      cell: (v, row) => (v === "bulk_fetch" ? (row.params?.banks ?? []).join(", ") : runKinds[v] ?? v),
+      cell: (v, row) =>
+        v === "bulk_fetch"
+          ? (row.params?.banks ?? []).join(", ")
+          : `${runKinds[v] ?? v}${row.trigger_source === "schedule" && triggerSources.schedule ? ` (${triggerSources.schedule})` : ""}`,
     },
     {
       field: "params",
@@ -384,6 +398,7 @@ export default function BulkDownloadTab() {
   const [runsPage, setRunsPage] = useState(0);
   const [runsLoading, startRuns] = useTransition();
   const [, startWorkers] = useTransition();
+  const [instRefreshing, startInstRefresh] = useTransition();
   const [checkingNow, startCheckNow] = useTransition();   // the dialog's "check again" only, not the 5 s poll
 
   const [banks, setBanks] = useState(() => new Set());
@@ -451,6 +466,16 @@ export default function BulkDownloadTab() {
     });
   }, []);
 
+  // The Institutions card's Refresh (and the 60 s re-read while a bulk run is
+  // active): fresh=1 bypasses the API's 60 s cache. Only the counts change —
+  // the user's choices (kinds, target, dates) are left alone.
+  const refreshInstitutions = useCallback(() => {
+    startInstRefresh(async () => {
+      const res = await loadBulkInstitutionsAction({ fresh: true });
+      if (res.ok) setInst(res.payload);
+    });
+  }, []);
+
   const refreshRuns = useCallback((page) => {
     startRuns(async () => {
       const res = await loadBulkRunsAction({ page: page + 1, page_size: RUNS_PAGE_SIZE });
@@ -484,6 +509,15 @@ export default function BulkDownloadTab() {
     }, RUNS_REFRESH_MS);
     return () => clearInterval(id);
   }, [active, runsPage, refreshRuns, refreshWorkers]);
+
+  // The Institutions counts: every 60 s while a BULK run is queued or running, not otherwise.
+  const bulkActive = bulkRunsActive(runs);
+  useEffect(() => {
+    if (!bulkActive) return undefined;
+    const id = setInterval(refreshInstitutions, INSTITUTIONS_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [bulkActive, refreshInstitutions]);
+  const indexState = indexRefreshState(runs);
 
   // ── preview (debounced)
   const params = useMemo(
@@ -631,6 +665,22 @@ export default function BulkDownloadTab() {
           onToggle={toggleBank}
           onAll={(names) => setBanks(new Set(names))}
           onNone={() => setBanks(new Set())}
+          columns={vocab.institution_columns ?? null}
+          asOf={inst.as_of ?? null}
+          onRefresh={refreshInstitutions}
+          refreshing={instRefreshing}
+          writable={writable}
+          lastIndexed={lastIndexed}
+          onRefreshIndex={writable ? refreshIndex : null}
+          indexState={indexState}
+          indexPending={pending}
+          indexMessage={
+            refreshOutcome ? (
+              <span style={refreshOutcome.error ? { color: ERROR_INK } : undefined}>
+                {refreshOutcome.text} <Command text={refreshOutcome.command} />
+              </span>
+            ) : null
+          }
         />
 
         <div className="flex flex-col gap-4">
@@ -675,19 +725,6 @@ export default function BulkDownloadTab() {
                 />
               </label>
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--2a-text-muted)]">
-              <span>Index loaded through {lastIndexed ?? "—"}.</span>
-              {writable && (
-                <button type="button" className={GHOST} onClick={refreshIndex} disabled={pending}>
-                  Refresh index
-                </button>
-              )}
-            </div>
-            {refreshOutcome && (
-              <p className="mt-1 text-[11px]" style={refreshOutcome.error ? { color: ERROR_INK } : undefined}>
-                {refreshOutcome.text} <Command text={refreshOutcome.command} />
-              </p>
-            )}
           </div>
 
           <div className={`${CARD} p-4`}>

@@ -1,0 +1,86 @@
+FWP 1 formfwp.htm FORM FWP
+Filed Pursuant to Rule 433
+Registration Statement No. 333-272447
+CAPPED MARKET INDEX TARGET-TERM SECURITIES ® (MITTS ® )
+Capped Market Index Target-Term Securities ® Linked to a Global Equity Index Basket
+The graph above and the table below reflect the hypothetical return on the notes, based on the terms contained in the table to the left (using the mid-point for any range(s)). The graph and the table have been prepared for purposes of illustration only and do not take into account any tax consequences from investing in the notes.
+Hypothetical Percentage Change from the Starting Value to the Ending Value
+Hypothetical Redemption Amount per Unit
+Hypothetical Total Rate of Return on the Notes
+-100.00%
+$10.00 (1)
+0.00%
+-50.00%
+$10.00
+0.00%
+-20.00%
+$10.00
+0.00%
+-10.00%
+$10.00
+0.00%
+-6.00%
+$10.00
+0.00%
+-3.00%
+$10.00
+0.00%
+0.00%
+$10.00
+0.00%
+5.00%
+$10.50
+5.00%
+10.00%
+$11.00
+10.00%
+50.00%
+$15.00 (2)
+50.00%
+60.00%
+$15.00
+50.00%
+75.00%
+$15.00
+50.00%
+100.00%
+$15.00
+50.00%
+Issuer
+Canadian Imperial Bank of Commerce (“CIBC”)
+Principal Amount
+$10.00 per unit
+Term
+Approximately 5 years
+Market Measure
+A global equity index basket comprised of the Dow Jones Industrial Average® (Bloomberg symbol: “INDU”), the EURO STOXX 50® Index (Bloomberg symbol: “SX5E”), and the TOPIX® Index (Bloomberg symbol: “TPX”) (each, a “Basket Component”). The Dow Jones Industrial Average® will be given an initial weight of 50.00%, and each of the EURO STOXX 50® Index and the TOPIX® Index will be given an initial weight of 25.00%.
+Payout Profile at Maturity
+● 100% participation in increases in the Market Measure, subject to the Capped Value
+● If the Market Measure is flat or decreases, the payment at maturity will be the Minimum Redemption Amount
+Participation Rate
+100.00%
+Minimum Redemption Amount
+$10.00 per unit
+Capped Value
+[$14.50 to $15.50] per unit, a [45.00% to 55.00%] return over the principal amount, to be determined on the pricing date.
+Investment Considerations
+This investment is designed for investors who anticipate that the Market Measure will increase moderately over the term of the notes, are seeking full principal amount at maturity, and are willing to forgo interim interest payments.
+Preliminary Offering Documents
+https://www.sec.gov/Archives/edgar/data/1045520/000191870426008793/formfwp.htm
+Exchange Listing
+No
+You should read the relevant Preliminary Offering Documents before you invest. Click on the Preliminary Offering Documents hyperlink above or call your Financial Advisor for a hard copy.
+Risk Factors
+Please see the Preliminary Offering Documents for a description of certain risks related to this investment, including, but not limited to, the following:
+● Depending on the performance of the Market Measure as measured shortly before the maturity date, you may not receive a positive return on your investment.
+● Your investment return is limited to the return represented by the Capped Value and may be less than a comparable investment directly in the stocks included in the Market Measure.
+● Changes in the level of one of the Basket Components may be offset by changes in the levels of the other Basket Components.
+● Payments on the notes, including any repayment of principal, are subject to the credit risk of CIBC, and actual or perceived changes in the creditworthiness of CIBC are expected to affect the value of the notes. If CIBC becomes insolvent or is unable to pay its obligations, you may lose your entire investment.
+● The initial estimated value of the notes on the pricing date will be less than their public offering price.
+● If you attempt to sell the notes prior to maturity, their market value may be lower than both the public offering price and the initial estimated value of the notes on the pricing date.
+● You will have no rights of a holder of the securities represented by the Basket Components, and you will not be entitled to receive securities or dividends or other distributions by the issuers of those securities.
+● Your return on the notes may be affected by factors affecting the international securities markets, specifically markets in the countries represented by the Basket Components. In addition, you will not obtain the benefit of any increase in the value of the currencies in which the securities included in the Basket Components trade against the U.S. dollar, which you would have received if you had owned the securities included in the Basket Components during the term of your notes, although the value of the Market Measure may be adversely affected by general exchange rate movements in the market.
+Final terms will be set on the pricing date within the given range for the specified Market-Linked Investment. Please see the Preliminary Offering Documents for complete product disclosure, including related risks and tax disclosure.
+(1) The Redemption Amount per unit cannot be less than the Minimum Redemption Amount.
+(2) The Redemption Amount per unit cannot exceed the hypothetical Capped Value.
+Canadian Imperial Bank of Commerce (CIBC) has filed a registration statement (including a product supplement, a prospectus supplement, and a prospectus) with the U.S. Securities and Exchange Commission (SEC) for the offering to which this document relates. Before you invest, you should carefully read these documents and other documents that CIBC has filed with the SEC for more complete information about CIBC and this offering. You may get these documents without cost by visiting EDGAR on the SEC Website at www.sec.gov. CIBC’s Central Index Key, or ClK, on the SEC website is 1045520. Alternatively, MLPF&S or BofAS will arrange to send you these documents if you so request by calling toll-free at 1-800-294-1322.

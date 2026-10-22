@@ -1,0 +1,154 @@
+424B2 1 gs-20260109.htm 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-284538
+GS Finance Corp.
+$500,000
+Autocallable Contingent Coupon Basket-Linked Notes due 2027
+guaranteed by
+The Goldman Sachs Group, Inc.
+The notes do not pay a fixed coupon and may pay no coupon on a payment date. The amount that you will be paid on your notes is based on the performance of an equally weighted basket comprised of the common stock or ordinary shares (the basket stocks) of 8 companies. For a full list of the basket stocks, see page S-3. Each basket stock has an initial weighting of 12.5% and an initial weighted value of 12.5.
+The notes will mature on the stated maturity date (January 25, 2027), unless automatically called on any observation date, commencing in April 2026 to and including October 2026. Your notes will be automatically called if the closing level of the basket on any such observation date is greater than or equal to the initial basket level. If your notes are automatically called, you will receive a payment on the next payment date (the third business day after the relevant observation date) equal to the face amount of your notes plus a coupon (as described below).
+The initial basket level is 100 and the closing level of the basket on any observation date will equal the sum of the products , as calculated for each basket stock, of: (i) its closing price on such observation date divided by its initial basket stock price (set on January 6, 2026 and is higher than the closing price of one share of such basket stock on the trade date (January 7, 2026)) multiplied by (ii) its initial weighted value.
+Observation dates are April 20, 2026, July 20, 2026, October 20, 2026 and January 20, 2027. If on any observation date the closing level of the basket is greater than or equal to 75% of the initial basket level, you will receive on the applicable payment date a coupon for each $1,000 face amount of your notes equal to: (i) the product of $27.5 times the number of observation dates that have occurred up to and including the relevant observation date minus (ii) the sum of all coupons previously paid, if any.
+The amount that you will be paid on your notes at maturity, if they have not been automatically called, in addition to the final coupon, if any, is based on the basket return. The basket return is the percentage increase or decrease in the closing level of the basket on the determination date (the final observation date, January 20, 2027) from the initial basket level.
+At maturity, for each $1,000 face amount of your notes, you will receive an amount in cash equal to:
+•
+if the basket return is greater than or equal to -25% (the final basket level is greater than or equal to 75% of the initial basket level), $1,000 plus a coupon calculated as described above; or
+•
+if the basket return is less than -25% (the final basket level is less than 75% of the initial basket level), the sum of (i) $1,000 plus (ii) the product of (a) $1,000 times (b) the basket return. You will receive less than 75% of the face amount of your notes and no coupon.
+Declines in one basket stock may offset increases in the other basket stocks.
+If the basket return is less than -25%, the percentage of the face amount of your notes you will receive will be based on the basket return. In such event, you will receive less than 75% of the face amount of your notes and no coupon.
+You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc. See page S- 23 .
+The estimated value of your notes at the time the terms of your notes are set on the trade date is equal to approximately $949 per $1,000 face amount. For a discussion of the estimated value and the price at which Goldman Sachs & Co. LLC would initially buy or sell your notes, if it makes a market in the notes, see the following page.
+Original issue date:
+January 12, 2026
+Original issue price:
+100% of the face amount
+Underwriting discount:
+1% of the face amount 1
+Net proceeds to the issuer:
+99% of the face amount
+1 This includes a selling concession of up to 1%.
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+JPMorgan
+Placement Agent
+Prospectus Supplement No. 21,544 dated January 7, 2026.
+The issue price, underwriting discount and net proceeds listed above relate to the notes we sell initially. We may decide to sell additional notes after the date of this prospectus supplement, at issue prices and with underwriting discounts and net proceeds that differ from the amounts set forth above. The return (whether positive or negative) on your investment in notes will depend in part on the issue price you pay for such notes.
+GS Finance Corp. may use this prospectus in the initial sale of the notes. In addition, Goldman Sachs & Co. LLC or any other affiliate of GS Finance Corp. may use this prospectus in a market-making transaction in a note after its initial sale. Unless GS Finance Corp. or its agent informs the purchaser otherwise in the confirmation of sale, this prospectus is being used in a market-making transaction.
+Estimated Value of Your Notes
+The estimated value of your notes at the time the terms of your notes are set on the trade date (as determined by reference to pricing models used by Goldman Sachs & Co. LLC (GS&Co.) and taking into account our credit spreads) is equal to approximately $949 per $1,000 face amount, which is less than the original issue price. The value of your notes at any time will reflect many factors and cannot be predicted; however, the price (not including GS&Co. ’ s customary bid and ask spreads) at which GS&Co. would initially buy or sell notes (if it makes a market, which it is not obligated to do) and the value that GS&Co. will initially use for account statements and otherwise is equal to approximately the estimated value of your notes at the time of pricing, plus an additional amount (initially equal to $46 per $1,000 face amount).
+Prior to April 23, 2026, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market, which it is not obligated to do) will equal approximately the sum of (a) the then-current estimated value of your notes (as determined by reference to GS&Co.’s pricing models) plus (b) any remaining additional amount (the additional amount will decline to zero on a straight-line basis from the time of pricing through April 22, 2026). On and after April 23, 2026, the price (not including GS&Co.’s customary bid and ask spreads) at which GS&Co. would buy or sell your notes (if it makes a market) will equal approximately the then-current estimated value of your notes determined by reference to such pricing models.
+About Your Prospectus
+The notes are part of the Medium-Term Notes, Series F program of GS Finance Corp. and are fully and unconditionally guaranteed by The Goldman Sachs Group, Inc. This prospectus includes this prospectus supplement and the accompanying documents listed below. This prospectus supplement constitutes a supplement to the documents listed below, does not set forth all of the terms of your notes and therefore should be read in conjunction with such documents:
+•
+Prospectus supplement dated February 14, 2025
+•
+Prospectus dated February 14, 2025
+The information in this prospectus supplement supersedes any conflicting information in the documents listed above. In addition, some of the terms or features described in the listed documents may not apply to your notes.
+We refer to the notes we are offering by this prospectus supplement as the “offered notes” or the “notes”. Each of the offered notes has the terms described below. Please note that in this prospectus supplement, references to “GS Finance Corp.”, “we”, “our” and “us” mean only GS Finance Corp. and do not include its subsidiaries or affiliates, references to “The Goldman Sachs Group, Inc.”, our parent company, mean only The Goldman Sachs Group, Inc. and do not include its subsidiaries or affiliates and references to “Goldman Sachs” mean The Goldman Sachs Group, Inc. together with its consolidated subsidiaries and affiliates, including us. The notes will be issued under the senior debt indenture, dated as of October 10, 2008, as supplemented by the First Supplemental Indenture, dated as of February 20, 2015, each among us, as issuer, The Goldman Sachs Group, Inc., as guarantor, and The Bank of New York Mellon, as trustee. This indenture, as so supplemented and as further supplemented thereafter, is referred to as the “GSFC 2008 indenture” in the accompanying prospectus supplement.
+The notes will be issued in book-entry form and represented by master note no. 3, dated March 22, 2021.
+S- 2
+Terms AND CONDITIONS
+CUSIP / ISIN: 40058WSV9 / US40058WSV99
+Company (Issuer): GS Finance Corp.
+Guarantor: The Goldman Sachs Group, Inc.
+Basket: an equally weighted basket comprised of the 8 basket stocks
+Basket stocks (each individually, a basket stock): the 8 common stocks or ordinary shares listed below; for each basket stock, its current Bloomberg ticker, type of security, current primary listing, initial weight in the basket, initial weighted value and initial basket stock price are set forth below:
+Basket Stock
+Current Bloomberg Ticker
+Type of Security
+Current Primary Listing
+Initial Weight in the Basket
+Initial Weighted Value
+Initial Basket Stock Price (USD)*
+Constellation Energy Corporation
+CEG UW
+Common Stock
+The Nasdaq Stock Market LLC
+12.5%
+12.5
+$354.58
+Eaton Corporation plc
+ETN UN
+Ordinary Share
+New York Stock Exchange
+12.5%
+12.5
+$332.97
+Equinix, Inc.
+EQIX UW
+Common Stock
+The Nasdaq Stock Market LLC
+12.5%
+12.5
+$788.06
+Freeport-McMoRan Inc.
+FCX UN
+Common Stock
+New York Stock Exchange
+12.5%
+12.5
+$56.15
+NextEra Energy, Inc.
+NEE UN
+Common Stock
+New York Stock Exchange
+12.5%
+12.5
+$81.05
+Quanta Services, Inc.
+PWR UN
+Common Stock
+New York Stock Exchange
+12.5%
+12.5
+$438.22
+Vertiv Holdings Co
+VRT UN
+Class A Common Stock
+New York Stock Exchange
+12.5%
+12.5
+$174.95
+Vistra Corp.
+VST UN
+Common Stock
+New York Stock Exchange
+12.5%
+12.5
+$169.53
+* The closing price of one share of each basket stock on January 6, 2026 and is higher than the closing price of one share of such basket stock on the trade date
+Face amount: $500,000 in the aggregate on the original issue date; the aggregate face amount may be increased if the company, at its sole option, decides to sell an additional amount on a date subsequent to the trade date
+Authorized denominations: $10,000 or any integral multiple of $1,000 in excess thereof
+Principal amount: Subject to redemption by the company as provided under “— Company’s redemption right (automatic call feature)” below, on the stated maturity date, in addition to the final coupon, if any, the company will pay, for each $1,000 of the outstanding face amount, an amount, if any, in cash equal to the cash settlement amount.
+Cash settlement amount:
+•
+if the final basket level is greater than or equal to the trigger buffer level, $1,000; or
+•
+if the final basket level is less than the trigger buffer level, the sum of (i) $1,000 plus (ii) the product of (a) $1,000 times (b) the basket return
+S- 3
+Company’s redemption right (automatic call feature): if a redemption event occurs, then the outstanding face amount will be automatically redeemed in whole and the company will pay, in addition to the coupon then due, an amount in cash on the following call payment date, for each $1,000 of the outstanding face amount, equal to $1,000
+Redemption event: a redemption event will occur if, as measured on any call observation date, the closing level of the basket is greater than or equal to the initial basket level
+Initial basket level: 100
+Closing level of the basket: on any coupon observation date, the sum of , for each of the basket stocks: the product of (i) the quotient of (a) the closing price of such basket stock on such coupon observation date divided by (b) the initial basket stock price of such basket stock times (ii) the initial weighted value of such basket stock, except in the limited circumstances described under “— Consequences of a market disruption event or a non-trading day” below
+Final basket level: the closing level of the basket on the determination date, subject to adjustment as provided in “— Consequences of a market disruption event or a non-trading day” below
+Basket return: the quotient of (i) the final basket level minus the initial basket level divided by (ii) the initial basket level, expressed as a percentage
+Trigger buffer level: 75% of the initial basket level
+Initial basket stock price: for a basket stock, as set forth under “— Basket stocks” above. The initial stock price of each basket stock was set on January 6, 2026 and is higher than the closing price of one share of such basket stock on the trade date.
+Final basket stock price: with respect to a basket stock, the closing price of one share of such basket stock on the determination date, subject to adjustment as provided in “— Consequences of a market disruption event or a non-trading day” and “— Anti-dilution adjustments” below
+Coupon: subject to the company’s redemption right, on each coupon payment date, for each $1,000 of the outstanding face amount, the company will pay an amount in cash equal to:
+•
+if the closing level of the basket on the related coupon observation date is greater than or equal to the coupon trigger level, (i) the product of $27.5 times the number of coupon observation dates that have occurred up to and including the relevant coupon observation date minus (ii) the sum of all coupons previously paid, if any; or
+•
+if the closing level of the basket on the related coupon observation date is less than the coupon trigger level, $0
+The coupon paid on any coupon payment date will be paid to the person in whose name this note is registered as of the close of business on the regular record date for such coupon payment date. If the coupon is due at maturity but on a day that is not a coupon payment date, the coupon will be paid to the person entitled to receive the principal of this note.
+Coupon trigger level: 75% of the initial basket level
+Trade date: January 7, 2026
+Original issue date: January 12, 2026
+Determination date: the last coupon observation date, January 20, 2027, subject to adjustment as described under “— Coupon observation dates” below.
+Stated maturity date: January 25, 2027, unless that day is not a business day, in which case the stated maturity date will be postponed to the next following business day. The stated maturity date will also be postponed if the determination date is postponed as described under “— Determination date” above. In such a case, the stated maturity date will be postponed by the same number of business day(s) from but excluding the originally scheduled determination date to and including the actual determination date.
+S- 4
+Call observation dates: each coupon observation date, commencing in April 2026 and ending in October 2026, subject to adjustment as described under “ — Coupon observation dates” below
+Call payment dates: the third business day after each call observation date, subject to adjustment as provided under “— Call observation dates” above
+Coupon observation dates: April 20, 2026, July 20, 2026, October 20, 2026 and January 20, 2027, unless the calculation agent determines that a market disruption event with respect to a basket stock occurs or is continuing on that day or that day is not otherwise a trading day with respect to a basket sto

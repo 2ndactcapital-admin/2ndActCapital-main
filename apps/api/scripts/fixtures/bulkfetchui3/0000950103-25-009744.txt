@@ -1,0 +1,117 @@
+FWP 1 dp232536_fwp-us2865esca.htm FORM FWP
+Auto-Callable Contingent Coupon Barrier Notes
+Linked to the Solactive Equal Weight U.S. Semi Conductor Select AR Index
+Due March 3, 2028
+PRODUCT CHARACTERISTICS
+·
+Contingent Coupons — If the Notes have not been automatically called, investors will receive a Contingent Coupon on a monthly Coupon Payment Date if the closing value of the Underlier is greater than or equal to the Coupon Threshold on the immediately preceding Coupon Observation Date. You may not receive any Contingent Coupons during the term of the Notes.
+·
+Call Feature — If, on any quarterly Call Observation Date beginning approximately six months following the Trade Date, the closing value of the Underlier is greater than or equal to the Initial Underlier Value, the Notes will be automatically called for 100% of their principal amount plus the Contingent Coupon otherwise due. No further payments will be made on the Notes.
+·
+Contingent Return of Principal at Maturity — If the Notes are not automatically called and the Final Underlier Value is greater than or equal to the Barrier Value, at maturity, investors will receive the principal amount of their Notes plus any Contingent Coupon otherwise due. If the Notes are not automatically called and the Final Underlier Value is less than the Barrier Value, at maturity, investors will lose 1% of the principal amount of their Notes for each 1% that the Final Underlier Value is less than the Initial Underlier Value.
+KEY TERMS
+Issuer:
+Royal Bank of Canada (“RBC”)
+CUSIP:
+78017PJH5
+Underlier:
+The Solactive Equal Weight U.S. Semi Conductor Select AR Index (Bloomberg symbol “SOUSESCA”)
+Trade Date:
+August 29, 2025
+Issue Date:
+September 4, 2025
+Valuation Date:
+February 29, 2028
+Maturity Date:
+March 3, 2028
+Payment of Contingent Coupons:
+If the Notes have not been automatically called, investors will receive a Contingent Coupon on a Coupon Payment Date if the closing value of the Underlier is greater than or equal to the Coupon Threshold on the immediately preceding Coupon Observation Date.
+No Contingent Coupon will be payable on a Coupon Payment Date if the closing value of the Underlier is less than the Coupon Threshold on the immediately preceding Coupon Observation Date.
+Contingent Coupon:
+If payable, $10.00 per $1,000 principal amount of Notes (corresponding to a rate of 1.00% per month or 12.00% per annum)
+Coupon Threshold:
+75% of the Initial Underlier Value
+Coupon Observation Dates:
+Monthly
+Coupon Payment Dates:
+Monthly
+KEY TERMS ( continued )
+Call Feature:
+If, on any Call Observation Date, the closing value of the Underlier is greater than or equal to the Initial Underlier Value, the Notes will be automatically called. Under these circumstances, investors will receive on the Call Settlement Date per $1,000 principal amount of Notes an amount equal to $1,000 plus the Contingent Coupon otherwise due. No further payments will be made on the Notes.
+Call Observation Dates:
+Quarterly, beginning approximately six months following the Trade Date
+Call Settlement Date:
+If the Notes are automatically called on any Call Observation Date, the Coupon Payment Date immediately following that Call Observation Date
+Payment at Maturity:
+If the Notes are not automatically called, investors will receive on the Maturity Date per $1,000 principal amount of Notes, in addition to any Contingent Coupon otherwise due:
+· If the Final Underlier Value is greater than or equal to the Barrier Value: $1,000
+· If the Final Underlier Value is less than the Barrier Value, an amount equal to:
+$1,000 + ($1,000 × Underlier Return)
+If the Notes are not automatically called and the Final Underlier Value is less than the Barrier Value, you will lose a substantial portion or all of your principal amount at maturity.
+Barrier Value:
+70% of the Initial Underlier Value
+Underlier Return:
+Final Underlier Value – Initial Underlier Value
+Initial Underlier Value
+Initial Underlier Value:
+The closing value of the Underlier on the Trade Date
+Final Underlier Value:
+The closing value of the Underlier on the Valuation Date
+This document provides a summary of the terms of the Notes. Investors should carefully review the accompanying preliminary pricing supplement, product supplement, index supplement, prospectus supplement and prospectus, as well as “Selected Risk Considerations” below, before making a decision to invest in the Notes:
+https://www.sec.gov/Archives/edgar/data/1000275/000095010325009714/dp232514_424b2-us2865esca.htm
+The initial estimated value of the Notes determined by us as of the Trade Date, which we refer to as the initial estimated value, is expected to be between $918.00 and $968.00 per $1,000 principal amount of Notes and will be less than the public offering price of the Notes. We describe the determination of the initial estimated value in more detail in the accompanying preliminary pricing supplement.
+Selected Risk Considerations
+An investment in the Notes involves significant risks. We urge you to consult your investment, legal, tax, accounting and other advisers before you invest in the Notes. Some of the risks that apply to an investment in the Notes are summarized below, but we urge you to read also the “Selected Risk Considerations” section of the accompanying preliminary pricing supplement and the “Risk Factors” sections of the accompanying prospectus, prospectus supplement, index supplement and product supplement. You should not purchase the Notes unless you understand and can bear the risks of investing in the Notes.
+·
+You May Lose a Portion or All of the Principal Amount at Maturity.
+·
+You May Not Receive Any Contingent Coupons.
+·
+You Will Not Participate in Any Appreciation of the Underlier, and Any Potential Return on the Notes Is Limited.
+·
+The Notes Are Subject to an Automatic Call.
+·
+Payments on the Notes Are Subject to Our Credit Risk, and Market Perceptions about Our Creditworthiness May Adversely Affect the Market Value of the Notes.
+·
+Any Payment on the Notes Will Be Determined Based on the Closing Values of the Underlier on the Dates Specified.
+·
+The U.S. Federal Income Tax Consequences of an Investment in the Notes Are Uncertain.
+·
+There May Not Be an Active Trading Market for the Notes; Sales in the Secondary Market May Result in Significant Losses.
+·
+The Initial Estimated Value of the Notes Will Be Less Than the Public Offering Price.
+·
+The Initial Estimated Value of the Notes Is Only an Estimate, Calculated as of the Trade Date.
+·
+Our and Our Affiliates’ Business and Trading Activities May Create Conflicts of Interest.
+·
+RBCCM’s Role as Calculation Agent May Create Conflicts of Interest.
+·
+RBCCM Coordinated with the Index Sponsor in the Development of the Underlier and the Underlying Index.
+·
+You Will Not Have Any Rights to the Securities Included in the Underlying Index.
+·
+The Underlier Has a Limited Operating History and May Perform in Unanticipated Ways.
+·
+The Underlier Is Subject to an Adjustment Factor That Will Adversely Affect the Underlier Performance.
+·
+Any Potential Benefit From the Gross Total Return Feature of the Underlying Index Will Be Reduced by the Adjustment Factor Applied to the Underlier.
+·
+There Is No Guarantee That the Index Methodology of the Underlier or the Underlying Index Will Be Successful.
+·
+The Underlying Index Constituents Are Not Expected to Change During the Term of the Notes, and Are Limited in Number.
+·
+Dividends and Distributions of the Underlying Index Constituents May Vary When Compared to Historical Levels.
+·
+The Underlying Index Constituents Are Concentrated in the Semiconductor Industry.
+·
+The Notes Are Subject to Risks Relating to Non-U.S. Securities.
+·
+We May Accelerate the Notes If a Change-in-Law Event Occurs.
+·
+Any Payment on the Notes May Be Postponed and Adversely Affected by the Occurrence of a Market Disruption Event.
+·
+Adjustments to the Underlier or the Underlying Index Could Adversely Affect Any Payments on the Notes.
+Royal Bank of Canada has filed a registration statement (including a product supplement, index supplement, prospectus supplement and prospectus) with the SEC for the offering to which this document relates. Before you invest, you should read those documents and the other documents that we have filed with the SEC for more complete information about us and this offering. You may get these documents for free by visiting EDGAR on the SEC website at www.sec.gov. Alternatively, we, any agent or any dealer participating in this offering will arrange to send you those documents if you so request by calling toll-free at 1-877-688-2301.
+As used in this document, “Royal Bank of Canada,” “we,” “our” and “us” mean only Royal Bank of Canada. Capitalized terms used in this document without definition are as defined in the accompanying preliminary pricing supplement.
+Registration Statement No. 333-275898; filed pursuant to Rule 433

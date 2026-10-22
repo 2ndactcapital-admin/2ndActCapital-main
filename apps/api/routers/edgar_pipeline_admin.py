@@ -21,7 +21,8 @@
     GET  /admin/edgar/inventory/{run_id}               template-study concepts + per-issuer label dictionary
 
   Bulk download (bulkfetchui) — QUEUED runs, executed by a worker process, never by the API:
-    GET  /admin/edgar/bulk/institutions                issuer groups, their filer entities, selected counts by year
+    GET  /admin/edgar/bulk/institutions[?fresh=1]      issuer groups, their filer entities, selected counts by year,
+                                                       downloaded / stored (fresh=1 bypasses the 60 s cache)
     POST /admin/edgar/bulk/preview                     the dry run: counts per institution/year/entity, ETA, storage
     POST /admin/edgar/bulk/runs                        queue a bulk_fetch run (target laptop | render)
     POST /admin/edgar/bulk/runs/refresh-index          queue a refresh_index run
@@ -521,6 +522,8 @@ def _bulk_vocab(can_write: bool) -> dict:
         "default_target": bulkq.DEFAULT_TARGET,
         "statuses": bulkq.STATUS_LABELS,
         "run_kinds": bulkq.RUN_KIND_LABELS,
+        "trigger_sources": bulkq.TRIGGER_SOURCE_LABELS,
+        "institution_columns": bulkq.INSTITUTION_COLUMNS,
         "max_rps": 8,
         "default_concurrency": bulkq.DEFAULT_CONCURRENCY,
         "max_concurrency": bulkq.MAX_CONCURRENCY,
@@ -529,11 +532,13 @@ def _bulk_vocab(can_write: bool) -> dict:
 
 
 @router.get("/admin/edgar/bulk/institutions")
-async def edgar_bulk_institutions(request: Request):
+async def edgar_bulk_institutions(request: Request, fresh: bool = Query(False)):
+    """``?fresh=1`` (bulkfetchui3, the screen's Refresh) bypasses the 60 s
+    cache. Same route, same gate."""
     await _require_super_admin(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        result = await bulkq.institutions(conn)
+        result = await bulkq.institutions(conn, use_cache=not fresh)
     return {**result, "permissions": _permissions(can_write=True), "vocabularies": _bulk_vocab(True)}
 
 

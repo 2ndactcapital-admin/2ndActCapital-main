@@ -1,0 +1,159 @@
+424B2 1 gs-20261001.htm 424B2
+Filed Pursuant to Rule 424(b)(2)
+Registration Statement No. 333-284538
+GS Finance Corp.
+$2,260,000
+Leveraged Buffered S&P 500 ® Index-Linked Notes due 2029
+guaranteed by
+The Goldman Sachs Group, Inc.
+Payment at Maturity: The amount that you will be paid on your notes on the stated maturity date is based on the performance of the underlier as measured from the trade date to and including the determination date.
+•
+If the final underlier level on the determination date is greater than the initial underlier level, the return on your notes will be positive and will equal the upside participation rate times the underlier return, subject to the maximum settlement amount.
+•
+If the final underlier level is equal to or less than the initial underlier level, but not by more than the buffer amount, you will receive the face amount of your notes.
+•
+If the final underlier level is less than the initial underlier level by more than the buffer amount, the return on your notes will be negative and you will lose 1% of the face amount of your notes for every 1% that the final underlier level has declined below the buffer level. You could lose a significant portion of the face amount of your notes.
+Interest: The notes do not bear interest.
+You should read the disclosure herein to better understand the terms and risks of your investment, including the credit risk of GS Finance Corp. and The Goldman Sachs Group, Inc. See page PS-5.
+Key Terms
+Company (Issuer) / Guarantor:
+GS Finance Corp. / The Goldman Sachs Group, Inc.
+Aggregate face amount:
+$2,260,000
+Cash settlement amount:
+On the stated maturity date, the company will pay, for each $1,000 face amount of the notes, an amount in cash equal to:
+•
+if the final underlier level is greater than the initial underlier level: $1,000 + ($1,000 × the upside participation rate × the underlier return), subject to the maximum settlement amount;
+•
+if the final underlier level is equal to or less than the initial underlier level, but greater than or equal to the buffer level: $1,000; or
+•
+if the final underlier level is less than the buffer level: $1,000 + ($1,000 × the buffer rate × (the underlier return + the buffer amount))
+Underlier:
+the S&P 500 ® Index (current Bloomberg symbol: “SPX Index”)
+Maximum settlement amount:
+$1,251.50
+Upside participation rate:
+200%
+Buffer level:
+85% of the initial underlier level
+Buffer amount:
+15%
+Buffer rate:
+100%
+Trade date:
+September 29, 2026
+Original issue date:
+October 2, 2026
+Determination date:
+June 29, 2029*
+Stated maturity date:
+July 5, 2029*
+Initial underlier level:
+7,670.84, which is an intra-day level or the closing level of the underlier on the trade date
+Final underlier level:
+the closing level of the underlier on the determination date*
+Underlier return:
+(the final underlier level - the initial underlier level) ÷ the initial underlier level
+Calculation agent:
+Goldman Sachs & Co. LLC (“GS&Co.”)
+CUSIP / ISIN:
+40058LH86 / US40058LH861
+* subject to adjustment as described in the accompanying general terms supplement
+Our estimated value of the notes on trade date / Additional amount / Additional amount end date:
+$952 per $1,000 face amount, which is less than the original issue price. The additional amount is $48 and the additional amount end date is December 28, 2026. See “The Estimated Value of Your Notes At the Time the Terms of Your Notes Are Set On the Trade Date Is Less Than the Original Issue Price Of Your Notes.”
+Original issue price
+Underwriting discount
+Net proceeds to the issuer
+100% of the face amount
+2.85% of the face amount 1
+97.15% of the face amount
+1 See "Supplemental Plan of Distribution; Conflicts of Interest" for additional information regarding the fees comprising the underwriting discount.
+Neither the Securities and Exchange Commission nor any other regulatory body has approved or disapproved of these securities or passed upon the accuracy or adequacy of this prospectus. Any representation to the contrary is a criminal offense. The notes are not bank deposits and are not insured by the Federal Deposit Insurance Corporation or any other governmental agency, nor are they obligations of, or guaranteed by, a bank.
+Goldman Sachs & Co. LLC
+Pricing Supplement No. 26,690 dated September 29, 2026.
+The issue price, underwriting discount and net proceeds listed above relate to the notes we sell initially. We may decide to sell additional notes after the date of this pricing supplement, at issue prices and with underwriting discounts and net proceeds that differ from the amounts set forth above. The return (whether positive or negative) on your investment in notes will depend in part on the issue price you pay for such notes.
+GS Finance Corp. may use this prospectus in the initial sale of the notes. In addition, Goldman Sachs & Co. LLC or any other affiliate of GS Finance Corp. may use this prospectus in a market-making transaction in a note after its initial sale. Unless GS Finance Corp. or its agent informs the purchaser otherwise in the confirmation of sale, this prospectus is being used in a market-making transaction.
+About Your Prospectus
+The notes are part of the Medium-Term Notes, Series F program of GS Finance Corp. and are fully and unconditionally guaranteed by The Goldman Sachs Group, Inc. This prospectus includes this pricing supplement and the accompanying documents listed below. This pricing supplement constitutes a supplement to the documents listed below, does not set forth all of the terms of your notes and therefore should be read in conjunction with such documents:
+•
+General terms supplement no. 17,745 dated January 20, 2026
+•
+Underlier supplement no. 50 dated September 23, 2026
+•
+Prospectus supplement dated February 14, 2025
+•
+Prospectus dated February 14, 2025
+The information in this pricing supplement supersedes any conflicting information in the documents listed above. In addition, some of the terms or features described in the listed documents may not apply to your notes.
+We have not authorized anyone to provide any information or to make any representations other than those contained in or incorporated by reference in this pricing supplement and the accompanying documents listed above. We take no responsibility for, and can provide no assurance as to the reliability of, any other information that others may provide. This pricing supplement and the accompanying documents listed above are an offer to sell only the notes offered hereby, but only under circumstances and in jurisdictions where it is lawful to do so. The information contained in this pricing supplement and the accompanying documents listed above is current only as of the respective dates of such documents.
+We refer to the notes we are offering by this pricing supplement as the “offered notes” or the “notes”. Each of the offered notes has the terms described below. Please note that in this pricing supplement, references to “GS Finance Corp.”, “we”, “our” and “us” mean only GS Finance Corp. and do not include its subsidiaries or affiliates, references to “The Goldman Sachs Group, Inc.”, our parent company, mean only The Goldman Sachs Group, Inc. and do not include its subsidiaries or affiliates and references to “Goldman Sachs” mean The Goldman Sachs Group, Inc. together with its consolidated subsidiaries and affiliates, including us. The notes will be issued under the senior debt indenture, dated as of October 10, 2008, as supplemented by the First Supplemental Indenture, dated as of February 20, 2015, each among us, as issuer, The Goldman Sachs Group, Inc., as guarantor, and The Bank of New York Mellon, as trustee. This indenture, as so supplemented and as further supplemented thereafter, is referred to as the “GSFC 2008 indenture” in the accompanying prospectus supplement.
+The notes will be issued in book-entry form and represented by master note no. 3, dated March 22, 2021.
+PS- 2
+HYPOTHETICAL EXAMPLES
+The following examples are provided for purposes of illustration only. The examples should not be taken as an indication or prediction of future investment results and merely are intended to illustrate the impact that the various hypothetical underlier levels on the determination date could have on the cash settlement amount at maturity assuming all other variables remain constant and are not intended to predict the final underlier level.
+The information in the following examples reflects hypothetical rates of return on the offered notes assuming that they are purchased on the original issue date at the face amount and held to the stated maturity date. If you sell your notes in a secondary market prior to the stated maturity date, your return will depend upon the market value of your notes at the time of sale, which may be affected by a number of factors that are not reflected in the examples below, such as interest rates, the volatility of the underlier, the creditworthiness of GS Finance Corp., as issuer, and the creditworthiness of The Goldman Sachs Group, Inc., as guarantor. The information in the examples also reflects the key terms and assumptions in the box below.
+Key Terms and Assumptions
+Face amount
+$1,000
+Upside participation rate
+200%
+Maximum settlement amount
+$1,251.50
+Buffer level
+85% of the initial underlier level
+Buffer rate
+100%
+Buffer amount
+15%
+Neither a market disruption event nor a non-trading day occurs on the originally scheduled determination date
+No change in or affecting any of the underlier stocks or the method by which the underlier sponsor calculates the underlier
+Notes purchased on original issue date at the face amount and held to the stated maturity date
+For these reasons, the actual performance of the underlier over the life of your notes, as well as the amount payable at maturity, may bear little relation to the hypothetical examples shown below or to the historical underlier levels shown elsewhere in this pricing supplement. Also, the hypothetical examples shown below do not take into account the effects of applicable taxes.
+The levels in the left column of the table below represent hypothetical final underlier levels and are expressed as percentages of the initial underlier level. The amounts in the right column represent the hypothetical cash settlement amounts, based on the corresponding hypothetical final underlier level, and are expressed as percentages of the face amount of a note (rounded to the nearest one-thousandth of a percent). Thus, a hypothetical cash settlement amount of 100.000% means that the value of the cash payment that we would deliver for each $1,000 of the outstanding face amount of the offered notes on the stated maturity date would equal 100.000% of the face amount of a note, based on the corresponding hypothetical final underlier level and the assumptions noted above.
+Hypothetical Final Underlier Level
+(as Percentage of Initial Underlier Level)
+Hypothetical Cash Settlement Amount
+(as Percentage of Face Amount)
+200.000%
+125.150%
+171.000%
+125.150%
+142.000%
+125.150%
+112.575%
+125.150%
+109.000%
+118.000%
+106.000%
+112.000%
+103.000%
+106.000%
+100.000%
+100.000%
+95.000%
+100.000%
+90.000%
+100.000%
+85.000%
+100.000%
+64.000%
+79.000%
+43.000%
+58.000%
+21.000%
+36.000%
+0.000%
+15.000%
+PS- 3
+As shown in the table above:
+•
+If the final underlier level were determined to be 21.000% of the initial underlier level, the cash settlement amount that we would deliver on your notes at maturity would be 36.000% of the face amount of your notes. As a result, if you purchased your notes on the original issue date at the face amount and held them to the stated maturity date, you would lose 64.000% of your investment (if you purchased your notes at a premium to face amount you would lose a correspondingly higher percentage of your investment).
+•
+If the final underlier level were determined to be 200.000% of the initial underlier level, the cash settlement amount that we would deliver on your notes at maturity would be capped at the maximum settlement amount, or 125.150% of each $1,000 face amount of your notes. As a result, if you held your notes to the stated maturity date, you would not benefit from any increase in the final underlier level over 112.575% of the initial underlier level.
+The following chart shows a graphical illustration of the hypothetical cash settlement amounts (expressed as percentages of the face amount of your notes) that we would pay on your notes on the stated maturity date, if the final underlier level (expressed as percentages of the initial underlier level) were any of the hypothetical levels shown on the horizontal axis. The chart shows that any hypothetical final underlier level of less than 85.000% (the section left of the 85.000% marker on the horizontal axis) would result in a hypothetical cash settlement amount of less than 100.000% of the face amount of your notes (the section below the 100.000% marker on the vertical axis) and, accordingly, in a loss of principal to the holder of the notes. The chart also shows that any hypothetical final underlier level of greater than or equal to 112.575% (the section right of the 112.575% marker on the horizontal axis) would result in a capped return on your investment.
+PS- 4
+SELECTED RISK FACTORS
+An investment in your notes is subject to the risks summarized below. These risks, as well as other risks and considerations, are explained in more detail in the accompanying documents listed above under “About Your Prospectus”. You should carefully review these risks and considerations as well as the terms of the notes described herein and in such accompanying documents. Your notes are a riskier investment than ordinary debt securities. Also, your notes are not equivalent to investing directly in the underlier stocks (i.e., the stocks comprising the underlier to which your notes are linked). You should carefully consider whether the offered notes are appropriate given your particular circumstances.
+Risks Related to Structure, Valuation and Secondary Market Sales
+The Estimated Value of Your Notes At the Time the Terms of Your Notes Are Set On the Trade Date (as Determined By Reference to Pricing Models Used By GS&Co.) Is Less Than the Original Issue Price Of Your Notes
+The original issue price for your notes exceeds the estimated value of your notes as of the time the terms of your notes are set on the trade date, as determined by reference to GS&Co.’s pricing models and taking into account our credit spreads. After the trade date, the estimated value as determined by reference to these models will be affected by changes in market conditions, the creditworthiness of GS Finance Corp., as issuer, the creditworthiness of The Goldman Sachs Group, Inc., as guarantor, and other relevant factors. The price at which GS&Co. would initially buy or sell your notes (if GS&Co. makes a market, which it is not obligated to do), and the value that GS&Co. will initially use for account statements and otherwise, also exceeds the estimated value of your notes as determined by reference to these models. As agreed by GS&Co. and the distribution participants, this excess (i.e., the additional amount set forth on the cover of this pricing supplement) will decline to zero on a straight line basis over the period from the date hereof through the additional amount end date set forth on the cover of this pricing supplement. Thereafter, if GS&Co. buys or sells your notes it will do so at prices that reflect the estimated value determined by reference to such pricing models at that time. The price at which GS&Co. will buy or sell your notes at any time also will reflect its then current bid and ask spread for similar sized trades of structured notes.
+In estimating the value of your notes as of the time the terms of your notes are set on the trade date, GS&Co.’s pricing models consider certain variables, including principally our credit spreads, interest rates (forecasted, current and historical rates), volatility, price-sensitivity analysis and the ti

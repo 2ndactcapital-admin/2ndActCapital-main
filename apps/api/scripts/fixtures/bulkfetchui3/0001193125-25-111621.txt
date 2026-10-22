@@ -1,0 +1,135 @@
+424B2 1 d757727d424b2.htm 424B2
+Table of Contents
+Filed pursuant to Rule 424(b)(2)
+Registration No. 333-286884
+PROSPECTUS SUPPLEMENT
+(To Prospectus dated May 1, 2025)
+Marex Group plc
+$500,000,000 5.829% Senior Notes due 2028
+We are offering $500,000,000 aggregate principal amount of 5.829% Senior Notes due 2028 (the “Notes”).
+We will pay interest on the Notes semi-annually in arrears on May 8 and November 8 of each year, commencing on November 8, 2025, at a rate equal to 5.829% per annum. The Notes will mature on May 8, 2028.
+The interest payable on the Notes will be subject to adjustment from time to time based on the credit ratings assigned by specific rating agencies to the Notes, as described under “Description of the Notes—Interest Rate Adjustment Based on Rating Events.”
+We may redeem the Notes, in whole at any time or in part from time to time, at our option, at the applicable redemption price set forth in this prospectus supplement under “Description of the Notes—Optional Redemption, Clean-up Call.” We may also redeem the Notes at a redemption price equal to 100% of the principal amount thereof, plus accrued and unpaid interest, if any, to, but excluding, the redemption date, in the event of a change in tax treatment, as described under “Description of the Notes—Optional Redemption in the Event of Change in Tax Treatment.”
+Upon the occurrence of a “Change of Control Triggering Event,” we will be required to make an offer to repurchase the Notes at a price equal to 101% of their principal amount, plus accrued and unpaid interest to, but excluding, the repurchase date, as described under “Description of the Notes—Offer to Repurchase Upon Change of Control Triggering Event.”
+The Notes will be our direct, senior and unsecured obligations and will rank equally with all of our other existing and future senior unsecured indebtedness.
+The Notes are not bank deposits and are not insured or guaranteed by the United Kingdom Financial Services Compensation Scheme, the United States Federal Deposit Insurance Corporation or any other government or governmental or private agency or deposit protection scheme in any jurisdiction.
+The Notes will be issued in minimum denominations of $1,000, increased in integral multiples of $1,000. The Notes are a new issue of securities with no established trading market. Application has been made for the Notes to be admitted to listing and trading on the Vienna Multilateral Trading Facility (“Vienna MTF”) of the Vienna Stock Exchange. The Vienna MTF is not a regulated market as defined by Directive 2014/65/EU (as amended, “MiFID II”). It is, however, a multilateral trading facility (MTF) for purposes of MiFID II.
+Investing in the Notes involves risks. See “ Risk Factors ” beginning on page S-14 of this prospectus supplement and “Risk Factors” beginning on page 7 of the accompanying prospectus, as well as the other information included or incorporated by reference in this prospectus supplement and the accompanying prospectus for a discussion of the factors you should carefully consider before deciding to purchase any Notes.
+Neither the Securities and Exchange Commission nor any state securities commission has approved or disapproved of these securities or determined if this prospectus supplement or the accompanying prospectus is truthful or complete. Any representation to the contrary is a criminal offense.
+Per Note
+Total
+Public offering price (1)
+100.000
+%
+$500,000,000
+Underwriting discount
+0.350
+%
+$1,750,000
+Proceeds, before expenses, to Marex Group plc.
+99.650
+%
+$498,250,000
+(1) Plus accrued interest, if any, from May 8, 2025.
+The underwriters expect to deliver the Notes to investors in registered book-entry form only through the facilities of the Depository Trust Company (“DTC”) for the accounts of its participants, including Clearstream Banking, S.A. (“Clearstream”) and Euroclear Bank SA/NV (“Euroclear”), on or about May 8, 2025. Under Rule 15c6-1 of the Securities Exchange Act of 1934, as amended (the “Exchange Act”), trades in the secondary market generally are required to settle in one business day, unless the parties to any such trade expressly agree otherwise. Accordingly, purchasers who wish to trade the Notes prior to the date that is one business day preceding delivery of the Notes will be required, by virtue of the fact that the Notes initially will settle on or about May 8, 2025, to specify an alternative settlement cycle at the time of any such trade to prevent failed settlement. Such purchasers should consult their own advisors in this regard.
+Joint Book-Running Managers
+Barclays
+Goldman Sachs & Co. LLC
+Jefferies
+The date of this prospectus supplement is May 1, 2025.
+Table of Contents
+TABLE OF CONTENTS
+Prospectus Supplement
+Page
+ABOUT THIS PROSPECTUS SUPPLEMENT
+S-1
+WHERE YOU CAN FIND MORE INFORMATION
+S-2
+CAUTIONARY STATEMENT REGARDING FORWARD-LOOKING STATEMENTS
+S-3
+SUMMARY
+S-5
+RISK FACTORS
+S-14
+USE OF PROCEEDS
+S-17
+DESCRIPTION OF THE NOTES
+S-18
+TAX CONSIDERATIONS
+S-34
+UNDERWRITING
+S-35
+LEGAL OPINIONS
+S-41
+EXPERTS
+S-41
+Prospectus
+ABOUT THIS PROSPECTUS
+1
+PRESENTATION OF FINANCIAL AND OTHER INFORMATION
+1
+CAUTIONARY STATEMENT REGARDING FORWARD-LOOKING STATEMENTS
+2
+WHERE YOU CAN FIND MORE INFORMATION
+4
+MAREX
+6
+RISK FACTORS
+7
+USE OF PROCEEDS
+13
+CAPITALIZATION AND INDEBTEDNESS
+14
+DESCRIPTION OF OTHER INDEBTEDNESS
+15
+DESCRIPTION OF DEBT SECURITIES
+22
+DESCRIPTION OF CONTINGENT CAPITAL SECURITIES
+38
+BOOK-ENTRY PROCEDURES
+48
+MATERIAL TAX CONSIDERATIONS
+53
+CERTAIN CONSIDERATIONS FOR ERISA AND OTHER U.S. EMPLOYEE BENEFIT PLANS
+67
+PLAN OF DISTRIBUTION (CONFLICT OF INTEREST)
+69
+ENFORCEMENT OF CIVIL LIABILITIES
+76
+LEGAL MATTERS
+78
+EXPERTS
+78
+OTHER EXPENSES OF ISSUANCE AND DISTRIBUTION
+79
+Neither we nor the underwriters have authorized anyone to provide you with any information other than that contained in this prospectus supplement, the accompanying prospectus or any free writing prospectus we may authorize to be delivered to you or the documents incorporated by reference herein and therein. Neither we nor the underwriters take responsibility for, or provide any assurance as to the reliability of, any different or additional information that others may give you.
+We are not, and the underwriters are not, offering to sell the Notes in any jurisdiction where offers or sales are not permitted. The distribution of this prospectus supplement and the accompanying prospectus and the offering or sale of the Notes in certain jurisdictions may be restricted by law. The Notes are offered globally for sale in those jurisdictions in the United States, Europe, Asia and elsewhere where it is lawful to make such offers. Persons into whose
+S-i
+Table of Contents
+possession this prospectus supplement and the accompanying prospectus come should inform themselves about and observe any applicable restrictions. This prospectus supplement and the accompanying prospectus may not be used for or in connection with an offer or solicitation by any person in any jurisdiction in which that offer or solicitation is not authorized or to any person to whom it is unlawful to make that offer or solicitation. See “Underwriting—Selling Restrictions” in this prospectus supplement.
+EU PRIIPs REGULATION / PROHIBITION OF SALES TO EEA RETAIL INVESTORS. The Notes are not intended to be offered, sold or otherwise made available to and should not be offered, sold or otherwise made available to any retail investor in the European Economic Area (“EEA”). For these purposes, a retail investor means a person who is: (i) a retail client as defined in point (11) of Article 4(1) of Directive 2014/65/EU (as amended, “MiFID II”); (ii) a customer within the meaning of Directive (EU) 2016/97 (as amended, the “Insurance Distribution Directive”), where that customer would not qualify as a professional client as defined in point (10) of Article 4(1) of MiFID II; and/or (iii) not a qualified investor as defined in Regulation (EU) 2017/1129 (as amended, the “Prospectus Regulation”). Consequently, no key information document required by Regulation (EU) No 1286/2014 (as amended, the “EU PRIIPs Regulation”) for offering or selling the Notes or otherwise making them available to retail investors in the EEA has been prepared and therefore offering or selling the Notes or otherwise making them available to any retail investor in the EEA may be unlawful under the EU PRIIPs Regulation.
+UK PRIIPS REGULATION / PROHIBITION OF SALES TO UK RETAIL INVESTORS. The Notes are not intended to be offered, sold or otherwise made available to and should not be offered, sold or otherwise made available to any retail investor in the United Kingdom (“UK”). For these purposes, a retail investor means a person who is: (i) a retail client as defined in point (8) of Article 2 of Regulation (EU) No 2017/565 as it forms part of UK domestic law; (ii) a customer within the meaning of the provisions of the Financial Services and Markets Act 2000 (the “FSMA”) and any rules or regulations made under the FSMA to implement Directive (EU) 2016/97 (as amended), where that customer would not qualify as a professional client, as defined in point (8) of Article 2(1) of Regulation (EU) No 600/2014 as it forms part of UK domestic law; and/or (iii) not a qualified investor as defined in Article 2 of Regulation (EU) 2017/1129 (as amended) as it forms part of UK domestic law (the “UK Prospectus Regulation”). Consequently, no key information document required by the Regulation (EU) No 1286/2014 (as amended) as it forms part of UK domestic law (the “UK PRIIPs Regulation”) for offering or selling the Notes or otherwise making them available to retail investors in the UK has been prepared and therefore offering or selling the Notes or otherwise making them available to any retail investor in the UK may be unlawful under the UK PRIIPs Regulation.
+S-ii
+Table of Contents
+ABOUT THIS PROSPECTUS SUPPLEMENT
+This document is in two parts. The first part is this prospectus supplement, which describes the terms of the offering of the Notes and also adds to and updates information contained in the accompanying prospectus and the documents incorporated by reference therein. The second part is the accompanying prospectus, which provides general information, including a general description of the securities that we may offer from time to time, some of which may not apply to the Notes. To the extent there is a conflict between the information contained in this prospectus supplement, on the one hand, and the information contained in the accompanying prospectus or any document incorporated herein and therein by reference, on the other hand, you should rely on the information contained in this prospectus supplement.
+You should carefully read and review this prospectus supplement, the accompanying prospectus, the information incorporated by reference herein and therein, and any related free writing prospectus we file with the Securities and Exchange Commission (the “SEC”) before you invest in the Notes. You should rely only on the information contained in or incorporated by reference in this prospectus supplement, the accompanying prospectus, and any such free writing prospectus. You should not assume that the information contained in this prospectus supplement, the accompanying prospectus (as updated by this prospectus supplement), or any such free writing prospectus is accurate as of any date other than its respective date or the date that is specified in those documents, or that the information we previously filed with the SEC and incorporated by reference in this prospectus supplement or the accompanying prospectus is accurate as of any date other than the date of the document incorporated by reference or the date that is specified in such document. The business, financial condition, results of operations and prospects of the Company may have changed since those dates.
+In this prospectus supplement and the accompanying prospectus, the terms “Company,” “Group,” “we,” “our,” “us,” and “Marex” refer to Marex Group plc.
+References herein to “$” and “dollars” are to the lawful currency of the United States of America.
+S-1
+Table of Contents
+WHERE YOU CAN FIND MORE INFORMATION
+This prospectus supplement is part of a registration statement on Form F-3 we have filed with the SEC under the Securities Act of 1933, as amended (the “Securities Act”). The registration statement, including its attached exhibits and schedules, contains additional relevant information about us and the securities described in this prospectus supplement. The SEC’s rules and regulations allow us to omit certain information included in the registration statement from this prospectus supplement. For further information, we refer you to the registration statement and the exhibits and schedules filed as part of the registration statement.
+In addition, we are subject to the informational requirements of the Exchange Act and accordingly, file annual reports and other information with the SEC, including our annual reports on Form 20-F and reports on Form 6-K. Our SEC filings are available to you on the SEC’s website at http://www.sec.gov. This site contains reports and other information regarding issuers, like us, that file electronically with the SEC. We also make available on our website, free of charge, our annual reports on Form 20-F and the text of our reports on Form 6-K, as soon as reasonably practicable after they are electronically filed with or furnished to the SEC. Our website address is http://www.marex.com. We have included the SEC’s web address and our web address as inactive textual references only. Except as specifically incorporated by reference into this prospectus supplement or the accompanying prospectus, information on those websites is not part of this prospectus.
+The SEC allows us to “incorporate by reference” the information we file with it, which means that we can disclose important information to you by referring you to those documents. The information incorporated by reference is considered to be part of this prospectus supplement, and information that we file with the SEC later will automatically update and supersede this information. We incorporate by reference the documents listed below and any future filings made by us with the SEC under Sections 13(a), 13(c), 14 or 15(d) of the Exchange Act prior to the termination of this offering, excluding any portions of such documents that have been “furnished” but not “filed” for purposes of the Exchange Act:
+•
+our Annual Report on Form 20-F for the fiscal year ended December 31, 2024, filed with the SEC on March 21, 2025 (the “2024 Annual Report on Form 20-F”) and
+•
+our Report on Form 6-K filed with the SEC on May 1, 2025.
+To the extent expressly stated therein, our reports on Form 6-K furnished by us after the date of this prospectus supplement but prior to the termination of this offering will also be deemed to be incorporated by reference in this prospectus supplement from the date of filing of such documents.
+You may request a copy of these filings, at no cost, by writing or telephoning us at: Marex Group plc, 155 Bishopsgate, London EC2M 3TQ United Kingdom, Attention: Company Secretary, Telephone: +44 2076 556000.
+As a foreign private issuer, we are exempt under the Exchange Act from, among other things, the rules prescribing the furnishing and content of proxy statements, and our executive officers, board of directors and principal shareholders are exempt from the reporting and short-swing profit recovery provisions contained in Section 16 of the Exchange Act. In addition, we will not be required under the Exchange Act to file periodic reports and financial statements with the SEC as frequently or as promptly as U.S. companies whose securities are registered under the Exchange Act.
+S-2
+Table of Contents
+CAUTIONARY STATEMENT REGARDING FORWARD-LOOKING STATEMENTS
+This prospectus supplement and the accompanying prospectus contain forward-looking statements that r
