@@ -15,6 +15,7 @@
 import { readFileSync } from "node:fs";
 
 import {
+  COMING_SOON,
   GROUPS,
   MENU_ITEMS,
   canAccess,
@@ -176,8 +177,11 @@ const result = {
     const strictHrefs = new Set(
       MENU_ITEMS.filter((i) => i.gate?.strict).map((i) => i.href),
     );
+    // BUGFIX1 hid its comingSoon items from every menu on purpose; the legacy
+    // rule (which reads MENU_ITEMS, flag-blind) still lists them. Found by
+    // DEALROOM1: this comparison already failed at b07c839 for that reason alone.
     const now = hrefs(visibleMenuItems(me)).filter((h) => !strictHrefs.has(h));
-    const before = legacyVisible(me).filter((h) => !strictHrefs.has(h));
+    const before = legacyVisible(me).filter((h) => !strictHrefs.has(h) && !COMING_SOON.includes(h));
     const lost = before.filter((h) => !now.includes(h)).sort();
     const expectedLoss = [...(AUTHZ1_LEGACY_LOSS[name] ?? [])].sort();
     return {
@@ -210,18 +214,22 @@ const BASELINE = JSON.parse(
 // BUGFIX1 moved the two Documents tabs from /admin/* to /documents (the old URLs
 // redirect), so the addition is now these hrefs.
 const DOCS = ["/documents", "/documents/semantic"];
+// DEALROOM1 — Marketplace became a group: every persona gains "My deal access"
+// (self-scoped API); manage_deals holders also gain the "Deal access" grid.
+const MY_ACCESS = ["/marketplace/my-access"];
+const GRID = ["/marketplace/access"];
 const INTENDED_ADDITIONS = {
   plain_member: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
-    "/admin/billing-groups", "/admin/custody-import"],
+    "/admin/billing-groups", "/admin/custody-import", ...MY_ACCESS],
   staff_member: ["/portfolio/transactions", "/portfolio/ownership-tree", ...DOCS,
-    "/admin/billing-groups", "/admin/custody-import", "/admin/vdr-proposals"],
-  org_admin_manage_members: ["/portfolio/ownership-tree", ...DOCS],
-  org_admin_manage_org_settings: ["/portfolio/ownership-tree", ...DOCS],
+    "/admin/billing-groups", "/admin/custody-import", "/admin/vdr-proposals", ...MY_ACCESS, ...GRID],
+  org_admin_manage_members: ["/portfolio/ownership-tree", ...DOCS, ...MY_ACCESS],
+  org_admin_manage_org_settings: ["/portfolio/ownership-tree", ...DOCS, ...MY_ACCESS],
   super_admin: ["/portfolio/transactions", "/portfolio/allocation", "/portfolio/ownership-tree", ...DOCS,
     "/admin/workflows/runs", "/admin/workflows/triggers", "/admin/billing-groups", "/admin/custody-import",
-    "/admin/vdr-proposals"],
+    "/admin/vdr-proposals", ...MY_ACCESS, ...GRID],
   // AUTHZ1: role-less gains only the ungated pages (no default-allow).
-  no_roles: ["/portfolio/ownership-tree", ...DOCS],
+  no_roles: ["/portfolio/ownership-tree", ...DOCS, ...MY_ACCESS],
 };
 
 // AUTHZ1 — what a persona loses from the frozen navregroup baseline: only the

@@ -59,6 +59,7 @@ FEATURE_GATES = {
     "routers.ledger": "GL writes → manage_ledger (new permission; GL posting is never agent-reachable)",
     "routers.investment_profile": "entity access: staff any entity, member only their own (visible_entity_ids)",
     "routers.spv": "subscriptions: entity access + indicate_interest for a non-staff caller",
+    "routers.deal_room": "DEALROOM1 — deal room scope (services.deal_room.deal_rights); publisher capability → manage_deals|manage_org_settings",
 }
 # Writes that stay "active account only", with the reason.
 SELF_SCOPED = {
@@ -160,7 +161,7 @@ def gates(module, src: str) -> dict:
     """What gates ``src`` (expanded endpoint source) applies."""
     g = {"perms": set(), "any_of": [], "super": False, "staff": False, "token": False,
          "rbac": False, "phantom": False, "entity": False, "document": False,
-         "workflow": False, "org_settings": False, "self_read_org": False}
+         "workflow": False, "org_settings": False, "self_read_org": False, "deal_room": False}
     if src is None:
         return g
     for m in re.finditer(r"(?<![\w.])require_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src):
@@ -200,6 +201,10 @@ def gates(module, src: str) -> dict:
         g["workflow"] = True
     if "_require_read_access(" in src:
         g["self_read_org"] = True
+    # DEALROOM1 — routers.deal_room's scope gates (services.deal_room.deal_rights).
+    if re.search(r"_require_deal_(manager|viewer)\(|_require_grid_scope\(|_require_publisher_or_staff\("
+                 r"|_require_signature_reader\(", src):
+        g["deal_room"] = True
     if g["rbac"] and "get_user_id(request)" in src:
         g["phantom"] = True
     return g
@@ -226,6 +231,8 @@ def describe(g, after: bool = False) -> str:
         parts.append("document visibility")
     if g["self_read_org"]:
         parts.append("own org (read)")
+    if g["deal_room"]:
+        parts.append("deal room scope (publisher users, delegates, manage_deals, org admin, super admin)")
     return "; ".join(parts) or "none beyond auth"
 
 
@@ -258,6 +265,11 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
         return {"rule": "super"}
     if g["workflow"]:
         return {"rule": "workflow"}
+    if g["deal_room"]:
+        # Several branches (publisher / delegate / staff / org admin / viewer):
+        # the matrix asserts only the global rules; each branch is proven by
+        # verify_dealroom1's rights matrix.
+        return {"rule": "mixed"}
     if g["any_of"] and not g["perms"]:
         return {"rule": "perm", "any_of": sorted({p for a in g["any_of"] for p in a})}
     if g["org_settings"] and not g["perms"]:

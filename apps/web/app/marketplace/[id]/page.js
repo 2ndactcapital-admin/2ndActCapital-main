@@ -4,7 +4,7 @@ import AppShell from "@/components/AppShell";
 import StatusBadge from "@/components/marketplace/StatusBadge";
 import InterestCard from "@/components/marketplace/InterestCard";
 import ScoringSection from "@/components/marketplace/ScoringSection";
-import DocumentsList from "@/components/marketplace/DocumentsList";
+import DataRoom from "@/components/dealroom/DataRoom";
 import ComplianceRequests from "@/components/marketplace/ComplianceRequests";
 import DealDetailTabBar from "@/components/marketplace/DealDetailTabBar";
 import DocumentsPanel from "@/components/DocumentsPanel";
@@ -20,6 +20,7 @@ import {
   getMemberInvestments,
   getDealClasses,
   getDealLifecycle,
+  fetchAPI,
 } from "@/lib/api";
 import { isStaff } from "@/lib/roles";
 import {
@@ -75,6 +76,8 @@ export default async function DealDetailPage({ params, searchParams }) {
     documentStatusesRes,
     dealClassesRes,
     lifecycleRes,
+    roomRes,
+    templatesRes,
   ] = await Promise.allSettled([
     staff ? getConfig("deal_scoring") : Promise.resolve([]),
     listInvestorEntities(),
@@ -86,7 +89,13 @@ export default async function DealDetailPage({ params, searchParams }) {
     staff ? getConfig("document_statuses") : Promise.resolve([]),
     getDealClasses(id),
     staff ? getDealLifecycle(id) : Promise.resolve(null),
+    // DEALROOM1 — the data room envelope (folders, my access, agreements);
+    // its permissions decide every write control, with no client default.
+    fetchAPI(`/api/v1/deal-room/deals/${id}`),
+    fetchAPI("/api/v1/deal-room/templates"),
   ]);
+  const room = roomRes.status === "fulfilled" ? roomRes.value : null;
+  const templates = templatesRes.status === "fulfilled" ? templatesRes.value?.templates || [] : [];
 
   const dimensions =
     dimensionsRes.status === "fulfilled" ? dimensionsRes.value || [] : [];
@@ -245,13 +254,7 @@ export default async function DealDetailPage({ params, searchParams }) {
           {/* Documents */}
           {tab === "documents" && (
             <div className="mt-6">
-              <DocumentsList
-                dealId={deal.id}
-                initial={detail.documents || []}
-                canUpload={staff}
-                canReview={staff}
-                documentStatuses={documentStatuses}
-              />
+              <DataRoom initialEnvelope={room} templates={templates} />
             </div>
           )}
 

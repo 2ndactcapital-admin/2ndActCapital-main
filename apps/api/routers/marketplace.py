@@ -54,6 +54,7 @@ from schemas.portfolio import TaxonomyPlacementResponse
 from services.audit import write_audit_log
 from services.database import get_pool
 from services import deal_lifecycle as dlc
+from services import deal_room
 from services.deal_creation import insert_deal
 from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
@@ -568,7 +569,8 @@ async def create_deal(request: Request, body: DealCreate):
             # Single shared deal-creation core (services.deal_creation.insert_deal)
             # — the SAME path Chancery Phase-10 VDR approval uses, so there is
             # never a second, parallel deal-creation mechanism.
-            row = await insert_deal(conn, org_id, body, returning=DEAL_SELECT)
+            row = await insert_deal(conn, org_id, body, returning=DEAL_SELECT,
+                                    created_by=get_user_id(request))
             stages = await dlc.lifecycle(conn, org_id)
     return _deal_response(row, stages=stages)
 
@@ -621,11 +623,14 @@ async def get_deal(request: Request, deal_id: UUID):
                 deal_id,
             )
         else:
+            # DEALROOM1 — a member sees a document only when its data-room
+            # folder is open to them (services.deal_room.MEMBER_DOC_PREDICATE →
+            # deal_room_folder_open). Pre-folder documents keep the old rule.
             doc_rows = await conn.fetch(
-                f"SELECT {DOC_SELECT} FROM deal_documents WHERE deal_id = $1 "
-                f"AND status = 'approved' AND visible_to_members = true "
+                f"SELECT {DOC_SELECT} FROM deal_documents dd WHERE deal_id = $1 "
+                f"AND {deal_room.member_doc_sql('dd', '$2::uuid')} "
                 f"ORDER BY created_at DESC NULLS LAST",
-                deal_id,
+                deal_id, UUID(str(user_id)),
             )
 
         interest_count = await conn.fetchval(

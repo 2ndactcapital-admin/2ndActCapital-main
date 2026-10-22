@@ -21,6 +21,10 @@ export const SERVER_GATES = {
   "/dashboard": "session",
   "/crm": "session",
   "/marketplace": "session",
+  // DEALROOM1 — GET /deal-room/my-access is self-scoped (require_active); the
+  // grid's gate is a scope whose manage_deals branch is the one a menu can see.
+  "/marketplace/my-access": "session",
+  "/marketplace/access": "rbac:manage_deals",
   "/portfolio": "session",
   "/portfolio/positions": "rbac:view_portfolio",
   "/portfolio/transactions": "rbac:view_portfolio",

@@ -1102,6 +1102,12 @@ async def y_gates(conn):
     check(len(gb) > 0 and not changed, "no existing route's gate changed (AUTHZ1_ROUTES.json before vs now)",
           f"{changed[:5]}")
     new = sorted(set(gn) - set(gb))
+    # DEALROOM1 (a later sprint) added the /deal-room/* routes on purpose; they
+    # are proven by verify_dealroom1. This check keeps proving bugfix1's own four.
+    later = [k for k in new if k[1].startswith("/api/v1/deal-room/") or k[1] == "/api/v1/deal-room"]
+    new = [k for k in new if k not in later]
+    if later:
+        print(f"[INFO] {len(later)} route(s) added by sprint dealroom1 — excluded from bugfix1's count")
     check(all(gn[k] != "none" for k in new if k[0] != ("GET",)) and len(new) == 4,
           "the four new routes each carry a gate", f"{[(k, gn[k]) for k in new]}")
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=300)

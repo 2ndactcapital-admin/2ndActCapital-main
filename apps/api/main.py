@@ -43,6 +43,7 @@ from routers.marketing import router as marketing_router
 from routers.market_data import router as market_data_router
 from routers.market_data_personal import router as market_data_personal_router
 from routers.marketplace import router as marketplace_router
+from routers.deal_room import router as deal_room_router
 from routers.notifications import router as notifications_router
 from routers.org_settings import router as org_settings_router
 from routers.ai_ensembles import router as ai_ensembles_router
@@ -552,6 +553,7 @@ app.include_router(vdr_router, prefix="/api/v1")
 app.include_router(investment_profile_router, prefix="/api/v1")
 app.include_router(marketing_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api/v1")
+app.include_router(deal_room_router, prefix="/api/v1")
 app.include_router(custody_import_router, prefix="/api/v1")
 app.include_router(altruist_connection_router, prefix="/api/v1")
 app.include_router(altruist_webhook_router, prefix="/api/v1")
