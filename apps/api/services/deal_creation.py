@@ -38,14 +38,28 @@ async def unique_slug(conn, org_id, name: str) -> str:
     return slug
 
 
-async def insert_deal(conn, org_id, body, *, returning: str):
+async def insert_deal(conn, org_id, body, *, returning: str, created_by=None,
+                      publisher_entity_id=None, staff: bool = True):
     """Insert one ``deals`` row from a ``DealCreate``-shaped body and write the
     audit log. Returns the inserted asyncpg Record (columns per ``returning``).
 
-    ``deal_status`` is forced to 'draft' (same as the endpoint); ``created_by`` is
-    intentionally not set on insert, matching the entities convention and avoiding
-    a FK to users before the auth→users mapping is finalized.
+    ``deal_status`` is forced to 'draft' (same as the endpoint).
+
+    DEALROOM1 — every deal now gets its Deal Room here, whichever path created
+    it: a publisher (``publisher_entity_id``, else ``services.deal_room.
+    default_publisher`` — the creator's CRM person, else for staff the org's
+    house publisher), its nine standard folders and its room settings.
+    ``created_by`` is the caller's real ``users.id`` when the caller passes it
+    (AUTHZ1 made that id real); callers that pass nothing keep NULL as before.
     """
+    from services import deal_room
+
+    if publisher_entity_id is None:
+        publisher_entity_id, _why = await deal_room.default_publisher(
+            conn, org_id, created_by, staff=staff)
+        if publisher_entity_id is None:
+            raise deal_room.DealRoomError(
+                422, "Your account has no CRM record to publish under — ask staff to make you a publisher.")
     slug = await unique_slug(conn, org_id, body.name)
     row = await conn.fetchrow(
         f"""
@@ -55,10 +69,10 @@ async def insert_deal(conn, org_id, body, *, returning: str):
             sponsor_entity_id, sponsor_name_override, target_raise,
             minimum_investment, expected_return_pct, term_months,
             deal_date, close_date, location, highlights, tags,
-            is_featured
+            is_featured, created_by, publisher_entity_id
         ) VALUES (
             $1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11,
-            $12, $13, $14, $15, $16, $17, $18, $19
+            $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
         )
         RETURNING {returning}
         """,
@@ -81,7 +95,10 @@ async def insert_deal(conn, org_id, body, *, returning: str):
         body.highlights or [],
         body.tags or [],
         bool(body.is_featured),
+        created_by,
+        publisher_entity_id,
     )
+    await deal_room.init_deal_room(conn, org_id, row["id"], actor=created_by)
     await write_audit_log(
         conn,
         org_id=org_id,

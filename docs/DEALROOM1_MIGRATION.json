@@ -1,0 +1,90 @@
+{
+  "deals": [
+    {
+      "deal_id": "3a8c7421-d0ed-425e-a46a-3eae502b5b7c",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Harbor Credit Opportunity Fund",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "05e0d166-2908-44d6-aade-98bacaba9961",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Stonegate Industrial REIT II",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "6878b41b-5cde-469a-b38d-5a48bc9f244d",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Meridian Growth Fund III",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "3c6b4b5f-5f19-477f-a514-96403ba7bd3c",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Verify12 Test Deal",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "e30b8f56-ff7e-4ed0-9903-b3778278212a",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Test GL Deal Sprint22",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "6c518481-9897-4c06-ad90-cb2800b1d1e1",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "TEST-Verify Deal",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "bed53061-fe10-4771-81fc-21f262d65caf",
+      "org_id": "00000000-0000-0000-0000-000000000001",
+      "name": "TEST-Submit Test",
+      "publisher_entity_id": "9c29294f-35a3-4fed-a5c2-546d5b6b106d",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "cfadee0a-6413-416b-a488-a28a8a07671c",
+      "org_id": "bb347258-8f28-4f49-8cc9-e29ccad82884",
+      "name": "Project Atlas",
+      "publisher_entity_id": "7e0f0224-8cd1-4165-b69a-9b08f1639ba2",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    },
+    {
+      "deal_id": "944523d2-d4d3-4286-8a54-a4506f94252d",
+      "org_id": "bb347258-8f28-4f49-8cc9-e29ccad82884",
+      "name": "Project Atlas",
+      "publisher_entity_id": "7e0f0224-8cd1-4165-b69a-9b08f1639ba2",
+      "publisher_rule": "house publisher (no sponsor; creator has no CRM person)",
+      "folders_created": 9
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "b0736507-139b-4ef4-b95b-a181ce244303",
+      "deal_id": "05e0d166-2908-44d6-aade-98bacaba9961",
+      "file_name": "2nd act capital.txt",
+      "visible_to_members": true,
+      "folder_key": "09_other",
+      "access_level": "after_agreements"
+    }
+  ],
+  "rule": {
+    "publisher": "sponsor_entity_id, else the creator's (created_by, else submitted_by) CRM person, else the org's house publisher",
+    "documents": "visible_to_members true \u2192 09 Other (after_agreements); false \u2192 09 Other / Restricted (after_approval)"
+  }
+}

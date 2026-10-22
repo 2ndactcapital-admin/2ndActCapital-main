@@ -1,5 +1,9 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-21 (bugfix1.structural — HollisMuse rounds 1–2: one
+Last updated: 2026-10-22 (dealroom1.structural — Marketplace Deal Room Phase 1:
+publishers, delegates, nine-folder data room, DRAFT NDA + joinder with in-house
+e-signature, eligibility, automatic approval, the access grid; schema and
+migration APPLIED live; verify WRITTEN, not yet run; see the top entry).
+Previously 2026-10-21 (bugfix1.structural — HollisMuse rounds 1–2: one
 SPV-totals function, one deal lifecycle, search over attachments, dead menu
 items flagged comingSoon, EDGAR peek before download; verify WRITTEN, not yet
 run; see the top entry). Previously 2026-10-21 (usermgmt1.structural — People & Access shows one row
@@ -312,6 +316,63 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000000000000000000000000000000000. DEALROOM1 — Marketplace Deal Room Phase 1: publishers and delegates, a nine-folder data room with access levels, the platform NDA + joinder (DRAFT) with a typed-name e-signature and a hash chain, eligibility from the CRM, automatic approval by default, the access grid; verify WRITTEN, not yet run (2026-10-22)
+
+**Run:** `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_dealroom1.py 2>&1 | grep -E "^\[FAIL\]|^\[FIND\]|^TOTAL"`.
+Written, **not run** (standing rule). R2 mocked. Regressions (`verify_authz1.py`,
+`verify_bugfix1.py`, `verify_navregroup.py`) run flat after teardown with
+`VERIFY_NESTED=1`. The signature teardown needs the operator DSN
+`DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP` (postgres) — the only path that can
+remove a (test-chain) signature. Full design: `docs/DEAL_ROOM.md`; discovery
+`docs/DEALROOM1_DISCOVERY.md` (1a–1e).
+
+**Applied live (2026-10-22):** `docs/dealroom1_part1.sql` (10 tables, RLS on all;
+signatures append-only by RLS + trigger; chain-head / link-check / folder-open /
+config-seed functions; 36 label rows per org) via
+`apps/api/scripts/_apply_dealroom1.py --schema`; `--templates` seeded
+`platform_nda` v1 and `platform_joinder` v1 (DRAFT) from
+`docs/templates/deal_room_templates_v1.md`; `--backfill` gave all 9 live deals a
+publisher, nine folders and settings, and moved the 1 existing document
+(`visible_to_members` true) into 09 Other at after_agreements —
+`docs/DEALROOM1_MIGRATION.json`. Re-read via MCP: 9/9 publishers, 81 folders,
+0 documents without a folder.
+
+**Run in this session:** `node --test tests/` 306/0 (8 new in
+`tests/dealroom/`), `authz1_routes.py` regenerated (32 new `/deal-room` routes,
+each gated; `--check` CURRENT; no existing gate changed), the menu-visibility
+harness green for all six personas. **`npm run build` was NOT confirmed**: the
+machine crashed twice while it ran; the verify runs it.
+
+**Findings:**
+- [FIND] No live deal had a sponsor or a creator with a CRM person (all 9
+  `sponsor_entity_id` and `created_by` NULL), so the prompt's migration rule gave
+  no publisher; every deal took its org's new **house publisher** (one firm
+  entity per org, named from `organizations.name`, `created_via
+  dealroom1_house_publisher`).
+- [FIND] There is no users→CRM column; a user's CRM person is their oldest
+  active `delegate_grants` principal of type individual.
+- [FIND] "Never change an existing route's gate" vs "publishers may edit":
+  existing marketplace routes are untouched (`PUT /deals/{id}` still
+  `manage_deals`); publisher/delegate editing is the new `/deal-room` surface.
+  `GET /deals/{id}` and Document Search now apply the folder rule to members
+  (strictly narrower; documents with no folder keep the old rule).
+- [FIND] A `declined` status was added (the prompt listed no status for
+  "decline with reason"). A revoked or declined investor cannot re-request (their
+  signatures would otherwise auto-grant again).
+- [FIND] `compliance_records` has no QP / QC column; those rules read
+  `accreditation_basis`.
+- [FIND] The menu cannot express "publisher of some deal", so the Deal access tab
+  is listed for `manage_deals` (strict); others reach it from the deal page and
+  My deal access. The menu-visibility harness's legacy-rule regression already
+  failed at b07c839 (BUGFIX1's comingSoon items); it now excludes them, named.
+- [FIND] `verify_bugfix1` asserted "exactly 4 new routes since e816797" — any
+  later route broke it; `/deal-room` routes are now excluded there, named.
+
+**Follow-ups:** counsel review of both templates before outside publishers;
+Phase 2 / 3 per `docs/DEAL_ROOM.md`.
 
 ---
 

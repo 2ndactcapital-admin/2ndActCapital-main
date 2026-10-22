@@ -347,7 +347,7 @@ async def search_documents(conn, org_id, query, *, pool, user_id, is_staff,
     # BUGFIX1 (R2-DOC-03) — the vault (public.documents) AND the three attachment
     # tables, each row under the rule its own record uses (see _search_attachments).
     rows = await _search_rows(conn, org_id, q, limit, scope=scope)
-    rows += await _search_attachments(conn, org_id, q, limit, scope=scope)
+    rows += await _search_attachments(conn, org_id, q, limit, scope=scope, viewer=user_id)
     rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return rows[:limit]
 
@@ -368,7 +368,7 @@ async def search_documents_org_wide(conn, org_id, query, *, limit=50) -> list[di
 SOURCE_LABELS = {"vault": "Document vault", "deal": "Deal", "entity": "Entity", "spv": "SPV"}
 
 
-async def _search_attachments(conn, org_id, q, limit, *, scope) -> list[dict]:
+async def _search_attachments(conn, org_id, q, limit, *, scope, viewer=None) -> list[dict]:
     """Keyword search over deal_documents, entity_documents and spv_documents —
     the three tables Document Search never looked at (R2-DOC-03: 0 vault rows
     live, while the attachments were all in these). Matches the file name /
@@ -389,13 +389,19 @@ async def _search_attachments(conn, org_id, q, limit, *, scope) -> list[dict]:
                 vehicle entity) in visible_entity_ids when it has one.
 
     scope None = org-wide (internal callers only, like search_documents_org_wide).
+
+    DEALROOM1 — a member's deal attachment must also sit in a data-room folder
+    open to ``viewer`` (services.deal_room.member_doc_sql → the ONE SQL rule,
+    deal_room_folder_open). Documents with no folder keep the rule above.
     """
+    from services.deal_room import member_doc_sql
     from services.deal_lifecycle import MEMBER_VISIBLE_STATUSES as DEAL_MEMBER
     from services.spv_visibility import MEMBER_VISIBLE_SPV_STATUSES as SPV_MEMBER
 
     like = f"%{q}%"
     staff = True if scope is None else bool(scope[0])
     allowed = None if scope is None else list(scope[1])
+    viewer = UUID(str(viewer)) if viewer else None
     out: list[dict] = []
 
     # deal attachments
@@ -416,11 +422,11 @@ async def _search_attachments(conn, org_id, q, limit, *, scope) -> list[dict]:
                OR COALESCE(dd.extracted_data::text, '') ILIKE $2)
           AND ($4::boolean
                OR (dl.deal_status::text = ANY($5::text[])
-                   AND dd.status = 'approved' AND dd.visible_to_members = true))
+                   AND {member_doc}))
         ORDER BY dd.created_at DESC
         LIMIT $3
-        """,
-        org_id, like, limit, staff, list(DEAL_MEMBER),
+        """.replace("{member_doc}", member_doc_sql("dd", "$6::uuid")),
+        org_id, like, limit, staff, list(DEAL_MEMBER), viewer,
     )
     out += [_attachment_result("deal", r, f"/marketplace/{r['parent_id']}?tab=documents") for r in rows]
 

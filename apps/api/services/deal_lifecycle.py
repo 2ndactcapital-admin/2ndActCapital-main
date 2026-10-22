@@ -148,7 +148,7 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
             deal_date, close_date, location, highlights, tags,
             is_featured, submitted_by, reviewed_by, published_at,
             valid_from, valid_to, system_from, system_to,
-            created_by, created_at, updated_at
+            created_by, created_at, updated_at, publisher_entity_id
         )
         SELECT org_id, NULL, name, description, deal_status, deal_stage,
                asset_super_class, asset_class, asset_sub_category,
@@ -157,7 +157,7 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
                deal_date, close_date, location, highlights, tags,
                is_featured, submitted_by, reviewed_by, published_at,
                valid_from, valid_to, system_from, now(),
-               created_by, created_at, updated_at
+               created_by, created_at, updated_at, publisher_entity_id
         FROM deals
         WHERE id = $1 AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL
         RETURNING id

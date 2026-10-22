@@ -61,6 +61,13 @@ export const GATE_VIEW_PORTFOLIO = { perm: "view_portfolio" };
 // navregroup Task 3 — GET /vdr-proposals now requires manage_deals, the same
 // permission approve/reject always required. There is no separate read key.
 export const GATE_MANAGE_DEALS = { perm: "manage_deals" };
+// DEALROOM1 — the Deal access grid's server gate is a SCOPE (publisher users and
+// delegates see their deals; manage_deals / manage_org_settings the firm; Super
+// Admin all), which /users/me cannot express. The menu lists the tab for the one
+// branch it can evaluate — manage_deals — STRICT so it fails closed; publishers,
+// delegates and org admins reach it from the deal page and My deal access
+// (GET /deal-room/me → has_access_grid). Recorded as a [FIND].
+export const GATE_MANAGE_DEALS_STRICT = { perm: "manage_deals", strict: true };
 
 /** Navigation sections, top to bottom. `header` is null for the main section. */
 export const SECTIONS = [
@@ -79,6 +86,13 @@ export const SECTIONS = [
  * the group's only gate, so no separate route exists.
  */
 export const GROUPS = [
+  {
+    // DEALROOM1 — Marketplace became a master page: its landing IS its first
+    // tab (the deal list), so no separate route exists.
+    id: "marketplace", label: "Marketplace", section: "main", order: 30, landing: "/marketplace",
+    icon: "marketplace",
+    description: "Deals, your deal-room access and the access grid.",
+  },
   {
     id: "portfolio", label: "Portfolio", section: "main", order: 40, landing: "/portfolio",
     icon: "portfolio",
@@ -165,7 +179,10 @@ const tab = (section, group, tab_order, href, label, gate, adminIndex) => ({
 export const MENU_ITEMS = [
   main(10, "/dashboard", "Dashboard", "dashboard"),
   main(20, "/crm", "CRM", "crm"),
-  main(30, "/marketplace", "Marketplace", "marketplace"),
+  tab("main", "marketplace", 1, "/marketplace", "Deals", null, false),
+  // DEALROOM1 — an investor's own deal-room access (self-scoped API).
+  tab("main", "marketplace", 2, "/marketplace/my-access", "My deal access", null, false),
+  tab("main", "marketplace", 3, "/marketplace/access", "Deal access", GATE_MANAGE_DEALS_STRICT, false),
   tab("main", "portfolio", 1, "/portfolio", "Overview", null, false),
   // Positions, Securities and Commitments were in the sidebar UNGATED; that is
   // kept so no persona loses a link (their API gate is view_portfolio — a

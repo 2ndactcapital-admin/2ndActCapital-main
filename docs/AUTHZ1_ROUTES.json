@@ -1,5 +1,5 @@
 {
- "app_route_count": 452,
+ "app_route_count": 484,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -2046,6 +2046,602 @@
    "path": "/api/v1/deals/{deal_id}/member-investments/{member_user_id}/stage",
    "public": false,
    "write": true
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "deal_room_me",
+   "note": "",
+   "path": "/api/v1/deal-room/me",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_deals|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_deals",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "list_publishers",
+   "note": "",
+   "path": "/api/v1/deal-room/publishers",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_deals|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_deals",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "create_publisher",
+   "note": "",
+   "path": "/api/v1/deal-room/publishers",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz submit_deal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "submit_deal"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "self_enrol_publisher",
+   "note": "",
+   "path": "/api/v1/deal-room/publishers/self",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_deals|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_deals",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "add_publisher_user",
+   "note": "",
+   "path": "/api/v1/deal-room/publishers/{entity_id}/users",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_deals|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_deals",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.deal_room",
+   "name": "remove_publisher_user",
+   "note": "",
+   "path": "/api/v1/deal-room/publishers/{entity_id}/users/{user_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "create_room_deal",
+   "note": "",
+   "path": "/api/v1/deal-room/deals",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.deal_room",
+   "name": "edit_room_deal",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "get_room",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.deal_room",
+   "name": "put_settings",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/settings",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "add_delegate",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/delegates",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.deal_room",
+   "name": "remove_delegate",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/delegates/{user_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "add_subfolder",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/folders",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.deal_room",
+   "name": "edit_folder",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/folders/{folder_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "name_investor",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/folders/{folder_id}/named",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.deal_room",
+   "name": "unname_investor",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/folders/{folder_id}/named/{user_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "upload_room_document",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/folders/{folder_id}/documents",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.deal_room",
+   "name": "move_room_document",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.deal_room",
+   "name": "delete_room_document",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "download_room_document",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}/download",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "list_templates",
+   "note": "",
+   "path": "/api/v1/deal-room/templates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "add_agreement",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/agreements",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.deal_room",
+   "name": "edit_agreement",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/agreements/{agreement_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "publish_agreement",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/agreements/{agreement_id}/publish",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz indicate_interest; deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "request_room_access",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/access/request",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz indicate_interest; deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "render_agreement",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/agreements/{agreement_id}/render",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz indicate_interest; deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "sign_agreement",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/agreements/{agreement_id}/sign",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "signed_copy",
+   "note": "",
+   "path": "/api/v1/deal-room/signatures/{signature_id}/copy",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "my_access",
+   "note": "",
+   "path": "/api/v1/deal-room/my-access",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "access_grid",
+   "note": "",
+   "path": "/api/v1/deal-room/access-grid",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "decide_access",
+   "note": "",
+   "path": "/api/v1/deal-room/access/decide",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "verify_signature_chain",
+   "note": "",
+   "path": "/api/v1/deal-room/signatures/verify",
+   "public": false,
+   "write": false
   },
   {
    "after": "authz view_portfolio",
