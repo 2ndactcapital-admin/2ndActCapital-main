@@ -82,6 +82,14 @@ each overdue open execution instruction's own if-not-filled policy (expire /
 carry to today / ask a person) — the one automatic step in the instruction
 lifecycle, always logged with no actor. It changes statuses only; nothing is
 ever sent to a custodian. Its own step, so a problem here stops nothing above.
+
+REBALANCE PROPOSALS (rep5). After that, ``services.rebalance_proposals.
+proposals_tick``: per org with an active account-model link, in that org's RLS
+context — expire stale proposals, mark executed the approved ones whose
+instructions are all done, re-sweep recent 'model.version_approved' events
+(idempotent), and the daily drift / cash-flow scan on each account's own
+valuation (after the holdings refresh above). It only ever writes PROPOSALS;
+nothing trades. Its own step.
 """
 from __future__ import annotations
 
@@ -94,6 +102,7 @@ import asyncpg
 from services.database import close_pool, get_pool
 from services.edgar_index_schedule import maybe_refresh_index
 from services.execution import expire_tick
+from services.rebalance_proposals import proposals_tick
 from services.replica_schedule import maybe_refresh_holdings
 from services.workflow_scheduler import run_scheduler_tick
 
@@ -144,6 +153,16 @@ async def main() -> int:
                       f"{ {k: len(v) for k, v in expiry.items()} }")
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] execution expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        try:
+            props = await proposals_tick(pool)
+            errs = [e for o in props.values() for e in o.get("errors", [])]
+            made = sum(1 for o in props.values() for s in o.get("scans", []) if s.get("proposal_id"))
+            if made or errs:
+                print(f"[scheduler] rebalance proposals: {made} generated, {len(errs)} error(s)")
+            for e in errs:
+                print(f"[scheduler] rebalance proposals: {e}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] rebalance proposals failed: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
         await conn.close()
         await close_pool()

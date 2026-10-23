@@ -361,10 +361,46 @@ def _need(row: dict, statuses: tuple[str, ...], what: str) -> None:
 
 
 # ── Create (called by the trade adapters) ───────────────────────────────────
+async def _verify_upstream(conn, org_id, acct: dict, trade_list, upstream: dict) -> dict:
+    """rep5 (Task 1d): an instruction list ALREADY approved by an upstream
+    maker-checker — a rebalance proposal. Re-read here, never trusted from the
+    caller: the proposal is this org's, this account's, approved, made by a
+    PERSON who is not its checker, and its approval task was completed
+    'approve' by that checker. The database's insert guard re-checks it."""
+    if trade_list.source != "proposal" or str(trade_list.source_ref) != str(upstream.get("proposal_id")):
+        raise ExecutionError("an upstream approval is a rebalance proposal named as the trade list's source")
+    p = await conn.fetchrow(
+        "SELECT id, account_id, status, maker_kind, maker_id, checker_id, decided_at, approval_task_id "
+        "FROM public.rebalance_proposals WHERE id = $1::uuid AND org_id = $2::uuid AND system_to IS NULL",
+        _uuid(upstream["proposal_id"], "proposal"), str(org_id))
+    if p is None or str(p["account_id"]) != str(acct["id"]):
+        raise ExecutionError("the upstream proposal is not this account's")
+    if p["status"] != "approved" or p["maker_kind"] != "user" or p["maker_id"] is None or p["checker_id"] is None:
+        raise ExecutionError("only an approved proposal made by a person carries its approval to instructions")
+    if str(p["maker_id"]) != str(upstream.get("maker_id")) or str(p["checker_id"]) != str(upstream.get("checker_id")):
+        raise ExecutionError("the upstream maker / checker do not match the proposal's")
+    if p["maker_id"] == p["checker_id"]:
+        raise MakerCheckerViolation("maker-checker: the proposal's maker cannot be its checker")
+    task = await HT.get_task(conn, org_id, p["approval_task_id"]) if p["approval_task_id"] else None
+    if not task or task["status"] != "completed" or task["outcome"] != "approve" \
+            or task["completed_by"] != str(p["checker_id"]):
+        raise ExecutionError("the proposal's approval task is not completed 'approve' by its checker")
+    return {"maker_id": p["maker_id"], "checker_id": p["checker_id"], "approved_at": p["decided_at"],
+            "task_id": str(p["approval_task_id"]), "proposal_id": str(p["id"])}
+
+
 async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_list, routed_via: str,
-                              routing_reason: str) -> list[dict]:
+                              routing_reason: str, upstream: dict | None = None) -> list[dict]:
     """One DRAFT instruction per trade, ONE transaction. Called by
-    services.custody.trading's ManualTradeAdapter — never directly by a route."""
+    services.custody.trading's ManualTradeAdapter — never directly by a route.
+
+    rep5 (additive): ``upstream`` = ``{"proposal_id", "maker_id", "checker_id"}``
+    of an APPROVED rebalance proposal (:func:`_verify_upstream` re-reads it).
+    Then each instruction starts APPROVED: maker = the proposal's maker,
+    approved_by = its checker (so makers_chk / maker_checker_chk / approved_chk
+    hold exactly as for a rep2 approval), with the lots inserted in the same
+    transaction. Everything after (mark sent, fills, reconcile, close) is
+    rep2's flow, unchanged."""
     if trade_list.execute_by < date.today():
         raise ExecutionError("execute-by date is in the past")
     out, refs = [], []
@@ -373,6 +409,9 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
         acct = await load_account(conn, org_id, trade_list.account_id)
         if str(acct["id"]) != str(account["id"]):
             raise ExecutionError("the trade list names a different account")
+        up = await _verify_upstream(conn, org_id, acct, trade_list, upstream) if upstream else None
+        maker = up["maker_id"] if up else actor["id"]
+        status = "approved" if up else "draft"
         async with conn.transaction():
             for t in trade_list.trades:
                 await _security(conn, t.global_security_id)
@@ -384,25 +423,31 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                             price_kind, limit_price, range_low, range_high, reference_price, reference_at,
                             wash_sale_notes, executor_type, executor_name, executor_contact, execute_by,
                             if_not_filled, source, source_ref, routed_via, routing_reason, notes, status,
-                            maker_id, maker_ids)
+                            maker_id, maker_ids, approved_by, approved_at)
                         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                                $16, $17, $18, $19, $20::uuid, $21, $22, $23, 'draft', $24::uuid, ARRAY[$24::uuid])
+                                $16, $17, $18, $19, $20::uuid, $21, $22, $23, $24, $25::uuid, ARRAY[$25::uuid],
+                                $26::uuid, $27)
                         RETURNING *""",
                     str(org_id), str(acct["id"]), str(t.global_security_id), t.side, t.quantity, t.notional,
                     pg.kind, pg.limit_price, pg.range_low, pg.range_high, pg.reference_price, pg.reference_at,
                     t.wash_sale_notes, trade_list.executor_type, trade_list.executor_name,
                     trade_list.executor_contact, trade_list.execute_by, trade_list.if_not_filled,
                     trade_list.source, str(trade_list.source_ref) if trade_list.source_ref else None,
-                    routed_via, routing_reason, trade_list.notes, str(actor["id"]))
+                    routed_via, routing_reason, trade_list.notes, status, str(maker),
+                    str(up["checker_id"]) if up else None, up["approved_at"] if up else None)
                 for lid, q in lots:
                     await conn.execute(
                         f"INSERT INTO {T_LOT} (org_id, instruction_id, tax_lot_id, quantity, created_by) "
                         "VALUES ($1::uuid, $2, $3::uuid, $4, $5::uuid)", str(org_id), row["id"], lid, q,
                         str(actor["id"]))
+                detail = {"routed_via": routed_via, "routing_reason": routing_reason, "lots": len(lots),
+                          "source": trade_list.source}
+                if up:
+                    detail["upstream"] = {"proposal_id": up["proposal_id"], "task_id": up["task_id"],
+                                          "maker_id": str(up["maker_id"]), "checker_id": str(up["checker_id"])}
                 refs.append(await _event(conn, org_id=org_id, instruction_id=row["id"], action="create",
-                                         from_status=None, to_status="draft", actor_id=actor["id"],
-                                         detail={"routed_via": routed_via, "routing_reason": routing_reason,
-                                                 "lots": len(lots), "source": trade_list.source}))
+                                         from_status=None, to_status=status, actor_id=actor["id"],
+                                         detail=detail))
                 out.append(dict(row))
     await publish(pool, refs)
     return out

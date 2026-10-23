@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,71 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep5 (sprint 5 of 15): accounts join models (account-level settings + exclusions), the lot-level transition analysis under a gain budget, rebalance PROPOSALS from every trigger, approval on human tasks, approved proposals → execution instructions through rep2; verify WRITTEN, not yet run (2026-10-23)
+
+Design + findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep5 section).
+Schema `docs/rep5_part1.sql` — APPLIED (`scripts/_apply_rep5.py --schema`) and read
+back (`--verify`: SCHEMA OK — 4 new tables with a policy for every operation, 7
+partial uniques, every CHECK and guard trigger, the 3 permissions on every org_admin
+role, and the two rep2 guard changes). Verify: `apps/api/scripts/verify_rep5.py` —
+WRITTEN, NOT RUN (WSL memory; it runs `node --test tests/`, `npm run build` and the
+`verify_rep2.py` regression itself). In-sprint proof only: the pure engine on
+hand-built inputs (exclusion policies, lot order, gain budget, plan by year), every
+new SQL statement PREPAREd against the live catalog (91 statements, 0 errors),
+`node --test` on tests/replication, nav, models and execution (64 pass, 1 pre-existing
+skip), and `authz1_routes.py --check` CURRENT (17 new routes, no existing gate changed).
+
+- **Custody cliff held:** every trigger produces a PROPOSAL; an approved proposal
+  becomes manual execution instructions a person sends, fills and reconciles.
+  Nothing is sent anywhere automatically.
+- **Accounts join, never fork:** `services/account_models.py` — a versioned
+  `account_model_links` row per change (join / settings / change of model / end), each
+  on a maker-checker human task (`approve_proposals`). Personal settings on the
+  ACCOUNT: exclusions with reasons + policy (pro_rata / to_cash / use_alternates),
+  cash floor, drift-threshold and frequency overrides, gain budget, short-term guard,
+  harvesting engine (custodian only when evidenced), fee override.
+- **Fees through the fee module:** the join's approval writes the ACCOUNT-scope
+  assignment (`create_assignment`) and, while the replicated fund is held, a SECURITY
+  exclusion per held asset (new `create_exclusion`). The scheduler tick ends the
+  exclusion once the asset is no longer held.
+- **[FIND]** nothing wrote `fee_exclusions` before this sprint (fee35 reads it,
+  `validate_exclusion` existed but nothing called it). Added
+  `fee_schedules.create_exclusion / end_exclusion / list_exclusions`. A SECURITY basis
+  is the org's `portfolio.assets.id`, not a global security id (fee_calc matches
+  `position.asset_id`).
+- **[FIND]** the fee module gives assignments and exclusions no approval of their
+  own. The join task (whose payload names them) is their approval.
+- **[FIND] (1c)** `domain_events` fans out only to BPMN workflow triggers; there is no
+  in-process subscriber. 'model.version_approved' is consumed by a direct call from
+  rep3's `after_approval`, plus a tick sweep of the last 7 days (idempotent per
+  account + model version).
+- **[FIND] (1d)** `execution_instruction_lots_guard` admitted lots only while the
+  instruction was a DRAFT. Changed narrowly: lots may also go onto an approved,
+  proposal-sourced instruction, but only in the transaction that creates it. A new
+  BEFORE INSERT guard admits an 'approved' instruction only from an approved proposal
+  whose maker and checker it carries. Every rep2 CHECK is unchanged.
+- **[FIND]** a SYSTEM proposal (drift / cash flow / model change) has no human maker,
+  and rep2's CHECKs need one distinct from the approver. Its instructions are
+  therefore drafts made by the reviewer, submitted to rep2's own approval (a second
+  person). Only a person's proposal starts its instructions APPROVED.
+- **[FIND]** `account_balances_daily` has no cash flow or withdrawal concept. The
+  cash_flow trigger is cash above the account's cash target (the floor, or the
+  model's cash weight when higher) by more than an org threshold, plus a
+  staff-entered withdrawal.
+- **[FIND]** transactions carry no realized gain. "Already realized this year" is
+  closed `tax_lots.realized_gain_loss` whose CLOSING transaction's trade date is this
+  year. A loss for the wash-sale flag is read the same way, and a sale with no lot
+  record is flagged as "loss unknown", never dropped.
+- **Name:** a manual-custodian variant now reads "Holdings of X — Manual"
+  (`replica_models.VARIANT_NAME_LABELS`). The capability matrix keeps its own label.
+- **.gitignore:** `sprint_prompts/logs/` ignored entirely; the tracked log files were
+  `git rm --cached` (they stay on disk).
+- Operator: run `verify_rep5.py`; nothing else to apply (the schema is live; the
+  scheduler entrypoint gains a `proposals_tick` step — redeploy the cron service to
+  pick it up). Org settings (all optional, with defaults):
+  `replication.proposals.min_trade_size` (100), `.expiry_days` (5),
+  `.stale_valuation_days` (3), `.cash_flow_threshold` (0.02), `.execute_within_days` (5).
 
 ## 000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep4 (sprint 4 of 15): build a model from a fund — "Holdings of <TICKER>" models, the five-question viability check, fund-vs-replica cost, find-or-build registry, holdings / terms monitoring; verify WRITTEN, not yet run (2026-10-23)
 

@@ -54,8 +54,6 @@ venv/
 .pytest_cache/
 apps/api/venv/
 .mcp.json
-sprint_prompts/logs/*.json
-sprint_prompts/logs/*.err
-sprint_prompts/logs/decision_log.jsonl
-sprint_prompts/logs/*.done
+# Sprint run logs stay on disk, never in git (rep5: *.log / *.out had been committed by a merge)
+sprint_prompts/logs/
 apps/api/litellm_diagnose.py

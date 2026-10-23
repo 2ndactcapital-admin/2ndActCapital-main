@@ -1107,7 +1107,20 @@ async def after_approval(pool, *, org_id, model_id, version_id) -> dict:
     """Drafts (never trades) for every composite in the org that follows this
     model LIVE, and for every subscriber of a library entry built on it. A
     failure here never undoes the approval — it is reported and logged."""
-    out = {"composite_drafts": [], "subscription_drafts": [], "skipped": [], "errors": []}
+    out = {"composite_drafts": [], "subscription_drafts": [], "skipped": [], "errors": [], "proposals": []}
+    # rep5: every account following this model live gets a rebalance PROPOSAL
+    # (trigger model_change) — never a trade. A direct call, not a subscriber:
+    # domain_events fans out only to BPMN workflow triggers (Task 1c). Its own
+    # step: a failure here never undoes the approval, and the scheduler tick's
+    # sweep of 'model.version_approved' events retries it (idempotent).
+    try:
+        from services import rebalance_proposals as RP
+
+        out["proposals"] = await RP.on_model_version_approved(pool, org_id=org_id, model_id=model_id,
+                                                               version_id=version_id)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("rebalance proposals after approval failed for %s", model_id)
+        out["errors"].append({"model_id": str(model_id), "error": f"proposals: {exc}"})
     async with pool.acquire() as conn:
         parents = [r["model_id"] for r in await conn.fetch(
             f"""SELECT DISTINCT v.model_id FROM {T_SLV} s JOIN {T_VER} v ON v.id = s.parent_version_id

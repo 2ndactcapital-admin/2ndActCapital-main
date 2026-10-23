@@ -260,6 +260,10 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_models", "models", "view"),
     ("manage_models", "models", "manage"),
     ("approve_models", "models", "approve"),
+    # rep5 — accounts join models; rebalance proposals and their approval.
+    ("view_proposals", "proposals", "view"),
+    ("manage_proposals", "proposals", "manage"),
+    ("approve_proposals", "proposals", "approve"),
 )
 
 

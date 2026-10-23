@@ -114,6 +114,7 @@ TABLE_ACCOUNTS = "public.accounts"
 TABLE_HOUSEHOLDS = "public.households"
 TABLE_ENTITIES = "public.entities"
 TABLE_DOCUMENTS = "public.documents"
+TABLE_EXCLUSIONS = "public.fee_exclusions"
 
 #: Same pair fee33 settled on. ``manage_billing`` rather than
 #: ``manage_portfolio``: deciding what a client is charged is a narrower
@@ -1175,6 +1176,135 @@ async def end_assignment(
         await _close_assignment(tx, org_id, assignment_id, ends_on)
 
     return {"id": assignment_id, "effective_to": ends_on}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Exclusions — rep5 (the write path the module did not have)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# rep5 Task 1e measured that NOTHING wrote ``fee_exclusions``: fee35's
+# calculator reads it (fee_calc_inputs.ExclusionInput) and fee_validation
+# carries ``validate_exclusion`` ("called at the exclusion's own write time"),
+# but no service called it. This is that write time. The rules are the fee
+# module's own — validate_exclusion (treatment / scope vocabulary, the
+# REDUCED_RATE schedule, the FLAT amount, a non-blank reason) plus the same
+# scope-resolves check assignments use — and, like an assignment, an exclusion
+# carries NO approval of its own: whoever calls it is the governed path (rep5:
+# the approved account-join task that proposed it).
+#
+# A SECURITY exclusion's ``basis_value`` is the org's ``portfolio.assets.id``
+# — NOT a global security id: fee_calc._matched_positions compares it to each
+# position's ``asset_id``. It is checked to be an asset of this org.
+
+EXCLUSION_BASIS_TYPES = ("SECURITY", "ASSET_CLASS", "ACCOUNT", "HELD_AWAY", "CASH", "POSITION_TAG")
+_EXCLUSION_SCOPE_TABLES = {"ACCOUNT": _SCOPE_TABLES["ACCOUNT"], "BILLING_GROUP": _SCOPE_TABLES["BILLING_GROUP"],
+                           "HOUSEHOLD": _SCOPE_TABLES["HOUSEHOLD"]}
+
+
+async def create_exclusion(
+    conn,
+    org_id: str,
+    *,
+    scope_type: str,
+    scope_id: Any = None,
+    basis_type: str,
+    basis_value: Any = None,
+    treatment: str = "EXCLUDE",
+    reason: str,
+    effective_from: date | None = None,
+    effective_to: date | None = None,
+    alt_fee_schedule_id: Any = None,
+    flat_amount: Decimal | None = None,
+    created_by: Any = None,
+) -> dict[str, Any]:
+    """Record one fee exclusion, through validate_exclusion and the scope check."""
+    from services.fee_validation import validate_exclusion
+
+    org_id = _require_org(org_id)
+    if basis_type not in EXCLUSION_BASIS_TYPES:
+        raise FeeScheduleError(f"basis_type={basis_type!r} is not one of {list(EXCLUSION_BASIS_TYPES)}")
+    if flat_amount is not None and not isinstance(flat_amount, Decimal):
+        raise FeeScheduleError("flat_amount must be a Decimal")
+    effective_from = effective_from or date.today()
+    if effective_to is not None and effective_to <= effective_from:
+        raise FeeScheduleError(f"effective_to ({effective_to}) must be after effective_from ({effective_from})")
+    row_in = {"scope_type": scope_type, "basis_type": basis_type, "basis_value": basis_value,
+              "treatment": treatment, "alt_fee_schedule_id": alt_fee_schedule_id, "flat_amount": flat_amount,
+              "reason": reason, "effective_from": effective_from, "effective_to": effective_to}
+    raise_if_invalid(validate_exclusion(row_in))
+    if scope_type == "ORG":
+        if scope_id is not None:
+            raise ScopeIdRequiredError("scope_type=ORG applies org-wide, so scope_id must be null",
+                                       scope_type=scope_type)
+        scope_id_text = None
+    else:
+        if scope_id is None:
+            raise ScopeIdRequiredError(f"scope_type={scope_type} needs a scope_id", scope_type=scope_type)
+        scope_id_text = _as_uuid_text(scope_id, field="scope_id")
+
+    async with _OrgWrite(conn, org_id) as tx:
+        if scope_type in _EXCLUSION_SCOPE_TABLES:
+            await _assert_scope_resolves(tx, org_id, scope_type, scope_id_text)
+        if basis_type == "SECURITY":
+            asset_id = _as_uuid_text(basis_value, field="basis_value")
+            found = await tx.fetchval(
+                "SELECT count(*) FROM portfolio.assets a WHERE a.id = $1::uuid AND a.org_id = $2::uuid",
+                asset_id, org_id)
+            if not found:
+                raise ScopeLinkError(
+                    f"a SECURITY exclusion names an asset of this org (fee35 matches it against each "
+                    f"position's asset_id); {asset_id} is not one",
+                    scope_type="SECURITY", scope_id=asset_id, reason="missing")
+            basis_value = asset_id
+        alt = _as_uuid_text(alt_fee_schedule_id, field="alt_fee_schedule_id") if alt_fee_schedule_id else None
+        if alt:
+            await load_schedule(tx, org_id, alt)
+        row = await tx.fetchrow(
+            f"""
+            INSERT INTO {TABLE_EXCLUSIONS}
+                (org_id, scope_type, scope_id, basis_type, basis_value, treatment, alt_fee_schedule_id,
+                 flat_amount, reason, effective_from, effective_to, created_by)
+            VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7::uuid, $8, $9, $10::date, $11::date, $12::uuid)
+            RETURNING id::text AS id, effective_from
+            """,
+            org_id, scope_type, scope_id_text, basis_type, None if basis_value is None else str(basis_value),
+            treatment, alt, flat_amount, reason.strip(), effective_from, effective_to,
+            str(created_by) if created_by else None,
+        )
+    return {"id": row["id"], "scope_type": scope_type, "scope_id": scope_id_text, "basis_type": basis_type,
+            "basis_value": None if basis_value is None else str(basis_value), "treatment": treatment,
+            "reason": reason.strip(), "effective_from": row["effective_from"], "effective_to": effective_to}
+
+
+async def end_exclusion(conn, org_id: str, exclusion_id: Any, *, effective_to: date | None = None) -> dict[str, Any]:
+    """Close one exclusion on both axes (effective_to + valid_to) — never delete it."""
+    org_id = _require_org(org_id)
+    exclusion_id = _as_uuid_text(exclusion_id, field="exclusion_id")
+    ends_on = effective_to or date.today()
+    async with _OrgWrite(conn, org_id) as tx:
+        row = await tx.fetchrow(
+            f"SELECT x.id::text AS id, x.effective_from FROM {TABLE_EXCLUSIONS} x "
+            f"WHERE x.id = $1::uuid AND x.org_id = $2::uuid AND {_current('x')}", exclusion_id, org_id)
+        if row is None:
+            raise FeeScheduleNotFoundError(f"fee exclusion {exclusion_id} is not a current exclusion in this org")
+        if ends_on < row["effective_from"]:
+            ends_on = row["effective_from"]
+        await tx.execute(
+            f"UPDATE {TABLE_EXCLUSIONS} SET effective_to = $1::date, valid_to = now() "
+            "WHERE id = $2::uuid AND org_id = $3::uuid AND valid_to IS NULL AND system_to IS NULL",
+            ends_on, exclusion_id, org_id)
+    return {"id": exclusion_id, "effective_to": ends_on}
+
+
+async def list_exclusions(conn, org_id: str, *, scope_type: str, scope_id: Any) -> list[dict[str, Any]]:
+    org_id = _require_org(org_id)
+    rows = await conn.fetch(
+        f"SELECT x.id::text AS id, x.scope_type, x.scope_id::text AS scope_id, x.basis_type, x.basis_value, "
+        f"x.treatment, x.reason, x.effective_from, x.effective_to FROM {TABLE_EXCLUSIONS} x "
+        f"WHERE x.org_id = $1::uuid AND x.scope_type = $2 AND x.scope_id IS NOT DISTINCT FROM $3::uuid "
+        f"AND {_current('x')} ORDER BY x.effective_from, x.id", org_id, scope_type,
+        _as_uuid_text(scope_id, field="scope_id") if scope_id else None)
+    return [dict(r) for r in rows]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -77,6 +77,9 @@ export const GATE_VIEW_EXECUTION = { perm: "view_execution", strict: true };
 // REP3 — Portfolio → Models. GET /models requires view_models (Super Admin
 // first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_MODELS = { perm: "view_models", strict: true };
+// REP5 — Portfolio → Accounts. GET /proposals/accounts requires view_proposals
+// (Super Admin first); STRICT so no envelope hides the tab.
+export const GATE_VIEW_PROPOSALS = { perm: "view_proposals", strict: true };
 // REP2 — Billing & Custody → Custodian capabilities. GET /custodians/capabilities
 // is require_staff_or_permission(manage_org_settings): Super Admin, a
 // STAFF_ROLE_NAMES role (/users/me `is_staff`), or an org admin (Joe,
@@ -218,7 +221,9 @@ export const MENU_ITEMS = [
   // REP3 — model management: one registry, uploads, library, sleeves.
   tab("main", "portfolio", 10, "/portfolio/models", "Models", GATE_VIEW_MODELS, false),
   // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
-  { ...tab("main", "portfolio", 11, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+  // REP5 — accounts joining models; rebalance proposals.
+  tab("main", "portfolio", 11, "/portfolio/accounts", "Accounts", GATE_VIEW_PROPOSALS, false),
+  { ...tab("main", "portfolio", 12, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
   main(60, "/spvs", "SPV Manager", "spv-manager"),

@@ -110,6 +110,11 @@ CRITICAL_TERMS = ("expense_ratio_net_pct", "expense_ratio_gross_pct", "weighting
 TERMS_REVIEW_KIND = "fund_model_terms_review"
 TERMS_REVIEW_SUBJECT = "model"
 
+#: rep5: the custodian suffix a variant's NAME carries ("Holdings of QQQ —
+#: Manual"). The capability matrix keeps its own longer label
+#: (custodian_capabilities.CUSTODIAN_LABELS) — a model name is not a route.
+VARIANT_NAME_LABELS = {"manual": "Manual"}
+
 DRIFT_SETTING = "replication.models.drift_threshold"
 TURNOVER_SETTING = "replication.models.turnover_review_threshold"
 DEFAULT_DRIFT = Decimal("0.01")          # absolute weight drift per position before a rebalance (rep5 reads it)
@@ -527,7 +532,8 @@ async def _model_name(conn, org_id, entry: dict, p: BuildParams) -> str:
     base = T.display_name_for(entry["ticker"])
     if p.method == "top_n":
         base = f"{base} — Top {p.top_n}"
-    for name in (base, f"{base} — {CC.CUSTODIAN_LABELS.get(p.custodian_code, p.custodian_code)}"):
+    suffix = VARIANT_NAME_LABELS.get(p.custodian_code) or CC.CUSTODIAN_LABELS.get(p.custodian_code, p.custodian_code)
+    for name in (base, f"{base} — {suffix}"):
         taken = await conn.fetchval(f"SELECT 1 FROM {M.T_MODEL} WHERE org_id = $1::uuid AND lower(btrim(name)) = "
                                     "lower($2) AND valid_to IS NULL AND system_to IS NULL", str(org_id), name)
         if not taken:
