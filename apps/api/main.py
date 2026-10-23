@@ -43,6 +43,7 @@ from routers.marketing import router as marketing_router
 from routers.market_data import router as market_data_router
 from routers.market_data_personal import router as market_data_personal_router
 from routers.replication import router as replication_router
+from routers.replication_models import router as replication_models_router
 from routers.execution import router as execution_router
 from routers.custodians import router as custodians_router
 from routers.human_tasks import router as human_tasks_router
@@ -601,6 +602,7 @@ app.include_router(modeling_ta_router, prefix="/api/v1")
 app.include_router(market_data_router, prefix="/api/v1")
 app.include_router(market_data_personal_router, prefix="/api/v1")
 app.include_router(replication_router, prefix="/api/v1")
+app.include_router(replication_models_router, prefix="/api/v1")
 app.include_router(execution_router, prefix="/api/v1")
 app.include_router(custodians_router, prefix="/api/v1")
 app.include_router(human_tasks_router, prefix="/api/v1")

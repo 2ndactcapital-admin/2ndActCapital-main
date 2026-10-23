@@ -101,3 +101,85 @@ export function diffSummary(diff) {
   return { first: false, added: diff.added || [], removed: diff.removed || [], moves: diff.moves || [],
     turnover: diff.turnover ?? null };
 }
+
+// ── REP4 — the Model tab ────────────────────────────────────────────────────
+// Every control below is decided from the Model tab's own envelope
+// (GET /replication/registry/{id}/model) and fails CLOSED: Build, Preview and
+// "Use this model" need `permissions.can_build === true` (manage_models AND
+// view_replication on the server) — a missing envelope shows none. Labels
+// (questions, statuses, methods, policies, custodians) come from its
+// vocabularies.
+
+/** Build / Preview / Use this model / Check viability. */
+export function modelControls(envelope) {
+  const p = perms(envelope);
+  const canBuild = isTrue(p.can_build);
+  const editable = Array.isArray(envelope?.vocabularies?.editable) ? envelope.vocabularies.editable : [];
+  return {
+    build: canBuild && editable.length > 0,
+    preview: canBuild && editable.length > 0,
+    use: canBuild,
+    viability: isTrue(p.can_read),
+    openModel: isTrue(p.can_view_models),
+  };
+}
+
+/** The registry offer: the existing model for the chosen key, first. */
+export function findOffer(envelope, { custodian_code: code, method, top_n: topN } = {}) {
+  const models = Array.isArray(envelope?.models) ? envelope.models : [];
+  const n = method === "top_n" ? Number(topN) || null : null;
+  return models.find((m) => m?.key && m.key.custodian_code === code && m.key.method === method
+    && (m.key.top_n ?? null) === n) || null;
+}
+
+/** "Holdings of QQQ (v3, built for altruist, full)". */
+export function offerText(offer, vocab) {
+  if (!offer?.model) return "";
+  const v = offer.live_version ? `v${offer.live_version.version_no}` : "no approved version yet";
+  const custodian = labelOf(vocab?.custodians, offer.key?.custodian_code);
+  const method = offer.key?.method === "top_n" ? `top ${offer.key.top_n}` : labelOf(vocab?.methods, offer.key?.method);
+  return `${offer.model.name} (${v}, built for ${custodian}, ${method})`;
+}
+
+const STATUS_TONE = { yes: "text-[#2D6A4F]", no: "text-[#9B2335]", unknown: "text-[#64748B]" };
+
+/** The five answers in the server's question order, each with its label and tone. */
+export function viabilityRows(report, vocab) {
+  const answers = Array.isArray(report?.answers) ? report.answers : [];
+  const order = Array.isArray(vocab?.questions) ? vocab.questions.map((q) => q.key) : answers.map((a) => a.key);
+  return order.map((key) => answers.find((a) => a.key === key)).filter(Boolean).map((a) => ({
+    key: a.key,
+    question: labelOf(vocab?.questions, a.key) || a.label,
+    status: a.status,
+    statusLabel: labelOf(vocab?.answer_statuses, a.status),
+    tone: STATUS_TONE[a.status] || STATUS_TONE.unknown,
+    reason: a.reason || "",
+    missing: Array.isArray(a.missing) ? a.missing : [],
+  }));
+}
+
+/** Cost lines: an unknown is shown as unknown, the tax line never as a number. */
+export function costRows(report, vocab) {
+  const lines = Array.isArray(report?.cost_lines) ? report.cost_lines : [];
+  return lines.map((l) => ({
+    key: l.key,
+    label: labelOf(vocab?.cost_lines, l.key) || l.label,
+    amount: l.key === "tax_benefit" ? (vocab?.tax_line || l.reason || "")
+      : (l.status === "known" && l.amount != null ? `$${Number(l.amount).toLocaleString("en-US", {
+        minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : labelOf(vocab?.answer_statuses, "unknown") || "Unknown"),
+    reason: l.reason || "",
+    unknown: l.status !== "known",
+  }));
+}
+
+/** Build-form body from the form state: percent strings pass through untouched. */
+export function buildBody(form) {
+  const body = { custodian_code: form.custodian_code, method: form.method,
+    unresolved_policy: form.unresolved_policy };
+  if (form.method === "top_n") body.top_n = Number(form.top_n);
+  for (const k of ["min_weight_pct", "cash_target_pct", "drift_threshold_pct", "turnover_review_threshold_pct",
+    "rebalance_frequency", "rebalance_reason", "description"]) {
+    if (form[k] !== undefined && form[k] !== null && String(form[k]).trim() !== "") body[k] = String(form[k]).trim();
+  }
+  return body;
+}

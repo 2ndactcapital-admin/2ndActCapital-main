@@ -1,5 +1,5 @@
 {
- "app_route_count": 557,
+ "app_route_count": 565,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -9976,6 +9976,174 @@
    "path": "/api/v1/replication/registry/{entry_id}/terms/{version_id}/reject",
    "public": false,
    "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_models",
+   "name": "model_tab",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/model",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_models",
+   "name": "compute_viability",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/viability",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_models",
+   "name": "list_viability",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/viability",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_models",
+   "name": "get_viability",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/viability/{report_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_models",
+   "name": "find_model",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/models/find",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models+view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_models",
+   "name": "preview_model",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/models/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models+view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_models",
+   "name": "build_model",
+   "note": "",
+   "path": "/api/v1/replication/registry/{entry_id}/models",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_models",
+   "name": "model_spec",
+   "note": "",
+   "path": "/api/v1/replication/models/{model_id}/spec",
+   "public": false,
+   "write": false
   },
   {
    "after": "authz view_execution",

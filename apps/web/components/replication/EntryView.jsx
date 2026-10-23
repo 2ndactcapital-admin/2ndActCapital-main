@@ -2,7 +2,7 @@
 
 /**
  * EntryView — one Replication Studio registry entry (REP1): Terms, Holdings,
- * Sources.
+ * Sources — and (REP4) Model: viability, cost comparison, find-or-build.
  *
  * Terms: every field with its value, origin chip (from the envelope's
  * `origins` vocabulary), source quote + document link, confidence and the
@@ -18,6 +18,7 @@ import { useState } from "react";
 import {
   approvalControls, departureLines, diffSummary, entryControls, fieldControls, formatValue, formatWeight, labelOf,
 } from "@/lib/replication.mjs";
+import ModelTab from "@/components/replication/ModelTab";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const chipTone = { extracted: "bg-[#F5F1EB] text-[#334155]", corrected: "bg-[#E8D5A3] text-[#1B2B4B]",
@@ -268,10 +269,10 @@ export default function EntryView({ initialEnvelope }) {
       <div>
         <p className="text-xs text-text-muted">{entry.disclosure}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {["terms", "holdings", "sources"].map((t) => (
+          {["terms", "holdings", "sources", "model"].map((t) => (
             <button key={t} type="button" onClick={() => setTab(t)}
               className={`rounded px-3 py-1 text-sm ${tab === t ? "bg-navy text-white" : "bg-[#F5F1EB] text-navy"}`}>
-              {t === "terms" ? "Terms" : t === "holdings" ? "Holdings" : "Sources"}
+              {t === "terms" ? "Terms" : t === "holdings" ? "Holdings" : t === "sources" ? "Sources" : "Model"}
             </button>
           ))}
           <span className="flex-1" />
@@ -283,6 +284,7 @@ export default function EntryView({ initialEnvelope }) {
       {tab === "terms" ? <TermsPanel envelope={env} onChanged={() => reload()} /> : null}
       {tab === "holdings" ? <HoldingsPanel envelope={env} onQuery={(q) => { const next = { ...query, ...q }; setQuery(next); reload(next); }} /> : null}
       {tab === "sources" ? <SourcesPanel envelope={env} /> : null}
+      {tab === "model" ? <ModelTab entryId={entry.id} /> : null}
     </div>
   );
 }

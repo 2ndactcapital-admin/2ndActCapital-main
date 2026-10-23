@@ -1,0 +1,195 @@
+[INFO] database via DATABASE_URL (doppler/env)
+[PASS] the reserved prefixes (ZZRM, 'REP3 ' model names) match no real row  — 0/0
+
+── [Y] Task 1 findings 1a–1e — files, signatures and the chosen patterns ──
+[FIND] 1a human tasks  — services/human_tasks.py: open_task(pool, *, org_id, kind, subject_type, subject_id, maker_id, eligible_permission, title, payload, action_path, actor_kind) / complete_task(pool, *, org_id, task_id, actor_id, outcome, note, actor_kind) / cancel_task(pool, *, org_id, task_id, actor_id, reason) / list_tasks(conn, org_id, *, status, kind, subject_type, subject_id, task_id) / get_task; subject = workflow_runs.context.human_task {kind, subject_type, subject_id, maker_id, title, payload, action_path}; outcome in workflow_run_steps.result {outcome, note, completed_by}. A module reacts through its kind's on_complete callback (idempotent) + a sync_*_task_outcome recovery. CHOSEN for rep3 and the rep1 move: on_complete — the only path that reacts however the task is completed; additive kwarg system_open lets the platform OPEN (never complete) a review task with no maker
+[PASS] task kinds registered: model approval (maker-checker), model review (system-opened), terms approval
+[FIND] 1b rep1 approval path  — services/replica_terms.py: _open_approval_todos (called by build_draft / correct_field / change_field) wrote member_todos for approve_replication holders; decide() closed them. verify_rep1.py asserted that path at its 'approval needed' check (~l.992) and 'approval tasks are closed' (~l.1026). MOVED: ensure_approval_task → HT.open_task (kind replica_terms_approval); decide → HT.complete_task, version change in on_complete; replica_terms_actions stays the domain log
+[PASS] rep1 approvals run through human tasks; the maker-checker refusal text is byte-identical to main
+[FIND] 1c spreadsheet readers  — openpyxl 3.1.5 (installed, pinned 3.1.5); xlrd 2.0.1 (pinned xlrd==2.0.1 — pure Python, cached values only); pandas present but unused (not needed)
+[PASS] openpyxl and xlrd pinned in requirements.txt
+[PASS] xlrd is installed (pip install -r requirements.txt) — needed for the .xls proofs
+[FIND] 1d fee schedules  — referenced by fee_schedules.id of an APPROVED row (that row is never mutated; an edit writes version N+1 as a new DRAFT row with a new id) — models.default_fee_schedule_id FK, validated APPROVED + same org in services.models.update_model; fee_schedules has an org-isolation ALL policy, so model code reads it on the RLS pool
+[PASS] fee_schedules readable under RLS
+[FIND] 1e platform rows  — rep2 custodian_capabilities: owner_scope 'platform', org_id NULL, SELECT USING true, writes only under app.is_super_admin. Library entries follow it for shelf 'platform'; the entry's content is a model owned by the Hollisworks org, admitted to every org read-only by a SECURITY DEFINER carve-out
+[PASS] fixture users created with the token's auth0_sub, is_test = true  — 9/9
+
+── [Y] Schema landed: tables, constraints, partial uniques, triggers, RLS with a policy for every operation ──
+[PASS] _apply_rep3.py --verify: SCHEMA OK (catalog read back)  — [] 
+[PASS] the database refuses a 'Holdings of' name for an upload model  — new row for relation "models" violates check constraint "models_reserved_name_chk"
+[PASS] ...and allows it for a fund_replica model (rep4's source)
+
+── [Y] Upload: xlsx = xls = csv; untrusted-file rules; row-numbered messages; unresolved queued; duplicates ──
+[PASS] a CSV with a BOM parses into a draft  — 201 {'upload': {'id': '3795d08f-6907-41b1-aa91-d6c3c34d25a5', 'file_name': 'model.csv', 'size_bytes': 126, 'sha256': '5360d3e3979999f4bc28c7d03e7b8c0edc12f4ac59c02c7c0ab7afbfe2c1a42d', 'file_kind': 'csv',
+[PASS] percent weights detected and stated (weight_basis 'percent')  — percent
+[PASS] CSV draft: weights converted to fractions, bands kept, CUSIP and ticker rows resolved  — [('d94d15c2-7bdc-4710-a71e-e7920df321e7', Decimal('0.5000000000'), Decimal('0.4000000000'), Decimal('0.6000000000'), 'Equity', 'resolved'), ('5fe0d014-a685-4484-a2a9-21ff375ad429', Decimal('0.3000000000'), None, None, 'Equity', 'resolved'), ('1d329b7e-67ca-47ec-8b31-5da37dd06f43', Decimal('0.2000000000'), None, None, 'Bond', 'resolved')]
+[PASS] a multi-sheet workbook lists its sheets  — 201 ['Cover', 'Holdings']
+[PASS] the cover sheet has no header row — stated, not guessed  — 200
+[PASS] the chosen sheet becomes a draft  — 201 {'upload': {'id': '0c27c717-e9b8-4a5c-92b5-a3f59e272d20', 'file_name': 'model.xlsx', 'size_bytes': 5486, 'sha256': '443ad81bacfea49a805d78792046c730c682f6f0dff6e52d4c4dd2f6e47ea887', 'file_kind': 'xls
+[PASS] .xlsx draft is IDENTICAL to the .csv draft
+[PASS] a .xls (BIFF8) workbook parses into a draft  — 201 {'upload': {'id': '3ba1f1d2-e612-4199-8850-32eed3e74ec5', 'file_name': 'model.xls', 'size_bytes': 5632, 'sha256': 'dae41648f33bfdcf3a8555224b03d4c9e0ff5ff920da613213ff2b6d5e895c9d', 'file_kind': 'xls'
+[PASS] .xls draft is IDENTICAL to the .csv draft
+[PASS] fractions (sums ~1, ';'-delimited) detected as fractions — the same weights  — [Decimal('0.5000000000'), Decimal('0.3000000000'), Decimal('0.2000000000')]
+[PASS] a formula cell with no cached value is a row-3 error (never evaluated) and the upload is logged rejected  — 422 [{'code': 'formula_no_value', 'severity': 'error', 'row': 3, 'column': 'weight', 'text': 'row 3: the Target Weight cell is a formula with no saved value — formulas are never evaluated; open the file in Excel, save it, and upload again'}]
+[PASS] .xlsm refused (422), logged 'failed', never stored  — 422 {'outcome': 'failed', 'r2_key': None}
+[PASS] an oversize file (> 5 MB) is refused and logged with its TRUE size  — 422 5243006 vs 5243006
+[PASS] more than 5,000 rows is refused (logged failed)  — 422 {'message': "sheet 'CSV' has more than 5,000 rows — split the file", 'messages': [{'code': 'too_many_rows', 'severity': 'error', 'row': None, 'column'
+[PASS] weights summing to 99% are refused — unless 'fill with cash' (then a 1% cash target)  — 422 201 0.0100000000
+[PASS] a negative weight (row 4) and a duplicate security (row 3) are refused, each with its row  — 422 [{'code': 'weight_basis', 'severity': 'info', 'row': 1, 'column': 'weight', 'text': 'weights read as percentages (they sum to about 100) and stored as fractions'}, {'code': 'duplicate_security', 'severity': 'error', 'row': 3, 'column': None, 'text': 'row 3: the same security as row 2'}, {'code': 'weight_negative', 'severity': 'error', 'row': 4, 'column': 'weight', 'text': 'row 4: negative weight -10.0000% — long/short models are not supported yet'}]
+[PASS] an unresolvable CUSIP is QUEUED unresolved — never matched to the decoy holding its ticker  — [(None, Decimal('0.4000000000'), None, None, None, 'unresolved'), ('d94d15c2-7bdc-4710-a71e-e7920df321e7', Decimal('0.6000000000'), None, None, None, 'resolved')]
+[PASS] tradability noted per custodian the org uses (informational): fractional_shares unknown at altruist  — [{"code": "tradability", "text": "fractional_shares unknown at altruist", "value": "unknown", "severity": "info", "custodian": "altruist", "capability": "fracti
+[PASS] the same file again → a new log row 'duplicate' (duplicate_of the first), ONE R2 object  — 201 {'outcome': 'duplicate', 'duplicate_of': UUID('3795d08f-6907-41b1-aa91-d6c3c34d25a5'), 'r2_key': 'models/uploads/99000000-0000-0000-0000-0000000e3001/5360d3e3979999f4bc28c7d03e7b8c0edc12f4ac59c02c7c0ab7afbfe2c1a42d'}
+
+── [Y] Mapping suggestions and saved provider mappings ──
+[PASS] synonyms auto-suggested: Symbol → Ticker, Allocation → Target Weight  — {'Symbol': ('ticker', 'synonym'), 'Allocation': ('weight', 'synonym')}
+[PASS] unknown headers get no suggestion before a mapping is saved  — {}
+[PASS] saving the mapping is a logged action (upload event + model event); re-read version 1  — 200
+[PASS] the provider's next upload applies the saved mapping first  — {'Fund Code': ('ticker', 'saved'), 'Model Pct': ('weight', 'saved')}
+[PASS] ...and the draft records which saved mapping was used  — 201 a6e48ca7-efa6-42ad-ba87-7534c6459efd
+
+── [Y] Upload log complete for every outcome, immutable facts, safe CSV export ──
+[PASS] an upload abandoned before a draft is logged 'abandoned' with its reason  — 200
+[PASS] the log holds every outcome: draft_created, rejected, abandoned, duplicate, failed  — ['abandoned', 'draft_created', 'duplicate', 'failed', 'received', 'rejected']
+[PASS] a rejected upload's messages carry row numbers  — [{'row': 1, 'code': 'weight_sum', 'text': "weights sum to 70.0000%, not 100% (±0.05%) — mark a cash row (blank weight takes the remainder) or choose 'fill with cash'", 'column': 'weight', 'severity': 'error'}, {'row': 1, 'code': 'weight_basis', 'text': 'weights read as percentages (they sum to about 100) and stored as fractions', 'column': 'weight', 'severity': 'info'}, {'row': 3, 'code': 'formula_no_value', 'text': 'row 3: the Target Weight cell is a formula with no saved value — formulas are never evaluated; open the file in Excel, save it, and upload again', 'column': 'weight', 'severity': 'error'}, {'row': 3, 'code': 'weight_missing', 'text': 'row 3: no weight', 'column': 'weight', 'severity': 'error'}]
+[PASS] UPDATE of model_uploads refused (facts never change)  — model_uploads rows are a permanent record and never change
+[PASS] UPDATE of model_upload_events refused (facts never change)  — model_upload_events rows are a permanent record and never change
+[PASS] the upload's facts are unchanged (re-read)
+[PASS] CSV export: every row, the =cmd file name escaped with an apostrophe, no cell begins with = + - @ tab CR  — 200 17/17
+
+── [Y] Versions: exact diff; maker-checker on the identical request; unresolved blocks approval; supersede; event; immutability ──
+[PASS] submit opens ONE human task (approve_models) whose engine maker is the submitter  — 200 [{'id': UUID('9cce7d68-59a7-47ae-bd70-2d1a9a419d9e'), 'status': 'active', 'started_by': UUID('99000000-0000-0000-0000-0000000e3111'), 'kind': 'model_version_approval', 'maker_id': '99000000-0000-0000-0000-0000000e3111', 'assigned_permission': 'approve_models'}]
+[PASS] the MAKER's approve is refused (403 naming the rule); the version is unchanged  — 403 {'detail': 'Maker-checker: you uploaded, edited or submitted this version, so a different holder of approve_models must decide it.'}
+[PASS] the database CHECK refuses a maker as checker  — new row for relation "model_versions" violates check constraint "model_versions_maker_chec
+[PASS] the identical request by a different approver succeeds  — 200 {'version': {'id': '88e8efc4-38ea-4a3f-8a65-1630e1c6ee06', 'model_id': '9b15a531-68db-4658-9d92-ba22cbf41ad6', 'version_no': 1, 'status': 'approved', 'origin': 
+[PASS] 'model.version_approved' emitted with the diff
+[PASS] the platform cannot open a maker-checker task (system opens review kinds only)
+[PASS] an agent cannot open a task
+[PASS] diff exact: added F, removed C, A −5%, B +5%, turnover 25%  — 200 {'added': [{'key': '24660da5-895b-4274-86e2-1f9dc0db009f', 'label': 'REP3 VERIFY FUND', 'weight': '0.2000000000'}], 'changed': [{'to': '0.3500000000', 'key': '5fe0d014-a685-4484-a2a9-21ff375ad429', 'from': '0.3000000000', 'delta': '0.0500000000', 'label': 'ZZRMB'}, {'to': '0.4500000000', 'key': 'd94d15c2-7bdc-4710-a71e-e7920df321e7', 'from': '0.5000000000', 'delta': '-0.0500000000', 'label': 'ZZRMA'}], 'removed': [{'key': '1d329b7e-67ca-47ec-8b31-5da37dd06f43', 'label': 'ZZRMC', 'weight': '0.2000000000'}], 'has_base': True, 'turnover': '0.2500000000', 'threshold': '0.0001', 'base_version_id': '88e8efc4-38ea-4a3f-8a65-1630e1c6ee06'}
+[PASS] approval supersedes the prior version; exactly ONE approved version live (re-read)  — {'88e8efc4-38ea-4a3f-8a65-1630e1c6ee06': 'superseded', '7695f5c3-b0ea-4207-b11d-9450d1230069': 'approved'}
+[PASS] ...and its event carries the exact diff (turnover 25%)
+[PASS] editing an APPROVED version is 409  — 409
+[PASS] a direct UPDATE of an approved version is refused (trigger)  — an approved model version is never changed — start a new draft
+[PASS] a position cannot be added to an approved version (trigger)
+[PASS] the approved version's positions are unchanged (re-read)
+[PASS] a version with unresolved rows cannot be approved (409 naming them)  — 200 409
+[PASS] reject needs a note (422 without); with one the version returns to draft  — 422 200
+[PASS] abandon is logged and the upload's outcome becomes abandoned  — 200
+
+── [Y] "Holdings of" reserved ──
+[PASS] an upload model named 'Holdings of …' is refused (422)  — 422
+[PASS] a composite named 'holdings of …' is refused (422)  — 422
+
+── [Y] Sleeves: look-through exact, no cycles, follow-live drafts + review tasks ──
+[PASS] child model 2 approved  — 200
+[PASS] look-through = sleeve weight × child weights, merged by security (exact)  — {'d94d15c2-7bdc-4710-a71e-e7920df321e7': Decimal('0.47000000000000000000'), '5fe0d014-a685-4484-a2a9-21ff375ad429': Decimal('0.33000000000000000000'), '24660da5-895b-4274-86e2-1f9dc0db009f': Decimal('0.12000000000000000000'), '1d329b7e-67ca-47ec-8b31-5da37dd06f43': Decimal('0.08000000000000000000')}
+[PASS] the live-following and the pinned composite are approved  — 200 200
+[PASS] a composite of a composite is allowed  — 201
+[PASS] a cycle is refused (outer contains this one; a model containing itself), nothing written  — 409 409
+[PASS] a child's new approved version drafts the live-following composite with a review task (no maker)  — 200 {'composite_drafts': [{'model_id': 'd1d8eac8-0cac-4c53-bff2-96e856a69f96', 'version_id': '22d308e0-2ff8-4413-bc6d-777a7c86a97b', 'task_id': 'd842fc73-406d-4421-9a53-4884071c8c64'}], 'subscription_drafts': [], 'skipped': [], 'errors': []}
+[PASS] ...and nothing for the pinned composite  — 1 → 1
+[PASS] a system-imported draft is approved by an org approver (maker = system import)  — 200
+
+── [Y] Library: shelves, visibility, copy vs subscribe, agreement gate ──
+[PASS] an org admin publishes an ORG-shelf entry  — 201 {'entry': {'id': 'd769d3b9-8083-483d-af78-8c5926ffc203', 'shelf': 'org', 'title': 'REP3 Org Entry', 'status': 'published'}}
+[PASS] the org entry is invisible to the other org (list and copy 404)  — 404
+[PASS] requires_agreement blocks copy (409) until confirmed; a viewer cannot confirm (403)  — 409 403
+[PASS] an org admin's 'agreement on file' is logged  — 200
+[PASS] copy → an independent draft; subscribe → a draft awaiting review  — 201 201
+[PASS] a new entry version drafts the SUBSCRIBER (with a task); the copy is untouched  — {'composite_drafts': [{'model_id': 'd1d8eac8-0cac-4c53-bff2-96e856a69f96', 'version_id': '674a47be-b5b3-4440-94ab-a7e7ee7d8beb', 'task_id': '397db115-e78f-4b69-bc5f-d60bc81a7aae'}], 'subscription_drafts': [{'org_id': '99000000-0000-0000-0000-0000000e3001', 'model_id': 'e73dcfd3-6883-4641-ae20-3642b033d307', 'version_id': '71bc3293-5929-4277-af06-9e9ca2cb0ecc', 'task_id': 'd7be790c-0a1b-499a-be64-1230219e45ef'}], 'skipped': [], 'errors': []}
+[PASS] only Super Admin publishes to the PLATFORM shelf (org admin 403)  — 403 201
+[PASS] the platform entry is visible to BOTH orgs
+[PASS] ...and editable by NEITHER org (API 403; SQL UPDATE matches 0 rows under RLS)  — 403 UPDATE 0 UPDATE 0
+[PASS] org B copies and org A subscribes to the platform entry  — 201 201
+[PASS] a new platform version drafts the subscriber IN ITS OWN ORG with a review task; org B's copy is untouched  — {'composite_drafts': [], 'subscription_drafts': [{'org_id': '99000000-0000-0000-0000-0000000e3001', 'model_id': '04f7d9d3-393d-43d0-ac41-1467e1f0aa5f', 'version_id': '8595cc60-ba8a-4317-9e5d-9f957e52dac3', 'task_id': '16429932-8380-486a-a496-40baf8c3ea00'}], 'skipped': [], 'errors': []}
+
+── [Y] rep1 approvals on human tasks, behaviour unchanged; verify_rep2 CSV check corrected ──
+[PASS] a terms draft opens a human task (approve_replication), notified through the engine; no old-path todos
+[PASS] rep1 maker-checker refusal unchanged (403, the same text)  — 403 {'detail': 'Maker-checker: you corrected or changed a field in this draft, so you cannot approve or reject it — another approver must.'}
+[PASS] the checker's approval completes the task; replica_terms_actions still logs it  — 200
+[PASS] approving an approved version is still 409  — 409
+[PASS] verify_rep1.py asserts the human-task path (only its approval-task checks changed)
+[PASS] verify_rep2.py reads the exception count from plan.exceptions (the importer is unchanged)
+[PASS] the importer is byte-identical
+
+── [Y] Org isolation both directions under app_service (rolbypassrls = false) ──
+[PASS] isolation is tested on a role WITHOUT rolbypassrls  — app_service
+[PASS] each org has its own model  — 201
+[PASS] B → A: own 200; the other org's model 404 (read AND write), absent from list and upload log  — 200 404 404
+[PASS] A → B: own 200; the other org's model 404 (read AND write), absent from list and upload log  — 200 404 404
+[PASS] SQL as 3001: own models visible; every model table of the other org reads 0  — own 19 other {'models': 0, 'model_versions': 0, 'model_version_positions': 0, 'model_uploads': 0, 'model_upload_events': 0, 'model_events': 0, 'model_column_mappings': 0, 'model_subscriptions': 0}
+[PASS] SQL as 3002: own models visible; every model table of the other org reads 0  — own 2 other {'models': 0, 'model_versions': 0, 'model_version_positions': 0, 'model_uploads': 0, 'model_upload_events': 0, 'model_events': 0, 'model_column_mappings': 0, 'model_subscriptions': 0}
+[PASS] org B cannot write an org A row (RLS WITH CHECK)  — new row violates row-level security policy for table "model_events"
+[PASS] the platform entry's model is readable to another org (carve-out, read only)
+
+── [Y] Gates both ways on identical requests ──
+[PASS] view_models reads with a view-only envelope (editable [], no actions); an admin's envelope allows writes
+[PASS] no view_models → 403 naming it  — 403
+[PASS] the identical upload: viewer 403 (manage_models), admin 201  — 403 201
+[PASS] the identical approve: viewer 403 (approve_models), checker 200  — 403 200
+[PASS] a viewer cannot publish (403)  — 403
+
+── [Y] New org's first org_admin gets the three model permissions ──
+[PASS] a NEW org's first org_admin role carries view/manage/approve_models (re-read on an independent connection)  — ['approve_execution', 'approve_models', 'approve_replication', 'manage_execution', 'manage_models', 'manage_org_settings', 'manage_replication', 'view_execution', 'view_models', 'view_replication']
+
+── [Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed ──
+[PASS] no existing route's gate changed or vanished  — [] []
+[PASS] 28 new routes, all under /models, each naming a model permission  — 28
+[PASS] authz1_routes.py --check: CURRENT  — CURRENT
+
+
+── [Y] node --test tests/ passes; npm run build exits 0 (run by this script, not during the sprint) ──
+[PASS] node --test tests/ passes (0 fail)
+[PASS] the rep3 node tests (no Upload / Approve / Publish / Edit controls without the flags) ran in that suite
+[PASS] npm run build exits 0
+[PASS] no network call was attempted during the whole run  — []
+
+── [Y] Teardown — zero fixture rows; every touched table at its pre-test count; real rows unchanged ──
+[INFO] teardown removed: ['model_events: 68', 'model_upload_events: 14', 'model_subscriptions: 4', 'model_sleeves: 10', 'model_version_positions: 56', 'model_versions: 62', 'model_uploads: 20', 'models (library-sourced): 6', 'model_library_entries: 2', 'models: 16', 'model_column_mappings: 1', 'member_todos: 23', 'domain_events: 109', 'audit_log: 118', 'workflow_run_steps: 16', 'workflow_runs: 16', 'workflow_steps: 2', 'workflow_versions: 2', 'workflow_definitions: 2', 'replica_terms_actions: 1', 'replica_terms_versions: 2', 'replica_securities: 2', 'accounts: 1', 'entities: 1', 'org_settings: 1', 'securities_global_identifiers: 10', 'securities_global: 5', 'public.user_roles: 8', 'public.users: 9', 'public.role_permissions: 73', 'public.roles: 6', 'public.org_ai_spend_cache: 3', 'public.organizations: 3']
+[PASS] zero fixture rows remain  — 0
+[PASS] public.users at its pre-test count  — 16 → 16
+[PASS] public.organizations at its pre-test count  — 2 → 2
+[PASS] public.roles at its pre-test count  — 20 → 20
+[PASS] public.user_roles at its pre-test count  — 11 → 11
+[PASS] public.role_permissions at its pre-test count  — 221 → 221
+[PASS] public.audit_log at its pre-test count  — 112 → 112
+[PASS] public.member_todos at its pre-test count  — 9 → 9
+[PASS] public.domain_events at its pre-test count  — 0 → 0
+[PASS] public.domain_event_deliveries at its pre-test count  — 0 → 0
+[PASS] public.workflow_definitions at its pre-test count  — 3 → 3
+[PASS] public.workflow_versions at its pre-test count  — 3 → 3
+[PASS] public.workflow_steps at its pre-test count  — 6 → 6
+[PASS] public.workflow_runs at its pre-test count  — 1 → 1
+[PASS] public.workflow_run_steps at its pre-test count  — 0 → 0
+[PASS] public.entities at its pre-test count  — 39 → 39
+[PASS] public.accounts at its pre-test count  — 0 → 0
+[PASS] public.org_settings at its pre-test count  — 31 → 31
+[PASS] public.document_field_corrections at its pre-test count  — 0 → 0
+[PASS] portfolio.securities_global at its pre-test count  — 67 → 67
+[PASS] portfolio.securities_global_identifiers at its pre-test count  — 64 → 64
+[PASS] portfolio.models at its pre-test count  — 0 → 0
+[PASS] portfolio.model_versions at its pre-test count  — 0 → 0
+[PASS] portfolio.model_version_positions at its pre-test count  — 0 → 0
+[PASS] portfolio.model_sleeves at its pre-test count  — 0 → 0
+[PASS] portfolio.model_uploads at its pre-test count  — 0 → 0
+[PASS] portfolio.model_upload_events at its pre-test count  — 0 → 0
+[PASS] portfolio.model_column_mappings at its pre-test count  — 0 → 0
+[PASS] portfolio.model_library_entries at its pre-test count  — 0 → 0
+[PASS] portfolio.model_subscriptions at its pre-test count  — 0 → 0
+[PASS] portfolio.model_events at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_securities at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_terms_versions at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_terms_actions at its pre-test count  — 0 → 0
+[PASS] real models unchanged (count + checksum)  — 0 → 0
+[PASS] real model_library_entries unchanged (count + checksum)  — 0 → 0
+[PASS] real fee_schedules unchanged (count + checksum)  — 0 → 0
+[PASS] real securities_global unchanged (count + checksum)  — 67 → 67
+[PASS] real users unchanged (count + checksum)  — 16 → 16
+[PASS] real workflow_definitions unchanged (count + checksum)  — 3 → 3
+[PASS] real workflow_runs unchanged (count + checksum)  — 1 → 1
+[PASS] real workflow_run_steps unchanged (count + checksum)  — 0 → 0
+[PASS] real replica_terms_versions unchanged (count + checksum)  — 0 → 0
+
+── [Y] Regression — verify_rep1.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1 ──
+[PASS] verify_rep1.py: 0 FAIL ('TOTAL:' or 'RESULT:' summary)  — ('135', '0'); [] 
+
+TOTAL: 151 PASS, 0 FAIL

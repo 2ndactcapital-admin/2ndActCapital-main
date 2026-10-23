@@ -455,6 +455,7 @@ async def refresh_holdings(request: Request, entry_id: str):
     await T.publish_actions(pool, refs)
     out = res.as_dict()
     out["review_task_opened"] = bool(reason)
+    out["model_monitor"] = await RS.monitor_models(pool, res)
     return out
 
 

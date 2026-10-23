@@ -1427,10 +1427,10 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
     prefixes = ("/api/v1/execution/", "/api/v1/custodians/", "/api/v1/human-tasks/")
-    check(len(new) == 21 and all(k[1].startswith(prefixes) for k in new),
-          "21 new routes, all under /execution, /custodians, /human-tasks", f"{len(new)}")
+    # by path: later sprints (rep3 /models, rep4 /replication) add routes past BEFORE_REF of their own
+    new = [k for k in gn if k not in gb and k[1].startswith(prefixes)]
+    check(len(new) == 21, "21 new routes under /execution, /custodians, /human-tasks", f"{len(new)}")
     ok_gate = all(
         any(p in str(gn[k].get("after")) for p in EXECUTION_PERMS) if k[1].startswith("/api/v1/execution/")
         else (str(gn[k].get("after")) == ("staff or authz manage_org_settings" if "GET" in k[0] else "super_admin"))

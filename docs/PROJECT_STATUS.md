@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,47 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep4 (sprint 4 of 15): build a model from a fund — "Holdings of <TICKER>" models, the five-question viability check, fund-vs-replica cost, find-or-build registry, holdings / terms monitoring; verify WRITTEN, not yet run (2026-10-23)
+
+Design + findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep4 section).
+Schema `docs/rep4_part1.sql` — APPLIED (`scripts/_apply_rep4.py --schema`) and read
+back (`--verify`: SCHEMA OK — 3 new tables with a policy for every operation, every
+partial unique, CHECK, FK and guard trigger; rep3's origin / event CHECKs widened).
+Verify: `apps/api/scripts/verify_rep4.py` — WRITTEN, NOT RUN (WSL memory; it runs
+`node --test tests/`, `npm run build` and the `verify_rep3.py` regression itself).
+In-sprint proof only: a local run of the pure construction math (full / top N /
+min weight / cash, exact sums), `node --test tests/replication/rep4.test.mjs` 7/7
+and `rep1.test.mjs` 9/9, `authz1_routes.py --check` CURRENT (8 new routes, no existing
+gate changed).
+
+- **Custody cliff held:** a build is a DRAFT approved through rep3's maker-checker
+  human task; monitoring drafts versions for REVIEW; nothing trades.
+- **[FIND]** `securities_global_prices` is EMPTY (0 rows, 2026-10-23) — Q3 (account
+  size) is "unknown — needs prices" for every real fund until a price feed exists;
+  an N-PORT value / balance quotient is never used as a price.
+- **[FIND]** rep1's refresh has no "new snapshot" event — only its return value; the
+  model monitor hooks both refresh paths (weekday + manual) on that value.
+- **[FIND]** rep3's `create_model` refused `fund_replica` by design; added
+  `models.create_fund_model` (the only path) and `_submit_system(extra_payload=…)`
+  so the review task carries the holdings diff (both additive).
+- **[FIND]** rep3's version origins / event actions are DB CHECKs — widened
+  (`fund_build`, `fund_monitor`; `fund_build_joined`, `holdings_monitor`,
+  `terms_monitor`, `terms_review_done`), and monitoring is idempotent by partial
+  unique indexes on `model_events`, not by a code check alone.
+- **[FIND]** model names are unique per org, so the same fund + method for a second
+  custodian gets the custodian label appended ("Holdings of QQQ — Manual — execution
+  instruction").
+- **[FIND]** weight changes between snapshots include price moves, so the trading-
+  cost estimate (turnover × 2 sides × bps) overstates trading — stated in its inputs.
+- **Regression scripts fixed (test defects, not behaviour):** `verify_rep3.py` and
+  `verify_rep2.py` counted EVERY route added since their base ref (rep2 has been
+  wrong since rep3 merged); both now count their own routes by path. `verify_rep3.py`
+  skips `npm run build` under `SKIP_BUILD=1` (a nested run; the outer verify builds).
+- Follow-ups: rep5 links accounts to models ("accounts using" is 0 until then) and
+  consumes `model.version_approved`; rep6 estimates the tax line; a price feed for
+  Q3; the `replication.viability.*` / `replication.models.*` settings have no
+  settings-screen fields yet.
 
 ## 00000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep3 (sprint 3 of 15): model management — one registry, uploads + column mapping, a permanent upload log, the model library, composite sleeves, approvals on human tasks (and rep1's terms approvals moved onto them); verify WRITTEN, not yet run (2026-10-23)
 
