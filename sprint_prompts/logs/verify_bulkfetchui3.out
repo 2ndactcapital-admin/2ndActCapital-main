@@ -1,0 +1,154 @@
+[doppler] hydrated 44 secrets
+[PASS] the verify connection's role does NOT bypass RLS (app_service)  — app_service
+[PASS] no fixture rows before the run  — {"portfolio.edgar_pipeline_lease": 0, "portfolio.reference_filing_supplements": 0, "portfolio.edgar_index_filing_filers": 0, "portfolio.edgar_index_filings": 0, "portfolio.reference_filings": 0, "portfolio.edgar_pipeline_runs": 0, "portfolio.structured_note_issuers": 0, "public.users": 0, "public.organizations": 0, "public.roles": 0}
+[PASS] the three real banks' filings are present for the checksum  — 76981
+
+── [Y] Task 1 — findings 1a–1d reported with files, SQL and live totals ──
+[PASS] docs/BULKFETCHUI3_DISCOVERY.md exists
+[PASS] discovery doc has section ## 1a.
+[PASS] discovery doc has section ## 1b.
+[PASS] discovery doc has section ## 1c.
+[PASS] discovery doc has section ## 1d.
+[PASS] 1a names where storage is recorded, how --kinds keeps/discards, and gives the SQL
+[PASS] 1a reports live totals (all + Wells Fargo, Goldman Sachs, Jefferies)
+[PASS] 1a states which index serves the query
+[PASS] 1b reports the breakdown, the GS sample, the rule and its result
+[PASS] 1c states the choice and the operator steps
+[PASS] 1d states the zero-byte behaviour and fix
+[PASS] fixture users.role values satisfy the live CHECK  — []
+[PASS] fixture users.status 'active' satisfies the live CHECK  — ['active', 'pending', 'rejected', 'retired']
+[PASS] fixture statuses / kinds are live CHECK values (edgar_index_filings)  — []
+[PASS] decided_has_policy / one_selector CHECKs read from the catalog (fixtures stamp the ACTIVE policy)
+[PASS] fixture reference_filings values satisfy the live CHECKs
+[PASS] trigger_source 'schedule' is a live CHECK value (migration bulkfetchui3 applied)  — ['cli', 'manual', 'nightly', 'schedule', 'verify']
+[PASS] the per-day partial unique index on details->>'schedule_date' exists  — 2 unique indexes
+[PASS] fixture include_status 'yes' satisfies the live CHECK  — ['no', 'review', 'yes']
+[PASS] no real issuer uses a 99094… CIK  — 0
+[PASS] an active selection policy exists (fixtures stamp its version)  — v1
+[PASS] fixture users are is_test = true (independent read)
+
+── [Y] Downloaded / Stored equal the 1a SQL per institution and per filer; exclusions; fresh vs cached ──
+[PASS] the 1a SQL run directly gives the hand-counted fixture numbers  — {'990940001': (6, 3), '990940002': (2, 1)}
+[PASS] per filer: the payload's downloaded/stored equal the 1a SQL  — HTTP 200 {'990940001': (6, 3), '990940002': (2, 1)}
+[PASS] per institution: downloaded 8 / stored 4 (the sum of its filers, all years)  — 8, 4
+[PASS] Total still counts only 'selected' (2) — the new columns did not change it  — 2
+[PASS] the payload carries as_of  — 2026-10-22T21:57:06.087002+00:00
+[PASS] column labels and one-line explanations come from the envelope's vocabularies  — {'downloaded': {'label': 'Downloaded', 'help': 'Handled by a bulk download: fetched, peeked or failed (all years)'}, 'stored': {'label': 'Stored', 'help': 'Kept in storage, by the document kinds chosen at the time (all years)'}}
+[PASS] the 4 selected / not_selected / discovered rows are NOT counted as downloaded (6 of 10 424B2 rows)  — excluded rows 4
+[PASS] the cached call within 60 s returns the OLD numbers (and the old as_of) after a fixture change  — 8, 4
+[PASS] ?fresh=1 returns the NEW numbers (9 / 5)  — 9, 5
+
+── [Y] Institutions gate: non-super-admin 403, super admin 200, identical request (fresh and cached) ──
+[PASS] GET /api/v1/admin/edgar/bulk/institutions: org admin 403 (no rows leaked), super admin 200  — org admin HTTP 403; super HTTP 200
+[PASS] GET /api/v1/admin/edgar/bulk/institutions?fresh=1: org admin 403 (no rows leaked), super admin 200  — org admin HTTP 403; super HTTP 200
+
+── [Y] Scheduled refresh: once per weekday after 10:30 UTC; idempotent; off switch; failure recorded ──
+[PASS] a 10:29 UTC weekday tick and a Saturday tick do nothing (no run row, re-read)  — not_due, not_due
+[PASS] EDGAR_INDEX_AUTO_REFRESH=0 stops it (no run row, re-read)  — off
+[PASS] the first eligible weekday tick refreshes and writes ONE run row  — {'action': 'succeeded', 'run_id': '3feaeda8-47c1-4319-a9cc-be0724c87543', 'day': '2001-01-03', 'new_filings': 1}
+[PASS] the row: run_kind refresh_index, trigger_source 'schedule', succeeded (independent re-read)  — refresh_index, schedule, succeeded
+[PASS] it refreshed THROUGH YESTERDAY: the 2001-01-02 file loaded, the 2001-01-03 one not; counts in details  — through 2001-01-02, new 1
+[PASS] exactly the mocked index's fixture filing is in the index (re-read)  — [{'accession_number': '9999999999-93-000015', 'pipeline_status': 'not_selected'}]
+[PASS] its SEC requests went to the mocked transport  — 1 request(s)
+[PASS] a second tick the same day writes nothing and makes no request (re-read: still one row)  — already
+[PASS] the Bulk download runs list shows the row (trigger_source 'schedule', no Stop / Requeue)  — [{'id': '3feaeda8-47c1-4319-a9cc-be0724c87543', 'run_kind': 'refresh_index', 'status': 'succeeded', 'display_status': 'succeeded', 'target': 'render', 'trigger_source': 'schedule', 'params': {'to': None}, 'requested_by': None, 'queued_at': datetime.datetime(2026, 10, 22, 21, 57, 14, 48607, tzinfo=datetime.timezone.utc), 'started_at': datetime.datetime(2026, 10, 22, 21, 57, 14, 48607, tzinfo=datetime.timezone.utc), 'finished_at': datetime.datetime(2026, 10, 22, 21, 57, 15, 401156, tzinfo=datetime.timezone.utc), 'worker_id': 'schedule:Lenovo-Laptop-jpl', 'worker_host': 'Lenovo-Laptop-jpl', 'heartbeat_at': datetime.datetime(2026, 10, 22, 21, 57, 15, 401156, tzinfo=datetime.timezone.utc), 'stop_requested': False, 'worker_lost': False, 'progress': {'log': ['index refresh: last loaded filing date 2001-01-02; reading 2001-01-02 .. 2001-01-02: 1 daily index file(s) (weekdays; a holiday simply has none)', 'read 1 file(s) (0 without an index), 1 new filings; selection v1 on the new rows only: 0 selected, 1 not selected'], 'files': 1, 'final': True, 'start': '2001-01-02', 'through': '2001-01-02', 'days_read': 1, 'selection': {'selected': 0, 'not_selected': 1, 'policy_version': 1}, 'new_filings': 1, 'new_accessions_count': 1}, 'done': 0, 'total': 0, 'rate_per_second': None, 'eta_seconds': None, 'failed': 0, 'failures': [], 'stop_reason': 'index refreshed (schedule)', 'error': None, 'actions': {'stop': False, 'cancel': False, 'requeue': False}}]
+[PASS] a mocked failure is recorded on the run row (status failed, error, finished; re-read)  — failed: HTTPStatusError: Client error '400 Bad Request' for url 'https://www.sec.gov/Arc
+[PASS] the failure holds only its own day; the NEXT weekday refreshes normally (re-read)  — already, succeeded
+[PASS] the real last indexed date did not move  — 2026-10-21
+[PASS] the step runs in the cron entrypoint, NOT inside run_scheduler_tick (scheduler verifies stay offline)
+
+── [Y] Classifier: GS image-cover finals → pricing_supplement; existing cases unchanged; true others stay ──
+[PASS] all 18 stored-text fixtures are present  — 18
+[PASS] 0001193125-26-410827 (GS image cover, 'Pricing Supplement No. 26,690') → pricing_supplement  — cover line 'pricing supplement no. 26,690 dated september 29, 2026' at 4221 (title is an image)
+[PASS] every GS sample (10) → pricing_supplement  — {'0001193125-26-410827': 'pricing_supplement', '0001193125-26-203976': 'pricing_supplement', '0001193125-26-267914': 'pricing_supplement', '0001193125-26-230908': 'pricing_supplement', '0001193125-26-008800': 'pricing_supplement', '0001193125-26-138073': 'pricing_supplement', '0001193125-26-204373': 'pricing_supplement', '0000950103-26-006519': 'pricing_supplement', '0001193125-26-041209': 'pricing_supplement', '0001193125-26-221826': 'pricing_supplement'}
+[PASS] every true-'other' sample (8, five banks + ABS/FWPs) stays 'other'  — {'0001193125-25-111621': 'other', '0001104659-22-011404': 'other', '0001193125-22-120761': 'other', '0001193125-21-209213': 'other', '0001104659-25-109994': 'other', '0001193125-21-220520': 'other', '0001918704-26-008797': 'other', '0000950103-25-009744': 'other'}
+[PASS] every existing classifier case keeps its kind  — {'pricing_supplement': 'pricing_supplement', 'preliminary_pricing_supplement': 'preliminary_pricing_supplement', 'product_supplement': 'product_supplement', 'underlying_supplement': 'underlying_supplement', 'term_sheet': 'term_sheet', 'other': 'other'}
+[PASS] the cover-line rule never turns a product / underlying / term sheet into a final  — {'product_supplement': 'product_supplement', 'underlying_supplement': 'underlying_supplement', 'term_sheet': 'term_sheet'}
+[PASS] 0000950170-25-001364 (real GS preliminary): original and new classifier agree → preliminary_pricing_supplement  — old preliminary_pricing_supplement / new preliminary_pricing_supplement
+[PASS] an image-cover preliminary ('Subject to Completion' in the text, no title phrase) never becomes a final  — {'marker before cover line': ('other', 'not_pricing_supplement'), 'marker after cover line': ('other', 'not_pricing_supplement')}
+[PASS] a cover line beyond 12,000 characters does not count
+
+── [Y] Reclassify: dry run writes nothing; --apply moves exactly the expected rows; no-text untouched; second --apply no-op; no HTTP client ──
+[PASS] the DRY RUN (default) writes nothing (before/after equal) and reports 2 changes  — changed 2
+[PASS] dry run: counts by issuer and old→new kind, the examples, and the no-text row listed  — {'VERIFY BFUI3 Reclassify|other→pricing_supplement': 2}
+[PASS] --apply moves EXACTLY the two GS finals (re-read from an independent connection)  — ['9999999999-93-000017', '9999999999-93-000018']
+[PASS] 0001193125-26-410827: kind pricing_supplement, status = the normal decision (ready_for_extraction), status_reason 'reclassified:other→pricing_supplement', active policy v1  — ready_for_extraction / reclassified:other→pricing_supplement; pricing supplement; p
+[PASS] 0001193125-26-203976: kind pricing_supplement, status = the normal decision (ready_for_extraction), status_reason 'reclassified:other→pricing_supplement', active policy v1  — ready_for_extraction / reclassified:other→pricing_supplement; pricing supplement; p
+[PASS] the true-'other' rows are untouched
+[PASS] the row without stored text is untouched
+[PASS] a non-'other' row (preliminary) is untouched even with final text
+[PASS] a second --apply changes nothing (re-read)  — changed 0
+[PASS] reclassify never constructed an HTTP client  — []
+[PASS] it read stored text from (mocked) R2 only — fixture keys  — 13 reads
+[PASS] the service function has no HTTP client parameter and the CLI path creates none
+
+── [Y] Zero-byte download: recorded fetch_failed AND retryable (attempt count + next_attempt_at) ──
+[PASS] a mocked zero-byte document is recorded fetch_failed, attempt_count 1 (re-read)  — fetch_failed bulk fetch: EmptyDocumentError: the main document downloaded as zero b
+[PASS] …with next_attempt_at set in the future (retryable), not NULL  — 2026-10-22 22:12:24.687526+00:00
+[PASS] once due, the next run's scope takes it again (no --retry-failed needed)  — {'filers': {'990940005': 1}, 'years': {2026: 1}, 'total': 1}
+[PASS] EmptyDocumentError is an EdgarPipelineError (per filing, not systemic)
+
+── [Y] scripts/run_regressions.sh: syntax OK; stub mode prints one line per script, exits non-zero on a failure ──
+[PASS] bash -n scripts/run_regressions.sh passes
+[PASS] regression_set.txt is seeded with the 11 scripts  — ['verify_authz1.py', 'verify_usermgmt1.py', 'verify_navregroup.py', 'verify_bugfix1.py', 'verify_dealroom1.py', 'verify_dealroom2.py', 'verify_bulkfetch.py', 'verify_bulkfetchui.py', 'verify_bulkfetchui2.py', 'verify_bulkfetchui3.py', 'verify_edgarpipelinea.py']
+[PASS] the real command, VERIFY_NESTED=1, the 1200 s timeout, the log path and the worker check are in the script
+[PASS] stub mode: one line per script, a summary, non-zero exit on the failing one  — .py                  PASS 3     FAIL 0    0s
+verify_stub_bad.py                 PASS 2     FAIL 1    0s
+----
+SUMMARY: 2 script(s): 1 clean, 1 with failures, 0 timed out, 0 crashed. Logs: /tmp/tmpbytxew_k/logs/2026-10-22
+NOT CLEAN: verify_stub_bad.py
+
+[PASS] a heartbeating laptop worker: it warns and stops before running anything  — . The bulkfetchui verifies refuse to run beside it.
+run_regressions: stop it first (tmux attach -t bulkworker, Ctrl-C), then re-run. Nothing was run.
+
+
+── [Y] docs/SPRINT_WORKFLOW_STANDARD.md: the new regression bullet; the old text gone; the rest byte-identical ──
+[PASS] the new 'Regression: NOT part of a normal sprint's verify' bullet is present
+[PASS] the old 're-run every PRIOR sprint' text is gone
+[PASS] the Regression-chain nesting gotcha carries the appended sentence
+[PASS] the rest of the file is byte-identical to main (diff limited to the two edits)  — 33756 vs 33756 chars
+
+── [Y] Routes: no route added, no gate changed; authz1_routes.py --check CURRENT ──
+[PASS] authz1_routes.py --check says CURRENT  — CURRENT
+
+[PASS] no existing route's gate changed versus main  — {}
+[PASS] no new route (the fresh read is ?fresh=1 on the same route)  — []
+[PASS] GET /admin/edgar/bulk/institutions is still gated super_admin  — super_admin
+
+── [Y] Front end — node tests on the REAL InstitutionPicker; the whole node suite ──
+[PASS] node test: sorting both ways on every column  — ok
+[PASS] node test: aria-sort + arrow  — ok
+[PASS] node test: sub-rows follow  — ok
+[PASS] node test: new columns  — ok
+[PASS] node test: Refresh with as of; Refresh index + note in the Institutions header  — ok
+[PASS] node test: hidden when not writable  — ok
+[PASS] node test: disabled while a refresh runs  — ok
+[PASS] node test: 60 s re-read while bulk active  — ok
+[PASS] node test: absent from Time frame; no max-h-80  — ok
+[PASS] node --test tests/ passes (bugfix1.test.mjs's InstitutionPicker test included)  — # pass 323 # fail 0
+[PASS] npm run build exits 0
+
+── [Y] PROJECT_STATUS records the changes, the operator steps and the exact commands ──
+[PASS] docs/PROJECT_STATUS.md has the BULKFETCH UI 3 entry  — ## 00000000000000000000000000000000000000000000000000000000. BULKFETCH UI 3 — Bu
+[PASS] PROJECT_STATUS covers --reclassify-other
+[PASS] PROJECT_STATUS covers --reclassify-other --apply
+[PASS] PROJECT_STATUS covers EDGAR_INDEX_AUTO_REFRESH
+[PASS] PROJECT_STATUS covers 2ndactcapital-workflow-scheduler
+[PASS] PROJECT_STATUS covers scripts/run_regressions.sh
+[PASS] PROJECT_STATUS covers ?fresh=1
+[PASS] PROJECT_STATUS covers Downloaded
+[PASS] PROJECT_STATUS covers Stored
+
+── [Y] No AI model calls; every SEC request was mocked ──
+[PASS] the mocked model clients recorded no call  — []
+[PASS] every SEC request went to the mock  — 5
+
+── [Y] Teardown: zero fixture rows; every touched table at its pre-test count; real filings unchanged ──
+[PASS] zero fixture rows remain  — {"portfolio.edgar_pipeline_lease": 0, "portfolio.reference_filing_supplements": 0, "portfolio.edgar_index_filing_filers": 0, "portfolio.edgar_index_filings": 0, "portfolio.reference_filings": 0, "portfolio.edgar_pipeline_runs": 0, "portfolio.structured_note_issuers": 0, "public.users": 0, "public.organizations": 0, "public.roles": 0}
+[PASS] every touched table is back at its exact pre-test count  — {}
+[PASS] real Wells Fargo / Goldman Sachs / Jefferies filings unchanged (count + checksum of status, kind)  — (76981, '0512b65fc5b7fefafdeeefa97369b79a') -> (76981, '0512b65fc5b7fefafdeeefa97369b79a')
+
+── [Y] Regression: verify_bulkfetch.py — ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 1200 s timeout ──
+[PASS] verify_bulkfetch.py still reports 0 FAIL  — TOTAL: 103 PASS, 0 FAIL
+
+TOTAL: 113 PASS, 0 FAIL

@@ -1,0 +1,306 @@
+[INFO] database via DATABASE_URL (doppler/env)
+[PASS] the reserved test prefix ZZRP matches no real security-master row  — 0
+
+── [Y] Task 1 findings (1a–1f) — files, URLs, formats, terms-of-use notes, the workflow mechanism ──
+[PASS] 1a services/securities_global.get_by_identifier exists (the ONE resolver/creator)
+[PASS] 1a services/securities_global.create_security exists (the ONE resolver/creator)
+[PASS] 1a services/securities_global.add_identifier exists (the ONE resolver/creator)
+[PASS] 1a services/securities_global.add_relationship exists (the ONE resolver/creator)
+[PASS] 1a services/securities_global.get_by_identifiers_bulk exists (the ONE resolver/creator)
+[PASS] 1a services/securities_global.add_relationships_bulk exists (the ONE resolver/creator)
+[FIND] 1a resolution  — ticker/CUSIP/ISIN → get_by_identifier (merge-following join; cusip/isin/figi/lei unique, ticker/sedol not); creation create_security + add_identifier (Super Admin, platform job); unresolved → add_relationship link_state 'unresolved' (constituent_of) — the underlying_resolution queue. Bulk variants added IN that module (one statement each), never a second resolver
+[FIND] 1b SSGA (SPY)  — 200 xlsx, sheet 'holdings', 'Holdings: As of 21-Oct-2026', header Name/Ticker/Identifier(CUSIP)/SEDOL/Weight(%)/Sector/Shares Held/Local Currency, 505 rows incl. US DOLLAR cash; site terms NOT reviewed — counsel must confirm automated retrieval
+[FIND] 1b Invesco (QQQ)  — HTTP 406 (empty) to a non-browser client, twice — source seeded INACTIVE; QQQ has SEC series S000101292 so it falls back to N-PORT
+[FIND] 1b iShares (IVV)  — the .ajax CSV URL answered 200 text/csv with a 2.3 MB HTML product page (bot/JS gate) — INACTIVE; IVV → N-PORT (S000004310)
+[FIND] 1b SEC  — company_tickers_mf.json fields [cik, seriesId, classId, symbol], 28,592 rows; SPY ABSENT (a UIT, no series → issuer file only). Series atom feed (browse-edgar CIK=<series>&type=NPORT-P|497K|485BPOS&output=atom) confirmed for IVV; latest IVV NPORT-P filed 2026-08-25. N-PORT is public quarterly, up to 60 days after period end: 2-5 months stale — a fallback, never daily
+[PASS] 1b the existing EDGAR client (_get: User-Agent + rate limit) is what fund documents use
+[FIND] 1c ensemble  — readers = services.note_extraction (proxy.chat one attempt/no fallback, schema.FieldSpec/json_schema/parse_reader_output, quote_match.TextIndex, schema.value_in_quote) reused with the replica registry; ai_ensemble_configs active row for replica/note extraction: NONE — without one, extraction is recorded 'blocked' and every model field needs review
+[FIND] 1d corrections  — document_field_corrections target_type CHECK widened with 'replica_terms' (org_id NOT NULL, document_id NULL): its readers filter by field_name 'doc_category' / template joins / note_terms / FEE_SCHEDULE_SPEC, so none sees the new rows; global-read policy lists note_terms/template_proposal only
+[FIND] 1e workflow mechanism  — the engine opens User Tasks only from a published BPMN version — no ad-hoc task service. CHOSEN: replica_terms_actions row + audit_log (same tx) + domain_events (publish_event, 'replication.<action>'); 'approval needed' = member_todos for approve_replication holders, closed on decide
+[FIND] 1f scheduler  — bulkfetchui3 runs from workflow_scheduler_tick.py's entrypoint after run_scheduler_tick (edgar_index_schedule.maybe_refresh_index, once per weekday by a partial unique index) — replica_schedule.maybe_refresh_holdings runs right after it
+[PASS] docs/REPLICATION_STUDIO.md records findings 1a–1f (URLs, formats, terms-of-use, mechanism)
+
+── [Y] Schema landed — tables, constraints, partial uniques, RLS on, a policy for every operation ──
+[PASS] _apply_rep1.py --verify: SCHEMA OK  — [] 
+[PASS] the verify connection is app_service with rolbypassrls = false  — {'u': 'app_service', 'rolbypassrls': False}
+[INFO] portfolio.securities_global_identifiers: sec_global_ident_type_chk (c) — CHECK ((id_type = ANY (ARRAY['cusip'::text, 'isin'::text, 'ticker'::text, 'sedol'::text, 'figi'::text, 'lei'::text, 'internal'::text])))
+[INFO] portfolio.securities_global_identifiers: securities_global_identifiers_global_security_id_fkey (f) — FOREIGN KEY (global_security_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.securities_global: securities_global_merged_into_id_fkey (f) — FOREIGN KEY (merged_into_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.securities_global: securities_global_price_coverage_chk (c) — CHECK ((price_coverage = ANY (ARRAY['has_series'::text, 'no_public_source'::text, 'unknown'::text])))
+[INFO] portfolio.securities_global: securities_global_type_chk (c) — CHECK ((security_type = ANY (ARRAY['equity'::text, 'fixed_income'::text, 'fund'::text, 'private_fund'::text, 'structured_note'::text, 'index
+[INFO] public.organizations: organizations_slug_key (u) — UNIQUE (slug)
+[INFO] public.role_permissions: role_permissions_permission_id_fkey (f) — FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+[INFO] public.role_permissions: role_permissions_role_id_fkey (f) — FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+[INFO] public.roles: roles_org_id_fkey (f) — FOREIGN KEY (org_id) REFERENCES organizations(id)
+[INFO] public.roles: roles_org_id_name_key (u) — UNIQUE (org_id, name)
+[INFO] public.user_roles: user_roles_role_id_fkey (f) — FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+[INFO] public.user_roles: user_roles_user_id_fkey (f) — FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+[INFO] public.ai_ensemble_configs: ai_ensemble_configs_active_not_retired_chk (c) — CHECK (((NOT is_active) OR (retired_at IS NULL)))
+[INFO] public.ai_ensemble_configs: ai_ensemble_configs_models_distinct_chk (c) — CHECK ((model_1 <> model_2))
+[INFO] public.ai_ensemble_configs: ai_ensemble_configs_slots_present_chk (c) — CHECK (((btrim(model_1) <> ''::text) AND (btrim(model_2) <> ''::text) AND (btrim(system_one_model) <> ''::text)))
+[INFO] public.ai_ensemble_configs: ai_ensemble_configs_system_one_model_fkey (f) — FOREIGN KEY (system_one_model) REFERENCES ai_system_one_models(key) ON UPDATE RESTRICT ON DELETE RESTRICT
+[INFO] public.users: users_auth0_sub_key (u) — UNIQUE (auth0_sub)
+[INFO] public.users: users_deactivated_by_fkey (f) — FOREIGN KEY (deactivated_by) REFERENCES users(id)
+[INFO] public.users: users_email_key (u) — UNIQUE (email)
+[INFO] public.users: users_invite_token_key (u) — UNIQUE (invite_token)
+[INFO] public.users: users_invited_by_fkey (f) — FOREIGN KEY (invited_by) REFERENCES users(id)
+[INFO] public.users: users_manager_id_fkey (f) — FOREIGN KEY (manager_id) REFERENCES users(id)
+[INFO] public.users: users_org_id_fkey (f) — FOREIGN KEY (org_id) REFERENCES organizations(id)
+[INFO] public.users: users_profile_id_fkey (f) — FOREIGN KEY (profile_id) REFERENCES profiles(id)
+[INFO] public.users: users_status_check (c) — CHECK ((status = ANY (ARRAY['active'::text, 'pending'::text, 'retired'::text, 'rejected'::text])))
+[INFO] portfolio.replica_instrument_classes: replica_instrument_classes_key_chk (c) — CHECK ((key ~ '^[a-z][a-z0-9_]*$'::text))
+[INFO] portfolio.replica_instrument_classes: replica_instrument_classes_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_holdings_sources: replica_holdings_sources_format_chk (c) — CHECK ((format = ANY (ARRAY['xlsx'::text, 'csv'::text, 'xml'::text])))
+[INFO] portfolio.replica_holdings_sources: replica_holdings_sources_parser_chk (c) — CHECK ((parser = ANY (ARRAY['ssga_xlsx'::text, 'invesco_csv'::text, 'ishares_csv'::text, 'sec_nport'::text])))
+[INFO] portfolio.replica_holdings_sources: replica_holdings_sources_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_file_uq (u) — UNIQUE (fund_global_security_id, as_of, source_key, file_sha256)
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_fund_global_security_id_fkey (f) — FOREIGN KEY (fund_global_security_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_previous_snapshot_id_fkey (f) — FOREIGN KEY (previous_snapshot_id) REFERENCES portfolio.replica_holdings_snapshots(id)
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_rows_chk (c) — CHECK ((row_count >= 0))
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_sha_chk (c) — CHECK ((file_sha256 ~ '^[0-9a-f]{64}$'::text))
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_status_chk (c) — CHECK ((status = ANY (ARRAY['live'::text, 'needs_review'::text])))
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_asset_type_chk (c) — CHECK ((asset_type = ANY (ARRAY['equity'::text, 'cash'::text, 'future'::text, 'other'::text])))
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_constituent_global_security_id_fkey (f) — FOREIGN KEY (constituent_global_security_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_queued_chk (c) — CHECK (((resolution_state <> 'unresolved'::text) OR (relationship_id IS NOT NULL)))
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_relationship_id_fkey (f) — FOREIGN KEY (relationship_id) REFERENCES portfolio.securities_global_relationships(id)
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_resolved_chk (c) — CHECK ((((resolution_state = 'resolved'::text) = (constituent_global_security_id IS NOT NULL)) AND ((resolution_state <> 'resolved'::text) O
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_row_uq (u) — UNIQUE (snapshot_id, row_num)
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_snapshot_id_fkey (f) — FOREIGN KEY (snapshot_id) REFERENCES portfolio.replica_holdings_snapshots(id)
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_state_chk (c) — CHECK ((resolution_state = ANY (ARRAY['resolved'::text, 'unresolved'::text, 'not_applicable'::text])))
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_via_chk (c) — CHECK (((resolved_via IS NULL) OR (resolved_via = ANY (ARRAY['cusip'::text, 'isin'::text, 'ticker'::text, 'sedol'::text]))))
+[INFO] portfolio.replica_source_documents: replica_source_documents_file_uq (u) — UNIQUE (fund_global_security_id, sha256)
+[INFO] portfolio.replica_source_documents: replica_source_documents_form_chk (c) — CHECK ((form_type = ANY (ARRAY['497K'::text, '485BPOS'::text, '497'::text])))
+[INFO] portfolio.replica_source_documents: replica_source_documents_fund_global_security_id_fkey (f) — FOREIGN KEY (fund_global_security_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.replica_source_documents: replica_source_documents_kind_chk (c) — CHECK ((doc_kind = ANY (ARRAY['summary_prospectus'::text, 'prospectus'::text])))
+[INFO] portfolio.replica_source_documents: replica_source_documents_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_source_documents: replica_source_documents_sha_chk (c) — CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+[INFO] portfolio.replica_terms_field_registry: replica_terms_field_registry_key_chk (c) — CHECK ((field_key ~ '^[a-z][a-z0-9_]*$'::text))
+[INFO] portfolio.replica_terms_field_registry: replica_terms_field_registry_method_chk (c) — CHECK ((extraction_method = ANY (ARRAY['model'::text, 'data'::text])))
+[INFO] portfolio.replica_terms_field_registry: replica_terms_field_registry_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_terms_field_registry: replica_terms_field_registry_shape_chk (c) — CHECK ((value_shape = 'scalar'::text))
+[INFO] portfolio.replica_terms_field_registry: replica_terms_field_registry_type_chk (c) — CHECK ((data_type = ANY (ARRAY['text'::text, 'numeric'::text, 'boolean'::text, 'date'::text])))
+[INFO] portfolio.replica_term_readings: replica_term_readings_data_chk (c) — CHECK (((source <> 'data'::text) OR ((deployment_name IS NULL) AND (data_source IS NOT NULL))))
+[INFO] portfolio.replica_term_readings: replica_term_readings_ensemble_config_id_fkey (f) — FOREIGN KEY (ensemble_config_id) REFERENCES ai_ensemble_configs(id)
+[INFO] portfolio.replica_term_readings: replica_term_readings_field_chk (c) — CHECK ((btrim(field_key) <> ''::text))
+[INFO] portfolio.replica_term_readings: replica_term_readings_fund_global_security_id_fkey (f) — FOREIGN KEY (fund_global_security_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.replica_term_readings: replica_term_readings_model_chk (c) — CHECK (((source = 'data'::text) OR (deployment_name IS NOT NULL)))
+[INFO] portfolio.replica_term_readings: replica_term_readings_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_term_readings: replica_term_readings_source_chk (c) — CHECK ((source = ANY (ARRAY['model_1'::text, 'model_2'::text, 'data'::text])))
+[INFO] portfolio.replica_term_readings: replica_term_readings_source_document_id_fkey (f) — FOREIGN KEY (source_document_id) REFERENCES portfolio.replica_source_documents(id)
+[INFO] portfolio.replica_term_readings: replica_term_readings_span_chk (c) — CHECK ((((raw_char_start IS NULL) AND (raw_char_end IS NULL)) OR ((raw_char_start >= 0) AND (raw_char_end >= raw_char_start))))
+[INFO] portfolio.replica_term_readings: replica_term_readings_status_chk (c) — CHECK ((status = ANY (ARRAY['ok'::text, 'failed'::text, 'model_mismatch'::text, 'invalid'::text])))
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_claim_id_fkey (f) — FOREIGN KEY (claim_id) REFERENCES portfolio.replica_refresh_events(id)
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_phase_chk (c) — CHECK ((phase = ANY (ARRAY['claim'::text, 'finish'::text])))
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_platform_chk (c) — CHECK (((owner_scope = 'platform'::text) AND (org_id IS NULL)))
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_shape_chk (c) — CHECK ((((phase = 'claim'::text) AND (claim_id IS NULL) AND (status = 'running'::text)) OR ((phase = 'finish'::text) AND (claim_id IS NOT NU
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_status_chk (c) — CHECK ((status = ANY (ARRAY['running'::text, 'succeeded'::text, 'partial'::text, 'failed'::text])))
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_trigger_chk (c) — CHECK ((trigger_source = ANY (ARRAY['schedule'::text, 'manual'::text])))
+[INFO] portfolio.replica_securities: replica_securities_archive_chk (c) — CHECK (((archived_from_id IS NULL) OR (system_to IS NOT NULL)))
+[INFO] portfolio.replica_securities: replica_securities_archived_from_id_fkey (f) — FOREIGN KEY (archived_from_id) REFERENCES portfolio.replica_securities(id)
+[INFO] portfolio.replica_securities: replica_securities_created_by_fkey (f) — FOREIGN KEY (created_by) REFERENCES users(id)
+[INFO] portfolio.replica_securities: replica_securities_display_name_chk (c) — CHECK ((display_name ~~ 'Holdings of %'::text))
+[INFO] portfolio.replica_securities: replica_securities_global_security_id_fkey (f) — FOREIGN KEY (global_security_id) REFERENCES portfolio.securities_global(id)
+[INFO] portfolio.replica_securities: replica_securities_instrument_class_fkey (f) — FOREIGN KEY (instrument_class) REFERENCES portfolio.replica_instrument_classes(key)
+[INFO] portfolio.replica_securities: replica_securities_org_id_fkey (f) — FOREIGN KEY (org_id) REFERENCES organizations(id)
+[INFO] portfolio.replica_securities: replica_securities_status_chk (c) — CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'retired'::text])))
+[INFO] portfolio.replica_securities: replica_securities_ticker_chk (c) — CHECK (((btrim(ticker) <> ''::text) AND (ticker = upper(ticker))))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_approved_chk (c) — CHECK (((status <> ALL (ARRAY['approved'::text, 'superseded'::text])) OR ((checker_id IS NOT NULL) AND (approved_at IS NOT NULL))))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_archive_chk (c) — CHECK (((archived_from_id IS NULL) OR (system_to IS NOT NULL)))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_archived_from_id_fkey (f) — FOREIGN KEY (archived_from_id) REFERENCES portfolio.replica_terms_versions(id)
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_checker_id_fkey (f) — FOREIGN KEY (checker_id) REFERENCES users(id)
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_created_by_fkey (f) — FOREIGN KEY (created_by) REFERENCES users(id)
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_departures_chk (c) — CHECK ((jsonb_typeof(departures) = 'array'::text))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_maker_checker_chk (c) — CHECK (((checker_id IS NULL) OR (NOT (checker_id = ANY (maker_ids)))))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_no_chk (c) — CHECK ((version_no > 0))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_org_id_fkey (f) — FOREIGN KEY (org_id) REFERENCES organizations(id)
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_rejected_chk (c) — CHECK (((status <> 'rejected'::text) OR ((checker_id IS NOT NULL) AND (rejected_at IS NOT NULL))))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_replica_security_id_fkey (f) — FOREIGN KEY (replica_security_id) REFERENCES portfolio.replica_securities(id)
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_status_chk (c) — CHECK ((status = ANY (ARRAY['draft'::text, 'approved'::text, 'superseded'::text, 'rejected'::text])))
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_supersedes_version_id_fkey (f) — FOREIGN KEY (supersedes_version_id) REFERENCES portfolio.replica_terms_versions(id)
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_values_chk (c) — CHECK ((jsonb_typeof(term_values) = 'object'::text))
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_action_chk (c) — CHECK ((action = ANY (ARRAY['add_security'::text, 'extract'::text, 'correct'::text, 'change'::text, 'approve'::text, 'reject'::text, 'refres
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_actor_id_fkey (f) — FOREIGN KEY (actor_id) REFERENCES users(id)
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_correction_chk (c) — CHECK (((action <> 'correct'::text) OR (correction_id IS NOT NULL)))
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_correction_id_fkey (f) — FOREIGN KEY (correction_id) REFERENCES document_field_corrections(id)
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_human_chk (c) — CHECK (((action <> ALL (ARRAY['correct'::text, 'change'::text, 'approve'::text, 'reject'::text])) OR (actor_id IS NOT NULL)))
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_org_id_fkey (f) — FOREIGN KEY (org_id) REFERENCES organizations(id)
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_reason_chk (c) — CHECK (((action <> 'change'::text) OR (length(btrim(COALESCE(reason, ''::text))) > 0)))
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_replica_security_id_fkey (f) — FOREIGN KEY (replica_security_id) REFERENCES portfolio.replica_securities(id)
+[INFO] portfolio.replica_terms_actions: replica_terms_actions_terms_version_id_fkey (f) — FOREIGN KEY (terms_version_id) REFERENCES portfolio.replica_terms_versions(id)
+[INFO] portfolio.securities_global_identifiers: uq_sec_global_ident_issuer_assigned (i) — CREATE UNIQUE INDEX uq_sec_global_ident_issuer_assigned ON portfolio.securities_global_identifiers USING btree (id_type, id_value) WHERE ((s
+[INFO] portfolio.securities_global: uq_sec_global_active_index_name (i) — CREATE UNIQUE INDEX uq_sec_global_active_index_name ON portfolio.securities_global USING btree (lower(name)) WHERE ((security_type = 'index'
+[INFO] public.organizations: organizations_slug_key (i) — CREATE UNIQUE INDEX organizations_slug_key ON public.organizations USING btree (slug)
+[INFO] public.roles: roles_org_id_name_key (i) — CREATE UNIQUE INDEX roles_org_id_name_key ON public.roles USING btree (org_id, name)
+[INFO] public.ai_ensemble_configs: ai_ensemble_configs_one_active_per_task (i) — CREATE UNIQUE INDEX ai_ensemble_configs_one_active_per_task ON public.ai_ensemble_configs USING btree (task_key) WHERE is_active
+[INFO] public.users: users_auth0_sub_key (i) — CREATE UNIQUE INDEX users_auth0_sub_key ON public.users USING btree (auth0_sub)
+[INFO] public.users: users_email_key (i) — CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)
+[INFO] public.users: users_invite_token_key (i) — CREATE UNIQUE INDEX users_invite_token_key ON public.users USING btree (invite_token)
+[INFO] portfolio.replica_holdings_sources: replica_holdings_sources_key_live_uq (i) — CREATE UNIQUE INDEX replica_holdings_sources_key_live_uq ON portfolio.replica_holdings_sources USING btree (key) WHERE ((valid_to IS NULL) A
+[INFO] portfolio.replica_holdings_snapshots: replica_holdings_snapshots_file_uq (i) — CREATE UNIQUE INDEX replica_holdings_snapshots_file_uq ON portfolio.replica_holdings_snapshots USING btree (fund_global_security_id, as_of, 
+[INFO] portfolio.replica_holdings_rows: replica_holdings_rows_row_uq (i) — CREATE UNIQUE INDEX replica_holdings_rows_row_uq ON portfolio.replica_holdings_rows USING btree (snapshot_id, row_num)
+[INFO] portfolio.replica_source_documents: replica_source_documents_file_uq (i) — CREATE UNIQUE INDEX replica_source_documents_file_uq ON portfolio.replica_source_documents USING btree (fund_global_security_id, sha256)
+[INFO] portfolio.replica_terms_field_registry: replica_terms_field_registry_key_live_uq (i) — CREATE UNIQUE INDEX replica_terms_field_registry_key_live_uq ON portfolio.replica_terms_field_registry USING btree (field_key) WHERE ((valid
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_day_uq (i) — CREATE UNIQUE INDEX replica_refresh_events_day_uq ON portfolio.replica_refresh_events USING btree (run_date) WHERE ((trigger_source = 'sched
+[INFO] portfolio.replica_refresh_events: replica_refresh_events_finish_uq (i) — CREATE UNIQUE INDEX replica_refresh_events_finish_uq ON portfolio.replica_refresh_events USING btree (claim_id) WHERE (phase = 'finish'::tex
+[INFO] portfolio.replica_securities: replica_securities_live_uq (i) — CREATE UNIQUE INDEX replica_securities_live_uq ON portfolio.replica_securities USING btree (org_id, global_security_id) WHERE ((valid_to IS 
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_one_approved_uq (i) — CREATE UNIQUE INDEX replica_terms_versions_one_approved_uq ON portfolio.replica_terms_versions USING btree (replica_security_id) WHERE ((sta
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_one_draft_uq (i) — CREATE UNIQUE INDEX replica_terms_versions_one_draft_uq ON portfolio.replica_terms_versions USING btree (replica_security_id) WHERE ((status
+[INFO] portfolio.replica_terms_versions: replica_terms_versions_no_uq (i) — CREATE UNIQUE INDEX replica_terms_versions_no_uq ON portfolio.replica_terms_versions USING btree (replica_security_id, version_no) WHERE ((v
+[PASS] seed constraints read from the catalog first — every seeded table resolved, the partial unique has its WHERE  — 125 read over 19 tables; not read: none
+[PASS] app_service can address platform tables (no-op update, RLS)
+
+── [Y] Ingestion — snapshot + rows; same bytes = nothing; diff; bad weights → needs_review; unresolved queued, never guessed; N-PORT fallback ──
+[PASS] a missing fund is created through securities_global (type 'fund') and its SEC ids come from the ticker file  — FundIdentity(global_security_id='53aad843-08e5-48be-b615-a296f15a6757', ticker='ZZRPQ', cusip=None, name='REP1 VERIFY FUND', sec={'cik': '999999901', 'series_id': 'S000ZZRP01', 'class_id': 'C000ZZRP01'}, created=True, found_by=None)
+[PASS] with no issuer listing the ticker, the source falls back to N-PORT  — sec_nport
+[PASS] a SPY-shaped file creates ONE live snapshot with 4 rows (re-read)  — live 4
+[PASS] weights stored as decimal fractions (percent / 100)  — {'ZZRP00011': Decimal('0.500000000000'), 'ZZRP00012': Decimal('0.300000000000'), 'ZZRP00013': Decimal('0.199500000000'), '999USDZ92': Decimal('0.000500000000')}
+[PASS] as_of from the FILE; ex-cash weight 0.9995; raw bytes gzipped to R2 (mocked)  — replica/holdings/ZZRPQ/2026-10-20/c8feaa1e69d614e4.xlsx.gz
+[PASS] a constituent with a known CUSIP resolves through the security master
+[PASS] NEVER GUESSED: C published a CUSIP the master lacks — not matched via its ticker, though a decoy carries it  — decoy 1588a068-a617-415f-b49a-243365b43526
+[PASS] the unresolved constituent is QUEUED on the shared relationships table (proposal pattern)  — REP1 VERIFY GAMMA | CUSIP ZZRP00013 | TICKER ZZRPC
+[PASS] cash is not resolved or queued
+[PASS] the same bytes again create nothing (no snapshot, no edge, no upload)  — 1
+[PASS] a changed file creates a SECOND snapshot linked to the previous one
+[PASS] the diff is exactly: D added, C removed, A +5.00pp, B -5.05pp, turnover 25% → exceeds threshold  — [{'key': 'ZZRP00014', 'name': 'REP1 VERIFY DELTA', 'ticker': 'ZZRPD', 'weight': '0.2'}] [{'key': 'ZZRP00013', 'name': 'REP1 VERIFY GAMMA', 'ticker': 'ZZRPC', 'weight': '0.199500000000'}] {'ZZRP00012': Decimal('-0.050500000000'), 'ZZRP00011': Decimal('0.050000000000')} 0.250000000000
+[PASS] weights summing to 0.9 → 'needs_review', and the live snapshot is still the previous one  — non-cash weights sum to 0.900000 (1 ± 0.005)
+[PASS] N-PORT fallback: series feed → primary_doc.xml parsed (as_of repPdDate, pctVal/100, STIV = cash)  — [{'raw_cusip': 'ZZRP00011', 'weight': Decimal('0.600000000000'), 'asset_type': 'equity', 'resolution_state': 'resolved'}, {'raw_cusip': 'ZZRP00012', 'weight': Decimal('0.399000000000'), 'asset_type': 'equity', 'resolution_state': 'resolved'}, {'raw_cusip': 'ZZRP00099', 'weight': Decimal('0.001000000000'), 'asset_type': 'cash', 'resolution_state': 'not_applicable'}]
+[PASS] the Invesco parser reads its documented layout (live format NOT confirmed — 406)
+[PASS] an HTML page served as CSV (what iShares returned) is refused  — the server returned an HTML page, not a CSV file
+
+── [Y] Dry run writes nothing (before/after counts equal) ──
+[PASS] the dry run fetched, parsed, resolved and diffed (it reports what it would write)  — rows 4 unresolved 1
+[PASS] ...and wrote NOTHING: every counted table and R2 unchanged  — {}
+
+── [Y] Registry add (API) + extraction — readings with verified quotes; unverified → needs review; no Claude ──
+[PASS] org admin adds the fund (201)  — 201 {'entry': {'id': '2073d199-c98d-47e8-ade8-fdb23d43b6dd', 'display_name': 'Holdings of ZZRPQ', 'ticker': 'ZZRPQ', 'cusip': None, 'fund_name': 'REP1 VERIFY FUND', 'issuer': 'State Street Investment Management (SPDR)', 'instrument_class': 'index_etf', 'status': 'draft', 'holdings_source_key': 'ssga_spd
+[PASS] the existing fund is reused (no second security)
+[PASS] the terms step ran the ensemble  — {'ok': True, 'result': {'version_id': '4963224d-c8a7-4811-a134-5ebd06d9d347', 'version_no': 1, 'extraction_status': 'extracted', 'reason': None, 'needs_review': ['expense_ratio_net_pct', 'weighting_method']}}
+[PASS] exactly the two configured readers were called — no Claude model id in any call  — ['zzrp-reader-a', 'zzrp-reader-b']
+[PASS] each reader call is tagged replica_terms_extraction and asks for the registry's JSON schema
+[PASS] readings are written with their quote, a verified span, provider model and ensemble id (re-read)
+[PASS] a quote that is not in the document is UNVERIFIED
+[PASS] ...so its field is marked needs review on the DRAFT  — ['expense_ratio_net_pct', 'weighting_method']
+[PASS] reader disagreement → needs review
+[PASS] agreed+verified fields are clean; ticker / holdings count come from data (origin 'extracted')  — {'quote': None, 'value': 3, 'origin': 'extracted', 'source': 'data', 'confidence': 'data', 'fund_value': 3, 'reading_id': '5be5287d-ffd3-4926-ab5f-60e3c5f3124d', 'data_source': 'snapshot:d585e285-464e-46f5-b0c4-e7c376c10c6b', 'alternatives': [], 'needs_review': False, 'quote_verified': None, 'review_reasons': []}
+[PASS] an ensemble slot that is a Claude model is refused before any call  — deployment 'zzrp-claude' (anthropic/claude-haiku-4-5) is a Claude model — fund terms extraction never uses Claude
+[PASS] no request left the mocks  — []
+
+── [Y] Correction vs deliberate change — corrections table vs departures; approved immutable (409) ──
+[PASS] a correction to the draft is accepted  — 200 {'version': {'id': '4963224d-c8a7-4811-a134-5ebd06d9d347', 'version_no': 1, 'status': 'draft', 'term_values': {'issuer': {'quote': None, 'value': 'State Street Investment Management (SPDR)', 'origin':
+[PASS] the correction writes document_field_corrections (target_type 'replica_terms', target = the draft)
+[PASS] ...origin 'corrected' and NO departure  — []
+[PASS] a change with a blank reason is refused (422) and writes nothing
+[PASS] a deliberate change with a reason is accepted  — 200 {'version': {'id': '4963224d-c8a7-4811-a134-5ebd06d9d347', 'version_no': 1, 'status': 'draft', 'term_values': {'issuer': {'quote': None, 'value': 'State Street Investment Management (SPDR)', 'origin':
+[PASS] ...origin 'deliberate' + a departure {fund quarterly → ours monthly}, on the SAME draft  — [{'at': '2026-10-23T02:18:31.799870+00:00', 'by': '99000000-0000-0000-0000-0000000e1111', 'label': 'Rebalance frequency', 'reason': "Monthly rebalancing keeps the member's account closer to the index", 'field_key': 'rebalance_frequency', 'our_value': 'monthly', 'fund_value': 'quarterly'}]
+[PASS] a deliberate change writes NO correction row
+[PASS] the index name (disclosure only) can be corrected but never changed  — 422
+[PASS] 'correct' is logged as an action row + domain_events workflow event + audit_log (re-read)
+[PASS] 'change' is logged as an action row + domain_events workflow event + audit_log (re-read)
+[PASS] an 'approval needed' task is open for every approve_replication holder  — [{'user_id': UUID('99000000-0000-0000-0000-0000000e1111'), 'status': 'open'}, {'user_id': UUID('99000000-0000-0000-0000-0000000e1112'), 'status': 'open'}]
+
+── [Y] Maker-checker on the identical request; approval supersedes; one approved version live ──
+[PASS] the MAKER's approve is refused (403 naming the rule) and the draft is unchanged  — 403 {'detail': 'Maker-checker: you corrected or changed a field in this draft, so you cannot approve or reject it — another approver must.'}
+[PASS] the database CHECK refuses a maker as checker too  — new row for relation "replica_terms_versions" violates check constraint "replica_terms_versions_maker_checker_chk"
+[PASS] the identical request by a different approver succeeds  — 200
+[PASS] 'approve' logged (action + event + audit)
+[PASS] the approval tasks are closed (status done)
+[PASS] first approval makes the registry entry active
+[PASS] a correction aimed at the APPROVED version is 409  — 409
+[PASS] a change aimed at the APPROVED version is 409  — 409
+[PASS] a direct UPDATE of an approved version is refused (trigger)  — an approved replica terms version is never edited (only superseded by approving a new one)
+[PASS] the approved version is byte-for-byte unchanged (re-read)
+[PASS] a change with no draft open creates draft v2 from the approved version  — 200
+[PASS] v2 approved by the checker  — 200
+[PASS] approval supersedes the prior version; exactly ONE approved version live (re-read)  — {'bb62c2f8-de35-4398-a21e-fa65f986c652': 'approved', '4963224d-c8a7-4811-a134-5ebd06d9d347': 'superseded'}
+[PASS] every edit archived the outgoing state on the system axis (bi-temporal)  — 6
+[PASS] reject: refused for the maker, done by the checker, logged  — 403 200
+
+── [Y] Org isolation both directions under app_service (rolbypassrls = false); platform snapshots shared ──
+[PASS] isolation is tested on a role WITHOUT rolbypassrls
+[PASS] org B adds the SAME fund to its own registry  — 201 {'entry': {'id': '8fa599e3-1d8c-4b48-9a54-c093a037af17', 'display_name': 'Holdings of ZZRPQ', 'ticker': 'ZZRPQ', 'cusip': None, 'fund_name': 'REP1 VERIFY FUND', 'issuer': 'State Street Investment Mana
+[PASS] platform data is shared: no second snapshot, the extraction is REUSED (no model call)  — 3->3 {'ok': True, 'result': {'version_id': 'd098178e-4635-48fd-88be-6e05329164c2', 'version_no': 1, 'extraction_status': 'reused', 'reason': None, 'needs_review': ['expense_ratio_net_pct', 'weighting_method']}}
+[PASS] B → A: own entry 200, the other org's entry 404 (read AND edit), absent from the list  — 200 404 404
+[PASS] A → B: own entry 200, the other org's entry 404 (read AND edit), absent from the list  — 200 404 404
+[PASS] SQL under app_service as 99000000-0000-0000-0000-0000000e1001: own entries visible, the other org's entries/versions 0, platform snapshots all readable  — own 2 other 0/0 snaps 3
+[PASS] SQL under app_service as 99000000-0000-0000-0000-0000000e1002: own entries visible, the other org's entries/versions 0, platform snapshots all readable  — own 1 other 0/0 snaps 3
+[PASS] org B cannot write an org A row (RLS WITH CHECK)  — new row violates row-level security policy for table "replica_terms_actions"
+
+── [Y] Permission gates both ways on identical requests ──
+[PASS] GET registry: member → 403 naming view_replication  — 403
+[PASS] GET registry: staff → 403 naming view_replication  — 403
+[PASS] GET registry: org admin → 200 on the identical request
+[PASS] GET 2073d199-c98d-47e8-ade8-fdb23d43b6dd: member → 403 naming view_replication  — 403
+[PASS] GET 2073d199-c98d-47e8-ade8-fdb23d43b6dd: staff → 403 naming view_replication  — 403
+[PASS] GET 2073d199-c98d-47e8-ade8-fdb23d43b6dd: org admin → 200 on the identical request
+[PASS] POST changes: member → 403 naming manage_replication  — 403
+[PASS] POST changes: staff → 403 naming manage_replication  — 403
+[PASS] POST changes: org admin → 200 on the identical request  — 200
+[PASS] POST approve: staff → 403 naming approve_replication  — 403
+[PASS] POST approve: org admin (not the maker) → 200 on the identical request  — 200
+[PASS] Super Admin first: no replication grant, full envelope  — 200
+[PASS] org admin's envelope: can_write true, field vocabularies from the server
+[PASS] a view-less caller gets no envelope at all (fails closed)
+[PASS] no role other than org_admin holds a replication permission (live grants)  — []
+[FIND] org_admin default for NEW orgs  — the migration granted the three permissions to every EXISTING org_admin role; rbac.ensure_org_admin_role (an org's FIRST org_admin) still grants manage_org_settings only — re-run the docs/rep1_part1.sql §14 grant (idempotent) after creating a new org, or extend that helper in a sprint that owns it
+
+── [Y] Daily refresh — once per weekday after 11:00 UTC, idempotent, off switch, failure recorded, review task ──
+[PASS] REPLICA_HOLDINGS_AUTO_REFRESH=0 → off, nothing claimed
+[PASS] Saturday and 10:59 UTC Monday → not due, nothing claimed
+[PASS] Monday 11:05 UTC: claims the day and ingests the active fund  — succeeded [{'fund_id': '53aad843-08e5-48be-b615-a296f15a6757', 'ticker': 'ZZRPQ', 'source': 'ssga_spdr', 'orgs': 1, 'action': 'created', 'snapshot_id': 'dc42a992-2687-4209-9fa6-b53af5cfd560', 'status': 'live', 'as_of': '2026-10-23', 'unresolved': 1, 'review_tasks': 2}]
+[PASS] a second tick the same day → 'already'; ONE snapshot; claim + finish rows  — 3->4 [{'phase': 'claim', 'status': 'running'}, {'phase': 'finish', 'status': 'succeeded'}]
+[PASS] the change exceeded the threshold → a review task + action/event/audit in the holding org  — 2 todos
+[PASS] an issuer failure is recorded per fund on the finish row; the tick does not raise  — failed [{'orgs': 1, 'error': 'ReplicaHoldingsError: holdings download answered HTTP 500: https://www.ssga.com/us/en/intermediary/library-content/products/fund-data/etfs/us/holdings-daily-us-en-zzrpq.xlsx', 'action': 'failed', 'source': 'ssga_spdr', 'ticker': 'ZZRPQ', 'fund_id': '53aad843-08e5-48be-b615-a296f15a6757'}]
+[PASS] wired into the cron entrypoint right after the weekday index refresh (bulkfetchui3's path)
+
+── [Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed ──
+[PASS] no existing route's gate changed or vanished  — [] []
+[PASS] 10 new routes, all under /replication  — 10
+[PASS] every new route names its replication gate  — ['authz view_replication', 'authz manage_replication', 'authz manage_replication']
+[PASS] authz1_routes.py --check: CURRENT  — CURRENT
+
+
+── [Y] Front end — node tests (no write controls without the flags); node --test tests/; npm run build ──
+[PASS] node --test tests/replication passes
+[PASS] node test: registry: no Add control unless the envelope says can_write === true
+[PASS] node test: terms: view-only envelope renders no Correct / Change / Approve / Reject (and no Refresh)
+[PASS] node test: approve / reject: only with approve_replication AND not a maker of the draft
+[PASS] node test: menu: Portfolio → Replication is gated on view_replication (strict, Super Admin first)
+[PASS] node --test tests/ passes (0 fail)
+[PASS] npm run build exits 0
+
+── [Y] Teardown — zero fixture rows; every touched table at its pre-test count; real rows unchanged ──
+[INFO] teardown removed: ['member_todos: 12', 'domain_events: 16', 'audit_log: 16', 'replica_terms_actions: 16', 'document_field_corrections: 2', 'replica_terms_versions: 16', 'replica_securities: 3', 'replica_term_readings: 41', 'ai_ensemble_configs: 1', 'replica_source_documents: 1', 'replica_holdings_rows: 19', 'replica_holdings_snapshots: 5', 'replica_refresh_events (finish): 2', 'replica_refresh_events (claim): 2', 'securities_global_relationships: 2', 'securities_global_identifiers: 7', 'securities_global: 5', 'public.user_roles: 6', 'public.users: 6', 'public.role_permissions: 63', 'public.roles: 5', 'public.org_ai_spend_cache: 2', 'public.organizations: 2']
+[PASS] zero fixture rows remain  — 0
+[PASS] public.users at its pre-test count  — 16 → 16
+[PASS] public.organizations at its pre-test count  — 2 → 2
+[PASS] public.roles at its pre-test count  — 20 → 20
+[PASS] public.user_roles at its pre-test count  — 11 → 11
+[PASS] public.role_permissions at its pre-test count  — 209 → 209
+[PASS] public.audit_log at its pre-test count  — 112 → 112
+[PASS] public.member_todos at its pre-test count  — 9 → 9
+[PASS] public.domain_events at its pre-test count  — 0 → 0
+[PASS] public.document_field_corrections at its pre-test count  — 0 → 0
+[PASS] public.ai_ensemble_configs at its pre-test count  — 0 → 0
+[PASS] portfolio.securities_global at its pre-test count  — 67 → 67
+[PASS] portfolio.securities_global_identifiers at its pre-test count  — 64 → 64
+[PASS] portfolio.securities_global_relationships at its pre-test count  — 97 → 97
+[PASS] portfolio.replica_securities at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_terms_versions at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_terms_actions at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_holdings_snapshots at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_holdings_rows at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_source_documents at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_term_readings at its pre-test count  — 0 → 0
+[PASS] portfolio.replica_refresh_events at its pre-test count  — 0 → 0
+[PASS] real securities_global unchanged (count + checksum)  — 67 rows
+[PASS] real securities_global_identifiers unchanged (count + checksum)  — 64 rows
+[PASS] real securities_global_relationships unchanged (count + checksum)  — 97 rows
+
+── [Y] Regression — verify_underlyingresolution.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1 ──
+[FAIL] verify_underlyingresolution.py: 0 FAIL  — no TOTAL; ["[FAIL] EXACTLY ONE code site writes link_state='resolved' — 3 site(s): ['apps/api/scripts/verify_portfolioa1.py:687', 'apps/api/scripts/verify_portfolioa1.py:693', 'apps/api/services/underlying_resolution.py:479']", "[FAIL] that site is confirm_resolution in services/underlying_resolution.py — ['apps/api/scripts/verify_portfolioa1.py:687', 'apps/api/scripts/verify_portfolioa1.py:693', 'apps/api/services/underlying_resolution.py:479']"] ripts/verify_underlyingresolution.py:959: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient
+
+
+TOTAL: 135 PASS, 1 FAIL
