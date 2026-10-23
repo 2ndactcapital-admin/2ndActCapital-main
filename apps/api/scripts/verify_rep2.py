@@ -35,6 +35,7 @@ With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 
 from __future__ import annotations
 
+from pathlib import Path
 import os as _authz_os
 _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: set before main is imported
 
