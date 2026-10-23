@@ -12,3 +12,4 @@ verify_bulkfetchui.py
 verify_bulkfetchui2.py
 verify_bulkfetchui3.py
 verify_edgarpipelinea.py
+verify_rep1.py

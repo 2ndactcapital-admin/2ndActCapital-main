@@ -68,6 +68,9 @@ export const GATE_MANAGE_DEALS = { perm: "manage_deals" };
 // delegates and org admins reach it from the deal page and My deal access
 // (GET /deal-room/me → has_access_grid). Recorded as a [FIND].
 export const GATE_MANAGE_DEALS_STRICT = { perm: "manage_deals", strict: true };
+// REP1 — Replication Studio. GET /replication/registry requires
+// view_replication (Super Admin first); STRICT so no envelope hides the tab.
+export const GATE_VIEW_REPLICATION = { perm: "view_replication", strict: true };
 
 /** Navigation sections, top to bottom. `header` is null for the main section. */
 export const SECTIONS = [
@@ -196,8 +199,10 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 6, "/portfolio/allocation", "Allocation", GATE_SUPER_ADMIN, false),
   // GET /me/ownership-graph is scoped to the caller's own visibility engine.
   tab("main", "portfolio", 7, "/portfolio/ownership-tree", "Ownership tree", null, false),
+  // REP1 — Replication Studio: registry, holdings and fund terms.
+  tab("main", "portfolio", 8, "/portfolio/replication", "Replication", GATE_VIEW_REPLICATION, false),
   // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
-  { ...tab("main", "portfolio", 8, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+  { ...tab("main", "portfolio", 9, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
   main(60, "/spvs", "SPV Manager", "spv-manager"),

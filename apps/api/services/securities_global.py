@@ -949,3 +949,101 @@ async def set_price_coverage(
         )
     if status.rsplit(" ", 1)[-1] == "0":
         raise SecuritiesGlobalError(f"security {global_security_id} does not exist")
+
+
+# ── Bulk variants (rep1 — Replication Studio holdings) ──────────────────────
+#
+# A fund holdings file is hundreds of rows. Calling get_by_identifier /
+# add_relationship once per row is ~3 round trips each through the pooler —
+# minutes for one S&P 500 file. These are the SAME rules in one statement each,
+# kept in THIS module so the security master still has exactly one resolver.
+
+
+async def get_by_identifiers_bulk(conn, id_type: str, id_values) -> dict[str, dict[str, Any]]:
+    """:func:`get_by_identifier` for many values of ONE id_type at once.
+
+    Returns ``{normalized_value: row}`` for every value that matched exactly
+    ONE surviving security — same merge-following join, same current-row
+    predicate. A value that points at two different surviving securities
+    (possible for 'ticker' and 'sedol', which carry no unique index) is
+    ABSENT from the result: an ambiguous identifier is not a match, and the
+    caller must treat it as unresolved rather than pick one.
+    """
+    _check_choice(id_type, IDENTIFIER_TYPES, "id_type")
+    values = sorted({normalize_identifier_value(id_type, v) for v in id_values if (v or "").strip()})
+    if not values:
+        return {}
+    rows = await conn.fetch(
+        f"""
+        SELECT i.id_value,
+               canonical.id::text            AS id,
+               canonical.name,
+               canonical.security_type,
+               matched.id::text              AS matched_global_security_id,
+               (matched.id <> canonical.id)  AS was_merged
+        FROM {TABLE_IDENT} i
+        JOIN {TABLE_SEC} matched
+          ON matched.id = i.global_security_id
+        JOIN {TABLE_SEC} canonical
+          ON canonical.id = COALESCE(matched.canonical_id, matched.id)
+        WHERE i.id_type = $1
+          AND i.id_value = ANY($2::text[])
+          AND {_current("i")}
+        """,
+        id_type, values,
+    )
+    by_value: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_value.setdefault(r["id_value"], []).append(dict(r))
+    out: dict[str, dict[str, Any]] = {}
+    for value, hits in by_value.items():
+        if len({h["id"] for h in hits}) == 1:
+            out[value] = hits[0]
+    return out
+
+
+async def add_relationships_bulk(
+    conn,
+    *,
+    from_global_security_id: str,
+    raw_texts,
+    relationship_type: str = "constituent_of",
+    is_super_admin: bool = False,
+) -> dict[str, str]:
+    """:func:`add_relationship` for many UNRESOLVED edges from one security.
+
+    Same refusals (Super Admin; edges are created 'unresolved' only — never
+    resolved, never ambiguous), same table. Idempotent on the live edge key
+    ``uq_sec_global_rel_edge`` (from, type, raw text): an edge that already
+    exists is returned, not duplicated. Returns ``{raw_text: relationship_id}``
+    for every requested text.
+    """
+    _require_super_admin(is_super_admin, "add_relationships_bulk")
+    _check_choice(relationship_type, RELATIONSHIP_TYPES, "relationship_type")
+    texts = sorted({(t or "").strip() for t in raw_texts if (t or "").strip()})
+    if not texts:
+        return {}
+    async with _SuperAdminWrite(conn) as c:
+        if await canonical_id_for(c, from_global_security_id) is None:
+            raise SecuritiesGlobalError(f"security {from_global_security_id} does not exist")
+        await c.execute(
+            f"""
+            INSERT INTO {TABLE_REL}
+                (from_global_security_id, raw_underlying_text, link_state, relationship_type)
+            SELECT $1::uuid, t, '{UNRESOLVED}', $2
+            FROM unnest($3::text[]) AS t
+            ON CONFLICT (from_global_security_id, relationship_type, raw_underlying_text)
+                WHERE system_to IS NULL AND valid_to IS NULL
+            DO NOTHING
+            """,
+            str(from_global_security_id), relationship_type, texts,
+        )
+        rows = await c.fetch(
+            f"""
+            SELECT raw_underlying_text, id::text AS id FROM {TABLE_REL}
+            WHERE from_global_security_id = $1::uuid AND relationship_type = $2
+              AND raw_underlying_text = ANY($3::text[]) AND {_current(TABLE_REL)}
+            """,
+            str(from_global_security_id), relationship_type, texts,
+        )
+    return {r["raw_underlying_text"]: r["id"] for r in rows}

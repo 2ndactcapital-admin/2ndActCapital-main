@@ -60,6 +60,7 @@ FEATURE_GATES = {
     "routers.investment_profile": "entity access: staff any entity, member only their own (visible_entity_ids)",
     "routers.spv": "subscriptions: entity access + indicate_interest for a non-staff caller",
     "routers.deal_room": "DEALROOM1 — deal room scope (services.deal_room.deal_rights); publisher capability → manage_deals|manage_org_settings",
+    "routers.replication": "REP1 — view_replication / manage_replication / approve_replication (approve never for a maker of the draft)",
 }
 # Writes that stay "active account only", with the reason.
 SELF_SCOPED = {

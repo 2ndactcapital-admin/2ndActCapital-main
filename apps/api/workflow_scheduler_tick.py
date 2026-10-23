@@ -69,6 +69,13 @@ through yesterday and records an edgar_pipeline_runs row (trigger_source
 never reach the SEC. Once-per-day is enforced by a unique index, a failure is
 recorded on the run row (exit code 1, so Render shows it), and
 EDGAR_INDEX_AUTO_REFRESH=0 turns it off.
+
+WEEKDAY REPLICA HOLDINGS REFRESH (rep1). Then, on the same path,
+``services.replica_schedule.maybe_refresh_holdings``: once per weekday, the
+first tick at or after 11:00 UTC ingests holdings for every active Replication
+Studio registry entry (once per day by a unique index; idempotent per file;
+failures recorded per fund on portfolio.replica_refresh_events, exit code 1
+when the step itself failed). REPLICA_HOLDINGS_AUTO_REFRESH=0 turns it off.
 """
 from __future__ import annotations
 
@@ -80,6 +87,7 @@ import asyncpg
 
 from services.database import close_pool, get_pool
 from services.edgar_index_schedule import maybe_refresh_index
+from services.replica_schedule import maybe_refresh_holdings
 from services.workflow_scheduler import run_scheduler_tick
 
 
@@ -103,6 +111,7 @@ async def main() -> int:
         return 2
 
     index = {"action": "not_run"}
+    holdings = {"action": "not_run"}
     try:
         pool = await get_pool()
         result = await run_scheduler_tick(conn, pool)
@@ -114,6 +123,13 @@ async def main() -> int:
             index = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
         if index["action"] in ("succeeded", "failed"):
             print(f"[scheduler] edgar index refresh: {index}")
+        # Its own step again: a holdings problem never stops the steps above.
+        try:
+            holdings = await maybe_refresh_holdings(pool)
+        except Exception as exc:  # noqa: BLE001
+            holdings = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        if holdings["action"] in ("succeeded", "partial", "failed"):
+            print(f"[scheduler] replica holdings refresh: { {k: v for k, v in holdings.items() if k != 'results'} }")
     finally:
         await conn.close()
         await close_pool()
@@ -122,7 +138,9 @@ async def main() -> int:
         print(f"[scheduler] unresolved: {err}", file=sys.stderr)
     if index["action"] == "failed":
         print(f"[scheduler] edgar index refresh failed: {index.get('error')}", file=sys.stderr)
-    return 1 if result.errors or index["action"] == "failed" else 0
+    if holdings["action"] == "failed":
+        print(f"[scheduler] replica holdings refresh failed: {holdings.get('error')}", file=sys.stderr)
+    return 1 if result.errors or index["action"] == "failed" or holdings["action"] == "failed" else 0
 
 
 if __name__ == "__main__":
