@@ -60,6 +60,7 @@ load_dotenv(
     override=False,
 )
 
+from services.database import _RLSPool  # noqa: E402
 from services.underlying_index_registry import (  # noqa: E402
     KNOWN_INDICES,
     lookup_index,
@@ -152,41 +153,53 @@ def check(name: str, passed: bool, detail: str = "") -> None:
 
 async def teardown(conn) -> None:
     """Remove fixture users and the fixture security. Edge state is restored
-    separately, by the checks that mutate it, from a snapshot they take."""
-    await conn.execute(
-        f"DELETE FROM {IDENT_TABLE} WHERE global_security_id IN "
-        f"(SELECT id FROM {SEC_TABLE} WHERE name = $1)",
-        FIXTURE_SECURITY_NAME,
-    )
-    # Nothing can reference it: it is created and confirmed inside one check,
-    # and that check restores the edge that pointed at it before this runs.
-    await conn.execute(
-        f"UPDATE {REL_TABLE} SET to_global_security_id = NULL, "
-        f"proposed_global_security_id = NULL "
-        f"WHERE to_global_security_id IN (SELECT id FROM {SEC_TABLE} WHERE name = $1) "
-        f"   OR proposed_global_security_id IN (SELECT id FROM {SEC_TABLE} WHERE name = $1)",
-        FIXTURE_SECURITY_NAME,
-    )
-    await conn.execute(f"DELETE FROM {SEC_TABLE} WHERE name = $1", FIXTURE_SECURITY_NAME)
-    await conn.execute(
-        "DELETE FROM users WHERE auth0_sub = ANY($1::text[])",
-        [ADMIN_SUB, MEMBER_SUB],
-    )
+    separately, by the checks that mutate it, from a snapshot they take.
+
+    DATABASE_URL is app_service (RLS enforced): every write here needs the
+    super-admin GUC, set transaction-local — without it the users/securities
+    deletes silently match zero rows."""
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        await conn.execute(
+            f"DELETE FROM {IDENT_TABLE} WHERE global_security_id IN "
+            f"(SELECT id FROM {SEC_TABLE} WHERE name = $1)",
+            FIXTURE_SECURITY_NAME,
+        )
+        # Nothing can reference it: it is created and confirmed inside one check,
+        # and that check restores the edge that pointed at it before this runs.
+        await conn.execute(
+            f"UPDATE {REL_TABLE} SET to_global_security_id = NULL, "
+            f"proposed_global_security_id = NULL "
+            f"WHERE to_global_security_id IN (SELECT id FROM {SEC_TABLE} WHERE name = $1) "
+            f"   OR proposed_global_security_id IN (SELECT id FROM {SEC_TABLE} WHERE name = $1)",
+            FIXTURE_SECURITY_NAME,
+        )
+        await conn.execute(f"DELETE FROM {SEC_TABLE} WHERE name = $1", FIXTURE_SECURITY_NAME)
+        fixture_ids = [ADMIN_USER_ID, MEMBER_USER_ID]
+        await conn.execute("DELETE FROM audit_log WHERE user_id = ANY($1::uuid[])", fixture_ids)
+        await conn.execute(
+            "DELETE FROM users WHERE auth0_sub = ANY($1::text[]) OR id = ANY($2::uuid[])",
+            [ADMIN_SUB, MEMBER_SUB], fixture_ids,
+        )
 
 
 async def seed_users(conn) -> None:
-    for user_id, sub, role, email in (
-        (ADMIN_USER_ID, ADMIN_SUB, "super_admin", "verify_underlying_admin@test.local"),
-        (MEMBER_USER_ID, MEMBER_SUB, "member", "verify_underlying_member@test.local"),
-    ):
-        await conn.execute(
-            """
-            INSERT INTO users (id, org_id, email, full_name, auth0_sub, role)
-            VALUES ($1::uuid, $2::uuid, $3, 'Verify Underlying', $4, $5)
-            ON CONFLICT (auth0_sub) DO NOTHING
-            """,
-            user_id, DEFAULT_ORG_ID, email, sub, role,
-        )
+    # users RLS is enforced for app_service: insert under the transaction-local
+    # super-admin GUC; is_test is explicit (the @test.local trigger also sets it).
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for user_id, sub, role, email in (
+            (ADMIN_USER_ID, ADMIN_SUB, "super_admin", "verify_underlying_admin@test.local"),
+            (MEMBER_USER_ID, MEMBER_SUB, "member", "verify_underlying_member@test.local"),
+        ):
+            await conn.execute(
+                """
+                INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active, is_test)
+                VALUES ($1::uuid, $2::uuid, $3, 'Verify Underlying', $4, $5, 'active', true, true)
+                ON CONFLICT (auth0_sub) DO NOTHING
+                """,
+                user_id, DEFAULT_ORG_ID, email, sub, role,
+            )
 
 
 EDGE_COLUMNS = (
@@ -207,17 +220,21 @@ async def snapshot_edge(conn, rel_id: str) -> dict:
 async def restore_edge(conn, rel_id: str, snap: dict) -> None:
     """Write a snapshot back verbatim.
 
-    Runs on the DATABASE_URL connection (table owner, RLS not forced) so it does
-    not need the super-admin GUC. It deliberately does NOT set
+    Runs on the DATABASE_URL connection, which is app_service (RLS enforced):
+    the UPDATE needs the super-admin GUC, set transaction-local — without it the
+    restore silently matches zero rows and leaves the real edge mutated. It
+    deliberately does NOT set
     app.underlying_confirm: if a snapshot ever carried link_state='resolved' the
     trigger would reject this and the run would fail loudly, which is the right
     outcome — this script has no business restoring a resolution it did not make.
     """
     sets = ", ".join(f"{col} = ${i + 2}" for i, col in enumerate(EDGE_COLUMNS))
-    await conn.execute(
-        f"UPDATE {REL_TABLE} SET {sets} WHERE id = $1::uuid",
-        rel_id, *[snap[col] for col in EDGE_COLUMNS],
-    )
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        await conn.execute(
+            f"UPDATE {REL_TABLE} SET {sets} WHERE id = $1::uuid",
+            rel_id, *[snap[col] for col in EDGE_COLUMNS],
+        )
 
 
 async def app_service_connection():
@@ -833,13 +850,17 @@ async def check_create_new(pool, conn) -> None:
                 created_id,
             )
             if refs == 0:
-                await conn.execute(
-                    f"DELETE FROM {IDENT_TABLE} WHERE global_security_id = $1::uuid",
-                    created_id,
-                )
-                await conn.execute(
-                    f"DELETE FROM {SEC_TABLE} WHERE id = $1::uuid", created_id
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "SELECT set_config('app.is_super_admin', 'true', true)"
+                    )
+                    await conn.execute(
+                        f"DELETE FROM {IDENT_TABLE} WHERE global_security_id = $1::uuid",
+                        created_id,
+                    )
+                    await conn.execute(
+                        f"DELETE FROM {SEC_TABLE} WHERE id = $1::uuid", created_id
+                    )
 
 
 async def check_reject(pool, conn) -> None:
@@ -1025,9 +1046,14 @@ async def main_async() -> int:
     app_conn, app_role = await app_service_connection()
     print(f"app_service role: {app_role}")
 
-    pool = await asyncpg.create_pool(
+    # The app's RLS pool wrapper, as the routes use it: every acquire runs in a
+    # transaction, which is what the services' SET LOCAL super-admin GUC relies
+    # on (a raw asyncpg pool autocommits, so that GUC dies before the INSERT).
+    # Its own instance, not get_pool()'s global — TestClient's lifespan in
+    # check_endpoints opens and closes that one on a different event loop.
+    pool = _RLSPool(await asyncpg.create_pool(
         os.environ["DATABASE_URL"], statement_cache_size=0, min_size=1, max_size=4
-    )
+    ))
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], statement_cache_size=0)
     summary: dict = {}
     try:

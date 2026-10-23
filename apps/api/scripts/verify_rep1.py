@@ -623,19 +623,35 @@ async def y_schema(conn):
     role = await conn.fetchrow("SELECT current_user AS u, rolbypassrls FROM pg_roles WHERE rolname = current_user")
     check(role["u"] == "app_service" and role["rolbypassrls"] is False,
           "the verify connection is app_service with rolbypassrls = false", f"{dict(role)}")
+    # Every table seed() writes directly (rbac.ensure_role → roles; securities_global → its two tables), plus the
+    # replica_* tables the services under test write. Names are bare (relname), never regclass::text — `portfolio`
+    # is not on app_service's search_path, so regclass renders those schema-qualified.
+    seeded = ["public.organizations", "public.roles", "public.role_permissions", "public.users",
+              "public.user_roles", "public.ai_ensemble_configs", "portfolio.securities_global",
+              "portfolio.securities_global_identifiers"]
     rows = await conn.fetch(
-        """SELECT conrelid::regclass::text AS t, conname, contype::text AS k, pg_get_constraintdef(oid) AS d
-           FROM pg_constraint WHERE connamespace = 'portfolio'::regnamespace AND conrelid::regclass::text LIKE
-           'portfolio.replica_%' AND contype IN ('u', 'c', 'f')
+        """WITH t AS (SELECT c.oid, n.nspname || '.' || c.relname AS t FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE c.relkind IN ('r', 'p') AND (n.nspname || '.' || c.relname = ANY($1::text[])
+                            OR (n.nspname = 'portfolio' AND c.relname LIKE 'replica\\_%')))
+           SELECT t.t, NULL::text AS conname, NULL::text AS k, NULL::text AS d FROM t
            UNION ALL
-           SELECT indrelid::regclass::text, indexrelid::regclass::text, 'i', pg_get_indexdef(indexrelid) FROM pg_index
-           WHERE indrelid::regclass::text LIKE 'portfolio.replica_%' AND indisunique AND NOT indisprimary""")
-    for r in rows:
+           SELECT t.t, x.conname::text, x.contype::text, pg_get_constraintdef(x.oid) FROM t
+           JOIN pg_constraint x ON x.conrelid = t.oid AND x.contype IN ('u', 'c', 'f')
+           UNION ALL
+           SELECT t.t, ic.relname::text, 'i', pg_get_indexdef(i.indexrelid) FROM t
+           JOIN pg_index i ON i.indrelid = t.oid AND i.indisunique AND NOT i.indisprimary
+           JOIN pg_class ic ON ic.oid = i.indexrelid""", seeded)
+    read_tables = {r["t"] for r in rows}
+    cons = [r for r in rows if r["conname"]]
+    for r in cons:
         print(f"[INFO] {r['t']}: {r['conname']} ({r['k']}) — {r['d'][:140]}")
-    have = {r["conname"]: r["d"] for r in rows}
-    check("replica_holdings_snapshots_file_uq" in have and "replica_securities_live_uq" in have
-          and "WHERE" in have["replica_securities_live_uq"], "seed constraints read from the catalog first",
-          f"{len(rows)} read")
+    have = {r["conname"]: r["d"] for r in cons}
+    unread = [t for t in seeded if t not in read_tables]
+    check(not unread and any(t.startswith("portfolio.replica_") for t in read_tables)
+          and "replica_holdings_snapshots_file_uq" in have and "WHERE" in have.get("replica_securities_live_uq", ""),
+          "seed constraints read from the catalog first — every seeded table resolved, the partial unique has its "
+          "WHERE", f"{len(cons)} read over {len(read_tables)} tables; not read: {unread or 'none'}")
     try:
         await conn.execute("UPDATE portfolio.replica_holdings_sources SET active = active WHERE false")
         check(True, "app_service can address platform tables (no-op update, RLS)")
