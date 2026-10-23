@@ -1565,10 +1565,10 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
-    check(len(new) == 28 and all(k[1].startswith("/api/v1/models") for k in new)
-          and all(any(p in str(gn[k].get("after")) for p in MODEL_PERMS) for k in new),
-          "28 new routes, all under /models, each naming a model permission", f"{len(new)}")
+    # by path: later sprints add routes of their own (rep4: /replication/...) — rep3's are the /models ones
+    new = [k for k in gn if k not in gb and k[1].startswith("/api/v1/models")]
+    check(len(new) == 28 and all(any(p in str(gn[k].get("after")) for p in MODEL_PERMS) for k in new),
+          "28 new routes under /models, each naming a model permission", f"{len(new)}")
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1581,6 +1581,9 @@ async def y_front_end(conn):
     check((WEB_DIR / "tests" / "models" / "rep3.test.mjs").exists() and "models list: no Upload" in out
           and "model page: a view-only envelope renders no write, approve or publish control" in out,
           "the rep3 node tests (no Upload / Approve / Publish / Edit controls without the flags) ran in that suite")
+    if os.environ.get("SKIP_BUILD") == "1":
+        print("[SKIP] npm run build (SKIP_BUILD=1 — a nested regression run; the outer verify builds)")
+        return
     code, out, err = run_cmd(["npm", "run", "build"], WEB_DIR, timeout=1200)
     check(code == 0, "npm run build exits 0", (out + err)[-400:] if code else "")
 

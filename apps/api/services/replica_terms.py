@@ -990,6 +990,18 @@ async def _apply_terms_decision(pool, *, org_id, version_id, approve: bool, acto
                                            "task_id": str(task_id) if task_id else None,
                                            "superseded_version_id": str(prior["id"]) if prior else None})
     await publish_actions(pool, [ref])
+    if approve and prior is not None:
+        # rep4: a critical terms change raises a review task on every model built from this fund (no automatic
+        # version). Never undoes the approval — a failure is logged.
+        try:
+            from services import replica_models as RM
+
+            await RM.monitor_terms(pool, org_id=org_id, entry_id=entry_id, version_id=draft["id"],
+                                   prior_version_id=prior["id"])
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception("terms monitor failed for %s", draft["id"])
     return version, [ref]
 
 

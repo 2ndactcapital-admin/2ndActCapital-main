@@ -527,3 +527,143 @@ upload log (`/portfolio/models/uploads`), templates (`/api/models/template`).
 
 1. `pip install -r apps/api/requirements.txt` (xlrd).
 2. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep3.py`.
+
+## rep4 — build a model from a fund (2026-10-23)
+
+Spec: "Replication Studio — ETF & Fund-to-SMA Spec" (Joe, 2026-10-22) — "What can
+be replicated", "Workflow" steps 2, 5, 6, "Portfolio construction", "Fees".
+Services: `services/replica_models.py` (construction, find-or-build, specs,
+monitoring), `services/replica_viability.py` (the five questions, cost
+comparison). Routes: `routers/replication_models.py`. Schema:
+`docs/rep4_part1.sql` (applied by `scripts/_apply_rep4.py`). Screen: the **Model**
+tab on a Replication entry (`components/replication/ModelTab.jsx`). Verify:
+`apps/api/scripts/verify_rep4.py` (written, not run in the sprint).
+
+### Task 1 findings (rep4)
+
+- **1a signatures.** rep3's `models.create_model` REFUSES `fund_replica` ("created
+  from the Replication registry (rep4)"), so rep4 adds `create_fund_model(conn, *,
+  org_id, actor_id, name, replica_security_id, disclosure, description)` — the only
+  path that creates one. Drafts go through rep3's `_create_version(conn, *, org_id,
+  model, origin, maker_ids, created_by, positions, …)`; system drafts through
+  `_submit_system(pool, *, org_id, model, version, why, extra_payload)` — the
+  composite-follow / subscription path, which opens `model_version_review` with NO
+  maker (`system_open`). rep1: `load_entry`, `live_approved`, `display_name_for`,
+  `disclosure_for`; holdings: `latest_snapshot(conn, fund_id, source_key, *,
+  live_only)`, `snapshot_rows`. Human tasks: `open_task(pool, *, …, actor_kind)`.
+  Capabilities: `capability(conn, code, key)` + `available()` ('unknown' = not
+  available; Altruist: all 13 'unknown'; manual: trading API 'no').
+- **1b prices.** `portfolio.securities_global_prices` held **zero rows at all** on
+  2026-10-23 (and no live snapshot existed). SSGA files carry weight + shares;
+  N-PORT carries valUSD + balance — a value / balance quotient is a price as of the
+  filing date and is NOT used (never estimate a price). Computable today: Q1, Q2,
+  Q4, Q5's expense ratio and strategy fee, and trading cost once two live snapshots
+  exist. **Q3 says "unknown — needs prices" for every real fund until a price feed
+  exists** (FMP not contracted).
+- **1c hook.** rep1's refresh signals a new snapshot only by its return value
+  (`IngestResult.created / status / snapshot_id`); there is no event of its own and
+  the member_todos review fires only over the diff threshold. Hook:
+  `replica_schedule.monitor_models(pool, res)` after every ingest in BOTH the
+  weekday refresh and the manual refresh route; terms: the approve branch of
+  `replica_terms._apply_terms_decision` (with a prior version).
+- **1d fee.** `fee_calc.apply_tiers(billable, tiers, method)` on the model's
+  `default_fee_schedule_id` tiers (`fee_schedule_tiers`), method = `tier_method` or
+  GRADUATED. Tiers only — a schedule minimum / maximum is period-scoped and is
+  named in the inputs, not applied. No fee run, no invoice.
+- **1e real data.** 0 replica entries, 0 models, 0 fee schedules on 2026-10-23.
+
+### Schema
+
+| table | axis | what |
+|---|---|---|
+| `portfolio.replica_model_specs` | immutable, one per model version | the recipe: entry, terms version, snapshot, custodian, method, top N, min weight, cash target, unresolved policy, rebalance (+ origin), drift and turnover-review thresholds, departures, dropped rows, origin `fund_build` / `fund_monitor` |
+| `portfolio.replica_registry_keys` | valid axis (closed, never edited) | the "find or build" key: one live model per (org, entry, custodian, method, top N) — partial unique `replica_registry_keys_live_uq` |
+| `portfolio.replica_viability_reports` | immutable | entry, custodian, account size, method, the five answers (CHECK: exactly five), cost lines, overall |
+
+rep3 additions: `model_versions.origin` += `fund_build`, `fund_monitor`;
+`model_events.action` += `fund_build_joined`, `holdings_monitor`, `terms_monitor`,
+`terms_review_done` (the two monitor actions may have no actor); partial uniques
+`model_events_holdings_monitor_uq` (model, snapshot) and
+`model_events_terms_monitor_uq` (model, terms version) make monitoring idempotent
+in the database; `models.disclosure` (fund models only). RLS: NULLIF org
+isolation on every operation of every new table.
+
+### Build (find or build)
+
+Needs an APPROVED terms version and a LIVE snapshot — otherwise 409 naming which
+is missing (`detail.missing`). A `needs_review` snapshot is never used.
+Construction, exact Decimal (numeric(14,10), largest remainder so the positions
+sum to exactly 1 − cash target):
+
+1. equity rows only — the fund's cash rows are replaced by the cash target;
+   futures / other are dropped (departure "stocks only" when they carry weight);
+2. unresolved rows: `block` keeps them as unresolved positions (rep3 refuses to
+   approve until they are resolved); `exclude_and_reweight` drops them (departure);
+3. `top_n`: the N largest by fund weight (ties by row number), departure;
+4. `min_weight`: rows under it (by FUND weight) dropped, weight spread pro rata
+   (departure);
+5. normalise to 1 − cash target; a cash position holds the rest (departure).
+
+Name: rep1's "Holdings of <TICKER>"; top N → "Holdings of QQQ — Top 50"; a second
+custodian with the same method appends the custodian's label (names are unique
+per org). The model is `fund_replica` with `replica_security_id` and the rep1
+disclosure; the version is a DRAFT with origin `fund_build` and the builder as
+maker; approval is rep3's `model_version_approval` task (approve_models, maker ≠
+checker). The registry key is (entry, custodian, method, top N): a second build on
+an existing key returns the existing model (200, `joined`) and says which
+requested settings differ — personal settings belong to the account (rep5).
+
+### Viability — the five questions and their data needs
+
+| # | question | yes / no | unknown when |
+|---|---|---|---|
+| 1 | rules-based and public? | `index_etf` / `index_mutual_fund` → yes; else no | never |
+| 2 | rebuildable with stocks / listed options? | futures + other ≤ `max_non_equity_weight` (5%) of non-cash weight → yes; else no + "core only" note. As-of date + age shown; N-PORT > 45 days flagged | no live snapshot |
+| 3 | account big enough at the tracking target? | minimum = max(max p·u / w, Σ p·u / T); u = 1 share, or the fractional increment (0.001) when the custodian's `fractional_shares` is available; T = `tracking_target` (0.5% summed weight error) | any constituent lacks a close ≤ 5 days old (unresolved rows count as unpriced) — "needs prices for N of M" |
+| 4 | custodian allows every leg? | always yes for a stock-only model: via the trading API when available, else "yes, via execution instructions" (manual); 'unknown' evidence listed as missing | never |
+| 5 | beats the fund after fees and tax? | fund net expense ratio × size vs strategy fee (apply_tiers) + trading cost (Σ turnover of the last 12 live diffs × 365 / days spanned × 2 sides × size × 5 bp); the tax line is "estimated by the tax engine (rep6)" — never a number | no approved net expense ratio, no model / no default fee schedule, fewer than two live snapshots |
+
+Every default is an org setting under `replication.viability.*`
+(`default_account_size` 250000, `max_non_equity_weight` 0.05, `nport_stale_days` 45,
+`price_max_age_days` 5, `tracking_target` 0.005, `fractional_increment` 0.001,
+`turnover_snapshots` 12, `trading_cost_bps` 5) and is reported in the answer's
+inputs with its origin. Thresholds for built models: `replication.models.
+drift_threshold` (0.01) and `replication.models.turnover_review_threshold` (0.02).
+A report is stored immutable; computing again writes a new one.
+
+### Monitoring
+
+- **New live snapshot** → every fund_replica model of the fund, in every org (each
+  in its own RLS context): the would-be version from the live version's spec;
+  turnover vs the live version ≥ the spec's threshold, or any constituent added /
+  removed → system DRAFT (origin `fund_monitor`, no maker, its own spec) + rep3
+  review task carrying the diff; else `within_tolerance`. A model with no approved
+  version, or with an open draft, is logged (`no_live_version`,
+  `skipped_open_draft`) and not drafted.
+- **New approved terms version** with a change in expense ratio (net / gross),
+  weighting method, rebalance frequency or index name → one
+  `fund_model_terms_review` task (outcome `done`, manage_models) per model of the
+  fund, naming the changed fields; no automatic version.
+- Every outcome is a model event (+ audit row) and a domain event
+  (`model.holdings_monitor`, `model.terms_monitor`); the Model tab lists them.
+
+### Permissions and screens
+
+No new permissions. view_replication: Model tab, viability (compute + list +
+read), find. manage_models AND view_replication: preview, build. view_models: a
+fund model's specs (`/replication/models/{id}/spec`). The Model tab: sources line
+(terms version, snapshot as-of and age, N-PORT warning, what is missing), the
+viability checklist with custodian / account-size pickers and an "as of" stamp,
+the cost table (unknown shown as unknown, the tax line without a number), the
+registry offer FIRST ("An approved model already exists: … — Use this model"),
+otherwise Build with a preview of positions vs the fund's holdings (dropped rows,
+departures), the models built from the fund, and the monitoring log. Build /
+Preview / Use render only on `permissions.can_build === true` with non-empty
+`editable`.
+
+### rep4 operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep4.py` (it
+   runs `node --test`, `npm run build` and the `verify_rep3.py` regression itself).
+2. Q3 stays "unknown — needs prices" for real funds until a licensed price feed
+   writes `portfolio.securities_global_prices`.

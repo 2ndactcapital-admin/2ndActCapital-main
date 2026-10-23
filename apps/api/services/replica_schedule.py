@@ -22,6 +22,10 @@ source) — the holdings are platform data, fetched once however many orgs hold
 the fund. A failure is recorded per fund on the 'finish' row and never stops
 the others; nothing raises into the tick after the claim exists.
 
+MODEL MONITORING (rep4). A new LIVE snapshot is also checked against every
+fund-built model of the fund (:func:`monitor_models`): over a model's turnover
+threshold → a system-opened draft + review task; under → logged only.
+
 REVIEW TASKS. A new snapshot whose diff exceeds the threshold
 (``replica_holdings.compute_diff``) — or that failed validation — opens a
 review task (member_todos, every manage_replication holder) in each org that
@@ -137,6 +141,24 @@ def review_reason(res: H.IngestResult) -> str | None:
     return None
 
 
+async def monitor_models(pool, res: H.IngestResult) -> dict | None:
+    """rep4: a NEW LIVE snapshot → every fund-built model of the fund is checked
+    against it (services.replica_models.monitor_snapshot). A needs_review
+    snapshot is never used. Never raises — the outcome (or the error) is
+    reported on the refresh result."""
+    if not res.created or res.status != "live" or not res.snapshot_id:
+        return None
+    try:
+        from services import replica_models as RM
+
+        out = await RM.monitor_snapshot(pool, fund_id=res.fund_global_security_id, source_key=res.source_key,
+                                        snapshot_id=res.snapshot_id)
+        return {"models": len(out["models"]), "errors": len(out["errors"]),
+                "outcomes": [m.get("outcome") for m in out["models"]]}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"[:500]}
+
+
 async def maybe_refresh_holdings(pool, *, now_utc: datetime | None = None, http_factory=None, log=print,
                                  host: str | None = None) -> dict:
     """One tick's holdings step. {"action": "off" | "not_due" | "already" |
@@ -176,6 +198,9 @@ async def maybe_refresh_holdings(pool, *, now_utc: datetime | None = None, http_
                                                       ticker=f["ticker"], reason=reason)
                     await publish_org_actions(pool, refs)
                     item["review_tasks"] = len(refs)
+                monitored = await monitor_models(pool, res)
+                if monitored is not None:
+                    item["model_monitor"] = monitored
             except Exception as exc:  # noqa: BLE001 — recorded per fund; the others carry on
                 item.update(action="failed", error=f"{type(exc).__name__}: {exc}"[:500])
                 log(f"[replica-holdings] {f['ticker']} FAILED: {item['error']}")

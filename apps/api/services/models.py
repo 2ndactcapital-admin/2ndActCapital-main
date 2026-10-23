@@ -98,7 +98,8 @@ VERSION_STATUS_LABELS = {"draft": "Draft", "submitted": "Awaiting approval", "ap
                          "superseded": "Superseded", "rejected": "Rejected", "abandoned": "Abandoned"}
 ORIGIN_LABELS = {"upload": "Upload", "manual": "Entered by hand", "library_copy": "Copied from the library",
                  "subscription": "Subscription update", "composite_follow": "A sleeve's model changed",
-                 "revision": "Revision of the approved version"}
+                 "revision": "Revision of the approved version", "fund_build": "Built from the fund",
+                 "fund_monitor": "The fund's holdings changed"}
 UPLOAD_OUTCOME_LABELS = {"received": "In progress", "draft_created": "Draft created", "rejected": "Rejected",
                          "abandoned": "Abandoned", "duplicate": "Duplicate", "failed": "Failed"}
 UPLOAD_SOURCE_LABELS = {"manual": "Uploaded by hand", "provider_email": "Provider email",
@@ -116,6 +117,8 @@ EVENT_LABELS = {
     "agreement_confirmed": "Agreement on file confirmed", "copy": "Copied from the library",
     "subscribe": "Subscribed", "subscription_draft": "Subscription update drafted",
     "composite_follow_draft": "Composite redrafted for a sleeve change", "follow_skipped": "Update not drafted",
+    "fund_build_joined": "Existing fund model offered", "holdings_monitor": "Fund holdings checked",
+    "terms_monitor": "Fund terms changed", "terms_review_done": "Terms change reviewed",
 }
 
 
@@ -528,6 +531,34 @@ async def create_model(conn, *, org_id, actor_id, name: str, source: str, descri
     return model, ref
 
 
+async def create_fund_model(conn, *, org_id, actor_id, name: str, replica_security_id, disclosure: str,
+                            description: str | None = None, base_currency: str = "USD") -> tuple[dict, EventRef]:
+    """rep4: the ONLY way a fund_replica model is created — from the Replication
+    registry (services.replica_models.build_model), inside the caller's
+    transaction. The name is the rep1 "Holdings of <TICKER>" display name (the
+    reserved prefix is allowed for this source alone) and the rep1 disclosure
+    line is stored on the model."""
+    n = check_name(name, "fund_replica")
+    if not n.lower().startswith(RESERVED_PREFIX):
+        raise ModelError('a fund-built model is named "Holdings of <TICKER>"')
+    if not (disclosure or "").strip():
+        raise ModelError("a fund-built model carries the fund's disclosure line")
+    dup = await conn.fetchval(f"SELECT 1 FROM {T_MODEL} WHERE org_id = $1::uuid AND lower(btrim(name)) = lower($2) "
+                              "AND valid_to IS NULL AND system_to IS NULL", str(org_id), n)
+    if dup:
+        raise ModelConflict(f"a model named {n!r} already exists")
+    mid = await conn.fetchval(
+        f"INSERT INTO {T_MODEL} (org_id, name, description, source, status, base_currency, replica_security_id, "
+        "disclosure, created_by) VALUES ($1::uuid, $2, $3, 'fund_replica', 'draft', $4, $5::uuid, $6, $7::uuid) "
+        "RETURNING id",
+        str(org_id), n, (description or "").strip() or None, (base_currency or "USD").strip().upper(),
+        str(replica_security_id), disclosure.strip(), str(actor_id))
+    model = dict(await conn.fetchrow(f"SELECT * FROM {T_MODEL} WHERE id = $1", mid))
+    ref = await _event(conn, org_id=org_id, action="create_model", actor_id=actor_id, model_id=mid,
+                       detail={"name": n, "source": "fund_replica", "replica_security_id": str(replica_security_id)})
+    return model, ref
+
+
 async def update_model(pool, *, org_id, actor_id, model_id, changes: dict) -> dict:
     allowed = {"name", "description", "base_currency", "default_fee_schedule_id", "status"}
     bad = set(changes) - allowed
@@ -886,12 +917,15 @@ async def submit(pool, *, org_id, actor_id, model_id, version_id) -> dict:
     return new
 
 
-async def _submit_system(pool, *, org_id, model: dict, version: dict, why: str) -> dict:
-    """A system-produced draft → submitted, with a review task that has no maker."""
+async def _submit_system(pool, *, org_id, model: dict, version: dict, why: str,
+                         extra_payload: dict | None = None) -> dict:
+    """A system-produced draft → submitted, with a review task that has no maker.
+    rep4 (additive): ``extra_payload`` rides on the task (e.g. the holdings diff)."""
     task = await HT.open_task(
         pool, org_id=org_id, kind=TASK_REVIEW, subject_type=TASK_SUBJECT, subject_id=version["id"], maker_id=None,
         eligible_permission=APPROVE, title=_title(model, version, review=True),
-        payload={"model_id": str(model["id"]), "version_no": version["version_no"], "why": why},
+        payload={**(extra_payload or {}), "model_id": str(model["id"]), "version_no": version["version_no"],
+                 "why": why},
         action_path=f"/portfolio/models/{model['id']}", actor_kind="system")
     try:
         async with pool.acquire() as conn:
@@ -1848,6 +1882,7 @@ def model_out(m: dict) -> dict:
             "status": m["status"], "base_currency": m["base_currency"], "provider_name": m["provider_name"],
             "default_fee_schedule_id": str(m["default_fee_schedule_id"]) if m["default_fee_schedule_id"] else None,
             "replica_security_id": str(m["replica_security_id"]) if m["replica_security_id"] else None,
+            "disclosure": m.get("disclosure"),
             "library_entry_id": str(m["library_entry_id"]) if m["library_entry_id"] else None,
             "created_at": _iso(m["created_at"])}
 
