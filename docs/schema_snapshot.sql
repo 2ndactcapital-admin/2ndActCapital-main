@@ -3339,6 +3339,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   disclosure                               text
 --   PRIMARY KEY models_pkey: (id)
 
 -- ===== portfolio.note_extraction_runs =====
@@ -3680,6 +3681,35 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY replica_instrument_classes_pkey: (key)
 
+-- ===== portfolio.replica_model_specs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   version_id                               uuid NOT NULL
+--   replica_security_id                      uuid NOT NULL
+--   terms_version_id                         uuid NOT NULL
+--   snapshot_id                              uuid NOT NULL
+--   custodian_code                           text NOT NULL
+--   method                                   text NOT NULL
+--   top_n                                    integer
+--   min_weight                               numeric NOT NULL DEFAULT 0
+--   cash_target                              numeric NOT NULL DEFAULT 0
+--   unresolved_policy                        text NOT NULL
+--   rebalance_frequency                      text
+--   rebalance_origin                         text NOT NULL
+--   drift_threshold                          numeric NOT NULL
+--   turnover_review_threshold                numeric NOT NULL
+--   departures                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   dropped                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   origin                                   text NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_model_specs_pkey: (id)
+
 -- ===== portfolio.replica_refresh_events =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   run_date                                 date NOT NULL
@@ -3698,6 +3728,22 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY replica_refresh_events_pkey: (id)
+
+-- ===== portfolio.replica_registry_keys =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_security_id                      uuid NOT NULL
+--   custodian_code                           text NOT NULL
+--   method                                   text NOT NULL
+--   top_n                                    integer
+--   model_id                                 uuid NOT NULL
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_registry_keys_pkey: (id)
 
 -- ===== portfolio.replica_securities =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -3855,6 +3901,29 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY replica_terms_versions_pkey: (id)
+
+-- ===== portfolio.replica_viability_reports =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_security_id                      uuid NOT NULL
+--   custodian_code                           text NOT NULL
+--   account_size                             numeric NOT NULL
+--   method                                   text NOT NULL
+--   top_n                                    integer
+--   snapshot_id                              uuid
+--   terms_version_id                         uuid
+--   model_id                                 uuid
+--   answers                                  jsonb NOT NULL
+--   cost_lines                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   overall                                  text NOT NULL
+--   computed_by                              uuid NOT NULL
+--   computed_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_viability_reports_pkey: (id)
 
 -- ===== portfolio.securities_global =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
