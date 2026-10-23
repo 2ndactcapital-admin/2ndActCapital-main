@@ -74,6 +74,9 @@ export const GATE_VIEW_REPLICATION = { perm: "view_replication", strict: true };
 // REP2 — Portfolio → Instructions. GET /execution/instructions requires
 // view_execution (Super Admin first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_EXECUTION = { perm: "view_execution", strict: true };
+// REP3 — Portfolio → Models. GET /models requires view_models (Super Admin
+// first); STRICT so no envelope hides the tab.
+export const GATE_VIEW_MODELS = { perm: "view_models", strict: true };
 // REP2 — Billing & Custody → Custodian capabilities. GET /custodians/capabilities
 // is require_staff_or_permission(manage_org_settings): Super Admin, a
 // STAFF_ROLE_NAMES role (/users/me `is_staff`), or an org admin (Joe,
@@ -212,8 +215,10 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 8, "/portfolio/replication", "Replication", GATE_VIEW_REPLICATION, false),
   // REP2 — execution instructions (every trade a person carries out).
   tab("main", "portfolio", 9, "/portfolio/instructions", "Instructions", GATE_VIEW_EXECUTION, false),
+  // REP3 — model management: one registry, uploads, library, sleeves.
+  tab("main", "portfolio", 10, "/portfolio/models", "Models", GATE_VIEW_MODELS, false),
   // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
-  { ...tab("main", "portfolio", 10, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+  { ...tab("main", "portfolio", 11, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
   main(60, "/spvs", "SPV Manager", "spv-manager"),

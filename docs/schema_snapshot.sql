@@ -570,6 +570,26 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY cost_schedules_pkey: (id)
 
+-- ===== custodian_capabilities =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   custodian_code                           text NOT NULL
+--   capability_key                           text NOT NULL
+--   value                                    text NOT NULL
+--   evidence_kind                            text NOT NULL
+--   evidence                                 text NOT NULL
+--   as_of                                    date NOT NULL
+--   version_no                               integer NOT NULL
+--   recorded_by                              uuid
+--   note                                     text
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY custodian_capabilities_pkey: (id)
+
 -- ===== dashboard_briefs =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -1324,6 +1344,110 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_tax_ids_pkey: (id)
+
+-- ===== execution_fills =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   instruction_id                           uuid NOT NULL
+--   quantity                                 numeric NOT NULL
+--   price                                    numeric NOT NULL
+--   filled_at                                timestamp with time zone NOT NULL
+--   lots                                     jsonb NOT NULL DEFAULT '[]'::jsonb
+--   completes                                boolean NOT NULL DEFAULT false
+--   note                                     text
+--   entered_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY execution_fills_pkey: (id)
+
+-- ===== execution_instruction_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   instruction_id                           uuid NOT NULL
+--   action                                   text NOT NULL
+--   from_status                              text
+--   to_status                                text NOT NULL
+--   actor_id                                 uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY execution_instruction_events_pkey: (id)
+
+-- ===== execution_instruction_lots =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   instruction_id                           uuid NOT NULL
+--   tax_lot_id                               uuid NOT NULL
+--   quantity                                 numeric NOT NULL
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY execution_instruction_lots_pkey: (id)
+
+-- ===== execution_instructions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   side                                     text NOT NULL
+--   quantity                                 numeric
+--   notional                                 numeric
+--   price_kind                               text NOT NULL DEFAULT 'market'::text
+--   limit_price                              numeric
+--   range_low                                numeric
+--   range_high                               numeric
+--   reference_price                          numeric
+--   reference_at                             timestamp with time zone
+--   wash_sale_notes                          text
+--   executor_type                            text NOT NULL
+--   executor_name                            text
+--   executor_contact                         text
+--   execute_by                               date NOT NULL
+--   if_not_filled                            text NOT NULL
+--   source                                   text NOT NULL DEFAULT 'manual'::text
+--   source_ref                               uuid
+--   routed_via                               text NOT NULL
+--   routing_reason                           text NOT NULL
+--   notes                                    text
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   maker_ids                                ARRAY NOT NULL
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   sent_by                                  uuid
+--   sent_at                                  timestamp with time zone
+--   sent_channel                             text
+--   sent_note                                text
+--   reconciled_by                            uuid
+--   reconciled_at                            timestamp with time zone
+--   reconcile_method                         text
+--   reconcile_reference                      text
+--   reconcile_note                           text
+--   closed_by                                uuid
+--   closed_at                                timestamp with time zone
+--   cancelled_by                             uuid
+--   cancelled_at                             timestamp with time zone
+--   cancel_reason                            text
+--   expired_at                               timestamp with time zone
+--   expiry_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY execution_instructions_pkey: (id)
 
 -- ===== external_access_grants =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2534,6 +2658,7 @@
 --   action_registry_key                      text
 --   display_name                             text
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   assigned_permission                      text
 --   PRIMARY KEY workflow_steps_pkey: (id)
 --   UNIQUE workflow_steps_workflow_version_id_step_key_key: (workflow_version_id, step_key)
 

@@ -63,6 +63,7 @@ FEATURE_GATES = {
     "routers.replication": "REP1 — view_replication / manage_replication / approve_replication (approve never for a maker of the draft)",
     "routers.execution": "REP2 — view_execution / manage_execution / approve_execution (approve never for a maker of the instruction); nothing is ever sent to a custodian",
     "routers.custodians": "REP2 — custodian capabilities: read staff or manage_org_settings (org admins), write Super Admin only (platform data)",
+    "routers.models": "REP3 — view_models / manage_models / approve_models (approve never for a maker of the version); platform library writes Super Admin, org shelf an org admin (services.models); nothing is ever traded",
 }
 # Writes that stay "active account only", with the reason.
 SELF_SCOPED = {

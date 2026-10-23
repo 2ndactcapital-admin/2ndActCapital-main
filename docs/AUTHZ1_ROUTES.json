@@ -1,5 +1,5 @@
 {
- "app_route_count": 529,
+ "app_route_count": 557,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -10422,6 +10422,622 @@
    "path": "/api/v1/human-tasks/mine",
    "public": false,
    "write": false
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "list_models",
+   "note": "",
+   "path": "/api/v1/models",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "create_composite",
+   "note": "",
+   "path": "/api/v1/models",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "template",
+   "note": "",
+   "path": "/api/v1/models/template",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "upload_log",
+   "note": "",
+   "path": "/api/v1/models/uploads",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "upload_log_export",
+   "note": "",
+   "path": "/api/v1/models/uploads/export.csv",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "receive_upload",
+   "note": "",
+   "path": "/api/v1/models/uploads",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "preview_upload",
+   "note": "",
+   "path": "/api/v1/models/uploads/{upload_id}/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "confirm_upload",
+   "note": "",
+   "path": "/api/v1/models/uploads/{upload_id}/confirm",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "abandon_upload",
+   "note": "",
+   "path": "/api/v1/models/uploads/{upload_id}/abandon",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "list_mappings",
+   "note": "",
+   "path": "/api/v1/models/mappings",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "save_mapping",
+   "note": "",
+   "path": "/api/v1/models/mappings",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "library",
+   "note": "",
+   "path": "/api/v1/models/library",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "publish",
+   "note": "",
+   "path": "/api/v1/models/library",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "entry_status",
+   "note": "",
+   "path": "/api/v1/models/library/{entry_id}/status",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "agreement",
+   "note": "",
+   "path": "/api/v1/models/library/{entry_id}/agreement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "copy_entry",
+   "note": "",
+   "path": "/api/v1/models/library/{entry_id}/copy",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "subscribe_entry",
+   "note": "",
+   "path": "/api/v1/models/library/{entry_id}/subscribe",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "model_detail",
+   "note": "",
+   "path": "/api/v1/models/{model_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.models",
+   "name": "update_model",
+   "note": "",
+   "path": "/api/v1/models/{model_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "new_draft",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/drafts",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "version_detail",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.models",
+   "name": "version_diff",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/diff",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "edit_positions",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/positions",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.models",
+   "name": "set_sleeves",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/sleeves",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "submit",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "approve",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "reject",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_models",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_models"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.models",
+   "name": "abandon",
+   "note": "",
+   "path": "/api/v1/models/{model_id}/versions/{version_id}/abandon",
+   "public": false,
+   "write": true
   },
   {
    "after": "public",
