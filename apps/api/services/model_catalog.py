@@ -88,6 +88,7 @@ class ModelCatalogError(RuntimeError):
 PUBLIC_DATA_TASK_KEYS = frozenset({
     "note_terms_extraction",      # the note-extraction ensemble (cascade.TASK_KEY) and its legacy path
     "edgar_inventory",            # the EDGAR template-study inventory
+    "replica_terms_extraction",   # rep1: fund prospectus terms (public SEC filings, platform-scoped)
 })
 
 

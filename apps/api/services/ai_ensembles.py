@@ -35,7 +35,8 @@ import asyncpg
 from services.system_one import list_system_one_models
 
 # Ensemble tasks. Keys, not display labels. note_terms_extraction = noteextractb1.
-KNOWN_TASK_KEYS = frozenset({"note_terms_hazard", "note_terms_extraction"})
+# rep1: replica_terms_extraction — Replication Studio fund-terms readers (public prospectuses).
+KNOWN_TASK_KEYS = frozenset({"note_terms_hazard", "note_terms_extraction", "replica_terms_extraction"})
 AVAILABLE = "available"
 
 

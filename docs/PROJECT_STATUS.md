@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-22 (bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,59 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep1 (sprint 1 of 14): security registry, fund holdings ingestion (issuer files + N-PORT fallback), fund terms extraction (no Claude), the correct / deliberate-change / maker-checker terms flow; verify WRITTEN, not yet run (2026-10-22)
+
+Design + operator guide: `docs/REPLICATION_STUDIO.md` (incl. Task 1 findings 1a–1f).
+Schema `docs/rep1_part1.sql` — APPLIED (`scripts/_apply_rep1.py --schema`) and
+read back (`--verify`: SCHEMA OK, 91 checks). Verify: `apps/api/scripts/verify_rep1.py`
+(written, NOT run — the sprint does not run verify scripts or npm build);
+regression for this sprint: `verify_underlyingresolution.py` once (it shares the
+security master + relationships queue). Added to `scripts/regression_set.txt`.
+
+What exists:
+- Platform tables (shared, fetched once): instrument classes, holdings sources,
+  snapshots + rows (immutable), source documents, terms field registry (20
+  fields; critical: gross/net expense ratio, index name, weighting, rebalance),
+  term readings, refresh events. Org tables: `replica_securities` (registry,
+  "Holdings of <ticker>" by CHECK), `replica_terms_versions`, `replica_terms_actions`.
+- Ingestion (`services/replica_holdings.py`, CLI `scripts/replica_ingest.py`):
+  same bytes = no snapshot; validation → needs_review; diff + threshold;
+  constituents resolved only by a published identifier through
+  `securities_global` (bulk variants added in that module), else queued as
+  'unresolved' `constituent_of` edges.
+- Terms (`services/replica_terms.py`): prospectus (497K, else 485BPOS) via the
+  EDGAR client; two readers through the LiteLLM proxy; quote verification;
+  draft with needs-review flags; corrections → `document_field_corrections`
+  (`target_type 'replica_terms'`, CHECKs widened); deliberate changes →
+  departures; approve/reject with maker-checker (app 403 + DB CHECK); one
+  approved version live; approved rows never edited (trigger).
+- Every human action → action row + audit_log + `domain_events`
+  ('replication.<action>'); approval-needed / holdings-review → `member_todos`.
+- Weekday refresh 11:00 UTC from `workflow_scheduler_tick.py` (after the EDGAR
+  index refresh); `REPLICA_HOLDINGS_AUTO_REFRESH`.
+- API `/api/v1/replication/*` (10 routes, view/manage/approve_replication; AUTHZ1
+  --check CURRENT; no existing gate changed). Permissions granted to every
+  existing org_admin role.
+- Screens: Portfolio → Replication (registry, Add, entry page with Terms /
+  Holdings / Sources); node tests `apps/web/tests/replication` (9/9 pass).
+
+Findings:
+- [FIND] `ai_ensemble_configs` has NO rows live — extraction records 'blocked'
+  until a Super Admin activates one for `replica_terms_extraction` (task key added
+  to KNOWN_TASK_KEYS and PUBLIC_DATA_TASK_KEYS).
+- [FIND] Invesco answered 406 and iShares an HTML page to a non-browser client;
+  both sources are seeded INACTIVE (parsers follow documented layouts, unconfirmed).
+  SSGA (SPY) confirmed live. SPY has no SEC series (UIT) → issuer file only.
+- [FIND] N-PORT lag 2–5 months — fallback only.
+- Operator: the daily refresh needs the same Render cron service bulkfetchui3's index refresh
+  needs (`workflow_scheduler_tick.py`); not deployed → neither refresh runs.
+- [FIND] Issuer-site terms of use NOT reviewed — counsel before production.
+- [FIND] `rbac.ensure_org_admin_role` (an org's first org_admin) grants only
+  manage_org_settings: a NEW org's org_admin lacks the replication permissions
+  until the §14 grant is re-run.
+- [FIND] First ingestion of a large fund queues most constituents (the master
+  holds few equities): SPY's 504 names land in the resolution queue.
 
 ## 00000000000000000000000000000000000000000000000000000000. BULKFETCH UI 3 — Bulk download: sortable full-height Institutions table with Downloaded / Stored and Refresh; Refresh index moved into the Institutions box; a weekday automatic index refresh; GS image-cover finals no longer 'other' + a reclassify command; zero-byte downloads retried; scripts/run_regressions.sh; verify WRITTEN, not yet run (2026-10-22)
 
