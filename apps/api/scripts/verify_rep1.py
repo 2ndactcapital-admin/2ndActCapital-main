@@ -1297,12 +1297,23 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
-    check(len(new) == 10 and all(k[1].startswith("/api/v1/replication/") for k in new),
-          "10 new routes, all under /replication", f"{len(new)}")
-    want = {"view_replication", "manage_replication", "approve_replication"}
-    check(all(any(p in str(gn[k].get("after")) for p in want) for k in new),
-          "every new route names its replication gate", f"{[gn[k].get('after') for k in new][:3]}")
+    # rep1's OWN routes by path — later sprints (rep2, rep3 …) add routes past BEFORE_REF, so a count of
+    # everything new since the baseline stops describing rep1 the moment they merge
+    reg = "/api/v1/replication/registry"
+    rep1 = {(("GET",), reg): "view_replication", (("GET",), "/api/v1/replication/lookup"): "manage_replication",
+            (("POST",), reg): "manage_replication", (("GET",), f"{reg}/{{entry_id}}"): "view_replication",
+            (("POST",), f"{reg}/{{entry_id}}/holdings/refresh"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/extract"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/corrections"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/changes"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/{{version_id}}/approve"): "approve_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/{{version_id}}/reject"): "approve_replication"}
+    missing = [k for k in rep1 if k not in gn or k in gb]
+    check(len(rep1) == 10 and not missing and all(k[1].startswith("/api/v1/replication/") for k in rep1),
+          "10 new routes, all under /replication", f"{missing[:5]}")
+    check(all(k in gn and rep1[k] in str(gn[k].get("after")) for k in rep1),
+          "every new route names its replication gate",
+          f"{[(k[1], gn.get(k, {}).get('after')) for k in rep1 if not (k in gn and rep1[k] in str(gn[k].get('after')))][:3]}")
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

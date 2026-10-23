@@ -2,13 +2,17 @@
 
     python3 apps/api/scripts/_apply_rep3.py --schema   # docs/rep3_part1.sql, one transaction
     python3 apps/api/scripts/_apply_rep3.py --verify   # read it back from the catalog
+    python3 apps/api/scripts/_apply_rep3.py --verify --fixture-orgs <uuid,uuid>   # a verify run's own orgs
 
 Runs on the operator's postgres DSN (``DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP``
 in Doppler — DDL needs the table owner, and the Supabase MCP cancels migration
 text containing DROP). Idempotent. ``--verify`` reads columns, constraints,
 partial unique indexes, RLS flags, every policy, triggers, grants, the
 SECURITY DEFINER helpers and the permission grants back and exits non-zero on
-any gap. Never prints a secret.
+any gap. ``--fixture-orgs`` names a verify run's reserved org ids: roles in
+those orgs (e.g. verify_rep3's ``rep3_viewer``) are left out of the "granted to
+org_admin and no other role" check, so it reports only real roles. Never
+prints a secret.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import sys
+from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve().parent
 API_DIR = HERE.parent
@@ -76,7 +81,7 @@ async def apply_schema() -> None:
         await conn.close()
 
 
-async def verify_schema() -> int:
+async def verify_schema(fixture_orgs: list[str] | None = None) -> int:
     conn = await _conn()
     gaps: list[str] = []
 
@@ -144,8 +149,10 @@ async def verify_schema() -> int:
         need(perms == set(PERMS), "three model permissions", f"{sorted(perms)}")
         holders = {r["name"] for r in await conn.fetch(
             "SELECT DISTINCT r.name FROM role_permissions rp JOIN roles r ON r.id = rp.role_id "
-            "JOIN permissions p ON p.id = rp.permission_id WHERE p.name = ANY($1::text[])", list(PERMS))}
-        need(holders == {"org_admin"}, "granted to org_admin and no other role", f"{sorted(holders)}")
+            "JOIN permissions p ON p.id = rp.permission_id WHERE p.name = ANY($1::text[]) "
+            "AND NOT COALESCE(r.org_id = ANY($2::uuid[]), false)", list(PERMS), fixture_orgs or [])}
+        need(holders == {"org_admin"}, "granted to org_admin and no other role"
+             + (f" (excluding {len(fixture_orgs)} fixture org(s))" if fixture_orgs else ""), f"{sorted(holders)}")
         missing = await conn.fetchval(
             "SELECT count(*) FROM roles r WHERE r.name = 'org_admin' AND (SELECT count(*) FROM role_permissions rp "
             "JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = r.id AND p.name = ANY($1::text[])) < 3",
@@ -163,7 +170,14 @@ def main() -> int:
         asyncio.run(apply_schema())
         return 0
     if "--verify" in args:
-        return asyncio.run(verify_schema())
+        fixture_orgs: list[str] = []
+        if "--fixture-orgs" in args:
+            i = args.index("--fixture-orgs")
+            if i + 1 >= len(args):
+                print("--fixture-orgs needs a comma-separated list of org uuids")
+                return 2
+            fixture_orgs = [str(UUID(o)) for o in args[i + 1].split(",") if o.strip()]
+        return asyncio.run(verify_schema(fixture_orgs))
     print(__doc__)
     return 2
 

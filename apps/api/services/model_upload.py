@@ -406,11 +406,14 @@ def _read_csv(data: bytes) -> Workbook:
 
 
 # ── header + mapping ────────────────────────────────────────────────────────
-def detect_header(grid: list[list[Any]]) -> int | None:
+def detect_header(grid: list[list[Any]], saved: dict | None = None) -> int | None:
     """1-based number of the first row (of the first 30) that names an
-    identifier column and a weight column."""
+    identifier column and a weight column — by the saved provider mapping
+    first, then the synonym vocabulary (a provider's own headers are often
+    in neither list until its mapping is saved)."""
+    saved_norm = {norm_header(k): v for k, v in (saved or {}).items() if v in FIELDS}
     for i, row in enumerate(grid[:HEADER_SCAN_ROWS], start=1):
-        fields = {field_for_header(c) for c in row if cell_text(c)}
+        fields = {saved_norm.get(norm_header(c)) or field_for_header(c) for c in row if cell_text(c)}
         if "weight" in fields and fields & set(IDENTIFIER_FIELDS):
             return i
     return None
@@ -841,7 +844,7 @@ async def parse_and_validate(conn, wb: Workbook, *, sheet: str | None, header_ro
     if sheet not in wb.grids:
         raise UploadRefused("unreadable", f"the workbook has no sheet named {sheet!r}")
     grid = wb.grids[sheet]
-    hdr = header_row or detect_header(grid)
+    hdr = header_row or detect_header(grid, saved_mapping)
     msgs: list[Message] = []
     if hdr is None:
         return ParseResult(sheet, 0, [], {}, None, [], [Message(

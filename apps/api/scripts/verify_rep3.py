@@ -802,7 +802,8 @@ async def y_task1(conn):
 
 async def y_schema(conn):
     section("[Y] Schema landed: tables, constraints, partial uniques, triggers, RLS with a policy for every operation")
-    code, out, err = run_cmd([sys.executable, str(HERE / "_apply_rep3.py"), "--verify"], REPO, timeout=600)
+    code, out, err = run_cmd([sys.executable, str(HERE / "_apply_rep3.py"), "--verify", "--fixture-orgs",
+                              ",".join(str(o) for o in FIXTURE_ORGS)], REPO, timeout=600)
     gaps = [ln for ln in out.splitlines() if ln.startswith("[GAP]")]
     check(code == 0 and "SCHEMA OK" in out and not gaps, "_apply_rep3.py --verify: SCHEMA OK (catalog read back)",
           f"{gaps[:3]} {err[-200:] if code else ''}")

@@ -1292,13 +1292,16 @@ async def change_entry_status(pool, *, org_id, actor_id, is_super_admin: bool, i
     if not (reason or "").strip():
         raise ModelError("a reason is required")
     async with pool.acquire() as conn:
-        entry = await _entry(conn, org_id, entry_id, lock=True, published_only=False)
-        if entry["status"] == "retired":
-            raise ModelConflict("this library entry is retired")
+        # read WITHOUT a lock first: under RLS, SELECT ... FOR UPDATE also applies the UPDATE policy, so a
+        # platform entry an org can see but not write would vanish and surface as a 404 instead of the 403
+        entry = await _entry(conn, org_id, entry_id, published_only=False)
         if entry["shelf"] == "platform" and not is_super_admin:
             raise ModelPermissionError("Super Admin required: platform entries are written only by Hollisworks")
         if entry["shelf"] == "org" and not (is_super_admin or is_org_admin):
             raise ModelPermissionError(f"Permission required: {ORG_ADMIN_PERMISSION}")
+        entry = await _entry(conn, org_id, entry_id, lock=True, published_only=False)
+        if entry["status"] == "retired":
+            raise ModelConflict("this library entry is retired")
         new = await _update(conn, T_LIB, entry["id"], {"status": status, "status_changed_by": uuid.UUID(str(actor_id)),
                                                        "status_changed_at": datetime.now(timezone.utc),
                                                        "status_reason": reason.strip()})
@@ -1530,7 +1533,8 @@ def _wizard(wb: U.Workbook, result: U.ParseResult | None, saved: dict | None, sh
     if sheet not in wb.grids:
         sheet = wb.sheets[0]
     grid = wb.grids[sheet]
-    hdr = (result.header_row if result and result.header_row else None) or header_row or U.detect_header(grid)
+    hdr = ((result.header_row if result and result.header_row else None) or header_row
+           or (saved or {}).get("header_row_hint") or U.detect_header(grid, (saved or {}).get("mapping")))
     headers = U.headers_of(grid, hdr) if hdr else []
     return {
         "sheets": [{"name": s, "rows": len(wb.grids[s])} for s in wb.sheets], "sheet": sheet, "header_row": hdr,
@@ -1557,6 +1561,18 @@ async def _parse_upload(conn, *, org_id, up: dict, sheet, header_row, mapping, p
                                         saved_mapping=(saved or {}).get("mapping"), fill_with_cash=fill_with_cash,
                                         tolerance_pct=tol)
     return wb, result, saved
+
+
+def _saved_mapping_used(saved: dict | None, result: U.ParseResult):
+    """The saved mapping's id when the parse applied it: every saved header the
+    file carries kept its saved field (other columns may map by synonym or by
+    hand). None when nothing of it applied, or the caller overrode it."""
+    if not saved:
+        return None
+    present = {U.norm_header(h) for h in result.headers}
+    got = {U.norm_header(k): v for k, v in result.mapping.items()}
+    want = {U.norm_header(k): v for k, v in saved["mapping"].items() if U.norm_header(k) in present}
+    return saved["id"] if want and all(got.get(k) == v for k, v in want.items()) else None
 
 
 async def preview_upload(pool, *, org_id, upload_id, sheet=None, header_row=None, mapping=None, provider_name=None,
@@ -1600,8 +1616,7 @@ async def confirm_upload(pool, *, org_id, actor_id, upload_id, sheet=None, heade
                                                     fill_with_cash=fill_with_cash)
         except U.UploadRefused as exc:
             raise ModelError(exc.text, [U.Message(exc.code, "error", exc.text).as_dict()]) from None
-        mapping_id = saved["id"] if saved and {U.norm_header(k): v for k, v in saved["mapping"].items()} == {
-            U.norm_header(k): v for k, v in result.mapping.items()} else None
+        mapping_id = _saved_mapping_used(saved, result)
         if result.blocking:
             await _upload_event(conn, org_id=org_id, upload_id=up["id"], event="rejected", actor_id=actor["id"],
                                 result=result, mapping_id=mapping_id,
