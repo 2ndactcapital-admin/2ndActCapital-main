@@ -136,7 +136,7 @@ test("capabilities: Edit only for Super Admin; 'unknown' shown plainly", () => {
   assert.ok(buttons(html).includes("Edit"));
 });
 
-test("menu: Instructions gated on view_execution (strict); Custodian capabilities on staff (strict)", () => {
+test("menu: Instructions gated on view_execution (strict); Custodian capabilities on staff or manage_org_settings (strict)", () => {
   const ins = menu.MENU_ITEMS.find((i) => i.href === "/portfolio/instructions");
   const cap = menu.MENU_ITEMS.find((i) => i.href === "/admin/custodian-capabilities");
   assert.equal(ins.group, "portfolio");
@@ -151,6 +151,10 @@ test("menu: Instructions gated on view_execution (strict); Custodian capabilitie
   assert.equal(menu.canAccess(me({}), cap.gate), false);
   assert.equal(menu.canAccess(me({ is_staff: true, status: "pending" }), cap.gate), false);
   assert.equal(menu.canAccess(me({ account_role: "super_admin" }), cap.gate), true);
+  assert.equal(menu.canAccess(me({ permissions: ["manage_org_settings"] }), cap.gate), true);
+  assert.equal(menu.canAccess(me({ permissions: ["manage_org_settings"], status: "pending" }), cap.gate), false);
+  assert.equal(menu.canAccess(me({ permissions: ["manage_members"] }), cap.gate), false);
+  assert.equal(menu.canAccess(me({ permissions: undefined }), cap.gate), false);
 });
 
 test("trade-list body: quantities and prices go as decimal strings, never numbers", () => {

@@ -335,11 +335,12 @@ are `no`).
 available**, and neither is a missing record. A missing capability downgrades
 a plan; it never blocks it.
 
-API: `GET /custodians/capabilities` and `.../{code}/{key}/history` (staff), and
+API: `GET /custodians/capabilities` and `.../{code}/{key}/history` (staff or
+`manage_org_settings`, via `services.authz.require_staff_or_permission`), and
 `PUT .../{code}/{key}` (Super Admin only, audit-logged).
-**[FIND]** `org_admin` is not a `STAFF_ROLE_NAMES` role, so an org admin with no
-staff role does not see the matrix. The gate is as specified; widening it is a
-product decision.
+**Decided (Joe, 2026-10-23):** `org_admin` is not a `STAFF_ROLE_NAMES` role, so
+the original staff-only read hid the matrix from org admins. The read gate is now
+staff OR `manage_org_settings` (org admins read); write stays Super Admin only.
 
 ## Trade adapters (`services/custody/trading.py`)
 
@@ -417,8 +418,8 @@ Screens:
   and the approval panel. Controls render only from the server's flags and
   `actions` list.
 - **Dashboard → My tasks** (`GET /human-tasks/mine`).
-- **Billing & Custody → Custodian capabilities** (strict staff gate; Edit for
-  Super Admin only).
+- **Billing & Custody → Custodian capabilities** (strict gate: `is_staff` or
+  `manage_org_settings`; Edit for Super Admin only).
 
 Human tasks: see `docs/HUMAN_TASKS.md`.
 

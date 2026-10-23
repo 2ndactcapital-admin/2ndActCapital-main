@@ -75,10 +75,11 @@ export const GATE_VIEW_REPLICATION = { perm: "view_replication", strict: true };
 // view_execution (Super Admin first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_EXECUTION = { perm: "view_execution", strict: true };
 // REP2 — Billing & Custody → Custodian capabilities. GET /custodians/capabilities
-// is require_staff (Super Admin or a STAFF_ROLE_NAMES role); /users/me publishes
-// the same Principal flag as `is_staff`. STRICT: only `is_staff === true` (or
-// Super Admin) shows it — a missing flag hides the tab.
-export const GATE_STAFF_STRICT = { staff: true, strict: true };
+// is require_staff_or_permission(manage_org_settings): Super Admin, a
+// STAFF_ROLE_NAMES role (/users/me `is_staff`), or an org admin (Joe,
+// 2026-10-23). STRICT on both branches: `is_staff === true` or the permission
+// explicitly in a real `permissions` array — a missing flag hides the tab.
+export const GATE_STAFF_OR_ORG_SETTINGS_STRICT = { staff: true, perm: "manage_org_settings", strict: true };
 
 /** Navigation sections, top to bottom. `header` is null for the main section. */
 export const SECTIONS = [
@@ -246,8 +247,9 @@ export const MENU_ITEMS = [
   tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_SUPER_ADMIN, true),
   tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_VIEW_PORTFOLIO, true),
   tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_VIEW_PORTFOLIO, true),
-  // REP2 — the platform capabilities matrix: staff read it, Super Admin edits it.
-  tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities", GATE_STAFF_STRICT, true),
+  // REP2 — the platform capabilities matrix: staff and org admins read it, Super Admin edits it.
+  tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities",
+    GATE_STAFF_OR_ORG_SETTINGS_STRICT, true),
   tab("org_admin", "deal_intake", 1, "/admin/vdr-proposals", "VDR Proposals", GATE_MANAGE_DEALS, true),
 
   tab("platform", "tenants", 1, "/admin/platform", "Tenants", GATE_SUPER_ADMIN, true),
@@ -332,7 +334,7 @@ export function isStaffStrict(me) {
 
 export function canAccess(me, gate) {
   if (!gate) return true;
-  if (gate.staff) return isStaffStrict(me);
+  if (gate.staff) return isStaffStrict(me) || (gate.perm ? canPermStrict(me, gate.perm) : false);
   if (gate.strict) return canPermStrict(me, gate.perm);
   if (gate.perm && !canPerm(me, gate.perm)) return false;
   // Role gates already name super_admin explicitly wherever they are used, so

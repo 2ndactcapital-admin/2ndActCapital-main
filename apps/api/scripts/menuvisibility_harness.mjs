@@ -149,7 +149,7 @@ const result = {
     label: i.label,
     gate: i.gate
       ? i.gate.staff
-        ? "staff (strict)"
+        ? `staff${i.gate.perm ? ` or perm:${i.gate.perm}` : ""} (strict)`
         : i.gate.perm
         ? `perm:${i.gate.perm}${i.gate.strict ? " (strict)" : ""}`
         : `roles:${i.gate.roles.join("|")}`

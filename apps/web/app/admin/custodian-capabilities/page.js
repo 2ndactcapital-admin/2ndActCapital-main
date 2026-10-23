@@ -27,7 +27,7 @@ export default async function CustodianCapabilitiesPage() {
       <div className="mt-6">
         {error === "forbidden" ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">
-            Custodian capabilities are open to staff.
+            Custodian capabilities are open to staff and organization admins.
           </div>
         ) : error ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">

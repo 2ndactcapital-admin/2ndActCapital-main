@@ -64,6 +64,7 @@ from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
 
+import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
@@ -814,8 +815,19 @@ async def y_capabilities(conn):
           "every seeded capability carries evidence, its kind and an as-of date")
     check(out.get("permissions", {}).get("can_write") is False and out.get("vocabularies", {}).get("editable") == [],
           "staff envelope: read-only (can_write false, editable [])")
-    code_m, _ = await api(U_MEMBER, "GET", "/api/v1/custodians/capabilities")
-    check(code_m == 403, "a non-staff member is refused (403)", f"{code_m}")
+    code_m, out_m = await api(U_MEMBER, "GET", "/api/v1/custodians/capabilities")
+    code_mh, _ = await api(U_MEMBER, "GET", "/api/v1/custodians/capabilities/altruist/margin/history")
+    check(code_m == 403 and code_mh == 403 and "rows" not in out_m,
+          "a member (neither staff nor manage_org_settings) is refused: matrix AND history 403, no envelope",
+          f"{code_m} {code_mh}")
+    # Joe, 2026-10-23: read = staff OR manage_org_settings — an org admin reads; writing stays Super Admin only.
+    code_oa, out_oa = await api(U_ADMIN1, "GET", "/api/v1/custodians/capabilities")
+    code_oah, _ = await api(U_ADMIN1, "GET", "/api/v1/custodians/capabilities/altruist/margin/history")
+    check(code_oa == 200 and code_oah == 200 and len(out_oa.get("rows", [])) == len(rows) > 0
+          and out_oa.get("permissions", {}).get("can_write") is False
+          and out_oa.get("vocabularies", {}).get("editable") == [],
+          "org admin (manage_org_settings) reads the matrix and history (200), read-only envelope (can_write "
+          "false, editable [])", f"{code_oa} {code_oah}")
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'false', true)")
         cap = await CC.capability(conn, "altruist", "equity_trading_api")
@@ -1079,21 +1091,27 @@ async def y_instructions(conn):
     check((await instr_row(conn, ORG_A, i4))["status"] == "cancelled" and t4["status"] == "cancelled"
           and t4["rstat"] == "cancelled", "cancelling while awaiting approval withdraws the engine task")
     # execute-by: expire / carry / ask (the only automatic step, logged with no actor)
-    _, _, i5 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=TODAY, if_not_filled="cancel")
-    _, _, i6 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=TODAY, if_not_filled="carry")
-    _, _, i7 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=TODAY, if_not_filled="ask")
+    # The date is read HERE, not from the module-level TODAY: a run that crosses midnight would otherwise
+    # create with yesterday's date, the service refuses it as past (422), and every read below sees nothing.
+    today = date.today()
+    c5, o5, i5 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=today, if_not_filled="cancel")
+    c6, o6, i6 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=today, if_not_filled="carry")
+    c7, o7, i7 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=today, if_not_filled="ask")
+    check(c5 == c6 == c7 == 201 and None not in (i5, i6, i7),
+          "execute-by fixtures created (execute-by = today)",
+          f"{c5} {c6} {c7} {[o.get('detail') for o in (o5, o6, o7)]}")
     for i in (i6, i7):
         await api(U_ADMIN1, "POST", f"/api/v1/execution/instructions/{i}/submit", {})
         await api(U_ADMIN2, "POST", f"/api/v1/execution/instructions/{i}/approve", {})
     await api(U_ADMIN1, "POST", f"/api/v1/execution/instructions/{i7}/sent", {"channel": "phone"})
-    later = TODAY + timedelta(days=2)
+    later = today + timedelta(days=2)
     with _ctx(None, super_admin=True):
         res = await X.expire_due(pool, today=later, org_id=ORG_A)
         res2 = await X.expire_due(pool, today=later, org_id=ORG_A)
     r5 = await instr_row(conn, ORG_A, i5)
     r6 = await instr_row(conn, ORG_A, i6)
     r7 = await instr_row(conn, ORG_A, i7)
-    e5 = (await events_of(conn, ORG_A, i5))[-1]
+    e5 = ((await events_of(conn, ORG_A, i5)) or [{"action": None, "actor_id": "none logged"}])[-1]
     e7 = [e for e in await events_of(conn, ORG_A, i7) if e["action"] == "ask"]
     todo7 = await scoped(conn, ORG_A, "SELECT user_id FROM member_todos WHERE source = 'execution_not_filled' AND "
                                       "related_id = $1", UUID(i7))
@@ -1229,7 +1247,7 @@ async def y_gates(conn):
     code_a, out_a = await api(U_ADMIN1, "GET", lst)
     check(code_v == 200 and code_a == 200, "the identical GET: viewer and org admin → 200")
     check(out_v["permissions"]["can_write"] is False and out_v["vocabularies"]["editable"] == []
-          and out_a["permissions"]["can_write"] is True and out_a["vocabularies"]["editable"],
+          and out_a["permissions"]["can_write"] is True and len(out_a["vocabularies"]["editable"]) > 0,
           "envelopes: viewer can_write false + editable []; org admin can_write true + editable from the server")
     body = body_for(ACCT_ALT, S["sec_ZZRQA"], side="buy", quantity="1")
     c_v, o_v = await api(U_VIEWER, "POST", lst, body)
@@ -1324,10 +1342,8 @@ CSV_FIXTURE = (
 
 async def y_csv(conn):
     section("[Y] CSV custody import path unchanged")
-    import types
-
-    import services.custody.csv_adapter as cur_mod
     from services.custody import importer
+    from services.custody import registered_adapters as CU_registered_adapters
 
     same = []
     for f in ("services/custody/csv_adapter.py", "services/custody/importer.py", "services/custody/base.py"):
@@ -1337,23 +1353,48 @@ async def y_csv(conn):
     now_reg = (API_DIR / "services/custody/registry.py").read_text(encoding="utf-8")
     check(bool(before_reg) and now_reg.startswith(before_reg), "registry.py: main's text is kept verbatim; rep2 only "
           "APPENDS the trade-adapter map")
-    old_src = git_show(BEFORE_REF, "apps/api/services/custody/csv_adapter.py")
-    old_mod = types.ModuleType("rep2_main_csv_adapter")
-    old_mod.__dict__["__name__"] = "rep2_main_csv_adapter"
-    exec(compile(old_src, "main:csv_adapter.py", "exec"), old_mod.__dict__)  # noqa: S102 — main's own source
-    from services.custody.registry import DEFAULT_PROFILES
+    # Main's code and this branch's each run in their OWN subprocess over the same fixture file. Exec'ing main's
+    # csv_adapter into this process would re-register 'csv' in the live registry (refused, rightly: a second
+    # class on one key). Main's custody package is written from git into a temp `services` package of its own.
+    probe = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from services.custody.csv_adapter import CsvCustodyAdapter\n"
+        "from services.custody.registry import DEFAULT_PROFILES, registered_adapters\n"
+        "a = CsvCustodyAdapter(custodian_code='GENERIC_CSV', source_system='CSV', file_bytes=open(sys.argv[2], "
+        "'rb').read(), filename='f.csv', column_map=DEFAULT_PROFILES['GENERIC_CSV']['column_map'])\n"
+        "o = a.fetch_accounts()\n"
+        "print(json.dumps({'records': [r.summary() for r in o.records], "
+        "'errors': [[e.source_row, e.reason_code] for e in o.errors], 'adapters': registered_adapters()}, "
+        "default=str, sort_keys=True))\n"
+    )
 
-    cmap = DEFAULT_PROFILES["GENERIC_CSV"]["column_map"]
+    def outcome(root: pathlib.Path, fixture: pathlib.Path):
+        code, out, err = run_cmd([sys.executable, "-c", probe, str(root), str(fixture)], root, timeout=120)
+        if code != 0:
+            return {"error": (err or out)[-300:]}
+        return json.loads(out.strip().splitlines()[-1])
 
-    def outcome(cls):
-        a = cls(custodian_code="GENERIC_CSV", source_system="CSV", file_bytes=CSV_FIXTURE, filename="f.csv",
-                column_map=cmap)
-        o = a.fetch_accounts()
-        return ([r.summary() for r in o.records], [(e.source_row, e.reason_code) for e in o.errors])
-
-    new_out, old_out = outcome(cur_mod.CsvCustodyAdapter), outcome(old_mod.CsvCustodyAdapter)
-    check(new_out == old_out and len(new_out[0]) == 2 and len(new_out[1]) == 1,
-          "the same fixture file parses identically under main's adapter and this branch's", f"{new_out[1]}")
+    with tempfile.TemporaryDirectory(prefix="rep2_csv_main_") as tmp:
+        root = pathlib.Path(tmp)
+        fixture = root / "fixture.csv"
+        fixture.write_bytes(CSV_FIXTURE)
+        (root / "services" / "custody").mkdir(parents=True)
+        (root / "services" / "__init__.py").write_text("", encoding="utf-8")
+        _, listing, _ = run_cmd(["git", "ls-tree", "--name-only", BEFORE_REF, "apps/api/services/custody/"], REPO,
+                                timeout=60)
+        for f in listing.split():
+            (root / "services" / "custody" / Path(f).name).write_text(git_show(BEFORE_REF, f), encoding="utf-8")
+        old_out = outcome(root, fixture)
+        new_out = outcome(API_DIR, fixture)
+    check("error" not in old_out and "error" not in new_out and old_out["records"] == new_out["records"]
+          and old_out["errors"] == new_out["errors"] and len(new_out["records"]) == 2
+          # 0 row errors, not 1: the blank-number line has no account record and is SKIPPED by design
+          # (csv_adapter._absent) — main's own code, run in its own process, returns 0 on this file.
+          and len(new_out["errors"]) == 0 and old_out["adapters"] == new_out["adapters"] == ["csv"],
+          "the same fixture file parses identically under main's code and this branch's (two separate processes)",
+          f"{old_out.get('error') or old_out.get('errors')} | {new_out.get('error') or new_out.get('errors')}")
+    check(CU_registered_adapters() == ["csv"], "the live ingestion registry was not touched: ['csv']")
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.current_org_id', $1, true), set_config('app.is_super_admin', "
                            "'false', true)", str(ORG_A))
@@ -1383,9 +1424,11 @@ async def y_routes(conn):
           "21 new routes, all under /execution, /custodians, /human-tasks", f"{len(new)}")
     ok_gate = all(
         any(p in str(gn[k].get("after")) for p in EXECUTION_PERMS) if k[1].startswith("/api/v1/execution/")
-        else (str(gn[k].get("after")) in ("staff", "super_admin")) if k[1].startswith("/api/v1/custodians/")
+        else (str(gn[k].get("after")) == ("staff or authz manage_org_settings" if "GET" in k[0] else "super_admin"))
+        if k[1].startswith("/api/v1/custodians/")
         else True for k in new)
-    check(ok_gate, "execution routes name their execution permission; capabilities: staff read / super_admin write",
+    check(ok_gate, "execution routes name their execution permission; capabilities: staff or manage_org_settings "
+          "read / super_admin write",
           f"{[(k[1][-40:], gn[k].get('after')) for k in new][:4]}")
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
@@ -1435,6 +1478,9 @@ async def guard_prefix(conn) -> bool:
                  f"{n}/{m}")
 
 
+DROPPED_CONNECTION = (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError, ConnectionError)
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1479,23 +1525,40 @@ async def main_async() -> int:
             await close_pool()
         except Exception:  # noqa: BLE001
             pass
+        async def after_teardown(c):
+            """Every post-teardown read, as ONE unit, so a retry re-runs all of it on the same connection."""
+            return (await leftovers(c), await counts(c) if pre is not None else None,
+                    await real_fingerprints(c) if real is not None else None)
+
         try:
             log = await teardown(conn)
             print(f"[INFO] teardown removed: {log}")
-            left = await leftovers(conn)
+            try:
+                left, post, after = await after_teardown(conn)
+            except DROPPED_CONNECTION as exc:
+                # Reconnect ONCE and re-run every count on the new connection. A second drop propagates
+                # to "teardown raised" below — a dropped connection is never reported as clean.
+                print(f"[INFO] connection dropped during the leftover check ({type(exc).__name__}); reconnecting once")
+                try:
+                    conn.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+                conn = await connect(dsn)
+                left, post, after = await after_teardown(conn)
             check(left == 0, "zero fixture rows remain", f"{left}")
-            if pre is not None:
-                post = await counts(conn)
+            if post is not None:
                 for t in COUNTED:
                     check(post[t] == pre[t], f"{t} at its pre-test count", f"{pre[t]} → {post[t]}")
-            if real is not None:
-                after = await real_fingerprints(conn)
+            if after is not None:
                 for k in real:
                     check(after[k] == real[k], f"real {k} unchanged (count + checksum)", f"{real[k][0]} → {after[k][0]}")
         except Exception as exc:  # noqa: BLE001
             check(False, "teardown raised", f"{type(exc).__name__}: {exc}")
             traceback.print_exc()
-        await conn.close()
+        try:
+            await conn.close()
+        except Exception:  # noqa: BLE001
+            pass
     if os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:

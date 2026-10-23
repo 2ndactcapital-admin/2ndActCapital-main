@@ -1,6 +1,7 @@
 """REP2 — custodian capabilities (/custodians).
 
-  staff         GET /custodians/capabilities                          matrix + envelope
+  staff or manage_org_settings (org admins read; Joe, 2026-10-23)
+                GET /custodians/capabilities                          matrix + envelope
                 GET /custodians/capabilities/{code}/{key}/history     every version of one cell
   super admin   PUT /custodians/capabilities/{code}/{key}             record a new version
 
@@ -17,10 +18,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from services import custodian_capabilities as CC
-from services.authz import require_staff, require_super_admin
+from services.authz import require_staff_or_permission, require_super_admin
 from services.database import get_pool
 
 router = APIRouter(tags=["custodians"])
+
+READ_PERMISSION = "manage_org_settings"
 
 
 class CapabilityEdit(BaseModel):
@@ -36,12 +39,12 @@ class CapabilityEdit(BaseModel):
 def _permissions(principal) -> dict:
     return {"can_read": True, "can_write": bool(principal.is_super_admin),
             "is_super_admin": bool(principal.is_super_admin),
-            "read_permission": "staff", "write_permission": "super_admin"}
+            "read_permission": f"staff or {READ_PERMISSION}", "write_permission": "super_admin"}
 
 
 @router.get("/custodians/capabilities")
 async def capabilities(request: Request):
-    principal = require_staff(request)
+    principal = require_staff_or_permission(request, READ_PERMISSION)
     pool = await get_pool()
     async with pool.acquire() as conn:
         m = await CC.matrix(conn)
@@ -53,7 +56,7 @@ async def capabilities(request: Request):
 
 @router.get("/custodians/capabilities/{custodian_code}/{capability_key}/history")
 async def capability_history(request: Request, custodian_code: str, capability_key: str):
-    require_staff(request)
+    require_staff_or_permission(request, READ_PERMISSION)
     if capability_key not in CC.CAPABILITY_LABELS:
         raise HTTPException(status_code=404, detail="unknown capability")
     pool = await get_pool()

@@ -345,8 +345,9 @@ WRITTEN, NOT RUN (WSL memory; it runs `npm run build` and the
   and three execution permissions (`rbac.ensure_org_admin_role`).
 - **[FIND]** `public.accounts`, `portfolio.positions` and `portfolio.tax_lots` hold
   ZERO rows today — lot instructions and the CSV-unchanged proof run on fixtures.
-- **[FIND]** capabilities read is `require_staff` as specified; `org_admin` is not a
-  staff role, so an org admin without a staff role does not see the matrix.
+- **[FIND → decided 2026-10-23]** capabilities read was `require_staff`; `org_admin` is
+  not a staff role, so org admins could not see the matrix. Now staff OR
+  `manage_org_settings` (`require_staff_or_permission`); write stays Super Admin only.
 - **[FIND]** the database stores only the masked number and a salted hash, so a
   letter with the full number needs the person to type it (checked against the hash).
 - **[FIND]** the system human-task definitions appear in each org's Workflow library.

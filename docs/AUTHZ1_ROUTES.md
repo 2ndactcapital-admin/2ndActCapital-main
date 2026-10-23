@@ -161,9 +161,9 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/billing-groups/{group_id}/members` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | DELETE | `/api/v1/billing-groups/{group_id}/members/{account_id}` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | GET | `/api/v1/config` | marketplace | R | none beyond auth | OPEN | none beyond auth |  |
-| GET | `/api/v1/custodians/capabilities` | custodians | R | — | new route | staff |  |
+| GET | `/api/v1/custodians/capabilities` | custodians | R | — | new route | staff or authz manage_org_settings |  |
 | PUT | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}` | custodians | W | — | new route | super_admin |  |
-| GET | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}/history` | custodians | R | — | new route | staff |  |
+| GET | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}/history` | custodians | R | — | new route | staff or authz manage_org_settings |  |
 | GET | `/api/v1/custody/batches` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio |  |
 | GET | `/api/v1/custody/batches/{batch_id}` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio |  |
 | POST | `/api/v1/custody/import/commit` | custody_import | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |

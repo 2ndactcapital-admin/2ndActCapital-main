@@ -10352,11 +10352,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "staff or authz manage_org_settings",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
-    "rule": "staff"
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
@@ -10370,11 +10370,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "staff or authz manage_org_settings",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
-    "rule": "staff"
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
