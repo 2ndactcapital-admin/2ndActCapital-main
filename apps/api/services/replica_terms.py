@@ -33,10 +33,21 @@ refresh): one append-only ``portfolio.replica_terms_actions`` row + one
 ``domain_events`` row (``services.domain_events.publish_event``, event_type
 ``replication.<action>``, source_type ``replica_terms_action``, source_id =
 the action id) — the platform's workflow event, which also starts any
-workflow an org has subscribed to that event type. "Approval needed" is a
-``member_todos`` task for every ``approve_replication`` holder of the org,
-opened when a draft is created or edited and closed (status 'done') by the
-approve / reject.
+workflow an org has subscribed to that event type.
+
+APPROVAL IS A GOVERNED HUMAN TASK (rep3). "Approval needed" is one
+``services.human_tasks`` task (kind ``replica_terms_approval``, eligible
+permission ``approve_replication``, subject = the terms version), opened when a
+draft is created or edited (if none is open for it) — the engine notifies every
+holder through its own member_todos. Approve / reject completes that task
+through the engine (``complete_task``); the version change itself runs in the
+kind's ``on_complete`` callback, idempotently, and :func:`sync_terms_task_outcome`
+re-applies a decision the engine recorded if the subject update ever failed
+after it. ``replica_terms_actions`` stays the domain log. The task kind is NOT
+engine-level maker-checker: rep1's makers are everyone in ``maker_ids`` (who
+corrected or changed a field), which the engine's single ``started_by`` cannot
+express — so the refusal stays rep1's own (same text, same 403) and the CHECK
+``replica_terms_versions_maker_checker_chk`` still backs it.
 
 NO CLAUDE. Extraction calls the platform's LiteLLM proxy through
 ``services.note_extraction.proxy.chat`` (one attempt per named deployment, no
@@ -62,6 +73,7 @@ import httpx
 from starlette.concurrency import run_in_threadpool
 
 from services import edgar_fetch, html_text, storage
+from services import human_tasks as HT
 from services import replica_holdings as H
 from services.note_extraction import proxy
 from services.note_extraction import schema as NS
@@ -91,7 +103,10 @@ CONFIDENCE_LABELS = {"agreed": "Both readers agree", "single": "One reader only"
                      "disagreed": "Readers disagree", "not_stated": "Not stated", "data": "From data",
                      "human": "Set by staff", "not_run": "Not extracted"}
 
-TODO_SOURCE_APPROVAL = "replica_terms_approval"
+TODO_SOURCE_APPROVAL = "replica_terms_approval"   # pre-rep3 drafts' todos (closed on decide)
+TERMS_TASK_KIND = "replica_terms_approval"
+TERMS_TASK_SUBJECT = "replica_terms_version"
+REJECT_WITHOUT_NOTE = "(rejected without a note)"
 TODO_SOURCE_HOLDINGS = "replica_holdings_review"
 TODO_CATEGORY = "replication"
 APPROVE_PERMISSION = "approve_replication"
@@ -258,21 +273,33 @@ async def close_todos(conn, *, org_id, source: str, related_id) -> int:
     return int(status.rsplit(" ", 1)[-1])
 
 
-async def _open_approval_todos(conn, org_id, entry: dict, version: dict) -> list[str]:
-    recipients = await _approvers(conn, org_id)
-    makers = {str(m) for m in (version.get("maker_ids") or [])}
-    title = f"Approve terms: {entry['display_name']} v{version['version_no']}"
-    detail = ("Terms draft is waiting for an approver" +
-              (" (you made changes in it, so another approver must decide)." if makers else "."))
-    if not recipients:
-        await conn.execute(
-            "INSERT INTO audit_log (org_id, action, resource_type, resource_id, payload) "
-            "VALUES ($1::uuid, 'replication.approval_alert_undelivered', 'replica_terms_version', $2::uuid, $3::jsonb)",
-            str(org_id), str(version["id"]), _dumps({"reason": f"no {APPROVE_PERMISSION} holder in the org"}))
-        return []
-    return await open_todos(conn, org_id=org_id, recipients=recipients, source=TODO_SOURCE_APPROVAL,
-                            related_type="replica_terms_version", related_id=version["id"], title=title,
-                            detail=detail, action_key=f"/portfolio/replication/{entry['id']}")
+async def open_terms_task(conn, org_id, version_id) -> dict | None:
+    rows = await HT.list_tasks(conn, org_id, status="open", kind=TERMS_TASK_KIND, subject_type=TERMS_TASK_SUBJECT,
+                               subject_id=version_id, limit=1)
+    return rows[0] if rows else None
+
+
+async def ensure_approval_task(pool, *, org_id, entry: dict, version: dict, actor_id) -> dict | None:
+    """The version's open approval task, opened now if there is none (the
+    engine notifies every approve_replication holder). After the caller's
+    transaction has committed — the engine uses its own connections."""
+    async with pool.acquire() as conn:
+        task = await open_terms_task(conn, org_id, version["id"])
+    if task is not None:
+        return task
+    if actor_id is None:
+        return None
+    try:
+        return await HT.open_task(
+            pool, org_id=org_id, kind=TERMS_TASK_KIND, subject_type=TERMS_TASK_SUBJECT, subject_id=version["id"],
+            maker_id=actor_id, eligible_permission=APPROVE_PERMISSION,
+            title=f"Approve terms: {entry['display_name']} v{version['version_no']}",
+            payload={"replica_security_id": str(entry["id"]), "version_no": version["version_no"],
+                     "ticker": entry.get("ticker")},
+            action_path=f"/portfolio/replication/{entry['id']}")
+    except HT.HumanTaskConflict:
+        async with pool.acquire() as conn:
+            return await open_terms_task(conn, org_id, version["id"])
 
 
 async def create_entry(pool, *, org_id, actor_id, ticker: str | None, cusip: str | None, instrument_class: str,
@@ -768,7 +795,7 @@ async def build_draft(pool, *, org_id, entry: dict, actor_id, http: httpx.AsyncC
         ref = await _record_action(conn, org_id=org_id, entry_id=entry["id"], version_id=vid, action="extract",
                                    actor_id=actor_id, detail={"extraction_status": run.status,
                                                               "needs_review": len(_needs(_loads(version["term_values"])))})
-        await _open_approval_todos(conn, org_id, entry, version)
+    await ensure_approval_task(pool, org_id=org_id, entry=entry, version=version, actor_id=actor_id)
     return version, run, [ref]
 
 
@@ -858,7 +885,7 @@ async def correct_field(pool, *, org_id, actor_id, entry_id, version_id, field_k
         ref = await _record_action(conn, org_id=org_id, entry_id=entry_id, version_id=draft["id"], action="correct",
                                    actor_id=actor_id, field_key=field_key, before=before, after=new_value,
                                    reason=notes, correction_id=corr_id)
-        await _open_approval_todos(conn, org_id, entry, version)
+    await ensure_approval_task(pool, org_id=org_id, entry=entry, version=version, actor_id=actor_id)
     return version, [ref]
 
 
@@ -913,16 +940,26 @@ async def change_field(pool, *, org_id, actor_id, entry_id, field_key: str, valu
         ref = await _record_action(conn, org_id=org_id, entry_id=entry_id, version_id=draft["id"], action="change",
                                    actor_id=actor_id, field_key=field_key, before=before, after=new_value,
                                    reason=reason.strip(), detail={"fund_value": fund_value})
-        await _open_approval_todos(conn, org_id, entry, version)
+    await ensure_approval_task(pool, org_id=org_id, entry=entry, version=version, actor_id=actor_id)
     return version, [ref]
 
 
-# ── approve / reject ────────────────────────────────────────────────────────
-async def decide(pool, *, org_id, actor_id, entry_id, version_id, approve: bool,
-                 note: str | None = None) -> tuple[dict, list[ActionRef]]:
+# ── approve / reject (a governed human task) ────────────────────────────────
+async def _apply_terms_decision(pool, *, org_id, version_id, approve: bool, actor_id, note,
+                                task_id=None) -> tuple[dict, list[ActionRef]]:
+    """Apply a decided approval task to its terms version, then publish the
+    action. Idempotent: a version that is no longer a draft is left alone and
+    returned with no action."""
     async with pool.acquire() as conn:
+        row = await conn.fetchrow(f"SELECT * FROM {T_VER} WHERE id = $1::uuid AND org_id = $2::uuid "
+                                  "AND system_to IS NULL FOR UPDATE", str(version_id), str(org_id))
+        if row is None:
+            raise ReplicaNotFound("terms version not found")
+        if row["status"] != "draft":
+            return dict(row), []
+        draft = dict(row)
+        entry_id = draft["replica_security_id"]
         entry = await load_entry(conn, org_id, entry_id)
-        draft = await _version_for_edit(conn, entry_id, version_id)
         if str(actor_id) in {str(m) for m in draft["maker_ids"] or []}:
             raise MakerCheckerViolation(MAKER_CHECKER_RULE)
         await _archive(conn, T_VER, draft["id"])
@@ -944,13 +981,81 @@ async def decide(pool, *, org_id, actor_id, entry_id, version_id, approve: bool,
             await conn.execute(
                 f"UPDATE {T_VER} SET status = 'rejected', checker_id = $2::uuid, rejected_at = now(), "
                 "decision_note = $3, system_from = now() WHERE id = $1::uuid", draft["id"], str(actor_id), note)
+        # drafts opened before rep3 carried member_todos of their own
         closed = await close_todos(conn, org_id=org_id, source=TODO_SOURCE_APPROVAL, related_id=draft["id"])
         version = dict(await conn.fetchrow(f"SELECT * FROM {T_VER} WHERE id = $1::uuid", str(draft["id"])))
         ref = await _record_action(conn, org_id=org_id, entry_id=entry_id, version_id=draft["id"],
                                    action="approve" if approve else "reject", actor_id=actor_id, reason=note,
-                                   detail={"version_no": draft["version_no"], "todos_closed": closed,
+                                   detail={"version_no": draft["version_no"], "legacy_todos_closed": closed,
+                                           "task_id": str(task_id) if task_id else None,
                                            "superseded_version_id": str(prior["id"]) if prior else None})
+    await publish_actions(pool, [ref])
     return version, [ref]
+
+
+async def _on_terms_task_complete(pool, task, outcome, actor_id, note):
+    stored = None if note == REJECT_WITHOUT_NOTE else note
+    return await _apply_terms_decision(pool, org_id=task["org_id"], version_id=task["subject_id"],
+                                       approve=outcome == "approve", actor_id=actor_id, note=stored,
+                                       task_id=task["id"])
+
+
+HT.register_kind(TERMS_TASK_KIND, label="Terms approval", outcomes=("approve", "reject"), maker_checker=False,
+                 on_complete=_on_terms_task_complete)
+
+
+async def sync_terms_task_outcome(pool, *, org_id, version_id) -> None:
+    """Recovery: a draft whose approval task the engine already decided (the
+    subject update failed after the engine committed) takes that outcome now."""
+    async with pool.acquire() as conn:
+        status = await conn.fetchval(f"SELECT status FROM {T_VER} WHERE id = $1::uuid AND org_id = $2::uuid "
+                                     "AND system_to IS NULL", str(version_id), str(org_id))
+        if status != "draft":
+            return
+        done = await HT.list_tasks(conn, org_id, status="completed", kind=TERMS_TASK_KIND,
+                                   subject_type=TERMS_TASK_SUBJECT, subject_id=version_id, limit=1)
+    if done and done[0]["outcome"] in ("approve", "reject") and done[0]["completed_by"]:
+        t = done[0]
+        await _on_terms_task_complete(pool, t, t["outcome"], t["completed_by"], t["note"])
+
+
+async def decide(pool, *, org_id, actor_id, entry_id, version_id, approve: bool,
+                 note: str | None = None) -> tuple[dict, list[ActionRef]]:
+    """Approve / reject the draft through its human task. Refusals are rep1's,
+    unchanged and in the same order: 404 not visible, 409 not the open draft,
+    403 a maker of the draft (MAKER_CHECKER_RULE). The action is published by
+    the task callback — callers must not publish the returned refs again."""
+    try:
+        vid = uuid.UUID(str(version_id))
+    except ValueError as exc:
+        raise ReplicaNotFound("terms version not found") from exc
+    await sync_terms_task_outcome(pool, org_id=org_id, version_id=vid)
+    async with pool.acquire() as conn:
+        entry = await load_entry(conn, org_id, entry_id)
+        draft = await _version_for_edit(conn, entry_id, version_id)
+        if str(actor_id) in {str(m) for m in draft["maker_ids"] or []}:
+            raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+    task = await ensure_approval_task(pool, org_id=org_id, entry=entry, version=draft, actor_id=actor_id)
+    if task is None:
+        raise ReplicaConflict("the approval task for this draft could not be opened")
+    task_note = note if (note or "").strip() else (None if approve else REJECT_WITHOUT_NOTE)
+    try:
+        done = await HT.complete_task(pool, org_id=org_id, task_id=task["id"], actor_id=actor_id,
+                                      outcome="approve" if approve else "reject", note=task_note)
+    except HT.HumanTaskPermissionError as exc:
+        raise MakerCheckerViolation(str(exc)) from exc
+    except HT.HumanTaskConflict as exc:
+        raise ReplicaConflict(str(exc)) from exc
+    except HT.AgentActorRefused as exc:
+        raise MakerCheckerViolation(str(exc)) from exc
+    except HT.HumanTaskError as exc:
+        raise ReplicaTermsError(str(exc)) from exc
+    result = done.get("subject_result")
+    if result is None:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(f"SELECT * FROM {T_VER} WHERE id = $1::uuid", str(draft["id"]))
+        return dict(row), []
+    return result
 
 
 # ── reads for the API ───────────────────────────────────────────────────────

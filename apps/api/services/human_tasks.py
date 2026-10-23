@@ -103,20 +103,28 @@ class TaskKind:
     #: after the engine committed, the subject module re-applies the recorded
     #: outcome (see services.execution.sync_task_outcome).
     on_complete: Callable[..., Awaitable[Any]] | None = None
+    #: rep3 (additive): a kind the platform itself may OPEN — a review of work
+    #: a system import produced (a library subscription's new version, a
+    #: composite following a child). Never maker-checker (there is no human
+    #: maker to exclude); never completable by anything but a person.
+    system_open: bool = False
 
 
 _KINDS: dict[str, TaskKind] = {}
 
 
 def register_kind(key: str, *, label: str, outcomes: tuple[str, ...], maker_checker: bool,
-                  on_complete=None) -> TaskKind:
+                  on_complete=None, system_open: bool = False) -> TaskKind:
     if not outcomes or any(o not in OUTCOME_LABELS for o in outcomes):
         raise HumanTaskError(f"task kind {key!r}: outcomes must be from {sorted(OUTCOME_LABELS)}")
     if maker_checker and "done" in outcomes:
         raise HumanTaskError(f"task kind {key!r}: a maker-checker kind decides approve/reject, not done")
-    kind = TaskKind(key, label, tuple(outcomes), maker_checker, on_complete)
+    if maker_checker and system_open:
+        raise HumanTaskError(f"task kind {key!r}: a system-opened kind has no maker, so it cannot be maker-checker")
+    kind = TaskKind(key, label, tuple(outcomes), maker_checker, on_complete, system_open)
     existing = _KINDS.get(key)
-    if existing is not None and (existing.outcomes, existing.maker_checker) != (kind.outcomes, kind.maker_checker):
+    if existing is not None and (existing.outcomes, existing.maker_checker, existing.system_open) != (
+            kind.outcomes, kind.maker_checker, kind.system_open):
         raise HumanTaskError(f"task kind {key!r} is already registered differently")
     _KINDS[key] = kind
     return kind
@@ -405,19 +413,30 @@ async def open_task(pool, *, org_id, kind: str, subject_type: str, subject_id, m
                     eligible_permission: str, title: str, payload: dict | None = None,
                     action_path: str | None = None, actor_kind: str = "user") -> dict:
     """Start a run of the system definition for this subject and notify the
-    eligible holders. One open task per (kind, subject)."""
+    eligible holders. One open task per (kind, subject).
+
+    rep3 (additive): ``actor_kind="system"`` with ``maker_id=None`` opens a
+    task with NO maker, for a kind registered ``system_open=True`` only (a
+    review of a system import). An agent is still refused, and completing a
+    task is never open to anything but an admitted person."""
     k = get_kind(kind)
     if not (title or "").strip():
         raise HumanTaskError("a task needs a title")
+    system = actor_kind == "system"
+    if system and (not k.system_open or maker_id is not None):
+        raise AgentActorRefused(f"only a system-opened kind may be opened by the platform itself, with no maker "
+                                f"({kind!r} is not one)")
     async with pool.acquire() as conn:
-        maker = await assert_human(conn, maker_id, org_id, actor_kind)
+        maker = {"id": None, "full_name": "System import"} if system else await assert_human(
+            conn, maker_id, org_id, actor_kind)
         dup = await list_tasks(conn, org_id, status="open", kind=kind, subject_type=subject_type,
                                subject_id=subject_id, limit=1)
         if dup:
             raise HumanTaskConflict(f"an open {k.label.lower()} task already exists for this {subject_type}")
         d = await ensure_definition(conn, org_id, eligible_permission)
     context = {"human_task": {
-        "kind": kind, "subject_type": subject_type, "subject_id": str(subject_id), "maker_id": str(maker["id"]),
+        "kind": kind, "subject_type": subject_type, "subject_id": str(subject_id),
+        "maker_id": str(maker["id"]) if maker["id"] else None,
         "maker_checker": k.maker_checker, "title": title, "payload": payload or {}, "action_path": action_path,
     }}
     started = await E.start_workflow_run(pool, d["version_id"], uuid.UUID(str(org_id)), context,
@@ -439,7 +458,7 @@ async def open_task(pool, *, org_id, kind: str, subject_type: str, subject_id, m
                                                           else ""), action_path, rsid)]
             audit = {"kind": kind, "subject_type": subject_type, "subject_id": str(subject_id), "title": title,
                      "eligible_permission": eligible_permission, "notified": notified,
-                     "workflow_run_id": str(started["run_id"])}
+                     "workflow_run_id": str(started["run_id"]), "opened_by": "system" if system else "user"}
             await _audit(conn, org_id, maker["id"], "human_task.opened", rsid, audit)
             if not notified:
                 await _audit(conn, org_id, maker["id"], "human_task.alert_undelivered", rsid,

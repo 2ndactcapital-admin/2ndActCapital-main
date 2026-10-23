@@ -67,6 +67,34 @@ The decision is made on the subject's own gated route (e.g.
 `GET /human-tasks/mine` lists the caller's actionable and waiting tasks for the
 dashboard's My tasks panel.
 
+## Users of the path
+
+- **rep2 — execution instructions** (`services/execution.py`): kind
+  `execution_approval`, maker-checker, eligible `approve_execution`.
+- **rep1 — fund terms (moved in rep3)** (`services/replica_terms.py`): kind
+  `replica_terms_approval`, eligible `approve_replication`, opened by
+  `ensure_approval_task` when a terms draft is created or edited (one open task per
+  version), completed by `decide` through `complete_task`; the version change runs in
+  `on_complete`, `sync_terms_task_outcome` re-applies a recorded outcome, and
+  `replica_terms_actions` stays the domain log. NOT engine-level maker-checker: rep1's
+  makers are everyone in `maker_ids`, which `started_by` cannot hold — rep1's own 403
+  (unchanged text) and `replica_terms_versions_maker_checker_chk` are the gate. A
+  rejection without a note is still allowed by rep1; the task records
+  "(rejected without a note)" and the version's `decision_note` stays NULL.
+- **rep3 — models** (`services/models.py`): kind `model_version_approval`
+  (maker-checker, maker = the submitter; every uploader / editor / submitter is also
+  refused by the app and by `model_versions_maker_checker_chk`) and kind
+  `model_version_review` for drafts the platform produced (a library subscription's
+  update, a composite following a child) — `system_open=True`.
+
+## System-opened review tasks (rep3, additive)
+
+`register_kind(..., system_open=True)` (never together with `maker_checker`) lets
+`open_task(..., maker_id=None, actor_kind="system")` open a task with NO maker:
+`started_by` NULL, every eligible holder notified, audit `opened_by: system`. An
+agent is still refused, a maker-checker kind can never be opened this way, and
+completing any task still requires an admitted person.
+
 ## Known
 
 - The system definitions are ordinary rows, so they appear in an org's Workflow

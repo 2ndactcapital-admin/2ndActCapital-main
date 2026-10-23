@@ -1402,8 +1402,16 @@ async def y_csv(conn):
         plan = await importer.build_plan(conn, org_id=str(ORG_A), custodian_code="GENERIC_CSV",
                                          file_bytes=CSV_FIXTURE, filename="f.csv")
     c = plan.to_json()["counts"]
-    check(c["accounts_new"] == 2 and c["unmatched"] == 1 and plan.custodian_code == "GENERIC_CSV",
-          "the importer's dry run over it: 2 new accounts, 1 exception — the same result as main", f"{c}")
+    # rep3 fix: the dry-run summary has no "exceptions" key. The importer reports its exceptions as
+    # plan.exceptions (counts.unmatched is len(plan.exceptions)). The blank-number line has no account
+    # record at all (csv_adapter skips it — see the parse check above), so the exception count main's own
+    # code produces on this file is the parse-error count measured in main's process: 0.
+    n_exc = len(plan.exceptions)
+    main_exc = len(old_out.get("errors") or []) if "error" not in old_out else None
+    check(c["accounts_new"] == 2 and n_exc == c["unmatched"] and main_exc is not None and n_exc == main_exc
+          and plan.custodian_code == "GENERIC_CSV",
+          f"the importer's dry run over it: 2 new accounts, {n_exc} exception(s) (plan.exceptions) — the same "
+          f"result as main ({main_exc})", f"{c}")
 
 
 async def y_routes(conn):

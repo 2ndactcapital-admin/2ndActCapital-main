@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,46 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep3 (sprint 3 of 15): model management — one registry, uploads + column mapping, a permanent upload log, the model library, composite sleeves, approvals on human tasks (and rep1's terms approvals moved onto them); verify WRITTEN, not yet run (2026-10-23)
+
+Design + findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep3 section) and `docs/HUMAN_TASKS.md`.
+Schema `docs/rep3_part1.sql` — APPLIED (`scripts/_apply_rep3.py --schema`) and read
+back (`--verify`: SCHEMA OK — 10 tables, every partial unique, trigger and a policy for
+every operation). Verify: `apps/api/scripts/verify_rep3.py` — WRITTEN, NOT RUN (WSL
+memory; it runs `npm run build` and the `verify_rep1.py` regression itself).
+In-sprint proof only: a rollback-only service smoke (every write inside one
+transaction that was rolled back — 29/30, the one miss a test-string mismatch on an
+exact value), a rollback-only smoke of the moved rep1 path (7/7), `node --test
+tests/models` 10/10 (nav / execution / replication suites still 37 pass, 1 skip),
+`authz1_routes.py --check` CURRENT (28 new routes, no existing gate changed).
+
+- **Custody cliff held:** approving a model version never trades; it emits
+  `model.version_approved` (with the diff) for rep5's rebalance PROPOSALS.
+- **Operator step:** `pip install -r apps/api/requirements.txt` (adds `xlrd==2.0.1`)
+  before running the verify; until then a .xls upload is logged `failed`
+  (`reader_unavailable`) and the verify's .xls proofs FAIL by design.
+- **rep2 test defect fixed:** `verify_rep2.py`'s CSV dry-run check now reads the
+  exception count from `plan.exceptions` (0 on that file — the blank-number line is
+  skipped by the adapter); the importer is unchanged.
+- **[FIND]** an unresolved model row cannot join the security master's unresolved
+  queue (`securities_global_relationships` needs a `from` security; a model is not
+  one) — it is queued on the version itself (`resolution_state 'unresolved'`, raw
+  identifiers kept) and blocks approval.
+- **[FIND]** `human_tasks.open_task` required a human maker, so a system import
+  (subscription update, composite following a child) could not open its review
+  task. Added `system_open` kinds (additive; agents still refused; completing still
+  needs a person).
+- **[FIND]** rep1's makers are everyone who edited a draft, which the engine's single
+  `started_by` cannot express — the terms task kind is NOT engine-level
+  maker-checker; rep1's own 403 (same text) and its DB CHECK remain the gate.
+- **[FIND]** a deployment's request-body limit (Vercel 4.5 MB) sits below the 5 MB
+  upload cap; a file between the two is refused by the Next.js proxy.
+- **[FIND]** version status `submitted` added (not in the prompt's list): content is
+  frozen while an approver decides; a rejection returns the version to `draft`.
+- Follow-ups: rep4 builds `fund_replica` models ("Holdings of" names); rep5 consumes
+  `model.version_approved`; per-org weight tolerance key
+  `portfolio.models.weight_tolerance_pct` (default 0.05%) has no settings-screen field yet.
 
 ## 0000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep2 (sprint 2 of 15): custodian capabilities, trade adapters (Altruist → manual, manual), governed human tasks on the workflow engine, execution instructions with a letter of instruction; verify WRITTEN, not yet run (2026-10-22)
 

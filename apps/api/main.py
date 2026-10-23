@@ -46,6 +46,7 @@ from routers.replication import router as replication_router
 from routers.execution import router as execution_router
 from routers.custodians import router as custodians_router
 from routers.human_tasks import router as human_tasks_router
+from routers.models import router as models_router
 from routers.marketplace import router as marketplace_router
 from routers.deal_room import router as deal_room_router
 from routers.notifications import router as notifications_router
@@ -603,5 +604,6 @@ app.include_router(replication_router, prefix="/api/v1")
 app.include_router(execution_router, prefix="/api/v1")
 app.include_router(custodians_router, prefix="/api/v1")
 app.include_router(human_tasks_router, prefix="/api/v1")
+app.include_router(models_router, prefix="/api/v1")
 # Debug router mounted at root so the path is exactly /debug/user-info.
 app.include_router(debug_router)

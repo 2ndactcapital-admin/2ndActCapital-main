@@ -260,6 +260,13 @@ async def teardown(_conn=None) -> list[str]:
                 ("domain_events", "DELETE FROM domain_events WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
                 ("audit_log", "DELETE FROM audit_log WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
                  [FIXTURE_ORGS, users]),
+                # rep3: terms approvals are human tasks — the engine's rows in the fixture orgs
+                ("workflow_run_steps", "DELETE FROM workflow_run_steps WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+                ("workflow_runs", "DELETE FROM workflow_runs WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+                ("workflow_steps", "DELETE FROM workflow_steps WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+                ("workflow_versions", "DELETE FROM workflow_versions WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+                ("workflow_definitions", "DELETE FROM workflow_definitions WHERE org_id = ANY($1::uuid[])",
+                 [FIXTURE_ORGS]),
                 ("replica_terms_actions", "DELETE FROM portfolio.replica_terms_actions WHERE org_id = ANY($1::uuid[])",
                  [FIXTURE_ORGS]),
                 ("document_field_corrections", "DELETE FROM document_field_corrections WHERE org_id = ANY($1::uuid[])",
@@ -315,6 +322,8 @@ async def leftovers(conn) -> int:
         ("SELECT count(*) FROM portfolio.replica_refresh_events WHERE run_date >= '2099-01-01'", []),
         ("SELECT count(*) FROM ai_ensemble_configs WHERE notes = $1", [TAG]),
         ("SELECT count(*) FROM member_todos WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+        ("SELECT count(*) FROM workflow_runs WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+        ("SELECT count(*) FROM workflow_definitions WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
         ("SELECT count(*) FROM domain_events WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
         ("SELECT count(*) FROM audit_log WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
         ("SELECT count(*) FROM document_field_corrections WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
@@ -606,7 +615,8 @@ async def y_task1(conn):
          "FEE_SCHEDULE_SPEC, so none sees the new rows; global-read policy lists note_terms/template_proposal only")
     find("1e workflow mechanism", "the engine opens User Tasks only from a published BPMN version — no ad-hoc task "
          "service. CHOSEN: replica_terms_actions row + audit_log (same tx) + domain_events (publish_event, "
-         "'replication.<action>'); 'approval needed' = member_todos for approve_replication holders, closed on decide")
+         "'replication.<action>'); 'approval needed' = member_todos for approve_replication holders, closed on decide "
+         "(rep3: moved onto services.human_tasks — one task per draft, kind replica_terms_approval)")
     find("1f scheduler", "bulkfetchui3 runs from workflow_scheduler_tick.py's entrypoint after run_scheduler_tick "
          "(edgar_index_schedule.maybe_refresh_index, once per weekday by a partial unique index) — "
          "replica_schedule.maybe_refresh_holdings runs right after it")
@@ -989,11 +999,26 @@ async def y_edits(conn):
     for aid, act in ((S.get("act_correct"), "correct"), (S.get("act_change"), "change")):
         check(bool(aid) and await _action_logged(conn, ORG_A, aid, act),
               f"'{act}' is logged as an action row + domain_events workflow event + audit_log (re-read)")
-    todos = await scoped(conn, ORG_A, "SELECT user_id, status FROM member_todos WHERE source = "
-                                      "'replica_terms_approval' AND related_id = $1", UUID(S["v1"]))
-    check({str(t["user_id"]) for t in todos} == {str(U_ADMIN1), str(U_ADMIN2)} and all(t["status"] == "open"
-                                                                                     for t in todos),
-          "an 'approval needed' task is open for every approve_replication holder", f"{[dict(t) for t in todos]}")
+    # rep3: "approval needed" is ONE governed human task (services.human_tasks), whose engine todos reach
+    # every approve_replication holder — no longer replica_terms' own member_todos.
+    tasks = await scoped(conn, ORG_A, "SELECT rs.id, rs.status, ws.assigned_permission, d.name FROM workflow_run_steps rs "
+                                      "JOIN workflow_runs r ON r.id = rs.workflow_run_id JOIN workflow_steps ws ON "
+                                      "ws.id = rs.workflow_step_id JOIN workflow_versions v ON v.id = r.workflow_version_id "
+                                      "JOIN workflow_definitions d ON d.id = v.workflow_definition_id WHERE "
+                                      "r.context->'human_task'->>'kind' = 'replica_terms_approval' AND "
+                                      "r.context->'human_task'->>'subject_id' = $1", S["v1"])
+    S["v1_task"] = str(tasks[0]["id"]) if len(tasks) == 1 else None
+    todos = await scoped(conn, ORG_A, "SELECT user_id, status FROM member_todos WHERE source = 'workflow_user_task' "
+                                      "AND related_type = 'workflow_run_step' AND related_id = $1",
+                         tasks[0]["id"]) if len(tasks) == 1 else []
+    old_path = await scoped(conn, ORG_A, "SELECT count(*) FROM member_todos WHERE source = 'replica_terms_approval'",
+                            fetch="fetchval")
+    check(len(tasks) == 1 and tasks[0]["status"] == "active" and tasks[0]["assigned_permission"] == "approve_replication"
+          and tasks[0]["name"] == "system:human_task:approve_replication"
+          and {str(t["user_id"]) for t in todos} == {str(U_ADMIN1), str(U_ADMIN2)}
+          and all(t["status"] == "open" for t in todos) and old_path == 0,
+          "an 'approval needed' HUMAN TASK is open (approve_replication), its todos reach every holder; no old-path todos",
+          f"{[dict(t) for t in tasks]} {[dict(t) for t in todos]} old={old_path}")
 
 
 async def y_maker_checker(conn):
@@ -1023,9 +1048,17 @@ async def y_maker_checker(conn):
         return
     S["act_approve1"] = out["action_id"]
     check(await _action_logged(conn, ORG_A, out["action_id"], "approve"), "'approve' logged (action + event + audit)")
-    todos = await scoped(conn, ORG_A, "SELECT status FROM member_todos WHERE source = 'replica_terms_approval' AND "
-                                      "related_id = $1", UUID(S["v1"]))
-    check(bool(todos) and all(t["status"] == "done" for t in todos), "the approval tasks are closed (status done)")
+    # rep3: the decision completed the version's human task through the engine (approved_by = the checker),
+    # and the engine closed its todos.
+    task = await scoped(conn, ORG_A, "SELECT rs.status, rs.approved_by, rs.result->>'outcome' AS outcome FROM "
+                                     "workflow_run_steps rs WHERE rs.id = $1", UUID(S["v1_task"]), fetch="fetchrow") \
+        if S.get("v1_task") else None
+    todos = await scoped(conn, ORG_A, "SELECT status FROM member_todos WHERE source = 'workflow_user_task' AND "
+                                      "related_id = $1", UUID(S["v1_task"])) if S.get("v1_task") else []
+    check(task is not None and task["status"] == "completed" and task["approved_by"] == U_ADMIN2
+          and task["outcome"] == "approve" and bool(todos) and all(t["status"] != "open" for t in todos),
+          "the approval human task is completed by the checker (outcome approve) and its todos are closed",
+          f"{dict(task) if task else None} {[dict(t) for t in todos]}")
     ent = await scoped(conn, ORG_A, "SELECT status FROM portfolio.replica_securities WHERE id = $1 AND system_to IS NULL",
                        UUID(e), fetch="fetchval")
     check(ent == "active", "first approval makes the registry entry active")

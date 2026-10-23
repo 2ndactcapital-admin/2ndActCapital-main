@@ -12,7 +12,8 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
                        POST /replication/registry/{id}/terms/changes
   approve_replication  POST /replication/registry/{id}/terms/{version_id}/approve
                        POST /replication/registry/{id}/terms/{version_id}/reject
-                       (and never for a maker of that draft — services.replica_terms)
+                       (and never for a maker of that draft — services.replica_terms;
+                       rep3: each decision completes the draft's governed human task)
 
 Super Admin first (services.authz). org_id is only ever the caller's
 (get_org_id) — never a body or path value; request models forbid extras.
@@ -528,8 +529,9 @@ async def _decide(request: Request, entry_id: str, version_id: str, body: Decisi
                                        version_id=version_id, approve=approve, note=body.note if body else None)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
-    await T.publish_actions(pool, refs)
-    return {"version": _version_out(version), "action_id": refs[0].id}
+    # rep3: the decision completes the version's human task; the task callback
+    # already published the action's domain event — not published again here.
+    return {"version": _version_out(version), "action_id": refs[0].id if refs else None}
 
 
 @router.post("/replication/registry/{entry_id}/terms/{version_id}/approve")

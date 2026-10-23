@@ -429,3 +429,101 @@ Human tasks: see `docs/HUMAN_TASKS.md`.
    `npm run build` and the `verify_workflowmgr5.py` regression itself.
 2. The execute-by step needs the same Render cron service as the rep1 holdings
    refresh.
+
+
+## rep3 — model management (2026-10-23)
+
+### Task 1 findings (rep3)
+
+- **1a human tasks** — `services/human_tasks.py`: `open_task(pool, *, org_id, kind,
+  subject_type, subject_id, maker_id, eligible_permission, title, payload, action_path,
+  actor_kind)`, `complete_task(pool, *, org_id, task_id, actor_id, outcome, note)`,
+  `cancel_task(pool, *, org_id, task_id, actor_id, reason)`, `list_tasks` / `get_task`.
+  Subject in `workflow_runs.context.human_task`; outcome in `workflow_run_steps.result`.
+  CHOSEN: the kind's idempotent `on_complete` callback plus a `sync_*_task_outcome`
+  recovery (the execution pattern) — the only way the subject reacts however the task
+  is completed. Added (additive) `system_open` kinds for review tasks with no maker.
+- **1b rep1 approvals** — `_open_approval_todos` (build_draft / correct_field /
+  change_field) and `decide` (close_todos); `verify_rep1.py` asserted them at its
+  "approval needed" (~l.992) and "approval tasks are closed" (~l.1026) checks. Moved
+  onto human tasks (see docs/HUMAN_TASKS.md); only those two checks (plus teardown of
+  the engine rows the tasks now create) changed in `verify_rep1.py`.
+- **1c spreadsheets** — openpyxl 3.1.5 installed and pinned; xlrd NOT installed (no
+  network during the sprint) → pinned `xlrd==2.0.1` (pure Python, cached values only).
+  pandas present, not used.
+- **1d fee schedules** — reference by `fee_schedules.id` of an APPROVED row (never
+  mutated; an edit writes version N+1 with a new id); validated APPROVED + same org;
+  org-isolation RLS (ALL) makes it readable from model code.
+- **1e platform rows** — the rep2 `custodian_capabilities` shape (owner_scope
+  'platform', org_id NULL, read by all, written under `app.is_super_admin`).
+
+### One registry (`portfolio.models`)
+
+Sources: upload, library_copy, library_subscription, fund_replica (rep4), composite.
+"Holdings of …" is reserved for fund_replica (CHECK `models_reserved_name_chk` + the
+service's 422). Optional default fee schedule (an APPROVED `fee_schedules.id`).
+Versions (`model_versions`): draft → submitted → approved → superseded; reject (note)
+→ draft; abandon (reason). One approved and one open version per model (partial
+uniques); approved versions never change (trigger + 409). Positions
+(`model_version_positions`, valid axis): resolved security + raw identifiers, target
+weight (numeric fraction), asset class, sleeve label, drift band, alternates,
+restrictions, resolution state (resolved | unresolved | cash). Unresolved rows can be
+saved in a draft but block approval.
+
+### Upload and the upload log
+
+`services/model_upload.py` reads .xlsx (openpyxl read-only, `data_only=True`; a formula
+with no cached value is a row error, never evaluated), .xls (xlrd), .csv (UTF-8 /
+UTF-8-SIG, sniffed delimiter). Refused: .xlsm/.xlsb/.xltm, macro-enabled packages,
+> 5 MB, > 5,000 rows, zip expansion > 50 MB or > 100×. Header row detection, sheet
+choice, column mapping from a synonym vocabulary with a provider's saved mapping
+(`model_column_mappings`, versioned) applied first. Weights percent or fraction
+(detected, stated, converted; Decimal), sum 100% ± 0.05% (org setting
+`portfolio.models.weight_tolerance_pct`), gap to cash only for a marked cash row or
+"fill with cash". Identifiers: CUSIP/ISIN first, ticker/SEDOL only when neither is
+given and unambiguous — never guessed. Tradability notes per custodian the org uses
+(`capability()`, informational). Originals stored once per (org, SHA-256) under
+`models/uploads/<org>/<sha256>`.
+
+The log (`model_uploads`, append-only, never deleted) records every file —
+received, duplicate (with `duplicate_of`, no second object) or failed — and
+`model_upload_events` (append-only) records parsed / mapping_saved / draft_created /
+rejected / abandoned / failed with row counts and row-numbered messages. Export:
+`GET /models/uploads/export.csv` (every row; = + - @ tab CR prefixes neutralised).
+
+### Library
+
+`model_library_entries`: shelf platform (org_id NULL; Super Admin publishes a model of
+the Hollisworks org; every org reads it through a SECURITY DEFINER carve-out on the
+model's live approved version) or org (an org admin with manage_models; own org
+only). Copy → an independent org model; subscribe → an org model
+(`model_subscriptions`) that receives each new approved version as a draft with a
+review task in its own org. `requires_agreement` → an org admin's logged
+`agreement_confirmed` first.
+
+### Composite models (sleeves)
+
+`model_sleeves`: parent version → child model, weight, follow live | pinned, the
+resolved child version. Weights sum to 100%; cycles refused (edit-time graph walk +
+look-through guard). Look-through = sleeve weight × child weights, merged by
+security. A child's new approved version drafts every composite that follows it
+live, with a review task; pinned sleeves are untouched.
+
+### Events for rep5
+
+`model.version_approved` (source_type `model_version`, source_id = the version):
+`{model_id, model_name, version_id, version_no, superseded_version_id, approved_by,
+diff: {added, removed, changed, threshold, turnover}}`. Every human action is also a
+`model_events` row + audit_log + `model.<action>` domain event.
+
+### Permissions and screens
+
+view_models / manage_models / approve_models — org_admin by default (migration +
+`rbac.ensure_org_admin_role`). Portfolio → Models: list, upload wizard
+(`/portfolio/models/upload`), model page, library (`/portfolio/models/library`),
+upload log (`/portfolio/models/uploads`), templates (`/api/models/template`).
+
+### rep3 operator steps
+
+1. `pip install -r apps/api/requirements.txt` (xlrd).
+2. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep3.py`.
