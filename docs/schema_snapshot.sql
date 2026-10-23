@@ -3234,6 +3234,274 @@
 --   UNIQUE reference_filings_accession_document_unique: (accession_number, primary_document)
 --   PRIMARY KEY reference_filings_pkey: (id)
 
+-- ===== portfolio.replica_holdings_rows =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   snapshot_id                              uuid NOT NULL
+--   row_num                                  integer NOT NULL
+--   raw_name                                 text
+--   raw_ticker                               text
+--   raw_cusip                                text
+--   raw_isin                                 text
+--   raw_sedol                                text
+--   raw                                      jsonb NOT NULL DEFAULT '{}'::jsonb
+--   asset_type                               text NOT NULL
+--   constituent_global_security_id           uuid
+--   resolution_state                         text NOT NULL
+--   resolved_via                             text
+--   relationship_id                          uuid
+--   weight                                   numeric
+--   shares                                   numeric
+--   market_value                             numeric
+--   currency                                 text
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_holdings_rows_pkey: (id)
+--   UNIQUE replica_holdings_rows_row_uq: (snapshot_id, row_num)
+
+-- ===== portfolio.replica_holdings_snapshots =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   fund_global_security_id                  uuid NOT NULL
+--   as_of                                    date NOT NULL
+--   source_key                               text NOT NULL
+--   source_url                               text
+--   accession_number                         text
+--   file_sha256                              text NOT NULL
+--   r2_key                                   text
+--   byte_size                                bigint
+--   row_count                                integer NOT NULL
+--   total_weight                             numeric
+--   total_weight_ex_cash                     numeric
+--   status                                   text NOT NULL
+--   validation                               jsonb NOT NULL DEFAULT '{}'::jsonb
+--   previous_snapshot_id                     uuid
+--   diff                                     jsonb NOT NULL DEFAULT '{}'::jsonb
+--   diff_exceeds_threshold                   boolean NOT NULL DEFAULT false
+--   fetched_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   UNIQUE replica_holdings_snapshots_file_uq: (fund_global_security_id, as_of, source_key, file_sha256)
+--   PRIMARY KEY replica_holdings_snapshots_pkey: (id)
+
+-- ===== portfolio.replica_holdings_sources =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   key                                      text NOT NULL
+--   issuer                                   text NOT NULL
+--   url_template                             text
+--   parser                                   text NOT NULL
+--   format                                   text NOT NULL
+--   active                                   boolean NOT NULL DEFAULT false
+--   match_tickers                            ARRAY NOT NULL DEFAULT '{}'::text[]
+--   priority                                 integer NOT NULL DEFAULT 100
+--   terms_of_use_note                        text
+--   confirmation_note                        text
+--   confirmed_on                             date
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_holdings_sources_pkey: (id)
+
+-- ===== portfolio.replica_instrument_classes =====
+--   key                                      text NOT NULL
+--   label                                    text NOT NULL
+--   description                              text
+--   enabled                                  boolean NOT NULL DEFAULT false
+--   sort_order                               integer NOT NULL DEFAULT 100
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_instrument_classes_pkey: (key)
+
+-- ===== portfolio.replica_refresh_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_date                                 date NOT NULL
+--   trigger_source                           text NOT NULL
+--   phase                                    text NOT NULL
+--   claim_id                                 uuid
+--   status                                   text NOT NULL
+--   host                                     text
+--   results                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   error                                    text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_refresh_events_pkey: (id)
+
+-- ===== portfolio.replica_securities =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   instrument_class                         text NOT NULL
+--   ticker                                   text NOT NULL
+--   cusip                                    text
+--   isin                                     text
+--   fund_name                                text
+--   issuer                                   text
+--   sec_cik                                  text
+--   sec_series_id                            text
+--   sec_class_id                             text
+--   holdings_source_key                      text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   display_name                             text NOT NULL
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_securities_pkey: (id)
+
+-- ===== portfolio.replica_source_documents =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   fund_global_security_id                  uuid NOT NULL
+--   doc_kind                                 text NOT NULL
+--   form_type                                text NOT NULL
+--   accession_number                         text
+--   filing_date                              date
+--   primary_document                         text
+--   source_url                               text NOT NULL
+--   r2_key                                   text
+--   sha256                                   text NOT NULL
+--   byte_size                                bigint
+--   extracted_text                           text
+--   fetched_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   UNIQUE replica_source_documents_file_uq: (fund_global_security_id, sha256)
+--   PRIMARY KEY replica_source_documents_pkey: (id)
+
+-- ===== portfolio.replica_term_readings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   fund_global_security_id                  uuid NOT NULL
+--   source_document_id                       uuid
+--   extraction_run_id                        uuid NOT NULL
+--   field_key                                text NOT NULL
+--   value                                    jsonb
+--   value_normalized                         text
+--   source                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'ok'::text
+--   error                                    text
+--   data_source                              text
+--   deployment_name                          text
+--   provider_model                           text
+--   proxy_model_id                           text
+--   ensemble_config_id                       uuid
+--   prompt_version                           text
+--   prompt_prefix_hash                       text
+--   source_quote                             text
+--   quote_verified                           boolean
+--   value_in_quote                           boolean
+--   raw_char_start                           integer
+--   raw_char_end                             integer
+--   input_tokens                             integer
+--   output_tokens                            integer
+--   cost_usd                                 numeric
+--   latency_ms                               integer
+--   call_id                                  text
+--   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_term_readings_pkey: (id)
+
+-- ===== portfolio.replica_terms_actions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_security_id                      uuid NOT NULL
+--   terms_version_id                         uuid
+--   action                                   text NOT NULL
+--   field_key                                text
+--   before_value                             jsonb
+--   after_value                              jsonb
+--   reason                                   text
+--   actor_id                                 uuid
+--   correction_id                            uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_terms_actions_pkey: (id)
+
+-- ===== portfolio.replica_terms_field_registry =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   field_key                                text NOT NULL
+--   display_label                            text NOT NULL
+--   data_type                                text NOT NULL
+--   section                                  text
+--   sort_order                               integer
+--   unit                                     text
+--   enum_values                              ARRAY
+--   synonyms                                 ARRAY NOT NULL DEFAULT '{}'::text[]
+--   trap_rule                                text
+--   extraction_method                        text NOT NULL DEFAULT 'model'::text
+--   is_critical                              boolean NOT NULL DEFAULT false
+--   disclosure_only                          boolean NOT NULL DEFAULT false
+--   description                              text NOT NULL
+--   value_shape                              text NOT NULL DEFAULT 'scalar'::text
+--   retired_at                               timestamp with time zone
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_terms_field_registry_pkey: (id)
+
+-- ===== portfolio.replica_terms_versions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_security_id                      uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   term_values                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   departures                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   needs_review_fields                      ARRAY NOT NULL DEFAULT '{}'::text[]
+--   extraction                               jsonb NOT NULL DEFAULT '{}'::jsonb
+--   maker_ids                                ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   created_by                               uuid
+--   checker_id                               uuid
+--   approved_at                              timestamp with time zone
+--   rejected_at                              timestamp with time zone
+--   decision_note                            text
+--   supersedes_version_id                    uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY replica_terms_versions_pkey: (id)
+
 -- ===== portfolio.securities_global =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   name                                     text NOT NULL
