@@ -246,6 +246,19 @@ ORG_ADMIN_ROLE_DESCRIPTION = (
 )
 
 
+#: Granted to org_admin by default alongside ``manage_org_settings`` —
+#: replication (rep1) and execution (rep2). Kept in step with the
+#: docs/rep1_part1.sql §14 and docs/rep2_part1.sql §8 grants.
+ORG_ADMIN_DEFAULT_PERMISSIONS = (
+    ("view_replication", "replication", "view"),
+    ("manage_replication", "replication", "manage"),
+    ("approve_replication", "replication", "approve"),
+    ("view_execution", "execution", "view"),
+    ("manage_execution", "execution", "manage"),
+    ("approve_execution", "execution", "approve"),
+)
+
+
 async def ensure_permission(conn, name: str, resource: str, action: str) -> str:
     """Idempotently ensure a row exists in the ``permissions`` catalog."""
     return await conn.fetchval(
@@ -291,6 +304,16 @@ async def ensure_org_admin_role(conn, org_id) -> str:
         "ON CONFLICT DO NOTHING",
         role_id, perm_id,
     )
+    # rep2: the org_admin defaults rep1 / rep2 grant every EXISTING org_admin
+    # role by migration, so a NEW org's first org_admin gets them too (rep1's
+    # [FIND]: before this, a new org's org_admin held manage_org_settings only).
+    for name, resource, action in ORG_ADMIN_DEFAULT_PERMISSIONS:
+        pid = await ensure_permission(conn, name, resource, action)
+        await conn.execute(
+            "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) "
+            "ON CONFLICT DO NOTHING",
+            role_id, pid,
+        )
     return role_id
 
 

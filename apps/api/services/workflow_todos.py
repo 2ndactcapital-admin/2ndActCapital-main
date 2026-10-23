@@ -170,15 +170,47 @@ async def sync_user_task_todos(
     step_key: str,
     display_name: str | None,
     assigned_role_profile_id,
+    assigned_permission: str | None = None,
+    exclude_user_id=None,
 ) -> list:
     """Create/refresh an ``open`` todo for every user holding the User Task's
-    assigned role profile in this org. Idempotent per (user, step)."""
-    if assigned_role_profile_id is None:
-        return []
-    users = await conn.fetch(
-        "SELECT id FROM users WHERE org_id = $1 AND profile_id = $2",
-        org_id, assigned_role_profile_id,
-    )
+    assigned role profile in this org. Idempotent per (user, step).
+
+    rep2: a step may instead (or also) be assigned by PERMISSION — every
+    admitted holder of ``assigned_permission`` in the org is notified, except
+    ``exclude_user_id`` (the task's maker, who cannot complete it under
+    maker-checker). Both new arguments default to None, which is exactly the
+    pre-rep2 behaviour for every existing caller and every existing step."""
+    recipients: list = []
+    if assigned_role_profile_id is not None:
+        recipients += [u["id"] for u in await conn.fetch(
+            "SELECT id FROM users WHERE org_id = $1 AND profile_id = $2",
+            org_id, assigned_role_profile_id,
+        )]
+    holders: list = []
+    if assigned_permission:
+        holders = [u["id"] for u in await conn.fetch(
+            """
+            SELECT DISTINCT u.id FROM users u
+            JOIN user_roles ur ON ur.user_id = u.id
+            JOIN roles r ON r.id = ur.role_id AND r.org_id = u.org_id
+            JOIN role_permissions rp ON rp.role_id = ur.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE u.org_id = $1 AND p.name = $2 AND u.is_active
+              AND COALESCE(u.status, 'active') = 'active'
+            """,
+            org_id, assigned_permission,
+        )]
+        # The exclusion applies to the permission leg ONLY: a profile-assigned
+        # step notifies exactly who it notified before rep2.
+        recipients += [h for h in holders if exclude_user_id is None or str(h) != str(exclude_user_id)]
+    users = []
+    seen: set[str] = set()
+    for uid in recipients:
+        if str(uid) in seen:
+            continue
+        seen.add(str(uid))
+        users.append({"id": uid})
     label = display_name or step_key
     ids = []
     for u in users:

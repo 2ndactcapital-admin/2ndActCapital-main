@@ -353,3 +353,43 @@ async def get_or_create_salt(conn, org_id) -> str:
             f"could not establish an account-number salt for org {org_id}"
         )
     return salt
+
+
+# ── Trade adapters (rep2) ────────────────────────────────────────────────
+#
+# A SEPARATE map from the CSV ingestion adapters above: an ingestion adapter
+# key ('csv') names a parser, a trade adapter key names a custodian ROUTE
+# ('altruist', 'manual'), and the two never collide or share a class. Adding
+# one does not change how a CSV import resolves or behaves.
+_TRADE_ADAPTERS: dict[str, type] = {}
+
+
+def trade_custodian_key(custodian_code: str | None) -> str:
+    """An account's ``custodian_code`` → the lower-case route key the trade
+    registry and ``custodian_capabilities`` use ('ALTRUIST' → 'altruist';
+    a CSV profile code such as 'SCHWAB_CSV' → 'schwab_csv', which has no
+    trade adapter and therefore routes manual)."""
+    return (custodian_code or "").strip().lower()
+
+
+def register_trade_adapter(custodian_key: str, adapter_class: type) -> None:
+    """Same rebinding guard as :func:`register_adapter`."""
+    key = trade_custodian_key(custodian_key)
+    existing = _TRADE_ADAPTERS.get(key)
+    if existing is not None and existing is not adapter_class:
+        raise CustodyError(
+            f"trade adapter {key!r} is already registered to {existing.__name__}; "
+            f"refusing to rebind it to {adapter_class.__name__}"
+        )
+    adapter_class.custodian_key = key
+    _TRADE_ADAPTERS[key] = adapter_class
+
+
+def registered_trade_adapters() -> list[str]:
+    return sorted(_TRADE_ADAPTERS)
+
+
+def trade_adapter_for(custodian_code: str | None):
+    """The registered trade adapter class for this account's custodian, or
+    None (→ the caller routes manual)."""
+    return _TRADE_ADAPTERS.get(trade_custodian_key(custodian_code))

@@ -274,3 +274,157 @@ index); the holdings refresh runs right after it.
 5. `R2_BUCKET_NAME` must name the real bucket (see the EDGAR pipeline A note:
    Doppler's value was invalid).
 6. Run `verify_rep1.py` (written, not run by the sprint).
+
+---
+
+# rep2 — custodians, trade adapters, human tasks, execution instructions (2026-10-22)
+
+Sprint 2 of 15. No models, proposals or tax logic yet. **The custody cliff
+holds:** nothing here places a trade or moves money. Altruist has no write
+access (no live credentials; integration sprints 1–6 ran against mocks), so
+every trade in this build ends as an execution instruction a person carries
+out. Schema `docs/rep2_part1.sql`, APPLIED (`scripts/_apply_rep2.py --schema`)
+and read back (`--verify`: SCHEMA OK).
+
+## Task 1 findings (rep2)
+
+- **1a. Custody registry.** `services/custody/registry.py:resolve_profile(conn, org_id, custodian_code)`
+  reads `org_settings['custody.profiles']` over `DEFAULT_PROFILES` (GENERIC_CSV)
+  and maps the profile's `adapter` key to a class registered by import side
+  effect (`custody/__init__.py`). The only ingestion adapter is `csv`. rep2 adds
+  a SEPARATE map appended to the same module (`register_trade_adapter`,
+  `trade_adapter_for`, `trade_custodian_key`), keyed by the lower-case custodian
+  route. `csv_adapter.py`, `importer.py` and `base.py` are byte-identical to main.
+  Custodian codes in `public.accounts`: **none**. The table holds no rows today,
+  and neither do `portfolio.tax_lots` or `portfolio.positions`.
+- **1b. Workflow engine.** A system definition can be seeded per org and
+  started for any subject with `start_workflow_run`. The subject rides in
+  `workflow_runs.context`. Maker ≠ checker is `complete_user_task`'s
+  `MakerCheckerError` (proposed_by == completed_by), backed by the
+  `workflow_run_steps_maker_checker` CHECK. Todos attach through
+  `workflow_todos.sync_user_task_todos`, by assigned PROFILE only.
+  **Engine change (additive):** `workflow_steps.assigned_permission` (nullable,
+  no default). When set, the engine notifies the permission's admitted holders
+  except the maker, and refuses a completer without it. `cancel_user_task` is
+  new. **Effect on existing runs: none.** Every pre-existing step is NULL and
+  takes the old path. Live at the time: 3 definitions, 1 run (completed), 0 run steps.
+- **1c. Tax lots.** `portfolio.tax_lots` has no account or security column.
+  A lot reaches its account through `position_id → positions.account_id`, and
+  its security through `positions.asset_id → assets.global_security_id`.
+  Lot-level instructions validate along that path.
+- **1d. Altruist.** Evidence: the OAuth scope is `accounts:read`
+  (`altruist_oauth.build_authorize_url`). The mocked account payload has id and
+  name only. Positions carry a position-level `cost_basis`. No order or trade
+  endpoint exists in any Altruist module. The fee37 rate card (margin spreads)
+  and fee38 (Altruist One TLH) are UNVERIFIED (fee37 F6) and describe the
+  product, not an account. Unknown: every account capability. All 13 are seeded
+  `unknown`, with that evidence cited.
+
+## Custodian capabilities (`public.custodian_capabilities`, platform)
+
+There are 13 capabilities per custodian route. Each has a value (`yes`, `no`
+or `unknown`; for `options_level`, 0–4 or `unknown`), an evidence kind
+(document, url or assumed), the evidence itself, an as-of date, a version
+number and who recorded it. Versioning is on the valid axis: an edit closes
+the live version and inserts the next one, and a trigger refuses any other
+change. Seeded routes: `altruist` (all unknown) and `manual` (the trade APIs
+are `no`).
+
+`services/custodian_capabilities.capability(conn, custodian, key)` returns
+`(value, evidence, as_of)`. **`available()` is the one rule: `unknown` is NOT
+available**, and neither is a missing record. A missing capability downgrades
+a plan; it never blocks it.
+
+API: `GET /custodians/capabilities` and `.../{code}/{key}/history` (staff), and
+`PUT .../{code}/{key}` (Super Admin only, audit-logged).
+**[FIND]** `org_admin` is not a `STAFF_ROLE_NAMES` role, so an org admin with no
+staff role does not see the matrix. The gate is as specified; widening it is a
+product decision.
+
+## Trade adapters (`services/custody/trading.py`)
+
+`TradeAdapter.submit / status / cancel`, registered per custodian route next
+to (not inside) the CSV interface. `TradeList` is typed with `extra='forbid'`.
+It holds one account and its trades: security, side, quantity OR notional,
+specific lots (sells only), price guidance (market / limit / range against a
+reference price and its time) and wash-sale notes. Amounts must be decimal
+strings; a JSON float is a 422.
+
+- `ManualTradeAdapter` turns each trade into a DRAFT execution instruction.
+- `AltruistTradeAdapter` reads Altruist's `equity_trading_api` capability. While
+  it is not `yes` (it is `unknown`), every trade routes to manual, and the
+  result says so. No trading HTTP code exists.
+- `route_trade_list`: a held-away account always goes manual. A custodian with
+  no registered adapter goes manual. Per-trade downgrade notes cover fractional
+  quantities, notional orders and lots without a lot feed.
+
+## Execution instructions
+
+Tables: `execution_instructions` (system-axis archive, so the id is stable),
+`execution_instruction_lots` (valid axis), `execution_fills` (append-only) and
+`execution_instruction_events` (append-only). All four are org-scoped with a
+NULLIF RLS policy on every operation.
+
+```
+draft ─submit→ pending_approval ─approve (human task, maker ≠ checker)→ approved
+      ←reject (note)─┘
+approved ─mark sent (channel)→ sent ─fill→ partially_filled ─fill→ filled
+filled ─reconcile (custodian data + reference, or manual + note)→ reconciled ─close→ closed
+cancelled (reason) / expired from any open state
+```
+
+- **Enforced twice.** The service enforces the graph first, with clear
+  messages; a database trigger re-enforces it. Terms are frozen once submitted.
+  Lots change only while the instruction is a draft. A fill is accepted only
+  after `sent`, never beyond the instructed quantity, and only on this
+  account's lots in this security (and on the instructed lots, when it names
+  any).
+- **Who counts as a maker.** Anyone who created, edited or submitted the
+  instruction is in `maker_ids`, and none of them can approve it. The DB CHECK
+  on `maker_ids` backs this, alongside the engine's own maker-checker check.
+- **Execute-by.** `services.execution.expire_tick` runs in
+  `workflow_scheduler_tick.py` and applies each instruction's if-not-filled
+  policy:
+  - `cancel` → expired
+  - `carry` → working again today
+  - `ask` → a todo for a person, once
+
+  An instruction that is not yet working simply expires. This is the only
+  automatic step, and it is logged with no actor.
+- **Logging.** Every action writes an event row and an audit row, and then a
+  `domain_events` row `execution.<action>`.
+- **Letter of instruction.** `POST .../letter` builds a PDF on demand and never
+  stores it; it is allowed only for member / other-adviser executors. The
+  account number is MASKED. To include the full number the person must choose
+  to AND type it. It is checked against the account's salted hash, used for
+  that one PDF, and never stored or logged. The choice is logged
+  (`execution.letter_full_account_number`).
+- **Pending differences.** `pending_differences(conn, org, account)` (and
+  `GET /execution/accounts/{id}/pending`) gives the signed remaining quantity or
+  notional of each open instruction, for later sprints (rep5 proposals).
+
+## Permissions and screens
+
+`view_execution`, `manage_execution` and `approve_execution` are granted to
+org_admin by migration. `rbac.ensure_org_admin_role` now gives a NEW org's
+first org_admin these three AND rep1's three replication permissions (closing
+rep1's [FIND]). Routes (17) are under `/api/v1/execution/`; every one is gated
+and listed in AUTHZ1_ROUTES.
+
+Screens:
+- **Portfolio → Instructions** (strict `view_execution`): list + filters, New
+  instruction, and a detail page with the timeline, fills, reconcile, letter
+  and the approval panel. Controls render only from the server's flags and
+  `actions` list.
+- **Dashboard → My tasks** (`GET /human-tasks/mine`).
+- **Billing & Custody → Custodian capabilities** (strict staff gate; Edit for
+  Super Admin only).
+
+Human tasks: see `docs/HUMAN_TASKS.md`.
+
+## rep2 operator steps
+
+1. Run `verify_rep2.py` (written, not run by the sprint). It runs
+   `npm run build` and the `verify_workflowmgr5.py` regression itself.
+2. The execute-by step needs the same Render cron service as the rep1 holdings
+   refresh.

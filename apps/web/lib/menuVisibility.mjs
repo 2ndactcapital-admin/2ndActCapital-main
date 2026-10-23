@@ -71,6 +71,14 @@ export const GATE_MANAGE_DEALS_STRICT = { perm: "manage_deals", strict: true };
 // REP1 — Replication Studio. GET /replication/registry requires
 // view_replication (Super Admin first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_REPLICATION = { perm: "view_replication", strict: true };
+// REP2 — Portfolio → Instructions. GET /execution/instructions requires
+// view_execution (Super Admin first); STRICT so no envelope hides the tab.
+export const GATE_VIEW_EXECUTION = { perm: "view_execution", strict: true };
+// REP2 — Billing & Custody → Custodian capabilities. GET /custodians/capabilities
+// is require_staff (Super Admin or a STAFF_ROLE_NAMES role); /users/me publishes
+// the same Principal flag as `is_staff`. STRICT: only `is_staff === true` (or
+// Super Admin) shows it — a missing flag hides the tab.
+export const GATE_STAFF_STRICT = { staff: true, strict: true };
 
 /** Navigation sections, top to bottom. `header` is null for the main section. */
 export const SECTIONS = [
@@ -124,7 +132,7 @@ export const GROUPS = [
   {
     id: "billing", label: "Billing & Custody", section: "org_admin", order: 50, landing: "/admin/billing",
     icon: "admin",
-    description: "Billing groups and custodian position imports.",
+    description: "Billing groups, custodian position imports and custodian capabilities.",
   },
   {
     id: "deal_intake", label: "Deal Intake", section: "org_admin", order: 60, landing: "/admin/deal-intake",
@@ -201,8 +209,10 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 7, "/portfolio/ownership-tree", "Ownership tree", null, false),
   // REP1 — Replication Studio: registry, holdings and fund terms.
   tab("main", "portfolio", 8, "/portfolio/replication", "Replication", GATE_VIEW_REPLICATION, false),
+  // REP2 — execution instructions (every trade a person carries out).
+  tab("main", "portfolio", 9, "/portfolio/instructions", "Instructions", GATE_VIEW_EXECUTION, false),
   // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
-  { ...tab("main", "portfolio", 9, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+  { ...tab("main", "portfolio", 10, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
   main(60, "/spvs", "SPV Manager", "spv-manager"),
@@ -236,6 +246,8 @@ export const MENU_ITEMS = [
   tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_SUPER_ADMIN, true),
   tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_VIEW_PORTFOLIO, true),
   tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_VIEW_PORTFOLIO, true),
+  // REP2 — the platform capabilities matrix: staff read it, Super Admin edits it.
+  tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities", GATE_STAFF_STRICT, true),
   tab("org_admin", "deal_intake", 1, "/admin/vdr-proposals", "VDR Proposals", GATE_MANAGE_DEALS, true),
 
   tab("platform", "tenants", 1, "/admin/platform", "Tenants", GATE_SUPER_ADMIN, true),
@@ -313,8 +325,14 @@ export function canPermStrict(me, permission) {
 }
 
 /** True when `me` may see an item carrying `gate` (null gate = always). */
+export function isStaffStrict(me) {
+  if (!me || typeof me !== "object" || !isAdmitted(me)) return false;
+  return isSuperAdmin(me) || me.is_staff === true;
+}
+
 export function canAccess(me, gate) {
   if (!gate) return true;
+  if (gate.staff) return isStaffStrict(me);
   if (gate.strict) return canPermStrict(me, gate.perm);
   if (gate.perm && !canPerm(me, gate.perm)) return false;
   // Role gates already name super_admin explicitly wherever they are used, so

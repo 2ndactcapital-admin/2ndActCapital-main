@@ -61,6 +61,8 @@ FEATURE_GATES = {
     "routers.spv": "subscriptions: entity access + indicate_interest for a non-staff caller",
     "routers.deal_room": "DEALROOM1 — deal room scope (services.deal_room.deal_rights); publisher capability → manage_deals|manage_org_settings",
     "routers.replication": "REP1 — view_replication / manage_replication / approve_replication (approve never for a maker of the draft)",
+    "routers.execution": "REP2 — view_execution / manage_execution / approve_execution (approve never for a maker of the instruction); nothing is ever sent to a custodian",
+    "routers.custodians": "REP2 — custodian capabilities: read any staff, write Super Admin only (platform data)",
 }
 # Writes that stay "active account only", with the reason.
 SELF_SCOPED = {
@@ -73,6 +75,7 @@ SELF_SCOPED = {
     "routers.enroll": "the invite token is the credential (provisioning-exempt)",
     "routers.marketing": "public by design (anonymous lead)",
     "routers.altruist_webhook": "public, HMAC-signed",
+    "routers.human_tasks": "own open human tasks (eligible by the caller's own permissions; decided on the subject's gated route)",
 }
 # Per-route note where the module's SELF_SCOPED reason does not fit.
 SELF_SCOPED_ROUTES = {

@@ -1,5 +1,5 @@
 {
- "app_route_count": 508,
+ "app_route_count": 529,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -9976,6 +9976,452 @@
    "path": "/api/v1/replication/registry/{entry_id}/terms/{version_id}/reject",
    "public": false,
    "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "list_instructions",
+   "note": "",
+   "path": "/api/v1/execution/instructions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "create_instructions",
+   "note": "",
+   "path": "/api/v1/execution/instructions",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "get_instruction",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.execution",
+   "name": "edit_instruction",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "submit",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "approve",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "reject",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "mark_sent",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/sent",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "enter_fill",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/fills",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "reconcile",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/reconcile",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "close",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/close",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "cancel",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/cancel",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "letter",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/letter",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "accounts",
+   "note": "",
+   "path": "/api/v1/execution/accounts",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "account_lots",
+   "note": "",
+   "path": "/api/v1/execution/accounts/{account_id}/lots",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "account_pending",
+   "note": "",
+   "path": "/api/v1/execution/accounts/{account_id}/pending",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.execution",
+   "name": "securities",
+   "note": "",
+   "path": "/api/v1/execution/securities",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "staff",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "staff"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.custodians",
+   "name": "capabilities",
+   "note": "",
+   "path": "/api/v1/custodians/capabilities",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "staff",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "staff"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.custodians",
+   "name": "capability_history",
+   "note": "",
+   "path": "/api/v1/custodians/capabilities/{custodian_code}/{capability_key}/history",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.custodians",
+   "name": "set_capability",
+   "note": "",
+   "path": "/api/v1/custodians/capabilities/{custodian_code}/{capability_key}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.human_tasks",
+   "name": "my_tasks",
+   "note": "",
+   "path": "/api/v1/human-tasks/mine",
+   "public": false,
+   "write": false
   },
   {
    "after": "public",
