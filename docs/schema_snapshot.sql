@@ -3112,6 +3112,235 @@
 --   UNIQUE external_references_org_source_ext_type_key: (org_id, source_system, external_id, record_type)
 --   PRIMARY KEY external_references_pkey: (id)
 
+-- ===== portfolio.model_column_mappings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   provider_name                            text NOT NULL
+--   provider_key                             text NOT NULL
+--   mapping                                  jsonb NOT NULL
+--   sheet_hint                               text
+--   header_row_hint                          integer
+--   version_no                               integer NOT NULL
+--   created_by                               uuid NOT NULL
+--   last_used_at                             timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_column_mappings_pkey: (id)
+
+-- ===== portfolio.model_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 uuid
+--   version_id                               uuid
+--   library_entry_id                         uuid
+--   upload_id                                uuid
+--   action                                   text NOT NULL
+--   actor_id                                 uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_events_pkey: (id)
+
+-- ===== portfolio.model_library_entries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   shelf                                    text NOT NULL
+--   owner_scope                              text NOT NULL
+--   org_id                                   uuid
+--   model_id                                 uuid NOT NULL
+--   title                                    text NOT NULL
+--   provider                                 text NOT NULL
+--   description                              text
+--   update_cadence                           text NOT NULL
+--   licensing_note                           text
+--   requires_agreement                       boolean NOT NULL DEFAULT false
+--   published_by                             uuid NOT NULL
+--   published_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   status                                   text NOT NULL DEFAULT 'published'::text
+--   status_changed_by                        uuid
+--   status_changed_at                        timestamp with time zone
+--   status_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_library_entries_pkey: (id)
+
+-- ===== portfolio.model_sleeves =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   parent_version_id                        uuid NOT NULL
+--   child_model_id                           uuid NOT NULL
+--   weight                                   numeric NOT NULL
+--   follow                                   text NOT NULL
+--   pinned_version_id                        uuid
+--   resolved_child_version_id                uuid NOT NULL
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_sleeves_pkey: (id)
+
+-- ===== portfolio.model_subscriptions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   library_entry_id                         uuid NOT NULL
+--   last_applied_version_id                  uuid
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_subscriptions_pkey: (id)
+
+-- ===== portfolio.model_upload_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   upload_id                                uuid NOT NULL
+--   event                                    text NOT NULL
+--   model_id                                 uuid
+--   version_id                               uuid
+--   mapping_id                               uuid
+--   sheet_name                               text
+--   header_row                               integer
+--   weight_basis                             text
+--   rows_read                                integer
+--   rows_resolved                            integer
+--   rows_unresolved                          integer
+--   rows_cash                                integer
+--   messages                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   reason                                   text
+--   actor_id                                 uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_upload_events_pkey: (id)
+
+-- ===== portfolio.model_uploads =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 uuid
+--   file_name                                text NOT NULL
+--   size_bytes                               bigint NOT NULL
+--   sha256                                   text NOT NULL
+--   r2_key                                   text
+--   content_type                             text
+--   file_kind                                text NOT NULL
+--   uploaded_by                              uuid
+--   uploaded_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   source                                   text NOT NULL DEFAULT 'manual'::text
+--   provider_name                            text
+--   outcome                                  text NOT NULL
+--   duplicate_of                             uuid
+--   messages                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_uploads_pkey: (id)
+
+-- ===== portfolio.model_version_positions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   version_id                               uuid NOT NULL
+--   row_num                                  integer NOT NULL
+--   global_security_id                       uuid
+--   raw_ticker                               text
+--   raw_cusip                                text
+--   raw_isin                                 text
+--   raw_sedol                                text
+--   raw_name                                 text
+--   target_weight                            numeric NOT NULL
+--   asset_class                              text
+--   sleeve_label                             text
+--   drift_min                                numeric
+--   drift_max                                numeric
+--   alternates                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   restrictions                             text
+--   notes                                    text
+--   resolution_state                         text NOT NULL
+--   resolution_note                          text
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_version_positions_pkey: (id)
+
+-- ===== portfolio.model_versions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   origin                                   text NOT NULL
+--   origin_ref                               uuid
+--   maker_ids                                ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   checker_id                               uuid
+--   approved_at                              timestamp with time zone
+--   submitted_by                             uuid
+--   submitted_at                             timestamp with time zone
+--   approval_task_id                         uuid
+--   upload_id                                uuid
+--   parent_version_id                        uuid
+--   notes                                    text
+--   cash_target                              numeric
+--   totals                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   diff                                     jsonb NOT NULL DEFAULT '{}'::jsonb
+--   tradability                              jsonb NOT NULL DEFAULT '[]'::jsonb
+--   decision_note                            text
+--   rejected_by                              uuid
+--   rejected_at                              timestamp with time zone
+--   abandoned_by                             uuid
+--   abandoned_at                             timestamp with time zone
+--   abandon_reason                           text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY model_versions_pkey: (id)
+
+-- ===== portfolio.models =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   description                              text
+--   source                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   base_currency                            text NOT NULL DEFAULT 'USD'::text
+--   default_fee_schedule_id                  uuid
+--   replica_security_id                      uuid
+--   library_entry_id                         uuid
+--   provider_name                            text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY models_pkey: (id)
+
 -- ===== portfolio.note_extraction_runs =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   run_kind                                 text NOT NULL
