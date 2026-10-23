@@ -34,8 +34,25 @@ from services.custody.registry import (  # noqa: F401
     load_profiles,
     register_adapter,
     registered_adapters,
+    registered_trade_adapters,
+    register_trade_adapter,
     resolve_profile,
+    trade_adapter_for,
+    trade_custodian_key,
 )
+
+# rep2 — trade adapters register the same way (import side effect), in their
+# own map: the CSV ingestion path above is untouched by them.
+from services.custody.trading import (  # noqa: E402,F401
+    AltruistTradeAdapter,
+    ManualTradeAdapter,
+    TradeAdapter,
+    TradeList,
+    route_trade_list,
+)
+
+register_trade_adapter("manual", ManualTradeAdapter)
+register_trade_adapter("altruist", AltruistTradeAdapter)
 
 __all__ = [
     "AccountNumber",
@@ -59,4 +76,13 @@ __all__ = [
     "register_adapter",
     "registered_adapters",
     "resolve_profile",
+    "AltruistTradeAdapter",
+    "ManualTradeAdapter",
+    "TradeAdapter",
+    "TradeList",
+    "register_trade_adapter",
+    "registered_trade_adapters",
+    "route_trade_list",
+    "trade_adapter_for",
+    "trade_custodian_key",
 ]

@@ -112,7 +112,35 @@ def check(label: str, passed: bool, detail: str = "") -> bool:
 
 
 # ── DB teardown / seed ───────────────────────────────────────────────────────
+class _platform_scope:
+    """One transaction with SET LOCAL app.is_super_admin = 'true' — the fixture
+    path verify_rep1 / verify_rep2 use. DATABASE_URL connects as app_service
+    (rolbypassrls = false), so a raw fixture write with no RLS context is refused
+    (profiles) and a raw read sees zero rows — a leftover count that proves nothing."""
+
+    def __init__(self, conn):
+        self.conn = conn
+        self.tx = conn.transaction()
+
+    async def __aenter__(self):
+        await self.tx.start()
+        await self.conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            await self.tx.commit()
+        else:
+            await self.tx.rollback()
+        return False
+
+
 async def teardown(conn):
+    async with _platform_scope(conn):
+        await _teardown(conn)
+
+
+async def _teardown(conn):
     await conn.execute("UPDATE users SET profile_id = NULL WHERE id = ANY($1::uuid[])", ALL_USERS)
     await conn.execute(
         """DELETE FROM profile_permissions WHERE profile_id IN
@@ -149,9 +177,10 @@ async def _mk_profile(conn, name, permission_key):
 
 
 async def _mk_user(conn, uid, auth0_sub, role, profile_id):
+    # status/is_active explicit: an unadmitted (pending) user is refused everywhere (AUTHZ1).
     await conn.execute(
-        """INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, profile_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, profile_id, status, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', true)
            ON CONFLICT (auth0_sub) DO UPDATE SET profile_id = EXCLUDED.profile_id,
                                                  role = EXCLUDED.role""",
         uid, ORG_ID, f"{auth0_sub}@test.local", auth0_sub, auth0_sub, role, profile_id,
@@ -159,6 +188,11 @@ async def _mk_user(conn, uid, auth0_sub, role, profile_id):
 
 
 async def seed(conn):
+    async with _platform_scope(conn):
+        await _seed(conn)
+
+
+async def _seed(conn):
     pa = await _mk_profile(conn, P_AUTHOR, PERM_AUTHOR)
     pr = await _mk_profile(conn, P_RUNS, PERM_VIEW_RUNS)
     pt = await _mk_profile(conn, P_TRIG, PERM_CONFIGURE_TRIGGERS)
@@ -305,28 +339,30 @@ async def run_db_phase():
             await teardown(conn)
             await seed(conn)
 
-            # Catalog rows exist + not granted to any seeded profile.
-            cat = await conn.fetch(
-                "SELECT name, resource FROM permissions WHERE name = ANY($1::text[])", WF_KEYS
-            )
-            cat_ok = {r["name"] for r in cat} == set(WF_KEYS) and all(
-                r["resource"] == "workflows" for r in cat
-            )
-            leaked = await conn.fetch(
-                """SELECT DISTINCT p.name, pp.permission_key
-                   FROM profile_permissions pp
-                   JOIN profiles p ON p.id = pp.profile_id
-                   WHERE p.is_seed = true AND pp.permission_key = ANY($1::text[])""",
-                WF_KEYS,
-            )
-            named_seed_leak = await conn.fetch(
-                """SELECT DISTINCT p.name, pp.permission_key
-                   FROM profile_permissions pp
-                   JOIN profiles p ON p.id = pp.profile_id
-                   WHERE p.org_id = $1 AND p.name = ANY($2::text[])
-                     AND pp.permission_key = ANY($3::text[])""",
-                ORG_ID, SEED_PERSONAS, WF_KEYS,
-            )
+            # Catalog rows exist + not granted to any seeded profile (read in platform
+            # scope: under app_service a context-less read of profiles sees nothing).
+            async with _platform_scope(conn):
+                cat = await conn.fetch(
+                    "SELECT name, resource FROM permissions WHERE name = ANY($1::text[])", WF_KEYS
+                )
+                cat_ok = {r["name"] for r in cat} == set(WF_KEYS) and all(
+                    r["resource"] == "workflows" for r in cat
+                )
+                leaked = await conn.fetch(
+                    """SELECT DISTINCT p.name, pp.permission_key
+                       FROM profile_permissions pp
+                       JOIN profiles p ON p.id = pp.profile_id
+                       WHERE p.is_seed = true AND pp.permission_key = ANY($1::text[])""",
+                    WF_KEYS,
+                )
+                named_seed_leak = await conn.fetch(
+                    """SELECT DISTINCT p.name, pp.permission_key
+                       FROM profile_permissions pp
+                       JOIN profiles p ON p.id = pp.profile_id
+                       WHERE p.org_id = $1 AND p.name = ANY($2::text[])
+                         AND pp.permission_key = ANY($3::text[])""",
+                    ORG_ID, SEED_PERSONAS, WF_KEYS,
+                )
         check(
             "Three new permission entries exist in the catalog under "
             "resource='workflows' AND are granted to NO seeded Profile by default",
@@ -392,16 +428,17 @@ async def run_db_phase():
         # Teardown + zero leftovers (permissions catalog rows intentionally kept).
         async with setup_pool.acquire() as conn:
             await teardown(conn)
-            leftover = await conn.fetchval(
-                """SELECT
-                     (SELECT count(*) FROM users WHERE id = ANY($1::uuid[]))
-                   + (SELECT count(*) FROM profiles
-                        WHERE org_id = $2 AND name = ANY($3::text[]) AND is_seed = false)
-                   + (SELECT count(*) FROM workflow_definitions WHERE id = $4)
-                   + (SELECT count(*) FROM workflow_versions WHERE workflow_definition_id = $4)
-                """,
-                ALL_USERS, ORG_ID, TEST_PROFILE_NAMES, DEF_ID,
-            )
+            async with _platform_scope(conn):
+                leftover = await conn.fetchval(
+                    """SELECT
+                         (SELECT count(*) FROM users WHERE id = ANY($1::uuid[]))
+                       + (SELECT count(*) FROM profiles
+                            WHERE org_id = $2 AND name = ANY($3::text[]) AND is_seed = false)
+                       + (SELECT count(*) FROM workflow_definitions WHERE id = $4)
+                       + (SELECT count(*) FROM workflow_versions WHERE workflow_definition_id = $4)
+                    """,
+                    ALL_USERS, ORG_ID, TEST_PROFILE_NAMES, DEF_ID,
+                )
         check("Teardown left zero leftover test rows", int(leftover) == 0, f"count={leftover}")
     finally:
         try:

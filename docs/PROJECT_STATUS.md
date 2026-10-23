@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,33 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep2 (sprint 2 of 15): custodian capabilities, trade adapters (Altruist → manual, manual), governed human tasks on the workflow engine, execution instructions with a letter of instruction; verify WRITTEN, not yet run (2026-10-22)
+
+Design + findings 1a–1d: `docs/REPLICATION_STUDIO.md` (rep2 section) and `docs/HUMAN_TASKS.md`.
+Schema `docs/rep2_part1.sql` — APPLIED (`scripts/_apply_rep2.py --schema`) and
+read back (`--verify`: SCHEMA OK). Verify: `apps/api/scripts/verify_rep2.py` —
+WRITTEN, NOT RUN (WSL memory; it runs `npm run build` and the
+`verify_workflowmgr5.py` regression itself).
+
+- **Custody cliff held:** no trade or money leaves the system; every trade becomes
+  an execution instruction a person approves (maker ≠ checker), sends, fills,
+  reconciles and closes.
+- **Engine change (additive):** `workflow_steps.assigned_permission` (NULL on every
+  existing step = unchanged behaviour) + `cancel_user_task`.
+- **rep1 gap closed:** a new org's first org_admin now gets the three replication
+  and three execution permissions (`rbac.ensure_org_admin_role`).
+- **[FIND]** `public.accounts`, `portfolio.positions` and `portfolio.tax_lots` hold
+  ZERO rows today — lot instructions and the CSV-unchanged proof run on fixtures.
+- **[FIND → decided 2026-10-23]** capabilities read was `require_staff`; `org_admin` is
+  not a staff role, so org admins could not see the matrix. Now staff OR
+  `manage_org_settings` (`require_staff_or_permission`); write stays Super Admin only.
+- **[FIND]** the database stores only the masked number and a salted hash, so a
+  letter with the full number needs the person to type it (checked against the hash).
+- **[FIND]** the system human-task definitions appear in each org's Workflow library.
+- Follow-ups: rep3 moves rep1's terms approvals onto `services.human_tasks`; rep9 FIX
+  route; Altruist trading stays manual until a trading client + an evidenced
+  `equity_trading_api = yes` exist.
 
 ## 000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep1 (sprint 1 of 14): security registry, fund holdings ingestion (issuer files + N-PORT fallback), fund terms extraction (no Claude), the correct / deliberate-change / maker-checker terms flow; verify WRITTEN, not yet run (2026-10-22)
 

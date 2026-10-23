@@ -76,6 +76,12 @@ first tick at or after 11:00 UTC ingests holdings for every active Replication
 Studio registry entry (once per day by a unique index; idempotent per file;
 failures recorded per fund on portfolio.replica_refresh_events, exit code 1
 when the step itself failed). REPLICA_HOLDINGS_AUTO_REFRESH=0 turns it off.
+
+EXECUTE-BY HANDLING (rep2). Last, ``services.execution.expire_tick`` applies
+each overdue open execution instruction's own if-not-filled policy (expire /
+carry to today / ask a person) — the one automatic step in the instruction
+lifecycle, always logged with no actor. It changes statuses only; nothing is
+ever sent to a custodian. Its own step, so a problem here stops nothing above.
 """
 from __future__ import annotations
 
@@ -87,6 +93,7 @@ import asyncpg
 
 from services.database import close_pool, get_pool
 from services.edgar_index_schedule import maybe_refresh_index
+from services.execution import expire_tick
 from services.replica_schedule import maybe_refresh_holdings
 from services.workflow_scheduler import run_scheduler_tick
 
@@ -130,6 +137,13 @@ async def main() -> int:
             holdings = {"action": "failed", "error": f"{type(exc).__name__}: {exc}"}
         if holdings["action"] in ("succeeded", "partial", "failed"):
             print(f"[scheduler] replica holdings refresh: { {k: v for k, v in holdings.items() if k != 'results'} }")
+        try:
+            expiry = await expire_tick(pool)
+            if any(expiry.values()):
+                print(f"[scheduler] execution instructions at execute-by: "
+                      f"{ {k: len(v) for k, v in expiry.items()} }")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] execution expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
         await conn.close()
         await close_pool()

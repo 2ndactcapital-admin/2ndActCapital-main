@@ -222,6 +222,15 @@ def require_staff(request: Request) -> Principal:
     raise HTTPException(status_code=403, detail="Staff access required")
 
 
+def require_staff_or_permission(request: Request, permission: str) -> Principal:
+    """Staff (Super Admin first) OR a holder of ``permission`` — e.g. a platform
+    read that org admins share via manage_org_settings."""
+    p = require_active(request)
+    if p.is_super_admin or p.is_staff or permission in p.permissions:
+        return p
+    raise HTTPException(status_code=403, detail=f"Staff access or permission required: {permission}")
+
+
 def require_super_admin(request: Request) -> Principal:
     p = require_active(request)
     if p.is_super_admin:

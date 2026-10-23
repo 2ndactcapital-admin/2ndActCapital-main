@@ -117,6 +117,9 @@ function legacyVisible(me) {
   return MENU_ITEMS.filter((item) => {
     const gate = item.gate;
     if (!gate) return true;
+    // REP2: the staff gate post-dates the legacy rule (it had no such shape);
+    // items behind it did not exist then, so the legacy view never listed them.
+    if (gate.staff) return false;
     if (gate.perm && !legacyCan(gate.perm)) return false;
     if (gate.roles && !gate.roles.includes(accountRole)) return false;
     return true;
@@ -145,7 +148,9 @@ const result = {
     href: i.href,
     label: i.label,
     gate: i.gate
-      ? i.gate.perm
+      ? i.gate.staff
+        ? `staff${i.gate.perm ? ` or perm:${i.gate.perm}` : ""} (strict)`
+        : i.gate.perm
         ? `perm:${i.gate.perm}${i.gate.strict ? " (strict)" : ""}`
         : `roles:${i.gate.roles.join("|")}`
       : "none",

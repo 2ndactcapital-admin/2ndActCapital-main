@@ -121,6 +121,14 @@ class WorkflowEngineError(Exception):
     """Raised for structural problems executing a run (bad XML, missing step)."""
 
 
+class WorkflowPermissionError(WorkflowEngineError):
+    """rep2: the completer does not hold the step's ``assigned_permission``."""
+
+
+STEP_STATUS_CANCELLED = "cancelled"
+RUN_STATUS_CANCELLED = "cancelled"
+
+
 class ScriptTaskRefusedError(WorkflowEngineError):
     """Raised when BPMN XML being parsed contains a ``bpmn:scriptTask``.
 
@@ -430,7 +438,7 @@ async def _load_steps(conn, workflow_version_id, org_id) -> list[asyncpg.Record]
     return await conn.fetch(
         """
         SELECT id, step_key, step_type, autonomy_tier,
-               assigned_role_profile_id, action_registry_key, display_name
+               assigned_role_profile_id, assigned_permission, action_registry_key, display_name
         FROM workflow_steps
         WHERE workflow_version_id = $1 AND org_id = $2
         """,
@@ -623,6 +631,8 @@ async def start_workflow_run(
                         step_key=ready.task_spec.bpmn_id,
                         display_name=active_step.get("display_name"),
                         assigned_role_profile_id=active_step.get("assigned_role_profile_id"),
+                        assigned_permission=active_step.get("assigned_permission"),
+                        exclude_user_id=started_by,
                     )
                     status = "running"
                 else:
@@ -795,6 +805,7 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
             """
             SELECT rs.id, rs.workflow_run_id, rs.org_id, rs.status, rs.proposed_by,
                    ws.step_key, ws.autonomy_tier, ws.assigned_role_profile_id,
+                   ws.assigned_permission,
                    r.workflow_version_id, r.spiff_serialized_state, r.started_by,
                    r.context
             FROM workflow_run_steps rs
@@ -822,6 +833,20 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
 
         org_id = step["org_id"]
         run_id = step["workflow_run_id"]
+
+        # rep2: a step assigned by PERMISSION may only be completed by a holder
+        # of it (Super Admin first, via rbac.has_permission). NULL — every step
+        # that existed before rep2 — skips this entirely, exactly as before.
+        if step["assigned_permission"]:
+            from services.rbac import has_permission
+
+            if completed_by is None or not await has_permission(
+                pool, completed_by, org_id, step["assigned_permission"]
+            ):
+                raise WorkflowPermissionError(
+                    f"this task may only be completed by a holder of "
+                    f"{step['assigned_permission']}"
+                )
 
         try:
             # Resume the paused SpiffWorkflow and run the User Task forward.
@@ -948,6 +973,7 @@ async def complete_user_task(pool, workflow_run_step_id, completed_by, result: d
                             step_key=ready.task_spec.bpmn_id,
                             display_name=next_step.get("display_name"),
                             assigned_role_profile_id=next_step.get("assigned_role_profile_id"),
+                            assigned_permission=next_step.get("assigned_permission"),
                         )
                     run_status = "running"
                 else:
@@ -1185,6 +1211,7 @@ async def resolve_tier_approval(
                             step_key=ready.task_spec.bpmn_id,
                             display_name=next_step.get("display_name"),
                             assigned_role_profile_id=next_step.get("assigned_role_profile_id"),
+                            assigned_permission=next_step.get("assigned_permission"),
                         )
                     run_status = "running"
                 else:
@@ -1211,3 +1238,47 @@ async def resolve_tier_approval(
             "is_completed": workflow.is_completed(),
             "proposal": proposal,
         }
+
+
+async def cancel_user_task(pool, workflow_run_step_id, cancelled_by, reason: str) -> dict:
+    """rep2 — withdraw an ACTIVE User Task without completing it.
+
+    For the case where the thing awaiting a decision went away (an execution
+    instruction cancelled while its approval was open). The step is marked
+    ``cancelled`` with ``result = {"cancelled": true, "reason", "cancelled_by"}``
+    and the run ``cancelled``; its todos are closed. No SpiffWorkflow state is
+    advanced — the user task was never completed, and the stored state still
+    says so. Additive: nothing that existed before rep2 calls this, and both
+    status values are free text (no CHECK) like every other status here.
+    """
+    if not (reason or "").strip():
+        raise WorkflowEngineError("a cancelled task needs a reason")
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            step = await conn.fetchrow(
+                "SELECT id, workflow_run_id, status FROM workflow_run_steps WHERE id = $1 FOR UPDATE",
+                workflow_run_step_id,
+            )
+            if step is None:
+                raise WorkflowEngineError(f"workflow_run_step {workflow_run_step_id} not found")
+            if step["status"] != "active":
+                raise WorkflowEngineError(
+                    f"step is not awaiting completion (status={step['status']})"
+                )
+            result = {"cancelled": True, "reason": reason,
+                      "cancelled_by": str(cancelled_by) if cancelled_by else None}
+            await conn.execute(
+                """
+                UPDATE workflow_run_steps
+                SET status = $2, completed_at = now(), result = $3::jsonb
+                WHERE id = $1
+                """,
+                workflow_run_step_id, STEP_STATUS_CANCELLED, json.dumps(result),
+            )
+            await conn.execute(
+                "UPDATE workflow_runs SET status = $2, completed_at = now() WHERE id = $1",
+                step["workflow_run_id"], RUN_STATUS_CANCELLED,
+            )
+            await workflow_todos.complete_user_task_todos(conn, run_step_id=workflow_run_step_id)
+    return {"run_id": step["workflow_run_id"], "run_status": RUN_STATUS_CANCELLED,
+            "step_status": STEP_STATUS_CANCELLED}

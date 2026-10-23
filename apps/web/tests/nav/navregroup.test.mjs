@@ -30,7 +30,8 @@ const EXPECTED = {
   staff_member: { main: MAIN, org_admin: ["/admin/billing-groups", "/admin/vdr-proposals"], platform: [] },
   org_admin_manage_members: { main: MAIN, org_admin: ["/admin", "/admin/users"], platform: [] },
   org_admin_manage_org_settings: {
-    main: MAIN, org_admin: ["/admin/profiles", "/admin/settings", "/admin/workflows"],
+    // REP2 (Joe, 2026-10-23): org admins read Custodian capabilities (Billing & Custody).
+    main: MAIN, org_admin: ["/admin/profiles", "/admin/settings", "/admin/workflows", "/admin/custodian-capabilities"],
     platform: ["/admin/model-research"],
   },
   super_admin: {

@@ -61,6 +61,8 @@ FEATURE_GATES = {
     "routers.spv": "subscriptions: entity access + indicate_interest for a non-staff caller",
     "routers.deal_room": "DEALROOM1 — deal room scope (services.deal_room.deal_rights); publisher capability → manage_deals|manage_org_settings",
     "routers.replication": "REP1 — view_replication / manage_replication / approve_replication (approve never for a maker of the draft)",
+    "routers.execution": "REP2 — view_execution / manage_execution / approve_execution (approve never for a maker of the instruction); nothing is ever sent to a custodian",
+    "routers.custodians": "REP2 — custodian capabilities: read staff or manage_org_settings (org admins), write Super Admin only (platform data)",
 }
 # Writes that stay "active account only", with the reason.
 SELF_SCOPED = {
@@ -73,6 +75,7 @@ SELF_SCOPED = {
     "routers.enroll": "the invite token is the credential (provisioning-exempt)",
     "routers.marketing": "public by design (anonymous lead)",
     "routers.altruist_webhook": "public, HMAC-signed",
+    "routers.human_tasks": "own open human tasks (eligible by the caller's own permissions; decided on the subject's gated route)",
 }
 # Per-route note where the module's SELF_SCOPED reason does not fit.
 SELF_SCOPED_ROUTES = {
@@ -162,7 +165,8 @@ def gates(module, src: str) -> dict:
     """What gates ``src`` (expanded endpoint source) applies."""
     g = {"perms": set(), "any_of": [], "super": False, "staff": False, "token": False,
          "rbac": False, "phantom": False, "entity": False, "document": False,
-         "workflow": False, "org_settings": False, "self_read_org": False, "deal_room": False}
+         "workflow": False, "org_settings": False, "self_read_org": False, "deal_room": False,
+         "staff_or": []}
     if src is None:
         return g
     for m in re.finditer(r"(?<![\w.])require_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src):
@@ -194,6 +198,8 @@ def gates(module, src: str) -> dict:
         g["super"] = bool(re.search(r"_require_super_admin|require_super_admin\(|if not is_super_admin\(", src))
     if re.search(r"(?<![\w.])require_staff\(\s*request", src):
         g["staff"] = True; g["token"] = True
+    for m in re.finditer(r"(?<![\w.])require_staff_or_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src):
+        g["staff_or"].append(m.group(2) or _const(module, m.group(3)) or m.group(3))
     if "require_entity_access(" in src or "_require_subscribe(" in src:
         g["entity"] = True
     if "_require_document_visible(" in src:
@@ -222,6 +228,8 @@ def describe(g, after: bool = False) -> str:
         parts.append("any(" + "|".join(a) + ")")
     if g["staff"]:
         parts.append("staff")
+    for perm in g["staff_or"]:
+        parts.append(f"staff or authz {perm}")
     if g["org_settings"]:
         parts.append("manage_org_settings (org admin)")
     if g["workflow"]:
@@ -240,7 +248,7 @@ def describe(g, after: bool = False) -> str:
 def before_effect(g) -> str:
     if g["super"] or g["workflow"]:
         return "enforced"
-    if not (g["perms"] or g["any_of"] or g["staff"] or g["org_settings"]):
+    if not (g["perms"] or g["any_of"] or g["staff"] or g["staff_or"] or g["org_settings"]):
         return "OPEN"
     if g["token"] and not g["rbac"]:
         return "OPEN (token claim absent → allow)"
@@ -278,6 +286,10 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
     if distinct == 1 and not g["any_of"] and not g["org_settings"]:
         return {"rule": "perm", "any_of": sorted(g["perms"]), "scoped": g["entity"] or g["document"]}
     if distinct > 1 or (g["perms"] and (g["any_of"] or g["org_settings"])):
+        return {"rule": "mixed"}
+    if g["staff_or"]:
+        # staff OR a permission (two branches): only the global rules are asserted;
+        # each branch is proven by the owning sprint's verify (verify_rep2 gates).
         return {"rule": "mixed"}
     if g["staff"]:
         return {"rule": "staff"}
