@@ -177,6 +177,9 @@ class TradeContext:
     org_id: str
     actor_id: str
     account: dict
+    #: rep5 (additive): an upstream approval (an approved rebalance proposal)
+    #: the instructions carry — services.execution.create_instructions re-reads it.
+    upstream: dict | None = None
 
 
 @dataclass
@@ -223,7 +226,7 @@ class ManualTradeAdapter(TradeAdapter):
         why = reason or "manual route: every trade becomes an execution instruction carried out by a person"
         rows = await execution.create_instructions(
             ctx.pool, org_id=ctx.org_id, actor_id=ctx.actor_id, account=ctx.account, trade_list=trade_list,
-            routed_via=self.custodian_key, routing_reason=why)
+            routed_via=self.custodian_key, routing_reason=why, upstream=ctx.upstream)
         return SubmissionResult(adapter=self.custodian_key, routed_to="manual", reason=why,
                                 instruction_ids=[str(r["id"]) for r in rows], notes=list(notes or []))
 
@@ -306,18 +309,21 @@ async def _downgrade_notes(conn, custodian_key: str, trade_list: TradeList) -> l
     return notes
 
 
-async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list: TradeList) -> SubmissionResult:
+async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list: TradeList,
+                           upstream: dict | None = None) -> SubmissionResult:
     """Pick the adapter from the account's custodian_code + capabilities.
 
     Held-away → manual, regardless of custodian. An account whose custodian
     has no registered trade adapter → manual. Otherwise the custodian's own
     adapter decides (Altruist → manual while its API is not evidenced).
+    rep5: ``upstream`` (an approved rebalance proposal) rides on the context to
+    the instruction creation — the routing itself is unchanged.
     """
     from services.custody.registry import trade_adapter_for, trade_custodian_key
 
     if str(account["id"]) != str(trade_list.account_id):
         raise ValueError("the trade list names a different account")
-    ctx = TradeContext(pool=pool, org_id=str(org_id), actor_id=str(actor_id), account=account)
+    ctx = TradeContext(pool=pool, org_id=str(org_id), actor_id=str(actor_id), account=account, upstream=upstream)
     key = trade_custodian_key(account.get("custodian_code"))
     async with pool.acquire() as conn:
         notes = await _downgrade_notes(conn, key if key else "manual", trade_list)

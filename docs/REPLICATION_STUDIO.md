@@ -667,3 +667,143 @@ Preview / Use render only on `permissions.can_build === true` with non-empty
    runs `node --test`, `npm run build` and the `verify_rep3.py` regression itself).
 2. Q3 stays "unknown — needs prices" for real funds until a licensed price feed
    writes `portfolio.securities_global_prices`.
+
+## rep5 — accounts join models; proposals; execution (2026-10-23)
+
+Spec: "Replication Studio — ETF & Fund-to-SMA Spec" (Joe, 2026-10-22) — "Workflow"
+steps 2 and 7, "Portfolio construction" (rebalance triggers; every trigger produces a
+proposal, never a trade), "Fees" (the account override; no double charging while a
+replicated fund is still held), "Custodians" (manual execution instructions).
+Decisions (Joe): personal settings live on the ACCOUNT, not the model; a new account
+joins an existing model rather than forking it; every human action is a human task;
+nothing trades.
+
+Services: `services/account_models.py` (link versions, settings, the join, fees, the
+account's holdings), `services/rebalance_engine.py` (PURE: exclusions, cash floor,
+lot selection, gain budget, trade sizing, wash-sale flag),
+`services/rebalance_proposals.py` (the one generator, lifecycle, execution through
+rep2, the tick). Routes: `routers/account_models.py`. Schema: `docs/rep5_part1.sql`
+(applied by `scripts/_apply_rep5.py`). Screens: Portfolio → **Accounts**
+(`/portfolio/accounts`), the account page (`/portfolio/accounts/{id}`), a proposal
+(`/portfolio/proposals/{id}`). Verify: `apps/api/scripts/verify_rep5.py` (written,
+not run in the sprint).
+
+### Task 1 findings (rep5)
+
+- **1a signatures.** `execution.create_instructions(pool, *, org_id, actor_id,
+  account, trade_list, routed_via, routing_reason, upstream=None)` (upstream is new);
+  `custody.trading.route_trade_list(pool, *, org_id, actor_id, account, trade_list,
+  upstream=None)` (upstream rides on `TradeContext`); `execution.submit / decide /
+  account_lots(conn, org_id, account_id, global_security_id=None) /
+  _validate_lots(...)`; `human_tasks.open_task(pool, *, org_id, kind, subject_type,
+  subject_id, maker_id, eligible_permission, title, payload, action_path,
+  actor_kind)` / `complete_task` / `cancel_task` / `list_tasks`; a kind is
+  maker-checker OR system_open, never both; `models.live_approved(conn, model_id)`,
+  `positions_of(conn, version_id)` (alternates are TICKERS), `look_through(conn,
+  version_id)`, `after_approval(pool, *, org_id, model_id, version_id)`;
+  `replica_models.spec_for_version(conn, version_id)` (drift_threshold);
+  `fee_schedules.create_assignment(conn, org_id, *, fee_schedule_id, scope_type,
+  scope_id, effective_from, effective_to, agreement_document_id, created_by,
+  replace_existing=True)`, `end_assignment`; `custodian_capabilities.capability(conn,
+  custodian_code, key)` + `available()` ('unknown' = not available).
+- **1b holdings.** One account: `portfolio.positions WHERE account_id` — the latest
+  live row per asset (`as_of_date` desc) is "current"; the valuation as-of is the
+  latest of those dates. Lots come from `execution.account_lots` (lot →
+  `positions.account_id`, security via `assets.global_security_id`). Price =
+  `market_value / quantity` on the position's own as_of_date (source
+  `account_position`, as-of shown). The household is accounts with the same
+  `household_id`, the same primary entity, or a shared `account_owners` entity.
+  Real rows: 0 accounts, 0 account positions (2026-10-23).
+- **1c event.** `domain_events.publish_event` fans out only to BPMN
+  `workflow_triggers`; no in-process subscriber registry exists. Chosen: a direct
+  call from rep3's `after_approval` (same request, deterministic, failure logged and
+  never undoing the approval), plus the scheduler tick re-sweeping the last 7 days of
+  'model.version_approved' events. Idempotent per (account, model version).
+- **1d upstream approval.** `execution_instruction_lots_guard` admitted lots only
+  while the instruction was a draft, and rep2's CHECKs require a human maker distinct
+  from `approved_by`. The exact change:
+  - `create_instructions(upstream=…)` re-reads the proposal: approved, made by a
+    person, maker ≠ checker, its task completed 'approve' by that checker.
+  - It then inserts each instruction 'approved' with maker = the proposal's maker
+    and approved_by = its checker.
+  - A new BEFORE INSERT trigger, `execution_instructions_insert_guard`, admits a live
+    'approved' row only from such a proposal.
+  - The lots guard also admits lots on that instruction, but only in its creating
+    transaction.
+  - Every rep2 CHECK is unchanged.
+  - A SYSTEM proposal cannot satisfy this (no human maker). Its instructions are
+    drafts by the reviewer, submitted to rep2's own approval.
+- **1e fees.** An ACCOUNT assignment goes through `create_assignment`: precedence 10
+  is derived, a RETIRED schedule is refused, and there is no approval of its own.
+  `fee_exclusions` had NO write path. rep5 adds `create_exclusion` /
+  `end_exclusion` / `list_exclusions` through `fee_validation.validate_exclusion`
+  and the same scope check. A SECURITY basis is the org asset id. The join task —
+  whose payload names both — is their approval.
+
+### Schema
+
+| Table | Axis | Notes |
+| --- | --- | --- |
+| `public.account_model_links` | both | a version per change; the decision is a system-axis archive; one active + one pending per account (partial uniques); settings never edited |
+| `public.rebalance_proposals` | system | one open (draft / pending / approved) per account; content fixed at generation; status edges in a guard; `superseded_by_id` deferrable |
+| `public.rebalance_proposal_trades` | valid | quantity xor notional (a sale is always a quantity); price source + as-of; lots; wash-sale flag; instruction link by close + insert |
+| `public.account_transition_plans` | valid | keep / trim / add / sell now / sell later by year; embedded gain; years to complete |
+
+RLS: org isolation with NULLIF on every operation of all four. Deletes only on the
+fixture-teardown path (`execution.teardown = 'fixture'`, never app_service).
+
+### Transition and proposals
+
+- **Exclusions:** pro_rata (rep4's largest-remainder allocation — exact), to_cash,
+  use_alternates (the first alternate not itself excluded; otherwise pro rata, with
+  a note saying so). Then the cash target is at least the floor (plus any withdrawal).
+- **Lots:** lowest tax per dollar raised — losses first, then highest cost; at equal
+  cost long-term before short-term. The short-term guard defers a short-term gain
+  lot that turns long-term within the wait window, to that date. The gain budget
+  caps NET realized gain for the year: realized-this-year counts against it, and
+  same-proposal losses add room. What does not fit is "sell later" by year, one
+  budget per year. A lot with no cost is never sold against a budget.
+- **Trades:** whole shares unless the custodian's fractional_shares is 'yes'. An
+  unpriced buy is by notional. A holding with no price is never traded. Trades
+  under `replication.proposals.min_trade_size` are dropped as dust. Every trade
+  carries a reason. Buys are scaled to the cash the allowed sales raise.
+- **Warnings:** cannot value, unpriced buy, stale valuation, capability unknown,
+  held-away, advice only, dust, buys scaled, sell later, unknown cost basis, no cash
+  balance, unresolved holding / target, no trades, wash-sale flag.
+- **Triggers:**
+  - join — after the link approval; the joiner is the maker; auto-submitted.
+  - model_change — system.
+  - drift — system; the daily tick on the account's own valuation; threshold:
+    link → model spec → org setting → 1%.
+  - cash_flow — system when cash exceeds its target by more than
+    `cash_flow_threshold`; or a person entering a withdrawal.
+  - manual — a person; a draft they submit.
+- **Lifecycle:** a newer proposal supersedes an older draft or pending one (its task
+  is withdrawn and the change is audited). While an approved proposal's instructions
+  are working, a new one is refused. Proposals expire after `expiry_days`, or when
+  the account's valuation date moves.
+- **Execution:** approval routes through `route_trade_list`. Altruist
+  'unknown' → manual; held-away → manual; advice-only and held-away → executor
+  'member'. A person's proposal → instructions APPROVED (maker + checker + lots
+  carried). A system proposal → drafts submitted to rep2's approval. The proposal
+  becomes 'executed' once every instruction is closed, cancelled or expired, with
+  the counts in its reason.
+
+### Permissions and screens
+
+`view_proposals`, `manage_proposals` (join, settings, generate, submit),
+`approve_proposals` — org_admin by default (migration + `rbac.ensure_org_admin_role`).
+17 routes, each gated and in `docs/AUTHZ1_ROUTES.json`. Every envelope carries
+`permissions`, `vocabularies` (triggers, statuses, exclusion policies, warning codes,
+harvesting engines; `editable` empty for a view-only caller) and the server's `actions`.
+The screens render a control only for `=== true` on the flag AND an action the
+server listed (`lib/proposals.mjs`; `tests/replication/rep5.test.mjs`).
+
+### rep5 operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep5.py` (it
+   runs `node --test`, `npm run build` and the `verify_rep2.py` regression itself).
+2. Redeploy the scheduler cron service so `workflow_scheduler_tick.py` runs the new
+   `proposals_tick` step.
+3. Optional org settings: `replication.proposals.min_trade_size`, `.expiry_days`,
+   `.stale_valuation_days`, `.cash_flow_threshold`, `.execute_within_days`.
