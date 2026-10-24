@@ -88,7 +88,7 @@ from services import users as users_mod  # noqa: E402
 from services.brief_blocks import register_brief_blocks  # noqa: E402
 from services.custody import trading as TR  # noqa: E402
 from services.custody.base import AccountNumber  # noqa: E402
-from services.custody.registry import get_or_create_salt  # noqa: E402
+from services.custody.registry import get_or_create_salt, trade_custodian_key  # noqa: E402
 from services.custody.trading import TradeList  # noqa: E402
 from services.database import close_pool, get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
@@ -567,6 +567,84 @@ async def make_model(name: str, positions: list[dict], *, fund_entry=None) -> tu
     return UUID(str(model["id"])), UUID(str(v["id"]))
 
 
+# Every literal seed() (and the later direct-SQL negative tests) writes into a column that a CHECK, a lookup
+# table or an enum constrains — checked against the live catalog first. A seed INSERT that dies on a constraint
+# skips every fixture-scoped section after it (rep5's first run: instrument_class 'etf', not a catalog key).
+SEED_INSTRUMENT_CLASS = "index_etf"
+SEED_CHECK_LITERALS = (   # (table, constraint, literals the script writes)
+    ("portfolio.positions", "positions_authority_chk", ("manual",)),
+    ("portfolio.positions", "positions_source_chk", ("manual",)),
+    ("portfolio.transactions", "transactions_authority_chk", ("manual",)),
+    ("portfolio.tax_lots", "tax_lots_term_check", ("long", "short")),
+    ("portfolio.tax_lots", "tax_lots_status_check", ("open", "closed")),
+    ("portfolio.replica_securities", "replica_securities_status_chk", ("active",)),
+    ("public.custodian_capabilities", "custodian_capabilities_key_chk",
+     ("fractional_shares", "custodian_tax_loss_harvesting")),
+    ("public.custodian_capabilities", "custodian_capabilities_evidence_kind_chk", ("assumed",)),
+    ("public.custodian_capabilities", "custodian_capabilities_value_chk", ("yes",)),
+    ("public.fee_schedules", "fee_schedules_product_type_check", ("ASSET_MANAGEMENT",)),
+    ("public.fee_schedules", "fee_schedules_rate_type_check", ("BPS",)),
+    ("public.fee_schedules", "fee_schedules_tier_method_check", ("GRADUATED",)),
+    ("public.fee_schedules", "fee_schedules_billing_frequency_check", ("QUARTERLY",)),
+    ("public.fee_schedules", "fee_schedules_billing_timing_check", ("ARREARS",)),
+    ("public.fee_schedules", "fee_schedules_valuation_method_check", ("PERIOD_END",)),
+    ("public.fee_schedules", "fee_schedules_status_check", ("APPROVED",)),
+    ("portfolio.models", "models_source_chk", ("upload",)),
+    ("portfolio.models", "models_status_chk", ("draft",)),
+    ("public.account_model_links", "account_model_links_change_chk", ("join",)),
+    ("public.account_model_links", "account_model_links_status_chk", ("active", "rejected")),
+    ("public.rebalance_proposals", "rebalance_proposals_trigger_chk", ("manual",)),
+    ("public.rebalance_proposals", "rebalance_proposals_maker_kind_chk", ("user",)),
+    ("public.execution_instructions", "execution_instructions_side_chk", ("buy",)),
+    ("public.execution_instructions", "execution_instructions_executor_chk", ("member",)),
+    ("public.execution_instructions", "execution_instructions_if_not_filled_chk", ("ask",)),
+    ("public.execution_instructions", "execution_instructions_source_chk", ("manual",)),
+    ("public.execution_instructions", "execution_instructions_status_chk", ("approved",)),
+    ("public.execution_instructions", "execution_instructions_price_chk", ("market",)),
+)
+
+
+async def y_seed_literals(conn):
+    section("[Y] Seed literals checked against the live catalog (CHECKs, lookup tables, enums) before seeding")
+    S.pop("instrument_class", None)
+    row = await platform(conn, "SELECT key, enabled FROM portfolio.replica_instrument_classes WHERE key = $1 "
+                               "AND valid_to IS NULL AND system_to IS NULL", SEED_INSTRUMENT_CLASS, fetch="fetchrow")
+    keys = [r["key"] for r in await platform(conn, "SELECT key FROM portfolio.replica_instrument_classes WHERE "
+                                                   "valid_to IS NULL AND system_to IS NULL ORDER BY sort_order")]
+    if check(row is not None and row["enabled"] is True, f"instrument class {SEED_INSTRUMENT_CLASS!r} is a current, "
+             "enabled portfolio.replica_instrument_classes key", f"live keys {keys}"):
+        S["instrument_class"] = row["key"]    # seed() reads the key from the table, never a literal
+    codes = {r["code"] for r in await platform(conn, "SELECT code FROM public.transaction_types WHERE code = "
+                                                     "ANY($1::text[])", ["buy", "sell"])}
+    check(codes == {"buy", "sell"}, "transaction_type_code 'buy' / 'sell' exist in public.transaction_types",
+          f"{sorted(codes)}")
+    labels = {r["l"] for r in await platform(conn, "SELECT enumlabel AS l FROM pg_enum WHERE enumtypid = "
+                                                   "'public.entity_type'::regtype")}
+    check("individual" in labels, "entity_type 'individual' is a label of the entity_type enum")
+    bad = []
+    for table, con, lits in SEED_CHECK_LITERALS:
+        d = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = $1::regclass "
+                                 "AND conname = $2 AND contype = 'c'", table, con, fetch="fetchval")
+        allowed = set(re.findall(r"'([^']*)'::text", d or ""))
+        missing = [x for x in lits if x not in allowed]
+        if d is None or missing:
+            bad.append(f"{table}.{con}: {'absent' if d is None else missing}")
+    check(not bad, f"every CHECK-constrained seed literal is admitted by its constraint ({len(SEED_CHECK_LITERALS)} "
+          "constraints)", "; ".join(bad))
+    d = await platform(conn, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = "
+                             "'public.custodian_capabilities'::regclass AND conname = 'custodian_capabilities_code_chk'",
+                       fetch="fetchval")
+    check(d is not None and "^[a-z][a-z0-9_]*$" in d and re.fullmatch(r"[a-z][a-z0-9_]*", CAP_TEST) is not None,
+          "the test custodian code satisfies custodian_capabilities_code_chk", f"{CAP_TEST!r} {d}")
+    check(all(trade_custodian_key(a[1]) in (CAP_TEST, "altruist") for a in ACCOUNTS.values()),
+          "every fixture account's custodian_code routes to a key the capability rows / adapters use",
+          f"{sorted({trade_custodian_key(a[1]) for a in ACCOUNTS.values()})}")
+    find("unconstrained seed text", "accounts.custodian_code / registration_type / tax_status, portfolio.assets."
+         "asset_type and account_balances_daily.source_system / source_confidence carry no CHECK, FK or enum — "
+         "nothing to validate; source_confidence now 'CONFIRMED' (the column default and the importer's vocabulary), "
+         "was 'high'")
+
+
 async def seed(conn) -> None:
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
@@ -705,12 +783,13 @@ async def seed(conn) -> None:
             await conn.execute(
                 "INSERT INTO public.account_balances_daily (org_id, account_id, as_of_date, total_market_value, "
                 "cash_value, margin_balance, accrued_income, source_system, source_confidence, is_billing_source, "
-                "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'high', true, true)", org, acct, VAL, D(cash))
+                "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'CONFIRMED', true, true)", org, acct, VAL, D(cash))
         await conn.execute("SELECT set_config('app.current_org_id', $1, true)", str(ORG_A))
         await conn.execute(
             "INSERT INTO portfolio.replica_securities (id, org_id, global_security_id, instrument_class, ticker, "
-            "holdings_source_key, status, display_name, created_by) VALUES ($1, $2, $3, 'etf', $4, 'zz_rep5_test', "
-            "'active', $5, $6)", ENTRY_F, ORG_A, S["sec_F"], f"{PREFIX}F", f"Holdings of {PREFIX}F", U_ADMIN1)
+            "holdings_source_key, status, display_name, created_by) VALUES ($1, $2, $3, $4, $5, 'zz_rep5_test', "
+            "'active', $6, $7)", ENTRY_F, ORG_A, S["sec_F"], S["instrument_class"], f"{PREFIX}F",
+            f"Holdings of {PREFIX}F", U_ADMIN1)
         await conn.execute(
             "INSERT INTO public.fee_schedules (id, org_id, code, version, name, product_type, rate_type, tier_method, "
             "billing_frequency, billing_timing, valuation_method, status, approved_by, approved_at, created_by) "
@@ -1533,7 +1612,11 @@ async def main_async() -> int:
         real = await real_fingerprints(conn)
         await run("task 1", y_task1, conn)
         await run("schema", y_schema, conn)
-        await run("seed", seed, conn)
+        await run("seed literals", y_seed_literals, conn)
+        if S.get("instrument_class"):
+            await run("seed", seed, conn)
+        else:
+            check(False, "seed skipped: no catalog instrument class to seed the fund entry with")
         if S.get("m3"):
             await run("join", y_join, conn)
             await run("exclusions", y_exclusions, conn)
