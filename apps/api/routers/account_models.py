@@ -71,6 +71,7 @@ class SettingsIn(_Body):
     short_term_wait_days: int | None = None
     harvesting_engine: str | None = Field(default=None, max_length=40)
     fee_schedule_override_id: UUID | None = None
+    harvest_enabled: bool | None = None
     harvest_loss_pct: Decimal | None = None
     harvest_loss_min: Decimal | None = None
     harvest_to_cash: bool | None = None
@@ -93,7 +94,7 @@ class SettingsIn(_Body):
             elif k == "fee_schedule_override_id" and v is not None:
                 v = str(v)
             elif k in ("cash_floor", "exclusion_policy", "avoid_short_term", "short_term_wait_days",
-                       "harvesting_engine") and v is None:
+                       "harvesting_engine", "harvest_enabled") and v is None:
                 raise HTTPException(status_code=422, detail=f"{k} cannot be cleared")
             out[k] = v
         return out

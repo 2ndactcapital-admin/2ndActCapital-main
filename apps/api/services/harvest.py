@@ -2,8 +2,10 @@
 
 THE SCAN (rep5's org_tick on the scheduler path, BEFORE the drift scan; Task 1e)
 ──────────────────────────────────────────────────────────────────────────────
-For every account following a model with ``harvesting_engine = 'hollisworks'``,
-once a day (public.harvest_runs: one live run per account per day):
+OPT-IN: only accounts whose link has ``harvest_enabled`` true (a versioned,
+approved link setting; default false) AND ``harvesting_engine = 'hollisworks'``
+are considered — any other link is not scanned at all (no run is written).
+For each of those, once a day (public.harvest_runs: one live run per account per day):
   * CANDIDATES — every open lot at an unrealized loss on the account's own
     valuation (price = position market value / quantity, rep5):
         loss          = (adjusted unit cost − price) × quantity
@@ -32,8 +34,12 @@ once a day (public.harvest_runs: one live run per account per day):
 OUTPUT: ONE proposal per account per day, trigger 'harvest', through rep5's
 generate (a SYSTEM maker → a review task → a person approves on
 approve_proposals); every candidate — taken or skipped, with its reason — is a
-row of public.harvest_candidates. An account that already has an open proposal
-is not harvested that day (each candidate recorded as 'open_proposal').
+row of public.harvest_candidates. A harvest NEVER supersedes an open proposal:
+an account with one (draft, awaiting approval, or approved and not yet
+executed — a person's or the system's) is not harvested that day; the run says
+'an open proposal exists' and each candidate is recorded as 'open_proposal'.
+generate refuses the supersede itself too (OpenProposalExists), so a proposal
+made between the scan's read and its write is never displaced.
 ``harvesting_engine = 'custodian'`` → no harvest proposals at all (the run says
 so); the custodian's realized losses still reach the loss bank through its
 lots, and wash-sale control still applies to Hollisworks' own proposals.
@@ -73,7 +79,7 @@ SKIP_LABELS = {"below_threshold": "Below the loss thresholds (net of trading cos
                "no_cost_basis": "No cost basis — its loss cannot be known",
                "recent_household_buy": "A household buy within 30 days (wash sale) — held back",
                "no_clear_replacement": "No approved substitute is clear of wash-sale windows",
-               "open_proposal": "The account already has an open proposal",
+               "open_proposal": "An open proposal exists — a harvest never supersedes it",
                "proposal_failed": "The proposal could not be generated",
                "swap_back_not_clear": "Swap back: the original is not yet clear to buy",
                "swap_back_gain_budget": "Swap back: the gain budget or short-term guard holds the sale",
@@ -81,6 +87,7 @@ SKIP_LABELS = {"below_threshold": "Below the loss thresholds (net of trading cos
 RUN_OUTCOME_LABELS = {"proposed": "A harvest proposal was made", "nothing_to_harvest": "Nothing to harvest",
                       "skipped": "Not harvested today", "failed": "Failed"}
 KIND_LABELS = {"harvest": "Harvest", "swap_back": "Swap back"}
+OPEN_PROPOSAL_REASON = "an open proposal exists"
 Q = Decimal("0.0000000001")
 
 
@@ -254,6 +261,9 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
         link = await AM.active_link(conn, account["id"])
         if link is None or AM.is_closed(account, today):
             return {"action": "none", "reason": "no active link"}
+        if not link.get("harvest_enabled"):
+            return {"action": "none", "reason": "harvesting is off for this account (harvest_enabled is an opt-in "
+                                                "link setting, default false)"}
         done = await conn.fetchval(f"SELECT id FROM {T_RUN} WHERE account_id = $1::uuid AND run_date = $2 "
                                    "AND valid_to IS NULL AND system_to IS NULL", str(account["id"]), today)
         if done:
@@ -439,16 +449,19 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
                       "value_note": f"swap back — {tax_txt}",
                       "replacement_note": f"back to the original {ctx.label(s_key)}",
                       "wash_sale": {"outcome": "clear", "reason": res["reason"]}})
-    if cur is not None:
+
+    async def open_skip(p: dict):
         for c in cands:
             if c["outcome"] == "proposed":
                 c.update(outcome="skipped", skip_reason="open_proposal",
-                         skip_detail=f"the account's proposal {cur['id']} ({cur['status']}) is open — one open proposal "
-                                     "per account; the harvest waits for tomorrow's scan")
+                         skip_detail=f"the account's proposal {p['id']} ({p['status']}) is open — a harvest never "
+                                     "supersedes it; the harvest waits for a later scan")
         async with pool.acquire() as conn:
-            return await _finish(conn, org_id, run_id, account, today, engine, "skipped",
-                                 f"an open proposal ({cur['status']}) already covers this account", settings, profile,
-                                 rates, hold, cands, None)
+            return await _finish(conn, org_id, run_id, account, today, engine, "skipped", OPEN_PROPOSAL_REASON,
+                                 settings, profile, rates, hold, cands, None)
+
+    if cur is not None:
+        return await open_skip(cur)
     if not trades:
         why = (f"{len(cands)} candidate(s), none taken" if cands else "no lot is at a loss on the account's own valuation")
         async with pool.acquire() as conn:
@@ -463,6 +476,8 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
                               trigger_ref={"run_id": str(run_id), "candidates": len(cands),
                                            "taken": sum(1 for c in cands if c["outcome"] == "proposed"),
                                            "rates": TP.rates_out(rates)}, today=today, harvest_plan=plan)
+    except RP.OpenProposalExists as exc:   # a proposal was made after the scan read the account
+        return await open_skip(exc.proposal)
     except Exception as exc:  # noqa: BLE001 — the run records the failure; tomorrow's scan tries again
         log.exception("harvest proposal failed for %s", account["id"])
         for c in cands:

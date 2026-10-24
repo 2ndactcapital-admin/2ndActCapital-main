@@ -98,8 +98,9 @@ export function washText(result, v) {
 }
 
 export function matchesOf(result) {
-  return listOf(result?.matches).map((m) => `${m.side === "buy" ? "buy" : "loss sale"} of ${m.label || m.security_id}`
-    + ` in ${m.account} ${m.pending ? `(pending, ${m.from} to ${m.to})` : `on ${m.to}`} — ${m.identical_because || ""}`.trim());
+  // the whole line is trimmed — `.trim()` on the second literal alone ate the space before "in"
+  return listOf(result?.matches).map((m) => (`${m.side === "buy" ? "buy" : "loss sale"} of ${m.label || m.security_id}`
+    + ` in ${m.account} ${m.pending ? `(pending, ${m.from} to ${m.to})` : `on ${m.to}`} — ${m.identical_because || ""}`).trim());
 }
 
 /** Decimal-safe: values go to the API as STRINGS (a JSON float is refused). */

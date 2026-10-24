@@ -1,6 +1,6 @@
 """REP6 — apply the tax-engine schema, then prove it landed.
 
-    python3 apps/api/scripts/_apply_rep6.py --schema   # docs/rep6_part1.sql, one transaction
+    python3 apps/api/scripts/_apply_rep6.py --schema   # docs/rep6_part1.sql then rep6_part2.sql, one transaction
     python3 apps/api/scripts/_apply_rep6.py --verify   # read it back from the catalog
 
 Runs on the operator's postgres DSN (``DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP``
@@ -28,6 +28,7 @@ hydrate()
 sys.path.insert(0, str(API_DIR))
 
 SCHEMA_SQL = REPO / "docs" / "rep6_part1.sql"
+SCHEMA_SQL_2 = REPO / "docs" / "rep6_part2.sql"      # harvest_enabled (opt-in harvesting)
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 
 TABLES = ("tax_profiles", "loss_carryforwards", "substitution_sets", "substitution_set_candidates",
@@ -60,7 +61,8 @@ GUARDS = {"tax_profiles": "tax_profiles_guard_trg", "loss_carryforwards": "loss_
           "harvest_candidates": "harvest_candidates_guard_trg"}
 PERMISSIONS = ("view_tax", "manage_tax", "approve_tax")
 NEW_COLUMNS = {"rebalance_proposal_trades": ("wash_sale",),
-               "account_model_links": ("harvest_loss_pct", "harvest_loss_min", "harvest_to_cash", "harvest_swap_back")}
+               "account_model_links": ("harvest_loss_pct", "harvest_loss_min", "harvest_to_cash", "harvest_swap_back",
+                                       "harvest_enabled")}
 
 
 async def _conn():
@@ -77,6 +79,7 @@ async def apply_schema() -> None:
     try:
         async with conn.transaction():
             await conn.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
+            await conn.execute(SCHEMA_SQL_2.read_text(encoding="utf-8"))
         print("[OK] schema applied")
     finally:
         await conn.close()
@@ -135,6 +138,11 @@ async def verify_schema() -> int:
                 "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1",
                 t)}
             need(set(cols) <= have, f"public.{t} gains {', '.join(cols)}")
+        he = await conn.fetchrow("SELECT is_nullable, column_default FROM information_schema.columns WHERE "
+                                 "table_schema = 'public' AND table_name = 'account_model_links' AND column_name = "
+                                 "'harvest_enabled'")
+        need(he is not None and he["is_nullable"] == "NO" and (he["column_default"] or "") == "false",
+             "account_model_links.harvest_enabled is NOT NULL DEFAULT false (opt-in)", f"{dict(he) if he else None}")
         perms = {r["name"] for r in await conn.fetch("SELECT name FROM permissions WHERE name = ANY($1::text[])",
                                                      list(PERMISSIONS))}
         need(perms == set(PERMISSIONS), "permissions view/manage/approve_tax exist", f"{sorted(perms)}")

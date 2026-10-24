@@ -923,7 +923,8 @@ async def y_task1(conn):
     i_drift = tick.find("await scan_account(pool, org_id=org_id, account_id=a")
     check(0 <= i_lb < i_hv < i_drift and sched.find("maybe_refresh_holdings(pool)") < sched.find("proposals_tick(pool)"),
           "1e: the harvest scan hooks into rep5's org_tick AFTER the holdings refresh, the loss-bank ingest before it, "
-          "and BEFORE the drift scan (it gets the account's one open-proposal slot first)", f"{i_lb} {i_hv} {i_drift}")
+          "and BEFORE the drift scan (opt-in per link; it never supersedes an open proposal)",
+          f"{i_lb} {i_hv} {i_drift}")
 
 
 async def y_schema(conn):
@@ -1288,13 +1289,31 @@ async def y_harvest(conn):
             "wash-sale control, one human-approved proposal per account per day, every candidate recorded, custodian "
             "engine, swap back")
     pool = await pool_()
-    c, c2, ptr, o, _ = await join(ACCT_H, S["m3"], {"harvest_loss_pct": "0.05", "harvest_loss_min": "500",
-                                                    "harvest_swap_back": True})
+    # OPT-IN: a link joined without harvest_enabled is never harvested — T1 holds loss lots (V, Y, X)
+    t1_link = await scoped(conn, ORG_A, "SELECT harvest_enabled, harvesting_engine FROM public.account_model_links "
+                                        "WHERE account_id = $1 AND status = 'active' AND valid_to IS NULL AND system_to "
+                                        "IS NULL", ACCT_T1, fetch="fetchrow")
+    n_hp0 = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND "
+                                      "trigger = 'harvest'", ACCT_T1, fetch="fetchval")
+    co, oo = await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_T1}/scan", {})
+    n_run = await scoped(conn, ORG_A, "SELECT count(*) FROM public.harvest_runs WHERE account_id = $1", ACCT_T1,
+                         fetch="fetchval")
+    n_hp = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND "
+                                     "trigger = 'harvest'", ACCT_T1, fetch="fetchval")
+    check(t1_link is not None and t1_link["harvest_enabled"] is False and t1_link["harvesting_engine"] == "hollisworks"
+          and co == 200 and (oo.get("scan") or {}).get("action") == "none"
+          and "off" in ((oo.get("scan") or {}).get("reason") or "") and int(n_run) == 0 and int(n_hp) == int(n_hp0) == 0,
+          "harvesting is OFF by default: a link joined without harvest_enabled (engine 'hollisworks', loss lots held) "
+          "is not scanned — no run, no harvest proposal", f"{dict(t1_link) if t1_link else None} {co} {oo} {n_run} {n_hp}")
+    c, c2, ptr, o, _ = await join(ACCT_H, S["m3"], {"harvest_enabled": True, "harvest_loss_pct": "0.05",
+                                                    "harvest_loss_min": "500", "harvest_swap_back": True})
     cr, _ = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{ptr}/reject", {"note": "REP6 verify — not now"})
     link = (o.get("link") or {}).get("settings") or {}
-    check(c == 201 and c2 == 200 and cr == 200 and link.get("harvest_loss_pct") == "0.0500000000"
+    check(c == 201 and c2 == 200 and cr == 200 and link.get("harvest_enabled") is True
+          and link.get("harvest_loss_pct") == "0.0500000000"
           and link.get("harvest_loss_min") == "500.00" and link.get("harvest_swap_back") is True,
-          "the account's harvest settings (5%, $500, swap back) are versioned link settings, approved with the join",
+          "the account's harvest settings (opted in, 5%, $500, swap back) are versioned link settings, approved with "
+          "the join",
           f"{c} {c2} {cr} {link}")
     cs, os_ = await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_H}/scan", {})
     scan = os_.get("scan") or {}
@@ -1374,17 +1393,32 @@ async def y_harvest(conn):
           "a PERSON approves the harvest (approve_proposals) — no trade placed; its instructions go to rep2",
           f"{ca} {hp2['status']}")
     # no profile → candidates listed, value not estimated
-    c, c2, ps, _, _ = await join(ACCT_SOLO, S["m3"])
-    await api(U_ADMIN2, "POST", f"/api/v1/proposals/{ps}/reject", {"note": "REP6 verify — not now"})
+    # ...and a harvest NEVER supersedes an open proposal: SOLO's person-made transition proposal is still pending
+    c, c2, ps, _, _ = await join(ACCT_SOLO, S["m3"], {"harvest_enabled": True})
+    ps_before = await prop_row(conn, ORG_A, ps) if ps else None
     await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_SOLO}/scan", {})
     rs = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2",
                       ACCT_SOLO, TODAY, fetch="fetchrow")
+    ps_after = await prop_row(conn, ORG_A, ps) if ps else None
+    n_arch = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE archived_from_id = $1",
+                          UUID(str(ps)) if ps else uuid.uuid4(), fetch="fetchval")
+    n_hs = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND "
+                                     "trigger = 'harvest'", ACCT_SOLO, fetch="fetchval")
+    check(ps_before is not None and ps_before["maker_kind"] == "user" and ps_before["status"] == "pending_approval"
+          and rs is not None and rs["outcome"] == "skipped" and rs["reason"] == "an open proposal exists"
+          and rs["proposal_id"] is None and int(n_hs) == 0 and ps_after is not None
+          and ps_after["status"] == "pending_approval" and ps_after["superseded_by_id"] is None
+          and ps_after["system_from"] == ps_before["system_from"] and int(n_arch) == 0,
+          "an open PERSON-made proposal → the harvest is skipped ('an open proposal exists'), no harvest proposal, and "
+          "the person's proposal is untouched (same live row, still awaiting approval, never superseded)",
+          f"{rs and (rs['outcome'], rs['reason'])} {ps_after and ps_after['status']} {n_arch} {n_hs}")
+    await api(U_ADMIN2, "POST", f"/api/v1/proposals/{ps}/reject", {"note": "REP6 verify — not now"})
     ns = (await cands_of(conn, rs["id"])).get((S["sec_NS"], "harvest")) if rs else None
     check(ns is not None and ns["est_tax_value"] is None and ns["value_note"] == TP.NO_PROFILE and ns["rate_used"] is None
           and (jl(rs["rates"]) or {}).get("estimated") is False,
           "no tax profile → the candidate is listed with 'not estimated — no tax profile' (no rate, no value)")
     # the custodian's own harvesting → no harvest proposals; wash-sale control still on its own proposals
-    c, c2, pc, _, _ = await join(ACCT_CUST, S["m3"], {"harvesting_engine": "custodian"})
+    c, c2, pc, _, _ = await join(ACCT_CUST, S["m3"], {"harvesting_engine": "custodian", "harvest_enabled": True})
     await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_CUST}/scan", {})
     rc = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2",
                       ACCT_CUST, TODAY, fetch="fetchrow")
@@ -1786,7 +1820,8 @@ async def y_front_end(conn):
 def regression():
     section("[Y] Regression — verify_rep5.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1")
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
-    code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep5.py")], REPO, timeout=1200, env=env)
+    # verify_rep5 takes ~22 minutes standalone — 1200 s cut it off
+    code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep5.py")], REPO, timeout=2700, env=env)
     total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
     result = re.findall(r"^RESULT: (.*)$", out, re.M)
     fails = [ln for ln in out.splitlines() if ln.lstrip().startswith("[FAIL]")]

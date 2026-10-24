@@ -85,6 +85,8 @@ VIEW, MANAGE, APPROVE = AM.VIEW, AM.MANAGE, AM.APPROVE
 
 TRIGGER_LABELS = {"join": "Joined the model", "model_change": "The model changed", "drift": "Drift over threshold",
                   "cash_flow": "Cash flow", "manual": "Rebalance now", "harvest": "Tax-loss harvest"}
+# the triggers that never supersede an open proposal (they wait for the account to be free)
+NO_SUPERSEDE_TRIGGERS = ("harvest",)
 STATUS_LABELS = {"draft": "Draft", "pending_approval": "Awaiting approval", "approved": "Approved — executing",
                  "rejected": "Rejected", "expired": "Expired", "superseded": "Superseded", "executed": "Executed"}
 OPEN_STATUSES = ("draft", "pending_approval", "approved")
@@ -129,6 +131,15 @@ class ProposalNotFound(LookupError):
 
 class ProposalConflict(RuntimeError):
     pass
+
+
+class OpenProposalExists(ProposalConflict):
+    """A trigger that never supersedes (harvest) met the account's open proposal."""
+
+    def __init__(self, proposal: dict):
+        self.proposal = proposal
+        super().__init__(f"an open proposal exists ({proposal['status']}) — a {', '.join(NO_SUPERSEDE_TRIGGERS)} "
+                         "proposal never supersedes it")
 
 
 class MakerCheckerViolation(PermissionError):
@@ -505,7 +516,8 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
                    auto_submit: bool = False, trigger_ref: dict | None = None, withdrawal: Decimal | None = None,
                    today: date | None = None, harvest_plan: dict | None = None) -> dict:
     """The ONE generator. Writes the proposal (draft), its trades and — for a
-    join — the transition plan; supersedes an older open draft / pending one;
+    join — the transition plan; supersedes an older open draft / pending one
+    (never for a harvest: that raises OpenProposalExists instead);
     a system trigger (or ``auto_submit``) submits it."""
     if trigger not in TRIGGER_LABELS:
         raise ProposalError(f"trigger is one of {list(TRIGGER_LABELS)}")
@@ -527,6 +539,8 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
         if not model["live_version_id"]:
             raise ProposalConflict(f"{model['name']} has no approved version")
         existing = await open_proposal(conn, account["id"])
+        if existing and trigger in NO_SUPERSEDE_TRIGGERS:
+            raise OpenProposalExists(existing)
         if existing and existing["status"] == "approved":
             raise ProposalConflict("the instructions of the approved proposal for this account are still working — "
                                    "a new proposal waits until they are closed or cancelled")
@@ -552,6 +566,8 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
     async with pool.acquire() as conn:
         async with conn.transaction():
             cur = await open_proposal(conn, account["id"])
+            if cur and trigger in NO_SUPERSEDE_TRIGGERS:
+                raise OpenProposalExists(cur)
             if cur and cur["status"] == "approved":
                 raise ProposalConflict("an approved proposal for this account is executing")
             if cur:
@@ -673,9 +689,7 @@ async def _expire_if_due(pool, org_id, p: dict) -> bool:
         reason = f"expired at {p['expires_at'].isoformat()}"
     else:
         async with pool.acquire() as conn:
-            latest = await conn.fetchval(
-                "SELECT max(as_of_date) FROM portfolio.positions WHERE org_id = $1::uuid AND account_id = $2::uuid "
-                "AND valid_to IS NULL AND system_to IS NULL", str(org_id), str(p["account_id"]))
+            latest = await AM.valuation_as_of(conn, org_id, p["account_id"])
         if latest is not None and (p["valuation_as_of"] is None or latest > p["valuation_as_of"]):
             reason = (f"the account's valuation moved from {_iso(p['valuation_as_of']) or 'none'} to "
                       f"{latest.isoformat()} — generate a new proposal on the new valuation")
@@ -1094,7 +1108,8 @@ async def org_tick(pool, *, org_id, today: date | None = None) -> dict:
             except Exception as exc:  # noqa: BLE001
                 out["errors"].append(f"event {ev['source_id']}: {exc}")
     # rep6 — the realized gains / losses into the loss bank, then the daily harvest scan BEFORE the drift
-    # scan (it gets the account's one open-proposal slot first; it skips an account that already has one)
+    # scan. Harvesting is opt-in per link (harvest_enabled) and NEVER supersedes an open proposal: an account
+    # with one is skipped ('an open proposal exists'); drift / cash_flow / model_change behave as in rep5
     from services import harvest as HV
     from services import loss_bank as LB
 
