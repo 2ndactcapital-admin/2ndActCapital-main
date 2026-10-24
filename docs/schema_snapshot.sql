@@ -90,6 +90,48 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY account_import_exceptions_pkey: (id)
 
+-- ===== account_model_links =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   follow                                   text NOT NULL DEFAULT 'live'::text
+--   link_group_id                            uuid NOT NULL
+--   version_no                               integer NOT NULL DEFAULT 1
+--   change_kind                              text NOT NULL
+--   replaces_link_id                         uuid
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   advice_only                              boolean NOT NULL DEFAULT false
+--   cash_floor                               numeric NOT NULL DEFAULT 0
+--   drift_threshold                          numeric
+--   rebalance_frequency                      text
+--   exclusions                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   exclusion_policy                         text NOT NULL DEFAULT 'pro_rata'::text
+--   gain_budget                              numeric
+--   avoid_short_term                         boolean NOT NULL DEFAULT true
+--   short_term_wait_days                     integer NOT NULL DEFAULT 30
+--   harvesting_engine                        text NOT NULL DEFAULT 'hollisworks'::text
+--   fee_schedule_override_id                 uuid
+--   proposed_fee                             jsonb NOT NULL DEFAULT '{}'::jsonb
+--   fee_assignment_id                        uuid
+--   fee_exclusion_ids                        ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   maker_id                                 uuid NOT NULL
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decision_note                            text
+--   decided_at                               timestamp with time zone
+--   joined_at                                timestamp with time zone
+--   ended_at                                 timestamp with time zone
+--   end_reason                               text
+--   notes                                    text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_model_links_pkey: (id)
+
 -- ===== account_owners =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -104,6 +146,26 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY account_owners_pkey: (id)
+
+-- ===== account_transition_plans =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   link_id                                  uuid NOT NULL
+--   proposal_id                              uuid
+--   valuation_as_of                          date
+--   holdings                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   plan_by_year                             jsonb NOT NULL DEFAULT '[]'::jsonb
+--   total_embedded_gain                      numeric NOT NULL DEFAULT 0
+--   gain_budget                              numeric
+--   years_to_complete                        integer
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_transition_plans_pkey: (id)
 
 -- ===== accounts =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -2180,6 +2242,77 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY provider_benefit_schedules_pkey: (id)
+
+-- ===== rebalance_proposal_trades =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   proposal_id                              uuid NOT NULL
+--   line_no                                  integer NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   side                                     text NOT NULL
+--   quantity                                 numeric
+--   notional                                 numeric
+--   price                                    numeric
+--   price_source                             text NOT NULL
+--   price_as_of                              date
+--   lots                                     jsonb NOT NULL DEFAULT '[]'::jsonb
+--   est_st_gain                              numeric NOT NULL DEFAULT 0
+--   est_lt_gain                              numeric NOT NULL DEFAULT 0
+--   reason                                   text NOT NULL
+--   wash_sale_flag                           jsonb
+--   instruction_id                           uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY rebalance_proposal_trades_pkey: (id)
+
+-- ===== rebalance_proposals =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   link_id                                  uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   model_version_id                         uuid NOT NULL
+--   trigger                                  text NOT NULL
+--   trigger_ref                              jsonb NOT NULL DEFAULT '{}'::jsonb
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   advice_only                              boolean NOT NULL DEFAULT false
+--   valuation_as_of                          date
+--   account_value                            numeric NOT NULL DEFAULT 0
+--   cash_value                               numeric NOT NULL DEFAULT 0
+--   withdrawal_amount                        numeric
+--   target_weights                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   before_weights                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   after_weights                            jsonb NOT NULL DEFAULT '[]'::jsonb
+--   drift_before                             numeric
+--   drift_after                              numeric
+--   est_st_gain                              numeric NOT NULL DEFAULT 0
+--   est_lt_gain                              numeric NOT NULL DEFAULT 0
+--   gain_budget                              numeric
+--   gain_realized_ytd                        numeric NOT NULL DEFAULT 0
+--   warnings                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   sell_later                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   expires_at                               timestamp with time zone NOT NULL
+--   maker_kind                               text NOT NULL
+--   maker_id                                 uuid
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   submitted_at                             timestamp with time zone
+--   decision_note                            text
+--   decided_at                               timestamp with time zone
+--   superseded_by_id                         uuid
+--   status_reason                            text
+--   execution                                jsonb NOT NULL DEFAULT '{}'::jsonb
+--   executed_at                              timestamp with time zone
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY rebalance_proposals_pkey: (id)
 
 -- ===== reference_data =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
