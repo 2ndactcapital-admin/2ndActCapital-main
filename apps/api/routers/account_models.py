@@ -71,8 +71,13 @@ class SettingsIn(_Body):
     short_term_wait_days: int | None = None
     harvesting_engine: str | None = Field(default=None, max_length=40)
     fee_schedule_override_id: UUID | None = None
+    harvest_loss_pct: Decimal | None = None
+    harvest_loss_min: Decimal | None = None
+    harvest_to_cash: bool | None = None
+    harvest_swap_back: bool | None = None
 
-    @field_validator("cash_floor", "drift_threshold", "gain_budget", mode="before")
+    @field_validator("cash_floor", "drift_threshold", "gain_budget", "harvest_loss_pct", "harvest_loss_min",
+                     mode="before")
     @classmethod
     def _dec(cls, v, info):
         return _decimal(v, info.field_name)

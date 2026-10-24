@@ -5,7 +5,9 @@ never forks one, and nothing here creates a model). Everything personal lives
 on the ACCOUNT's link, not on the model: exclusions (each with a reason), the
 exclusion policy, the cash floor, a drift-threshold and rebalance-frequency
 override, the gain budget, the short-term guard and the harvesting-engine
-switch (rep6 reads it), and a fee-schedule override.
+switch (rep6 reads it), the harvest settings (rep6: loss % and $ thresholds,
+harvest to cash, swap back — NULL = the org default), and a fee-schedule
+override.
 
 VERSIONS AND APPROVAL
 ──────────────────────────────────────────────────────────────────────────────
@@ -76,11 +78,13 @@ FREQUENCY_LABELS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly", 
                     "semiannually": "Twice a year", "annually": "Once a year"}
 SETTING_FIELDS = ("cash_floor", "drift_threshold", "rebalance_frequency", "exclusions", "exclusion_policy",
                   "gain_budget", "avoid_short_term", "short_term_wait_days", "harvesting_engine",
-                  "fee_schedule_override_id")
+                  "fee_schedule_override_id", "harvest_loss_pct", "harvest_loss_min", "harvest_to_cash",
+                  "harvest_swap_back")
 DEFAULT_SETTINGS = {"cash_floor": Decimal(0), "drift_threshold": None, "rebalance_frequency": None, "exclusions": [],
                     "exclusion_policy": "pro_rata", "gain_budget": None, "avoid_short_term": True,
                     "short_term_wait_days": 30, "harvesting_engine": "hollisworks",
-                    "fee_schedule_override_id": None}
+                    "fee_schedule_override_id": None, "harvest_loss_pct": None, "harvest_loss_min": None,
+                    "harvest_to_cash": None, "harvest_swap_back": None}
 
 
 class AccountModelError(ValueError):
@@ -173,7 +177,7 @@ async def pending_link(conn, account_id) -> dict | None:
 def settings_of(link: dict | None) -> dict:
     if not link:
         return dict(DEFAULT_SETTINGS)
-    out = {k: link[k] for k in SETTING_FIELDS}
+    out = {k: link.get(k) for k in SETTING_FIELDS}
     out["exclusions"] = _loads(link["exclusions"]) or []
     return out
 
@@ -352,6 +356,13 @@ async def clean_settings(conn, org_id, account: dict, raw: dict, base: dict) -> 
     s["gain_budget"] = dec("gain_budget", Decimal(0))
     if s["gain_budget"] is not None:
         s["gain_budget"] = s["gain_budget"].quantize(Decimal("0.01"))
+    s["harvest_loss_pct"] = dec("harvest_loss_pct", Decimal(0), Decimal(1), lo_open=True, hi_open=True)
+    s["harvest_loss_min"] = dec("harvest_loss_min", Decimal(0))
+    if s["harvest_loss_min"] is not None:
+        s["harvest_loss_min"] = s["harvest_loss_min"].quantize(Decimal("0.01"))
+    for b in ("harvest_to_cash", "harvest_swap_back"):
+        if s.get(b) is not None and not isinstance(s[b], bool):
+            raise AccountModelError(f"{b} is true, false or empty (the org default)")
     if s.get("rebalance_frequency") is not None and s["rebalance_frequency"] not in FREQUENCY_LABELS:
         raise AccountModelError(f"rebalance frequency is one of {list(FREQUENCY_LABELS)}")
     if s.get("exclusion_policy") not in EXCLUSION_POLICY_LABELS:
@@ -463,7 +474,9 @@ def _settings_brief(s: dict) -> dict:
             "rebalance_frequency": s["rebalance_frequency"], "exclusions": s["exclusions"],
             "exclusion_policy": s["exclusion_policy"], "gain_budget": _num(s["gain_budget"]),
             "avoid_short_term": s["avoid_short_term"], "short_term_wait_days": s["short_term_wait_days"],
-            "harvesting_engine": s["harvesting_engine"], "fee_schedule_override_id": s["fee_schedule_override_id"]}
+            "harvesting_engine": s["harvesting_engine"], "fee_schedule_override_id": s["fee_schedule_override_id"],
+            "harvest_loss_pct": _num(s.get("harvest_loss_pct")), "harvest_loss_min": _num(s.get("harvest_loss_min")),
+            "harvest_to_cash": s.get("harvest_to_cash"), "harvest_swap_back": s.get("harvest_swap_back")}
 
 
 # ── Proposing a change (join / settings / change of model / end) ───────────
@@ -530,17 +543,18 @@ async def propose_change(pool, *, org_id, actor_id, account_id, change_kind: str
                             replaces_link_id, status, advice_only, cash_floor, drift_threshold, rebalance_frequency,
                             exclusions, exclusion_policy, gain_budget, avoid_short_term, short_term_wait_days,
                             harvesting_engine, fee_schedule_override_id, proposed_fee, maker_id, approval_task_id,
-                            end_reason, notes)
+                            end_reason, notes, harvest_loss_pct, harvest_loss_min, harvest_to_cash, harvest_swap_back)
                         VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8::uuid, 'pending', $9, $10, $11,
                                 $12, $13::jsonb, $14, $15, $16, $17, $18, $19::uuid, $20::jsonb, $21::uuid,
-                                $22::uuid, $23, $24) RETURNING *""",
+                                $22::uuid, $23, $24, $25, $26, $27, $28) RETURNING *""",
                     new_id, str(org_id), str(account["id"]), str(model["id"]), str(group or new_id), version_no,
                     change_kind, str(current["id"]) if current else None, advice_only, clean["cash_floor"],
                     clean["drift_threshold"], clean["rebalance_frequency"], _dumps(clean["exclusions"]),
                     clean["exclusion_policy"], clean["gain_budget"], clean["avoid_short_term"],
                     clean["short_term_wait_days"], clean["harvesting_engine"], clean["fee_schedule_override_id"],
                     _dumps(fee), str(actor["id"]), task["id"], (reason or "").strip() or None,
-                    (notes or "").strip() or None)
+                    (notes or "").strip() or None, clean.get("harvest_loss_pct"), clean.get("harvest_loss_min"),
+                    clean.get("harvest_to_cash"), clean.get("harvest_swap_back"))
                 await _audit(conn, org_id, actor["id"], f"propose_{change_kind}", new_id,
                              {"account_id": str(account["id"]), "model_id": str(model["id"]), "task_id": task["id"],
                               "settings": _settings_brief(clean), "proposed_fee": fee, "advice_only": advice_only})

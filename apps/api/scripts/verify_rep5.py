@@ -764,7 +764,9 @@ async def seed(conn) -> None:
         pib = await position(ACCT_IRA, "B", 10, 1000)
         ia_sell = await txn(pia, "sell", TODAY - timedelta(days=5), 5, 49)
         await lot(pia, 5, 295, date(2022, 1, 3), "long", status="closed", realized=-50, closing=ia_sell)
-        await txn(pix, "buy", TODAY - timedelta(days=10), 10, 100)
+        # rep6: 31 days, not 10 — day 31 is outside the wash window, so the transition's X loss lot still
+        # sells now (a 10-day IRA buy is now CONTROL, not a flag: it would hold the loss lot back; verify_rep6 proves it)
+        await txn(pix, "buy", TODAY - timedelta(days=31), 10, 100)
         ib_sell = await txn(pib, "sell", TODAY - timedelta(days=45), 5, 92)
         await lot(pib, 5, 540, date(2022, 1, 3), "long", status="closed", realized=-80, closing=ib_sell)
         # the others
@@ -1238,22 +1240,27 @@ async def y_proposals(conn):
 
 
 async def y_wash(conn):
-    section("[Y] Wash-sale flag both directions across the household (IRA included); never blocks")
+    # rep6 replaced the basic flag with household wash-sale CONTROL (services.wash_sale): every trade carries a
+    # result (clear | replaced | deferred | blocked) and rep5's flag is no longer written. The flag-only checks are
+    # restated as the control's outcomes on the same fixture; the control itself is proven in verify_rep6.py.
+    section("[Y] Wash-sale control (rep6 replaced the flag): every trade carries its result across the household")
     trades = await trades_rows(conn, ORG_A, S["join_proposal_main"])
     by = {(r["global_security_id"], r["side"]): r for r in trades}
-    fa = jl((by.get((S["sec_A"], "buy")) or {}).get("wash_sale_flag"))
-    fx = jl((by.get((S["sec_X"], "sell")) or {}).get("wash_sale_flag"))
-    fb = jl((by.get((S["sec_B"], "buy")) or {}).get("wash_sale_flag"))
-    ff = jl((by.get((S["sec_F"], "sell")) or {}).get("wash_sale_flag"))
-    check(fa is not None and fa["kind"] == "buy_after_loss_sale"
-          and any(m["registration_type"] == "ira" and m["side"] == "sell" for m in fa["matches"]),
-          "a BUY of a security the household's IRA sold at a loss 5 days ago is flagged", f"{fa}")
-    check(fx is not None and fx["kind"] == "loss_sale_after_buy"
-          and any(m["registration_type"] == "ira" and m["side"] == "buy" for m in fx["matches"]),
-          "a LOSS SALE of a security the household's IRA bought 10 days ago is flagged", f"{fx}")
-    check(fb is None, "a loss sale 45 days ago (outside 30) flags nothing", f"{fb}")
-    check(ff is None, "a sale at a gain (no recent buy) flags nothing", f"{ff}")
-    S["flagged_lines"] = [r["line_no"] for r in trades if r["wash_sale_flag"] is not None]
+    fa = jl((by.get((S["sec_A"], "buy")) or {}).get("wash_sale"))
+    fx = jl((by.get((S["sec_X"], "sell")) or {}).get("wash_sale"))
+    fb = jl((by.get((S["sec_B"], "buy")) or {}).get("wash_sale"))
+    ff = jl((by.get((S["sec_F"], "sell")) or {}).get("wash_sale"))
+    check(fa is not None and fa["outcome"] == "clear",
+          "a BUY of a security the household's IRA sold at a loss 5 days ago is CLEAR — a loss inside an IRA is not "
+          "deductible, so it opens no window", f"{fa}")
+    check(fx is not None and fx["outcome"] == "clear",
+          "a LOSS SALE of a security the household's IRA bought 31 days ago is CLEAR (day 31 is outside the window)",
+          f"{fx}")
+    check(fb is not None and fb["outcome"] == "clear", "a loss sale 45 days ago (outside 30) → clear", f"{fb}")
+    check(ff is not None and ff["outcome"] == "clear", "a sale at a gain (no recent buy) → clear", f"{ff}")
+    check(bool(trades) and all(r["wash_sale_flag"] is None and jl(r["wash_sale"]) is not None for r in trades),
+          "every trade carries a wash-sale result and no rep5 flag")
+    S["flagged_lines"] = [r["line_no"] for r in trades if jl(r["wash_sale"]) is not None]
 
 
 async def y_execution(conn):
@@ -1291,12 +1298,11 @@ async def y_execution(conn):
     want = sorted((x["lot_id"], D(x["quantity"])) for x in jl(sell["lots"])) if sell else []
     check(bool(want) and sorted((str(r["tax_lot_id"]), D(r["quantity"])) for r in lots) == want,
           "the sell instruction carries the proposal's specific lots", f"{want}")
-    flagged = [t for t in trades if t["wash_sale_flag"] is not None]
+    # rep6: a deferred / blocked line is never routed; every clear / replaced one has its instruction
+    routed = [t for t in trades if (jl(t["wash_sale"]) or {}).get("outcome") in ("clear", "replaced")]
     fl_rows = {r["id"]: r for r in rows}
-    check(bool(flagged) and all(t["instruction_id"] in fl_rows and (fl_rows[t["instruction_id"]]["wash_sale_notes"]
-                                                                    or "").startswith("[")
-                                for t in flagged),
-          "wash-sale flags never block: the flagged trades have instructions, the flag in their notes")
+    check(bool(routed) and len(routed) == len(trades) and all(t["instruction_id"] in fl_rows for t in routed),
+          "every clear / replaced line has its instruction (wash-sale control routes nothing deferred or blocked)")
     ev = await scoped(conn, ORG_A, "SELECT to_status, actor_id, detail FROM public.execution_instruction_events WHERE "
                                    "instruction_id = $1 AND action = 'create'", ids[0], fetch="fetchrow") if ids else None
     check(ev is not None and ev["to_status"] == "approved" and ev["actor_id"] == U_ADMIN2

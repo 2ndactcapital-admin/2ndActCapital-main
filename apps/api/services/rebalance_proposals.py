@@ -17,6 +17,9 @@ EVERY TRIGGER PRODUCES A PROPOSAL, NEVER A TRADE
                 model's cash weight when higher) by more than the org threshold
                 (a fraction of the account), or a withdrawal staff enter;
   manual        "Rebalance now".
+  harvest       (rep6) the daily loss-harvest scan (services.harvest) — a SYSTEM
+                proposal of loss sales and approved replacements (and any
+                swap-backs), on the same review task; a person approves.
 The arithmetic is services.rebalance_engine (pure). Prices are the account's
 own position valuation (market_value / quantity, as-of shown); a security with
 no price is bought by NOTIONAL and a holding with no price is never sold.
@@ -49,9 +52,12 @@ close are rep2's flow. The proposal becomes 'executed' when every instruction
 is closed, cancelled or expired (:func:`sync_executed`, on the tick and on
 request). Nothing is ever sent anywhere automatically.
 
-WASH-SALE FLAG — basic (rep6 replaces it): from portfolio.transactions across
-the household's accounts (household_id, the account's primary entity, its
-account_owners; IRAs included). Shown on the trade; never blocks it.
+WASH-SALE CONTROL (rep6 — replaced the basic flag): services.wash_sale, on
+every proposal. Every trade line carries its result (clear | replaced |
+deferred | blocked, with the matches that caused it); a deferred or blocked
+line is recorded on the proposal and is never routed to an instruction (the
+CHECK rebalance_proposal_trades_wash_route_chk backs it). Proposals made before
+rep6 keep their flag (``wash_sale_flag``) and route as they did.
 """
 
 from __future__ import annotations
@@ -65,6 +71,7 @@ from decimal import Decimal
 from services import account_models as AM
 from services import human_tasks as HT
 from services import rebalance_engine as E
+from services import wash_sale as WS
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +84,7 @@ SUBJECT = "rebalance_proposal"
 VIEW, MANAGE, APPROVE = AM.VIEW, AM.MANAGE, AM.APPROVE
 
 TRIGGER_LABELS = {"join": "Joined the model", "model_change": "The model changed", "drift": "Drift over threshold",
-                  "cash_flow": "Cash flow", "manual": "Rebalance now"}
+                  "cash_flow": "Cash flow", "manual": "Rebalance now", "harvest": "Tax-loss harvest"}
 STATUS_LABELS = {"draft": "Draft", "pending_approval": "Awaiting approval", "approved": "Approved — executing",
                  "rejected": "Rejected", "expired": "Expired", "superseded": "Superseded", "executed": "Executed"}
 OPEN_STATUSES = ("draft", "pending_approval", "approved")
@@ -89,7 +96,9 @@ WARNING_LABELS = {
     "sell_later": "Some sales wait for a later year", "unknown_cost_basis": "A lot has no cost basis",
     "no_cash_balance": "No cash balance on record", "unresolved_holding": "A holding is not in the security master",
     "unresolved_target": "A model position is not resolved", "no_trades": "Nothing to trade",
-    "wash_sale_flag": "Possible wash sale (flag only)", "exclusion_note": "Exclusion applied",
+    "wash_sale_flag": "Possible wash sale (flag only — before rep6)", "exclusion_note": "Exclusion applied",
+    "wash_sale_control": "Wash-sale control changed a trade", "wash_sale_held": "Loss lots held back (wash sale)",
+    "harvest_note": "Tax-loss harvest",
 }
 PRICE_SOURCE_LABELS = {"account_position": "The account's own position valuation",
                        "security_price": "Security price", "none": "No price — bought by amount"}
@@ -331,10 +340,21 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
         labels.setdefault(h.key, h.label)
     unheld = [k for k in tg["target"] if k != E.CASH and k not in {h.key for h in hold["holdings"]}]
     prices = await _unheld_prices(conn, unheld, today - timedelta(days=stale_days))
+    # rep6 — household wash-sale control: the context, then rule (b) on the loss lots before the plan
+    own_open = await open_proposal(conn, account["id"])
+    ctx = await WS.load_context(conn, org_id, account, today, exclude_proposal_ids=[own_open["id"]] if own_open
+                                and own_open["status"] in ("draft", "pending_approval") else [])
+    cls = WS.tax_class(account)
+    hold_rules = {}
+    for h in hold["holdings"]:
+        r = WS.sale_restriction(h.key, account_class=cls, ctx=ctx)
+        if r:
+            hold_rules[h.key] = r
     s = E.BuildSettings(
         sale=E.SaleSettings(today=today, gain_budget=budget, realized_ytd=ytd,
                             avoid_short_term=link["avoid_short_term"],
-                            short_term_wait_days=link["short_term_wait_days"], fractional=available(frac)),
+                            short_term_wait_days=link["short_term_wait_days"], fractional=available(frac),
+                            wash_hold=hold_rules),
         cash_floor=Decimal(str(link["cash_floor"])), min_trade=min_trade, withdrawal=withdrawal)
     res = E.build(hold["holdings"], hold["cash"], tg["target"], labels, prices, s, tg["excluded"])
     warnings = list(tg["warnings"]) + [{"code": "exclusion_note", "message": n} for n in tg["notes"]] + res.warnings
@@ -363,16 +383,42 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
     if not res.trades:
         warnings.append({"code": "no_trades", "message": "the account is at its target within the rules — nothing "
                          "to trade"})
-    accts = await household_accounts(conn, org_id, account)
-    txns = await household_transactions(conn, org_id, accts, sorted({t.key for t in res.trades}), today)
-    flags = E.wash_sale_flags(res.trades, txns, today)
-    if flags:
-        warnings.append({"code": "wash_sale_flag", "message": f"{len(flags)} trade(s) carry a basic wash-sale flag "
-                         "(information only — they do not block)"})
+    lines, res, w2 = await apply_wash_control(conn, account, res, hold, ctx, fractional=available(frac),
+                                              today=today, prices=prices)
+    warnings += w2
+    for k in {t.key for t, _ in lines}:
+        labels.setdefault(k, ctx.label(k))
     thr, thr_src = await drift_threshold(conn, org_id, link, version_id)
-    return {"result": res, "flags": flags, "warnings": warnings, "labels": labels, "holdings": hold,
+    return {"result": res, "lines": lines, "warnings": warnings, "labels": labels, "holdings": hold,
             "realized_ytd": ytd, "gain_budget": budget, "fractional": available(frac), "threshold": thr,
             "threshold_source": thr_src, "min_trade": min_trade, "today": today}
+
+
+async def apply_wash_control(conn, account: dict, res: E.BuildResult, hold: dict, ctx, *, fractional: bool,
+                             today: date, prices: dict | None = None) -> tuple[list, E.BuildResult, list[dict]]:
+    """Run rules (a, c, d) on the built trades; re-state the after-weights on the
+    lines that will actually trade. Returns (lines, result, warnings)."""
+    import dataclasses
+
+    px = dict(prices or {})
+    for h in hold["holdings"]:
+        if h.price is not None:
+            px[h.key] = (h.price, h.price_as_of, h.price_source)
+    subs = {c["key"] for t in res.trades for c in ctx.substitutes.get(t.key, [])} - set(px)
+    if subs:
+        stale = await _setting(conn, account["org_id"], STALE_SETTING, DEFAULT_STALE_DAYS, lo=0, hi=366, integer=True)
+        px.update(await _unheld_prices(conn, sorted(subs), today - timedelta(days=stale)))
+    lines = WS.control(res, account=account, ctx=ctx, prices=px, fractional=fractional)
+    warnings = []
+    changed = [r for _, r in lines if r["outcome"] != "clear"]
+    if changed:
+        counts = {o: sum(1 for r in changed if r["outcome"] == o) for o in WS.OUTCOMES if o != "clear"}
+        warnings.append({"code": "wash_sale_control", "message": "household wash-sale control: " + ", ".join(
+            f"{n} {o}" for o, n in counts.items() if n) + " — a deferred or blocked line is never routed"})
+    going = [t for t, r in lines if WS.routable(r)]
+    after = E.after_weights(hold["holdings"], hold["cash"], going, res.account_value)
+    res = dataclasses.replace(res, after=after, drift_after=E.qw(E.max_drift(after, res.target)))
+    return lines, res, warnings
 
 
 def _weights_out(w: dict[str, Decimal], labels: dict[str, str]) -> list[dict]:
@@ -457,7 +503,7 @@ async def _withdraw_task(pool, task_id, reason: str) -> None:
 # ── Generate ────────────────────────────────────────────────────────────────
 async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, maker_id=None,
                    auto_submit: bool = False, trigger_ref: dict | None = None, withdrawal: Decimal | None = None,
-                   today: date | None = None) -> dict:
+                   today: date | None = None, harvest_plan: dict | None = None) -> dict:
     """The ONE generator. Writes the proposal (draft), its trades and — for a
     join — the transition plan; supersedes an older open draft / pending one;
     a system trigger (or ``auto_submit``) submits it."""
@@ -484,7 +530,16 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
         if existing and existing["status"] == "approved":
             raise ProposalConflict("the instructions of the approved proposal for this account are still working — "
                                    "a new proposal waits until they are closed or cancelled")
-        c = await compute(conn, org_id, account, link, model["live_version_id"], withdrawal=withdrawal, today=today)
+        if trigger == "harvest":
+            from services import harvest as HV
+
+            if harvest_plan is None or maker_kind != "system":
+                raise ProposalError("a harvest proposal is the system's, from the daily scan's plan")
+            c = await HV.compute_for_proposal(conn, org_id, account, link, model["live_version_id"], harvest_plan,
+                                              today=today)
+        else:
+            c = await compute(conn, org_id, account, link, model["live_version_id"], withdrawal=withdrawal,
+                              today=today)
         expiry_days = await _setting(conn, org_id, EXPIRY_SETTING, DEFAULT_EXPIRY_DAYS, lo=1, hi=90, integer=True)
     r: E.BuildResult = c["result"]
     pid = uuid.uuid4()
@@ -524,10 +579,10 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
                 r.drift_before, r.drift_after, r.est_st_gain.quantize(E.QTY), r.est_lt_gain.quantize(E.QTY),
                 c["gain_budget"], c["realized_ytd"].quantize(E.QTY), _dumps(c["warnings"]), _dumps(later),
                 now + timedelta(days=expiry_days), maker_kind, str(maker_id) if maker_id else None)
-            for i, t in enumerate(r.trades, start=1):
+            for i, (t, wash) in enumerate(c["lines"], start=1):
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
-                            price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag)
+                            price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale)
                         VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14,
                                 $15::jsonb)""",
                     str(org_id), pid, i, t.key, t.side, None if t.quantity is None else t.quantity.quantize(E.QTY),
@@ -536,8 +591,7 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
                              "unit_cost": _num(None if lot["unit_cost"] is None else lot["unit_cost"].quantize(E.QTY)),
                              "est_gain": _num(None if lot["est_gain"] is None else lot["est_gain"].quantize(E.QTY))}
                             for lot in t.lots]),
-                    t.est_st_gain.quantize(E.QTY), t.est_lt_gain.quantize(E.QTY), t.reason,
-                    _dumps(c["flags"][i - 1]) if (i - 1) in c["flags"] else None)
+                    t.est_st_gain.quantize(E.QTY), t.est_lt_gain.quantize(E.QTY), t.reason, _dumps(wash))
             if trigger == "join":
                 await conn.execute(f"UPDATE {T_PLAN} SET valid_to = now() WHERE account_id = $1::uuid "
                                    "AND valid_to IS NULL AND system_to IS NULL", str(account["id"]))
@@ -549,14 +603,14 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
                     _dumps(r.plan), _dumps(r.plan_by_year), r.total_embedded_gain.quantize(E.QTY), c["gain_budget"],
                     r.years_to_complete, str(maker_id) if maker_id else None)
             await _audit(conn, org_id, maker_id, "generated", pid,
-                         {"trigger": trigger, "trigger_ref": ref, "trades": len(r.trades), "maker_kind": maker_kind,
+                         {"trigger": trigger, "trigger_ref": ref, "trades": len(c["lines"]), "maker_kind": maker_kind,
                           "supersedes": str(superseded["id"]) if superseded else None})
     if superseded and superseded.get("approval_task_id"):
         await _withdraw_task(pool, superseded["approval_task_id"], "superseded by a newer proposal")
     if superseded:
         await _publish(pool, org_id, "superseded", superseded["id"], {"superseded_by_id": str(pid)}, maker_id)
     await _publish(pool, org_id, "generated", pid, {"trigger": trigger, "account_id": str(account["id"]),
-                                                    "trades": len(r.trades)}, maker_id)
+                                                    "trades": len(c["lines"])}, maker_id)
     out = None
     if maker_kind == "system" or auto_submit:
         out = await submit(pool, org_id=org_id, proposal_id=pid, actor_id=maker_id, system=maker_kind == "system")
@@ -787,11 +841,12 @@ def _trade_line(t: dict):
     lots = [LotInstruction(tax_lot_id=x["lot_id"], quantity=Decimal(x["quantity"]))
             for x in (_loads(t["lots"]) or []) if x.get("lot_id")]
     flag = _loads(t["wash_sale_flag"])
+    wash = _loads(t.get("wash_sale"))
+    note = WS.note_of(wash) if wash else (f"[{flag['kind']}] {flag['note']}" if flag else None)
     return TradeLine(global_security_id=t["global_security_id"], side=t["side"],
                      quantity=None if t["quantity"] is None else Decimal(str(t["quantity"])),
                      notional=None if t["notional"] is None else Decimal(str(t["notional"])),
-                     lot_instructions=lots, price_guidance=pg,
-                     wash_sale_notes=(f"[{flag['kind']}] {flag['note']}" if flag else None))
+                     lot_instructions=lots, price_guidance=pg, wash_sale_notes=note)
 
 
 async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
@@ -810,17 +865,23 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
         actor = await HT.assert_human(conn, actor_id, org_id)
         account = await X.load_account(conn, org_id, p["account_id"])
         acct = await AM.load_account(conn, org_id, p["account_id"])
-        trades = await trades_of(conn, p["id"])
+        lines = await trades_of(conn, p["id"])
         within = await _setting(conn, org_id, EXECUTE_WITHIN_SETTING, DEFAULT_EXECUTE_WITHIN, lo=0, hi=90,
                                 integer=True)
+    # rep6: a line wash-sale control deferred or blocked is never routed
+    trades = [t for t in lines if WS.routable(_loads(t.get("wash_sale")))]
+    held = len(lines) - len(trades)
     now = datetime.now(timezone.utc)
     if not trades:
+        why = "nothing to trade" if not held else (f"nothing routed: all {held} line(s) are deferred or blocked by "
+                                                   "wash-sale control")
         async with pool.acquire() as conn:
             async with conn.transaction():
                 new = await _update(conn, p["id"], {"status": "executed", "executed_at": now,
-                                                    "status_reason": "nothing to trade",
-                                                    "execution": {"instruction_ids": [], "routing": None}})
-                await _audit(conn, org_id, actor["id"], "executed", p["id"], {"reason": "nothing to trade"})
+                                                    "status_reason": why,
+                                                    "execution": {"instruction_ids": [], "routing": None,
+                                                                  "held_by_wash_sale": held}})
+                await _audit(conn, org_id, actor["id"], "executed", p["id"], {"reason": why})
         return new
     advice = p["advice_only"]
     executor = "member" if (advice or acct["is_held_away"]) else "custodian_desk"
@@ -836,6 +897,8 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                                     upstream=upstream)
     ids = list(result.instruction_ids)
     notes = []
+    if held:
+        notes.append(f"{held} line(s) deferred or blocked by wash-sale control were not routed")
     if not human_maker:
         notes.append("system proposal: no human maker, so the instructions are drafts made by the reviewer and "
                      "submitted to rep2's own approval (a second person)")
@@ -848,12 +911,13 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                            instruction_id)
+                            wash_sale, instruction_id)
                         SELECT org_id, proposal_id, line_no, global_security_id, side, quantity, notional, price,
                                price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                               $2::uuid FROM {T_T} WHERE id = $1""", t["id"], iid)
+                               wash_sale, $2::uuid FROM {T_T} WHERE id = $1""", t["id"], iid)
             new = await _update(conn, p["id"], {"execution": {
                 "instruction_ids": ids, "routing": result.as_dict(), "executor_type": executor,
+                "held_by_wash_sale": held,
                 "starts": "approved" if human_maker else "pending_approval", "notes": notes,
                 "routed_at": now.isoformat(), "routed_by": str(actor["id"])}})
             await _audit(conn, org_id, actor["id"], "routed", p["id"], {"instruction_ids": ids,
@@ -999,7 +1063,8 @@ async def release_fee_exclusions(pool, *, org_id) -> list[str]:
 async def org_tick(pool, *, org_id, today: date | None = None) -> dict:
     """Every proposal step for one org (the caller set its RLS context)."""
     today = today or date.today()
-    out = {"expired": 0, "executed": 0, "model_change": [], "scans": [], "fee_exclusions_ended": [], "errors": []}
+    out = {"expired": 0, "executed": 0, "model_change": [], "harvest": [], "scans": [], "fee_exclusions_ended": [],
+           "loss_bank": None, "errors": []}
     async with pool.acquire() as conn:
         open_rows = [dict(r) for r in await conn.fetch(
             f"SELECT * FROM {T_P} WHERE org_id = $1::uuid AND system_to IS NULL AND status = ANY($2::text[])",
@@ -1028,6 +1093,21 @@ async def org_tick(pool, *, org_id, today: date | None = None) -> dict:
                     pool, org_id=org_id, model_id=payload["model_id"], version_id=ev["source_id"])
             except Exception as exc:  # noqa: BLE001
                 out["errors"].append(f"event {ev['source_id']}: {exc}")
+    # rep6 — the realized gains / losses into the loss bank, then the daily harvest scan BEFORE the drift
+    # scan (it gets the account's one open-proposal slot first; it skips an account that already has one)
+    from services import harvest as HV
+    from services import loss_bank as LB
+
+    try:
+        out["loss_bank"] = await LB.ingest(pool, org_id=org_id, today=today)
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"loss bank: {exc}")
+    for a in accounts:
+        try:
+            out["harvest"].append({"account_id": str(a), **await HV.scan_account(pool, org_id=org_id, account_id=a,
+                                                                                 today=today)})
+        except Exception as exc:  # noqa: BLE001
+            out["errors"].append(f"harvest {a}: {exc}")
     for a in accounts:
         try:
             out["scans"].append({"account_id": str(a), **await scan_account(pool, org_id=org_id, account_id=a,
@@ -1075,7 +1155,8 @@ def trade_out(t: dict) -> dict:
             "quantity": _num(t["quantity"]), "notional": _num(t["notional"]), "price": _num(t["price"]),
             "price_source": t["price_source"], "price_as_of": _iso(t["price_as_of"]), "lots": _loads(t["lots"]) or [],
             "est_st_gain": _num(t["est_st_gain"]), "est_lt_gain": _num(t["est_lt_gain"]), "reason": t["reason"],
-            "wash_sale_flag": _loads(t["wash_sale_flag"]),
+            "wash_sale_flag": _loads(t["wash_sale_flag"]), "wash_sale": _loads(t.get("wash_sale")),
+            "routable": WS.routable(_loads(t.get("wash_sale"))),
             "instruction_id": str(t["instruction_id"]) if t["instruction_id"] else None}
 
 
@@ -1237,7 +1318,7 @@ def vocabularies() -> dict:
 
     return {"triggers": pairs(TRIGGER_LABELS), "statuses": pairs(STATUS_LABELS), "open_statuses": list(OPEN_STATUSES),
             "warning_codes": pairs(WARNING_LABELS), "price_sources": pairs(PRICE_SOURCE_LABELS),
-            "plan_actions": pairs(PLAN_ACTION_LABELS), "account_filters": [
+            "plan_actions": pairs(PLAN_ACTION_LABELS), **WS.vocabularies(), "account_filters": [
                 {"key": "following", "label": "Following a model"},
                 {"key": "not_following", "label": "Not following a model"},
                 {"key": "open_proposal", "label": "With an open proposal"}], **AM.vocabularies()}

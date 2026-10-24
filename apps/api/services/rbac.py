@@ -247,7 +247,7 @@ ORG_ADMIN_ROLE_DESCRIPTION = (
 
 
 #: Granted to org_admin by default alongside ``manage_org_settings`` —
-#: replication (rep1), execution (rep2) and models (rep3). Kept in step with the
+#: replication (rep1), execution (rep2), models (rep3), proposals (rep5) and tax (rep6). Kept in step with the
 #: docs/rep1_part1.sql §14, docs/rep2_part1.sql §8 and docs/rep3_part1.sql §14 grants.
 ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_replication", "replication", "view"),
@@ -264,6 +264,10 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_proposals", "proposals", "view"),
     ("manage_proposals", "proposals", "manage"),
     ("approve_proposals", "proposals", "approve"),
+    # rep6 — the tax engine: profiles, carryforwards, substitutions, declared trades, harvest.
+    ("view_tax", "tax", "view"),
+    ("manage_tax", "tax", "manage"),
+    ("approve_tax", "tax", "approve"),
 )
 
 

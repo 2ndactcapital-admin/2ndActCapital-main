@@ -80,6 +80,9 @@ export const GATE_VIEW_MODELS = { perm: "view_models", strict: true };
 // REP5 — Portfolio → Accounts. GET /proposals/accounts requires view_proposals
 // (Super Admin first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_PROPOSALS = { perm: "view_proposals", strict: true };
+// REP6 — Portfolio → Tax. GET /tax/overview requires view_tax (Super Admin
+// first); STRICT so no envelope hides the tab.
+export const GATE_VIEW_TAX = { perm: "view_tax", strict: true };
 // REP2 — Billing & Custody → Custodian capabilities. GET /custodians/capabilities
 // is require_staff_or_permission(manage_org_settings): Super Admin, a
 // STAFF_ROLE_NAMES role (/users/me `is_staff`), or an org admin (Joe,
@@ -223,7 +226,9 @@ export const MENU_ITEMS = [
   // BUGFIX1 (DEAD-LINKS): no page exists yet — flagged, see COMING_SOON below.
   // REP5 — accounts joining models; rebalance proposals.
   tab("main", "portfolio", 11, "/portfolio/accounts", "Accounts", GATE_VIEW_PROPOSALS, false),
-  { ...tab("main", "portfolio", 12, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
+  // REP6 — the tax engine: harvest dashboard, substitutions, profiles, declared trades.
+  tab("main", "portfolio", 12, "/portfolio/tax", "Tax", GATE_VIEW_TAX, false),
+  { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
   main(60, "/spvs", "SPV Manager", "spv-manager"),

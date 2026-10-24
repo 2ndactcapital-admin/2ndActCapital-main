@@ -17,3 +17,4 @@ verify_rep2.py
 verify_rep3.py
 verify_rep4.py
 verify_rep5.py
+verify_rep6.py

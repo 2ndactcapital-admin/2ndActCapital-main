@@ -807,3 +807,188 @@ server listed (`lib/proposals.mjs`; `tests/replication/rep5.test.mjs`).
    `proposals_tick` step.
 3. Optional org settings: `replication.proposals.min_trade_size`, `.expiry_days`,
    `.stale_valuation_days`, `.cash_flow_threshold`, `.execute_within_days`.
+
+## rep6 — the tax engine (2026-10-23)
+
+Spec: "Replication Studio — ETF & Fund-to-SMA Spec" (Joe, 2026-10-22), "Tax overlay"
+(phase-1 rows): lot-level accounting, loss harvesting, household wash-sale control
+(spouse and IRAs included — an IRA buy permanently forfeits the loss, Rev. Rul.
+2008-5), the substitution table as a versioned approved compliance artifact, the loss
+bank and tax-alpha ledger. Guardrails: tax inputs come from the adviser with a date
+and are never guessed; every tax figure is labelled an estimate; benefit decay shown
+honestly. Decisions (Joe): Hollisworks runs its own lot-level engine with a
+per-account switch to the custodian's (only where `custodian_tax_loss_harvesting` is
+evidenced 'yes'; Altruist 'unknown'); every human action is a human task; nothing
+trades.
+
+Services: `services/wash_sale.py` (household CONTROL — replaced rep5's flag),
+`services/tax_profiles.py` (subjects, profiles, carryforwards, declared outside
+trades, combined rates), `services/substitutions.py` (sets, denials, rule seeding,
+suggestions), `services/harvest.py` (the daily scan → one harvest proposal),
+`services/loss_bank.py` (sources, IRS netting, the ledger), `services/tax_overview.py`
+(the dashboard and the account panel). Routes: `routers/tax.py` (`/tax/…`,
+`/harvest/…`). Schema: `docs/rep6_part1.sql` (applied by `scripts/_apply_rep6.py`).
+Screens: Portfolio → **Tax** (`/portfolio/tax`: Harvest | Substitutions | Profiles |
+Declared outside trades) and a Tax panel on the account page. Verify:
+`apps/api/scripts/verify_rep6.py` (written, not run in the sprint).
+
+### Task 1 findings (rep6)
+
+- **1a.** `rebalance_proposals.generate(pool, *, org_id, account_id, trigger,
+  maker_kind, maker_id=None, auto_submit=False, trigger_ref=None, withdrawal=None,
+  today=None, harvest_plan=None)` (harvest_plan is new); `compute(conn, org_id,
+  account, link, version_id, *, withdrawal=None, today=None)`;
+  `rebalance_engine.plan_sales(requests, SaleSettings)` (SaleSettings gains
+  `wash_hold`); `account_models.load_account / active_link / settings_of /
+  harvesting_options / load_holdings`; `human_tasks.open_task / complete_task /
+  cancel_task / register_kind(…, system_open=)`; `custodian_capabilities.
+  capability(conn, custodian_code, key)`. `wash_sale_flags` was called once
+  (`compute`), and its output read by the trades insert (`wash_sale_flag`),
+  `_trade_line` (→ the instruction's `wash_sale_notes`), `trade_out`, the
+  ProposalDetail screen, `verify_rep5.py` (y_wash, y_execution) and
+  `tests/replication/rep5.test.mjs`. All moved to the control's `wash_sale` result; a
+  pre-rep6 proposal still shows (and routes) its flag.
+- **1b subject.** A profile hangs on the account's HOUSEHOLD (`accounts.household_id`
+  → `households`; a married couple filing jointly is one profile covering both
+  spouses' accounts), or — for an account with no household — its primary entity.
+  Wash-sale scope is wider: rep5's `household_accounts` (household, primary entity,
+  shared `account_owners`).
+- **1c loss bank sources** (each counted once): `lot_close` — a closed
+  `tax_lots.realized_gain_loss` (the custodian's number, keyed by the lot); `fill` —
+  a rep2 fill on a sell, per lot it names, PROVISIONAL, closed (`valid_to` + reason)
+  when the custodian's closed lot for that tax lot arrives; `carryforward` — an
+  approved row; `declared_outside` — a declared sale with an amount and term.
+  `portfolio.transactions` carry no gain (rep5's finding) and are not a source. One
+  row per source key, closed rows included, so a re-run never re-adds anything.
+- **1d pending trades.** An open execution instruction counts from today to its
+  execute-by; a proposal awaiting approval (or approved and not yet routed) counts
+  from today to its expiry + the execute-within days — only its clear / replaced
+  lines. The account's own draft or pending proposal is excluded (the new one
+  supersedes it). Reported fills count on their fill date.
+- **1e hook.** `rebalance_proposals.org_tick` (the scheduler's `proposals_tick`,
+  after the holdings refresh and rep2's execute-by step): expiry / execution sync →
+  model-change sweep → **loss-bank ingest → harvest scan** → the drift / cash-flow
+  scan. The harvest scan runs before the drift scan, so it gets the account's one
+  open-proposal slot first; it skips an account that already has an open proposal
+  (each candidate recorded as `open_proposal`).
+
+### Schema (`docs/rep6_part1.sql`)
+
+Nine org-scoped tables, each with a policy for SELECT / INSERT / UPDATE / DELETE:
+`tax_profiles`, `loss_carryforwards` (versioned, both axes, one live approved per
+subject and year, maker-checker CHECK), `substitution_sets` + `substitution_set_
+candidates` (every version kept), `substitution_denials` (pairs stored in id order;
+rule-seeded = the system's, active at once; an adviser's needs a second person),
+`declared_outside_trades` (valid axis), `loss_bank_entries` (valid axis; unique per
+source key), `harvest_runs` (one live run per account per day) and
+`harvest_candidates`. Combined rates are computed, never stored. rep5 changes:
+trigger 'harvest'; `rebalance_proposal_trades.wash_sale` with a CHECK that a deferred
+or blocked line never carries an instruction; four harvest settings on the link
+(NULL = the org default).
+
+### Tax profiles and carryforwards
+
+Entered by `manage_tax` (rates as decimal fractions, the as-of date, a source note),
+approved by a different holder of `approve_tax` on a maker-checker human task
+(`tax_profile_approval` / `loss_carryforward_approval`). Combined rates:
+  ST = federal ordinary + NIIT (3.8% when it applies) + state + city
+  LT = federal LT + NIIT + state LT + city LT — a state / city with no separate LT rate
+       taxes LT gains as ordinary income, so its ordinary rate is used.
+No approved profile → every tax value reads "not estimated — no tax profile", never a
+default rate.
+
+### Household wash-sale control (`services/wash_sale.py`)
+
+- **Window: 61 days** — a loss sale on day L is washed by a substantially identical
+  purchase on L − 30 … L + 30, both edges IN; day 31 either side is clear (a buy is
+  clear from L + 31; a loss sale from B + 31 after the last matching buy B). A pending
+  trade spans every day it could still happen.
+- **Who:** every account of the household (spouse, IRAs / Roths) + declared outside
+  trades. **[FIND]** A loss realized INSIDE an IRA / Roth is not deductible, so it
+  opens no window; a BUY counts in every account. `tax_class` reads the account's
+  `tax_status` (free text — no CHECK): 'taxable', a deferred / exempt status or an
+  IRA-like registration → tax-advantaged; anything else (the importer's `UNKNOWN`) is
+  treated as taxable.
+- **Substantially identical** = the same security or an ACTIVE denial pair (either
+  direction). Nothing inferred; an approved substitute is not identical unless a
+  denial says so (a denial overrides a set).
+- **Rules:** (a) a buy inside a household loss window → the next approved substitute
+  that is itself clear (same dollars; by amount when it has no price), else deferred
+  to the first clear day (or the cash kept — org setting
+  `replication.tax.wash_buy_fallback`); (b) a loss sale with a household buy within 30
+  days → its loss lots wait for the first clear day and the plan sells other lots
+  instead (`plan_sales` — held lots never add gain-budget room); (c) an IRA / Roth buy
+  inside a taxable loss window with no clear substitute → BLOCKED in plain words;
+  (d) planned loss sales (open instructions, pending proposals, the proposal's own)
+  reserve their forward 30 days. Every trade line carries `clear | replaced | deferred
+  | blocked` with its matches; deferred and blocked lines are recorded and never
+  routed. A sale of unknown cost cannot be shown to be a loss: it is not held (its
+  matches are recorded); a sale whose loss is unknown still opens a window for buys.
+
+### Substitutions
+
+A set per security: ranked candidates, each with a reason and evidence. The model's
+alternates are offered as suggestions only (`GET /tax/substitutions/suggestions`).
+Proposed by `manage_tax`, approved by another holder of `approve_tax`; a newer approved
+version supersedes the older one (kept). ONLY approved, live sets are read by the
+engine. Denials seeded from the rules (`POST /tax/substitutions/denials/seed`):
+same index (approved rep1 terms with the same `index_name`, both in the org's
+registry), share classes (same SEC series in the registry, or one canonical security
+in the master), plus adviser pairs. Retiring a set or a denial needs `approve_tax` and
+is never done by its maker.
+
+### Harvesting (`services/harvest.py`)
+
+Daily, per account following a model with engine 'hollisworks': candidates = open lots
+at a loss on the account's own valuation; net loss = loss − market value × the org's
+`replication.tax.trading_cost_bps` × 2; taken when the net loss is at or above BOTH the
+% threshold (net loss ÷ cost basis) and the $ threshold (link settings, else
+`replication.tax.harvest_loss_pct` / `.harvest_loss_min`, else 5% / $500). Value =
+loss × the lot's combined ST / LT rate — an estimate with its rate and as-of.
+Unpriced → "needs a price"; no cost basis → skipped; a household buy within 30 days →
+held (wash sale); no clear approved substitute → skipped (or harvested to cash when
+`harvest_to_cash`). Swap back (`harvest_swap_back`): 31+ days after an approved
+harvest, sell the replacement lots and buy the original when it is clear; the sale
+goes through `plan_sales` (gain budget, short-term guard). ONE proposal per account
+per day, trigger 'harvest', a SYSTEM proposal on the review task — a person approves
+(`approve_proposals`); every candidate is a `harvest_candidates` row. Engine
+'custodian' → no harvest proposals (the run says so); its realized losses reach the
+loss bank through the custodian's lots.
+
+### Loss bank and tax-alpha ledger
+
+IRS order: ST vs ST (the ST carryforward is an ST loss), LT vs LT, then cross-net; a
+net loss offsets ordinary income up to $3,000 ($1,500 married filing separately),
+taken from the ST loss first; the rest carries forward with its character. Per subject
+and year: totals, every netting step, carryforward in / out, the losses harvested on
+approved harvest proposals, and the estimated value at the profile's rates (labelled;
+"a deferral, not a permanent saving" stated).
+
+### Not estimated — needs prices
+
+`securities_global_prices` has 0 rows: the tracking-error cost of a harvest and
+pre-tax / after-tax PERFORMANCE read "not estimated — needs prices" wherever they
+would appear. Later sprints: the dividend holding-period guard, charitable gifting,
+step-up flags, the Section 351 exit.
+
+### Permissions and screens
+
+`view_tax`, `manage_tax`, `approve_tax` — org_admin by default (migration +
+`rbac.ensure_org_admin_role`). 31 routes, each gated and in
+`docs/AUTHZ1_ROUTES.json`; harvest proposals keep rep5's `approve_proposals`. Every
+envelope carries `permissions`, `vocabularies` (filing statuses, wash-sale outcomes,
+skip reasons, ledger sources, denial rules, …; `editable` empty for a view-only
+caller) and the server's `actions` (per row for decisions — never the maker's). The
+screens render a control only for `=== true` on the flag AND a listed action
+(`lib/tax.mjs`; `tests/replication/rep6.test.mjs`). Every tax number shows as
+"$X (estimate)" with the rates and as-of on hover.
+
+### rep6 operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep6.py` (it runs
+   `node --test`, `npm run build` and the `verify_rep5.py` regression itself).
+2. Redeploy the scheduler cron service (the tick now ingests the loss bank and runs the
+   harvest scan) and the API.
+3. Optional org settings: `replication.tax.trading_cost_bps` (0), `.harvest_loss_pct`
+   (0.05), `.harvest_loss_min` (500), `.harvest_to_cash` (false), `.harvest_swap_back`
+   (false), `.wash_buy_fallback` ('defer').
