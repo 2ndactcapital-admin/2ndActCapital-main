@@ -780,7 +780,7 @@ async def y_task1(conn):
          "replica_schedule.monitor_models(pool, res), called after every ingest in maybe_refresh_holdings AND in the "
          "manual refresh route → replica_models.monitor_snapshot; terms: replica_terms._apply_terms_decision (approve, "
          "with a prior version) → replica_models.monitor_terms")
-    check("await monitor_models(pool, res)" in sched and "RS.monitor_models(pool, res)" in rtr
+    check("await monitor_models(pool, res" in sched and "RS.monitor_models(pool, res" in rtr
           and "RM.monitor_terms(" in terms_src and inspect.iscoroutinefunction(RS.monitor_models),
           "the snapshot hook is wired in both refresh paths and the terms hook in the approval")
     find("1d illustrative fee", "fee_calc.apply_tiers(billable, tiers[FeeTierInput], method) → (annual, slices, "
@@ -1193,7 +1193,8 @@ async def y_monitoring(conn):
     v0 = int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_versions WHERE model_id = $1::uuid AND "
                                        "system_to IS NULL", m1, fetch="fetchval"))
     with _ctx(None):
-        res = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F2"]))
+        res = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F2"]),
+                                         include_test_orgs=True)
     outcomes = {r["model_id"]: r for r in res["models"]}
     r1 = outcomes.get(m1, {})
     check(r1.get("outcome") == "drafted" and Decimal(r1.get("turnover", "0")) == Decimal("0.049")
@@ -1237,7 +1238,8 @@ async def y_monitoring(conn):
               int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_events", fetch="fetchval")),
               int(await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs", fetch="fetchval")))
     with _ctx(None):
-        res2 = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F2"]))
+        res2 = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F2"]),
+                                         include_test_orgs=True)
     after = (int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_versions", fetch="fetchval")),
              int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_events", fetch="fetchval")),
              int(await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs", fetch="fetchval")))
@@ -1266,7 +1268,7 @@ async def y_monitoring(conn):
     ingest = H.IngestResult(S["sec_F"], TICKER["F"], "ssga_spdr", False, created=True, snapshot_id=str(S["snap_F3"]),
                             status="live")
     with _ctx(None):
-        hook = await RS.monitor_models(pool, ingest)
+        hook = await RS.monitor_models(pool, ingest, include_test_orgs=True)
     ev3 = await scoped(conn, ORG_A, "SELECT detail FROM portfolio.model_events WHERE model_id = $1::uuid AND action = "
                                     "'holdings_monitor' AND detail->>'snapshot_id' = $2", m1, str(S["snap_F3"]),
                        fetch="fetchval")
@@ -1283,9 +1285,9 @@ async def y_monitoring(conn):
     nr = H.IngestResult(S["sec_F"], TICKER["F"], "ssga_spdr", False, created=True, snapshot_id=str(S["snap_Fnr"]),
                         status="needs_review")
     with _ctx(None):
-        hook_nr = await RS.monitor_models(pool, nr)
+        hook_nr = await RS.monitor_models(pool, nr, include_test_orgs=True)
         direct = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr",
-                                           snapshot_id=str(S["snap_Fnr"]))
+                                           snapshot_id=str(S["snap_Fnr"]), include_test_orgs=True)
     n_nr = int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.model_events WHERE detail->>'snapshot_id' = $1",
                             str(S["snap_Fnr"]), fetch="fetchval"))
     check(hook_nr is None and "never used" in direct.get("skipped", "") and n_nr == 0,
@@ -1415,7 +1417,8 @@ async def y_isolation(conn):
 
     pool = await get_pool()
     with _ctx(None):
-        res = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F3"]))
+        res = await RM.monitor_snapshot(pool, fund_id=S["sec_F"], source_key="ssga_spdr", snapshot_id=str(S["snap_F3"]),
+                                        include_test_orgs=True)
     rb = next((x for x in res["models"] if x["model_id"] == mb), {})
     evb = await scoped(conn, ORG_B, "SELECT count(*) FROM portfolio.model_events WHERE model_id = $1::uuid AND action = "
                                     "'holdings_monitor'", mb, fetch="fetchval") if mb else 0

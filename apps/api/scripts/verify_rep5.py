@@ -419,6 +419,20 @@ async def teardown(_conn=None) -> list[str]:
     return log
 
 
+TEARDOWN_RETRYABLE = (asyncpg.DeadlockDetectedError, asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError,
+                      ConnectionError)
+
+
+async def teardown_retrying(_conn=None) -> list[str]:
+    """:func:`teardown` (one transaction, fixture ids only), retried ONCE on a deadlock or a dropped connection —
+    the rolled-back attempt left nothing half-done; the retry opens its own operator connection."""
+    try:
+        return await teardown()
+    except TEARDOWN_RETRYABLE as exc:
+        print(f"[INFO] teardown hit {type(exc).__name__}; rolled back, retrying once")
+        return await teardown()
+
+
 async def leftovers(conn) -> int:
     n = 0
     orgs = FIXTURE_ORGS
@@ -649,7 +663,8 @@ async def seed(conn) -> None:
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b"), (ORG_C, "c")):
-            await conn.execute("INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)",
+            # is_test: schedulers never act on a fixture org (services.orgs; the reserved-prefix trigger sets it too)
+            await conn.execute("INSERT INTO organizations (id, name, slug, is_test) VALUES ($1, $2, $3, true)",
                                org, f"REP5 Verify Org {nm.upper()}", f"{TAG}-{nm}")
         perm_ids = {r["name"]: r["id"] for r in await conn.fetch("SELECT id, name FROM permissions")}
         roles = {}
@@ -1610,7 +1625,7 @@ async def main_async() -> int:
     install_stubs()
     pre = real = None
     try:
-        await run("pre-teardown", teardown, conn)
+        await run("pre-teardown", teardown_retrying, conn)
         if not await guard_prefix(conn):
             print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
             return 1
@@ -1654,7 +1669,7 @@ async def main_async() -> int:
                     await real_fingerprints(c) if real is not None else None)
 
         try:
-            log = await teardown(conn)
+            log = await teardown_retrying(conn)
             print(f"[INFO] teardown removed: {log}")
             try:
                 left, post, after = await after_teardown(conn)

@@ -1074,12 +1074,19 @@ async def release_fee_exclusions(pool, *, org_id) -> list[str]:
     return ended
 
 
-async def org_tick(pool, *, org_id, today: date | None = None) -> dict:
-    """Every proposal step for one org (the caller set its RLS context)."""
+async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs: bool = False) -> dict:
+    """Every proposal step for one org (the caller set its RLS context).
+
+    A test org (services.orgs) is skipped — no step runs — unless the caller
+    passes ``include_test_orgs=True``: only a verify script, for its own org."""
+    from services import orgs as ORGS
+
     today = today or date.today()
     out = {"expired": 0, "executed": 0, "model_change": [], "harvest": [], "scans": [], "fee_exclusions_ended": [],
            "loss_bank": None, "errors": []}
     async with pool.acquire() as conn:
+        if not include_test_orgs and await ORGS.is_test_org(conn, org_id):
+            return {**out, "skipped": "test org (organizations.is_test) — schedulers never act on one"}
         open_rows = [dict(r) for r in await conn.fetch(
             f"SELECT * FROM {T_P} WHERE org_id = $1::uuid AND system_to IS NULL AND status = ANY($2::text[])",
             str(org_id), list(OPEN_STATUSES))]
@@ -1139,16 +1146,19 @@ async def org_tick(pool, *, org_id, today: date | None = None) -> dict:
 async def proposals_tick(pool, *, today: date | None = None) -> dict:
     """The scheduler entrypoint's step (after the holdings refresh and rep2's
     execute-by handling): every org with an active link, each in its own RLS
-    context."""
+    context. Test orgs are never enumerated (services.orgs)."""
+    from services import orgs as ORGS
     from services.database import reset_rls_context, set_rls_context
 
     tokens = set_rls_context(None, True)
     try:
         async with pool.acquire() as conn:
+            # never a test org (services.orgs): a crashed verify's fixture accounts are not scanned
             orgs = [r["org_id"] for r in await conn.fetch(
-                f"SELECT DISTINCT org_id FROM {AM.T_LINK} WHERE status = 'active' AND valid_to IS NULL "
-                "AND system_to IS NULL UNION SELECT DISTINCT org_id FROM " + T_P +
-                " WHERE system_to IS NULL AND status = ANY($1::text[])", list(OPEN_STATUSES))]
+                f"SELECT org_id FROM (SELECT DISTINCT org_id FROM {AM.T_LINK} WHERE status = 'active' "
+                "AND valid_to IS NULL AND system_to IS NULL UNION SELECT DISTINCT org_id FROM " + T_P +
+                " WHERE system_to IS NULL AND status = ANY($1::text[])) x WHERE " + ORGS.not_test_org_sql("x.org_id"),
+                list(OPEN_STATUSES))]
     finally:
         reset_rls_context(tokens)
     out = {}

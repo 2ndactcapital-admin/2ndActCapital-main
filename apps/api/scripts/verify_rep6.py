@@ -359,9 +359,46 @@ async def fixture_security_ids(conn) -> list:
     return list(ids)
 
 
+async def org_tables(conn) -> list[str]:
+    """Every table with an ``org_id`` column (partition children excluded)."""
+    return [r["t"] for r in await conn.fetch(
+        "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped "
+        "WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname NOT IN ('pg_catalog', "
+        "'information_schema') ORDER BY 1")]
+
+
+async def sweep_fixture_orgs(conn, orgs: list, skip: set, log: list[str]) -> None:
+    """Rows under a FIXTURE org in any table the plan does not name — what a crashed run left behind and anything
+    a scheduler made on its fixture accounts (rep6 fix 2). Keyed by fixture org id only; child-before-parent from
+    pg_constraint (a cycle falls back to delete_tree, which follows the FKs recursively)."""
+    found = []
+    for t in await org_tables(conn):
+        if t in skip:
+            continue
+        if await conn.fetchval(f"SELECT EXISTS (SELECT 1 FROM {t} WHERE org_id = ANY($1::uuid[]))", orgs):
+            found.append(t)
+    if not found:
+        return
+    try:
+        order = await fk_order(conn, found)
+    except RuntimeError:
+        order = None
+    for t in order or found:
+        if order is None:
+            await delete_tree(conn, t, "org_id = ANY($1::uuid[])", [orgs], log=log)
+            continue
+        status = await conn.execute(f"DELETE FROM {t} WHERE org_id = ANY($1::uuid[])", orgs)
+        n = int(status.rsplit(" ", 1)[-1])
+        if n:
+            log.append(f"{t}: {n} (sweep)")
+
+
 async def teardown(_conn=None) -> list[str]:
     """Operator connection, the teardown GUCs, FK child-before-parent, every
-    DELETE keyed by this run's fixture ids (orgs, users, securities)."""
+    DELETE keyed by this run's fixture ids (orgs, users, securities). Then a
+    sweep of EVERY org_id table for rows under a fixture org the plan does not
+    name (a crashed run's leftovers)."""
     log: list[str] = []
     op = await operator_conn()
     try:
@@ -439,6 +476,7 @@ async def teardown(_conn=None) -> list[str]:
                 n = int(status.rsplit(" ", 1)[-1])
                 if n:
                     log.append(f"{table}: {n}")
+            await sweep_fixture_orgs(op, orgs, set(plan), log)
             await delete_tree(op, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
                               [users, f"%{TAG}%"], log=log)
             await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [orgs], log=log)
@@ -446,6 +484,30 @@ async def teardown(_conn=None) -> list[str]:
     finally:
         await op.close()
     return log
+
+
+TEARDOWN_RETRYABLE = (asyncpg.DeadlockDetectedError, asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError,
+                      ConnectionError)
+
+
+async def teardown_retrying(_conn=None) -> list[str]:
+    """:func:`teardown` (one transaction, fixture ids only), retried ONCE on a deadlock or a dropped connection —
+    the rolled-back attempt left nothing half-done; the retry opens its own operator connection."""
+    try:
+        return await teardown()
+    except TEARDOWN_RETRYABLE as exc:
+        print(f"[INFO] teardown hit {type(exc).__name__}; rolled back, retrying once")
+        return await teardown()
+
+
+async def pre_teardown(conn):
+    """Start of run: everything a crashed earlier run left under the fixture orgs / ids, removed and reported."""
+    log = await teardown_retrying(conn)
+    if log:
+        find("pre-run cleanup removed an earlier run's leftovers", "; ".join(log))
+    else:
+        print("[INFO] pre-run cleanup: nothing left from an earlier run")
+    check(await leftovers(conn) == 0, "pre-run cleanup: zero fixture rows before seeding")
 
 
 async def leftovers(conn) -> int:
@@ -469,6 +531,14 @@ async def leftovers(conn) -> int:
             "portfolio.replica_securities", "portfolio.replica_terms_versions", "public.org_settings")],
     ):
         n += int(await platform(conn, sql, *args, fetch="fetchval"))
+    # and EVERY org_id table (the teardown's sweep), read on the operator connection — app_service cannot see
+    # every schema
+    op = await operator_conn()
+    try:
+        for t in await org_tables(op):
+            n += int(await op.fetchval(f"SELECT count(*) FROM {t} WHERE org_id = ANY($1::uuid[])", orgs))
+    finally:
+        await op.close()
     return n
 
 
@@ -689,7 +759,8 @@ async def seed(conn) -> None:
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b"), (ORG_C, "c")):
-            await conn.execute("INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)",
+            # is_test: schedulers never act on a fixture org (services.orgs; the reserved-prefix trigger sets it too)
+            await conn.execute("INSERT INTO organizations (id, name, slug, is_test) VALUES ($1, $2, $3, true)",
                                org, f"REP6 Verify Org {nm.upper()}", f"{TAG}-{nm}")
         perm_ids = {r["name"]: r["id"] for r in await conn.fetch("SELECT id, name FROM permissions")}
         roles = {}
@@ -1315,6 +1386,25 @@ async def y_harvest(conn):
           "the account's harvest settings (opted in, 5%, $500, swap back) are versioned link settings, approved with "
           "the join",
           f"{c} {c2} {cr} {link}")
+    # a harvest never supersedes an open proposal (proven on SOLO below), so the fixture RESOLVES every open
+    # proposal on H first: the join's transition (rejected above) and anything else open on the account, each
+    # rejected with a note. A proposal that is not the join's is recorded — the live scheduler once made drift
+    # proposals on these fixture accounts (fixed: schedulers skip test orgs, services.orgs)
+    stray = await scoped(conn, ORG_A, "SELECT id, trigger, maker_kind, status FROM public.rebalance_proposals WHERE "
+                                      "account_id = $1 AND system_to IS NULL AND status = ANY($2::text[]) AND id <> "
+                                      "$3::uuid", ACCT_H, list(RP.OPEN_STATUSES), str(ptr or uuid.uuid4()))
+    for sp in stray:
+        if sp["status"] == "pending_approval":
+            await api(U_ADMIN2, "POST", f"/api/v1/proposals/{sp['id']}/reject", {"note": "REP6 verify — not now"})
+    if stray:
+        find("open proposals on H besides the join's",
+             f"{[(str(x['id']), x['trigger'], x['maker_kind'], x['status']) for x in stray]} — each pending one "
+             "rejected with a note before the scan")
+    n_open = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND "
+                                       "system_to IS NULL AND status = ANY($2::text[])", ACCT_H,
+                          list(RP.OPEN_STATUSES), fetch="fetchval")
+    check(int(n_open) == 0, "before the scan, H has NO open proposal (the join's transition rejected with a note)",
+          f"{n_open} open")
     cs, os_ = await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_H}/scan", {})
     scan = os_.get("scan") or {}
     run = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2 AND "
@@ -1359,11 +1449,18 @@ async def y_harvest(conn):
           "replacement chosen through wash-sale control: RHX (rank 1) has the spouse's loss sale 3 days ago → skipped; "
           "RH1 (rank 2) is clear → chosen", f"{tried}")
     n_c = await scoped(conn, ORG_A, "SELECT count(*) FROM public.harvest_candidates WHERE run_id = $1", run["id"],
-                       fetch="fetchval")
-    check(int(n_c) == run["candidates"] == 7 and run["taken"] == 2,
-          "every candidate recorded — taken (2) or skipped with its reason (5)", f"{n_c} {run['candidates']}")
+                       fetch="fetchval") if run else None
+    check(run is not None and int(n_c) == run["candidates"] == 7 and run["taken"] == 2,
+          "every candidate recorded — taken (2) or skipped with its reason (5)",
+          f"{n_c} {run and (run['candidates'], run['taken'])}")
+    S["p_harvest"] = run["proposal_id"] if run else None
+    if S["p_harvest"] is None:
+        # never cascade: every check below that needs the proposal is reported as not run, the independent ones run
+        check(False, "the harvest proposal exists — its review task, lines, approval and swap back are NOT checked",
+              f"{scan}")
+        await y_harvest_guards(conn)
+        return
     hp = await prop_row(conn, ORG_A, run["proposal_id"])
-    S["p_harvest"] = run["proposal_id"]
     lines = await trades_rows(conn, ORG_A, run["proposal_id"])
     bl = by_line(lines)
     task = await scoped(conn, ORG_A, "SELECT r.context->'human_task'->>'kind' FROM workflow_run_steps rs JOIN "
@@ -1392,6 +1489,13 @@ async def y_harvest(conn):
     check(ca == 200 and hp2["status"] == "approved" and hp2["checker_id"] == U_ADMIN3,
           "a PERSON approves the harvest (approve_proposals) — no trade placed; its instructions go to rep2",
           f"{ca} {hp2['status']}")
+    await y_harvest_guards(conn)
+    await y_harvest_swap_back(conn, run, hp2, h1)
+
+
+async def y_harvest_guards(conn):
+    """Independent of the H harvest proposal: an open person-made proposal skips the scan; no profile → not
+    estimated; the custodian engine → no harvest proposal."""
     # no profile → candidates listed, value not estimated
     # ...and a harvest NEVER supersedes an open proposal: SOLO's person-made transition proposal is still pending
     c, c2, ps, _, _ = await join(ACCT_SOLO, S["m3"], {"harvest_enabled": True})
@@ -1430,6 +1534,10 @@ async def y_harvest(conn):
           and all(jl(x["wash_sale"]) is not None for x in lc),
           "harvesting_engine 'custodian' → no harvest proposal (its loss lot NC notwithstanding); its own transition "
           "proposal still carries wash-sale results", f"{rc and (rc['engine'], rc['outcome'])} {nhc}")
+
+
+async def y_harvest_swap_back(conn, run, hp2, h1):
+    pool = await pool_()
     # swap back: the approved harvest is done (its instructions cancelled, the proposal executed), the replacement held
     ids = (jl(hp2["execution"]) or {}).get("instruction_ids") or []
     for iid in ids:
@@ -1873,7 +1981,7 @@ async def main_async() -> int:
     install_stubs()
     pre = real = None
     try:
-        await run("pre-teardown", teardown, conn)
+        await run("pre-teardown", pre_teardown, conn)
         if not await guard_prefix(conn):
             print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
             return 1
@@ -1915,7 +2023,7 @@ async def main_async() -> int:
                     await real_fingerprints(c) if real is not None else None)
 
         try:
-            log = await teardown(conn)
+            log = await teardown_retrying(conn)
             print(f"[INFO] teardown removed: {log}")
             try:
                 left, post, after = await after_teardown(conn)

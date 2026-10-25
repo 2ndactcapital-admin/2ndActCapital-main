@@ -692,9 +692,12 @@ async def monitoring_events(conn, org_id, entry_id) -> list[dict]:
 
 
 # ── monitoring: a new live snapshot ─────────────────────────────────────────
-async def monitor_snapshot(pool, *, fund_id: str, source_key: str, snapshot_id: str) -> dict:
-    """Every fund_replica model of this fund (any org) against a new LIVE
-    snapshot. Never raises: each model's outcome (or error) is reported."""
+async def monitor_snapshot(pool, *, fund_id: str, source_key: str, snapshot_id: str,
+                           include_test_orgs: bool = False) -> dict:
+    """Every fund_replica model of this fund (any org but a test org, unless
+    ``include_test_orgs`` — services.orgs) against a new LIVE snapshot. Never
+    raises: each model's outcome (or error) is reported."""
+    from services import orgs as ORGS
     from services.database import reset_rls_context, set_rls_context
 
     out = {"snapshot_id": str(snapshot_id), "models": [], "errors": []}
@@ -712,7 +715,8 @@ async def monitor_snapshot(pool, *, fund_id: str, source_key: str, snapshot_id: 
                   AND m.status <> 'retired'
                 WHERE e.global_security_id = $1::uuid AND e.holdings_source_key = $2
                   AND s.valid_to IS NULL AND s.system_to IS NULL
-                ORDER BY s.org_id, s.model_id""", str(fund_id), source_key)
+                  AND ($3::boolean OR {ORGS.not_test_org_sql("s.org_id")})
+                ORDER BY s.org_id, s.model_id""", str(fund_id), source_key, include_test_orgs)
     for t in targets:
         tokens = set_rls_context(str(t["org_id"]), False)
         try:

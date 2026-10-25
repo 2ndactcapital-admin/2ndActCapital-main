@@ -43,6 +43,7 @@ from datetime import date, datetime, time, timezone
 
 from services import edgar_fetch
 from services import replica_holdings as H
+from services import orgs as ORGS
 from services import replica_terms as T
 from services.database import reset_rls_context, set_rls_context
 
@@ -82,8 +83,9 @@ async def _finish(pool, claim_id, *, day: date, trigger: str, status: str, resul
             day, trigger, str(claim_id), status, host, H._dumps(results), error)
 
 
-async def active_funds(pool) -> list[dict]:
-    """Active entries of every org, grouped by (fund, source). Platform read."""
+async def active_funds(pool, *, include_test_orgs: bool = False) -> list[dict]:
+    """Active entries of every org except test orgs (services.orgs; unless
+    ``include_test_orgs``), grouped by (fund, source). Platform read."""
     async with H.platform_tx(pool) as conn:
         rows = await conn.fetch(
             """SELECT global_security_id::text AS fund_id, holdings_source_key, min(ticker) AS ticker,
@@ -91,19 +93,27 @@ async def active_funds(pool) -> list[dict]:
                       array_agg(DISTINCT org_id::text) AS org_ids
                FROM portfolio.replica_securities
                WHERE status = 'active' AND valid_to IS NULL AND system_to IS NULL
-               GROUP BY global_security_id, holdings_source_key ORDER BY min(ticker)""")
+                 AND ($1::boolean OR """ + ORGS.not_test_org_sql("portfolio.replica_securities.org_id") + """)
+               GROUP BY global_security_id, holdings_source_key ORDER BY min(ticker)""", include_test_orgs)
     return [dict(r) for r in rows]
 
 
 async def open_holdings_review(pool, *, fund_id: str, snapshot_id: str, ticker: str, reason: str,
-                               org_ids: list[str] | None = None, actor_id=None) -> list[T.ActionRef]:
-    """A review task in each org that holds the fund (or only ``org_ids``)."""
+                               org_ids: list[str] | None = None, actor_id=None,
+                               include_test_orgs: bool = False) -> list[T.ActionRef]:
+    """A review task in each org that holds the fund (or only ``org_ids``).
+    Without ``org_ids`` (the scheduled refresh) test orgs are skipped unless
+    ``include_test_orgs`` (services.orgs); an explicit ``org_ids`` is the
+    caller's own choice."""
     refs: list[T.ActionRef] = []
     async with H.platform_tx(pool) as conn:
         entries = await conn.fetch(
             "SELECT * FROM portfolio.replica_securities WHERE global_security_id = $1::uuid AND status IN "
             "('active', 'draft') AND valid_to IS NULL AND system_to IS NULL "
-            "AND ($2::uuid[] IS NULL OR org_id = ANY($2::uuid[]))", fund_id, org_ids)
+            "AND ($2::uuid[] IS NULL OR org_id = ANY($2::uuid[])) "
+            "AND ($2::uuid[] IS NOT NULL OR $3::boolean OR "
+            + ORGS.not_test_org_sql("portfolio.replica_securities.org_id") + ")",
+            fund_id, org_ids, include_test_orgs)
         for e in entries:
             e = dict(e)
             recipients = await T._approvers(conn, e["org_id"], T.MANAGE_PERMISSION)
@@ -141,18 +151,19 @@ def review_reason(res: H.IngestResult) -> str | None:
     return None
 
 
-async def monitor_models(pool, res: H.IngestResult) -> dict | None:
+async def monitor_models(pool, res: H.IngestResult, *, include_test_orgs: bool = False) -> dict | None:
     """rep4: a NEW LIVE snapshot → every fund-built model of the fund is checked
     against it (services.replica_models.monitor_snapshot). A needs_review
     snapshot is never used. Never raises — the outcome (or the error) is
-    reported on the refresh result."""
+    reported on the refresh result. Test orgs' models are skipped unless
+    ``include_test_orgs`` (services.orgs)."""
     if not res.created or res.status != "live" or not res.snapshot_id:
         return None
     try:
         from services import replica_models as RM
 
         out = await RM.monitor_snapshot(pool, fund_id=res.fund_global_security_id, source_key=res.source_key,
-                                        snapshot_id=res.snapshot_id)
+                                        snapshot_id=res.snapshot_id, include_test_orgs=include_test_orgs)
         return {"models": len(out["models"]), "errors": len(out["errors"]),
                 "outcomes": [m.get("outcome") for m in out["models"]]}
     except Exception as exc:  # noqa: BLE001
@@ -160,9 +171,11 @@ async def monitor_models(pool, res: H.IngestResult) -> dict | None:
 
 
 async def maybe_refresh_holdings(pool, *, now_utc: datetime | None = None, http_factory=None, log=print,
-                                 host: str | None = None) -> dict:
+                                 host: str | None = None, include_test_orgs: bool = False) -> dict:
     """One tick's holdings step. {"action": "off" | "not_due" | "already" |
-    "succeeded" | "partial" | "failed", ...}. Never raises after the claim."""
+    "succeeded" | "partial" | "failed", ...}. Never raises after the claim.
+    Test orgs (services.orgs) are never refreshed, reviewed or monitored —
+    ``include_test_orgs`` is for a verify script calling this directly."""
     now_utc = now_utc or datetime.now(timezone.utc)
     if not auto_refresh_enabled():
         return {"action": "off", "reason": f"{AUTO_REFRESH_ENV} is off"}
@@ -178,7 +191,7 @@ async def maybe_refresh_holdings(pool, *, now_utc: datetime | None = None, http_
     try:
         edgar_fetch.set_rate_limit(SCHEDULE_MAX_RPS)
         http = (http_factory or H.make_http)()
-        for f in await active_funds(pool):
+        for f in await active_funds(pool, include_test_orgs=include_test_orgs):
             item = {"fund_id": f["fund_id"], "ticker": f["ticker"], "source": f["holdings_source_key"],
                     "orgs": len(f["org_ids"] or [])}
             try:
@@ -195,10 +208,11 @@ async def maybe_refresh_holdings(pool, *, now_utc: datetime | None = None, http_
                 reason = review_reason(res)
                 if reason:
                     refs = await open_holdings_review(pool, fund_id=f["fund_id"], snapshot_id=res.snapshot_id,
-                                                      ticker=f["ticker"], reason=reason)
+                                                      ticker=f["ticker"], reason=reason,
+                                                      include_test_orgs=include_test_orgs)
                     await publish_org_actions(pool, refs)
                     item["review_tasks"] = len(refs)
-                monitored = await monitor_models(pool, res)
+                monitored = await monitor_models(pool, res, include_test_orgs=include_test_orgs)
                 if monitored is not None:
                     item["model_monitor"] = monitored
             except Exception as exc:  # noqa: BLE001 — recorded per fund; the others carry on
