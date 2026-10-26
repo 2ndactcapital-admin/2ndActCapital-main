@@ -30,6 +30,18 @@ ONE OPEN PROPOSAL PER ACCOUNT (partial unique index: draft / awaiting approval
 working, a new one is refused. Proposals EXPIRE after N days (org setting) or
 when the account's valuation date moves past the one they were computed on.
 
+SERIALIZED PER ACCOUNT (rep6 fix 4). Two callers generating for one account at
+once (rep3's direct after_approval call and a scheduler's event sweep; a drift
+scan and a harvest) each read "no proposal yet", then the second superseded the
+first's fresh draft and the first's submit failed on it — two model_change
+proposals for one event. :func:`account_lock` (pg_advisory_xact_lock on the
+account, held on its own connection for the whole unit of work, re-entrant in
+one task) now wraps generate (read open → supersede → insert → submit), submit,
+expiry and an approval's outcome, and every caller's "already done?" read runs
+under it. Backstop: rebalance_proposals_model_change_uq — one live model_change
+proposal per (account, model version), whatever its status; a second insert is
+:class:`AlreadyProposed`.
+
 APPROVAL — services.human_tasks
 ──────────────────────────────────────────────────────────────────────────────
 A person's proposal: a maker-checker task (``rebalance_proposal_approval``,
@@ -62,11 +74,16 @@ rep6 keep their flag (``wash_sale_flag``) and route as they did.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+
+import asyncpg
 
 from services import account_models as AM
 from services import human_tasks as HT
@@ -142,8 +159,82 @@ class OpenProposalExists(ProposalConflict):
                          "proposal never supersedes it")
 
 
+class AlreadyProposed(ProposalConflict):
+    """A model_change proposal for this account + model version already exists
+    (rebalance_proposals_model_change_uq, or the check under the account lock)."""
+
+    def __init__(self, proposal_id=None):
+        self.proposal_id = proposal_id
+        super().__init__("already proposed: this account has a proposal for this model version"
+                         + (f" ({proposal_id})" if proposal_id else ""))
+
+
 class MakerCheckerViolation(PermissionError):
     pass
+
+
+MODEL_CHANGE_UQ = "rebalance_proposals_model_change_uq"
+LOCK_NAMESPACE = "rebalance_proposal_account:"
+_HELD_LOCKS: contextvars.ContextVar[frozenset] = contextvars.ContextVar("rebalance_account_locks",
+                                                                         default=frozenset())
+
+
+LOCK_TIMEOUT = "60s"
+_LOCAL_LOCKS: dict[tuple[int, str], list] = {}     # (loop id, account) → [asyncio.Lock, users]
+
+
+@asynccontextmanager
+async def _local_lock(key: str):
+    """In-process first: waiters in this process queue on an asyncio lock and
+    hold NO pool connection while they wait (the pool is 10 — ten waiters each
+    parked on the advisory lock with a connection would starve the holder)."""
+    k = (id(asyncio.get_running_loop()), key)
+    entry = _LOCAL_LOCKS.setdefault(k, [asyncio.Lock(), 0])
+    entry[1] += 1
+    try:
+        async with entry[0]:
+            yield
+    finally:
+        entry[1] -= 1
+        if entry[1] == 0:
+            _LOCAL_LOCKS.pop(k, None)
+
+
+@asynccontextmanager
+async def account_lock(pool, account_id):
+    """Serialize proposal writes for one account across processes: a
+    transaction-scoped advisory lock (safe under the transaction pooler — never
+    a session lock) held on its own connection until the block ends, waited
+    for at most LOCK_TIMEOUT. Re-entrant within one asyncio task (generate →
+    submit), so a nested call never waits on its own lock from a second
+    connection."""
+    key = str(account_id)
+    if key in _HELD_LOCKS.get():
+        yield
+        return
+    async with _local_lock(key):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+                try:
+                    await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", LOCK_NAMESPACE + key)
+                except asyncpg.LockNotAvailableError as exc:
+                    raise ProposalConflict("another change to this account's proposals is still running — "
+                                           "retry in a moment") from exc
+                await conn.execute("SET LOCAL lock_timeout = 0")
+                token = _HELD_LOCKS.set(_HELD_LOCKS.get() | {key})
+                try:
+                    yield
+                finally:
+                    _HELD_LOCKS.reset(token)
+
+
+async def model_change_for(conn, account_id, version_id):
+    """The live model_change proposal for (account, model version), any status."""
+    return await conn.fetchval(
+        f"SELECT id FROM {T_P} WHERE account_id = $1::uuid AND trigger = 'model_change' "
+        "AND model_version_id = $2::uuid AND archived_from_id IS NULL AND system_to IS NULL LIMIT 1",
+        str(account_id), str(version_id))
 
 
 MAKER_CHECKER_RULE = ("Maker-checker: you made this proposal, so a different holder of approve_proposals must approve "
@@ -518,7 +609,18 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
     """The ONE generator. Writes the proposal (draft), its trades and — for a
     join — the transition plan; supersedes an older open draft / pending one
     (never for a harvest: that raises OpenProposalExists instead);
-    a system trigger (or ``auto_submit``) submits it."""
+    a system trigger (or ``auto_submit``) submits it. The whole sequence runs
+    under :func:`account_lock`; a model_change proposal the account already has
+    for the model's live version raises :class:`AlreadyProposed`."""
+    async with account_lock(pool, _uuid(account_id, "account")):
+        return await _generate(pool, org_id=org_id, account_id=account_id, trigger=trigger, maker_kind=maker_kind,
+                               maker_id=maker_id, auto_submit=auto_submit, trigger_ref=trigger_ref,
+                               withdrawal=withdrawal, today=today, harvest_plan=harvest_plan)
+
+
+async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, maker_id, auto_submit: bool,
+                    trigger_ref: dict | None, withdrawal: Decimal | None, today: date | None,
+                    harvest_plan: dict | None) -> dict:
     if trigger not in TRIGGER_LABELS:
         raise ProposalError(f"trigger is one of {list(TRIGGER_LABELS)}")
     if maker_kind not in ("user", "system") or (maker_kind == "user") != (maker_id is not None):
@@ -538,6 +640,10 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
         model = await AM.model_brief(conn, org_id, link["model_id"])
         if not model["live_version_id"]:
             raise ProposalConflict(f"{model['name']} has no approved version")
+        if trigger == "model_change":
+            done = await model_change_for(conn, account["id"], model["live_version_id"])
+            if done:
+                raise AlreadyProposed(done)
         existing = await open_proposal(conn, account["id"])
         if existing and trigger in NO_SUPERSEDE_TRIGGERS:
             raise OpenProposalExists(existing)
@@ -562,6 +668,36 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
     later = [{"key": x.key, "label": c["labels"].get(x.key, x.key), "lot_id": x.lot_id, "quantity": x.quantity,
               "year": x.year, "on_date": _iso(x.on_date), "est_gain": x.gain, "reason": x.reason} for x in r.later]
     ref = dict(trigger_ref or {})
+    try:
+        superseded = await _write_generated(pool, org_id=org_id, account=account, link=link, model=model, c=c, r=r,
+                                            pid=pid, now=now, trigger=trigger, ref=ref, advice_only=advice_only,
+                                            later=later, withdrawal=withdrawal, expiry_days=expiry_days,
+                                            maker_kind=maker_kind, maker_id=maker_id)
+    except asyncpg.UniqueViolationError as exc:
+        if exc.constraint_name != MODEL_CHANGE_UQ:
+            raise
+        async with pool.acquire() as conn:
+            done = await model_change_for(conn, account["id"], model["live_version_id"])
+        raise AlreadyProposed(done) from exc
+    if superseded and superseded.get("approval_task_id"):
+        await _withdraw_task(pool, superseded["approval_task_id"], "superseded by a newer proposal")
+    if superseded:
+        await _publish(pool, org_id, "superseded", superseded["id"], {"superseded_by_id": str(pid)}, maker_id)
+    await _publish(pool, org_id, "generated", pid, {"trigger": trigger, "account_id": str(account["id"]),
+                                                    "trades": len(c["lines"])}, maker_id)
+    out = None
+    if maker_kind == "system" or auto_submit:
+        out = await submit(pool, org_id=org_id, proposal_id=pid, actor_id=maker_id, system=maker_kind == "system")
+    if out is None:
+        async with pool.acquire() as conn:
+            out = await load(conn, org_id, pid)
+    return out
+
+
+async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now, trigger, ref, advice_only, later,
+                           withdrawal, expiry_days, maker_kind, maker_id) -> dict | None:
+    """One transaction: supersede the open proposal (if any), insert this one,
+    its trades and (a join) its plan. Returns the superseded row."""
     superseded = None
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -572,6 +708,9 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
                 raise ProposalConflict("an approved proposal for this account is executing")
             if cur:
                 cur = await load(conn, org_id, cur["id"], lock=True)
+                if cur["status"] == "approved":
+                    raise ProposalConflict("an approved proposal for this account is executing")
+            if cur and cur["status"] in ("draft", "pending_approval"):
                 superseded = await _update(conn, cur["id"], {
                     "status": "superseded", "superseded_by_id": pid,
                     "status_reason": f"superseded by a newer proposal ({TRIGGER_LABELS[trigger].lower()}) {pid}"})
@@ -621,19 +760,7 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
             await _audit(conn, org_id, maker_id, "generated", pid,
                          {"trigger": trigger, "trigger_ref": ref, "trades": len(c["lines"]), "maker_kind": maker_kind,
                           "supersedes": str(superseded["id"]) if superseded else None})
-    if superseded and superseded.get("approval_task_id"):
-        await _withdraw_task(pool, superseded["approval_task_id"], "superseded by a newer proposal")
-    if superseded:
-        await _publish(pool, org_id, "superseded", superseded["id"], {"superseded_by_id": str(pid)}, maker_id)
-    await _publish(pool, org_id, "generated", pid, {"trigger": trigger, "account_id": str(account["id"]),
-                                                    "trades": len(c["lines"])}, maker_id)
-    out = None
-    if maker_kind == "system" or auto_submit:
-        out = await submit(pool, org_id=org_id, proposal_id=pid, actor_id=maker_id, system=maker_kind == "system")
-    if out is None:
-        async with pool.acquire() as conn:
-            out = await load(conn, org_id, pid)
-    return out
+    return superseded
 
 
 async def transition_preview(conn, org_id, account_id, *, model_id=None, settings: dict | None = None,
@@ -695,23 +822,34 @@ async def _expire_if_due(pool, org_id, p: dict) -> bool:
                       f"{latest.isoformat()} — generate a new proposal on the new valuation")
     if reason is None:
         return False
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            cur = await load(conn, org_id, p["id"], lock=True)
-            if cur["status"] not in ("draft", "pending_approval"):
-                return False
-            await _update(conn, cur["id"], {"status": "expired", "status_reason": reason})
-            await _audit(conn, org_id, None, "expired", cur["id"], {"reason": reason})
+    async with account_lock(pool, str(p["account_id"])):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                cur = await load(conn, org_id, p["id"], lock=True)
+                if cur["status"] not in ("draft", "pending_approval"):
+                    return False
+                await _update(conn, cur["id"], {"status": "expired", "status_reason": reason})
+                await _audit(conn, org_id, None, "expired", cur["id"], {"reason": reason})
     if p.get("approval_task_id"):
         await _withdraw_task(pool, p["approval_task_id"], f"the proposal expired: {reason}")
     await _publish(pool, org_id, "expired", p["id"], {"reason": reason}, None)
     return True
 
 
+async def _account_of(pool, org_id, proposal_id) -> str:
+    async with pool.acquire() as conn:
+        return str((await load(conn, org_id, proposal_id))["account_id"])
+
+
 async def submit(pool, *, org_id, proposal_id, actor_id=None, system: bool = False) -> dict:
     """draft → awaiting approval. A person submits their own proposal (it opens
     the maker-checker task); a system proposal is submitted by the platform
-    (a review task with no maker)."""
+    (a review task with no maker). Under :func:`account_lock`."""
+    async with account_lock(pool, await _account_of(pool, org_id, proposal_id)):
+        return await _submit(pool, org_id=org_id, proposal_id=proposal_id, actor_id=actor_id, system=system)
+
+
+async def _submit(pool, *, org_id, proposal_id, actor_id, system: bool) -> dict:
     async with pool.acquire() as conn:
         p = await load(conn, org_id, proposal_id)
         account = await AM.load_account(conn, org_id, p["account_id"])
@@ -759,26 +897,30 @@ async def submit(pool, *, org_id, proposal_id, actor_id=None, system: bool = Fal
 
 
 async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note) -> dict | None:
-    """Apply a decided approval / review task. Idempotent."""
+    """Apply a decided approval / review task. Idempotent. Under
+    :func:`account_lock`, so it never interleaves with a supersede."""
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow(f"SELECT * FROM {T_P} WHERE approval_task_id = $1::uuid AND org_id = $2::uuid "
-                                      "AND system_to IS NULL FOR UPDATE", task["id"], str(org_id))
-            if row is None or row["status"] != "pending_approval":
-                return dict(row) if row else None
-            row = dict(row)
-            checker = uuid.UUID(str(actor_id))
-            if row["maker_id"] is not None and checker == row["maker_id"]:
-                raise MakerCheckerViolation(MAKER_CHECKER_RULE)
-            now = datetime.now(timezone.utc)
-            if outcome == "approve":
-                new = await _update(conn, row["id"], {"status": "approved", "checker_id": checker, "decided_at": now,
+        acct = await conn.fetchval(f"SELECT account_id FROM {T_P} WHERE approval_task_id = $1::uuid "
+                                   "AND org_id = $2::uuid AND system_to IS NULL", task["id"], str(org_id))
+    if acct is None:
+        return None
+    async with account_lock(pool, str(acct)):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(f"SELECT * FROM {T_P} WHERE approval_task_id = $1::uuid "
+                                          "AND org_id = $2::uuid AND system_to IS NULL FOR UPDATE",
+                                          task["id"], str(org_id))
+                if row is None or row["status"] != "pending_approval":
+                    return dict(row) if row else None
+                row = dict(row)
+                checker = uuid.UUID(str(actor_id))
+                if row["maker_id"] is not None and checker == row["maker_id"]:
+                    raise MakerCheckerViolation(MAKER_CHECKER_RULE)
+                now = datetime.now(timezone.utc)
+                status = "approved" if outcome == "approve" else "rejected"
+                new = await _update(conn, row["id"], {"status": status, "checker_id": checker, "decided_at": now,
                                                       "decision_note": note})
-            else:
-                new = await _update(conn, row["id"], {"status": "rejected", "checker_id": checker, "decided_at": now,
-                                                      "decision_note": note})
-            await _audit(conn, org_id, checker, "approved" if outcome == "approve" else "rejected", row["id"],
-                         {"task_id": task["id"], "note": note})
+                await _audit(conn, org_id, checker, status, row["id"], {"task_id": task["id"], "note": note})
     await _publish(pool, org_id, "approved" if outcome == "approve" else "rejected", row["id"],
                    {"task_id": task["id"]}, actor_id)
     if outcome == "approve":
@@ -837,6 +979,13 @@ async def decide(pool, *, org_id, actor_id, proposal_id, outcome: str, note: str
     except HT.HumanTaskPermissionError as exc:
         raise PermissionError(str(exc)) from exc
     except HT.HumanTaskConflict as exc:
+        # the task closed underneath (e.g. a newer proposal superseded this one and withdrew it) — say what
+        # the proposal now is, not the engine's step status
+        async with pool.acquire() as conn:
+            now_p = await load(conn, org_id, proposal_id)
+        if now_p["status"] != "pending_approval":
+            raise ProposalConflict(f"the proposal is {STATUS_LABELS[now_p['status']].lower()}, not awaiting "
+                                   "approval") from exc
         raise ProposalConflict(str(exc)) from exc
     result = done.get("subject_result")
     if result is None:
@@ -989,19 +1138,23 @@ async def on_model_version_approved(pool, *, org_id, model_id, version_id) -> li
             "SELECT id FROM domain_events WHERE org_id = $1::uuid AND event_type = 'model.version_approved' "
             "AND source_id = $2::uuid", str(org_id), str(version_id))
     for ln in links:
-        async with pool.acquire() as conn:
-            done = await conn.fetchval(
-                f"SELECT id FROM {T_P} WHERE account_id = $1::uuid AND trigger = 'model_change' "
-                "AND model_version_id = $2::uuid AND archived_from_id IS NULL AND system_to IS NULL LIMIT 1",
-                str(ln["account_id"]), str(version_id))
-        if done:
-            out.append({"account_id": str(ln["account_id"]), "proposal_id": str(done), "skipped": "already proposed"})
-            continue
+        # the "already proposed?" read and the generate run under ONE account lock: a concurrent caller (the
+        # direct after_approval call vs a scheduler's event sweep) waits, then sees this one's proposal
         try:
-            p = await generate(pool, org_id=org_id, account_id=ln["account_id"], trigger="model_change",
-                               maker_kind="system", trigger_ref={"event_id": str(event_id) if event_id else None,
-                                                                 "model_version_id": str(version_id)})
+            async with account_lock(pool, str(ln["account_id"])):
+                async with pool.acquire() as conn:
+                    done = await model_change_for(conn, ln["account_id"], version_id)
+                if done:
+                    out.append({"account_id": str(ln["account_id"]), "proposal_id": str(done),
+                                "skipped": "already proposed"})
+                    continue
+                p = await generate(pool, org_id=org_id, account_id=ln["account_id"], trigger="model_change",
+                                   maker_kind="system", trigger_ref={"event_id": str(event_id) if event_id else None,
+                                                                     "model_version_id": str(version_id)})
             out.append({"account_id": str(ln["account_id"]), "proposal_id": str(p["id"])})
+        except AlreadyProposed as exc:
+            out.append({"account_id": str(ln["account_id"]),
+                        "proposal_id": str(exc.proposal_id) if exc.proposal_id else None, "skipped": "already proposed"})
         except Exception as exc:  # noqa: BLE001 — one account never stops the others
             log.exception("model_change proposal failed for %s", ln["account_id"])
             out.append({"account_id": str(ln["account_id"]), "error": str(exc)})
@@ -1009,7 +1162,14 @@ async def on_model_version_approved(pool, *, org_id, model_id, version_id) -> li
 
 
 async def scan_account(pool, *, org_id, account_id, today: date | None = None) -> dict:
-    """The daily drift / cash-flow check for one account (its own valuation)."""
+    """The daily drift / cash-flow check for one account (its own valuation).
+    Its "an open proposal already covers this" read and the generate run under
+    one :func:`account_lock`."""
+    async with account_lock(pool, _uuid(account_id, "account")):
+        return await _scan_account(pool, org_id=org_id, account_id=account_id, today=today)
+
+
+async def _scan_account(pool, *, org_id, account_id, today: date | None) -> dict:
     today = today or date.today()
     async with pool.acquire() as conn:
         account = await AM.load_account(conn, org_id, account_id)

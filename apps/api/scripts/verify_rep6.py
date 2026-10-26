@@ -1567,6 +1567,79 @@ async def y_harvest_guards(conn):
           "proposal still carries wash-sale results", f"{rc and (rc['engine'], rc['outcome'])} {nhc}")
 
 
+async def y_concurrency(conn):
+    """fix 4: two generators for one account + model version at once (the direct after_approval call vs a
+    scheduler's event sweep, as in verify_rep5's 17 FAILs) → exactly one proposal and one review task."""
+    section("[Y] fix 4 — concurrent generate for one account + model version: one proposal, one review task")
+    pool = await pool_()
+    version = S["m3v1"]
+
+    async def state(acct, since):
+        rows = await scoped(conn, ORG_A, "SELECT * FROM public.rebalance_proposals WHERE account_id = $1 AND trigger = "
+                                         "'model_change' AND model_version_id = $2 AND system_to IS NULL", acct, version)
+        tasks = await scoped(conn, ORG_A, "SELECT count(*) FROM workflow_runs r WHERE r.org_id = $1 AND r.started_at >= "
+                                          "$2 AND r.context->'human_task'->>'kind' = 'rebalance_proposal_review' AND "
+                                          "r.context->'human_task'->>'subject_id' IN (SELECT id::text FROM "
+                                          "public.rebalance_proposals WHERE account_id = $3)", ORG_A, since, acct,
+                             fetch="fetchval")
+        opens = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND "
+                                          "system_to IS NULL AND status IN ('draft', 'pending_approval', 'approved')",
+                             acct, fetch="fetchval")
+        return rows, int(tasks), int(opens)
+
+    def gen(fn, acct):
+        return fn(pool, org_id=ORG_A, account_id=acct, trigger="model_change", maker_kind="system", maker_id=None,
+                  auto_submit=False, trigger_ref={"model_version_id": str(version), "verify": "fix4"}, withdrawal=None,
+                  today=None, harvest_plan=None)
+
+    # 1. through generate (the account lock): CUST follows m3 live and still has its person-made join proposal open
+    before = await open_prop(conn, ORG_A, ACCT_CUST)
+    pre_rows, _, _ = await state(ACCT_CUST, datetime.now(timezone.utc))
+    t0 = await conn.fetchval("SELECT now()")
+    with _ctx(ORG_A):
+        res = await asyncio.gather(gen(RP.generate, ACCT_CUST), gen(RP.generate, ACCT_CUST), return_exceptions=True)
+    rows, tasks, opens = await state(ACCT_CUST, t0)
+    made = [r for r in res if isinstance(r, dict)]
+    refused = [r for r in res if isinstance(r, BaseException)]
+    check(not pre_rows and len(made) == 1 and len(refused) == 1 and isinstance(refused[0], RP.AlreadyProposed),
+          "two generate calls at once (asyncio.gather): one proposal, the other 'already proposed' (AlreadyProposed)",
+          f"{[type(r).__name__ for r in res]} {refused[0] if refused else ''}")
+    check(len(rows) == 1 and rows[0]["status"] == "pending_approval" and rows[0]["maker_kind"] == "system"
+          and tasks == 1 and opens == 1,
+          "exactly ONE model_change proposal for the account + version, awaiting approval on ONE review task; one open "
+          "proposal for the account", f"{len(rows)} rows, {tasks} review task(s), {opens} open")
+    old = await prop_row(conn, ORG_A, before["id"]) if before else None
+    check(before is not None and old is not None and old["status"] == "superseded"
+          and rows and old["superseded_by_id"] == rows[0]["id"],
+          "rep5 kept: the newer system proposal superseded the account's older open one (successor named)",
+          f"{old and (old['status'], old['superseded_by_id'])}")
+    with _ctx(ORG_A):
+        again = await RP.on_model_version_approved(pool, org_id=ORG_A, model_id=S["m3"], version_id=version)
+    mine = [x for x in again if x.get("account_id") == str(ACCT_CUST)]
+    rows2, tasks2, _ = await state(ACCT_CUST, t0)
+    check(len(mine) == 1 and mine[0].get("skipped") == "already proposed" and len(rows2) == 1 and tasks2 == 1,
+          "the event sweep after it → 'already proposed', nothing new", f"{mine}")
+    # 2. the database backstop alone: the same race with the account lock BYPASSED (RP._generate) still leaves one
+    t1 = await conn.fetchval("SELECT now()")
+    with _ctx(ORG_A):
+        res = await asyncio.gather(gen(RP._generate, ACCT_SOLO), gen(RP._generate, ACCT_SOLO), return_exceptions=True)
+    rows, tasks, opens = await state(ACCT_SOLO, t1)
+    refused = [r for r in res if isinstance(r, BaseException)]
+    names = {getattr(r, "constraint_name", None) or type(r).__name__ for r in refused}
+    check(sum(isinstance(r, dict) for r in res) == 1 and len(refused) == 1
+          and names <= {"AlreadyProposed", "rebalance_proposals_open_uq"} and len(rows) == 1 and tasks == 1
+          and opens == 1,
+          "WITHOUT the lock the database still allows one: the second insert is refused (AlreadyProposed from "
+          "rebalance_proposals_model_change_uq, or the open-proposal index) — one proposal, one review task",
+          f"{[type(r).__name__ for r in res]} {names} {len(rows)} rows, {tasks} task(s)")
+    idx = await platform(conn, "SELECT pg_get_indexdef(indexrelid) FROM pg_index i JOIN pg_class c ON c.oid = "
+                               "i.indexrelid WHERE c.relname = 'rebalance_proposals_model_change_uq' AND i.indisunique",
+                         fetch="fetchval")
+    check(idx is not None and "(account_id, model_version_id)" in idx and "model_change" in idx,
+          "rebalance_proposals_model_change_uq: unique (account_id, model_version_id) over live model_change rows",
+          f"{idx}")
+
+
 async def y_harvest_swap_back(conn, run, hp2, h1):
     pool = await pool_()
     # swap back: the approved harvest is done (its instructions cancelled, the proposal executed), the replacement held
@@ -2041,6 +2114,7 @@ async def main_async() -> int:
             await run("wash-sale rules", y_wash_rules, conn)
             await run("wash-sale proposals", y_wash_proposals, conn)
             await run("harvest", y_harvest, conn)
+            await run("concurrency (fix 4)", y_concurrency, conn)
             await run("loss bank", y_loss_bank, conn)
             await run("substitutions (versions, late denial)", y_substitutions_late, conn)
             await run("rep5 diff", y_rep5_diff, conn)

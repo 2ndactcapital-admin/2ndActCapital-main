@@ -51,6 +51,7 @@ from routers.entities import get_org_id
 from services import harvest as HV
 from services import human_tasks as HT
 from services import loss_bank as LB
+from services import rebalance_proposals as RP
 from services import substitutions as SB
 from services import tax_overview as TO
 from services import tax_profiles as TP
@@ -170,7 +171,7 @@ def _raise(exc: Exception):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, (TP.MakerCheckerViolation, HT.MakerCheckerError, PermissionError, HT.HumanTaskPermissionError)):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    if isinstance(exc, (TP.TaxConflict, HT.HumanTaskConflict)):
+    if isinstance(exc, (TP.TaxConflict, HT.HumanTaskConflict, RP.ProposalConflict)):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, asyncpg.UniqueViolationError):
         raise HTTPException(status_code=409, detail=f"refused by the database: {exc.constraint_name}") from exc
@@ -180,7 +181,7 @@ def _raise(exc: Exception):
         raise HTTPException(status_code=409, detail=str(exc).split("\n")[0]) from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if isinstance(exc, (TP.TaxError, HT.HumanTaskError, ValueError)):
+    if isinstance(exc, (TP.TaxError, HT.HumanTaskError, RP.ProposalError, ValueError)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise exc
 
