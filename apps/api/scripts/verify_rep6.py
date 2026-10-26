@@ -95,7 +95,7 @@ from services.custody import trading as TR  # noqa: E402
 from services.custody.base import AccountNumber  # noqa: E402
 from services.custody.registry import get_or_create_salt, trade_custodian_key  # noqa: E402
 from services.custody.trading import TradeList  # noqa: E402
-from services.database import close_pool, get_pool, reset_rls_context, set_rls_context  # noqa: E402
+from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
 BEFORE_REF = "f1b0eb0"   # rep6-work base — main after the rep5 merge + schema refresh
 TAG = "rep6verify"
@@ -279,6 +279,26 @@ async def real_fingerprints(conn) -> dict:
     out["custodian_capabilities"] = await fingerprint(
         conn, "SELECT * FROM public.custodian_capabilities WHERE custodian_code NOT LIKE 'zz_rep6%'")
     return out
+
+
+async def close_conn(c, timeout: float = 30) -> None:
+    """Close a connection or pool, bounded: a close that does not finish in ``timeout`` s is terminated."""
+    if c is None:
+        return
+    try:
+        await asyncio.wait_for(c.close(), timeout)
+    except Exception:  # noqa: BLE001
+        try:
+            c.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def close_app_pool() -> None:
+    """services.database's pool, closed with the same bound (its own close_pool waits forever)."""
+    import services.database as DB
+    p, DB._pool = DB._pool, None
+    await close_conn(p)
 
 
 async def operator_conn():
@@ -482,7 +502,7 @@ async def teardown(_conn=None) -> list[str]:
             await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [orgs], log=log)
             await delete_tree(op, "public.organizations", "id = ANY($1::uuid[])", [orgs], log=log)
     finally:
-        await op.close()
+        await close_conn(op)
     return log
 
 
@@ -497,7 +517,15 @@ async def teardown_retrying(_conn=None) -> list[str]:
         return await teardown()
     except TEARDOWN_RETRYABLE as exc:
         print(f"[INFO] teardown hit {type(exc).__name__}; rolled back, retrying once")
-        return await teardown()
+        try:
+            return await teardown()
+        except Exception as exc2:  # noqa: BLE001
+            # never wait on a second failure: report it and exit now
+            check(False, "teardown retry failed", f"{type(exc2).__name__}: {exc2}")
+            print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL", flush=True)
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(1)
 
 
 async def pre_teardown(conn):
@@ -538,7 +566,7 @@ async def leftovers(conn) -> int:
         for t in await org_tables(op):
             n += int(await op.fetchval(f"SELECT count(*) FROM {t} WHERE org_id = ANY($1::uuid[])", orgs))
     finally:
-        await op.close()
+        await close_conn(op)
     return n
 
 
@@ -1500,12 +1528,15 @@ async def y_harvest_guards(conn):
     # ...and a harvest NEVER supersedes an open proposal: SOLO's person-made transition proposal is still pending
     c, c2, ps, _, _ = await join(ACCT_SOLO, S["m3"], {"harvest_enabled": True})
     ps_before = await prop_row(conn, ORG_A, ps) if ps else None
+    # the submit (draft → pending_approval) already archived a version; only archives written AFTER this read count
+    read_at = await conn.fetchval("SELECT clock_timestamp()")
     await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_SOLO}/scan", {})
     rs = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2",
                       ACCT_SOLO, TODAY, fetch="fetchrow")
     ps_after = await prop_row(conn, ORG_A, ps) if ps else None
-    n_arch = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE archived_from_id = $1",
-                          UUID(str(ps)) if ps else uuid.uuid4(), fetch="fetchval")
+    n_arch = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE archived_from_id = $1 "
+                                       "AND GREATEST(system_from, created_at, system_to) > $2",
+                          UUID(str(ps)) if ps else uuid.uuid4(), read_at, fetch="fetchval")
     n_hs = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND "
                                      "trigger = 'harvest'", ACCT_SOLO, fetch="fetchval")
     check(ps_before is not None and ps_before["maker_kind"] == "user" and ps_before["status"] == "pending_approval"
@@ -1738,10 +1769,19 @@ async def y_rep5_diff(conn):
         s = text.strip()
         if fn == "y_wash":
             return True
-        if fn == "seed":
-            return "pix" in s or s.startswith("#")
+        if fn == "seed" and ("pix" in s or s.startswith("#")):
+            return True
         if fn == "y_execution":
             return s.startswith("#") or any(w in s for w in ("wash", "routed", "fl_rows", "flagged", 'startswith("[")'))
+        # fix-2: the teardown retry (TEARDOWN_RETRYABLE sits after teardown, so fn_at names it teardown) — and the
+        # two call sites in main_async that switched to it
+        if fn in ("teardown", "teardown_retrying"):
+            return True
+        if fn == "main_async":
+            return bool(re.search(r"\bteardown(_retrying)?\b", s))
+        # fix-2: the fixture orgs are is_test, so the schedulers never act on them
+        if fn == "seed":
+            return "is_test" in s or "INSERT INTO organizations (id, name, slug) VALUES" in s
         return False
 
     bad, changed = [], 0
@@ -1758,7 +1798,8 @@ async def y_rep5_diff(conn):
             if not ok(fn_at(new, j), new[j]):
                 bad.append(f"+{j + 1} {fn_at(new, j)}: {new[j].strip()[:60]}")
     check(bool(old) and changed > 0 and not bad, "every changed line of verify_rep5.py is in y_wash (the flag checks, "
-          "restated as outcomes), the IRA X buy fixture (10 → 31 days) or y_execution's 'flags never block' check",
+          "restated as outcomes), the IRA X buy fixture (10 → 31 days), y_execution's 'flags never block' check, or "
+          "fix-2's teardown retry / is_test fixture orgs",
           f"{changed} changed; {bad[:4]}")
     find("verify_rep5 lines changed", "seed: the IRA's X buy moved from 10 to 31 days ago (a 10-day buy is now control "
          "and would hold the transition's X loss lot — the transition arithmetic checks depend on it; rule b is proven "
@@ -2012,10 +2053,7 @@ async def main_async() -> int:
         check(NETWORK_CALLS == [], "no network call was attempted during the whole run", f"{NETWORK_CALLS[:3]}")
     finally:
         section("[Y] Teardown — zero fixture rows; every touched table at its pre-test count; real rows unchanged")
-        try:
-            await close_pool()
-        except Exception:  # noqa: BLE001
-            pass
+        await close_app_pool()
 
         async def after_teardown(c):
             """Every post-teardown read, as ONE unit, so a retry re-runs all of it on the same connection."""
@@ -2045,10 +2083,7 @@ async def main_async() -> int:
         except Exception as exc:  # noqa: BLE001
             check(False, "teardown raised", f"{type(exc).__name__}: {exc}")
             traceback.print_exc()
-        try:
-            await conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+        await close_conn(conn)
     if os.environ.get("VERIFY_NESTED") == "1":
         print("[SKIP] nested run")
     else:
