@@ -129,9 +129,9 @@ USERS = {   # org, users.role, short, rbac role, full name
 }
 TAX_PERMS = ("view_tax", "manage_tax", "approve_tax")
 
-ENT_A, ENT_A2, ENT_SOLO, ENT_LB, ENT_B = _id(201), _id(202), _id(203), _id(204), _id(205)
+ENT_A, ENT_A2, ENT_SOLO, ENT_LB, ENT_B, ENT_RACE = _id(201), _id(202), _id(203), _id(204), _id(205), _id(206)
 HH_A = _id(211)
-(ACCT_T1, ACCT_T2, ACCT_IRA, ACCT_H, ACCT_SOLO, ACCT_CUST, ACCT_LB, ACCT_B) = (_id(301 + i) for i in range(8))
+(ACCT_T1, ACCT_T2, ACCT_IRA, ACCT_H, ACCT_SOLO, ACCT_CUST, ACCT_LB, ACCT_B, ACCT_RACE) = (_id(301 + i) for i in range(9))
 ACCOUNTS = {   # id: (org, custodian_code, registration, tax_status, household, primary entity, raw number)
     ACCT_T1: (ORG_A, "ALTRUIST", "individual", "taxable", HH_A, ENT_A, "ZZ60000001"),
     ACCT_T2: (ORG_A, "ALTRUIST", "individual", "taxable", HH_A, ENT_A2, "ZZ60000002"),
@@ -141,6 +141,8 @@ ACCOUNTS = {   # id: (org, custodian_code, registration, tax_status, household, 
     ACCT_CUST: (ORG_A, CAP_TEST.upper(), "individual", "taxable", None, ENT_SOLO, "ZZ60000006"),
     ACCT_LB: (ORG_A, "ALTRUIST", "individual", "taxable", None, ENT_LB, "ZZ60000007"),
     ACCT_B: (ORG_B, "ALTRUIST", "individual", "taxable", None, ENT_B, "ZZ60000008"),
+    # fix 5: the lock-bypassed race's own account (follows m3, no model_change proposal), its own household
+    ACCT_RACE: (ORG_A, "ALTRUIST", "individual", "taxable", None, ENT_RACE, "ZZ60000009"),
 }
 TODAY = date.today()
 VAL = TODAY - timedelta(days=1)
@@ -660,6 +662,15 @@ async def open_prop(conn, org, account):
                         fetch="fetchrow")
 
 
+async def open_props(conn, org, account) -> str:
+    """Every open proposal of the account (detail text for a failing check: names the culprit)."""
+    rows = await scoped(conn, org, "SELECT id, trigger, status, maker_kind, created_at FROM "
+                                   "public.rebalance_proposals WHERE account_id = $1::uuid AND system_to IS NULL AND "
+                                   "status IN ('draft', 'pending_approval', 'approved') ORDER BY created_at", str(account))
+    return "open: " + (", ".join(f"({r['id']}, {r['trigger']}, {r['status']}, {r['maker_kind']}, "
+                                 f"{r['created_at'].isoformat()})" for r in rows) or "none")
+
+
 async def account_row(account_id) -> dict:
     pool = await pool_()
     with _ctx(ORG_A):
@@ -816,7 +827,7 @@ async def seed(conn) -> None:
                 await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", uid,
                                    roles[(org, rname)])
         for ent, org, nm in ((ENT_A, ORG_A, "Spouse One"), (ENT_A2, ORG_A, "Spouse Two"), (ENT_SOLO, ORG_A, "Solo"),
-                             (ENT_LB, ORG_A, "Ledger"), (ENT_B, ORG_B, "Org B")):
+                             (ENT_LB, ORG_A, "Ledger"), (ENT_B, ORG_B, "Org B"), (ENT_RACE, ORG_A, "Race")):
             await conn.execute("INSERT INTO entities (id, org_id, entity_type, display_name) VALUES ($1, $2, "
                                "'individual', $3)", ent, org, f"REP6 Verify {nm}")
         await conn.execute("INSERT INTO households (id, org_id, name, created_by) VALUES ($1, $2, $3, $4)",
@@ -929,7 +940,7 @@ async def seed(conn) -> None:
             await lot(name, py, 10, 1000 - realized, date(2020, 1, 2) if term == "long" else YEAR_START, term,
                       status="closed", realized=realized, closing=t)
         for acct, cash in ((ACCT_T1, 10000), (ACCT_T2, 5000), (ACCT_IRA, 10000), (ACCT_H, 1000), (ACCT_SOLO, 1000),
-                           (ACCT_CUST, 1000), (ACCT_LB, 0)):
+                           (ACCT_CUST, 1000), (ACCT_LB, 0), (ACCT_RACE, 1000)):
             await conn.execute(
                 "INSERT INTO public.account_balances_daily (org_id, account_id, as_of_date, total_market_value, "
                 "cash_value, margin_balance, accrued_income, source_system, source_confidence, is_billing_source, "
@@ -1526,8 +1537,15 @@ async def y_harvest_guards(conn):
     estimated; the custodian engine → no harvest proposal."""
     # no profile → candidates listed, value not estimated
     # ...and a harvest NEVER supersedes an open proposal: SOLO's person-made transition proposal is still pending
-    c, c2, ps, _, _ = await join(ACCT_SOLO, S["m3"], {"harvest_enabled": True})
+    c, c2, ps, _, o2 = await join(ACCT_SOLO, S["m3"], {"harvest_enabled": True})
     ps_before = await prop_row(conn, ORG_A, ps) if ps else None
+    # the join's own transition proposal is made under the account lock like every other — it is not a model_change
+    # duplicate, so nothing refuses or supersedes it
+    check(c == 201 and c2 == 200 and ps_before is not None and ps_before["trigger"] == "join"
+          and ps_before["maker_kind"] == "user" and ps_before["maker_id"] == U_ADMIN1
+          and ps_before["status"] == "pending_approval" and not o2.get("transition_proposal_error"),
+          "SOLO's join → its PERSON-made transition proposal (trigger join, the joiner as maker), awaiting approval",
+          f"{c} {c2} {o2.get('transition_proposal_error')} {await open_props(conn, ORG_A, ACCT_SOLO)}")
     # the submit (draft → pending_approval) already archived a version; only archives written AFTER this read count
     read_at = await conn.fetchval("SELECT clock_timestamp()")
     await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_SOLO}/scan", {})
@@ -1546,7 +1564,8 @@ async def y_harvest_guards(conn):
           and ps_after["system_from"] == ps_before["system_from"] and int(n_arch) == 0,
           "an open PERSON-made proposal → the harvest is skipped ('an open proposal exists'), no harvest proposal, and "
           "the person's proposal is untouched (same live row, still awaiting approval, never superseded)",
-          f"{rs and (rs['outcome'], rs['reason'])} {ps_after and ps_after['status']} {n_arch} {n_hs}")
+          f"{rs and (rs['outcome'], rs['reason'])} {ps_after and ps_after['status']} {n_arch} {n_hs} "
+          f"{await open_props(conn, ORG_A, ACCT_SOLO)}")
     await api(U_ADMIN2, "POST", f"/api/v1/proposals/{ps}/reject", {"note": "REP6 verify — not now"})
     ns = (await cands_of(conn, rs["id"])).get((S["sec_NS"], "harvest")) if rs else None
     check(ns is not None and ns["est_tax_value"] is None and ns["value_note"] == TP.NO_PROFILE and ns["rate_used"] is None
@@ -1619,11 +1638,29 @@ async def y_concurrency(conn):
     rows2, tasks2, _ = await state(ACCT_CUST, t0)
     check(len(mine) == 1 and mine[0].get("skipped") == "already proposed" and len(rows2) == 1 and tasks2 == 1,
           "the event sweep after it → 'already proposed', nothing new", f"{mine}")
-    # 2. the database backstop alone: the same race with the account lock BYPASSED (RP._generate) still leaves one
+    # fix 5: the sweep never proposes a version to an account that joined ON it. Before the fix this very sweep made
+    # SOLO (joined m3 on this version, its join's transition rejected) a model_change proposal — a proposal from a
+    # rejection's aftermath, and the reason the lock-bypassed race below once found SOLO already proposed
+    solo = [x for x in again if x.get("account_id") == str(ACCT_SOLO)]
+    solo_rows, _, _ = await state(ACCT_SOLO, t0)
+    check(len(solo) == 1 and solo[0].get("skipped") in ("joined on this version", "a proposal on this version exists")
+          and "proposal_id" not in solo[0] and not solo_rows,
+          "the event sweep proposes NOTHING to an account that joined on the version (SOLO: its rejected join stays "
+          "the last word — no model_change proposal)", f"{solo} {len(solo_rows)} {await open_props(conn, ORG_A, ACCT_SOLO)}")
+    # 2. the database backstop alone: the same race with the account lock BYPASSED (RP._generate) still leaves one.
+    # Its own fresh account (fix 5): RACE follows m3 live (joined, the join's transition rejected), with no
+    # model_change proposal for the version and no open proposal — SOLO is not reused, so nothing an earlier section
+    # did to it decides this check
+    c, c2, pr, _, _ = await join(ACCT_RACE, S["m3"])
+    cr, _ = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{pr}/reject", {"note": "REP6 verify — race fixture"})
+    pre_rows, _, pre_open = await state(ACCT_RACE, datetime.now(timezone.utc))
+    check(c == 201 and c2 == 200 and cr == 200 and not pre_rows and pre_open == 0,
+          "the race's own account follows m3 live with no model_change proposal for the version and nothing open",
+          f"{c} {c2} {cr} {len(pre_rows)} {await open_props(conn, ORG_A, ACCT_RACE)}")
     t1 = await conn.fetchval("SELECT now()")
     with _ctx(ORG_A):
-        res = await asyncio.gather(gen(RP._generate, ACCT_SOLO), gen(RP._generate, ACCT_SOLO), return_exceptions=True)
-    rows, tasks, opens = await state(ACCT_SOLO, t1)
+        res = await asyncio.gather(gen(RP._generate, ACCT_RACE), gen(RP._generate, ACCT_RACE), return_exceptions=True)
+    rows, tasks, opens = await state(ACCT_RACE, t1)
     refused = [r for r in res if isinstance(r, BaseException)]
     names = {getattr(r, "constraint_name", None) or type(r).__name__ for r in refused}
     check(sum(isinstance(r, dict) for r in res) == 1 and len(refused) == 1
@@ -1631,7 +1668,8 @@ async def y_concurrency(conn):
           and opens == 1,
           "WITHOUT the lock the database still allows one: the second insert is refused (AlreadyProposed from "
           "rebalance_proposals_model_change_uq, or the open-proposal index) — one proposal, one review task",
-          f"{[type(r).__name__ for r in res]} {names} {len(rows)} rows, {tasks} task(s)")
+          f"{[type(r).__name__ for r in res]} {names} {len(rows)} rows, {tasks} task(s) "
+          f"{await open_props(conn, ORG_A, ACCT_RACE)}")
     idx = await platform(conn, "SELECT pg_get_indexdef(indexrelid) FROM pg_index i JOIN pg_class c ON c.oid = "
                                "i.indexrelid WHERE c.relname = 'rebalance_proposals_model_change_uq' AND i.indisunique",
                          fetch="fetchval")

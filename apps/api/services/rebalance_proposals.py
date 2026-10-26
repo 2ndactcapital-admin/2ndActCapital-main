@@ -9,7 +9,9 @@ EVERY TRIGGER PRODUCES A PROPOSAL, NEVER A TRADE
   model_change  'model.version_approved' for every account following the model
                 live (a direct call from rep3's after_approval, Task 1c; the
                 scheduler tick sweeps recent events again — idempotent per
-                account + model version);
+                account + model version; never for an account that joined on
+                that version or already has a proposal on it, see
+                :func:`joined_on_version`);
   drift         the daily scan on the scheduler tick: max |actual − target|
                 over the account's own valuation above its drift threshold
                 (link override → the model's spec → org setting → 1%);
@@ -1125,13 +1127,33 @@ async def sync_executed(pool, *, org_id, proposal_id) -> dict:
 
 
 # ── Triggers from outside ───────────────────────────────────────────────────
+async def joined_on_version(conn, link: dict, version_id) -> str | None:
+    """Why an account following the model is NOT due a model_change proposal
+    for ``version_id``, or None: it joined while that version was already
+    live (its join transition is the proposal for it), or it already has a
+    proposal computed against that version (any trigger, any status — a
+    rejected join stays rejected). The event sweep re-reads the last days of
+    events, so without this every tick re-proposed the version to every
+    account that joined on it — superseding the join's own proposal, or
+    making a new one after a person rejected it."""
+    approved_at = await conn.fetchval("SELECT approved_at FROM portfolio.model_versions WHERE id = $1::uuid "
+                                      "AND system_to IS NULL", str(version_id))
+    if approved_at is not None and link.get("joined_at") is not None and link["joined_at"] >= approved_at:
+        return "joined on this version"
+    pid = await conn.fetchval(
+        f"SELECT id FROM {T_P} WHERE account_id = $1::uuid AND model_version_id = $2::uuid "
+        "AND archived_from_id IS NULL AND system_to IS NULL LIMIT 1", str(link["account_id"]), str(version_id))
+    return "a proposal on this version exists" if pid else None
+
+
 async def on_model_version_approved(pool, *, org_id, model_id, version_id) -> list[dict]:
-    """'model.version_approved' → a system proposal for every account following
-    the model live. Idempotent per (account, model version)."""
+    """'model.version_approved' → a system proposal for every account that was
+    following the model live BEFORE this version (:func:`joined_on_version`).
+    Idempotent per (account, model version)."""
     out = []
     async with pool.acquire() as conn:
         links = [dict(r) for r in await conn.fetch(
-            f"SELECT id, account_id FROM {AM.T_LINK} WHERE org_id = $1::uuid AND model_id = $2::uuid "
+            f"SELECT id, account_id, joined_at FROM {AM.T_LINK} WHERE org_id = $1::uuid AND model_id = $2::uuid "
             "AND status = 'active' AND follow = 'live' AND valid_to IS NULL AND system_to IS NULL",
             str(org_id), str(model_id))]
         event_id = await conn.fetchval(
@@ -1144,9 +1166,13 @@ async def on_model_version_approved(pool, *, org_id, model_id, version_id) -> li
             async with account_lock(pool, str(ln["account_id"])):
                 async with pool.acquire() as conn:
                     done = await model_change_for(conn, ln["account_id"], version_id)
+                    covered = None if done else await joined_on_version(conn, ln, version_id)
                 if done:
                     out.append({"account_id": str(ln["account_id"]), "proposal_id": str(done),
                                 "skipped": "already proposed"})
+                    continue
+                if covered:
+                    out.append({"account_id": str(ln["account_id"]), "skipped": covered})
                     continue
                 p = await generate(pool, org_id=org_id, account_id=ln["account_id"], trigger="model_change",
                                    maker_kind="system", trigger_ref={"event_id": str(event_id) if event_id else None,

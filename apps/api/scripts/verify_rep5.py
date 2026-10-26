@@ -546,6 +546,15 @@ async def open_prop(conn, org, account):
                         fetch="fetchrow")
 
 
+async def open_props(conn, org, account) -> str:
+    """Every open proposal of the account (detail text for a failing check: names the culprit)."""
+    rows = await scoped(conn, org, "SELECT id, trigger, status, maker_kind, created_at FROM "
+                                   "public.rebalance_proposals WHERE account_id = $1::uuid AND system_to IS NULL AND "
+                                   "status IN ('draft', 'pending_approval', 'approved') ORDER BY created_at", str(account))
+    return "open: " + (", ".join(f"({r['id']}, {r['trigger']}, {r['status']}, {r['maker_kind']}, "
+                                 f"{r['created_at'].isoformat()})" for r in rows) or "none")
+
+
 def jl(v):
     if v is None or isinstance(v, (dict, list)):
         return v
@@ -1191,9 +1200,10 @@ async def y_proposals(conn):
     dp = await open_prop(conn, ORG_A, ACCT_DRIFT)
     check(drift.get("action") == "drift" and dp is not None and dp["trigger"] == "drift" and dp["maker_kind"] == "system"
           and D(dp["drift_before"]) > D("0.05"), "drift over the account's threshold → a drift proposal (system)",
-          f"{drift}")
+          f"{drift} {await open_props(conn, ORG_A, ACCT_DRIFT)}")
     cp = await open_prop(conn, ORG_A, ACCT_CALM)
-    check(calm.get("action") == "none" and cp is None, "an account within its threshold gets NO proposal", f"{calm}")
+    check(calm.get("action") == "none" and cp is None, "an account within its threshold gets NO proposal",
+          f"{calm} {await open_props(conn, ORG_A, ACCT_CALM)}")
     kp = await open_prop(conn, ORG_A, ACCT_CASH)
     check(cash.get("action") == "cash_flow" and kp is not None and kp["trigger"] == "cash_flow"
           and D(kp["drift_before"]) <= D("0.5"), "cash above its target by more than the threshold → cash_flow "
@@ -1285,9 +1295,11 @@ async def y_execution(conn):
     pool = await pool_()
     pid = S["join_proposal_main"]
     c1, o1 = await api(U_ADMIN1, "POST", f"/api/v1/proposals/{pid}/approve", {})
-    st = (await prop_row(conn, ORG_A, pid))["status"]
+    pr = await prop_row(conn, ORG_A, pid)
+    st = pr["status"]
     check(c1 == 403 and st == "pending_approval", "the proposal's maker is refused (403); it stays pending",
-          f"{c1} {st}")
+          f"{c1} {st} {pr['status_reason'] if st != 'pending_approval' else ''} "
+          f"{await open_props(conn, ORG_A, ACCT_MAIN)}")
     c2, o2 = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{pid}/approve", {})
     p = await prop_row(conn, ORG_A, pid)
     ex = jl(p["execution"]) or {}
