@@ -1,5 +1,5 @@
 {
- "app_route_count": 613,
+ "app_route_count": 632,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -11572,6 +11572,424 @@
    "name": "retire_denial",
    "note": "",
    "path": "/api/v1/tax/substitutions/denials/{row_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.held_away",
+   "name": "account_panel",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.held_away",
+   "name": "account_positions",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/positions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.held_away",
+   "name": "get_import",
+   "note": "",
+   "path": "/api/v1/held-away/imports/{import_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.held_away",
+   "name": "providers",
+   "note": "",
+   "path": "/api/v1/held-away/providers",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "add_source",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/sources",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "change_source",
+   "note": "",
+   "path": "/api/v1/held-away/sources/{source_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "manual_import",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/imports/manual",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "file_import",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/imports/file",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "link_statement",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/statements",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "statement_import",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/imports/statement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "approve_import",
+   "note": "",
+   "path": "/api/v1/held-away/imports/{import_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "reject_import",
+   "note": "",
+   "path": "/api/v1/held-away/imports/{import_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "request_confirmation",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/confirmations",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.held_away",
+   "name": "confirm",
+   "note": "",
+   "path": "/api/v1/held-away/confirmations/{confirmation_id}/confirm",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.xray",
+   "name": "households",
+   "note": "",
+   "path": "/api/v1/xray/households",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.xray",
+   "name": "household_xray",
+   "note": "",
+   "path": "/api/v1/xray/households/{household_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.xray",
+   "name": "get_run",
+   "note": "",
+   "path": "/api/v1/xray/runs/{run_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.xray",
+   "name": "record_run",
+   "note": "",
+   "path": "/api/v1/xray/households/{household_id}/runs",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.xray",
+   "name": "open_join",
+   "note": "",
+   "path": "/api/v1/xray/households/{household_id}/join",
    "public": false,
    "write": true
   },

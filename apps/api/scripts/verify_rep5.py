@@ -976,7 +976,12 @@ async def y_join(conn):
                             fetch="fetchval")
     check(int(n_active) == 1, "exactly one active link for the account", f"{n_active}")
     # the other joins this run uses
-    joins = {ACCT_ADV: ("m2", {}), ACCT_HELD: ("m2", {}), ACCT_SYS: ("m3", {}),
+    # rep7 superseded rep5 here: a held-away account never joins a model (a join is a transition — it trades)
+    ch, oh = await api(U_ADMIN1, "POST", f"/api/v1/accounts/{ACCT_HELD}/model/join", {"model_id": str(S["m2"]),
+                                                                                   "settings": {}})
+    check(ch == 409 and "held-away" in str(oh), "rep7: a held-away account's join is refused (409, plain words)",
+          f"{ch} {str(oh)[:160]}")
+    joins = {ACCT_ADV: ("m2", {}), ACCT_SYS: ("m3", {}),
              ACCT_DRIFT: ("m2", {"drift_threshold": "0.05"}), ACCT_CALM: ("m2", {"drift_threshold": "0.05"}),
              ACCT_CASH: ("m2", {"drift_threshold": "0.5"})}
     for acct, (m, st_) in joins.items():
@@ -1413,8 +1418,8 @@ async def y_execution(conn):
         x1, _ = await api(U_ADMIN3, "POST", f"/api/v1/execution/instructions/{srows[0]['id']}/approve", {})
         x2, _ = await api(U_ADMIN2, "POST", f"/api/v1/execution/instructions/{srows[0]['id']}/approve", {})
         check(x1 == 403 and x2 == 200, "rep2 refuses the reviewer (its maker) and a second person approves", f"{x1} {x2}")
-    # held-away and advice-only → the member executes
-    for acct, why in ((ACCT_HELD, "held-away account"), (ACCT_ADV, None)):
+    # advice-only → the member executes (rep7: a held-away account never reaches this — its join is refused)
+    for acct, why in ((ACCT_ADV, None),):
         pid2 = S[f"join_{acct}"]
         c, o = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{pid2}/approve", {})
         r2 = await prop_row(conn, ORG_A, pid2)

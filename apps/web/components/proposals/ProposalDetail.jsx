@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { amountText, labelOf, moneyText, pctText, proposalControls, securityText, vocab, weightRows } from "@/lib/proposals.mjs";
 import { matchesOf, washText } from "@/lib/tax.mjs";
+import { proposalStale } from "@/lib/heldAway.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -89,6 +90,7 @@ export default function ProposalDetail({ initialEnvelope }) {
   const open = tasks.find((t) => t.status === "open");
   const warnings = Array.isArray(p.warnings) ? p.warnings : [];
   const instructions = Array.isArray(p.instructions) ? p.instructions : [];
+  const stale = proposalStale(p);   // REP7 — approval waits for a confirmation of stale held-away data
 
   async function act(path, body) {
     setMsg(null);
@@ -110,6 +112,15 @@ export default function ProposalDetail({ initialEnvelope }) {
         <p className="mt-1">Estimated gain: short-term {moneyText(p.est_st_gain)}, long-term {moneyText(p.est_lt_gain)}
           {p.gain_budget ? ` · gain budget ${moneyText(p.gain_budget)} (already realized this year ${moneyText(p.gain_realized_ytd)})` : " · no gain budget"}</p>
       </div>
+      {stale.lines.length ? (
+        <div className={`${card} p-6 text-sm`}>
+          <h2 className="text-lg font-semibold text-navy">Held-away data{stale.blocking ? <span className="ml-2 rounded bg-[#FAF9F6] px-2 text-xs text-[#9B2335]">Stale — confirm before approval</span> : null}</h2>
+          <ul className="mt-2 space-y-1">{stale.lines.map((d) => (
+            <li key={d.account_id}>{d.message}
+              {d.blocking ? <a className="ml-2 text-navy underline" href={`/portfolio/accounts/${d.account_id}`}>Confirm the data (task: confirm_held_away_data)</a> : null}</li>
+          ))}</ul>
+        </div>
+      ) : null}
       {warnings.length ? (
         <div className={`${card} p-6 text-sm`}>
           <h2 className="text-lg font-semibold text-navy">Warnings</h2>
@@ -132,7 +143,7 @@ export default function ProposalDetail({ initialEnvelope }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {c.submit ? <button type="button" className={primary} onClick={() => act("submit")}>Submit for approval</button> : null}
           {c.approve || c.reject ? <input className={input} placeholder="Note (required to reject)" value={note} onChange={(e) => setNote(e.target.value)} /> : null}
-          {c.approve ? <button type="button" className={primary} onClick={() => act("approve", { note: note || undefined })}>Approve</button> : null}
+          {c.approve && !stale.blocking ? <button type="button" className={primary} onClick={() => act("approve", { note: note || undefined })}>Approve</button> : null}
           {c.reject ? <button type="button" className={secondary} onClick={() => act("reject", { note })}>Reject</button> : null}
           {c.execute ? <button type="button" className={secondary} onClick={() => act("execute")}>Create instructions</button> : null}
           {c.refresh ? <button type="button" className={secondary} onClick={() => act("refresh")}>Check instructions</button> : null}

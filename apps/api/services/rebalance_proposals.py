@@ -88,6 +88,7 @@ from decimal import Decimal
 import asyncpg
 
 from services import account_models as AM
+from services import held_away as HA
 from services import human_tasks as HT
 from services import rebalance_engine as E
 from services import wash_sale as WS
@@ -120,6 +121,8 @@ WARNING_LABELS = {
     "wash_sale_flag": "Possible wash sale (flag only — before rep6)", "exclusion_note": "Exclusion applied",
     "wash_sale_control": "Wash-sale control changed a trade", "wash_sale_held": "Loss lots held back (wash sale)",
     "harvest_note": "Tax-loss harvest",
+    "held_away_realized": "Includes gains realized in held-away accounts",
+    "stale_held_away": "Held-away data is stale — confirm before approval",
 }
 PRICE_SOURCE_LABELS = {"account_position": "The account's own position valuation",
                        "security_price": "Security price", "none": "No price — bought by amount"}
@@ -348,10 +351,25 @@ async def target_for(conn, org_id, link: dict, version_id) -> dict:
             "warnings": warnings}
 
 
-async def realized_ytd(conn, org_id, account_id, today: date) -> Decimal:
+async def realized_ytd(conn, org_id, account_id, today: date, *, include_held_away: bool = True) -> Decimal:
     """Gains already realized this calendar year: closed lots of this account
     whose CLOSING transaction's trade_date is this year
-    (tax_lots.realized_gain_loss — the transaction carries no gain itself)."""
+    (tax_lots.realized_gain_loss — the transaction carries no gain itself).
+    rep7: plus the gains realized in HELD-AWAY accounts of the same tax subject
+    (services.held_away.realized_elsewhere) — the gain budget counts gains
+    realized elsewhere."""
+    own = await _realized_own(conn, org_id, account_id, today)
+    if not include_held_away:
+        return own
+    acct = await conn.fetchrow("SELECT id, household_id, primary_entity_id FROM public.accounts WHERE id = $1::uuid "
+                               "AND org_id = $2::uuid AND system_to IS NULL AND valid_to IS NULL",
+                               str(account_id), str(org_id))
+    if acct is None:
+        return own
+    return own + (await HA.realized_elsewhere(conn, org_id, dict(acct), today))["amount"]
+
+
+async def _realized_own(conn, org_id, account_id, today: date) -> Decimal:
     v = await conn.fetchval(
         """SELECT COALESCE(sum(tl.realized_gain_loss), 0)
            FROM portfolio.tax_lots tl
@@ -372,7 +390,8 @@ async def household_accounts(conn, org_id, account: dict) -> list[dict]:
              SELECT $3::uuid AS entity_id
              UNION SELECT entity_id FROM public.account_owners WHERE account_id = $2::uuid AND org_id = $1::uuid
                AND valid_to IS NULL AND system_to IS NULL)
-           SELECT a.id, a.account_number_masked, a.registration_type, a.tax_status FROM public.accounts a
+           SELECT a.id, a.account_number_masked, a.registration_type, a.tax_status, a.is_held_away
+           FROM public.accounts a
            WHERE a.org_id = $1::uuid AND a.system_to IS NULL AND a.valid_to IS NULL
              AND (a.id = $2::uuid OR ($4::uuid IS NOT NULL AND a.household_id = $4::uuid)
                   OR a.primary_entity_id IN (SELECT entity_id FROM owners)
@@ -490,6 +509,19 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
     lines, res, w2 = await apply_wash_control(conn, account, res, hold, ctx, fractional=available(frac),
                                               today=today, prices=prices)
     warnings += w2
+    # rep7 — held-away data: gains realized elsewhere are in the budget; stale data is stated with its date
+    elsewhere = await HA.realized_elsewhere(conn, org_id, account, today)
+    if elsewhere["lots"]:
+        warnings.append({"code": "held_away_realized",
+                         "message": f"realized YTD includes ${elsewhere['amount'].quantize(E.CENT)} realized elsewhere "
+                                    f"({elsewhere['lots']} closed lot(s) in {len(elsewhere['accounts'])} held-away "
+                                    "account(s) of the same tax subject)",
+                         "amount": str(elsewhere["amount"]), "lots": elsewhere["lots"],
+                         "accounts": elsewhere["accounts"]})
+    for s_ in await HA.staleness(conn, org_id, account, today):
+        if s_["stale"]:
+            warnings.append({"code": "stale_held_away", "message": s_["message"], "account_id": s_["account_id"],
+                             "as_of": s_["as_of"], "stale_after_days": s_["stale_after_days"]})
     for k in {t.key for t, _ in lines}:
         labels.setdefault(k, ctx.label(k))
     thr, thr_src = await drift_threshold(conn, org_id, link, version_id)
@@ -636,6 +668,8 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
         account = await AM.load_account(conn, org_id, account_id)
         if AM.is_closed(account, today):
             raise ProposalConflict(f"account {account['account_number_masked']} is closed")
+        # rep7 — a held-away account is never traded: no proposal of any trigger
+        HA.refuse(account, f"a {TRIGGER_LABELS[trigger].lower()} proposal", ProposalConflict)
         link = await AM.active_link(conn, account["id"])
         if link is None:
             raise ProposalConflict("the account does not follow a model — join one first")
@@ -687,6 +721,12 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
         await _publish(pool, org_id, "superseded", superseded["id"], {"superseded_by_id": str(pid)}, maker_id)
     await _publish(pool, org_id, "generated", pid, {"trigger": trigger, "account_id": str(account["id"]),
                                                     "trades": len(c["lines"])}, maker_id)
+    if any(w.get("code") == "stale_held_away" for w in c["warnings"]):
+        try:   # rep7 — the adviser's confirmation task for each stale held-away dependency
+            await HA.ensure_proposal_confirmations(pool, org_id=org_id, proposal_id=pid, account_id=account["id"],
+                                                   today=today)
+        except Exception:  # noqa: BLE001 — the approval precheck opens it again; the proposal stands
+            log.exception("confirm_held_away_data task for proposal %s", pid)
     out = None
     if maker_kind == "system" or auto_submit:
         out = await submit(pool, org_id=org_id, proposal_id=pid, actor_id=maker_id, system=maker_kind == "system")
@@ -770,6 +810,7 @@ async def transition_preview(conn, org_id, account_id, *, model_id=None, setting
     """The transition analysis for a joining (or re-targeted) account, computed
     without writing anything: keep / trim / add / sell now / sell later by year."""
     account = await AM.load_account(conn, org_id, account_id)
+    HA.refuse(account, "a transition", ProposalConflict)       # rep7
     link = await AM.active_link(conn, account["id"])
     mid = model_id or (link["model_id"] if link else None)
     if mid is None:
@@ -943,6 +984,10 @@ HT.register_kind(TASK_APPROVAL, label="Rebalance proposal approval", outcomes=("
                  maker_checker=True, on_complete=_on_task_complete)
 HT.register_kind(TASK_REVIEW, label="Rebalance proposal review", outcomes=("approve", "reject"),
                  maker_checker=False, on_complete=_on_task_complete, system_open=True)
+# rep7 — approval waits while the proposal depends on stale, unconfirmed held-away data (checked BEFORE the task
+# commits, so the task stays open)
+HT.register_precheck(TASK_APPROVAL, HA._approval_precheck)
+HT.register_precheck(TASK_REVIEW, HA._approval_precheck)
 
 
 async def sync_task_outcome(pool, *, org_id, proposal_id) -> None:
@@ -1030,6 +1075,7 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
         actor = await HT.assert_human(conn, actor_id, org_id)
         account = await X.load_account(conn, org_id, p["account_id"])
         acct = await AM.load_account(conn, org_id, p["account_id"])
+        HA.refuse(acct, "routing a proposal to instructions", ProposalConflict)     # rep7
         lines = await trades_of(conn, p["id"])
         within = await _setting(conn, org_id, EXECUTE_WITHIN_SETTING, DEFAULT_EXECUTE_WITHIN, lo=0, hi=90,
                                 integer=True)
@@ -1260,16 +1306,23 @@ async def release_fee_exclusions(pool, *, org_id) -> list[str]:
     return ended
 
 
-async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs: bool = False) -> dict:
+async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs: bool = False,
+                   xray_sweep: bool | None = None) -> dict:
     """Every proposal step for one org (the caller set its RLS context).
 
     A test org (services.orgs) is skipped — no step runs — unless the caller
-    passes ``include_test_orgs=True``: only a verify script, for its own org."""
+    passes ``include_test_orgs=True``: only a verify script, for its own org.
+    rep7: the X-ray sweep records runs against the org's households, so a
+    verify that ticks its own org gets it only by asking (``xray_sweep=True``)
+    — an older verify's household teardown is never blocked by a run it did
+    not create."""
+    if xray_sweep is None:
+        xray_sweep = not include_test_orgs
     from services import orgs as ORGS
 
     today = today or date.today()
     out = {"expired": 0, "executed": 0, "model_change": [], "harvest": [], "scans": [], "fee_exclusions_ended": [],
-           "loss_bank": None, "errors": []}
+           "loss_bank": None, "held_away_staleness": None, "xray": None, "errors": []}
     async with pool.acquire() as conn:
         if not include_test_orgs and await ORGS.is_test_org(conn, org_id):
             return {**out, "skipped": "test org (organizations.is_test) — schedulers never act on one"}
@@ -1326,6 +1379,19 @@ async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs
         out["fee_exclusions_ended"] = await release_fee_exclusions(pool, org_id=org_id)
     except Exception as exc:  # noqa: BLE001
         out["errors"].append(f"fee exclusions: {exc}")
+    # rep7 — the held-away staleness check (confirmations expire; stale proposals get their confirm task) and the
+    # daily X-ray sweep (one recorded run per household and day). Neither trades nor opens a proposal.
+    from services import xray as XR
+
+    try:
+        out["held_away_staleness"] = await HA.staleness_tick(pool, org_id=org_id, today=today)
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"held-away staleness: {exc}")
+    if xray_sweep:
+        try:
+            out["xray"] = await XR.sweep(pool, org_id=org_id, today=today)
+        except Exception as exc:  # noqa: BLE001
+            out["errors"].append(f"x-ray: {exc}")
     return out
 
 
@@ -1343,7 +1409,11 @@ async def proposals_tick(pool, *, today: date | None = None) -> dict:
             orgs = [r["org_id"] for r in await conn.fetch(
                 f"SELECT org_id FROM (SELECT DISTINCT org_id FROM {AM.T_LINK} WHERE status = 'active' "
                 "AND valid_to IS NULL AND system_to IS NULL UNION SELECT DISTINCT org_id FROM " + T_P +
-                " WHERE system_to IS NULL AND status = ANY($1::text[])) x WHERE " + ORGS.not_test_org_sql("x.org_id"),
+                " WHERE system_to IS NULL AND status = ANY($1::text[])"
+                # rep7 — orgs with households (the daily X-ray) and with held-away sources (staleness)
+                " UNION SELECT DISTINCT org_id FROM public.accounts WHERE household_id IS NOT NULL "
+                "AND system_to IS NULL AND valid_to IS NULL UNION SELECT DISTINCT org_id FROM " + HA.T_SRC +
+                " WHERE system_to IS NULL) x WHERE " + ORGS.not_test_org_sql("x.org_id"),
                 list(OPEN_STATUSES))]
     finally:
         reset_rls_context(tokens)
@@ -1437,6 +1507,7 @@ async def detail(conn, org_id, proposal_id) -> dict:
     plan = await conn.fetchrow(f"SELECT * FROM {T_PLAN} WHERE proposal_id = $1 AND system_to IS NULL "
                                "ORDER BY created_at DESC LIMIT 1", p["id"])
     out["transition_plan"] = plan_row_out(dict(plan)) if plan else None
+    out["held_away"] = await HA.proposal_held_away(conn, org_id, p)        # rep7
     return out
 
 

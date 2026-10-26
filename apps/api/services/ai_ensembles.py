@@ -36,7 +36,8 @@ from services.system_one import list_system_one_models
 
 # Ensemble tasks. Keys, not display labels. note_terms_extraction = noteextractb1.
 # rep1: replica_terms_extraction — Replication Studio fund-terms readers (public prospectuses).
-KNOWN_TASK_KEYS = frozenset({"note_terms_hazard", "note_terms_extraction", "replica_terms_extraction"})
+KNOWN_TASK_KEYS = frozenset({"note_terms_hazard", "note_terms_extraction", "replica_terms_extraction",
+                             "statement_positions"})  # rep7: held-away statement extraction (never Claude)
 AVAILABLE = "available"
 
 

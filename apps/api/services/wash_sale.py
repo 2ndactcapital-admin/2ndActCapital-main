@@ -13,7 +13,12 @@ and its window ends 30 days after the last of them.
 
 WHO — every account of the household (rep5's ``household_accounts``: the same
 household, the same primary entity, or a shared owner) — the spouse and every
-IRA / Roth included — plus the household's DECLARED outside trades.
+IRA / Roth included, and (rep7) every HELD-AWAY account: its trades are
+portfolio.transactions like any other (source 'held_away'), so an IRA held
+elsewhere makes rule (c) block — plus the household's DECLARED outside trades.
+A declared trade that a held-away transaction matches (held_away_records.
+matched_declared_id) counts ONCE: the held-away row stands, the declaration is
+skipped.
 
   A LOSS opens a window only where it is a deductible loss: a sale in a taxable
   account (or one whose tax status is unknown — treated as taxable). A loss
@@ -61,7 +66,8 @@ OUTCOME_LABELS = {"clear": "Clear", "replaced": "Replaced by an approved substit
                   "deferred": "Deferred until it is clear", "blocked": "Blocked"}
 TAX_CLASS_LABELS = {"taxable": "Taxable", "tax_advantaged": "IRA / Roth (tax-advantaged)",
                     "unknown": "Tax status unknown (treated as taxable)"}
-SOURCE_LABELS = {"transaction": "A recorded trade", "fill": "A reported fill", "instruction": "An open instruction",
+SOURCE_LABELS = {"transaction": "A recorded trade", "held_away": "A trade in a held-away account (its source and as-of "
+                 "are on the account)", "fill": "A reported fill", "instruction": "An open instruction",
                  "proposal": "A pending proposal", "declared_outside": "A declared outside trade",
                  "this_proposal": "This proposal"}
 FALLBACK_SETTING = "replication.tax.wash_buy_fallback"
@@ -391,9 +397,10 @@ async def load_context(conn, org_id, account: dict, today: date, *, exclude_prop
                  AND x.transaction_type_code IN ('buy', 'sell') AND x.valid_to IS NULL AND x.system_to IS NULL
                  AND a.global_security_id IS NOT NULL""", str(org_id), ids, lo, today):
         loss = None if (r["transaction_type_code"] == "buy" or r["realized"] is None) else Decimal(str(r["realized"])) < 0
+        held = bool((by_id.get(str(r["account_id"])) or {}).get("is_held_away"))
         ev(r["global_security_id"], r["transaction_type_code"], r["trade_date"], r["trade_date"],
-           loss if r["transaction_type_code"] == "sell" else None, r["account_id"], "transaction", r["id"],
-           r["quantity"])
+           loss if r["transaction_type_code"] == "sell" else None, r["account_id"],
+           "held_away" if held else "transaction", r["id"], r["quantity"])
     # reported fills (dated by the fill)
     for r in await conn.fetch(
             """SELECT f.id, f.quantity, f.price, f.filled_at, f.lots, i.side, i.account_id, i.global_security_id
@@ -448,9 +455,11 @@ async def load_context(conn, org_id, account: dict, today: date, *, exclude_prop
     if subs:
         for r in await conn.fetch(
                 """SELECT id, account_description, account_tax_class, global_security_id, side, trade_date, quantity, loss
-                   FROM public.declared_outside_trades
+                   FROM public.declared_outside_trades d
                    WHERE org_id = $1::uuid AND valid_to IS NULL AND system_to IS NULL AND trade_date >= $2
-                     AND (subject_type || ':' || subject_id::text) = ANY($3::text[])""",
+                     AND (subject_type || ':' || subject_id::text) = ANY($3::text[])
+                     AND NOT EXISTS (SELECT 1 FROM public.held_away_records h WHERE h.matched_declared_id = d.id
+                                     AND h.valid_to IS NULL AND h.system_to IS NULL)""",
                 str(org_id), lo - timedelta(days=WINDOW_DAYS), [f"{t}:{i}" for t, i in subs]):
             loss = None if r["side"] == "buy" else {"yes": True, "no": False}.get(r["loss"])
             events.append(Event(str(r["global_security_id"]), r["side"], r["trade_date"], r["trade_date"], loss, None,

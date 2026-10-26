@@ -171,8 +171,28 @@ for _alias in ("target %", "weight %", "% weight", "target weight %", "allocatio
     _SYNONYMS.setdefault(norm_header(_alias), "weight")
 
 
-def field_for_header(header) -> str | None:
-    return _SYNONYMS.get(norm_header(header))
+_VOCABS: dict[int, dict[str, str]] = {}
+
+
+def synonyms_for(fields: dict | None) -> dict[str, str]:
+    """The normalised-header → field map of a field vocabulary (rep7: the
+    held-away positions-and-lots file reuses this machinery with its own
+    vocabulary; ``None`` = the model vocabulary, unchanged)."""
+    if fields is None or fields is FIELDS:
+        return _SYNONYMS
+    got = _VOCABS.get(id(fields))
+    if got is None:
+        got = {}
+        for k, (label, syns) in fields.items():
+            for s_ in syns:
+                got.setdefault(norm_header(s_), k)
+            got.setdefault(norm_header(label), k)
+        _VOCABS[id(fields)] = got
+    return got
+
+
+def field_for_header(header, fields: dict | None = None) -> str | None:
+    return synonyms_for(fields).get(norm_header(header))
 
 
 def cell_text(v) -> str | None:
@@ -406,15 +426,18 @@ def _read_csv(data: bytes) -> Workbook:
 
 
 # ── header + mapping ────────────────────────────────────────────────────────
-def detect_header(grid: list[list[Any]], saved: dict | None = None) -> int | None:
+def detect_header(grid: list[list[Any]], saved: dict | None = None, *, fields: dict | None = None,
+                  required: tuple[str, ...] = ("weight",)) -> int | None:
     """1-based number of the first row (of the first 30) that names an
-    identifier column and a weight column — by the saved provider mapping
-    first, then the synonym vocabulary (a provider's own headers are often
-    in neither list until its mapping is saved)."""
-    saved_norm = {norm_header(k): v for k, v in (saved or {}).items() if v in FIELDS}
+    identifier column and every ``required`` column (a weight, for a model) —
+    by the saved provider mapping first, then the synonym vocabulary (a
+    provider's own headers are often in neither list until its mapping is
+    saved)."""
+    vocab = fields or FIELDS
+    saved_norm = {norm_header(k): v for k, v in (saved or {}).items() if v in vocab}
     for i, row in enumerate(grid[:HEADER_SCAN_ROWS], start=1):
-        fields = {saved_norm.get(norm_header(c)) or field_for_header(c) for c in row if cell_text(c)}
-        if "weight" in fields and fields & set(IDENTIFIER_FIELDS):
+        found = {saved_norm.get(norm_header(c)) or field_for_header(c, fields) for c in row if cell_text(c)}
+        if set(required) <= found and found & set(IDENTIFIER_FIELDS):
             return i
     return None
 
@@ -425,10 +448,10 @@ def headers_of(grid: list[list[Any]], header_row: int) -> list[str]:
     return [cell_text(c) or "" for c in grid[header_row - 1]]
 
 
-def suggest_mapping(headers: list[str], saved: dict | None = None) -> list[dict]:
+def suggest_mapping(headers: list[str], saved: dict | None = None, *, fields: dict | None = None) -> list[dict]:
     """One suggestion per column: the saved provider mapping first (keyed by
     normalised header), then the synonym vocabulary. Each field once."""
-    saved_norm = {norm_header(k): v for k, v in (saved or {}).items() if v in FIELDS}
+    saved_norm = {norm_header(k): v for k, v in (saved or {}).items() if v in (fields or FIELDS)}
     used: set[str] = set()
     out = []
     for idx, h in enumerate(headers):
@@ -437,7 +460,7 @@ def suggest_mapping(headers: list[str], saved: dict | None = None) -> list[dict]
         if key and key in saved_norm and saved_norm[key] not in used:
             fld, src = saved_norm[key], "saved"
         elif key:
-            cand = field_for_header(h)
+            cand = field_for_header(h, fields)
             if cand and cand not in used:
                 fld, src = cand, "synonym"
         if fld:
@@ -446,10 +469,12 @@ def suggest_mapping(headers: list[str], saved: dict | None = None) -> list[dict]
     return out
 
 
-def mapping_from_request(headers: list[str], mapping: dict | None, saved: dict | None = None) -> dict[int, str]:
+def mapping_from_request(headers: list[str], mapping: dict | None, saved: dict | None = None, *,
+                         fields: dict | None = None) -> dict[int, str]:
     """{column index: field}. ``mapping`` is {header text: field | ''}; a header
     it does not mention takes the suggestion."""
-    sugg = {s["column"]: s["field"] for s in suggest_mapping(headers, saved) if s["field"]}
+    vocab = fields or FIELDS
+    sugg = {s["column"]: s["field"] for s in suggest_mapping(headers, saved, fields=fields) if s["field"]}
     if mapping is None:
         return sugg
     by_norm = {norm_header(k): (v or None) for k, v in mapping.items()}
@@ -458,13 +483,13 @@ def mapping_from_request(headers: list[str], mapping: dict | None, saved: dict |
         key = norm_header(h)
         fld = by_norm[key] if key in by_norm else sugg.get(idx)
         if fld:
-            if fld not in FIELDS:
+            if fld not in vocab:
                 raise UploadRefused("mapping", f"unknown field {fld!r} for column {h!r}")
             out[idx] = fld
     seen: dict[str, int] = {}
     for idx, fld in out.items():
         if fld in seen:
-            raise UploadRefused("mapping", f"two columns are mapped to {FIELDS[fld][0]!r} "
+            raise UploadRefused("mapping", f"two columns are mapped to {vocab[fld][0]!r} "
                                            f"({headers[seen[fld]]!r} and {headers[idx]!r})")
         seen[fld] = idx
     return out

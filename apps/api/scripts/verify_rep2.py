@@ -888,7 +888,7 @@ async def y_capabilities(conn):
 
 
 async def y_routing(conn):
-    section("[Y] Trade routing: Altruist (unknown API) and held-away → manual; extra fields refused")
+    section("[Y] Trade routing: Altruist (unknown API) → manual; held-away refused (rep7); extra fields refused")
     from services.custody.registry import register_trade_adapter
     from services.custody.trading import AltruistTradeAdapter
 
@@ -910,9 +910,10 @@ async def y_routing(conn):
           f"{code} {str(r)[:220]}")
     S["routed_alt"] = iid
     code, out, iid = await create(U_ADMIN1, ACCT_HELD, sa, side="buy", quantity="5")
-    r = out.get("routing", {})
-    check(code == 201 and r.get("adapter") == "manual" and "held-away" in (r.get("reason") or ""),
-          "held-away account (same custodian) → manual regardless", f"{code} {str(r)[:160]}")
+    # rep7 superseded rep2 here: a held-away account is never traded — the instruction is REFUSED (was: manual)
+    check(code == 409 and "held-away" in str(out) and iid is None,
+          "rep7: an instruction for a held-away account (same custodian) is refused (409, plain words)",
+          f"{code} {str(out)[:160]}")
     code, out, iid = await create(U_ADMIN1, ACCT_OTHER, sa, side="buy", quantity="5")
     r = out.get("routing", {})
     check(code == 201 and r.get("adapter") == "manual" and "no trade adapter" in (r.get("reason") or ""),

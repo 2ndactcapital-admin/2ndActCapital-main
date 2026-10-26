@@ -409,6 +409,9 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
         acct = await load_account(conn, org_id, trade_list.account_id)
         if str(acct["id"]) != str(account["id"]):
             raise ExecutionError("the trade list names a different account")
+        from services.held_away import refuse      # rep7 — never an instruction for a held-away account
+
+        refuse(acct, "an execution instruction", ExecutionConflict)
         up = await _verify_upstream(conn, org_id, acct, trade_list, upstream) if upstream else None
         maker = up["maker_id"] if up else actor["id"]
         status = "approved" if up else "draft"
