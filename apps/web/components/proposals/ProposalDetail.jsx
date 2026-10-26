@@ -3,14 +3,17 @@
 /**
  * ProposalDetail — one rebalance proposal (REP5): its trades with reasons,
  * lots, prices (source and as-of), before / target / after weights and drift,
- * estimated short- and long-term gain, warnings, wash-sale flags (information
- * only — they never block), the approval task, and the execution instructions
+ * estimated short- and long-term gain, warnings, each trade's household
+ * wash-sale result (REP6: clear / replaced / deferred / blocked, with the
+ * matches; a deferred or blocked line is never routed — a pre-rep6 proposal
+ * still shows its flag), the approval task, and the execution instructions
  * an approved proposal created. Submit / Approve / Reject / Execute render only
  * from `proposalControls(envelope)`; Approve / Reject never for the maker.
  */
 
 import { useState } from "react";
 import { amountText, labelOf, moneyText, pctText, proposalControls, securityText, vocab, weightRows } from "@/lib/proposals.mjs";
+import { matchesOf, washText } from "@/lib/tax.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -45,7 +48,13 @@ export function Trades({ envelope }) {
           <td>{t.price ?? "—"}<span className="block text-xs text-text-muted">{labelOf(v.price_sources, t.price_source)}{t.price_as_of ? `, as of ${t.price_as_of}` : ""}</span></td>
           <td>{t.side === "sell" ? `ST ${t.est_st_gain} / LT ${t.est_lt_gain}` : "—"}</td>
           <td>{t.reason}
-            {t.wash_sale_flag ? <span className="mt-1 block text-xs text-[#9B2335]">Wash-sale flag: {t.wash_sale_flag.note}</span> : null}</td>
+            {t.wash_sale_flag ? <span className="mt-1 block text-xs text-[#9B2335]">Wash-sale flag: {t.wash_sale_flag.note}</span> : null}
+            {t.wash_sale ? (
+              <span className={`mt-1 block text-xs ${t.wash_sale.outcome === "clear" ? "text-text-muted" : "text-[#9B2335]"}`}>
+                Wash sale: {washText(t.wash_sale, v)}{t.wash_sale.outcome !== "clear" ? ` — ${t.wash_sale.reason}` : ""}
+                {matchesOf(t.wash_sale).map((m, i) => <span key={i} className="block">· {m}</span>)}
+              </span>
+            ) : null}</td>
         </tr>
       ))}</tbody>
     </table>

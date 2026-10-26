@@ -71,8 +71,14 @@ class SettingsIn(_Body):
     short_term_wait_days: int | None = None
     harvesting_engine: str | None = Field(default=None, max_length=40)
     fee_schedule_override_id: UUID | None = None
+    harvest_enabled: bool | None = None
+    harvest_loss_pct: Decimal | None = None
+    harvest_loss_min: Decimal | None = None
+    harvest_to_cash: bool | None = None
+    harvest_swap_back: bool | None = None
 
-    @field_validator("cash_floor", "drift_threshold", "gain_budget", mode="before")
+    @field_validator("cash_floor", "drift_threshold", "gain_budget", "harvest_loss_pct", "harvest_loss_min",
+                     mode="before")
     @classmethod
     def _dec(cls, v, info):
         return _decimal(v, info.field_name)
@@ -88,7 +94,7 @@ class SettingsIn(_Body):
             elif k == "fee_schedule_override_id" and v is not None:
                 v = str(v)
             elif k in ("cash_floor", "exclusion_policy", "avoid_short_term", "short_term_wait_days",
-                       "harvesting_engine") and v is None:
+                       "harvesting_engine", "harvest_enabled") and v is None:
                 raise HTTPException(status_code=422, detail=f"{k} cannot be cleared")
             out[k] = v
         return out

@@ -40,6 +40,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from routers.entities import get_org_id
+from services import orgs as ORGS
 from services import replica_holdings as H
 from services import replica_parsers as P
 from services import replica_schedule as RS
@@ -455,7 +456,10 @@ async def refresh_holdings(request: Request, entry_id: str):
     await T.publish_actions(pool, refs)
     out = res.as_dict()
     out["review_task_opened"] = bool(reason)
-    out["model_monitor"] = await RS.monitor_models(pool, res)
+    # a real org's refresh never monitors a test org's models; a verify fixture org's own refresh may
+    async with pool.acquire() as conn:
+        caller_is_test = await ORGS.is_test_org(conn, org_id, missing=False)
+    out["model_monitor"] = await RS.monitor_models(pool, res, include_test_orgs=caller_is_test)
     return out
 
 

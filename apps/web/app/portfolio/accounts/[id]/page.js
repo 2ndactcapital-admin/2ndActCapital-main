@@ -3,10 +3,12 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
 import AccountModelPanel from "@/components/proposals/AccountModelPanel";
+import AccountTaxPanel from "@/components/tax/AccountTaxPanel";
 
 // REP5 — one account: its model, settings, a change awaiting approval, the
 // transition plan and its proposals. The envelope (flags, actions, registry
-// offer, harvesting-engine options) is fetched server-side.
+// offer, harvesting-engine options) is fetched server-side. REP6: the Tax
+// panel's envelope too — a caller without view_tax gets a 403 and no panel.
 export default async function AccountPage({ params }) {
   const { id } = await params;
   const session = await getHostSession();
@@ -20,6 +22,14 @@ export default async function AccountPage({ params }) {
     error = e.status === 404 ? "This account was not found." : e.status === 403
       ? "Accounts are open to staff with proposal access." : e.message;
   }
+  let tax = null;
+  if (!error) {
+    try {
+      tax = await fetchAPI(`/api/v1/tax/accounts/${encodeURIComponent(id)}`);
+    } catch {
+      tax = null; // no view_tax (403) or no panel: the Tax panel is simply not shown
+    }
+  }
   return (
     <AppShell user={session.user}>
       <p className="text-sm"><a className="text-navy underline" href="/portfolio/accounts">Accounts</a></p>
@@ -28,7 +38,10 @@ export default async function AccountPage({ params }) {
         {error ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">{error}</div>
         ) : (
-          <AccountModelPanel initialEnvelope={envelope} />
+          <div className="space-y-5">
+            <AccountModelPanel initialEnvelope={envelope} />
+            {tax ? <AccountTaxPanel envelope={tax} /> : null}
+          </div>
         )}
       </div>
     </AppShell>

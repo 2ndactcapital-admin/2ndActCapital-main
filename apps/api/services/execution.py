@@ -798,6 +798,12 @@ async def expire_due(pool, *, today: date | None = None, org_id=None) -> dict:
         if org_id:
             args.append(str(org_id))
             sql += " AND org_id = $3::uuid"
+        else:
+            # the cross-org sweep (the cron tick) never acts on a test org (services.orgs); a verify
+            # passes its own org_id explicitly
+            from services import orgs as ORGS
+
+            sql += " AND " + ORGS.not_test_org_sql(f"{T_INS}.org_id")
         due = await conn.fetch(sql + " ORDER BY execute_by, id", *args)
     for d in due:
         oid, iid = str(d["org_id"]), str(d["id"])

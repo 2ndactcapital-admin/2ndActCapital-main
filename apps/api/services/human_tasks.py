@@ -506,6 +506,10 @@ async def complete_task(pool, *, org_id, task_id, actor_id, outcome: str, note: 
         raise MakerCheckerError(f"maker-checker: {exc}") from exc
     except E.WorkflowPermissionError as exc:
         raise HumanTaskPermissionError(f"Permission required: {task['eligible_permission']}") from exc
+    except E.WorkflowEngineError as exc:
+        # the step closed between the read above and the engine's own (e.g. withdrawn by a newer proposal):
+        # a conflict, never a 500
+        raise HumanTaskConflict(f"this task is no longer open ({exc})") from exc
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _audit(conn, org_id, actor["id"], "human_task.completed", task["id"],
@@ -530,7 +534,10 @@ async def cancel_task(pool, *, org_id, task_id, actor_id, reason: str, actor_kin
         task = await get_task(conn, org_id, task_id)
     if task["status"] != "open":
         raise HumanTaskConflict(f"this task is {task['status']}, not open")
-    await E.cancel_user_task(pool, uuid.UUID(task["id"]), actor["id"], reason)
+    try:
+        await E.cancel_user_task(pool, uuid.UUID(task["id"]), actor["id"], reason)
+    except E.WorkflowEngineError as exc:
+        raise HumanTaskConflict(f"this task is no longer open ({exc})") from exc
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _audit(conn, org_id, actor["id"], "human_task.cancelled", task["id"],

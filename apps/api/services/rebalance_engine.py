@@ -41,12 +41,14 @@ is 'yes'); an UNPRICED one by notional (dollars) — never a guessed quantity. A
 holding the account cannot value is never traded. Trades under the minimum
 trade size are dropped as dust (counted in a warning).
 
-WASH-SALE FLAG — :func:`wash_sale_flags` (rep6 replaces it with full control)
+WASH-SALE CONTROL (rep6 — replaced rep5's flag) — services.wash_sale
 ──────────────────────────────────────────────────────────────────────────────
-A buy of a security the household SOLD AT A LOSS in the prior 30 days, and a
-loss sale of a security the household BOUGHT in the prior 30 days (every
-account of the household, IRAs included). A flag is information on the trade;
-it never blocks it.
+The engine's part is rule (b): ``SaleSettings.wash_hold`` names the securities
+whose LOSS lots must wait (a household buy within 30 days); :func:`plan_sales`
+holds those lots back — they never add gain-budget room — and the plan sells
+the account's other lots instead where it wants them. The held lots come back
+on ``BuildResult.wash_held`` (and in "sell later" from their clear day); the
+buy rules (a, c, d) run on the built trades in services.wash_sale.control.
 """
 
 from __future__ import annotations
@@ -236,6 +238,8 @@ class SaleSettings:
     avoid_short_term: bool = True
     short_term_wait_days: int = 30
     fractional: bool = False
+    #: rep6 — {security: {until, reason, matches, forfeit}}: its loss lots wait (wash sale)
+    wash_hold: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -266,6 +270,7 @@ class SalePlan:
     blocked: list[dict]
     net_gain_now: Decimal
     room_now: Decimal | None
+    held: list = field(default_factory=list)
 
 
 def _units(fractional: bool) -> Decimal:
@@ -289,11 +294,15 @@ def plan_sales(requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> Sale
     wanted = {h.key: q for h, q in requests}
     portions = []          # (sort key, holding, lot, gain per share)
     deferred = []          # (holding, lot, date turns long)
+    held: list[dict] = []  # rep6: loss lots held back by wash-sale control
     for h, _ in requests:
         price = h.price
         for lot in sorted(h.lots, key=lambda x: lot_order_key(x, price, s.today)):
             g = None if lot.unit_cost is None else price - lot.unit_cost
             term = term_of(lot, s.today)
+            if g is not None and g < 0 and h.key in s.wash_hold:
+                held.append({"holding": h, "lot": lot, "gain": g, "term": term})
+                continue
             if g is None:
                 if budget is not None:
                     blocked.append({"key": h.key, "lot_id": lot.id, "quantity": lot.quantity,
@@ -375,8 +384,19 @@ def plan_sales(requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> Sale
                  f"short-term gain: deferred until it turns long-term on {turns.isoformat()}")
     for h, lot, q, g in leftover:
         schedule(h, lot, q, g, s.today.year + 1, None, "over this year's gain budget")
+    # 4. rep6: wash-held loss lots wait for their clear day (they never used the budget)
+    for x in held:
+        h, lot = x["holding"], x["lot"]
+        q = min(lot.quantity, wanted[h.key]) if wanted[h.key] > 0 else ZERO
+        if q <= 0:
+            continue
+        wanted[h.key] -= q
+        r = s.wash_hold[h.key]
+        x["quantity"] = q
+        later.append(LaterSale(h.key, lot.id, q, r["until"].year, r["until"], q * x["gain"],
+                               f"wash sale: loss lot held until {r['until'].isoformat()}"))
     return SalePlan(now=now, later=later, blocked=blocked, net_gain_now=net,
-                    room_now=None if room is None else room)
+                    room_now=None if room is None else room, held=[x for x in held if x.get("quantity")])
 
 
 # ── The proposal ────────────────────────────────────────────────────────────
@@ -423,6 +443,7 @@ class BuildResult:
     total_embedded_gain: Decimal
     years_to_complete: int
     plan_by_year: list[dict]
+    wash_held: list[dict] = field(default_factory=list)
 
 
 def _weights(values: dict[str, Decimal], total: Decimal) -> dict[str, Decimal]:
@@ -652,43 +673,39 @@ def build(holdings: list[Holding], cash: Decimal, target: dict[str, Decimal], la
     if sp.later:
         warnings.append({"code": "sell_later", "message": f"{len(sp.later)} lot portion(s) wait for a later year "
                          "or for the day a short-term lot turns long-term", "count": len(sp.later)})
+    wash_held: dict[str, dict] = {}
+    for x in sp.held:
+        h, lot = x["holding"], x["lot"]
+        e = wash_held.setdefault(h.key, {"key": h.key, "label": h.label, "price": h.price,
+                                         "price_source": h.price_source, "price_as_of": h.price_as_of,
+                                         "restriction": s.sale.wash_hold[h.key], "lots": []})
+        e["lots"].append({"lot_id": lot.id, "quantity": x["quantity"], "unit_cost": lot.unit_cost, "term": x["term"],
+                          "est_gain": x["quantity"] * x["gain"],
+                          "acquired_date": lot.acquired.isoformat() if lot.acquired else None})
+    if wash_held:
+        warnings.append({"code": "wash_sale_held", "message": f"loss lots of {len(wash_held)} security(ies) are "
+                         "held back by wash-sale control (a household buy within 30 days) — see the deferred lines"})
     return BuildResult(
         account_value=A, cash=cash, target=tgt_q, before=before, after=after,
         drift_before=qw(max_drift(before, tgt_q)), drift_after=qw(max_drift(after, tgt_q)), trades=trades,
         later=sp.later, warnings=warnings, notes=notes, plan=plan, est_st_gain=st_total, est_lt_gain=lt_total,
         total_embedded_gain=embedded, years_to_complete=ytc,
-        plan_by_year=[by_year[y] for y in sorted(by_year)])
+        plan_by_year=[by_year[y] for y in sorted(by_year)], wash_held=list(wash_held.values()))
 
 
-# ── Wash-sale flag (basic; rep6 replaces it) ────────────────────────────────
-def wash_sale_flags(trades: list[TradeOut], household_txns: list[dict], today: date) -> dict[int, dict]:
-    """{trade index: flag}. ``household_txns``: {key, side 'buy'|'sell',
-    trade_date, quantity, loss (True / False / None = unknown), account}."""
-    start = today - timedelta(days=WASH_WINDOW_DAYS)
-    flags: dict[int, dict] = {}
-    for i, t in enumerate(trades):
-        recent = [x for x in household_txns if x["key"] == t.key and start <= x["trade_date"] <= today]
-        if t.side == "buy":
-            hits = [x for x in recent if x["side"] == "sell" and x.get("loss") is not False]
-            kind = "buy_after_loss_sale"
-            note = ("the household sold this security at a loss in the prior 30 days — buying it now may be a "
-                    "wash sale")
+# ── After the trades that will actually happen (rep6) ─────────────────────
+def after_weights(holdings: list[Holding], cash: Decimal, trades: list[TradeOut], account_value: Decimal
+                  ) -> dict[str, Decimal]:
+    """Weights after ONLY ``trades`` (the lines wash-sale control lets
+    through), valued as :func:`build` values them."""
+    vals = {h.key: h.market_value for h in holdings if h.price is not None and h.market_value is not None}
+    c = cash
+    for t in trades:
+        amount = t.notional if t.notional is not None else t.quantity * t.price
+        if t.side == "sell":
+            vals[t.key] = vals.get(t.key, ZERO) - amount
+            c += amount
         else:
-            loss = any(lot.get("est_gain") is not None and lot["est_gain"] < 0 for lot in t.lots) or (
-                t.est_st_gain + t.est_lt_gain < 0)
-            if not loss:
-                continue
-            hits = [x for x in recent if x["side"] == "buy"]
-            kind = "loss_sale_after_buy"
-            note = ("this sale realizes a loss and the household bought this security in the prior 30 days — the "
-                    "loss may be disallowed as a wash sale")
-        if hits:
-            flags[i] = {"rule": "basic_61_day", "kind": kind, "note": note + ". A flag only: it does not block "
-                        "the trade (full household wash-sale control is rep6).",
-                        "window_days": WASH_WINDOW_DAYS,
-                        "matches": [{"account": x.get("account"), "registration_type": x.get("registration_type"),
-                                     "tax_status": x.get("tax_status"), "side": x["side"],
-                                     "trade_date": x["trade_date"].isoformat(),
-                                     "quantity": None if x.get("quantity") is None else str(x["quantity"]),
-                                     "loss_known": x.get("loss") is not None} for x in hits]}
-    return flags
+            vals[t.key] = vals.get(t.key, ZERO) + amount
+            c -= amount
+    return _weights({**{k: v for k, v in vals.items() if v != 0}, CASH: c}, account_value)

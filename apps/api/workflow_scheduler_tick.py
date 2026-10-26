@@ -90,6 +90,12 @@ instructions are all done, re-sweep recent 'model.version_approved' events
 (idempotent), and the daily drift / cash-flow scan on each account's own
 valuation (after the holdings refresh above). It only ever writes PROPOSALS;
 nothing trades. Its own step.
+
+TEST ORGS (rep6 fix 2). No step here acts on a verify fixture org
+(``organizations.is_test``, services.orgs): the holdings refresh, its review
+tasks and model monitoring, the execute-by sweep and the proposals tick all
+skip them. A verify calls the per-org function directly with
+``include_test_orgs=True`` (or its own ``org_id``), never through this tick.
 """
 from __future__ import annotations
 

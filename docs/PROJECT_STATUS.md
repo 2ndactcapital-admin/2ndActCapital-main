@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-24 (rep6.structural — Replication Studio sprint 6: the tax engine — member tax profiles and carryforwards, the substitution table and its denials, household wash-sale CONTROL replacing rep5's flag, daily loss harvesting as proposals, the loss bank and tax-alpha ledger, declared outside trades, the custodian-harvest switch, the Tax screens; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,51 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep6 (sprint 6 of 15): the tax engine — tax profiles + carryforwards, the substitution table + denials, household wash-sale CONTROL (replacing rep5's flag), daily loss harvesting as proposals, the loss bank, declared outside trades, the custodian-harvest switch, the Tax screens; verify WRITTEN, not yet run (2026-10-24)
+
+Design + findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep6 section).
+Schema `docs/rep6_part1.sql` — APPLIED (`scripts/_apply_rep6.py --schema`) and read
+back (`--verify`: SCHEMA OK — 9 new tables with a policy for every operation, 18
+partial uniques, every CHECK and guard trigger, the 3 tax permissions on every
+org_admin role, and the rep5 changes). Verify: `apps/api/scripts/verify_rep6.py` —
+WRITTEN, NOT RUN (WSL memory; it runs `node --test tests/`, `npm run build` and the
+`verify_rep5.py` regression itself). In-sprint proof only: the pure rules on
+hand-built inputs (both window edges, replace / defer / block, IRA losses, rule b in
+`plan_sales`, IRS netting with the $3,000 / $1,500 limit, the harvest arithmetic),
+every new SQL statement PREPAREd against the live catalog (232 statements across the
+services, the router and the verify script, 0 errors), a TypeScript transpile of every
+new / changed web file, and `authz1_routes.py --check` CURRENT (31 new routes, no
+existing gate changed). `node --test` was NOT run in the sprint.
+
+- **Custody cliff held:** a harvest is a rep5 PROPOSAL (trigger 'harvest', the
+  system's, on the review task); a person approves; its instructions go to rep2.
+- **Wash-sale control** (`services/wash_sale.py`) on every proposal: 61-day window
+  (day 30 in, day 31 clear, both directions), every household account + declared
+  outside trades + open instructions + pending proposals; substantially identical =
+  same security or an ACTIVE denial. Outcomes clear / replaced / deferred / blocked on
+  every line; a deferred or blocked line is never routed (DB CHECK backs it).
+- **[FIND]** a loss realized INSIDE an IRA / Roth is not deductible, so it opens no
+  wash window (an IRA BUY still counts — Rev. Rul. 2008-5 — and is a hard block).
+- **[FIND]** `accounts.tax_status` is free text with no CHECK (the importer writes
+  `UNKNOWN` when the file has none); an unknown status is treated as taxable.
+- **[FIND] verify_rep5:** its IRA "bought X 10 days ago" fixture is now CONTROL, not a
+  flag, and would hold the transition's X loss lot (breaking rep5's gain-budget
+  arithmetic checks). The fixture moved to 31 days (day 31 = clear); y_wash restated
+  as outcomes; y_execution's "flags never block" restated. Nothing else changed;
+  verify_rep6 checks the diff line by line.
+- **[FIND]** no tax-rate data existed anywhere; no default is ever used — "not
+  estimated — no tax profile". The NIIT 3.8% is the statutory rate, stored on the row.
+- **Loss bank sources** counted once: closed lots (the custodian's number), fills
+  (provisional, closed when the custodian's lot arrives), approved carryforwards,
+  declared outside sales. Transactions carry no gain and are not a source.
+- **Not estimated — needs prices:** tracking-error cost of a harvest; after-tax
+  performance (`securities_global_prices` has 0 rows).
+- Operator: run `verify_rep6.py`; redeploy the API and the scheduler cron service (the
+  tick now ingests the loss bank and runs the harvest scan before the drift scan).
+  Optional org settings: `replication.tax.trading_cost_bps` (0),
+  `.harvest_loss_pct` (0.05), `.harvest_loss_min` (500), `.harvest_to_cash` (false),
+  `.harvest_swap_back` (false), `.wash_buy_fallback` ('defer').
 
 ## 0000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep5 (sprint 5 of 15): accounts join models (account-level settings + exclusions), the lot-level transition analysis under a gain budget, rebalance PROPOSALS from every trigger, approval on human tasks, approved proposals → execution instructions through rep2; verify WRITTEN, not yet run (2026-10-23)
 

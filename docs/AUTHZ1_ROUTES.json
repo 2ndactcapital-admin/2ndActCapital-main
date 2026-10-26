@@ -1,5 +1,5 @@
 {
- "app_route_count": 582,
+ "app_route_count": 613,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -10890,6 +10890,688 @@
    "name": "reject",
    "note": "",
    "path": "/api/v1/proposals/{proposal_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "overview",
+   "note": "",
+   "path": "/api/v1/tax/overview",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "subjects",
+   "note": "",
+   "path": "/api/v1/tax/subjects",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "securities",
+   "note": "",
+   "path": "/api/v1/tax/securities",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "profiles",
+   "note": "",
+   "path": "/api/v1/tax/profiles",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "carryforwards",
+   "note": "",
+   "path": "/api/v1/tax/carryforwards",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "substitutions",
+   "note": "",
+   "path": "/api/v1/tax/substitutions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "suggestions",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/suggestions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "declared",
+   "note": "",
+   "path": "/api/v1/tax/declared-trades",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "loss_bank",
+   "note": "",
+   "path": "/api/v1/tax/loss-bank",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "account_tax",
+   "note": "",
+   "path": "/api/v1/tax/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "harvest_runs",
+   "note": "",
+   "path": "/api/v1/harvest/runs",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax",
+   "name": "harvest_run",
+   "note": "",
+   "path": "/api/v1/harvest/runs/{run_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "create_profile",
+   "note": "",
+   "path": "/api/v1/tax/profiles",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "create_carryforward",
+   "note": "",
+   "path": "/api/v1/tax/carryforwards",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "create_set",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/sets",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "create_denial",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/denials",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "seed_denials",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/denials/seed",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "declare",
+   "note": "",
+   "path": "/api/v1/tax/declared-trades",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "withdraw",
+   "note": "",
+   "path": "/api/v1/tax/declared-trades/{trade_id}/withdraw",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "refresh_loss_bank",
+   "note": "",
+   "path": "/api/v1/tax/loss-bank/refresh",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "scan",
+   "note": "",
+   "path": "/api/v1/harvest/accounts/{account_id}/scan",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "approve_profile",
+   "note": "",
+   "path": "/api/v1/tax/profiles/{row_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "reject_profile",
+   "note": "",
+   "path": "/api/v1/tax/profiles/{row_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "approve_carryforward",
+   "note": "",
+   "path": "/api/v1/tax/carryforwards/{row_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "reject_carryforward",
+   "note": "",
+   "path": "/api/v1/tax/carryforwards/{row_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "approve_set",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/sets/{row_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "reject_set",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/sets/{row_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "retire_set",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/sets/{row_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "approve_denial",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/denials/{row_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "reject_denial",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/denials/{row_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax",
+   "name": "retire_denial",
+   "note": "",
+   "path": "/api/v1/tax/substitutions/denials/{row_id}/retire",
    "public": false,
    "write": true
   },

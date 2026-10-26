@@ -5,7 +5,9 @@ never forks one, and nothing here creates a model). Everything personal lives
 on the ACCOUNT's link, not on the model: exclusions (each with a reason), the
 exclusion policy, the cash floor, a drift-threshold and rebalance-frequency
 override, the gain budget, the short-term guard and the harvesting-engine
-switch (rep6 reads it), and a fee-schedule override.
+switch (rep6 reads it), the harvest settings (rep6: ``harvest_enabled`` —
+OPT-IN, default false; loss % and $ thresholds, harvest to cash, swap back —
+NULL = the org default), and a fee-schedule override.
 
 VERSIONS AND APPROVAL
 ──────────────────────────────────────────────────────────────────────────────
@@ -76,11 +78,14 @@ FREQUENCY_LABELS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly", 
                     "semiannually": "Twice a year", "annually": "Once a year"}
 SETTING_FIELDS = ("cash_floor", "drift_threshold", "rebalance_frequency", "exclusions", "exclusion_policy",
                   "gain_budget", "avoid_short_term", "short_term_wait_days", "harvesting_engine",
-                  "fee_schedule_override_id")
+                  "fee_schedule_override_id", "harvest_enabled", "harvest_loss_pct", "harvest_loss_min",
+                  "harvest_to_cash", "harvest_swap_back")
 DEFAULT_SETTINGS = {"cash_floor": Decimal(0), "drift_threshold": None, "rebalance_frequency": None, "exclusions": [],
                     "exclusion_policy": "pro_rata", "gain_budget": None, "avoid_short_term": True,
                     "short_term_wait_days": 30, "harvesting_engine": "hollisworks",
-                    "fee_schedule_override_id": None}
+                    "fee_schedule_override_id": None, "harvest_enabled": False, "harvest_loss_pct": None,
+                    "harvest_loss_min": None,
+                    "harvest_to_cash": None, "harvest_swap_back": None}
 
 
 class AccountModelError(ValueError):
@@ -173,7 +178,7 @@ async def pending_link(conn, account_id) -> dict | None:
 def settings_of(link: dict | None) -> dict:
     if not link:
         return dict(DEFAULT_SETTINGS)
-    out = {k: link[k] for k in SETTING_FIELDS}
+    out = {k: link.get(k) for k in SETTING_FIELDS}
     out["exclusions"] = _loads(link["exclusions"]) or []
     return out
 
@@ -237,11 +242,22 @@ def label_for(name: str | None, ticker: str | None) -> str:
     return name or ticker or "?"
 
 
+async def valuation_as_of(conn, org_id, account_id) -> date | None:
+    """THE account's current valuation as-of — the ONE definition: the latest
+    ``as_of_date`` of its live position rows, a row at zero quantity included
+    (a custodian snapshot that says "none held" is still a valuation on that
+    date). Every proposal stamps it (via :func:`load_holdings`) and rep5's
+    expiry compares against it, so a proposal is never born expired."""
+    return await conn.fetchval(
+        "SELECT max(as_of_date) FROM portfolio.positions WHERE org_id = $1::uuid AND account_id = $2::uuid "
+        "AND valid_to IS NULL AND system_to IS NULL", str(org_id), str(account_id))
+
+
 async def load_holdings(conn, org_id, account_id) -> dict:
     """What the account holds now, valued by ITS OWN positions.
 
     "Current" = each asset's latest live position row (``as_of_date`` desc);
-    the valuation as-of is the latest of those dates. A position's price is
+    the valuation as-of is :func:`valuation_as_of`. A position's price is
     ``market_value / quantity`` on its as_of_date — the custodian's valuation,
     used as that security's price for THIS account only (source
     'account_position'). A position without both is "cannot value". Cash is
@@ -259,12 +275,10 @@ async def load_holdings(conn, org_id, account_id) -> dict:
     holdings: dict[str, E.Holding] = {}
     unresolved: list[dict] = []
     cash_from_positions = Decimal(0)
-    as_of = None
     for r in rows:
         qty = E.d(r["quantity"])
         if qty is None or qty == 0:
             continue
-        as_of = max(as_of, r["as_of_date"]) if as_of else r["as_of_date"]
         if (r["asset_type"] or "").lower() == "cash":
             cash_from_positions += E.d(r["market_value"]) or Decimal(0)
             continue
@@ -309,7 +323,7 @@ async def load_holdings(conn, org_id, account_id) -> dict:
     cash = (E.d(bal["cash_value"]) if bal else Decimal(0)) + cash_from_positions
     return {"holdings": list(holdings.values()), "unresolved": unresolved, "cash": cash,
             "cash_as_of": bal["as_of_date"] if bal else None, "cash_source": bal["source_system"] if bal else None,
-            "valuation_as_of": as_of}
+            "valuation_as_of": await valuation_as_of(conn, org_id, account_id)}
 
 
 async def fund_security_ids(conn, model: dict) -> list[str]:
@@ -352,6 +366,17 @@ async def clean_settings(conn, org_id, account: dict, raw: dict, base: dict) -> 
     s["gain_budget"] = dec("gain_budget", Decimal(0))
     if s["gain_budget"] is not None:
         s["gain_budget"] = s["gain_budget"].quantize(Decimal("0.01"))
+    s["harvest_loss_pct"] = dec("harvest_loss_pct", Decimal(0), Decimal(1), lo_open=True, hi_open=True)
+    s["harvest_loss_min"] = dec("harvest_loss_min", Decimal(0))
+    if s["harvest_loss_min"] is not None:
+        s["harvest_loss_min"] = s["harvest_loss_min"].quantize(Decimal("0.01"))
+    if s.get("harvest_enabled") is None:
+        s["harvest_enabled"] = False          # a link from before the setting existed: off
+    if not isinstance(s["harvest_enabled"], bool):
+        raise AccountModelError("harvest_enabled is true or false")
+    for b in ("harvest_to_cash", "harvest_swap_back"):
+        if s.get(b) is not None and not isinstance(s[b], bool):
+            raise AccountModelError(f"{b} is true, false or empty (the org default)")
     if s.get("rebalance_frequency") is not None and s["rebalance_frequency"] not in FREQUENCY_LABELS:
         raise AccountModelError(f"rebalance frequency is one of {list(FREQUENCY_LABELS)}")
     if s.get("exclusion_policy") not in EXCLUSION_POLICY_LABELS:
@@ -463,7 +488,9 @@ def _settings_brief(s: dict) -> dict:
             "rebalance_frequency": s["rebalance_frequency"], "exclusions": s["exclusions"],
             "exclusion_policy": s["exclusion_policy"], "gain_budget": _num(s["gain_budget"]),
             "avoid_short_term": s["avoid_short_term"], "short_term_wait_days": s["short_term_wait_days"],
-            "harvesting_engine": s["harvesting_engine"], "fee_schedule_override_id": s["fee_schedule_override_id"]}
+            "harvesting_engine": s["harvesting_engine"], "fee_schedule_override_id": s["fee_schedule_override_id"],
+            "harvest_enabled": bool(s.get("harvest_enabled")), "harvest_loss_pct": _num(s.get("harvest_loss_pct")),
+            "harvest_loss_min": _num(s.get("harvest_loss_min")), "harvest_to_cash": s.get("harvest_to_cash"), "harvest_swap_back": s.get("harvest_swap_back")}
 
 
 # ── Proposing a change (join / settings / change of model / end) ───────────
@@ -530,17 +557,19 @@ async def propose_change(pool, *, org_id, actor_id, account_id, change_kind: str
                             replaces_link_id, status, advice_only, cash_floor, drift_threshold, rebalance_frequency,
                             exclusions, exclusion_policy, gain_budget, avoid_short_term, short_term_wait_days,
                             harvesting_engine, fee_schedule_override_id, proposed_fee, maker_id, approval_task_id,
-                            end_reason, notes)
+                            end_reason, notes, harvest_loss_pct, harvest_loss_min, harvest_to_cash, harvest_swap_back,
+                            harvest_enabled)
                         VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8::uuid, 'pending', $9, $10, $11,
                                 $12, $13::jsonb, $14, $15, $16, $17, $18, $19::uuid, $20::jsonb, $21::uuid,
-                                $22::uuid, $23, $24) RETURNING *""",
+                                $22::uuid, $23, $24, $25, $26, $27, $28, $29) RETURNING *""",
                     new_id, str(org_id), str(account["id"]), str(model["id"]), str(group or new_id), version_no,
                     change_kind, str(current["id"]) if current else None, advice_only, clean["cash_floor"],
                     clean["drift_threshold"], clean["rebalance_frequency"], _dumps(clean["exclusions"]),
                     clean["exclusion_policy"], clean["gain_budget"], clean["avoid_short_term"],
                     clean["short_term_wait_days"], clean["harvesting_engine"], clean["fee_schedule_override_id"],
                     _dumps(fee), str(actor["id"]), task["id"], (reason or "").strip() or None,
-                    (notes or "").strip() or None)
+                    (notes or "").strip() or None, clean.get("harvest_loss_pct"), clean.get("harvest_loss_min"),
+                    clean.get("harvest_to_cash"), clean.get("harvest_swap_back"), bool(clean["harvest_enabled"]))
                 await _audit(conn, org_id, actor["id"], f"propose_{change_kind}", new_id,
                              {"account_id": str(account["id"]), "model_id": str(model["id"]), "task_id": task["id"],
                               "settings": _settings_brief(clean), "proposed_fee": fee, "advice_only": advice_only})

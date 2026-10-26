@@ -1224,32 +1224,37 @@ async def y_refresh(conn):
     pool = await get_pool()
     real_active = RS.active_funds
 
-    async def fixture_funds(p):
-        return [f for f in await real_active(p) if f["fund_id"] == S.get("fund")]
+    async def fixture_funds(p, **kw):
+        # the fixture org is a test org (services.orgs): only this direct caller includes it, for its own fund
+        return [f for f in await real_active(p, include_test_orgs=True) if f["fund_id"] == S.get("fund")]
 
     RS.active_funds = fixture_funds
     try:
         ev = lambda: platform(conn, "SELECT count(*) FROM portfolio.replica_refresh_events WHERE run_date >= "  # noqa
                                     "'2099-01-01'", fetch="fetchval")
         os.environ["REPLICA_HOLDINGS_AUTO_REFRESH"] = "0"
-        r = await RS.maybe_refresh_holdings(pool, now_utc=DAY1, http_factory=mock_http, log=lambda m: None)
+        r = await RS.maybe_refresh_holdings(pool, now_utc=DAY1, http_factory=mock_http, log=lambda m: None,
+                                            include_test_orgs=True)
         check(r["action"] == "off" and await ev() == 0, "REPLICA_HOLDINGS_AUTO_REFRESH=0 → off, nothing claimed")
         os.environ.pop("REPLICA_HOLDINGS_AUTO_REFRESH", None)
         sat = datetime(2099, 1, 3, 12, 0, tzinfo=timezone.utc)
         early = datetime(2099, 1, 5, 10, 59, tzinfo=timezone.utc)
-        r_sat = await RS.maybe_refresh_holdings(pool, now_utc=sat, http_factory=mock_http, log=lambda m: None)
-        r_early = await RS.maybe_refresh_holdings(pool, now_utc=early, http_factory=mock_http, log=lambda m: None)
+        r_sat = await RS.maybe_refresh_holdings(pool, now_utc=sat, http_factory=mock_http, log=lambda m: None,
+                                                include_test_orgs=True)
+        r_early = await RS.maybe_refresh_holdings(pool, now_utc=early, http_factory=mock_http, log=lambda m: None,
+                                                  include_test_orgs=True)
         check(r_sat["action"] == "not_due" and r_early["action"] == "not_due" and await ev() == 0,
               "Saturday and 10:59 UTC Monday → not due, nothing claimed")
         HTTP_STATE["issuer_file"] = FILE4
         snaps0 = await platform(conn, "SELECT count(*) FROM portfolio.replica_holdings_snapshots WHERE "
                                       "fund_global_security_id = $1", UUID(S["fund"]), fetch="fetchval")
-        r1 = await RS.maybe_refresh_holdings(pool, now_utc=DAY1, http_factory=mock_http, log=lambda m: None)
+        r1 = await RS.maybe_refresh_holdings(pool, now_utc=DAY1, http_factory=mock_http, log=lambda m: None,
+                                             include_test_orgs=True)
         mine = [x for x in r1.get("results", []) if x["fund_id"] == S["fund"]]
         check(r1["action"] == "succeeded" and len(mine) == 1 and mine[0]["action"] == "created",
               "Monday 11:05 UTC: claims the day and ingests the active fund", f"{r1.get('action')} {mine}")
         r2 = await RS.maybe_refresh_holdings(pool, now_utc=DAY1.replace(hour=15), http_factory=mock_http,
-                                             log=lambda m: None)
+                                             log=lambda m: None, include_test_orgs=True)
         snaps1 = await platform(conn, "SELECT count(*) FROM portfolio.replica_holdings_snapshots WHERE "
                                       "fund_global_security_id = $1", UUID(S["fund"]), fetch="fetchval")
         rows = await platform(conn, "SELECT phase, status FROM portfolio.replica_refresh_events WHERE run_date = $1",
@@ -1266,7 +1271,8 @@ async def y_refresh(conn):
               f"{len(todos)} todos")
         HTTP_STATE["issuer_status"] = 500
         day2 = DAY1.replace(day=6)
-        r3 = await RS.maybe_refresh_holdings(pool, now_utc=day2, http_factory=mock_http, log=lambda m: None)
+        r3 = await RS.maybe_refresh_holdings(pool, now_utc=day2, http_factory=mock_http, log=lambda m: None,
+                                             include_test_orgs=True)
         HTTP_STATE["issuer_status"] = 200
         fin = await platform(conn, "SELECT status, results FROM portfolio.replica_refresh_events WHERE run_date = $1 "
                                    "AND phase = 'finish'", day2.date(), fetch="fetchrow")
