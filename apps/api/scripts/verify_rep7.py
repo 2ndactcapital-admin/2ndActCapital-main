@@ -1678,9 +1678,16 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
+    # rep7b fix 1 — scoped to rep7's own routes: rep7b (built on this branch after rep7) added these 11; any other
+    # new route still fails the count
+    rep7b_added = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),
+                   (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),
+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),
+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}
+    new = [k for k in gn if k not in gb and k not in rep7b_added and not k[1].startswith("/api/v1/authority/")]
     mine = [k for k in new if k[1].startswith(("/api/v1/held-away/", "/api/v1/xray/"))]
-    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/…", f"{len(new)} {len(mine)}")
+    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/… (rep7b's /authority/… and "
+          "its 4 other routes excluded)", f"{len(new)} {len(mine)} {[k for k in new if k not in mine][:4]}")
 
     def want(k):
         if k[1].startswith("/api/v1/xray/"):

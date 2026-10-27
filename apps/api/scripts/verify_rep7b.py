@@ -684,6 +684,20 @@ SEED_CHECK_LITERALS = (
     ("portfolio.replica_securities", "replica_securities_status_chk", ("active",)),
     ("portfolio.models", "models_source_chk", ("upload",)),
 )
+# fix 1 — the exact diff lines of verify_rep7.py's y_routes scoping (beyond its TODAY fix), checked in regression()
+REP7_ROUTE_SCOPE_DIFF = (
+    '-    new = [k for k in gn if k not in gb]',
+    "+    # rep7b fix 1 — scoped to rep7's own routes: rep7b (built on this branch after rep7) added these 11; any other",
+    '+    # new route still fails the count',
+    '+    rep7b_added = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),',
+    '+                   (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),',
+    '+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),',
+    '+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}',
+    '+    new = [k for k in gn if k not in gb and k not in rep7b_added and not k[1].startswith("/api/v1/authority/")]',
+    '-    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/…", f"{len(new)} {len(mine)}")',
+    '+    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/… (rep7b\'s /authority/… and "',
+    '+          "its 4 other routes excluded)", f"{len(new)} {len(mine)} {[k for k in new if k not in mine][:4]}")',
+)
 SEED_INSTRUMENT_CLASS = "index_etf"
 SEED_REGISTRATION, SEED_TAX_STATUS = "individual", "taxable"
 
@@ -877,10 +891,25 @@ async def seed(conn) -> None:
 async def y_migration(conn):
     section("[Y] Migration: every existing account's behaviour unchanged; the existing held-away draft instruction "
             "refused approval with the reason, kept")
+    live_now = int(await platform(conn, "SELECT count(*) FROM public.accounts WHERE valid_to IS NULL AND system_to IS "
+                                        "NULL", fetch="fetchval"))
     code, out, err = run_cmd([sys.executable, str(HERE / "_apply_rep7b.py"), "--migrate"], REPO, timeout=600)
-    changed = [ln for ln in out.splitlines() if "CHANGED" in ln and "MIGRATION" not in ln]
-    check(code == 0 and "MIGRATION OK" in out and not changed, "_apply_rep7b.py --migrate: every existing account "
-          "UNCHANGED on every path", f"{changed[:3]} {err[-200:] if code else ''}")
+    # fix 1 — one line per account ends in its verdict: 'UNCHANGED' or 'CHANGED: <paths>'. The old filter
+    # ("CHANGED" in line) also matched every UNCHANGED line, so a clean migration always failed.
+    acct_lines = [ln for ln in out.splitlines() if "→ authority" in ln]
+    verdicts = [ln.rstrip().rsplit("  ", 1)[-1].strip() for ln in acct_lines]
+    changed = [ln.strip() for ln, v in zip(acct_lines, verdicts) if v != "UNCHANGED"]
+    m = re.search(r"live accounts: (\d+) \((\d+) in non-test orgs\)", out)
+    reported, non_test = (int(m.group(1)), int(m.group(2))) if m else (None, None)
+    check(code == 0 and "MIGRATION OK" in out and m is not None and len(acct_lines) == reported == live_now
+          and not changed and all(v == "UNCHANGED" for v in verdicts),
+          f"_apply_rep7b.py --migrate: every existing account UNCHANGED on every path ({len(acct_lines)} account "
+          f"line(s), test orgs included; live accounts now {live_now})",
+          f"reported={reported} lines={len(acct_lines)} live_now={live_now} changed={changed[:3]} "
+          f"{(out[-300:] + err[-200:]) if code or m is None else ''}")
+    if non_test == 0:
+        find("migration: zero non-test accounts", "every live account sits in an is_test org (leftover REP2 fixture "
+             "orgs plus this run's own) — the migration is proven on those; no real account exists yet")
     real = [dict(r) for r in await platform(
         conn, "SELECT id, org_id, account_number_masked, is_held_away FROM public.accounts WHERE NOT (org_id = "
               "ANY($1::uuid[])) AND valid_to IS NULL AND system_to IS NULL", FIXTURE_ORGS)]
@@ -973,7 +1002,8 @@ async def y_changes(conn):
           "household → advise: maker refused, checker approves; the open proposal the new authority forbids is "
           "withdrawn (expired) with the plain reason and its task withdrawn — never executed",
           f"{c} {cm} {ca} {dict(p1)} {task['status']} {wd}")
-    e_int, e_int2, e_adv = (await effective_of(a) for a in (ACCT_INT, ACCT_INT2, ACCT_ADV))
+    # sequential awaits — a generator expression containing await is an ASYNC generator and cannot be unpacked
+    e_int, e_int2, e_adv = await effective_of(ACCT_INT), await effective_of(ACCT_INT2), await effective_of(ACCT_ADV)
     check((e_int["authority"], e_int["authority_source"]) == ("managed", "account")
           and (e_int2["authority"], e_int2["authority_source"]) == ("advise", "household")
           and (e_adv["authority"], e_adv["custody"], e_adv["authority_source"]) == ("advise", "outside", "household"),
@@ -1068,8 +1098,29 @@ async def y_advise(conn):
     ws = {w["code"] for w in p.get("warnings") or []}
     check("one_off" in ws and "held_away" in ws, "the one-off carries the engine's warnings (one-off, held-away)",
           f"{sorted(ws)}")
-    cs, _ = await api(U_ADMIN1, "POST", f"/api/v1/proposals/{pid}/submit", {})
+    cs, os_ = await api(U_ADMIN1, "POST", f"/api/v1/proposals/{pid}/submit", {})
     cm, om = await api(U_ADMIN1, "POST", f"/api/v1/proposals/{pid}/approve", {})
+    # fix 1 — rep6's household is "same household_id OR same primary entity OR a shared owner"
+    # (RP.household_accounts); every ORG_A fixture account shares ENT_A, so this one-off ALSO depends on ACCT_DVP's
+    # held-away data, which the fixture deliberately dates ago(STALE_DAYS + 5) for y_dvp. rep7's rule holds: approval
+    # waits for confirm_held_away_data. The code is right; the verify now proves the wait, then confirms, then approves.
+    c0, o0 = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{pid}/approve", {})
+    st0 = await scoped(conn, ORG_A, "SELECT status FROM public.rebalance_proposals WHERE id = $1 AND system_to IS NULL",
+                       pid, fetch="fetchval")
+    confs = await scoped(conn, ORG_A, "SELECT id, account_id FROM public.stale_confirmations WHERE proposal_id = $1 "
+                                      "AND status = 'pending' AND valid_to IS NULL AND system_to IS NULL", pid)
+    dvp_mask = AccountNumber(ACCOUNTS[ACCT_DVP][4]).masked
+    check(c0 == 409 and "confirm_held_away_data" in str(o0) and dvp_mask in str(o0) and st0 == "pending_approval"
+          and {r["account_id"] for r in confs} == {ACCT_DVP},
+          "the one-off depends on the household's stale held-away data (ACCT_DVP, same primary entity): the checker's "
+          "approval waits for confirm_held_away_data (409, naming the account); the proposal stays pending",
+          f"{cs} {str(os_)[:120]} | {c0} {str(o0)[:240]} | {st0} {[str(r['account_id']) for r in confs]}")
+    find("one-off staleness dependency", "the advise account's own data is fresh (ago 1); the stale dependency is "
+         f"{dvp_mask} via the shared primary entity — rep6's household definition, unchanged")
+    ccs = [await api(U_ADMIN1, "POST", f"/api/v1/held-away/confirmations/{r['id']}/confirm",
+                     {"note": "REP7B verify — seen"}) for r in confs]
+    check(bool(ccs) and all(cc == 200 for cc, _ in ccs), "an adviser confirms the stale dependency for this proposal",
+          f"{[(cc, str(oc)[:120]) for cc, oc in ccs]}")
     ca, oa = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{pid}/approve", {})
     pr = oa.get("proposal") or {}
     ids = (pr.get("execution") or {}).get("instruction_ids") or []
@@ -1081,9 +1132,13 @@ async def y_advise(conn):
           and str(ins[0]["source_ref"]) == pid and ins[0]["status"] == "approved" and ins[0]["routed_via"] == "manual",
           "submitted, the maker refused, a checker approves → one instruction for the other adviser (source "
           "proposal, approved from the upstream maker-checker, routed manually)",
-          f"{cs} {cm} {ca} {[dict(r) for r in ins]}")
+          f"{cs} {cm} {str(om)[:100]} | {ca} {str(oa)[:240]} execution_error={pr.get('execution_error')} | "
+          f"{[dict(r) for r in ins]}")
     iid = str(ins[0]["id"]) if ins else None
     S["adv_iid"] = iid
+    if not check(iid is not None, "the advise instruction exists (the rest of this section needs it)",
+                 f"{ca} {str(oa)[:240]}"):
+        return
     cl, body, hdr = await api_raw(U_ADMIN1, "POST", f"/api/v1/execution/instructions/{iid}/letter", {})
     d = await in_org(lambda c_: X.detail(c_, ORG_A, iid))
     from services.execution_letter import letter_rows
@@ -1162,7 +1217,8 @@ async def y_dvp(conn):
     check(cj == 201 and cj2 == 200 and bool(pid) and own.get("blocking") is True
           and own.get("as_of") == ago(STALE_DAYS + 5).isoformat(),
           "managed at another custodian: the join's transition proposal is generated, and depends on the account's "
-          "OWN held-away data, stale (as-of stated) — staleness applies", f"{cj} {cj2} {own}")
+          "OWN held-away data, stale (as-of stated) — staleness applies",
+          f"{cj} {cj2} {own} | join approve: {str(oj2)[:240]} | proposal {c}: {str(d)[:160]}")
     ca, oa = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{pid}/approve", {})
     conf = await scoped(conn, ORG_A, "SELECT id FROM public.stale_confirmations WHERE account_id = $1 AND "
                                      "proposal_id = $2 AND valid_to IS NULL AND system_to IS NULL", ACCT_DVP, pid,
@@ -1179,8 +1235,8 @@ async def y_dvp(conn):
           and all(r["executor_type"] == "broker" and r["routed_via"] == "manual" and r["status"] == "approved"
                   for r in ins) and len(sts) == len(ins),
           "approval waits for the stale-data confirmation; once confirmed and approved, every trade is a manual "
-          "instruction for a broker with its DVP settlement row", f"{ca} {cc} {ca2} {[dict(r) for r in ins]} "
-          f"{len(sts)}")
+          "instruction for a broker with its DVP settlement row", f"{ca} {str(oa)[:160]} | {cc} | {ca2} "
+          f"{str(oa2)[:240]} | {[dict(r) for r in ins]} {len(sts)}")
     want = next_business_day(trade_day)
     check(all(r["trade_date"] == trade_day and r["settlement_date"] == want and r["receiving_custodian_name"]
               == "ZZ Receiving Trust" and r["receiving_participant_number"] == "0901"
@@ -1192,6 +1248,9 @@ async def y_dvp(conn):
     check(ADAPTER_CALLS == [] and NETWORK_CALLS == [], "never routed to a custodian adapter / API (the account's "
           "custodian_code has a registered adapter; no submit was recorded)", f"{ADAPTER_CALLS}")
     iid = str(ins[0]["id"]) if ins else None
+    if not check(iid is not None, "the DVP instruction exists (the rest of this section needs it)",
+                 f"{ca2} {str(oa2)[:240]}"):
+        return
     cl, body, _ = await api_raw(U_ADMIN1, "POST", f"/api/v1/execution/instructions/{iid}/settlement", {})
     d = await in_org(lambda c_: X.detail(c_, ORG_A, iid))
     rows = SL.settlement_rows(d, d["settlement"], account_display=d["account"]["account_number_masked"])
@@ -1432,9 +1491,14 @@ def regression():
             "changed")
     code, diff, _ = run_cmd(["git", "diff", "-U0", BEFORE_REF, "--", "apps/api/scripts/verify_rep7.py"], REPO, 60)
     changed = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
-    check(code == 0 and len(changed) == 2 and "TODAY + timedelta(days=STALE_DAYS)" in changed[0]
-          and "date.today() + timedelta(days=STALE_DAYS)" in changed[1],
-          "verify_rep7.py differs from main only by the expires_on expectation computed at the call", f"{changed}")
+    # fix 1 — plus, exactly, y_routes' two self-checks scoped to rep7's own 19 routes (rep7b's routes excluded)
+    scope = [ln.rstrip() for ln in changed[2:]]
+    check(code == 0 and len(changed) >= 2 and "TODAY + timedelta(days=STALE_DAYS)" in changed[0]
+          and "date.today() + timedelta(days=STALE_DAYS)" in changed[1] and scope == list(REP7_ROUTE_SCOPE_DIFF),
+          "verify_rep7.py differs from main only by the expires_on expectation computed at the call and the route "
+          "self-checks scoped to rep7's own routes",
+          f"{changed[:2]} unexpected={[x for x in scope if x not in REP7_ROUTE_SCOPE_DIFF][:3]} "
+          f"{len(scope)}/{len(REP7_ROUTE_SCOPE_DIFF)}")
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep7.py")], REPO, timeout=2700, env=env)
     total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
