@@ -13,6 +13,8 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
   manage_proposals + household access
         POST /xray/households/{id}/join          rep5's join request for a managed account (the caller is the
                                                  maker; a second holder of approve_proposals approves it)
+        POST /xray/households/{id}/one-off       rep7b: on an ADVISE account, a draft one-off proposal selling
+                                                 the fund (the caller is the maker; approve_proposals decides)
 
 Household access: Super Admin, staff and org admins (manage_org_settings) any household of the
 org; anyone else
@@ -23,15 +25,17 @@ caller's (get_org_id); every request model forbids extras.
 """
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 import asyncpg
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from routers.entities import get_org_id
 from services import account_models as AM
 from services import human_tasks as HT
+from services import rebalance_proposals as RP
 from services import xray as XR
 from services.authz import require_permission
 from services.database import get_pool
@@ -57,18 +61,26 @@ class RunIn(_Body):
     pass
 
 
+class OneOffIn(_Body):
+    account_id: UUID
+    fund_security_id: UUID
+    executor_type: Literal["member", "other_adviser"] = "member"
+    executor_name: str | None = Field(default=None, max_length=300)
+    executor_contact: str | None = Field(default=None, max_length=500)
+
+
 def _raise(exc: Exception):
     if isinstance(exc, HTTPException):
         raise exc
-    if isinstance(exc, (XR.XrayNotFound, AM.AccountModelNotFound, HT.HumanTaskNotFound)):
+    if isinstance(exc, (XR.XrayNotFound, AM.AccountModelNotFound, RP.ProposalNotFound, HT.HumanTaskNotFound)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, (AM.MakerCheckerViolation, HT.MakerCheckerError, PermissionError, HT.HumanTaskPermissionError)):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    if isinstance(exc, (XR.XrayConflict, AM.AccountModelConflict, HT.HumanTaskConflict)):
+    if isinstance(exc, (XR.XrayConflict, AM.AccountModelConflict, RP.ProposalConflict, HT.HumanTaskConflict)):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, asyncpg.UniqueViolationError):
         raise HTTPException(status_code=409, detail=f"refused by the database: {exc.constraint_name}") from exc
-    if isinstance(exc, (XR.XrayError, AM.AccountModelError, HT.HumanTaskError, ValueError)):
+    if isinstance(exc, (XR.XrayError, AM.AccountModelError, RP.ProposalError, HT.HumanTaskError, ValueError)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise exc
 
@@ -114,7 +126,12 @@ def _join_actions(x: dict, perms: dict) -> None:
     """The server says which lines carry the button: a managed account, an
     approved model, a replicable verdict — and the caller may propose."""
     for f in x["funds"]:
-        f["actions"] = ["open_join_request"] if (perms["can_join"] and f["join"]["available"]) else []
+        acts = []
+        if perms["can_join"] and f["join"]["available"]:
+            acts.append("open_join_request")
+        elif perms["can_join"] and (f.get("one_off") or {}).get("available"):
+            acts.append("propose_one_off")     # rep7b — an advise account: the one-off trade instead of the join
+        f["actions"] = acts
 
 
 @router.get("/xray/households")
@@ -205,3 +222,19 @@ async def open_join(request: Request, household_id: UUID, body: JoinIn):
         _raise(exc)
     return {"link_id": str(row["id"]), "status": row["status"], "account_id": str(row["account_id"]),
             "model_id": str(row["model_id"]), "task_id": (row.get("task") or {}).get("id")}
+
+
+@router.post("/xray/households/{household_id}/one-off", status_code=201)
+async def open_one_off(request: Request, household_id: UUID, body: OneOffIn):
+    principal = require_permission(request, JOIN)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    await _require_household(pool, principal, org_id, household_id)
+    try:
+        row = await XR.open_one_off(pool, org_id=org_id, actor_id=principal.user_id, household_id=household_id,
+                                    account_id=body.account_id, fund_security_id=body.fund_security_id,
+                                    executor_type=body.executor_type, executor_name=body.executor_name,
+                                    executor_contact=body.executor_contact)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+    return {"proposal": RP.proposal_out(row)}

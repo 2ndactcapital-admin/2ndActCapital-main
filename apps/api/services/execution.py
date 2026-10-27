@@ -85,6 +85,8 @@ ACTION_LABELS = {
     "close": "Closed", "cancel": "Cancelled", "expire": "Expired", "carry": "Carried to the next day",
     "ask": "Not filled — decision requested", "letter": "Letter of instruction generated",
 }
+DOCUMENT_LABELS = {"letter_of_instruction": "Letter of instruction",
+                   "dvp_settlement_instruction": "DVP settlement instruction"}
 # Fields a draft edit may change (everything else is lifecycle).
 EDITABLE_FIELDS = ("quantity", "notional", "price_kind", "limit_price", "range_low", "range_high", "reference_price",
                    "reference_at", "wash_sale_notes", "executor_type", "executor_name", "executor_contact",
@@ -162,7 +164,9 @@ async def load_account(conn, org_id, account_id) -> dict:
         _uuid(account_id, "account"), str(org_id))
     if row is None:
         raise ExecutionNotFound("account not found")
-    return dict(row)
+    from services import authority as AU      # rep7b — the effective authority / custody rides on the account
+
+    return await AU.attach(conn, org_id, dict(row))
 
 
 async def _security(conn, global_security_id) -> dict:
@@ -361,6 +365,15 @@ def _need(row: dict, statuses: tuple[str, ...], what: str) -> None:
 
 
 # ── Create (called by the trade adapters) ───────────────────────────────────
+def _is_dvp(acct: dict, executor_type: str) -> bool:
+    """rep7b — a managed account at another custodian, executed by a broker or
+    trader: a manual DVP settlement instruction (never a custodian API)."""
+    from services import authority as AU
+
+    e = AU.effective(acct)
+    return e["authority"] == "managed" and e["custody"] == "other_custodian" and executor_type in AU.DVP_EXECUTORS
+
+
 async def _verify_upstream(conn, org_id, acct: dict, trade_list, upstream: dict) -> dict:
     """rep5 (Task 1d): an instruction list ALREADY approved by an upstream
     maker-checker — a rebalance proposal. Re-read here, never trusted from the
@@ -409,12 +422,20 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
         acct = await load_account(conn, org_id, trade_list.account_id)
         if str(acct["id"]) != str(account["id"]):
             raise ExecutionError("the trade list names a different account")
-        from services.held_away import refuse      # rep7 — never an instruction for a held-away account
+        from services.held_away import refuse      # rep7 / rep7b — the authority × custody and the executor decide
 
-        refuse(acct, "an execution instruction", ExecutionConflict)
+        refuse(acct, "an execution instruction", ExecutionConflict, path="instructions",
+               executor=trade_list.executor_type)
         up = await _verify_upstream(conn, org_id, acct, trade_list, upstream) if upstream else None
         maker = up["maker_id"] if up else actor["id"]
         status = "approved" if up else "draft"
+        dvp = _is_dvp(acct, trade_list.executor_type)
+        if dvp and not ((acct.get("receiving") or {}).get("custodian_name")
+                        and (acct.get("receiving") or {}).get("participant_number")):
+            raise ExecutionConflict(f"{acct['account_number_masked']}: record the receiving custodian's name and DTC / "
+                                    "participant number (an approved custody change) before a DVP settlement "
+                                    "instruction")
+        trade_date = date.today()
         async with conn.transaction():
             for t in trade_list.trades:
                 await _security(conn, t.global_security_id)
@@ -445,6 +466,13 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                         str(actor["id"]))
                 detail = {"routed_via": routed_via, "routing_reason": routing_reason, "lots": len(lots),
                           "source": trade_list.source}
+                if dvp:   # rep7b — managed at another custodian: the manual DVP settlement detail, same transaction
+                    from services import authority as AU
+
+                    st = await AU.write_settlement(conn, org_id=org_id, account=acct, instruction=dict(row),
+                                                   actor_id=actor["id"], trade_date=trade_date)
+                    detail["settlement"] = {"type": "dvp", "settlement_date": st["settlement_date"].isoformat(),
+                                            "receiving_custodian": st["receiving_custodian_name"]}
                 if up:
                     detail["upstream"] = {"proposal_id": up["proposal_id"], "task_id": up["task_id"],
                                           "maker_id": str(up["maker_id"]), "checker_id": str(up["checker_id"])}
@@ -524,6 +552,9 @@ async def submit(pool, *, org_id, instruction_id, actor_id) -> dict:
             raise ExecutionError("execute-by date is in the past — edit it before submitting")
         sec = await _security(conn, row["global_security_id"])
         acct = await load_account(conn, org_id, row["account_id"])
+    why = _approval_refusal(acct, row)
+    if why:
+        raise ExecutionConflict(why)
     task = await HT.open_task(
         pool, org_id=org_id, kind=TASK_KIND, subject_type="execution_instruction", subject_id=row["id"],
         maker_id=actor["id"], eligible_permission=APPROVE, title=_task_title(row, sec["name"]),
@@ -587,6 +618,34 @@ async def _on_task_complete(pool, task, outcome, actor_id, note):
 
 HT.register_kind(TASK_KIND, label="Execution approval", outcomes=("approve", "reject"), maker_checker=True,
                  on_complete=_on_task_complete)
+
+
+def _approval_refusal(acct: dict, row: dict) -> str | None:
+    """rep7b — an instruction is submitted / approved only while its account's
+    authority allows it (the same policy as creation). A draft written before
+    rep7 on a held-away account (read-only) is refused with the reason — kept,
+    never deleted or cancelled by this check."""
+    from services import authority as AU
+
+    return AU.refusal(acct, "approving an execution instruction", path="instructions",
+                      executor=row["executor_type"])
+
+
+async def _approval_precheck(pool, task, outcome, actor_id):
+    if outcome != "approve":
+        return
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(f"SELECT * FROM {T_INS} WHERE approval_task_id = $1::uuid AND system_to IS NULL",
+                                  task["id"])
+        if row is None:
+            return
+        acct = await load_account(conn, row["org_id"], row["account_id"])
+    why = _approval_refusal(acct, dict(row))
+    if why:
+        raise HT.HumanTaskConflict(why)
+
+
+HT.register_precheck(TASK_KIND, _approval_precheck)
 
 
 async def sync_task_outcome(pool, *, org_id, instruction_id) -> dict:
@@ -1039,6 +1098,12 @@ async def detail(conn, org_id, instruction_id) -> dict:
     out["tasks"] = tasks
     out["history_versions"] = int(await conn.fetchval(
         f"SELECT count(*) FROM {T_INS} WHERE archived_from_id = $1", row["id"]))
+    from services import authority as AU      # rep7b — the manual DVP settlement detail, when there is one
+
+    out["settlement"] = AU.settlement_out(await AU.settlement_of(conn, org_id, row["id"]))
+    out["account_authority"] = AU.authority_out(acct)
+    out["approval_refused"] = _approval_refusal(acct, row) if row["status"] in ("draft", "pending_approval") else None
+    out["held_away"] = bool(acct["is_held_away"])
     return out
 
 
@@ -1052,7 +1117,7 @@ def vocabularies() -> dict:
         "sides": pairs(SIDE_LABELS), "price_kinds": pairs(PRICE_KIND_LABELS),
         "if_not_filled": pairs(IF_NOT_FILLED_LABELS), "sources": pairs(SOURCE_LABELS),
         "sent_channels": pairs(SENT_CHANNEL_LABELS), "reconcile_methods": pairs(RECONCILE_METHOD_LABELS),
-        "actions": pairs(ACTION_LABELS), "editable": [],
+        "actions": pairs(ACTION_LABELS), "documents": pairs(DOCUMENT_LABELS), "editable": [],
     }
 
 
@@ -1077,8 +1142,15 @@ def actions_for(row: dict, *, can_write: bool, can_approve: bool, user_id, task_
             acts += ["close"]
     if can_approve and s == "pending_approval" and task_open and str(user_id) not in makers:
         acts += ["approve", "reject"]
+    if row.get("approval_refused"):
+        # rep7b — the account's authority refuses it (e.g. a pre-rep7 draft on a read-only held-away account)
+        acts = [a for a in acts if a not in ("submit", "approve")]
     if row.get("executor_type") in LETTER_EXECUTORS:
         acts.append("letter")
+    if row.get("settlement"):
+        acts.append("settlement_instruction")
+    if can_write and s == "filled" and row.get("held_away"):
+        acts.append("reconcile_from_held_away")
     return acts
 
 
@@ -1142,6 +1214,90 @@ async def letter(pool, *, org_id, instruction_id, actor_id, include_full_number:
                             "verified_against_hash": True}))
     await publish(pool, [ref])
     return pdf, f"letter-of-instruction-{d['id'][:8]}.pdf"
+
+
+async def settlement_letter(pool, *, org_id, instruction_id, actor_id, include_full_number: bool = False,
+                            full_account_number: str | None = None) -> tuple[bytes, str]:
+    """rep7b — the DVP settlement instruction PDF for a managed account at
+    another custodian, ON DEMAND (never stored). Masked unless the full number
+    is explicitly chosen, typed and checked against the account's hash —
+    exactly :func:`letter`'s rule. Logged as a 'letter' event naming the
+    document; the digits never are."""
+    from services.custody.base import AccountNumber
+    from services.settlement_letter import build_settlement
+
+    async with pool.acquire() as conn:
+        actor = await _human(conn, actor_id, org_id)
+        d = await detail(conn, org_id, instruction_id)
+        st = d.get("settlement")
+        if not st:
+            raise ExecutionError("a DVP settlement instruction is for a managed account at another custodian, "
+                                 "executed by a broker or trader; this instruction carries no settlement detail")
+        acct = await load_account(conn, org_id, d["account_id"])
+        org_name = await conn.fetchval("SELECT name FROM organizations WHERE id = $1::uuid", str(org_id))
+        number = None
+        if include_full_number:
+            if not (full_account_number or "").strip():
+                raise ExecutionError("to include the full account number, type it — only the masked number is "
+                                     "stored")
+            number = AccountNumber(full_account_number)
+            salt = await _account_salt(conn, org_id)
+            if not salt or number.hashed(salt) != acct["account_number_hash"]:
+                raise ExecutionError("that is not this account's number")
+        elif full_account_number:
+            raise ExecutionError("a full account number was given without choosing to include it")
+    pdf = build_settlement(d, st, org_name=org_name or "", account_number=number, prepared_by=_who_name(actor))
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            ref = await _event(conn, org_id=org_id, instruction_id=d["id"], action="letter",
+                               from_status=d["status"], to_status=d["status"], actor_id=actor["id"],
+                               detail={"document": "dvp_settlement_instruction",
+                                       "include_full_number": bool(include_full_number),
+                                       "settlement_date": st["settlement_date"]})
+            if include_full_number:
+                await conn.execute(
+                    "INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, payload) "
+                    "VALUES ($1::uuid, $2::uuid, 'execution.settlement_full_account_number', "
+                    "'execution_instruction', $3::uuid, $4::jsonb)", str(org_id), str(actor["id"]), d["id"],
+                    _dumps({"event_id": ref.id, "account_number_masked": acct["account_number_masked"],
+                            "verified_against_hash": True}))
+    await publish(pool, [ref])
+    return pdf, f"dvp-settlement-{d['id'][:8]}.pdf"
+
+
+async def reconcile_from_held_away(pool, *, org_id, instruction_id, actor_id, record_id, note: str | None = None
+                                   ) -> dict:
+    """rep7b — a FILLED instruction on a held-away account (advise, or managed
+    at another custodian) reconciled when the held-away feed / import shows the
+    trade: reconcile_method 'custodian_data' with the held-away record as the
+    reference. The record must be a TRANSACTION of this account, same security
+    and side (and quantity, when the record states one)."""
+    async with pool.acquire() as conn:
+        await _human(conn, actor_id, org_id)
+        row = await load(conn, org_id, instruction_id)
+        rec = await conn.fetchrow(
+            """SELECT r.id, r.record_type, r.record_id, r.account_id, r.valid_to, t.transaction_type_code AS side,
+                      t.quantity, a.global_security_id
+               FROM public.held_away_records r
+               JOIN portfolio.transactions t ON t.id = r.record_id AND t.system_to IS NULL
+               JOIN portfolio.positions p ON p.id = t.position_id
+               JOIN portfolio.assets a ON a.id = p.asset_id AND a.system_to IS NULL
+               WHERE r.id = $1::uuid AND r.org_id = $2::uuid AND r.system_to IS NULL""",
+            _uuid(record_id, "held-away record"), str(org_id))
+    if rec is None or rec["record_type"] != "transaction":
+        raise ExecutionNotFound("held-away transaction record not found")
+    if str(rec["account_id"]) != str(row["account_id"]):
+        raise ExecutionConflict("that held-away record is another account's")
+    if str(rec["global_security_id"]) != str(row["global_security_id"]) or (rec["side"] or "") != row["side"]:
+        raise ExecutionConflict("that held-away transaction is a different security or side")
+    if rec["quantity"] is not None and row["quantity"] is not None and abs(Decimal(str(rec["quantity"]))) != Decimal(
+            str(row["quantity"])):
+        raise ExecutionConflict(f"that held-away transaction is {abs(Decimal(str(rec['quantity'])))} shares; the "
+                                f"instruction is {row['quantity']}")
+    return await reconcile(pool, org_id=org_id, instruction_id=instruction_id, actor_id=actor_id,
+                           method="custodian_data", reference=f"held_away_record:{rec['id']}",
+                           transaction_ids=[str(rec["record_id"])],
+                           note=note or "matched to the held-away feed / import")
 
 
 def _who_name(user: dict) -> str:

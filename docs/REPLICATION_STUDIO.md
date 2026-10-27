@@ -1148,3 +1148,117 @@ Completion portfolios and overlap consolidation are rep10.
 2. Redeploy the API and the scheduler cron service (the tick now runs the staleness check and the X-ray sweep).
 3. Optional org settings: `replication.held_away.stale_after_days` (30) and `replication.xray.single_name_pct` (0.10).
 4. To extract statements, activate an ensemble for task key `statement_positions` with two non-Claude chat models.
+
+## rep7b — account authority and custody (2026-10-27)
+
+Joe's decision 6 (corrected 26 Oct) was "DVP into held-away accounts", not read-only
+visibility. rep7 merged the two meanings into `accounts.is_held_away` = never traded. rep7b
+separates them into two settings per account:
+
+- **Authority** — what the adviser may do: `read_only` | `advise` | `managed`. Set per
+  household by the adviser (`public.household_authority`), overridable per account
+  (`public.account_authority_settings.authority_override`). Every change is maker-checker.
+- **Custody** — where the account is held: `integrated` (the integrated custodian feed,
+  `is_held_away = false`) | `other_custodian` (settled delivery-versus-payment) | `outside`
+  (outside the platform). On `account_authority_settings.custody`, with the receiving
+  custodian's details for `other_custodian`.
+
+### Task 1 findings (rep7b)
+
+**1a — readers.** `is_held_away`: set by `custody/importer.py`; read by `held_away` (sources,
+staleness, the guard), `rebalance_proposals` (warning, executor), `xray` (join eligibility),
+`loss_bank` / `wash_sale` / `tax_overview` (data tagging — unchanged), the routers' envelopes and
+the web labels. `is_discretionary` → rep5's `advice_only` on the link at join and at generate.
+`service_model`: free text, read by nothing that decides anything.
+
+**1b — the matrix (final).**
+
+| authority \ custody | integrated | other_custodian | outside |
+|---|---|---|---|
+| read_only | nothing (data only) | nothing | nothing |
+| advise | one-off + execute/instructions/route, executor member \| other_adviser, never an adapter | same | same |
+| managed | every path, as before (adapter routing) | every model path (join, change model, settings, transition, each proposal trigger, harvest); instructions broker \| trader = manual DVP settlement (member \| other_adviser for rep5 advice-only) | **not a setting** (refused) |
+
+Paths: `join`, `change_model`, `settings`, `transition`, `proposal:<trigger>` for join /
+model_change / drift / cash_flow / manual / harvest, `one_off`, `harvest`, `execute`,
+`instructions`, `route`. Correction to the prompt: advise is NOT `not is_discretionary` — a
+non-discretionary managed account following a model gets drift / model-change proposals as
+advice today (rep5), and mapping it to advise would refuse them. One source per decision:
+which paths ← authority × custody; who executes when managed ← rep5's `advice_only`; who executes
+under advise ← the authority (member / other adviser).
+
+**1c — the migration.** Writes no rows. Effective authority = the account's approved override ??
+the household's approved authority ?? the default, computed at read time
+(`services/authority.default_for`): `is_held_away` → read_only / outside; otherwise managed /
+integrated — rep7's behaviour exactly. The 5 live accounts at the time (all in the leftover REP2
+fixture orgs, is_test): `******2222` held-away → read_only / outside; `******4321`, `******4444`,
+`******5678`, `******6666` → managed / integrated. `_apply_rep7b.py --migrate` proves each path
+allowed / refused before = after.
+
+**1d — where authority is read.** The one guard (`held_away.refusal` → `authority.refusal`, one
+call per path, now with a structured `path` and the executor), every account loader
+(`account_models.load_account`, `execution.load_account`, `xray.household_accounts` attach the
+effective setting), the envelopes (account model actions, held-away `trade_actions`, X-ray line
+actions), rep5's executor choice (`rebalance_proposals.executor_for`), and staleness (a held-away
+account proposed for depends on its own data too). The existing DRAFT instruction on a read-only
+held-away account: submit and the approval task's precheck refuse it with the reason; it is neither
+deleted nor cancelled.
+
+**1e — DVP settlement.** Beyond today's instruction columns a DVP needs the receiving custodian, its
+DTC / participant number, the agent bank, the settlement date, the masked account at the
+receiving custodian and the contra / executing broker. They live in a child table
+`public.instruction_settlements` (written once with the instruction, valid axis), and a separate
+**DVP settlement instruction** PDF (`services/settlement_letter.py`): rep2's letter asks a member
+or other adviser to *place* a trade; this one tells a broker how it *settles* — different audience,
+same masking rule and the same full-number path.
+
+### Schema (`docs/rep7b_part1.sql`)
+
+- `household_authority` and `account_authority_settings`: draft → approved / rejected on the same
+  id (system axis, the draft state archived); a newer approved change closes the previous
+  approved row's `valid_to` (never deleted — the history). One live approved row and one pending
+  change per household / account (partial uniques). CHECKs: managed + outside refused; receiving
+  details only (and then required) for another custodian; participant number digits; receiving
+  account masked; maker ≠ checker; a rejection needs a note.
+- `instruction_settlements`: CHECK authority = managed AND custody = other_custodian, executor broker
+  | trader (advise / read_only never carry settlement detail), settlement after trade date,
+  `calendar_basis = 'weekends_only'`; an insert guard ties it to its instruction's account, org and
+  executor.
+- `rebalance_proposals.proposal_kind` ('model' | 'one_off'); link / model / version nullable only
+  for a one-off (manual trigger, made by a person).
+- Permissions `view_authority` / `manage_authority` / `approve_authority` (org_admin by default).
+
+### The advise flow
+
+1. Account page or X-ray line → **Propose a one-off trade** (only on an advise account; the X-ray
+   line offers it instead of "Open join request"). A draft manual proposal: the engine builds the
+   trades from a target that moves only the named securities to / from cash, so lot selection, the
+   gain budget (incl. gains realized elsewhere), household wash-sale control and held-away
+   staleness all apply.
+2. The maker submits; a second holder of `approve_proposals` approves (stale held-away data waits
+   for the confirmation task).
+3. The approved proposal routes to instructions executed by the member or the other adviser the
+   adviser chose (name and contact recorded), source `proposal`, never a custodian API; each has
+   rep2's letter of instruction (masked unless the full number is typed and checked).
+4. The fill is entered by the adviser, or the instruction is reconciled when the held-away feed /
+   import shows the trade (`POST /execution/instructions/{id}/reconcile-held-away` —
+   `custodian_data`, reference `held_away_record:<id>`; same security and side, and quantity when
+   stated).
+
+### Manual DVP settlement (until rep9)
+
+A managed account at another custodian follows models like any managed account (joins, every
+trigger, harvest). Its approved proposals route to MANUAL instructions for a broker (the contra
+broker, else the receiving custodian), each with its `instruction_settlements` row: receiving
+custodian, DTC / participant number, agent bank, masked account there, trade date and settlement
+date = trade date + 1 business day (weekends only — no holiday calendar exists). Nothing calls a
+custodian API; a person sends the DVP settlement instruction PDF. Staleness applies: the account's
+own held-away data is a dependency. Block trading in an omnibus account, allocation and automated
+DVP are rep9. Billing / disclosure for advising on held-away assets: an open decision (Joe and
+counsel) — nothing is shown.
+
+### rep7b operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep7b.py` (runs `node --test`,
+   `npm run build` and the `verify_rep7.py` regression — VERIFY_NESTED=1, 2700 s).
+2. Redeploy the API. Refresh the schema snapshot (`refresh-schema`).

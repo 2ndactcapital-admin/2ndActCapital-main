@@ -1,5 +1,5 @@
 {
- "app_route_count": 632,
+ "app_route_count": 643,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -10444,6 +10444,50 @@
    },
    "find": false,
    "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "settlement",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/settlement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.execution",
+   "name": "reconcile_held_away",
+   "note": "",
+   "path": "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
     "GET"
    ],
    "module": "routers.execution",
@@ -10780,6 +10824,28 @@
    "name": "generate",
    "note": "",
    "path": "/api/v1/accounts/{account_id}/proposals",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.account_models",
+   "name": "generate_one_off",
+   "note": "",
+   "path": "/api/v1/accounts/{account_id}/proposals/one-off",
    "public": false,
    "write": true
   },
@@ -11990,6 +12056,182 @@
    "name": "open_join",
    "note": "",
    "path": "/api/v1/xray/households/{household_id}/join",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.xray",
+   "name": "open_one_off",
+   "note": "",
+   "path": "/api/v1/xray/households/{household_id}/one-off",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.authority",
+   "name": "vocabulary",
+   "note": "",
+   "path": "/api/v1/authority/vocabulary",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.authority",
+   "name": "household",
+   "note": "",
+   "path": "/api/v1/authority/households/{household_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.authority",
+   "name": "account",
+   "note": "",
+   "path": "/api/v1/authority/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.authority",
+   "name": "request_household_change",
+   "note": "",
+   "path": "/api/v1/authority/households/{household_id}/changes",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.authority",
+   "name": "request_account_change",
+   "note": "",
+   "path": "/api/v1/authority/accounts/{account_id}/changes",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.authority",
+   "name": "approve",
+   "note": "",
+   "path": "/api/v1/authority/changes/{change_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_authority",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_authority"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.authority",
+   "name": "reject",
+   "note": "",
+   "path": "/api/v1/authority/changes/{change_id}/reject",
    "public": false,
    "write": true
   },

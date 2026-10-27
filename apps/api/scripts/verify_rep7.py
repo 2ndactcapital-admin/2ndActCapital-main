@@ -1405,7 +1405,7 @@ async def y_staleness(conn):
     cc, oc = await api(U_ADMIN1, "POST", f"/api/v1/held-away/confirmations/{conf['id']}/confirm", {"note": "seen"})
     check(cv == 403 and cc == 200 and oc.get("status") == "confirmed" and oc.get("confirmed_by") == str(U_ADMIN1)
           and oc.get("as_of_confirmed") == ago(STALE_DAYS + 1) and oc.get("expires_on") == (
-              TODAY + timedelta(days=STALE_DAYS)).isoformat(),
+              date.today() + timedelta(days=STALE_DAYS)).isoformat(),
           "a viewer cannot confirm; an adviser confirms — logged with who and which as-of, expiring after "
           "stale_after_days", f"{cv} {cc} {oc}")
     ca, oa = await api(approver, "POST", f"/api/v1/proposals/{pid}/approve", {})

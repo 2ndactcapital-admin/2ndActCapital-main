@@ -15,6 +15,7 @@ import { useState } from "react";
 import {
   barWidth, breakEvenText, estimateText, inputsTitle, joinControl, labelOf, money, pct, runControl, vocab,
 } from "@/lib/heldAway.mjs";
+import { oneOffXrayControl } from "@/lib/authority.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const secondary = "rounded border border-navy px-3 py-1 text-navy disabled:opacity-50";
@@ -68,7 +69,7 @@ export function Exposure({ envelope }) {
   );
 }
 
-export function Funds({ envelope, onJoin }) {
+export function Funds({ envelope, onJoin, onOneOff }) {
   const x = envelope?.xray || {};
   const v = vocab(envelope);
   const funds = Array.isArray(x.funds) ? x.funds : [];
@@ -87,7 +88,9 @@ export function Funds({ envelope, onJoin }) {
           <td title={f.break_even?.note || ""}>{breakEvenText(f.break_even)}</td>
           <td>{joinControl(envelope, f)
             ? <button type="button" className={secondary} onClick={() => onJoin?.(f)}>Open join request</button>
-            : (f.held_away ? <span className="text-xs text-text-muted">{v.held_away_note || "held away — moving the assets comes first"}</span> : null)}</td>
+            : oneOffXrayControl(envelope, f)
+              ? <button type="button" className={secondary} title={f.one_off?.reason || ""} onClick={() => onOneOff?.(f)}>Propose a one-off trade</button>
+              : (f.held_away ? <span className="text-xs text-text-muted">{v.held_away_note || "held away — moving the assets comes first"}</span> : null)}</td>
         </tr>
       ))}</tbody>
     </table>
@@ -118,6 +121,14 @@ export default function XrayView({ initialEnvelope }) {
       await reload();
     } catch (e) { setMsg(e.message); }
   }
+  async function oneOff(f) {
+    setMsg(null);
+    try {
+      const out = await call(`households/${hh.id}/one-off`, { account_id: f.account_id, fund_security_id: f.fund_security_id });
+      setMsg("Draft one-off proposal made — submit it from the proposal page; a second person approves it.");
+      if (out?.proposal?.id) window.location.href = `/portfolio/proposals/${out.proposal.id}`;
+    } catch (e) { setMsg(e.message); }
+  }
   async function record() {
     setMsg(null);
     try { await call(`households/${hh.id}/runs`, {}); setMsg("Run recorded."); await reload(); } catch (e) { setMsg(e.message); }
@@ -143,7 +154,7 @@ export default function XrayView({ initialEnvelope }) {
           : <p className="mt-1 text-text-muted">No two looked-through funds.</p>}
         {rov.length ? <ul className="mt-1">{rov.map((o) => <li key={o.model_id}>With {o.name} (followed): {o.shared} shared, overlap {pct(o.overlap_weight)}</li>)}</ul> : null}
       </div>
-      <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Replicable funds</h2><div className="mt-2"><Funds envelope={env} onJoin={join} /></div></div>
+      <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Replicable funds</h2><div className="mt-2"><Funds envelope={env} onJoin={join} onOneOff={oneOff} /></div></div>
       <div className={`${card} p-6`}>
         <h2 className="text-lg font-semibold text-navy">Holdings</h2>
         <table className="mt-2 w-full">

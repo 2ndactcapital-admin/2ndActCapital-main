@@ -123,7 +123,9 @@ WARNING_LABELS = {
     "harvest_note": "Tax-loss harvest",
     "held_away_realized": "Includes gains realized in held-away accounts",
     "stale_held_away": "Held-away data is stale — confirm before approval",
+    "one_off": "One-off trade — advise (the member or another adviser executes)",
 }
+PROPOSAL_KIND_LABELS = {"model": "Model rebalance", "one_off": "One-off trade (advise)"}
 PRICE_SOURCE_LABELS = {"account_position": "The account's own position valuation",
                        "security_price": "Security price", "none": "No price — bought by amount"}
 PLAN_ACTION_LABELS = {"keep": "Keep", "trim": "Trim", "add": "Add", "sell_now": "Sell now",
@@ -443,14 +445,16 @@ async def _unheld_prices(conn, keys: list[str], since: date) -> dict:
 
 
 async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdrawal: Decimal | None = None,
-                  today: date | None = None) -> dict:
-    """Everything a proposal stores, computed (no writes)."""
+                  today: date | None = None, target_override: dict | None = None) -> dict:
+    """Everything a proposal stores, computed (no writes). rep7b: a one-off
+    (advise) passes its own ``target_override`` and no model version — the same
+    lot selection, gain budget, wash-sale control and staleness apply."""
     from services.custodian_capabilities import available, capability
     from services.custody.registry import trade_custodian_key
 
     today = today or date.today()
     hold = await AM.load_holdings(conn, org_id, account["id"])
-    tg = await target_for(conn, org_id, link, version_id)
+    tg = target_override if target_override is not None else await target_for(conn, org_id, link, version_id)
     key = trade_custodian_key(account.get("custodian_code")) or "manual"
     frac = await capability(conn, key, "fractional_shares")
     trading = await capability(conn, key, "equity_trading_api")
@@ -524,7 +528,7 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
                              "as_of": s_["as_of"], "stale_after_days": s_["stale_after_days"]})
     for k in {t.key for t, _ in lines}:
         labels.setdefault(k, ctx.label(k))
-    thr, thr_src = await drift_threshold(conn, org_id, link, version_id)
+    thr, thr_src = (await drift_threshold(conn, org_id, link, version_id)) if version_id else (None, "one_off")
     return {"result": res, "lines": lines, "warnings": warnings, "labels": labels, "holdings": hold,
             "realized_ytd": ytd, "gain_budget": budget, "fractional": available(frac), "threshold": thr,
             "threshold_source": thr_src, "min_trade": min_trade, "today": today}
@@ -668,8 +672,9 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
         account = await AM.load_account(conn, org_id, account_id)
         if AM.is_closed(account, today):
             raise ProposalConflict(f"account {account['account_number_masked']} is closed")
-        # rep7 — a held-away account is never traded: no proposal of any trigger
-        HA.refuse(account, f"a {TRIGGER_LABELS[trigger].lower()} proposal", ProposalConflict)
+        # rep7 / rep7b — the account's authority × custody decides (read-only held-away: no proposal of any trigger)
+        HA.refuse(account, f"a {TRIGGER_LABELS[trigger].lower()} proposal", ProposalConflict,
+                  path=f"proposal:{trigger}")
         link = await AM.active_link(conn, account["id"])
         if link is None:
             raise ProposalConflict("the account does not follow a model — join one first")
@@ -763,19 +768,20 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                         trigger_ref, status, advice_only, valuation_as_of, account_value, cash_value, withdrawal_amount,
                         target_weights, before_weights, after_weights, drift_before, drift_after, est_st_gain,
                         est_lt_gain, gain_budget, gain_realized_ytd, warnings, sell_later, expires_at, maker_kind,
-                        maker_id)
+                        maker_id, proposal_kind)
                     VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7, $8::jsonb, 'draft', $9, $10, $11,
                             $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19, $20, $21, $22, $23::jsonb,
-                            $24::jsonb, $25, $26, $27::uuid)""",
-                pid, str(org_id), str(account["id"]), str(link["id"]), str(model["id"]),
-                str(model["live_version_id"]), trigger, _dumps({**ref, "threshold": c["threshold"],
+                            $24::jsonb, $25, $26, $27::uuid, $28)""",
+                pid, str(org_id), str(account["id"]), str(link["id"]) if link else None,
+                str(model["id"]) if model else None, str(model["live_version_id"]) if model else None, trigger, _dumps({**ref, "threshold": c["threshold"],
                                                                 "threshold_source": c["threshold_source"]}),
                 advice_only, c["holdings"]["valuation_as_of"], r.account_value.quantize(E.QTY),
                 r.cash.quantize(E.QTY), withdrawal, _dumps(_weights_out(r.target, c["labels"])),
                 _dumps(_weights_out(r.before, c["labels"])), _dumps(_weights_out(r.after, c["labels"])),
                 r.drift_before, r.drift_after, r.est_st_gain.quantize(E.QTY), r.est_lt_gain.quantize(E.QTY),
                 c["gain_budget"], c["realized_ytd"].quantize(E.QTY), _dumps(c["warnings"]), _dumps(later),
-                now + timedelta(days=expiry_days), maker_kind, str(maker_id) if maker_id else None)
+                now + timedelta(days=expiry_days), maker_kind, str(maker_id) if maker_id else None,
+                "model" if link else "one_off")
             for i, (t, wash) in enumerate(c["lines"], start=1):
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
@@ -789,7 +795,7 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                              "est_gain": _num(None if lot["est_gain"] is None else lot["est_gain"].quantize(E.QTY))}
                             for lot in t.lots]),
                     t.est_st_gain.quantize(E.QTY), t.est_lt_gain.quantize(E.QTY), t.reason, _dumps(wash))
-            if trigger == "join":
+            if trigger == "join" and link:
                 await conn.execute(f"UPDATE {T_PLAN} SET valid_to = now() WHERE account_id = $1::uuid "
                                    "AND valid_to IS NULL AND system_to IS NULL", str(account["id"]))
                 await conn.execute(
@@ -810,7 +816,7 @@ async def transition_preview(conn, org_id, account_id, *, model_id=None, setting
     """The transition analysis for a joining (or re-targeted) account, computed
     without writing anything: keep / trim / add / sell now / sell later by year."""
     account = await AM.load_account(conn, org_id, account_id)
-    HA.refuse(account, "a transition", ProposalConflict)       # rep7
+    HA.refuse(account, "a transition", ProposalConflict, path="transition")       # rep7 / rep7b
     link = await AM.active_link(conn, account["id"])
     mid = model_id or (link["model_id"] if link else None)
     if mid is None:
@@ -845,6 +851,8 @@ def plan_out(r: E.BuildResult, labels: dict) -> dict:
 
 # ── Submit / decide ─────────────────────────────────────────────────────────
 def _title(account: dict, p: dict) -> str:
+    if p.get("proposal_kind") == "one_off":
+        return f"Approve one-off trade (advise): {account['account_number_masked']}"
     return f"{'Review' if p['maker_kind'] == 'system' else 'Approve'} rebalance: {account['account_number_masked']} " \
            f"— {TRIGGER_LABELS[p['trigger']].lower()}"
 
@@ -1075,7 +1083,7 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
         actor = await HT.assert_human(conn, actor_id, org_id)
         account = await X.load_account(conn, org_id, p["account_id"])
         acct = await AM.load_account(conn, org_id, p["account_id"])
-        HA.refuse(acct, "routing a proposal to instructions", ProposalConflict)     # rep7
+        HA.refuse(acct, "routing a proposal to instructions", ProposalConflict, path="execute")     # rep7 / rep7b
         lines = await trades_of(conn, p["id"])
         within = await _setting(conn, org_id, EXECUTE_WITHIN_SETTING, DEFAULT_EXECUTE_WITHIN, lo=0, hi=90,
                                 integer=True)
@@ -1095,12 +1103,18 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                 await _audit(conn, org_id, actor["id"], "executed", p["id"], {"reason": why})
         return new
     advice = p["advice_only"]
-    executor = "member" if (advice or acct["is_held_away"]) else "custodian_desk"
+    executor, ex_name, ex_contact = executor_for(p, acct)
+    one_off = p.get("proposal_kind") == "one_off"
     tl = TradeList(account_id=p["account_id"], trades=[_trade_line(t) for t in trades], executor_type=executor,
+                   executor_name=ex_name, executor_contact=ex_contact,
                    execute_by=date.today() + timedelta(days=within), if_not_filled="ask", source="proposal",
                    source_ref=p["id"],
-                   notes=(f"From rebalance proposal {p['id']} ({TRIGGER_LABELS[p['trigger']].lower()})"
-                          + ("; ADVICE ONLY — the member decides and executes" if advice else "")))
+                   notes=(f"From one-off trade proposal {p['id']} (advise — the {executor.replace('_', ' ')} "
+                          "executes; letter of instruction)" if one_off else
+                          f"From rebalance proposal {p['id']} ({TRIGGER_LABELS[p['trigger']].lower()})"
+                          + ("; ADVICE ONLY — the member decides and executes" if advice else "")
+                          + ("; manual DVP settlement at the receiving custodian" if executor in ("broker", "trader")
+                             else "")))
     human_maker = p["maker_kind"] == "user"
     upstream = {"proposal_id": str(p["id"]), "maker_id": str(p["maker_id"]), "checker_id": str(p["checker_id"])} \
         if human_maker else None
@@ -1136,6 +1150,148 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                                                                         "reason": result.reason})
     await _publish(pool, org_id, "routed", p["id"], {"instruction_ids": ids}, actor["id"])
     return new
+
+
+def executor_for(p: dict, acct: dict) -> tuple[str, str | None, str | None]:
+    """Who executes an approved proposal's trades (rep7b, Task 1b):
+    a one-off (advise) — the executor the adviser chose (member / other
+    adviser) and its contact; rep5's advice-only — the member; managed at
+    another custodian — a broker (manual DVP settlement); otherwise the
+    integrated custodian's desk, as before."""
+    from services import authority as AU
+
+    if p.get("proposal_kind") == "one_off":
+        ex = (_loads(p["trigger_ref"]) or {}).get("executor") or {}
+        return ex.get("type") or "member", ex.get("name"), ex.get("contact")
+    if p["advice_only"]:
+        return "member", None, None
+    e = AU.effective(acct)
+    if e["custody"] == "other_custodian":
+        rc = acct.get("receiving") or {}
+        return "broker", rc.get("contra_broker") or rc.get("custodian_name"), None
+    return "custodian_desk", None, None
+
+
+async def generate_one_off(pool, *, org_id, account_id, maker_id, lines: list[dict], executor_type: str,
+                           executor_name: str | None = None, executor_contact: str | None = None,
+                           gain_budget: Decimal | None = None, avoid_short_term: bool = False,
+                           note: str | None = None, today: date | None = None) -> dict:
+    """rep7b — ADVISE: a manual one-off proposal (no model). ``lines`` =
+    ``[{"global_security_id", "side": "sell"|"buy", "quantity": Decimal|None}]``
+    (a sell with no quantity sells the whole holding). The trades are built by
+    the SAME engine from a target that moves only those weights (to / from
+    cash), so lot selection, the gain budget (realized YTD includes held-away
+    gains), household wash-sale control and held-away staleness all apply.
+    Approved → instructions to the member or another adviser (rep2's letter)."""
+    from services import authority as AU
+
+    if executor_type not in AU.ADVISE_EXECUTORS:
+        raise ProposalError(f"a one-off trade is executed by {' or '.join(AU.ADVISE_EXECUTORS)}")
+    if executor_type == "other_adviser" and not (executor_name or "").strip():
+        raise ProposalError("name the other adviser who executes it")
+    if not lines:
+        raise ProposalError("a one-off proposal names at least one trade")
+    if gain_budget is not None and (not isinstance(gain_budget, Decimal) or gain_budget < 0):
+        raise ProposalError("a gain budget is a decimal amount of zero or more")
+    today = today or date.today()
+    async with account_lock(pool, str(account_id)):
+        async with pool.acquire() as conn:
+            await HT.assert_human(conn, maker_id, org_id)
+            account = await AM.load_account(conn, org_id, account_id)
+            if AM.is_closed(account, today):
+                raise ProposalConflict(f"account {account['account_number_masked']} is closed")
+            HA.refuse(account, "a one-off trade proposal", ProposalConflict, path="one_off")     # rep7b
+            existing = await open_proposal(conn, account["id"])
+            if existing and existing["status"] == "approved":
+                raise ProposalConflict("the instructions of the approved proposal for this account are still "
+                                       "working — a new proposal waits until they are closed or cancelled")
+            hold = await AM.load_holdings(conn, org_id, account["id"])
+            target, labels = await _one_off_target(conn, hold, lines, today)
+            shim = {"gain_budget": gain_budget, "avoid_short_term": bool(avoid_short_term),
+                    "short_term_wait_days": 30, "cash_floor": Decimal(0), "advice_only": False}
+            c = await compute(conn, org_id, account, shim, None, today=today,
+                              target_override={"target": target, "labels": labels, "excluded": {}, "notes": [],
+                                               "warnings": [], "alternates": {}})
+            expiry_days = await _setting(conn, org_id, EXPIRY_SETTING, DEFAULT_EXPIRY_DAYS, lo=1, hi=90, integer=True)
+        c["warnings"].insert(0, {"code": "one_off", "message": f"one-off trade under advise: the "
+                                 f"{AU.AUTHORITY_SHORT['advise']} authority — "
+                                 f"{executor_type.replace('_', ' ')} executes, with a letter of instruction"})
+        r: E.BuildResult = c["result"]
+        pid = uuid.uuid4()
+        now = datetime.now(timezone.utc)
+        later = [{"key": x.key, "label": c["labels"].get(x.key, x.key), "lot_id": x.lot_id, "quantity": x.quantity,
+                  "year": x.year, "on_date": _iso(x.on_date), "est_gain": x.gain, "reason": x.reason}
+                 for x in r.later]
+        ref = {"entered_by": str(maker_id), "note": note,
+               "one_off": [{"global_security_id": str(x["global_security_id"]), "side": x["side"],
+                            "quantity": _num(x.get("quantity"))} for x in lines],
+               "executor": {"type": executor_type, "name": (executor_name or "").strip() or None,
+                            "contact": (executor_contact or "").strip() or None}}
+        superseded = await _write_generated(pool, org_id=org_id, account=account, link=None, model=None, c=c, r=r,
+                                            pid=pid, now=now, trigger="manual", ref=ref, advice_only=False,
+                                            later=later, withdrawal=None, expiry_days=expiry_days, maker_kind="user",
+                                            maker_id=maker_id)
+    if superseded and superseded.get("approval_task_id"):
+        await _withdraw_task(pool, superseded["approval_task_id"], "superseded by a newer proposal")
+    if superseded:
+        await _publish(pool, org_id, "superseded", superseded["id"], {"superseded_by_id": str(pid)}, maker_id)
+    await _publish(pool, org_id, "generated", pid, {"trigger": "manual", "proposal_kind": "one_off",
+                                                    "account_id": str(account["id"]), "trades": len(c["lines"])},
+                   maker_id)
+    if any(w.get("code") == "stale_held_away" for w in c["warnings"]):
+        try:   # rep7 — the adviser's confirmation task for each stale held-away dependency (the account's own too)
+            await HA.ensure_proposal_confirmations(pool, org_id=org_id, proposal_id=pid, account_id=account["id"],
+                                                   today=today)
+        except Exception:  # noqa: BLE001 — the approval precheck opens it again; the proposal stands
+            log.exception("confirm_held_away_data task for proposal %s", pid)
+    async with pool.acquire() as conn:
+        return await load(conn, org_id, pid)
+
+
+async def _one_off_target(conn, hold: dict, lines: list[dict], today: date) -> tuple[dict, dict]:
+    """Current weights, with only the named securities moved to / from cash."""
+    held = {h.key: h for h in hold["holdings"]}
+    A, before = E.current_weights(hold["holdings"], hold["cash"])
+    if A <= 0:
+        raise ProposalConflict("the account has no valued holdings or cash")
+    target = dict(before)
+    target.setdefault(E.CASH, Decimal(0))
+    labels = {h.key: h.label for h in hold["holdings"]}
+    for x in lines:
+        key = str(x["global_security_id"])
+        side, q = x["side"], x.get("quantity")
+        if side not in ("buy", "sell"):
+            raise ProposalError("a one-off trade is a buy or a sell")
+        if q is not None and (not isinstance(q, Decimal) or q <= 0):
+            raise ProposalError("a quantity is a decimal above zero")
+        h = held.get(key)
+        if side == "sell":
+            if h is None or h.price is None or h.market_value is None:
+                raise ProposalConflict("the account does not hold a valued position in that security to sell")
+            if q is not None and q > h.quantity:
+                raise ProposalConflict(f"{h.label}: the account holds {h.quantity}, fewer than {q}")
+            move = h.market_value if q is None else q * h.price
+            w = E.qw(move / A)
+            target[key] = max(target.get(key, Decimal(0)) - w, Decimal(0)) if q is not None else Decimal(0)
+            target[E.CASH] += w if q is not None else before.get(key, Decimal(0))
+        else:
+            if q is None:
+                raise ProposalError("a one-off buy names its quantity")
+            price = h.price if h is not None and h.price is not None else None
+            if price is None:
+                px = await _unheld_prices(conn, [key], today - timedelta(days=DEFAULT_STALE_DAYS))
+                price = px[key][0] if key in px else None
+            if price is None:
+                raise ProposalConflict("no recent price for that security — a one-off buy needs one")
+            w = E.qw(q * price / A)
+            if w > target[E.CASH]:
+                raise ProposalConflict("not enough cash in the account for that buy")
+            target[key] = target.get(key, Decimal(0)) + w
+            target[E.CASH] -= w
+            if key not in labels:
+                labels[key] = await conn.fetchval("SELECT name FROM portfolio.securities_global WHERE id = $1::uuid",
+                                                  key) or key
+    return target, labels
 
 
 DONE_STATUSES = ("closed", "cancelled", "expired")
@@ -1442,8 +1598,11 @@ def trade_out(t: dict) -> dict:
 
 
 def proposal_out(p: dict, account: dict | None = None) -> dict:
-    return {"id": str(p["id"]), "account_id": str(p["account_id"]), "link_id": str(p["link_id"]),
-            "model_id": str(p["model_id"]), "model_version_id": str(p["model_version_id"]), "trigger": p["trigger"],
+    return {"id": str(p["id"]), "account_id": str(p["account_id"]),
+            "link_id": str(p["link_id"]) if p["link_id"] else None,
+            "model_id": str(p["model_id"]) if p["model_id"] else None,
+            "model_version_id": str(p["model_version_id"]) if p["model_version_id"] else None,
+            "proposal_kind": p.get("proposal_kind") or "model", "trigger": p["trigger"],
             "trigger_ref": _loads(p["trigger_ref"]) or {}, "status": p["status"], "advice_only": p["advice_only"],
             "valuation_as_of": _iso(p["valuation_as_of"]), "account_value": _num(p["account_value"]),
             "cash_value": _num(p["cash_value"]), "withdrawal_amount": _num(p["withdrawal_amount"]),
@@ -1494,7 +1653,7 @@ async def detail(conn, org_id, proposal_id) -> dict:
     out = proposal_out(p, account)
     out["trades"] = [trade_out(t) for t in await trades_of(conn, p["id"])]
     model = await conn.fetchrow("SELECT name FROM portfolio.models WHERE id = $1 AND system_to IS NULL "
-                                "ORDER BY valid_to NULLS FIRST LIMIT 1", p["model_id"])
+                                "ORDER BY valid_to NULLS FIRST LIMIT 1", p["model_id"]) if p["model_id"] else None
     out["model_name"] = model["name"] if model else None
     tasks = await HT.list_tasks(conn, org_id, subject_type=SUBJECT, subject_id=p["id"], limit=20)
     out["tasks"] = tasks
@@ -1508,6 +1667,9 @@ async def detail(conn, org_id, proposal_id) -> dict:
                                "ORDER BY created_at DESC LIMIT 1", p["id"])
     out["transition_plan"] = plan_row_out(dict(plan)) if plan else None
     out["held_away"] = await HA.proposal_held_away(conn, org_id, p)        # rep7
+    from services import authority as AU
+
+    out["account_authority"] = AU.authority_out(account)                     # rep7b
     return out
 
 
@@ -1594,13 +1756,28 @@ async def accounts_overview(conn, org_id, *, model_id=None, status=None, q=None)
     return out
 
 
+def _one_off_executors() -> list[dict]:
+    from services import authority as AU
+    from services.execution import EXECUTOR_LABELS
+
+    return [{"key": k, "label": EXECUTOR_LABELS[k]} for k in AU.ADVISE_EXECUTORS]
+
+
+def _one_off_sides() -> list[dict]:
+    from services.execution import SIDE_LABELS
+
+    return [{"key": k, "label": v} for k, v in SIDE_LABELS.items()]
+
+
 def vocabularies() -> dict:
     def pairs(d):
         return [{"key": k, "label": v} for k, v in d.items()]
 
     return {"triggers": pairs(TRIGGER_LABELS), "statuses": pairs(STATUS_LABELS), "open_statuses": list(OPEN_STATUSES),
             "warning_codes": pairs(WARNING_LABELS), "price_sources": pairs(PRICE_SOURCE_LABELS),
-            "plan_actions": pairs(PLAN_ACTION_LABELS), **WS.vocabularies(), "account_filters": [
+            "plan_actions": pairs(PLAN_ACTION_LABELS), "proposal_kinds": pairs(PROPOSAL_KIND_LABELS),
+            "one_off_executors": _one_off_executors(), "one_off_sides": _one_off_sides(),
+            **WS.vocabularies(), "account_filters": [
                 {"key": "following", "label": "Following a model"},
                 {"key": "not_following", "label": "Not following a model"},
                 {"key": "open_proposal", "label": "With an open proposal"}], **AM.vocabularies()}
