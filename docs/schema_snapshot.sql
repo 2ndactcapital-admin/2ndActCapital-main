@@ -2,6 +2,34 @@
 -- DO NOT EDIT BY HAND.
 -- Regenerate: cd apps/api && DATABASE_URL='...' python scripts/refresh_schema.py
 
+-- ===== account_authority_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   authority_override                       text
+--   custody                                  text NOT NULL
+--   receiving_custodian_name                 text
+--   receiving_participant_number             text
+--   receiving_agent_bank                     text
+--   receiving_account_masked                 text
+--   contra_broker                            text
+--   effective_from                           date NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_authority_settings_pkey: (id)
+
 -- ===== account_balances_daily =====
 --   org_id                                   uuid NOT NULL
 --   account_id                               uuid NOT NULL
@@ -1943,6 +1971,28 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY held_away_sources_pkey: (id)
 
+-- ===== household_authority =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   authority                                text NOT NULL
+--   effective_from                           date NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY household_authority_pkey: (id)
+
 -- ===== household_memberships =====
 --   household_id                             uuid NOT NULL
 --   entity_id                                uuid NOT NULL
@@ -1957,6 +2007,32 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   created_by                               uuid
 --   PRIMARY KEY households_pkey: (id)
+
+-- ===== instruction_settlements =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   instruction_id                           uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   settings_id                              uuid
+--   settlement_type                          text NOT NULL DEFAULT 'dvp'::text
+--   authority                                text NOT NULL
+--   custody                                  text NOT NULL
+--   executor_type                            text NOT NULL
+--   receiving_custodian_name                 text NOT NULL
+--   receiving_participant_number             text NOT NULL
+--   receiving_agent_bank                     text
+--   receiving_account_masked                 text
+--   contra_broker                            text
+--   trade_date                               date NOT NULL
+--   settlement_date                          date NOT NULL
+--   calendar_basis                           text NOT NULL
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY instruction_settlements_pkey: (id)
 
 -- ===== investment_profile_answers =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2488,9 +2564,9 @@
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
 --   account_id                               uuid NOT NULL
---   link_id                                  uuid NOT NULL
---   model_id                                 uuid NOT NULL
---   model_version_id                         uuid NOT NULL
+--   link_id                                  uuid
+--   model_id                                 uuid
+--   model_version_id                         uuid
 --   trigger                                  text NOT NULL
 --   trigger_ref                              jsonb NOT NULL DEFAULT '{}'::jsonb
 --   status                                   text NOT NULL DEFAULT 'draft'::text
@@ -2528,6 +2604,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   proposal_kind                            text NOT NULL DEFAULT 'model'::text
 --   PRIMARY KEY rebalance_proposals_pkey: (id)
 
 -- ===== reference_data =====
