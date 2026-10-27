@@ -258,6 +258,9 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
     run_id = uuid.uuid4()
     async with pool.acquire() as conn:
         account = await AM.load_account(conn, org_id, account_id)
+        from services.held_away import refuse      # rep7 — a held-away account is never harvested
+
+        refuse(account, "a tax-loss harvest", RP.ProposalConflict)
         link = await AM.active_link(conn, account["id"])
         if link is None or AM.is_closed(account, today):
             return {"action": "none", "reason": "no active link"}

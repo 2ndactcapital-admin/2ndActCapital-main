@@ -15,7 +15,12 @@ SOURCES (Task 1c) — each realized gain or loss is counted ONCE
   carryforward      an APPROVED loss_carryforwards version — its ST and LT loss
                     carried in, as two entries dated 1 January of its tax year;
                     a newer approved version closes the older version's entries.
-  declared_outside  a declared outside SALE with a realized amount and term.
+  declared_outside  a declared outside SALE with a realized amount and term —
+                    unless a held-away transaction matches it (rep7): then the
+                    held-away lot counts and the declared entry is closed.
+  held_away         (rep7) a CLOSED tax lot in a HELD-AWAY account (an approved
+                    held-away import wrote it) — keyed by the lot id, like
+                    lot_close, which no longer takes held-away lots.
 portfolio.transactions carry no gain of their own (rep5's finding) — they are
 not a source; their gains arrive through the lots they close. With the
 custodian's own harvesting on, its realized losses arrive the same way.
@@ -52,7 +57,8 @@ T_LB = "public.loss_bank_entries"
 SOURCE_LABELS = {"lot_close": "A closed tax lot (the custodian's number)",
                  "fill": "A reported fill (provisional until the custodian's lot arrives)",
                  "carryforward": "Loss carried forward from the prior return",
-                 "declared_outside": "A declared outside trade"}
+                 "declared_outside": "A declared outside trade",
+                 "held_away": "A closed lot in a held-away account (source and as-of on its import)"}
 CENT = Decimal("0.01")
 ZERO = Decimal(0)
 ORDINARY_LIMIT = Decimal(3000)
@@ -135,7 +141,7 @@ async def ingest(pool, *, org_id, today: date | None = None) -> dict:
                        JOIN public.accounts ac ON ac.id = p.account_id AND ac.system_to IS NULL AND ac.valid_to IS NULL
                        LEFT JOIN portfolio.transactions x ON x.id = tl.closing_transaction_id AND x.system_to IS NULL
                        WHERE tl.org_id = $1::uuid AND tl.status = 'closed' AND tl.realized_gain_loss IS NOT NULL
-                         AND tl.valid_to IS NULL AND tl.system_to IS NULL""", str(org_id)):
+                         AND tl.valid_to IS NULL AND tl.system_to IS NULL AND NOT ac.is_held_away""", str(org_id)):
                 if r["trade_date"] is None:
                     out["waiting"]["no_closing_date"] += 1
                     continue
@@ -230,15 +236,58 @@ async def ingest(pool, *, org_id, today: date | None = None) -> dict:
                 "AND system_to IS NULL AND NOT (source_id::text = ANY($2::text[])) RETURNING id",
                 str(org_id), sorted(live_decl))
             out["superseded"] += len(n)
+            # rep7 — a declared trade a held-away transaction matched counts once: from the held-away data
+            matched = {str(r["matched_declared_id"]): str(r["record_id"]) for r in await conn.fetch(
+                "SELECT matched_declared_id, record_id FROM public.held_away_records WHERE org_id = $1::uuid "
+                "AND matched_declared_id IS NOT NULL AND valid_to IS NULL AND system_to IS NULL", str(org_id))}
+            for did, xid in matched.items():
+                n = await conn.fetch(
+                    f"UPDATE {T_LB} SET valid_to = now(), superseded_reason = $3 WHERE org_id = $1::uuid "
+                    "AND source = 'declared_outside' AND source_id = $2::uuid AND valid_to IS NULL "
+                    "AND system_to IS NULL RETURNING id", str(org_id), did,
+                    f"matched by held-away transaction {xid} — counted once, from the held-away data")
+                out["superseded"] += len(n)
             for r in await conn.fetch(
                     f"SELECT * FROM {TP.T_DECL} WHERE org_id = $1::uuid AND side = 'sell' AND realized_amount IS NOT NULL "
                     "AND valid_to IS NULL AND system_to IS NULL", str(org_id)):
+                if str(r["id"]) in matched:
+                    continue
                 got = await conn.fetchval(_INSERT, str(org_id), r["subject_type"], r["subject_id"], r["trade_date"].year,
                                           None, r["trade_date"], r["term"], money(Decimal(str(r["realized_amount"]))),
                                           "declared_outside", r["id"], str(r["id"]), None, r["global_security_id"],
                                           TP._dumps({"account_description": r["account_description"]}))
                 if got:
                     out["added"]["declared_outside"] += 1
+            # 5. held-away closed lots (rep7) — source 'held_away', keyed by the lot id
+            for r in await conn.fetch(
+                    """SELECT tl.id, tl.realized_gain_loss, tl.term, tl.acquired_date, x.trade_date, p.account_id,
+                              a.global_security_id, ac.household_id, ac.primary_entity_id, h.import_id, h.source_id,
+                              h.as_of
+                       FROM portfolio.tax_lots tl
+                       JOIN portfolio.positions p ON p.id = tl.position_id AND p.system_to IS NULL
+                       JOIN portfolio.assets a ON a.id = p.asset_id AND a.system_to IS NULL
+                       JOIN public.accounts ac ON ac.id = p.account_id AND ac.system_to IS NULL AND ac.valid_to IS NULL
+                       LEFT JOIN portfolio.transactions x ON x.id = tl.closing_transaction_id AND x.system_to IS NULL
+                       LEFT JOIN public.held_away_records h ON h.record_type = 'tax_lot' AND h.record_id = tl.id
+                            AND h.system_to IS NULL
+                       WHERE tl.org_id = $1::uuid AND tl.status = 'closed' AND tl.realized_gain_loss IS NOT NULL
+                         AND tl.valid_to IS NULL AND tl.system_to IS NULL AND ac.is_held_away""", str(org_id)):
+                if r["trade_date"] is None:
+                    out["waiting"]["no_closing_date"] += 1
+                    continue
+                ch = _term(r["term"], r["acquired_date"], r["trade_date"])
+                if ch is None:
+                    out["waiting"]["no_term"] += 1
+                    continue
+                st, sid = TP.subject_of(dict(r))
+                got = await conn.fetchval(_INSERT, str(org_id), st, sid, r["trade_date"].year, r["account_id"],
+                                          r["trade_date"], ch, money(Decimal(str(r["realized_gain_loss"]))),
+                                          "held_away", r["id"], str(r["id"]), r["id"], r["global_security_id"],
+                                          TP._dumps({"import_id": str(r["import_id"]) if r["import_id"] else None,
+                                                     "source_id": str(r["source_id"]) if r["source_id"] else None,
+                                                     "as_of": r["as_of"].isoformat() if r["as_of"] else None}))
+                if got:
+                    out["added"]["held_away"] += 1
     return out
 
 

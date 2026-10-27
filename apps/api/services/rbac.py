@@ -268,6 +268,10 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_tax", "tax", "view"),
     ("manage_tax", "tax", "manage"),
     ("approve_tax", "tax", "approve"),
+    # rep7 — held-away accounts: sources, imports (maker-checker), stale-data confirmations.
+    ("view_held_away", "held_away", "view"),
+    ("manage_held_away", "held_away", "manage"),
+    ("approve_held_away", "held_away", "approve"),
 )
 
 

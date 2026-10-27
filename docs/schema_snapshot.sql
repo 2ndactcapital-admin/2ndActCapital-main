@@ -130,6 +130,11 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   harvest_loss_pct                         numeric
+--   harvest_loss_min                         numeric
+--   harvest_to_cash                          boolean
+--   harvest_swap_back                        boolean
+--   harvest_enabled                          boolean NOT NULL DEFAULT false
 --   PRIMARY KEY account_model_links_pkey: (id)
 
 -- ===== account_owners =====
@@ -928,6 +933,31 @@
 --   publisher_entity_id                      uuid
 --   PRIMARY KEY deals_pkey: (id)
 --   UNIQUE deals_slug_key: (slug)
+
+-- ===== declared_outside_trades =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid NOT NULL
+--   account_description                      text NOT NULL
+--   account_tax_class                        text NOT NULL DEFAULT 'unknown'::text
+--   global_security_id                       uuid NOT NULL
+--   side                                     text NOT NULL
+--   trade_date                               date NOT NULL
+--   quantity                                 numeric
+--   loss                                     text
+--   realized_amount                          numeric
+--   term                                     text
+--   declared_by                              uuid NOT NULL
+--   source_note                              text NOT NULL
+--   replaces_id                              uuid
+--   withdraw_reason                          text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY declared_outside_trades_pkey: (id)
 
 -- ===== delegate_grants =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -1779,6 +1809,140 @@
 --   UNIQUE fx_rates_pair_date_type_key: (base_ccy, quote_ccy, as_of_date, rate_type)
 --   PRIMARY KEY fx_rates_pkey: (id)
 
+-- ===== harvest_candidates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   run_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   kind                                     text NOT NULL DEFAULT 'harvest'::text
+--   tax_lot_id                               uuid
+--   global_security_id                       uuid NOT NULL
+--   quantity                                 numeric
+--   unit_cost                                numeric
+--   price                                    numeric
+--   price_as_of                              date
+--   price_source                             text NOT NULL
+--   cost_basis                               numeric
+--   market_value                             numeric
+--   unrealized                               numeric
+--   trading_cost                             numeric
+--   net_loss                                 numeric
+--   loss_pct                                 numeric
+--   term                                     text
+--   threshold_pct                            numeric
+--   threshold_amount                         numeric
+--   passes_pct                               boolean
+--   passes_amount                            boolean
+--   rate_used                                numeric
+--   est_tax_value                            numeric
+--   value_note                               text NOT NULL
+--   replacement_security_id                  uuid
+--   replacement_note                         text
+--   wash_sale                                jsonb NOT NULL DEFAULT '{}'::jsonb
+--   outcome                                  text NOT NULL
+--   skip_reason                              text
+--   skip_detail                              text
+--   proposal_id                              uuid
+--   original_candidate_id                    uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY harvest_candidates_pkey: (id)
+
+-- ===== harvest_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   run_date                                 date NOT NULL
+--   engine                                   text NOT NULL
+--   outcome                                  text NOT NULL
+--   reason                                   text NOT NULL
+--   settings                                 jsonb NOT NULL DEFAULT '{}'::jsonb
+--   tax_profile_id                           uuid
+--   rates                                    jsonb NOT NULL DEFAULT '{}'::jsonb
+--   valuation_as_of                          date
+--   proposal_id                              uuid
+--   candidates                               integer NOT NULL DEFAULT 0
+--   taken                                    integer NOT NULL DEFAULT 0
+--   created_by                               text NOT NULL DEFAULT 'scheduler'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY harvest_runs_pkey: (id)
+
+-- ===== held_away_imports =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   source_id                                uuid NOT NULL
+--   kind                                     text NOT NULL
+--   as_of                                    date NOT NULL
+--   document_id                              uuid
+--   file_name                                text
+--   file_sha256                              text
+--   mapping                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   rows_read                                integer NOT NULL DEFAULT 0
+--   rows_accepted                            integer NOT NULL DEFAULT 0
+--   rows_rejected                            integer NOT NULL DEFAULT 0
+--   rejects                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   payload                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   extraction                               jsonb NOT NULL DEFAULT '{}'::jsonb
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   entered_by                               uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   notes                                    text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY held_away_imports_pkey: (id)
+
+-- ===== held_away_records =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   source_id                                uuid NOT NULL
+--   import_id                                uuid NOT NULL
+--   record_type                              text NOT NULL
+--   record_id                                uuid NOT NULL
+--   as_of                                    date NOT NULL
+--   matched_declared_id                      uuid
+--   superseded_reason                        text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY held_away_records_pkey: (id)
+
+-- ===== held_away_sources =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   kind                                     text NOT NULL
+--   provider                                 text
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   last_as_of                               date
+--   stale_after_days                         integer
+--   notes                                    text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY held_away_sources_pkey: (id)
+
 -- ===== household_memberships =====
 --   household_id                             uuid NOT NULL
 --   entity_id                                uuid NOT NULL
@@ -1902,6 +2066,56 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY ledger_books_pkey: (id)
+
+-- ===== loss_bank_entries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid NOT NULL
+--   tax_year                                 integer NOT NULL
+--   account_id                               uuid
+--   trade_date                               date NOT NULL
+--   character                                text NOT NULL
+--   amount                                   numeric NOT NULL
+--   source                                   text NOT NULL
+--   source_id                                uuid NOT NULL
+--   source_key                               text NOT NULL
+--   tax_lot_id                               uuid
+--   global_security_id                       uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   superseded_reason                        text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY loss_bank_entries_pkey: (id)
+
+-- ===== loss_carryforwards =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid NOT NULL
+--   tax_year                                 integer NOT NULL
+--   version_no                               integer NOT NULL DEFAULT 1
+--   st_amount                                numeric NOT NULL DEFAULT 0
+--   lt_amount                                numeric NOT NULL DEFAULT 0
+--   source_document                          text NOT NULL
+--   notes                                    text
+--   status                                   text NOT NULL DEFAULT 'pending_approval'::text
+--   entered_by                               uuid NOT NULL
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   replaces_id                              uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY loss_carryforwards_pkey: (id)
 
 -- ===== marketing_contacts =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2063,6 +2277,7 @@
 --   saml_connection_name                     text
 --   login_url                                text
 --   enroll_url                               text
+--   is_test                                  boolean NOT NULL DEFAULT false
 --   PRIMARY KEY organizations_pkey: (id)
 --   UNIQUE organizations_slug_key: (slug)
 
@@ -2266,6 +2481,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   wash_sale                                jsonb
 --   PRIMARY KEY rebalance_proposal_trades_pkey: (id)
 
 -- ===== rebalance_proposals =====
@@ -2599,6 +2815,127 @@
 --   assigned_by                              uuid
 --   PRIMARY KEY staff_assignments_pkey: (id)
 
+-- ===== stale_confirmations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   as_of_confirmed                          date NOT NULL
+--   purpose                                  text NOT NULL
+--   proposal_id                              uuid
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   requested_by                             uuid
+--   task_id                                  uuid
+--   confirmed_by                             uuid
+--   confirmed_at                             timestamp with time zone
+--   expires_on                               date
+--   closed_reason                            text
+--   note                                     text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY stale_confirmations_pkey: (id)
+
+-- ===== substitution_denials =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   security_a_id                            uuid NOT NULL
+--   security_b_id                            uuid NOT NULL
+--   rule                                     text NOT NULL
+--   reason                                   text NOT NULL
+--   evidence                                 text NOT NULL
+--   status                                   text NOT NULL
+--   maker_kind                               text NOT NULL
+--   maker_id                                 uuid
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   retire_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY substitution_denials_pkey: (id)
+
+-- ===== substitution_set_candidates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   set_id                                   uuid NOT NULL
+--   rank                                     integer NOT NULL
+--   replacement_security_id                  uuid NOT NULL
+--   reason                                   text NOT NULL
+--   evidence                                 text NOT NULL
+--   source                                   text NOT NULL DEFAULT 'adviser'::text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY substitution_set_candidates_pkey: (id)
+
+-- ===== substitution_sets =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   version_no                               integer NOT NULL DEFAULT 1
+--   status                                   text NOT NULL DEFAULT 'pending_approval'::text
+--   notes                                    text
+--   maker_id                                 uuid NOT NULL
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   replaces_id                              uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY substitution_sets_pkey: (id)
+
+-- ===== tax_profiles =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid NOT NULL
+--   tax_year                                 integer NOT NULL
+--   version_no                               integer NOT NULL DEFAULT 1
+--   filing_status                            text NOT NULL
+--   federal_ordinary_rate                    numeric NOT NULL
+--   federal_lt_rate                          numeric NOT NULL
+--   niit_applies                             boolean NOT NULL
+--   niit_rate                                numeric NOT NULL DEFAULT 0.038
+--   state_code                               text
+--   state_rate                               numeric NOT NULL DEFAULT 0
+--   state_lt_rate                            numeric
+--   city                                     text
+--   city_rate                                numeric NOT NULL DEFAULT 0
+--   city_lt_rate                             numeric
+--   as_of                                    date NOT NULL
+--   source                                   text NOT NULL DEFAULT 'adviser'::text
+--   source_note                              text NOT NULL
+--   notes                                    text
+--   status                                   text NOT NULL DEFAULT 'pending_approval'::text
+--   entered_by                               uuid NOT NULL
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   replaces_id                              uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY tax_profiles_pkey: (id)
+
 -- ===== team_members =====
 --   team_id                                  uuid NOT NULL
 --   user_id                                  uuid NOT NULL
@@ -2825,6 +3162,49 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY workflow_versions_pkey: (id)
 --   UNIQUE workflow_versions_workflow_definition_id_version_number_key: (workflow_definition_id, version_number)
+
+-- ===== xray_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   run_id                                   uuid NOT NULL
+--   line_kind                                text NOT NULL
+--   account_id                               uuid
+--   global_security_id                       uuid
+--   fund_security_id                         uuid
+--   label                                    text NOT NULL
+--   market_value                             numeric
+--   as_of                                    date
+--   source                                   text
+--   weight                                   numeric
+--   weight_as_of                             date
+--   exposure                                 numeric
+--   sector                                   text
+--   replicable                               boolean
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   status_lines                             jsonb NOT NULL DEFAULT '[]'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY xray_lines_pkey: (id)
+
+-- ===== xray_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   run_date                                 date NOT NULL
+--   trigger                                  text NOT NULL
+--   created_by                               uuid
+--   settings                                 jsonb NOT NULL DEFAULT '{}'::jsonb
+--   summary                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   status_lines                             jsonb NOT NULL DEFAULT '[]'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY xray_runs_pkey: (id)
 
 -- ===== market_data.indicator_ingest_runs =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

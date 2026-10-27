@@ -992,3 +992,159 @@ screens render a control only for `=== true` on the flag AND a listed action
 3. Optional org settings: `replication.tax.trading_cost_bps` (0), `.harvest_loss_pct`
    (0.05), `.harvest_loss_min` (500), `.harvest_to_cash` (false), `.harvest_swap_back`
    (false), `.wash_buy_fallback` ('defer').
+
+## rep7 — held-away accounts and the portfolio X-ray (2026-10-26)
+
+Read-only visibility into accounts held elsewhere, every position with its source and
+as-of; held-away data feeding household wash-sale control, the gain budget and the loss
+bank; a stale-data confirmation task; and the X-ray, which looks through every fund a
+household holds, marks the replicable ones and opens a join request in one click.
+**A held-away account is never traded.** No aggregator is contracted: the provider
+interface exists, nothing is connected, and there is no client code or network call.
+Completion portfolios and overlap consolidation are rep10.
+
+### Task 1 findings (rep7)
+
+- **1a — held-away accounts today.**
+  - `accounts.is_held_away` is set only by the custody CSV importer (`services/custody/importer.py`).
+  - A held-away account carries an ordinary `custodian_code`.
+  - Readers before rep7:
+    - `account_models.harvesting_options` (no custodian harvesting)
+    - `execution` (display)
+    - `custody/trading.route_trade_list` (**routed to manual**, not refused)
+    - `rebalance_proposals.compute` (a warning only) and `.execute` (executor = member)
+    - `fee_calc` / `fee_run_inputs`, `model_upload`, `tax_overview`
+  - **Trade paths it could reach:**
+    - `account_models.propose_change` (join → a transition)
+    - `rebalance_proposals._generate` (every trigger) and `.execute`
+    - `harvest.scan_account` (no held-away check at all)
+    - `execution.create_instructions` / `route_trade_list`
+  - Each now calls `services.held_away.refuse` once, at its entry (409, plain words).
+  - rep5's account envelope lists no join / model / settings / proposal action for a held-away account.
+  - **[FIND]** `verify_rep2` and `verify_rep5` asserted the old behaviour (manual routing; the member executes). Their assertions were restated to the refusal.
+- **1b — where the data lives.** Held-away positions, lots and transactions go in `portfolio.positions` / `tax_lots` / `transactions`, the one place every reader already looks.
+  - What was missing is provenance: which source and which approved import wrote a row, and its as-of.
+  - That is `public.held_away_records`, a link table, so the shared portfolio tables gain no held-away semantics.
+- **1c — no double count.**
+  - `wash_sale.load_context` reads every `household_accounts` account's transactions, so held-away ones are included (event source `held_away`). It also reads `declared_outside_trades`.
+  - When a held-away transaction matches a declared trade (same subject, security, side, trade date and, when declared, quantity), the match is recorded on its provenance row (`matched_declared_id`). The declaration is then skipped in the window and its loss-bank entry is closed.
+  - `realized_ytd` was per-account. It now adds `held_away.realized_elsewhere` (same tax subject).
+- **1d — reuse.**
+  - **rep3's file machinery:** `model_upload.precheck` / `read_workbook` / `detect_header` / `suggest_mapping` / `mapping_from_request` now take an optional field vocabulary (`fields=`). Model uploads are unchanged; the held-away file uses the same machinery with its own fields.
+  - **Chancery:** a statement is a `documents` row linked via `document_record_links` (`record_type 'held_away_account'`). Its text is the latest `document_extractions.extracted_text`.
+  - **Ensembles:** they are keyed by `ai_ensemble_configs.task_key`, and `'statement_positions'` was added. The Claude refusal is `replica_terms.is_claude`. With no active row the path says "no extraction models configured".
+- **1e — registry.**
+  - A held fund matches `portfolio.replica_securities.global_security_id`.
+  - Its holdings and their as-of come from `replica_holdings.latest_snapshot` / `snapshot_rows`; weights are fractions.
+  - `expense_ratio_net_pct` (a **percent**) comes via `replica_models.term_value`.
+  - The verdict is `replica_viability.list_reports()[0].overall`.
+  - The strategy fee comes via `replica_viability.strategy_fee`. There is no all-in-rate function.
+  - **Sector:** the security master has no sector column. It is taken from the holdings file's own `raw->>'Sector'`, else "unclassified".
+
+### Schema (`docs/rep7_part1.sql`)
+
+| Table | What it holds | Axis |
+|---|---|---|
+| `held_away_sources` | Kind, provider, status, `last_as_of`, `stale_after_days` | System axis |
+| `held_away_imports` | One row per load: draft → approved / rejected; the mapping, rows read / accepted / rejected, rejects with reasons, payload, extraction metadata | System axis |
+| `held_away_records` | Provenance per position / lot / transaction, plus `matched_declared_id` | Valid axis: closed when replaced, never deleted |
+| `stale_confirmations` | pending → confirmed → expired / cancelled | System axis |
+| `xray_runs`, `xray_lines` | Recorded runs | Written once |
+
+- Constraints:
+  - An aggregator / feed source can never be `active` (nothing is connected).
+  - The maker never approves their own import.
+  - Partial uniques: one live source per account + kind + provider; one live match per declared trade; one open confirmation per account + purpose + proposal; one scheduler run per household per day.
+- RLS: NULLIF org isolation on SELECT / INSERT / UPDATE / DELETE for every table.
+- Loss bank: `loss_bank_entries.source` gains `'held_away'`.
+- Permissions: `view_held_away` / `manage_held_away` / `approve_held_away`, on every org_admin role and in `rbac.ensure_org_admin_role`. These are not the tax permissions: keying another custodian's positions is a data duty, and the import needs its own checker.
+
+### Sources, in order (best first)
+
+1. A direct custodian feed.
+2. An aggregator (ByAllAccounts, Plaid, Yodlee). Both are registered in `services/held_away_adapters.py` and shown **"not connected"**. The interface covers accounts, positions, lots, transactions and as-of.
+3. A statement filed in Chancery, extracted by the `statement_positions` ensemble (never Claude). An item is accepted only when **both** readers report it identically; a row only one reader saw is rejected as `models_disagree`.
+4. A file (xlsx / xls / csv through rep3's machinery) or manual entry, which a person can always use.
+
+### Imports and approval
+
+- **Every load is a draft import.** This includes refused files, which are logged with the reason and can only be rejected.
+- **Rejected rows are listed with reasons:** no identifier, not in the security master, identifiers conflict, not a number, negative, a date after the as-of, side / term invalid, a spreadsheet formula / error cell.
+- **Nothing changes until a second holder of `approve_held_away` approves.** This is a human task, maker ≠ checker, enforced by a DB CHECK as well.
+- **An approved import replaces the account's live positions as of its date:**
+  - The earlier rows and open lots are closed on the valid axis and kept.
+  - New lots and transactions are added. A sale with a realized result also writes its closed lot.
+  - A transaction already recorded is skipped.
+- **An import older than the account's data is refused** before the task commits (`human_tasks.register_precheck`, new).
+
+### Staleness rule
+
+- **Threshold:** an account's data is stale when today − its as-of > `stale_after_days`. The source's value applies, else the org setting `replication.held_away.stale_after_days` (default 30).
+- **Edge:** data exactly that many days old is not stale; one day more is.
+- **Effect on proposals:**
+  - Every proposal states the date of any stale held-away dependency. A dependency is a held-away account of the household (wash-sale) or of the tax subject (gain budget).
+  - The platform opens the `confirm_held_away_data` task.
+  - **Approval is refused before the approval task commits** (a pre-check on rep5's approval and review kinds) until an adviser holding `manage_held_away` confirms.
+- **Confirmation:**
+  - It is logged with who confirmed and which as-of.
+  - It expires when newer data is approved, or after `stale_after_days`. It holds on its expiry day.
+
+### How held-away data enters tax
+
+- **Wash-sale:** held-away trades are household trades. An IRA held elsewhere counts as tax-advantaged, so rule (c) blocks a substantially identical buy into any household IRA. A declared trade matched by a held-away transaction counts once.
+- **Gain budget:** `realized_ytd` = the account's own + gains realized in held-away accounts of the same subject. The proposal says "realized YTD includes $X realized elsewhere (N closed lots …)".
+- **Loss bank:** held-away closed lots enter with source `held_away` (`lot_close` no longer takes them), idempotent per lot. A matched declared sale's entry is closed.
+
+### The X-ray method (`services/xray.py`)
+
+- **Holdings:** every account of the household, managed and held-away, with source and as-of per line.
+- **Look-through:**
+  - A registry fund with a live holdings file is decomposed: exposure = weight × the holding's market value, cents ROUND_HALF_EVEN, labelled with the holdings as-of.
+  - Any other fund stays one "no look-through" line.
+  - A single stock passes through at weight 1.
+- **Aggregates:**
+  - Exposure by security and by sector.
+  - Concentration flags at or above `replication.xray.single_name_pct` (default 0.10).
+  - Overlap between funds: Σ min(weight) over shared constituents.
+  - Overlap with followed replicas.
+- **Replicable funds** (each figure an **estimate** with its inputs and as-of):
+  - **Verdict:** rep4's verdict, else "no viability report"; the approved "Holdings of …" model, else "no model yet".
+  - **Annual fee difference** = market value × `expense_ratio_net_pct` ÷ 100 − the model's strategy fee. If there is no schedule: "no fee schedule".
+  - **Embedded gain** comes from the fund's open lots.
+  - **Transition tax** = gains netted per character × the rep6 profile's combined rates. No profile → "not estimated — no tax profile". An IRA / Roth owes no tax.
+  - **Break-even** = tax ÷ fee difference.
+- **Join:**
+  - "Open join request" (a MANAGED account, an approved model, a verdict of yes) calls rep5's `propose_change(join)`. The clicker is the maker and rep5's maker-checker follows.
+  - A held-away line has no button and reads "held away — moving the assets comes first".
+- **Needs-prices lines:**
+  - Tracking error: not estimated — needs prices.
+  - Harvest value of switching: not estimated — needs prices.
+  - After-tax performance: not estimated — needs prices (`securities_global_prices` has no history).
+- **Scheduler:**
+  - rep5's `org_tick` runs the held-away staleness check, then the X-ray sweep (one recorded run per household and day), after the harvest / drift steps and therefore after the holdings refresh.
+  - Test orgs are skipped.
+  - A verify that ticks its own test org gets no sweep unless it asks (`xray_sweep=True`), so an older verify's household teardown is never blocked by a run it did not create.
+  - Neither step trades nor opens a proposal.
+
+### Permissions and screens
+
+- **Routes:**
+  - `/api/v1/held-away/…` (14) and `/api/v1/xray/…` (5), all in `AUTHZ1_ROUTES`; no existing gate changed.
+  - X-ray reads need `view_replication` plus household access. Super Admin, staff and org admins (`manage_org_settings`) see any household; anyone else only a household holding an entity the visibility engine grants them, else 404.
+  - Recording a run needs `manage_replication`; the join needs `manage_proposals`.
+- **Account page (held-away):**
+  - Sources (kind, status, last as-of, stale badge).
+  - Imports: the log, draft review with each reject and its reason, approve / reject.
+  - Positions and lots with source and as-of, with earlier versions kept.
+  - Statements, and stale-data confirmations.
+  - **No trade control at all.**
+- **Household → "X-ray" tab** (`/portfolio/households/{id}`).
+- **Proposal view:** the stale held-away badge and the confirm link. Approve is hidden while the proposal is blocking (the server refuses it anyway).
+- **Client logic:** controls fail closed (`lib/heldAway.mjs`; `tests/replication/rep7.test.mjs`).
+
+### rep7 operator steps
+
+1. Run `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep7.py`. It runs `node --test`, `npm run build` and the `verify_rep6.py` regression itself (VERIFY_NESTED=1, 2700 s).
+2. Redeploy the API and the scheduler cron service (the tick now runs the staleness check and the X-ray sweep).
+3. Optional org settings: `replication.held_away.stale_after_days` (30) and `replication.xray.single_name_pct` (0.10).
+4. To extract statements, activate an ensemble for task key `statement_positions` with two non-Claude chat models.

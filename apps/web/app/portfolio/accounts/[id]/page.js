@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
 import AccountModelPanel from "@/components/proposals/AccountModelPanel";
 import AccountTaxPanel from "@/components/tax/AccountTaxPanel";
+import HeldAwayPanel from "@/components/heldaway/HeldAwayPanel";
 
 // REP5 — one account: its model, settings, a change awaiting approval, the
 // transition plan and its proposals. The envelope (flags, actions, registry
@@ -30,6 +31,15 @@ export default async function AccountPage({ params }) {
       tax = null; // no view_tax (403) or no panel: the Tax panel is simply not shown
     }
   }
+  // REP7 — a held-away account: its sources, imports, positions and lots (read-only; no trade control)
+  let heldAway = null;
+  if (!error && envelope?.account?.is_held_away === true) {
+    try {
+      heldAway = await fetchAPI(`/api/v1/held-away/accounts/${encodeURIComponent(id)}`);
+    } catch {
+      heldAway = null; // no view_held_away (403): the panel is simply not shown
+    }
+  }
   return (
     <AppShell user={session.user}>
       <p className="text-sm"><a className="text-navy underline" href="/portfolio/accounts">Accounts</a></p>
@@ -39,6 +49,7 @@ export default async function AccountPage({ params }) {
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">{error}</div>
         ) : (
           <div className="space-y-5">
+            {heldAway ? <HeldAwayPanel initialEnvelope={heldAway} /> : null}
             <AccountModelPanel initialEnvelope={envelope} />
             {tax ? <AccountTaxPanel envelope={tax} /> : null}
           </div>

@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-24 (rep6.structural — Replication Studio sprint 6: the tax engine — member tax profiles and carryforwards, the substitution table and its denials, household wash-sale CONTROL replacing rep5's flag, daily loss harvesting as proposals, the loss bank and tax-alpha ledger, declared outside trades, the custodian-harvest switch, the Tax screens; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-26 (rep7.structural — Replication Studio sprint 7: held-away accounts and the portfolio X-ray — read-only positions and lots for accounts held elsewhere via manual entry, file upload through rep3's mapping, Chancery statements and an aggregator interface (none connected), with source and as-of on every row; held-away data in household wash-sale control, the gain budget and the loss bank; the stale-data confirmation task; every trade path refuses a held-away account; the X-ray with its one-click join request; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-24 (rep6.structural — Replication Studio sprint 6: the tax engine — member tax profiles and carryforwards, the substitution table and its denials, household wash-sale CONTROL replacing rep5's flag, daily loss harvesting as proposals, the loss bank and tax-alpha ledger, declared outside trades, the custodian-harvest switch, the Tax screens; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,57 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep7 (sprint 7 of 15): held-away accounts and the portfolio X-ray — sources (manual, file, Chancery statement, aggregator interface — none connected), maker-checker imports, held-away data in wash-sale / gain budget / loss bank, the stale-data confirmation task, the trade-path guard, the X-ray + one-click join; verify WRITTEN, not yet run (2026-10-26)
+
+UPDATE 2026-10-26 (rep7 fix 1, after verify_rep7 ran 173 PASS / 7 FAIL): `services/xray.py` — `_iso` called `.isoformat()` on `tax_profiles.combined_rates`' `as_of`, already an ISO str, so every X-ray with an approved tax profile 500'd (the run, both sweeps, the org-admin read, the transition tax / break-even — one cause, not a lookup mismatch); `_iso` now accepts date | datetime | str | None and the rates' as_of is passed through. Overlap between funds re-added a fund's file weights once per account holding it (FUND in two accounts → C1 1.0 → min 0.6); each fund's own file weights are now built once per snapshot (0.5, the expectation, stands). `verify_rep6.py` self-checks scoped to rep6: y_rep5_diff allows rep7's held-away join refusal in y_join / y_execution; the routes check ignores rep7's `/held-away/` and `/xray/` prefixes (still 31 under /tax/ and /harvest/). Re-run `verify_rep7.py` pending (operator).
+
+Design + findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep7 section).
+Schema `docs/rep7_part1.sql` — APPLIED (`scripts/_apply_rep7.py --schema`) and read
+back (`--verify`: SCHEMA OK — 6 new tables with a policy for every operation, 7
+partial uniques, every CHECK and guard trigger, the loss-bank source `held_away`, the 3
+held-away permissions on every org_admin role). Verify: `apps/api/scripts/verify_rep7.py`
+— WRITTEN, NOT RUN (WSL memory; it runs `node --test tests/`, `npm run build` and the
+`verify_rep6.py` regression itself). In-sprint proof only: the app imports cleanly, pyflakes
+clean on every new file, rep3's mapping reused on a sample CSV (the model vocabulary
+unchanged), `node --test tests/replication/` 42/42 (incl. 8 new rep7 render tests), and
+`authz1_routes.py --check` CURRENT (19 new routes, no existing gate changed).
+
+- **Custody cliff held — a held-away account is NEVER traded.** One guard per trade
+  path (`services.held_away.refuse`): join / transition preview, every proposal trigger,
+  execute, harvest scan, instruction creation (and `route_trade_list`).
+- **[FIND] behaviour change:** before rep7 a held-away account was ROUTED TO MANUAL
+  (rep2) and its proposals' instructions went to the member (rep5). Both now refuse;
+  `verify_rep2.py` / `verify_rep5.py` assertions restated (their held-away join and
+  instruction now expect 409). `verify_rep6.py` uses no held-away account.
+- **Data lives in portfolio.positions / tax_lots / transactions** with provenance in
+  `held_away_records` (source, import, as-of) — every rep5 / rep6 reader sees it.
+- **Imports:** draft → a second holder of `approve_held_away` approves (human task;
+  DB maker-checker CHECK); an approved import replaces positions as of its date
+  (earlier rows closed, kept). Older-than-current data and refused files are refused
+  BEFORE the task commits (new `human_tasks.register_precheck`).
+- **Statements:** ensemble task key `statement_positions` (added to KNOWN_TASK_KEYS);
+  no active config → "no extraction models configured" + manual entry; Claude refused.
+- **Tax:** held-away trades count in household wash-sale control (an IRA held elsewhere
+  blocks via rule c); a declared trade matched by a held-away transaction counts once;
+  `realized_ytd` adds gains realized in held-away accounts of the same subject; the loss
+  bank takes held-away closed lots as source `held_away`.
+- **Staleness:** as-of older than `stale_after_days` (exactly N days is fresh) → the
+  proposal shows the date and cannot be approved until `confirm_held_away_data` is
+  completed; confirmations expire on newer data or after N days.
+- **X-ray:** look-through by holdings file (as-of on every line), sectors from the file
+  (else "unclassified"), concentration, overlap, fee difference / embedded gain /
+  transition tax / break-even as estimates; tracking error, harvest value of switching,
+  after-tax performance: "not estimated — needs prices". One-click join → rep5's
+  `propose_change` for MANAGED accounts only.
+- **[FIND]** `org_admin` is not a staff role: X-ray household access admits Super Admin,
+  staff AND holders of `manage_org_settings` (org admins); others via the visibility
+  engine (404 otherwise).
+- **[FIND]** rep3's mapping functions were module-global and hard-wired to a weight
+  column; they now take an optional field vocabulary (defaults unchanged).
+- Operator: run `verify_rep7.py`; redeploy the API and the scheduler cron service (the
+  tick now runs the staleness check and the X-ray sweep). Optional org settings:
+  `replication.held_away.stale_after_days` (30), `replication.xray.single_name_pct` (0.10).
 
 ## 00000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep6 (sprint 6 of 15): the tax engine — tax profiles + carryforwards, the substitution table + denials, household wash-sale CONTROL (replacing rep5's flag), daily loss harvesting as proposals, the loss bank, declared outside trades, the custodian-harvest switch, the Tax screens; verify WRITTEN, not yet run (2026-10-24)
 

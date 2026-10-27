@@ -313,7 +313,8 @@ async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list:
                            upstream: dict | None = None) -> SubmissionResult:
     """Pick the adapter from the account's custodian_code + capabilities.
 
-    Held-away → manual, regardless of custodian. An account whose custodian
+    Held-away → REFUSED (rep7: a held-away account is never traded; before
+    rep7 it was routed to manual). An account whose custodian
     has no registered trade adapter → manual. Otherwise the custodian's own
     adapter decides (Altruist → manual while its API is not evidenced).
     rep5: ``upstream`` (an approved rebalance proposal) rides on the context to
@@ -328,9 +329,10 @@ async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list:
     async with pool.acquire() as conn:
         notes = await _downgrade_notes(conn, key if key else "manual", trade_list)
     if account.get("is_held_away"):
-        return await ManualTradeAdapter().submit(
-            ctx, trade_list, notes=notes,
-            reason="held-away account: always routed to manual execution instructions")
+        from services.execution import ExecutionConflict
+        from services.held_away import refuse
+
+        refuse(account, "an execution instruction", ExecutionConflict)
     adapter_cls = trade_adapter_for(account.get("custodian_code"))
     if adapter_cls is None:
         return await ManualTradeAdapter().submit(

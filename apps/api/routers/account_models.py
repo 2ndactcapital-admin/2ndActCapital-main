@@ -225,6 +225,10 @@ async def account_model(request: Request, account_id: str):
         actions.append("generate")
     if can_decide:
         actions += ["approve_change", "reject_change"]
+    if acct["is_held_away"]:
+        # rep7 — a held-away account is never traded: no join, model change, settings or proposal control
+        actions = [a for a in actions if a in ("end", "approve_change", "reject_change")]
+        offer = []
     return {"account": _account_out(acct), "links": links,
             "registry": [{"id": str(m["id"]), "name": m["name"], "source": m["source"],
                           "live_version_no": m["live_version_no"]} for m in offer],

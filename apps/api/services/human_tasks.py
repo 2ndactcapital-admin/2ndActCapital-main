@@ -130,6 +130,20 @@ def register_kind(key: str, *, label: str, outcomes: tuple[str, ...], maker_chec
     return kind
 
 
+#: rep7 (additive): ``await precheck(pool, task, outcome, actor_id)`` per kind —
+#: runs BEFORE the engine completes the task and may raise to refuse the
+#: decision with the task left open (e.g. a proposal that depends on stale
+#: held-away data cannot be approved until the data is confirmed). Another
+#: module registers it, so the kind's own module stays unaware of it.
+_PRECHECKS: dict[str, list[Callable[..., Awaitable[Any]]]] = {}
+
+
+def register_precheck(key: str, fn) -> None:
+    lst = _PRECHECKS.setdefault(key, [])
+    if fn not in lst:
+        lst.append(fn)
+
+
 def get_kind(key: str) -> TaskKind:
     try:
         return _KINDS[key]
@@ -499,6 +513,8 @@ async def complete_task(pool, *, org_id, task_id, actor_id, outcome: str, note: 
 
     if not await has_permission(pool, actor["id"], org_id, task["eligible_permission"]):
         raise HumanTaskPermissionError(f"Permission required: {task['eligible_permission']}")
+    for check in _PRECHECKS.get(task["kind"], ()):
+        await check(pool, task, outcome, str(actor["id"]))
     result = {"outcome": outcome, "note": note, "completed_by": str(actor["id"])}
     try:
         await E.complete_user_task(pool, uuid.UUID(task["id"]), actor["id"], result)

@@ -505,6 +505,10 @@ async def propose_change(pool, *, org_id, actor_id, account_id, change_kind: str
         if is_closed(account):
             raise AccountModelConflict(f"account {account['account_number_masked']} is closed "
                                        f"({account['closed_on'].isoformat()}) — a closed account cannot join a model")
+        if change_kind != "end":   # rep7 — a held-away account never joins (a join is a transition: it trades)
+            from services.held_away import refuse
+
+            refuse(account, f"{CHANGE_LABELS[change_kind].lower()}", AccountModelConflict)
         current = await active_link(conn, account["id"])
         if await pending_link(conn, account["id"]):
             raise AccountModelConflict("a change for this account is already awaiting approval — decide it first")

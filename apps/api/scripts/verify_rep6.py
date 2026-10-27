@@ -1889,6 +1889,12 @@ async def y_rep5_diff(conn):
         if fn == "y_proposals" and (s.startswith('f"{drift}') or s.startswith('f"{calm}')
                                     or s.startswith('check(calm.get("action") == "none" and cp is None,')):
             return True
+        # rep7 superseded rep5 here: a held-away account never joins a model — y_join's refused join and its
+        # response check, and y_execution's member-executes loop without ACCT_HELD
+        if fn in ("y_join", "y_execution") and (any(w in s for w in ("ACCT_HELD", "held-away", "rep7")) or s in (
+                '"settings": {}})', 'f"{ch} {str(oh)[:160]}")', 'joins = {ACCT_ADV: ("m2", {}), ACCT_SYS: ("m3", {}),',
+                'for acct, why in ((ACCT_ADV, None),):')):
+            return True
         if fn == "y_execution" and ("prop_row(conn, ORG_A, pid)" in s or s == 'st = pr["status"]'
                                     or s.startswith('f"{c1} {st}')):
             return True
@@ -2055,8 +2061,9 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
-    tax = [k for k in new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
+    # rep7 fix-1: routes under prefixes later sprints added (rep7's /held-away/ and /xray/) are not rep6's
+    new = [k for k in gn if k not in gb and not k[1].startswith(("/api/v1/held-away/", "/api/v1/xray/"))]
+    tax =[k for k in new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
     check(len(new) == len(tax) == 31, "31 new routes, all under /tax/… and /harvest/…", f"{len(new)} {len(tax)}")
 
     def want(k):
