@@ -125,7 +125,10 @@ def _s(v):
 
 
 def _iso(v):
-    return v.isoformat() if v else None
+    """date | datetime | an already-ISO str | None → str | None."""
+    if v is None or v == "":
+        return None
+    return v if isinstance(v, str) else v.isoformat()
 
 
 def _loads(v):
@@ -147,6 +150,12 @@ def _uuid(v, what: str) -> str:
         return str(uuid.UUID(str(v)))
     except (TypeError, ValueError):
         raise XrayNotFound(f"{what} not found") from None
+
+
+def _constituent_key(h: dict) -> str:
+    if h["constituent_global_security_id"]:
+        return str(h["constituent_global_security_id"])
+    return f"raw:{(h['raw_ticker'] or h['raw_cusip'] or h['raw_name'] or h['row_num'])}"
 
 
 def sector_of(raw: dict | None) -> str:
@@ -349,6 +358,13 @@ async def compute(conn, org_id, household_id, *, today: date | None = None) -> d
         if sec not in snap_cache:
             snap = await H.latest_snapshot(conn, sec, entry["holdings_source_key"], live_only=True)
             snap_cache[sec] = (snap, await H.snapshot_rows(conn, snap["id"]) if snap else [])
+            if snap is not None:
+                # the fund's OWN file weights, once per fund — never re-added per account holding it
+                fw = fund_weights[sec] = {}
+                for h in snap_cache[sec][1]:
+                    if h["weight"] is not None:
+                        k = _constituent_key(h)
+                        fw[k] = fw.get(k, ZERO) + Decimal(str(h["weight"]))
         snap, srows = snap_cache[sec]
         if snap is None:
             add_exposure(sec, label, "no look-through", mv, via=label)
@@ -358,19 +374,17 @@ async def compute(conn, org_id, household_id, *, today: date | None = None) -> d
                                  "status": "no look-through — the registry fund has no live holdings file"})
             line["status_lines"].append("no look-through — no live holdings file")
         else:
-            fw = fund_weights.setdefault(sec, {})
             for h in srows:
                 if h["weight"] is None:
                     continue
                 w = Decimal(str(h["weight"]))
                 cs = str(h["constituent_global_security_id"]) if h["constituent_global_security_id"] else None
-                key = cs or f"raw:{(h['raw_ticker'] or h['raw_cusip'] or h['raw_name'] or h['row_num'])}"
+                key = _constituent_key(h)
                 clabel = h["raw_name"] or h["raw_ticker"] or key
                 if h["raw_ticker"] and h["raw_name"]:
                     clabel = f"{h['raw_name']} ({h['raw_ticker']})"
                 sector = "Cash" if h["asset_type"] == "cash" else sector_of(_loads(h["raw"]))
                 amt = money(w * mv)
-                fw[key] = fw.get(key, ZERO) + w
                 add_exposure(key, clabel, sector, amt, via=label)
                 constituents.append({"kind": "constituent", "account_id": str(a["id"]), "fund_security_id": sec,
                                      "security_id": cs, "label": clabel, "weight": str(w),
@@ -515,7 +529,7 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
             tax.update(amount=str(transition_tax(st, lt, rates)),
                        inputs={"short_term": str(money(st)), "long_term": str(money(lt)), "st_rate": str(rates["st"]),
                                "lt_rate": str(rates["lt"]), "profile_id": str(rates["profile_id"]),
-                               "tax_year": rates["tax_year"], "rates_as_of": _iso(rates["as_of"])},
+                               "tax_year": rates["tax_year"], "rates_as_of": rates["as_of"]},  # combined_rates: ISO str
                        note="estimate: embedded gain netted by character × the profile's combined rates")
     out["transition_tax"] = tax
     diff = Decimal(fee["annual_difference"]) if fee.get("annual_difference") is not None else None

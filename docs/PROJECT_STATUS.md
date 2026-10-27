@@ -330,6 +330,8 @@ This file starts with the email item below.
 
 ## 000000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep7 (sprint 7 of 15): held-away accounts and the portfolio X-ray — sources (manual, file, Chancery statement, aggregator interface — none connected), maker-checker imports, held-away data in wash-sale / gain budget / loss bank, the stale-data confirmation task, the trade-path guard, the X-ray + one-click join; verify WRITTEN, not yet run (2026-10-26)
 
+UPDATE 2026-10-26 (rep7 fix 1, after verify_rep7 ran 173 PASS / 7 FAIL): `services/xray.py` — `_iso` called `.isoformat()` on `tax_profiles.combined_rates`' `as_of`, already an ISO str, so every X-ray with an approved tax profile 500'd (the run, both sweeps, the org-admin read, the transition tax / break-even — one cause, not a lookup mismatch); `_iso` now accepts date | datetime | str | None and the rates' as_of is passed through. Overlap between funds re-added a fund's file weights once per account holding it (FUND in two accounts → C1 1.0 → min 0.6); each fund's own file weights are now built once per snapshot (0.5, the expectation, stands). `verify_rep6.py` self-checks scoped to rep6: y_rep5_diff allows rep7's held-away join refusal in y_join / y_execution; the routes check ignores rep7's `/held-away/` and `/xray/` prefixes (still 31 under /tax/ and /harvest/). Re-run `verify_rep7.py` pending (operator).
+
 Design + findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep7 section).
 Schema `docs/rep7_part1.sql` — APPLIED (`scripts/_apply_rep7.py --schema`) and read
 back (`--verify`: SCHEMA OK — 6 new tables with a policy for every operation, 7
