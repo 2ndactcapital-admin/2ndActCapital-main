@@ -19,8 +19,9 @@ Assertions:
   [Y] Task 1's three discovery findings reported explicitly.
   [Y] The three new permission entries (author_workflows / view_workflow_runs /
       configure_workflow_triggers) exist in the `permissions` catalog and are
-      NOT granted to ANY seeded Profile (Member / Community Member / Adviser /
-      CSA / Ops) by default.
+      granted to EXACTLY the seeded Profiles workflowpermsfix intended (Org
+      Admin: all three; Adviser + CSA / Ops: view_workflow_runs) — originally
+      "NOT granted to ANY seeded Profile", superseded by workflowpermsfix.
   [Y] A user whose Profile grants ONLY `author_workflows` reaches the library
       AND editor endpoints, but is REJECTED (403) from the run-console and the
       scheduler endpoints.
@@ -339,8 +340,21 @@ async def run_db_phase():
             await teardown(conn)
             await seed(conn)
 
-            # Catalog rows exist + not granted to any seeded profile (read in platform
-            # scope: under app_service a context-less read of profiles sees nothing).
+            # Catalog rows exist + are granted to EXACTLY the seeded profiles
+            # workflowpermsfix intended (read in platform scope: under app_service a
+            # context-less read of profiles sees nothing).
+            #
+            # This used to assert the three keys were granted to NO seeded profile —
+            # true when Phase 5 shipped, stale since workflowpermsfix.structural
+            # (docs/workflowpermsfix_part1.sql §1-2, proven by
+            # scripts/verify_workflowpermsfix.py's EXPECTED_PROFILE_GRANTS) seeded an
+            # 'Org Admin' profile in the default org and granted:
+            #   Org Admin -> author_workflows, configure_workflow_triggers,
+            #                view_workflow_runs
+            #   Adviser   -> view_workflow_runs
+            #   CSA / Ops -> view_workflow_runs
+            # Member / Community Member stay ungranted, and no other org's seeded
+            # profile holds any of the three.
             async with _platform_scope(conn):
                 cat = await conn.fetch(
                     "SELECT name, resource FROM permissions WHERE name = ANY($1::text[])", WF_KEYS
@@ -348,26 +362,29 @@ async def run_db_phase():
                 cat_ok = {r["name"] for r in cat} == set(WF_KEYS) and all(
                     r["resource"] == "workflows" for r in cat
                 )
-                leaked = await conn.fetch(
-                    """SELECT DISTINCT p.name, pp.permission_key
+                seed_grants = await conn.fetch(
+                    """SELECT DISTINCT p.org_id, p.name, pp.permission_key
                        FROM profile_permissions pp
                        JOIN profiles p ON p.id = pp.profile_id
                        WHERE p.is_seed = true AND pp.permission_key = ANY($1::text[])""",
                     WF_KEYS,
                 )
-                named_seed_leak = await conn.fetch(
-                    """SELECT DISTINCT p.name, pp.permission_key
-                       FROM profile_permissions pp
-                       JOIN profiles p ON p.id = pp.profile_id
-                       WHERE p.org_id = $1 AND p.name = ANY($2::text[])
-                         AND pp.permission_key = ANY($3::text[])""",
-                    ORG_ID, SEED_PERSONAS, WF_KEYS,
-                )
+        expected_seed_grants = {
+            (ORG_ID, "Org Admin", PERM_AUTHOR),
+            (ORG_ID, "Org Admin", PERM_CONFIGURE_TRIGGERS),
+            (ORG_ID, "Org Admin", PERM_VIEW_RUNS),
+            (ORG_ID, "Adviser", PERM_VIEW_RUNS),
+            (ORG_ID, "CSA / Ops", PERM_VIEW_RUNS),
+        }
+        got_seed_grants = {(r["org_id"], r["name"], r["permission_key"]) for r in seed_grants}
         check(
             "Three new permission entries exist in the catalog under "
-            "resource='workflows' AND are granted to NO seeded Profile by default",
-            cat_ok and len(leaked) == 0 and len(named_seed_leak) == 0,
-            f"catalog_ok={cat_ok} seed_leaks={[dict(r) for r in leaked]}",
+            "resource='workflows' AND are granted to EXACTLY the workflowpermsfix "
+            "seeded profiles (Org Admin: all three; Adviser + CSA / Ops: "
+            "view_workflow_runs) and to no other seeded Profile",
+            cat_ok and got_seed_grants == expected_seed_grants,
+            f"catalog_ok={cat_ok} missing={sorted(map(str, expected_seed_grants - got_seed_grants))} "
+            f"unexpected={sorted(map(str, got_seed_grants - expected_seed_grants))}",
         )
 
         obs = await run_matrix()

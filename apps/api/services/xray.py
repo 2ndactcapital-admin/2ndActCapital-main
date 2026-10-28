@@ -46,6 +46,14 @@ Replicable funds (each a labelled ESTIMATE with its inputs and as-of)
                          tax subject's approved rep6 profile's combined rates;
                          no profile → "not estimated — no tax profile"; an IRA
                          / Roth → no tax.
+           lot method (lotmethod) — a switch SELLS THE WHOLE FUND, every lot, so
+                         which lots a method would pick does not change the
+                         estimate (stated on the line); a fund the account's
+                         custodian carries at AVERAGE COST (the account's lot-
+                         method setting) is figured at the average cost, its
+                         holding periods first in, first out — the ST / LT
+                         split, and so the tax, can differ from the lot-by-lot
+                         figure.
            break-even years = transition tax ÷ annual fee difference (none when
                          the replica does not cost less).
            harvest benefit of switching, tracking error, after-tax performance
@@ -442,6 +450,39 @@ async def compute(conn, org_id, household_id, *, today: date | None = None) -> d
             "label": "estimate"}
 
 
+def embedded_by_character(lots: list[dict], price: Decimal | None, today: date, *, average: bool = False
+                          ) -> tuple[bool, Decimal, Decimal, Decimal | None]:
+    """(known, short-term gain, long-term gain, average cost per share) of selling EVERY open lot at ``price``.
+    lotmethod: with ``average`` (the account's custodian carries the fund at average cost) every share carries
+    the average cost and each lot keeps its own holding period (first in, first out — a full sale relieves them
+    all); otherwise each lot its own cost. Unknown cost or term → not known (never guessed)."""
+    st = lt = ZERO
+    known = bool(lots) and price is not None
+    avg_cost = None
+    if average and known:
+        tq = sum((Decimal(str(x["quantity"] or 0)) for x in lots), ZERO)
+        costs = [x["adjusted_cost"] if x["adjusted_cost"] is not None else x["original_cost"] for x in lots]
+        if tq > 0 and all(c is not None for c in costs):
+            avg_cost = sum((Decimal(str(c)) for c in costs), ZERO) / tq      # per share
+    if not known:
+        return False, st, lt, avg_cost
+    for lot in lots:
+        q = Decimal(str(lot["quantity"] or 0))
+        cost = lot["adjusted_cost"] if lot["adjusted_cost"] is not None else lot["original_cost"]
+        if cost is None or q <= 0:
+            return False, ZERO, ZERO, avg_cost
+        g = q * price - (q * avg_cost if avg_cost is not None else Decimal(str(cost)))
+        term = lot["term"] or HA.term_of(date.fromisoformat(lot["acquired_date"]) if lot["acquired_date"] else None,
+                                         today)
+        if term is None:
+            return False, ZERO, ZERO, avg_cost
+        if term == "long":
+            lt += g
+        else:
+            st += g
+    return True, st, lt, avg_cost
+
+
 async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T, RV, TP, WS, profile_cache,
                          snap) -> dict:
     from services import execution as X
@@ -488,24 +529,11 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
     lots = await X.account_lots(conn, org_id, a["id"], sec)
     qty = Decimal(str(r["quantity"]))
     price = mv / qty if qty else None
-    st = lt = ZERO
-    known = bool(lots) and price is not None
-    for lot in lots:
-        q = Decimal(str(lot["quantity"] or 0))
-        cost = lot["adjusted_cost"] if lot["adjusted_cost"] is not None else lot["original_cost"]
-        if cost is None or q <= 0:
-            known = False
-            break
-        g = q * price - Decimal(str(cost))
-        term = lot["term"] or HA.term_of(date.fromisoformat(lot["acquired_date"]) if lot["acquired_date"] else None,
-                                         today)
-        if term is None:
-            known = False
-            break
-        if term == "long":
-            lt += g
-        else:
-            st += g
+    from services import lot_method as LM      # lotmethod
+
+    eff = await LM.effective(conn, org_id, a)
+    average = sec in set(eff["average_cost_security_ids"])
+    known, st, lt, avg_cost = embedded_by_character(lots, price, today, average=average)
     gain = {"label": "estimate", "inputs": {"lots": len(lots), "price": _s(None if price is None else
                                                                             price.quantize(Decimal("0.0001"))),
                                             "price_source": "the position's own valuation", "as_of": line["as_of"]}}
@@ -514,6 +542,15 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
     else:
         gain.update(amount=None, note=COST_UNKNOWN)
     out["embedded_gain"] = gain
+    out["lot_method"] = {"lot_method": eff["lot_method"], "source": eff["lot_method_source"],
+                         "average_cost": average,
+                         "note": ("average cost: every share at the average cost "
+                                  f"{avg_cost.quantize(Decimal('0.0001')) if avg_cost is not None else '(unknown)'}, "
+                                  "holding periods first in, first out" if average else
+                                  "a switch sells the whole fund — every lot — so the lot method does not change "
+                                  "this estimate")}
+    if average:
+        gain["inputs"]["average_cost"] = None if avg_cost is None else str(avg_cost)
     # transition tax
     tax = {"label": "estimate"}
     if WS.tax_class(a) == "tax_advantaged":

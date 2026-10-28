@@ -528,8 +528,11 @@ _SET_RESOLVED = re.compile(r"link_state\s*=\s*'resolved'")
 
 
 def _scan_files() -> list[str]:
+    # apps/api/scripts is deliberately NOT scanned: verify scripts legitimately
+    # contain `UPDATE ... link_state = 'resolved'` (attack/restore SQL proving
+    # the gate), and none of them is an application write site.
     paths = []
-    for base in ("apps/api/services", "apps/api/routers", "apps/api/scripts",
+    for base in ("apps/api/services", "apps/api/routers",
                  "apps/api/models", "apps/api/migrations", "docs"):
         root = os.path.join(ROOT, base)
         for dirpath, dirnames, filenames in os.walk(root):
@@ -1090,6 +1093,7 @@ async def main_async() -> int:
               f"({summary['by_kind']})")
     print(f"\nRESULT: {'PASS' if failed == 0 else 'FAIL'} "
           f"({len(results)} checks, {passed} passed, {failed} failed)")
+    print(f"TOTAL: {passed} PASS, {failed} FAIL")
     return 0 if failed == 0 else 1
 
 

@@ -1262,3 +1262,82 @@ counsel) — nothing is shown.
 1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep7b.py` (runs `node --test`,
    `npm run build` and the `verify_rep7.py` regression — VERIFY_NESTED=1, 2700 s).
 2. Redeploy the API. Refresh the schema snapshot (`refresh-schema`).
+
+## lotmethod — the lot-relief method (2026-10-28)
+
+Joe (2026-10-26) asked for the lot method as an option. Before this sprint one fixed rule
+(`rebalance_engine.lot_order_key`) served every sale. Every sale still names its lots on the
+instruction (specific identification); what changed is HOW the lots are chosen.
+
+### Methods (`services/rebalance_engine.py` — `LotMethod`, `method_key`, `_plan_by_method`)
+
+| method | order |
+|---|---|
+| no method set (default) | **today's rule, exactly** — `_plan_today_rule` is the pre-sprint `plan_sales` body, unchanged: losses first (largest loss per share), then the lowest gain per dollar raised, long-term before short-term at equal cost, then oldest; unknown cost never sold against a budget |
+| `tax_optimized` (once SET) | estimated tax per dollar raised, lowest first: (price − cost) ÷ price × the lot's combined rate (ST when short-term on the sale date, else LT) from the tax subject's approved rep6 profile — so a short-term loss ranks ahead of a long-term loss, a long-term gain ahead of a short-term gain. No profile → today's rule, and every line says so. Never a guessed rate; a lot with unknown cost or term is "not estimated" and ranked after every estimated lot |
+| `hifo` / `highest_cost` | highest unit cost first (the same ordering under specific identification — both names kept because custodians use both) |
+| `lowest_cost` | lowest unit cost first |
+| `fifo` / `lifo` | oldest / newest acquisition first |
+| `specific` | the adviser's picked lots on the proposal, validated (an open lot of this account in a security the sale sells; enough quantity; not wash-held; not unknown-cost against a budget; not over the sale) and used as given; any shortfall filled by today's rule, stated |
+
+Gain preference: `prefer_long_term` (ties → long-term), `st_losses_first` (short-term losses ahead
+of everything), `realize_gains` (gain lots, long-term first, until the adviser's entered target —
+the lot that crosses it is sold only as far as the target; it chooses lots for sales the proposal
+already makes and never adds one; the target is never computed from income we do not hold).
+
+**Average cost.** The security master marks no mutual-fund type and no cost-basis method
+(`security_type 'fund'` covers ETFs and mutual funds alike), so average cost is the ACCOUNT's
+election: `account_lot_method_settings.average_cost_security_ids`. For those holdings the engine
+makes no lot choice — every share at the average cost, holding periods first in, first out, the
+instruction names no lots.
+
+**Precedence, always: wash-sale holds and hard blocks > guards (short-term guard, gain budget) >
+method.** A method selects WHICH lots fill the sale; the budget then decides now or later
+(losses among the selected go now; selected gains in the method's order while they fit). No
+method sells a wash-held loss lot, an unknown-cost lot against a budget, or a deferred short-term
+gain now.
+
+**[FIND] "tax_optimized (default)" vs "no figure changes".** With a tax profile the two cannot both
+hold. Resolved: an account with NO method set keeps today's rule exactly (source `default`); the
+profile-based ranking applies once an adviser sets a method (household, account or proposal).
+
+### Settings and precedence of sources (`services/lot_method.py`)
+
+Effective = the proposal's override ?? the account's approved override ?? the household's approved
+default ?? none set (today's rule). `public.household_lot_method` and
+`public.account_lot_method_settings` copy rep7b's authority pattern — versioned (system axis for
+the decision, valid axis for supersession), **maker-checker** (task `approve_lot_method_change`,
+`approve_proposals`, never the maker): a lot method is the same investment-policy class as rep5's
+gain budget and short-term guard, which are already approved link versions. The per-proposal
+override (`POST /lot-method/proposals/{id}/override`) makes a NEW proposal (trigger `manual`, the
+person its maker, `trigger_ref.lot_method_override_of`) that supersedes the draft / pending one;
+its own maker-checker approval approves the method. Gates: rep5's `view/manage/approve_proposals`
+(no new permission). The migration wrote no rows.
+
+The custodian's own method (`custodian_cost_basis_method`: as reported by the custodian or entered
+by the adviser; `unknown` default) — when it is KNOWN, not specific identification and differs
+from the account's method, the proposal warns (`lot_method_mismatch`) and every instruction's notes
+say the named lots must be given to the custodian. `unknown` warns nothing (so no existing
+proposal's warnings change).
+
+Every proposal records `lot_method`, `lot_method_source`, `gain_preference`,
+`realize_gains_target`, `lot_picks`, `custodian_cost_basis_method`; every sale line its
+`lot_method`, and each lot its reason (`lots[].why`).
+
+### Where the method applies
+
+- Rebalance (every trigger), one-off, transition preview — through `plan_sales`.
+- Harvest: a LOSS line sells each qualifying loss lot whole (judged on its own thresholds — no
+  choice for a method to make; line method `harvest_loss`); the SWAP-BACK sale goes through
+  `plan_sales` with the account's method.
+- X-ray: a switch sells the whole fund, every lot, so the method changes no lot choice (stated);
+  a fund the custodian carries at average cost is figured at the average cost
+  (`xray.embedded_by_character`) — same total gain, a different ST / LT character and so a
+  different transition tax.
+
+### Screens
+
+Household → tab "Lot method"; Account → "Lot method" panel (method, preference, custodian
+method, average-cost securities, history, request / approve); Proposal → each sale's method and
+each lot's reason, and "Choose the lot method" with a lot picker for `specific`. Every control
+from `lib/lotMethod.mjs`, failing closed on the server's flags and actions.

@@ -37,6 +37,20 @@ count, and real accounts / positions / lots / transactions / proposals /
 instructions / tax rows / users are compared by count + checksum.
 
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+
+Teardown mechanics: ``_verify_cleanup.cleanup`` — seeds keyed by this run's
+fixture ids (every org_id table under the fixture orgs, the fixture
+organizations and users, and this script's plan), a FK closure from
+pg_constraint that only follows children that really hold rows (values
+materialised, ``= ANY(array)``, never a nested ``IN (SELECT ...)`` walk), a
+refusal if a derived predicate reaches a row outside the fixture orgs, one
+DELETE per table child-before-parent. It prints one '[INFO] cleanup ...' line
+with the table / row / query counts and how long it took.
+
+--cleanup-only: run only the teardown (exactly as a real run does, start or
+end) and the leftover check, print 'CLEANUP_SECONDS: <s>', 'LEFTOVERS: <n>'
+and 'TOTAL: N PASS, M FAIL' (one check: zero fixture rows remain); no
+seeding, no checks, no regression, no npm. Exits 0 when clean.
 """
 
 from __future__ import annotations
@@ -73,6 +87,7 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 # Every import at the top (after hydrate: the pool reads DATABASE_URL lazily, on first get_pool()).
@@ -310,67 +325,6 @@ async def operator_conn():
     return await connect(dsn)
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete for a FIXTURE-ID parent (users / roles / orgs
-    of this run only), FKs read from pg_constraint (recursively)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
-async def fk_order(conn, tables: list[str]) -> list[str]:
-    """``tables`` sorted child-before-parent from pg_constraint (Kahn)."""
-    edges = {t: set() for t in tables}
-    rows = await conn.fetch("""
-        SELECT cn.nspname || '.' || cc.relname AS child, pn.nspname || '.' || pc.relname AS parent
-        FROM pg_constraint c JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-        JOIN pg_class pc ON pc.oid = c.confrelid JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-        WHERE c.contype = 'f'""")
-    for r in rows:
-        if r["child"] in edges and r["parent"] in edges and r["child"] != r["parent"]:
-            edges[r["child"]].add(r["parent"])
-    children_of = {t: {c for c, ps in edges.items() if t in ps} for t in tables}
-    out, done = [], set()
-    while len(out) < len(tables):
-        ready = [t for t in tables if t not in done and children_of[t] <= done]
-        if not ready:
-            raise RuntimeError(f"FK cycle among {sorted(set(tables) - done)}")
-        for t in ready:
-            out.append(t)
-            done.add(t)
-    return out
-
-
 async def fixture_security_ids(conn) -> list:
     rows = await conn.fetch(
         "SELECT DISTINCT global_security_id FROM portfolio.securities_global_identifiers WHERE id_value LIKE $1",
@@ -390,32 +344,6 @@ async def org_tables(conn) -> list[str]:
         "'information_schema') ORDER BY 1")]
 
 
-async def sweep_fixture_orgs(conn, orgs: list, skip: set, log: list[str]) -> None:
-    """Rows under a FIXTURE org in any table the plan does not name — what a crashed run left behind and anything
-    a scheduler made on its fixture accounts (rep6 fix 2). Keyed by fixture org id only; child-before-parent from
-    pg_constraint (a cycle falls back to delete_tree, which follows the FKs recursively)."""
-    found = []
-    for t in await org_tables(conn):
-        if t in skip:
-            continue
-        if await conn.fetchval(f"SELECT EXISTS (SELECT 1 FROM {t} WHERE org_id = ANY($1::uuid[]))", orgs):
-            found.append(t)
-    if not found:
-        return
-    try:
-        order = await fk_order(conn, found)
-    except RuntimeError:
-        order = None
-    for t in order or found:
-        if order is None:
-            await delete_tree(conn, t, "org_id = ANY($1::uuid[])", [orgs], log=log)
-            continue
-        status = await conn.execute(f"DELETE FROM {t} WHERE org_id = ANY($1::uuid[])", orgs)
-        n = int(status.rsplit(" ", 1)[-1])
-        if n:
-            log.append(f"{t}: {n} (sweep)")
-
-
 async def teardown(_conn=None) -> list[str]:
     """Operator connection, the teardown GUCs, FK child-before-parent, every
     DELETE keyed by this run's fixture ids (orgs, users, securities). Then a
@@ -424,85 +352,74 @@ async def teardown(_conn=None) -> list[str]:
     log: list[str] = []
     op = await operator_conn()
     try:
-        async with op.transaction():
-            await op.execute("SELECT set_config('execution.teardown', 'fixture', true), "
-                             "set_config('models.teardown', 'fixture', true), "
-                             "set_config('replica.teardown', 'fixture', true)")
-            secs = await fixture_security_ids(op)
-            users = list(USERS)
-            orgs = FIXTURE_ORGS
-            by_org = "org_id = ANY($1::uuid[])"
-            org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
-            plan = {
-                "public.harvest_candidates": (by_org, [orgs]),
-                "public.harvest_runs": (by_org, [orgs]),
-                "public.loss_bank_entries": (by_org, [orgs]),
-                "public.declared_outside_trades": (by_org, [orgs]),
-                "public.substitution_set_candidates": (by_org, [orgs]),
-                "public.substitution_sets": (by_org, [orgs]),
-                "public.substitution_denials": (by_org, [orgs]),
-                "public.loss_carryforwards": (by_org, [orgs]),
-                "public.tax_profiles": (by_org, [orgs]),
-                "public.rebalance_proposal_trades": (by_org, [orgs]),
-                "public.account_transition_plans": (by_org, [orgs]),
-                "public.rebalance_proposals": (by_org, [orgs]),
-                "public.account_model_links": (by_org, [orgs]),
-                "public.execution_instruction_events": (by_org, [orgs]),
-                "public.execution_fills": (by_org, [orgs]),
-                "public.execution_instruction_lots": (by_org, [orgs]),
-                "public.execution_instructions": (by_org, [orgs]),
-                "public.fee_exclusions": (by_org, [orgs]),
-                "public.fee_assignments": (by_org, [orgs]),
-                "public.member_todos": org_or_user,
-                "public.domain_event_deliveries": (by_org, [orgs]),
-                "public.domain_events": (by_org, [orgs]),
-                "public.audit_log": org_or_user,
-                "public.workflow_run_steps": (by_org, [orgs]),
-                "public.agent_proposals": (by_org, [orgs]),
-                "public.workflow_runs": (by_org, [orgs]),
-                "public.workflow_steps": (by_org, [orgs]),
-                "public.workflow_versions": (by_org, [orgs]),
-                "public.workflow_definitions": (by_org, [orgs]),
-                "public.custodian_capabilities": ("custodian_code LIKE 'zz_rep6%'", []),
-                "portfolio.replica_terms_versions": (by_org, [orgs]),
-                "portfolio.replica_model_specs": (by_org, [orgs]),
-                "portfolio.replica_registry_keys": (by_org, [orgs]),
-                "portfolio.model_events": (by_org, [orgs]),
-                "portfolio.model_version_positions": (by_org, [orgs]),
-                "portfolio.model_sleeves": (by_org, [orgs]),
-                "portfolio.model_versions": (by_org, [orgs]),
-                "portfolio.models": (by_org, [orgs]),
-                "portfolio.replica_securities": (by_org, [orgs]),
-                "portfolio.tax_lots": (by_org, [orgs]),
-                "portfolio.transactions": (by_org, [orgs]),
-                "portfolio.positions": (by_org, [orgs]),
-                "portfolio.assets": (by_org, [orgs]),
-                "public.account_balances_daily": (by_org, [orgs]),
-                "public.account_owners": (by_org, [orgs]),
-                "public.accounts": (by_org, [orgs]),
-                "public.household_memberships": ("household_id = ANY($1::uuid[])", [[HH_A]]),
-                "public.households": (by_org, [orgs]),
-                "public.entities": (by_org, [orgs]),
-                "public.org_settings": (by_org, [orgs]),
-                "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
-                "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
-            }
-            exists = {r["t"] for r in await op.fetch(
-                "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE c.relkind = 'r'")}
-            if "public.assistant_activities" in exists:
-                plan["public.assistant_activities"] = org_or_user
-            for table in await fk_order(op, [t for t in plan if t in exists]):
-                where, args = plan[table]
-                status = await op.execute(f"DELETE FROM {table} WHERE {where}", *args)
-                n = int(status.rsplit(" ", 1)[-1])
-                if n:
-                    log.append(f"{table}: {n}")
-            await sweep_fixture_orgs(op, orgs, set(plan), log)
-            await delete_tree(op, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                              [users, f"%{TAG}%"], log=log)
-            await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [orgs], log=log)
-            await delete_tree(op, "public.organizations", "id = ANY($1::uuid[])", [orgs], log=log)
+        secs = await fixture_security_ids(op)
+        users = list(USERS)
+        orgs = FIXTURE_ORGS
+        by_org = "org_id = ANY($1::uuid[])"
+        org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
+        plan = {
+            "public.harvest_candidates": (by_org, [orgs]),
+            "public.harvest_runs": (by_org, [orgs]),
+            "public.loss_bank_entries": (by_org, [orgs]),
+            "public.declared_outside_trades": (by_org, [orgs]),
+            "public.substitution_set_candidates": (by_org, [orgs]),
+            "public.substitution_sets": (by_org, [orgs]),
+            "public.substitution_denials": (by_org, [orgs]),
+            "public.loss_carryforwards": (by_org, [orgs]),
+            "public.tax_profiles": (by_org, [orgs]),
+            "public.rebalance_proposal_trades": (by_org, [orgs]),
+            "public.account_transition_plans": (by_org, [orgs]),
+            "public.rebalance_proposals": (by_org, [orgs]),
+            "public.account_model_links": (by_org, [orgs]),
+            "public.execution_instruction_events": (by_org, [orgs]),
+            "public.execution_fills": (by_org, [orgs]),
+            "public.execution_instruction_lots": (by_org, [orgs]),
+            "public.execution_instructions": (by_org, [orgs]),
+            "public.fee_exclusions": (by_org, [orgs]),
+            "public.fee_assignments": (by_org, [orgs]),
+            "public.member_todos": org_or_user,
+            "public.domain_event_deliveries": (by_org, [orgs]),
+            "public.domain_events": (by_org, [orgs]),
+            "public.audit_log": org_or_user,
+            "public.workflow_run_steps": (by_org, [orgs]),
+            "public.agent_proposals": (by_org, [orgs]),
+            "public.workflow_runs": (by_org, [orgs]),
+            "public.workflow_steps": (by_org, [orgs]),
+            "public.workflow_versions": (by_org, [orgs]),
+            "public.workflow_definitions": (by_org, [orgs]),
+            "public.custodian_capabilities": ("custodian_code LIKE 'zz_rep6%'", []),
+            "portfolio.replica_terms_versions": (by_org, [orgs]),
+            "portfolio.replica_model_specs": (by_org, [orgs]),
+            "portfolio.replica_registry_keys": (by_org, [orgs]),
+            "portfolio.model_events": (by_org, [orgs]),
+            "portfolio.model_version_positions": (by_org, [orgs]),
+            "portfolio.model_sleeves": (by_org, [orgs]),
+            "portfolio.model_versions": (by_org, [orgs]),
+            "portfolio.models": (by_org, [orgs]),
+            "portfolio.replica_securities": (by_org, [orgs]),
+            "portfolio.tax_lots": (by_org, [orgs]),
+            "portfolio.transactions": (by_org, [orgs]),
+            "portfolio.positions": (by_org, [orgs]),
+            "portfolio.assets": (by_org, [orgs]),
+            "public.account_balances_daily": (by_org, [orgs]),
+            "public.account_owners": (by_org, [orgs]),
+            "public.accounts": (by_org, [orgs]),
+            "public.household_memberships": ("household_id = ANY($1::uuid[])", [[HH_A]]),
+            "public.households": (by_org, [orgs]),
+            "public.entities": (by_org, [orgs]),
+            "public.org_settings": (by_org, [orgs]),
+            "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
+        }
+        exists = {r["t"] for r in await op.fetch(
+            "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE c.relkind = 'r'")}
+        if "public.assistant_activities" in exists:
+            plan["public.assistant_activities"] = org_or_user
+        res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
+                               gucs=("execution.teardown", "models.teardown", "replica.teardown"),
+                               cycle_order=("portfolio.model_library_entries",), label="verify_rep6")
+        log = res["log"]
     finally:
         await close_conn(op)
     return log
@@ -1867,7 +1784,14 @@ async def y_substitutions_late(conn):
 async def y_rep5_diff(conn):
     section("[Y] rep5: proposals carry wash-sale outcomes; verify_rep5.py changed ONLY where it asserted the flag")
     old = git_show(BEFORE_REF, "apps/api/scripts/verify_rep5.py").splitlines()
-    new = (HERE / "verify_rep5.py").read_text(encoding="utf-8").splitlines()
+    # lotmethod: the rule below holds up to main @ merge rep7b (VC.LOTMETHOD_BASE); after it, BUGFIX2 B1 / B2 (the
+    # shared scoped cleanup, --cleanup-only, the nested verify_rep2 timeout 1200 → 2700 s) may change verify_rep5.py
+    # — and nothing else may (checked separately below)
+    base_text = git_show(VC.LOTMETHOD_BASE, "apps/api/scripts/verify_rep5.py")
+    new = base_text.splitlines()
+    b1_bad = VC.b1_diff_bad(base_text, (HERE / "verify_rep5.py").read_text(encoding="utf-8"))
+    check(bool(base_text) and not b1_bad, "verify_rep5.py: every change since the lotmethod base is BUGFIX2's "
+          "cleanup (B1) or its nested timeout (B2)", f"{b1_bad[:4]}")
 
     def fn_at(lines, i):
         for k in range(min(i, len(lines) - 1), -1, -1):
@@ -2062,7 +1986,15 @@ async def y_routes(conn):
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
     # rep7 fix-1: routes under prefixes later sprints added (rep7's /held-away/ and /xray/) are not rep6's
-    new = [k for k in gn if k not in gb and not k[1].startswith(("/api/v1/held-away/", "/api/v1/xray/"))]
+    # lotmethod [FIND]: this count already failed at main @ merge rep7b (41, not 31) — rep7's reconcile route and
+    # rep7b's /authority/…, one-off and settlement routes were never excluded here; scoped now to rep6's own, as
+    # rep7b fix 1 scoped verify_rep7's (and lotmethod's /lot-method/… excluded)
+    later = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),
+             (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),
+             (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),
+             (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}
+    new = [k for k in gn if k not in gb and k not in later and not k[1].startswith(
+        ("/api/v1/held-away/", "/api/v1/xray/", "/api/v1/authority/", "/api/v1/lot-method/"))]
     tax =[k for k in new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
     check(len(new) == len(tax) == 31, "31 new routes, all under /tax/… and /harvest/…", f"{len(new)} {len(tax)}")
 
@@ -2138,6 +2070,29 @@ async def guard_prefix(conn) -> bool:
 DROPPED_CONNECTION = (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError, ConnectionError)
 
 
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown_retrying(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await close_conn(conn)
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -2148,6 +2103,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if "--cleanup-only" in sys.argv:
+        return await cleanup_only(conn)
     pre = real = None
     try:
         await run("pre-teardown", pre_teardown, conn)

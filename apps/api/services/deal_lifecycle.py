@@ -27,10 +27,13 @@ The rule now:
 """
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from services.audit import write_audit_log
 from services.org_settings import get_setting
+
+log = logging.getLogger(__name__)
 
 # Allowed transitions: from -> set(to). "any -> archived" is always permitted
 # (with confirmation); "archived -> <its prior status>" is Un-archive only.
@@ -137,7 +140,12 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
     """Copy the live row as a closed SYSTEM-axis version (id kept on the live
     row). Every column is carried — the pre-BUGFIX1 copy in update_deal omitted
     deal_stage and kept the slug, which violates deals_slug_key, so it could
-    never have succeeded (live: zero deal history rows)."""
+    never have succeeded (live: zero deal history rows).
+
+    BUGFIX2 (B6): the copy carries ``version_of_deal_id`` = the live deal's id,
+    so :func:`prior_status` ties a version to ITS deal instead of matching on
+    created_at + creator (two deals made in one transaction by one person
+    share both)."""
     return await conn.fetchval(
         """
         INSERT INTO deals (
@@ -148,7 +156,8 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
             deal_date, close_date, location, highlights, tags,
             is_featured, submitted_by, reviewed_by, published_at,
             valid_from, valid_to, system_from, system_to,
-            created_by, created_at, updated_at, publisher_entity_id
+            created_by, created_at, updated_at, publisher_entity_id,
+            version_of_deal_id
         )
         SELECT org_id, NULL, name, description, deal_status, deal_stage,
                asset_super_class, asset_class, asset_sub_category,
@@ -157,7 +166,8 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
                deal_date, close_date, location, highlights, tags,
                is_featured, submitted_by, reviewed_by, published_at,
                valid_from, valid_to, system_from, now(),
-               created_by, created_at, updated_at, publisher_entity_id
+               created_by, created_at, updated_at, publisher_entity_id,
+               id
         FROM deals
         WHERE id = $1 AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL
         RETURNING id
@@ -190,14 +200,32 @@ async def prior_status(conn, org_id, deal_id) -> str | None:
     archive made through apply_status leaves one); then, for a deal archived by
     the old in-place UPDATE (no version), the audit trail's status_change
     rows — the `deal_status` of the last change before the newest archive."""
-    # A closed version carries the live row's created_at (archive_version
-    # copies it), which is how a version is tied back to its deal — the copy
-    # gets its own id and deals has no lineage column.
+    # BUGFIX2 (B6): a version made since lotmethod carries its deal's id
+    # (version_of_deal_id) — the match is on that. Before it, a version was
+    # tied back to its deal only by created_at + creator, and two deals created
+    # in one transaction by one person share both, so Un-archive could restore
+    # one deal to the OTHER's stage. The old match is kept ONLY for a version
+    # with no deal id (made before the column; the migration backfilled every
+    # unambiguous one), only when no version names this deal, and logged.
     v = await conn.fetchval(
+        """
+        SELECT h.deal_status::text FROM deals h
+        WHERE h.org_id = $1 AND h.version_of_deal_id = $2 AND h.system_to IS NOT NULL
+          AND h.deal_status::text <> 'archived'
+        ORDER BY h.system_to DESC LIMIT 1
+        """,
+        org_id, deal_id,
+    )
+    if v:
+        return v
+    named = await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM deals WHERE org_id = $1 AND version_of_deal_id = $2)", org_id, deal_id)
+    v = None if named else await conn.fetchval(
         """
         SELECT h.deal_status::text FROM deals h
         JOIN deals live ON live.id = $2 AND live.org_id = $1
         WHERE h.org_id = $1 AND h.id <> live.id AND h.system_to IS NOT NULL
+          AND h.version_of_deal_id IS NULL
           AND h.created_at = live.created_at
           AND h.created_by IS NOT DISTINCT FROM live.created_by
           AND h.deal_status::text <> 'archived'
@@ -206,6 +234,8 @@ async def prior_status(conn, org_id, deal_id) -> str | None:
         org_id, deal_id,
     )
     if v:
+        log.info("deal %s: prior stage from a pre-B6 version matched on created_at + creator (no deal id on it)",
+                 deal_id)
         return v
     rows = await conn.fetch(
         """
