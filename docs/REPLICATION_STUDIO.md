@@ -1341,3 +1341,150 @@ Household → tab "Lot method"; Account → "Lot method" panel (method, preferen
 method, average-cost securities, history, request / approve); Proposal → each sale's method and
 each lot's reason, and "Choose the lot method" with a lot picker for `specific`. Every control
 from `lib/lotMethod.mjs`, failing closed on the server's flags and actions.
+
+## rep8 — the options sleeve (phase 2 starts, 2026-10-28)
+
+Spec sections: "Options sleeve (buffer ETFs and notes)", "Options overlays" (the tax-treatment table and the tax gate), "Terms captured per class" (buffer and income ETF rows), "Other features worth building" (the payoff lab).
+
+Instrument order (Joe): index ETFs → **defined-outcome options sleeve** → notes → long / short. Every human action is a human task. The custody cliff holds: nothing trades, and every options trade is a manual execution instruction.
+
+Services:
+- `services/options_sleeve.py` — contracts, quotes, payoff, builder, minimum account, rolls and expiry, fill booking.
+- `services/options_tax_gate.py`
+- `services/options_proposals.py`
+
+Routes: `routers/replication_options.py`. Schema: `docs/rep8_part1.sql`, applied by `scripts/_apply_rep8.py`. Screens: the **Options** tab on an entry (`components/replication/OptionsTab.jsx`) and the tax-gate panel on an options proposal (`components/replication/OptionsTaxGate.jsx`). Client logic: `lib/replicationOptions.mjs`, which fails closed. Verify: `apps/api/scripts/verify_rep8.py` — written, not run in the sprint.
+
+### Phase-2 gates still open — built around them
+
+- **Altruist options access.** `options_level` and `flex_options` are `unknown`, and unknown counts as not available.
+  - Every options leg becomes a MANUAL instruction for the custodian desk, a broker or a trader.
+  - Viability Q4 and the Options tab both say: "manual execution only — Altruist options access unconfirmed".
+  - The core is never blocked. A buffer package needs options level 3 or higher; a covered call needs level 1 or higher.
+- **No options data or price vendor.** Premiums, index levels, underlying prices and implied vols come only from `portfolio.adviser_quotes`.
+  - Each quote records its value, source text, as-of and who entered it.
+  - A new quote is a new row. A trigger refuses any UPDATE.
+  - Every priced figure is labelled **estimate** and lists its quotes and their as-of.
+  - With no quote, the figure reads "not priced — enter a quote".
+  - At-expiry payoffs need strikes only, so they are always available.
+- **Counsel question (26 U.S.C. 1092).** Are index options written against a full stock basket offsetting positions? Until counsel answers, the gate treats them as a straddle and labels each such result "pending counsel review". The same label goes on index collars under §1259.
+
+### Task 1 findings (rep8)
+
+- **1a.** A security is a `portfolio.securities_global` row.
+  - The type CHECK had no `option` value; it was added.
+  - Org holdings run `assets.global_security_id` → `positions` → `tax_lots`.
+  - An option contract = an `option` security plus a PLATFORM `portfolio.option_contracts` row with all its terms. The terms are the contract's identity (`terms_key`, partial unique), so defining the same contract twice returns the first.
+  - Contracts are created as a platform job under `app.is_super_admin`, the same way rep1 creates a fund.
+  - Positions, lots, instructions and wash-sale control all keep keying on `global_security_id`.
+- **1b.** Terms are rep1's versioned `term_values` over the field registry. The registry was global, so it gains `instrument_classes` (NULL = every class).
+  - `load_registry(conn, class)` and `for_class` give each class its own fields. An index fund's extraction never asks for buffer terms.
+  - Holdings parsers type option rows `other`, with no strike or expiry. **Leg terms therefore come from the approved terms, not the holdings file.** Parser work for N-PORT option legs is later work.
+- **1c.** A sleeve in rep3 is a weight, and an options overlay is not one.
+  - The options sleeve is an `option_packages` row on the model version. The model version holds only the core (`sleeve_label 'core'`).
+  - A proposal is `rebalance_proposals.proposal_kind 'options'`, and each line carries `option_leg`.
+  - An instruction carries contracts in `quantity` and the leg in `option_terms`. A CHECK allows `option_terms` only with `routed_via 'manual'` and executor `custodian_desk | broker | trader`.
+- **1d.** `wash_sale.identical()` is the single decision point. It is extended, never weakened: an option counts as its underlying's EXPOSURE.
+  - An option on X is substantially identical to X, and two options on one index are identical to each other.
+  - A denial pair on the exposures, such as an adviser's "index ↔ ETF", carries through to their options.
+  - For a non-option, the exposure is the security itself, so every earlier answer is unchanged.
+- **1e.** `securities_global_prices` holds no licensed series. Quotes live in `portfolio.adviser_quotes`, keyed by instrument, kind and as-of.
+
+### The package and the builder
+
+- **Buffer package:** underlying (ratio 1), plus a long put at the money, a short put at the buffer's end and a short call at the cap.
+  - Strikes are a % of the outcome-period start level, taken from the approved terms (`leg_*_strike_pct`).
+  - Default legs are FLEX index options: European, cash-settled, broad-based (Section 1256).
+- **Income package:** underlying, plus written calls at (1 + % out of the money), ratio = coverage, expiry = start + tenor.
+  - For a delta rule, the adviser enters the strike chosen for the target delta. It is never computed without a model.
+- **Cap / buffer / floor** are computed from the legs (exact Decimal) and stored next to the fund's stated values. Floor = the worst at-expiry return.
+- **Builder** (find or build, one options model per entry): a "Holdings of …" fund_replica model.
+  - The core is an approved index replica model (its look-through) or the ETF itself.
+  - A fresh outcome period starting on the funding date is allowed, with the same length as the fund's period.
+  - Approval: the model through rep3 (`approve_models`); the package through its own maker-checker task (`option_package_approval`, `approve_replication`). Approval is refused until the package is priced (start level and every leg's contract).
+- **Minimum account.** One contract covers N = multiplier × the quoted level. The sleeve covers c (the largest option-leg ratio) of the account. With hedge tolerance t (`replication.options.hedge_ratio_tolerance`, 5%):
+  - minimum = N ÷ (c(1+t));
+  - every account from n*·N ÷ (c(1+t)) fits, where n* = ⌈(1−t) ÷ 2t⌉.
+  - A mini contract on the same index (flagged `is_mini` with its `mini_ratio`) is considered too. With no level quote, the figure reads "not priced — enter an index level".
+- **Basis risk** (basket vs index): tracking error is "not estimated — needs prices".
+
+### Payoff lab (exact)
+
+At expiry, for an underlying return r, let s = 1 + r. Then:
+
+    value(s) = Σ underlying ratio · s + Σ ±ratio · intrinsic(strike %, s)
+    replica return = (value(s) − Σ underlying ratio) ÷ Σ underlying ratio
+
+Long legs count +, short legs −. Premiums are excluded (a package opened at zero net premium).
+
+The fund's stated outcome:
+- r ≥ 0 → min(r, cap)
+- −buffer ≤ r < 0 → 0
+- r < −buffer → r + buffer
+- never below a stated floor
+
+The lab covers −50% … +50% at `replication.options.payoff_step_pct` (default 5%), plus both buffer edges and the cap. Example: with start 100, buffer 10% and cap 15%, the replica equals the stated outcome at every point.
+
+From quotes only, labelled estimate:
+- **Mark-to-market** = Σ ±ratio × premium × multiplier, per package unit.
+- **The cap a new package would set** = the HIGHEST QUOTED call strike whose premium covers the net put cost. It is never interpolated.
+
+A structured-note comparison slot is present, marked "phase 3", and empty.
+
+### The tax gate (`services/options_tax_gate.py`)
+
+The gate runs when a proposal is generated (the results are shown) and again as a pre-check on rep5's approval task.
+- Any BLOCK refuses approval with a 409 naming the rule, and the task stays open.
+- Every result is stored in `options_tax_gate_results` with its inputs. A newer run closes the earlier rows.
+- The proposal view also hides Approve while any rule blocks.
+
+| rule | outcome |
+|---|---|
+| section_1256 | A broad-based, exchange-traded index option (FLEX included) → FLAG: 60/40 and year-end mark-to-market. Single-stock, fund or narrow options → pass (not 1256). |
+| wash_sale | A leg that acquires the exposure (a call bought to open) inside a household loss window of the same issuer or index → BLOCK. A leg closed at a loss (or at an unknown result) with a household buy within 30 days → BLOCK. The window edges are rep6's: L ± 30 is in, L ± 31 is clear. |
+| cash_secured_put | A put written on an exposure the household sold at a loss within 30 days → BLOCK (a wash-sale purchase). |
+| straddle | Options while the account holds the core → FLAG: loss deferral and holding-period suspension. Index or fund options against the basket / ETF are labelled **pending counsel review**. Realizing a loss (or an unknown result) on one leg while the offset stays open → BLOCK. |
+| constructive_sale | A collar (long put + short call on the same underlying and expiry, with no written put below) on an appreciated position whose band is at or inside `replication.options.constructive_sale_band` (15%) → BLOCK. Appreciation that cannot be shown absent counts as appreciated. A buffer package is not a collar. |
+| qualified_covered_call | A call written on a single stock must be exchange-traded with MORE than 30 days to expiry (31 passes, 30 fails). It must not be deep in the money: conservatively, the strike must be at or above the quoted price, because the strike grid is not held. With no price quote → BLOCK "cannot qualify without a price". |
+
+### Proposals, instructions, fills, rolls
+
+- **Proposal.** A person raises it with `POST /replication/options/accounts/{id}/proposals`, choosing open, close or roll.
+  - The account must follow the package's model. Authority must be MANAGED (rep7b path `options`); read-only and advise accounts are refused.
+  - Contracts = core value × ratio ÷ (multiplier × start level), rounded half-even. A result outside the tolerance gets a warning; zero is refused.
+  - Each line's price is the latest premium quote. An unpriced line cannot be approved.
+  - The proposal takes the account's one open-proposal slot.
+- **Approval** goes through rep5's maker-checker routes.
+- **Instructions.** Approval produces one MANUAL instruction per leg, routed straight to `execution.create_instructions`. No adapter is involved, and the manual adapter's submit is not called either.
+  - Quantity is in contracts.
+  - The limit price comes from the quote, which is also the reference with its as-of.
+  - Each instruction carries the expiry, the FLEX terms, and the proposal's maker and checker.
+- **Fills** are entered through rep2's flow. `POST /replication/options/instructions/{id}/book` then books option positions, transactions and lots, idempotently per fill.
+  - A long lot is booked as +contracts at the premium paid.
+  - A short lot is booked as −contracts at minus the premium received.
+  - A closing fill closes lots FIFO.
+- **Rolls.** rep5's `org_tick` runs the daily options sweep, never for an is_test org.
+  - N days before an outcome period ends (`replication.options.roll_notice_days`, default 10), it opens a roll to-do with a DRAFT next package: same buffer, cap leg omitted, so the cap reads "not priced".
+  - A person prices it, approves it and proposes the roll. On approval, the old package becomes `rolled`.
+- **Expiry.** A package past its end with no approved roll becomes `expired` and gets a to-do.
+  - Each cash-settled leg gets a settlement entry per holding account. The intrinsic value comes from an index-level quote dated the expiry day.
+  - Confirming the to-do confirms the entries. It is refused while an entry is unpriced.
+  - Physically settled legs are entered as trades.
+
+### Permissions and screens
+
+There are no new permissions. Gates by permission:
+- `view_replication` — sleeve, package, payoff, settlements, quotes, contracts.
+- `manage_replication` — price, submit, quotes, contracts.
+- `approve_replication` — package decisions.
+- `manage_models` + `manage_replication` — build.
+- `view_proposals` / `manage_proposals` — gate results, proposal creation.
+- `manage_execution` — booking.
+
+All 17 routes are in AUTHZ1_ROUTES. Envelopes carry vocabularies for leg roles, gate rules and outcomes, and quote kinds. `editable`, `price_editable` and `quote_editable` are empty for a view-only caller. Package `actions` come from the server.
+
+### rep8 operator steps
+
+1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep8.py`. It runs `node --test`, `npm run build`, and the `verify_rep6.py` regression (VERIFY_NESTED=1, 2700 s).
+2. Redeploy the API and the scheduler cron service, because the tick now runs the options sweep. Refresh the schema snapshot.
+3. Before any real options trade: confirm Altruist's options level and FLEX access, record them in custodian capabilities, and get counsel's answer on the straddle question.

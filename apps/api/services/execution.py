@@ -447,10 +447,10 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                             price_kind, limit_price, range_low, range_high, reference_price, reference_at,
                             wash_sale_notes, executor_type, executor_name, executor_contact, execute_by,
                             if_not_filled, source, source_ref, routed_via, routing_reason, notes, status,
-                            maker_id, maker_ids, approved_by, approved_at)
+                            maker_id, maker_ids, approved_by, approved_at, option_terms)
                         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                                 $16, $17, $18, $19, $20::uuid, $21, $22, $23, $24, $25::uuid, ARRAY[$25::uuid],
-                                $26::uuid, $27)
+                                $26::uuid, $27, $28::jsonb)
                         RETURNING *""",
                     str(org_id), str(acct["id"]), str(t.global_security_id), t.side, t.quantity, t.notional,
                     pg.kind, pg.limit_price, pg.range_low, pg.range_high, pg.reference_price, pg.reference_at,
@@ -458,7 +458,8 @@ async def create_instructions(pool, *, org_id, actor_id, account: dict, trade_li
                     trade_list.executor_contact, trade_list.execute_by, trade_list.if_not_filled,
                     trade_list.source, str(trade_list.source_ref) if trade_list.source_ref else None,
                     routed_via, routing_reason, trade_list.notes, status, str(maker),
-                    str(up["checker_id"]) if up else None, up["approved_at"] if up else None)
+                    str(up["checker_id"]) if up else None, up["approved_at"] if up else None,
+                    _dumps(t.option_leg) if t.option_leg else None)       # rep8 — an option leg's terms
                 for lid, q in lots:
                     await conn.execute(
                         f"INSERT INTO {T_LOT} (org_id, instruction_id, tax_lot_id, quantity, created_by) "
@@ -1000,6 +1001,7 @@ def instruction_out(r: dict, *, sec: dict | None = None, acct: dict | None = Non
         "reconcile_note": r["reconcile_note"], "cancel_reason": r["cancel_reason"],
         "expiry_reason": r["expiry_reason"], "created_at": r["created_at"].isoformat(),
         "filled_quantity": _num(filled_quantity),
+        "option_terms": _loads(r.get("option_terms")),        # rep8 — an option leg: contracts, expiry, FLEX terms
         "security": {"name": sec["name"], "ticker": (sec.get("identifiers") or {}).get("ticker"),
                      "cusip": (sec.get("identifiers") or {}).get("cusip")} if sec else None,
         "account": {"account_number_masked": acct["account_number_masked"], "custodian_code": acct["custodian_code"],

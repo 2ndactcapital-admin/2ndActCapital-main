@@ -137,9 +137,11 @@ WARNING_LABELS = {
     "stale_held_away": "Held-away data is stale — confirm before approval",
     "one_off": "One-off trade — advise (the member or another adviser executes)",
 }
-PROPOSAL_KIND_LABELS = {"model": "Model rebalance", "one_off": "One-off trade (advise)"}
+PROPOSAL_KIND_LABELS = {"model": "Model rebalance", "one_off": "One-off trade (advise)",
+                        "options": "Options sleeve (manual execution only)"}
 PRICE_SOURCE_LABELS = {"account_position": "The account's own position valuation",
-                       "security_price": "Security price", "none": "No price — bought by amount"}
+                       "security_price": "Security price", "none": "No price — bought by amount",
+                       "adviser_quote": "An adviser-entered quote (source and as-of on the line)"}
 PLAN_ACTION_LABELS = {"keep": "Keep", "trim": "Trim", "add": "Add", "sell_now": "Sell now",
                       "sell_later": "Sell later", "sell_now_and_later": "Sell now and later",
                       "cannot_value": "Cannot value — needs a price"}
@@ -909,6 +911,8 @@ def plan_out(r: E.BuildResult, labels: dict) -> dict:
 def _title(account: dict, p: dict) -> str:
     if p.get("proposal_kind") == "one_off":
         return f"Approve one-off trade (advise): {account['account_number_masked']}"
+    if p.get("proposal_kind") == "options":
+        return f"Approve options trades (manual execution): {account['account_number_masked']}"
     return f"{'Review' if p['maker_kind'] == 'system' else 'Approve'} rebalance: {account['account_number_masked']} " \
            f"— {TRIGGER_LABELS[p['trigger']].lower()}"
 
@@ -1137,6 +1141,11 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
         if execution.get("instruction_ids"):
             return p
         actor = await HT.assert_human(conn, actor_id, org_id)
+    if p.get("proposal_kind") == "options":      # rep8 — per-leg MANUAL instructions, never an adapter
+        from services import options_proposals as OP
+
+        return await OP.execute(pool, org_id=org_id, p=p, actor=actor)
+    async with pool.acquire() as conn:
         account = await X.load_account(conn, org_id, p["account_id"])
         acct = await AM.load_account(conn, org_id, p["account_id"])
         HA.refuse(acct, "routing a proposal to instructions", ProposalConflict, path="execute")     # rep7 / rep7b
@@ -1555,7 +1564,7 @@ async def release_fee_exclusions(pool, *, org_id) -> list[str]:
 
 
 async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs: bool = False,
-                   xray_sweep: bool | None = None) -> dict:
+                   xray_sweep: bool | None = None, options_sweep: bool | None = None) -> dict:
     """Every proposal step for one org (the caller set its RLS context).
 
     A test org (services.orgs) is skipped — no step runs — unless the caller
@@ -1566,11 +1575,13 @@ async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs
     not create."""
     if xray_sweep is None:
         xray_sweep = not include_test_orgs
+    if options_sweep is None:      # rep8 — like the X-ray sweep: a verify ticking its own org asks for it
+        options_sweep = not include_test_orgs
     from services import orgs as ORGS
 
     today = today or date.today()
     out = {"expired": 0, "executed": 0, "model_change": [], "harvest": [], "scans": [], "fee_exclusions_ended": [],
-           "loss_bank": None, "held_away_staleness": None, "xray": None, "errors": []}
+           "loss_bank": None, "held_away_staleness": None, "xray": None, "options": None, "errors": []}
     async with pool.acquire() as conn:
         if not include_test_orgs and await ORGS.is_test_org(conn, org_id):
             return {**out, "skipped": "test org (organizations.is_test) — schedulers never act on one"}
@@ -1640,6 +1651,15 @@ async def org_tick(pool, *, org_id, today: date | None = None, include_test_orgs
             out["xray"] = await XR.sweep(pool, org_id=org_id, today=today)
         except Exception as exc:  # noqa: BLE001
             out["errors"].append(f"x-ray: {exc}")
+    # rep8 — outcome-period rolls (a to-do with a DRAFT next package) and expiries (to-do + settlement entries).
+    # Nothing trades: a person prices and proposes the roll.
+    if options_sweep:
+        from services import options_sleeve as OS
+
+        try:
+            out["options"] = await OS.sweep(pool, org_id=org_id, today=today)
+        except Exception as exc:  # noqa: BLE001
+            out["errors"].append(f"options: {exc}")
     return out
 
 
@@ -1661,7 +1681,10 @@ async def proposals_tick(pool, *, today: date | None = None) -> dict:
                 # rep7 — orgs with households (the daily X-ray) and with held-away sources (staleness)
                 " UNION SELECT DISTINCT org_id FROM public.accounts WHERE household_id IS NOT NULL "
                 "AND system_to IS NULL AND valid_to IS NULL UNION SELECT DISTINCT org_id FROM " + HA.T_SRC +
-                " WHERE system_to IS NULL) x WHERE " + ORGS.not_test_org_sql("x.org_id"),
+                " WHERE system_to IS NULL"
+                # rep8 — orgs with an approved option package (rolls and expiries)
+                " UNION SELECT DISTINCT org_id FROM portfolio.option_packages WHERE status = 'approved' "
+                "AND system_to IS NULL) x WHERE " + ORGS.not_test_org_sql("x.org_id"),
                 list(OPEN_STATUSES))]
     finally:
         reset_rls_context(tokens)
@@ -1688,7 +1711,8 @@ def trade_out(t: dict) -> dict:
             "routable": WS.routable(_loads(t.get("wash_sale"))),
             "instruction_id": str(t["instruction_id"]) if t["instruction_id"] else None,
             "lot_method": t.get("lot_method"),
-            "lot_method_label": E.METHOD_LABELS.get(t["lot_method"]) if t.get("lot_method") else None}
+            "lot_method_label": E.METHOD_LABELS.get(t["lot_method"]) if t.get("lot_method") else None,
+            "option_leg": _loads(t.get("option_leg"))}
 
 
 def proposal_out(p: dict, account: dict | None = None) -> dict:
@@ -1874,12 +1898,20 @@ def _one_off_sides() -> list[dict]:
     return [{"key": k, "label": v} for k, v in SIDE_LABELS.items()]
 
 
+def _options_warning_labels() -> dict:
+    from services import options_proposals as OP      # rep8 — an options proposal's own warning codes
+
+    return OP.WARNING_LABELS
+
+
 def vocabularies() -> dict:
     def pairs(d):
         return [{"key": k, "label": v} for k, v in d.items()]
 
     return {"triggers": pairs(TRIGGER_LABELS), "statuses": pairs(STATUS_LABELS), "open_statuses": list(OPEN_STATUSES),
-            "warning_codes": pairs(WARNING_LABELS), "price_sources": pairs(PRICE_SOURCE_LABELS),
+            "warning_codes": pairs({**WARNING_LABELS, **_options_warning_labels()}),
+            "price_sources": pairs(PRICE_SOURCE_LABELS),
+            "leg_roles": pairs(_options_sleeve.LEG_ROLE_LABELS),       # rep8 — option legs on a proposal line
             "plan_actions": pairs(PLAN_ACTION_LABELS), "proposal_kinds": pairs(PROPOSAL_KIND_LABELS),
             "one_off_executors": _one_off_executors(), "one_off_sides": _one_off_sides(),
             **WS.vocabularies(), "account_filters": [
@@ -1887,3 +1919,9 @@ def vocabularies() -> dict:
                 {"key": "not_following", "label": "Not following a model"},
                 {"key": "open_proposal", "label": "With an open proposal"}], **AM.vocabularies(),
             "lot_method": LM.vocabularies()}
+
+
+# rep8 — the options sleeve's task kinds and the options tax gate's pre-check on TASK_APPROVAL register on import
+# (after everything above is defined: both modules import this one)
+from services import options_sleeve as _options_sleeve  # noqa: E402,F401
+from services import options_tax_gate as _options_tax_gate  # noqa: E402,F401

@@ -70,6 +70,8 @@ COST_LINE_LABELS = {
 }
 TAX_LINE_TEXT = "Estimated by the tax engine (rep6) — not estimated here"
 INDEX_CLASSES = ("index_etf", "index_mutual_fund")
+#: rep8 — defined-outcome (buffer) and covered-call (income) ETFs: the underlying plus an options package
+OPTIONS_CLASSES = ("buffer_etf", "income_etf")
 
 #: org setting key → stated default. Each one used is reported in the answer's inputs with its origin.
 SETTINGS = {
@@ -117,6 +119,10 @@ def _today() -> date:
 # ── the five questions ──────────────────────────────────────────────────────
 def q1_rules_based(entry: dict) -> dict:
     cls = entry["instrument_class"]
+    if cls in OPTIONS_CLASSES:
+        return _answer("rules_based", "yes", "A defined-outcome or covered-call fund follows stated rules — an outcome "
+                       "period with a cap and a buffer, or a call-writing rule — over a published underlying, so it "
+                       "is rebuilt as the underlying plus an options package.", {"instrument_class": cls})
     if cls in INDEX_CLASSES:
         return _answer("rules_based", "yes", "An index fund follows published rules and discloses its holdings, so "
                        "they can be rebuilt position by position.", {"instrument_class": cls})
@@ -246,7 +252,26 @@ async def q3_account_size(conn, org_id, src: RM.Sources, *, custodian_code: str,
                    f"tracking target needs at least ${m['minimum']}; this account is ${_cents(account_size)}.", inputs)
 
 
-async def q4_custodian(conn, custodian_code: str) -> dict:
+def q2_options(src: RM.Sources) -> dict:
+    """rep8: a buffer / income ETF's holdings file shows its options only as
+    'other' rows (no strike or expiry) — the legs come from the approved terms,
+    so the question is whether those terms are approved."""
+    from services import options_sleeve as OS
+
+    kind = OS.KIND_FOR_CLASS[src.entry["instrument_class"]]
+    miss = OS.missing_terms(src.terms, kind)
+    inputs = {"instrument_class": src.entry["instrument_class"],
+              "terms_version_id": str(src.terms["id"]) if src.terms else None,
+              "snapshot_as_of": src.snapshot["as_of"].isoformat() if src.snapshot else None}
+    if miss:
+        return _answer("rebuildable", "unknown", "unknown — the options legs come from the approved terms, and these "
+                       "are missing: " + ", ".join(miss), inputs, miss)
+    return _answer("rebuildable", "yes", "Yes — the underlying as the core sleeve plus listed (FLEX) index options "
+                   "built from the approved terms' legs; the holdings file shows the fund's options only as 'other' "
+                   "rows without strikes, so it is not the source of the legs.", inputs)
+
+
+async def q4_custodian(conn, custodian_code: str, instrument_class: str | None = None) -> dict:
     api = await CC.capability(conn, custodian_code, "equity_trading_api")
     frac = await CC.capability(conn, custodian_code, "fractional_shares")
     label = CC.CUSTODIAN_LABELS.get(custodian_code, custodian_code)
@@ -258,11 +283,21 @@ async def q4_custodian(conn, custodian_code: str) -> dict:
               "legs": "stocks only (futures and other instruments are not held — see question 2)"}
     missing = [f"evidence of {k} at {label}" for k, c in (("equity_trading_api", api), ("fractional_shares", frac))
                if c.value == "unknown"]
+    opt = ""
+    if instrument_class in OPTIONS_CLASSES:       # rep8 — the options legs: options level / FLEX; never blocks the core
+        from services import options_sleeve as OS
+
+        via = await OS.options_viability(conn, custodian_code, OS.KIND_FOR_CLASS[instrument_class])
+        inputs["options"] = via
+        inputs["legs"] = "the core (stocks / the ETF) plus an options package"
+        missing = missing + via["missing"]
+        opt = f" Options legs: {via['note']}."
     if CC.available(api):
-        return _answer("custodian", "yes", f"{label} takes stock trades through its trading API.", inputs, missing)
+        return _answer("custodian", "yes", f"{label} takes stock trades through its trading API.{opt}", inputs,
+                       missing)
     return _answer("custodian", "yes", f"Yes, via execution instructions: {label}'s equity trading API is "
                    f"{'not evidenced (unknown counts as not available)' if api.value == 'unknown' else api.value}, "
-                   "so trades go out as instructions a person places — the manual path.", inputs, missing)
+                   f"so trades go out as instructions a person places — the manual path.{opt}", inputs, missing)
 
 
 async def strategy_fee(conn, org_id, model_id, account_size: Decimal) -> tuple[Decimal | None, dict, list[str]]:
@@ -415,9 +450,10 @@ async def compute(pool, *, org_id, actor_id, entry_id, custodian_code: str, acco
             raise M.ModelError("account size must be above $0")
         size = size.quantize(CENT, rounding=ROUND_HALF_UP)
         a1 = q1_rules_based(src.entry)
-        a2 = await q2_rebuildable(conn, org_id, src)
+        a2 = q2_options(src) if src.entry["instrument_class"] in OPTIONS_CLASSES else await q2_rebuildable(
+            conn, org_id, src)
         a3 = await q3_account_size(conn, org_id, src, custodian_code=p.custodian_code, account_size=size, p=p)
-        a4 = await q4_custodian(conn, p.custodian_code)
+        a4 = await q4_custodian(conn, p.custodian_code, src.entry["instrument_class"])
         a5, lines = await q5_cost(conn, org_id, src, account_size=size, p=p)
         answers = [a1, a2, a3, a4, a5]
         model = await RM.find_model(conn, org_id, src.entry["id"], p)

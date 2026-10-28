@@ -11,12 +11,14 @@
  * from `proposalControls(envelope)`; Approve / Reject never for the maker.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { amountText, labelOf, moneyText, pctText, proposalControls, securityText, vocab, weightRows } from "@/lib/proposals.mjs";
 import { matchesOf, washText } from "@/lib/tax.mjs";
 import { saleMethodText } from "@/lib/lotMethod.mjs";
 import ProposalLotMethod from "@/components/lotmethod/ProposalLotMethod";
 import { proposalStale } from "@/lib/heldAway.mjs";
+import { TaxGatePanelView } from "@/components/replication/OptionsTaxGate";
+import { optionsApproveVisible } from "@/lib/replicationOptions.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -42,7 +44,8 @@ export function Trades({ envelope }) {
       <thead className="text-left text-text-muted"><tr><th className="py-1">Trade</th><th>Price</th><th>Est. gain</th><th>Why</th></tr></thead>
       <tbody>{trades.map((t) => (
         <tr key={t.id} className="border-t border-[#ece8dd] align-top">
-          <td className="py-2">{t.side === "buy" ? "Buy" : "Sell"} {amountText(t)} {securityText(t)}
+          <td className="py-2">{t.side === "buy" ? "Buy" : "Sell"} {amountText(t)}{t.option_leg ? " contracts" : ""} {securityText(t)}
+            {t.option_leg ? <span className="block text-xs text-navy">{labelOf(v.leg_roles, t.option_leg.role)} — to {t.option_leg.position_effect}, strike {t.option_leg.strike}, expires {t.option_leg.expiry}{t.option_leg.is_flex ? " (FLEX)" : ""}, ×{t.option_leg.multiplier}</span> : null}
             {saleMethodText(t, envelope) ? <span className="block text-xs text-navy">Lots: {saleMethodText(t, envelope)}</span> : null}
             {(t.lots || []).map((l, i) => (
               <span key={l.lot_id || `avg-${i}`} className="block text-xs text-text-muted">lot {String(l.acquired_date || "—")}: {l.quantity} sh, cost {l.unit_cost ?? "—"}, {l.term}, est. {l.est_gain ?? "—"}{l.why ? ` — ${l.why}` : ""}</span>
@@ -94,6 +97,25 @@ export default function ProposalDetail({ initialEnvelope }) {
   const warnings = Array.isArray(p.warnings) ? p.warnings : [];
   const instructions = Array.isArray(p.instructions) ? p.instructions : [];
   const stale = proposalStale(p);   // REP7 — approval waits for a confirmation of stale held-away data
+  const isOptions = p.proposal_kind === "options";
+  const [gate, setGate] = useState(null);   // REP8 — the options tax gate (Approve hidden while a rule blocks)
+  const [gateBusy, setGateBusy] = useState(false);
+
+  async function loadGate(rerun = false) {
+    if (!isOptions || !p.id) return;
+    setGateBusy(true);
+    try {
+      const res = await fetch(`/api/replication/options/proposals/${p.id}/gate`, rerun ? { method: "POST" } : undefined);
+      const data = await res.json().catch(() => ({}));
+      if (rerun && res.ok) {
+        const again = await fetch(`/api/replication/options/proposals/${p.id}/gate`);
+        setGate(again.ok ? await again.json() : null);
+      } else setGate(res.ok ? data : null);
+    } finally { setGateBusy(false); }
+  }
+
+  useEffect(() => { loadGate(); }, [p.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const approveShown = isOptions ? optionsApproveVisible(c.approve, gate) : c.approve;
 
   async function act(path, body) {
     setMsg(null);
@@ -130,6 +152,7 @@ export default function ProposalDetail({ initialEnvelope }) {
           <ul className="mt-2 space-y-1">{warnings.map((w, i) => <li key={i}><span className="font-medium">{labelOf(v.warning_codes, w.code)}</span> — {w.message}</li>)}</ul>
         </div>
       ) : null}
+      {isOptions ? <TaxGatePanelView gate={gate} busy={gateBusy} onRerun={() => loadGate(true)} /> : null}
       <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Trades</h2><div className="mt-2"><Trades envelope={env} /></div>
         <div className="mt-3"><ProposalLotMethod envelope={env} /></div></div>
       <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Weights</h2><div className="mt-2"><Weights envelope={env} /></div></div>
@@ -147,7 +170,7 @@ export default function ProposalDetail({ initialEnvelope }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {c.submit ? <button type="button" className={primary} onClick={() => act("submit")}>Submit for approval</button> : null}
           {c.approve || c.reject ? <input className={input} placeholder="Note (required to reject)" value={note} onChange={(e) => setNote(e.target.value)} /> : null}
-          {c.approve && !stale.blocking ? <button type="button" className={primary} onClick={() => act("approve", { note: note || undefined })}>Approve</button> : null}
+          {approveShown && !stale.blocking ? <button type="button" className={primary} onClick={() => act("approve", { note: note || undefined })}>Approve</button> : null}
           {c.reject ? <button type="button" className={secondary} onClick={() => act("reject", { note })}>Reject</button> : null}
           {c.execute ? <button type="button" className={secondary} onClick={() => act("execute")}>Create instructions</button> : null}
           {c.refresh ? <button type="button" className={secondary} onClick={() => act("refresh")}>Check instructions</button> : null}

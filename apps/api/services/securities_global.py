@@ -81,6 +81,7 @@ TABLE_REL = "portfolio.securities_global_relationships"
 SECURITY_TYPES = frozenset({
     "equity", "fixed_income", "fund", "private_fund", "structured_note",
     "index", "real_asset", "cash", "other",
+    "option",          # rep8 — an option contract (its terms: portfolio.option_contracts)
 })
 
 # securities_global_price_coverage_chk

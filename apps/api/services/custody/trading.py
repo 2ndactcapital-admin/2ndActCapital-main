@@ -121,6 +121,9 @@ class TradeLine(_Strict):
     lot_instructions: list[LotInstruction] = Field(default_factory=list, max_length=200)
     price_guidance: PriceGuidance = Field(default_factory=PriceGuidance)
     wash_sale_notes: str | None = Field(default=None, max_length=4000)
+    #: rep8 (additive): an option leg's terms — contracts, position effect (open / close), expiry, FLEX terms, the
+    #: adviser quote behind its limit price. Only services.options_proposals sets it; a CHECK makes it manual-only.
+    option_leg: dict | None = None
 
     @field_validator("quantity", "notional", mode="before")
     @classmethod
@@ -136,6 +139,9 @@ class TradeLine(_Strict):
             raise ValueError("quantity / notional must be greater than zero")
         if self.lot_instructions and self.side != "sell":
             raise ValueError("lot instructions apply to sells only")
+        if self.option_leg is not None and (self.quantity is None
+                                            or self.option_leg.get("position_effect") not in ("open", "close")):
+            raise ValueError("an option leg is a number of contracts with a position effect (open / close)")
         ids = [str(li.tax_lot_id) for li in self.lot_instructions]
         if len(ids) != len(set(ids)):
             raise ValueError("a tax lot is listed twice")

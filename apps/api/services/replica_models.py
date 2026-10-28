@@ -106,7 +106,12 @@ REBALANCE_ORIGIN_LABELS = {"terms": "From the fund's terms", "deliberate": "A de
 
 #: Approved-terms fields whose change raises a review task on every model of the fund.
 CRITICAL_TERMS = ("expense_ratio_net_pct", "expense_ratio_gross_pct", "weighting_method", "rebalance_frequency",
-                  "index_name")
+                  "index_name",
+                  # rep8 — buffer / income ETFs: the outcome period, cap, buffer and every leg; the call-writing rule
+                  "outcome_period_start", "outcome_period_end", "cap_pct", "buffer_pct", "floor_pct",
+                  "leg_long_put_strike_pct", "leg_short_put_strike_pct", "leg_short_call_strike_pct",
+                  "underlying_reference", "call_strike_rule", "call_strike_pct_otm", "call_delta", "call_tenor_days",
+                  "call_coverage_pct")
 TERMS_REVIEW_KIND = "fund_model_terms_review"
 TERMS_REVIEW_SUBJECT = "model"
 

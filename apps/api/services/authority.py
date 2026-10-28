@@ -91,10 +91,12 @@ PATH_LABELS = {
     "join": "Join a model", "change_model": "Change model", "settings": "Change model settings",
     "transition": "Transition preview", **{f"proposal:{t}": f"Proposal — {t.replace('_', ' ')}" for t in TRIGGERS},
     "one_off": "One-off trade proposal", "harvest": "Tax-loss harvest scan",
+    "options": "Options sleeve proposal (manual execution)",
     "execute": "Route an approved proposal to instructions", "instructions": "Create execution instructions",
     "route": "Route a trade list",
 }
-MODEL_PATHS = frozenset({"join", "change_model", "settings", "transition", "harvest",
+# rep8: 'options' (an options-sleeve proposal) is a model path — managed only; read_only / advise never get one
+MODEL_PATHS = frozenset({"join", "change_model", "settings", "transition", "harvest", "options",
                          *(f"proposal:{t}" for t in TRIGGERS)})
 EXEC_PATHS = frozenset({"execute", "instructions", "route"})
 ALL_PATHS = tuple(PATH_LABELS)
@@ -194,7 +196,8 @@ def refusal(account: dict | None, action: str, *, path: str | None = None, execu
         why = ("managed needs a custodian and this account is outside the platform. What would allow it: an approved "
                "custody change to another custodian (settled DVP) with its receiving-custodian details")
     elif a == "advise" and path in MODEL_PATHS:
-        why = ("advise covers one-off trades only — no model, join, drift, model-change, cash-flow or harvest. "
+        why = ("advise covers one-off trades only — no model, join, drift, model-change, cash-flow, harvest or "
+               "options sleeve. "
                "What would allow it: an approved authority change to managed")
     elif a == "advise" and path in EXEC_PATHS:
         why = ("under advise the member or another adviser executes — choose executor member or other_adviser "
