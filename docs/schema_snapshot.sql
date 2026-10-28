@@ -118,6 +118,32 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY account_import_exceptions_pkey: (id)
 
+-- ===== account_lot_method_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   lot_method_override                      text
+--   gain_preference_override                 text
+--   realize_gains_target                     numeric
+--   custodian_cost_basis_method              text NOT NULL DEFAULT 'unknown'::text
+--   custodian_method_source                  text
+--   average_cost_security_ids                ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY account_lot_method_settings_pkey: (id)
+
 -- ===== account_model_links =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -959,6 +985,7 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   deal_stage                               text DEFAULT 'sourced'::text
 --   publisher_entity_id                      uuid
+--   version_of_deal_id                       uuid
 --   PRIMARY KEY deals_pkey: (id)
 --   UNIQUE deals_slug_key: (slug)
 
@@ -1993,6 +2020,29 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY household_authority_pkey: (id)
 
+-- ===== household_lot_method =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid NOT NULL
+--   lot_method                               text NOT NULL DEFAULT 'tax_optimized'::text
+--   gain_preference                          text NOT NULL DEFAULT 'prefer_long_term'::text
+--   realize_gains_target                     numeric
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY household_lot_method_pkey: (id)
+
 -- ===== household_memberships =====
 --   household_id                             uuid NOT NULL
 --   entity_id                                uuid NOT NULL
@@ -2558,6 +2608,7 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   wash_sale                                jsonb
+--   lot_method                               text
 --   PRIMARY KEY rebalance_proposal_trades_pkey: (id)
 
 -- ===== rebalance_proposals =====
@@ -2605,6 +2656,12 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   proposal_kind                            text NOT NULL DEFAULT 'model'::text
+--   lot_method                               text
+--   lot_method_source                        text
+--   gain_preference                          text
+--   realize_gains_target                     numeric
+--   lot_picks                                jsonb
+--   custodian_cost_basis_method              text
 --   PRIMARY KEY rebalance_proposals_pkey: (id)
 
 -- ===== reference_data =====
