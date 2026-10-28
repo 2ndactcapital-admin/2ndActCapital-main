@@ -200,11 +200,13 @@ async def household(conn, org_id, household_id) -> dict:
 
 
 async def household_accounts(conn, org_id, household_id) -> list[dict]:
-    return [dict(r) for r in await conn.fetch(
+    from services import authority as AU      # rep7b — each account's effective authority / custody
+
+    return await AU.attach_many(conn, org_id, [dict(r) for r in await conn.fetch(
         "SELECT id, org_id, account_number_masked, custodian_code, registration_type, tax_status, primary_entity_id, "
         "household_id, is_discretionary, is_held_away, closed_on FROM public.accounts WHERE org_id = $1::uuid "
         "AND household_id = $2::uuid AND system_to IS NULL AND valid_to IS NULL ORDER BY account_number_masked",
-        str(org_id), str(household_id))]
+        str(org_id), str(household_id))])
 
 
 _HOLD_SQL = f"""
@@ -431,7 +433,8 @@ async def compute(conn, org_id, household_id, *, today: date | None = None) -> d
     return {"household": {"id": str(hh["id"]), "name": hh["name"]}, "as_of": today.isoformat(),
             "accounts": [{"id": str(a["id"]), "account_number_masked": a["account_number_masked"],
                           "held_away": a["is_held_away"], "registration_type": a["registration_type"],
-                          "tax_status": a["tax_status"]} for a in accounts],
+                          "tax_status": a["tax_status"], "authority": a.get("authority"),
+                          "custody": a.get("custody")} for a in accounts],
             "total_market_value": str(money(total)), "unvalued_holdings": unvalued,
             "holdings": holdings, "constituents": constituents, "by_security": by_security, "by_sector": by_sector,
             "concentration": {"threshold": str(threshold), "setting": CONCENTRATION_SETTING, "flags": flags},
@@ -536,21 +539,66 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
     out["break_even"] = break_even(Decimal(tax["amount"]) if tax.get("amount") is not None else None, diff)
     out["harvest_benefit"] = NEEDS_PRICES
     out["tracking_error"] = NEEDS_PRICES
-    if held:
+    if held and (a.get("authority") or "read_only") == "read_only":
         out["status_lines"].append(HELD_AWAY_NOTE)
     out["join"] = join_eligibility(a, model, out["replicable"])
+    out["one_off"] = one_off_eligibility(a)
     return out
 
 
+def one_off_eligibility(account: dict) -> dict:
+    """rep7b — on an ADVISE account the line offers "Propose a one-off trade"
+    (a draft manual proposal selling the fund) instead of "Open join request"."""
+    from services import authority as AU
+
+    if not AU.path_allowed(account, "one_off"):
+        return {"available": False}
+    return {"available": True, "side": "sell",
+            "reason": "opens a draft one-off proposal selling the fund; the member or another adviser executes it "
+                      "once a second person approves"}
+
+
 def join_eligibility(account: dict, model: dict | None, replicable: bool) -> dict:
-    if account.get("is_held_away"):
-        return {"available": False, "reason": HELD_AWAY_NOTE}
+    from services import authority as AU
+
+    if not AU.path_allowed(account, "join"):
+        e = AU.effective(account)
+        if account.get("is_held_away") and e["authority"] == "read_only":
+            return {"available": False, "reason": HELD_AWAY_NOTE}
+        return {"available": False, "reason": AU.refusal(account, "a join", path="join")}
     if model is None:
         return {"available": False, "reason": NO_MODEL}
     if not replicable:
         return {"available": False, "reason": "not replicable — the viability verdict is not yes"}
     return {"available": True, "model_id": model["id"], "model_name": model["name"],
             "reason": "opens rep5's join request; a second person approves it"}
+
+
+async def open_one_off(pool, *, org_id, actor_id, household_id, account_id, fund_security_id, executor_type: str,
+                       executor_name: str | None = None, executor_contact: str | None = None) -> dict:
+    """rep7b — the advise one click: re-check, then a DRAFT one-off proposal
+    selling the whole fund (rep5's manual trigger; the clicker is the maker;
+    submit and a second person's approval follow)."""
+    from services import rebalance_proposals as RP
+
+    async with pool.acquire() as conn:
+        hh = await household(conn, org_id, household_id)
+        accts = {str(a["id"]): a for a in await household_accounts(conn, org_id, hh["id"])}
+        a = accts.get(_uuid(account_id, "account"))
+        if a is None:
+            raise XrayNotFound("account not found in this household")
+        sec = _uuid(fund_security_id, "fund")
+        held = await conn.fetchval(
+            "SELECT 1 FROM portfolio.positions p JOIN portfolio.assets s ON s.id = p.asset_id WHERE p.org_id = $1::uuid "
+            "AND p.account_id = $2::uuid AND s.global_security_id = $3::uuid AND p.valid_to IS NULL "
+            "AND p.system_to IS NULL AND p.quantity <> 0", str(org_id), str(a["id"]), sec)
+        if not held:
+            raise XrayConflict("the account does not hold this fund")
+    return await RP.generate_one_off(pool, org_id=org_id, account_id=a["id"], maker_id=actor_id,
+                                     lines=[{"global_security_id": sec, "side": "sell", "quantity": None}],
+                                     executor_type=executor_type, executor_name=executor_name,
+                                     executor_contact=executor_contact,
+                                     note="from the X-ray: propose a one-off trade selling the fund")
 
 
 # ── Runs ────────────────────────────────────────────────────────────────────
@@ -593,7 +641,7 @@ async def run(pool, *, org_id, household_id, trigger: str, actor_id=None, today:
                 await _line(conn, org_id, rid, "fund", f["account_id"], f["fund_security_id"], f["fund_security_id"],
                             f["label"], f["market_value"], f["as_of"], None, None, f["look_through_as_of"], None, None,
                             f["replicable"], {k: f[k] for k in ("viability", "model", "fee", "embedded_gain",
-                                                                 "transition_tax", "break_even", "join",
+                                                                 "transition_tax", "break_even", "join", "one_off",
                                                                  "harvest_benefit", "tracking_error")},
                             f["status_lines"])
     return {"run_id": str(rid), **x}
@@ -631,9 +679,12 @@ async def open_join(pool, *, org_id, actor_id, household_id, account_id, fund_se
         a = accts.get(_uuid(account_id, "account"))
         if a is None:
             raise XrayNotFound("account not found in this household")
-        if a["is_held_away"]:
-            raise XrayConflict(f"{a['account_number_masked']}: {HELD_AWAY_NOTE} — Hollisworks never trades a "
-                               "held-away account, so it cannot join a model")
+        from services import authority as AU
+
+        why = AU.refusal(a, "a join", path="join")     # rep7b — the authority decides (read-only held-away: never)
+        if why:
+            raise XrayConflict(f"{a['account_number_masked']}: "
+                               + (f"{HELD_AWAY_NOTE} — " if a["is_held_away"] else "") + why)
         sec = _uuid(fund_security_id, "fund")
         held = await conn.fetchval(
             "SELECT 1 FROM portfolio.positions p JOIN portfolio.assets s ON s.id = p.asset_id WHERE p.org_id = $1::uuid "

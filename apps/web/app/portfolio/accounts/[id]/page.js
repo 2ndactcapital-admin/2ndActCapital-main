@@ -5,6 +5,8 @@ import { fetchAPI } from "@/lib/api";
 import AccountModelPanel from "@/components/proposals/AccountModelPanel";
 import AccountTaxPanel from "@/components/tax/AccountTaxPanel";
 import HeldAwayPanel from "@/components/heldaway/HeldAwayPanel";
+import AuthorityPanel from "@/components/authority/AuthorityPanel";
+import OneOffForm from "@/components/authority/OneOffForm";
 
 // REP5 — one account: its model, settings, a change awaiting approval, the
 // transition plan and its proposals. The envelope (flags, actions, registry
@@ -40,6 +42,16 @@ export default async function AccountPage({ params }) {
       heldAway = null; // no view_held_away (403): the panel is simply not shown
     }
   }
+  // REP7B — the account's authority and custody (a caller without view_authority gets a 403 and no panel)
+  let authority = null;
+  if (!error) {
+    try {
+      authority = await fetchAPI(`/api/v1/authority/accounts/${encodeURIComponent(id)}`);
+    } catch {
+      authority = null;
+    }
+  }
+  const holdings = Array.isArray(heldAway?.positions?.positions) ? heldAway.positions.positions : [];
   return (
     <AppShell user={session.user}>
       <p className="text-sm"><a className="text-navy underline" href="/portfolio/accounts">Accounts</a></p>
@@ -50,6 +62,8 @@ export default async function AccountPage({ params }) {
         ) : (
           <div className="space-y-5">
             {heldAway ? <HeldAwayPanel initialEnvelope={heldAway} /> : null}
+            {authority ? <AuthorityPanel initialEnvelope={authority} kind="account" /> : null}
+            <OneOffForm envelope={envelope} holdings={holdings} />
             <AccountModelPanel initialEnvelope={envelope} />
             {tax ? <AccountTaxPanel envelope={tax} /> : null}
           </div>

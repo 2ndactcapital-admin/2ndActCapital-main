@@ -272,6 +272,10 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_held_away", "held_away", "view"),
     ("manage_held_away", "held_away", "manage"),
     ("approve_held_away", "held_away", "approve"),
+    # rep7b — account authority (read_only / advise / managed) and custody; changes are maker-checker.
+    ("view_authority", "authority", "view"),
+    ("manage_authority", "authority", "manage"),
+    ("approve_authority", "authority", "approve"),
 )
 
 

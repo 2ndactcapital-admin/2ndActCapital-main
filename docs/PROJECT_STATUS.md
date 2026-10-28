@@ -1,5 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
-Last updated: 2026-10-26 (rep7.structural — Replication Studio sprint 7: held-away accounts and the portfolio X-ray — read-only positions and lots for accounts held elsewhere via manual entry, file upload through rep3's mapping, Chancery statements and an aggregator interface (none connected), with source and as-of on every row; held-away data in household wash-sale control, the gain budget and the loss bank; the stale-data confirmation task; every trade path refuses a held-away account; the X-ray with its one-click join request; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-24 (rep6.structural — Replication Studio sprint 6: the tax engine — member tax profiles and carryforwards, the substitution table and its denials, household wash-sale CONTROL replacing rep5's flag, daily loss harvesting as proposals, the loss bank and tax-alpha ledger, declared outside trades, the custodian-harvest switch, the Tax screens; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
+Last updated: 2026-10-27 (rep7b.structural — Replication Studio sprint 7b: account AUTHORITY (read_only | advise | managed — a household setting, overridable per account, maker-checker) and CUSTODY (integrated | other_custodian | outside) as two separate settings; rep7's held-away guard re-keyed on authority; advise one-off proposals → member / other-adviser instructions + letter; managed at another custodian → MANUAL DVP settlement instructions; schema APPLIED; migration writes no rows (every account behaves as before); verify WRITTEN, not yet run; see the top entry). Previously 2026-10-26 (rep7.structural — Replication Studio sprint 7: held-away accounts and the portfolio X-ray — read-only positions and lots for accounts held elsewhere via manual entry, file upload through rep3's mapping, Chancery statements and an aggregator interface (none connected), with source and as-of on every row; held-away data in household wash-sale control, the gain budget and the loss bank; the stale-data confirmation task; every trade path refuses a held-away account; the X-ray with its one-click join request; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-24 (rep6.structural — Replication Studio sprint 6: the tax engine — member tax profiles and carryforwards, the substitution table and its denials, household wash-sale CONTROL replacing rep5's flag, daily loss harvesting as proposals, the loss bank and tax-alpha ledger, declared outside trades, the custodian-harvest switch, the Tax screens; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep5.structural — Replication Studio sprint 5: accounts join models with account-level settings and exclusions, the lot-level transition analysis under a gain budget, rebalance proposals from join / model change / drift / cash flow / manual, approval on human tasks, approved proposals → execution instructions through rep2; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep4.structural — Replication Studio sprint 4: build a model from a fund — "Holdings of <TICKER>" models from approved terms + live holdings into rep3's registry, the five-question viability check, the fund-versus-replica cost comparison, the registry "join the existing model" offer, holdings / terms monitoring that drafts versions for review; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-23 (rep3.structural — Replication Studio sprint 3: model management — one model registry, Excel/CSV upload with column mapping, a permanent upload log, the model library (platform + org shelves, copy or subscribe), composite (sleeve) models, approvals on governed human tasks, rep1's terms approvals moved onto them; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep2.structural — Replication Studio sprint 2: custodian capabilities, trade adapters, governed human tasks on the workflow engine, execution instructions; schema APPLIED; verify WRITTEN, not yet run; see the top entry). Previously 2026-10-22 (rep1.structural — Replication Studio sprint 1; previously bulkfetchui3.structural — Bulk download: sortable
 full-height Institutions table with Downloaded / Stored + Refresh, Refresh
 index in the Institutions box, weekday automatic index refresh (operator must
 deploy the cron service), GS image-cover finals classified, --reclassify-other,
@@ -327,6 +327,61 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep7b (sprint 7b): account authority and custody — household authority (read_only / advise / managed) overridable per account, maker-checker; custody (integrated / other custodian / outside); the guard re-keyed on authority; advise one-off proposals + letter; managed at another custodian → manual DVP settlement instructions; verify WRITTEN, not yet run (2026-10-27)
+
+Design, matrix and findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep7b section).
+Schema `docs/rep7b_part1.sql` — APPLIED (`scripts/_apply_rep7b.py --schema`) and read back
+(`--verify`: SCHEMA OK — 3 new tables, 32 constraints, 7 partial uniques, RLS with a NULLIF org
+policy for all four operations, guards, grants, 3 permissions on every org_admin role).
+`--migrate` ran: 5 live accounts, all UNCHANGED on every path. Verify:
+`apps/api/scripts/verify_rep7b.py` — WRITTEN, NOT RUN (the sprint runs no verify script and no
+`npm run build`). Run during the sprint: `authz1_routes.py` (11 new routes, every one gated, no
+existing gate changed, `--check` CURRENT) and `node --test tests/` 389 pass / 0 fail (1 skip,
+pre-existing), including 6 new rep7b render tests.
+
+- **Authority × custody (one matrix, `services/authority.py`).** read_only: nothing. advise (any
+  custody): a one-off proposal (manual, no model) → instructions executed by the member or another
+  adviser, each with rep2's letter of instruction; never routed to an adapter. managed + integrated:
+  as before. managed + other custodian: every model path; instructions are manual DVP settlement
+  instructions (broker / trader) with the receiving custodian's details and T+1. managed + outside:
+  refused as a setting (request 409 + CHECK).
+- **Effective authority** = account override ?? household ?? the migrated default (held-away →
+  read_only / outside; else managed / integrated — rep7's rule exactly). A household change to
+  managed is refused while an inheriting account is outside the platform (named).
+- **Changes** open the human task `approve_authority_change` (new permission `approve_authority`;
+  not `approve_held_away` — approving trading authority is a different decision from approving a
+  data import). Approval withdraws (expires, task withdrawn) every open draft / pending proposal
+  the new authority forbids, with the plain reason; an approved-not-routed one stays approved and
+  every route refuses it.
+- **[FIND] the "5 real accounts" are all in the leftover REP2 fixture orgs** (`…e2001` 4, `…e2002`
+  1; is_test) — no non-test org has an account. So the migration WRITES NO ROWS (a settings row
+  would also put an FK in front of verify_rep2's own teardown); the default is computed at read time.
+  The held-away DRAFT instruction (`4de3c1ac…`, member, 2026-10-26) is kept; its approval (submit
+  and the task precheck) is refused with the read-only reason.
+- **[FIND] "advise ⇔ not discretionary" NOT adopted.** A non-discretionary managed account that
+  follows a model gets drift / model-change proposals as advice (rep5); mapping it to advise would
+  refuse them — an unapproved behaviour change. One source per decision: paths ← authority ×
+  custody; managed executor ← rep5 advice_only; advise executor ← the authority.
+- **[FIND] no holiday calendar exists** — T+1 counts weekends only, stated on the settlement row
+  (`calendar_basis = 'weekends_only'`), the PDF and the panel.
+- **[FIND] fills do not book lots** (rep2). On a held-away account the lots arrive through the next
+  approved held-away import at the reported price; a reconcile can name the held-away transaction
+  record (`reconcile_method 'custodian_data'`, reference `held_away_record:<id>`). No second lot
+  write path was added.
+- **[FIND] naming:** `services/trading_authority.py` (SOC phase 5, per-USER tiers) is unrelated to
+  rep7b's per-ACCOUNT `services/authority.py`.
+- `rebalance_proposals` gained `proposal_kind` ('model' | 'one_off'); `link_id` / `model_id` /
+  `model_version_id` are nullable ONLY for a one-off (CHECK `rebalance_proposals_kind_chk`).
+- `verify_rep7.py` changed in ONE line (1408): the confirmation's `expires_on` expectation is
+  computed at the call (`date.today()`), not from the script-start `TODAY` (a run crossing midnight
+  failed by one day). Nothing else changed.
+- Nothing about billing for advising on held-away assets is shown anywhere (open: Joe + counsel).
+  Block trading in an omnibus account, allocation and automated DVP remain rep9.
+- Operator: run `verify_rep7b.py` (it runs `node --test`, `npm run build` and the `verify_rep7.py`
+  regression itself — VERIFY_NESTED=1, 2700 s); redeploy the API; refresh the schema snapshot.
+
+UPDATE 2026-10-27 (rep7b fix 1, after verify_rep7b ran 104 PASS / 12 FAIL): NO code defect. All fixes are in the verify scripts. (A) `verify_rep7b.py` y_changes unpacked an async generator (`(await … for …)`); it now uses sequential awaits, so ACCT_DVP reaches managed + other_custodian. FAILs F–K (DVP proposal, settlement rows, matrix cell, RLS on instruction_settlements) were cascades: reading the code, join → generate → route → `create_instructions` already writes the DVP settlement row in the same transaction. (B) The checker's 409 on the advise one-off was rep7's staleness rule, working correctly: every ORG_A fixture account shares one primary entity, which rep6's household includes, so the one-off depends on ACCT_DVP's deliberately stale data. The verify now proves the 409 names `confirm_held_away_data` and the account, confirms, then approves. (C) The migration check's `"CHANGED" in line` also matched every UNCHANGED line; it now parses each line's verdict, matches the reported count to `SELECT count(*)` of live accounts, and reports zero non-test accounts as a [FIND]. (D) `verify_rep7.py` y_routes is scoped to rep7's own 19 routes: rep7b's 7 `/authority/…` routes and its 4 others (both one-off routes, `…/settlement`, `…/reconcile-held-away`) are excluded by explicit list. Its TODAY fix is unchanged. verify_rep7b's regression diff guard now allows exactly those lines. Re-run `verify_rep7b.py` pending (operator).
 
 ## 000000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep7 (sprint 7 of 15): held-away accounts and the portfolio X-ray — sources (manual, file, Chancery statement, aggregator interface — none connected), maker-checker imports, held-away data in wash-sale / gain budget / loss bank, the stale-data confirmation task, the trade-path guard, the X-ray + one-click join; verify WRITTEN, not yet run (2026-10-26)
 

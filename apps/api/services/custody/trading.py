@@ -328,11 +328,19 @@ async def route_trade_list(pool, *, org_id, actor_id, account: dict, trade_list:
     key = trade_custodian_key(account.get("custodian_code"))
     async with pool.acquire() as conn:
         notes = await _downgrade_notes(conn, key if key else "manual", trade_list)
-    if account.get("is_held_away"):
-        from services.execution import ExecutionConflict
-        from services.held_away import refuse
+    from services import authority as AU
+    from services.execution import ExecutionConflict
+    from services.held_away import refuse
 
-        refuse(account, "an execution instruction", ExecutionConflict)
+    # rep7 / rep7b — the authority × custody and the executor decide
+    refuse(account, "an execution instruction", ExecutionConflict, path="route", executor=trade_list.executor_type)
+    e = AU.effective(account)
+    if e["custody"] != "integrated" or e["authority"] != "managed":
+        # rep7b — advise, or managed at another custodian: manual instructions only, NEVER a custodian API
+        why = ("advise: one-off instructions the member or another adviser executes (letter of instruction) — "
+               "never a custodian API" if e["authority"] == "advise" else
+               "managed at another custodian: manual DVP settlement instructions — never a custodian API")
+        return await ManualTradeAdapter().submit(ctx, trade_list, notes=notes, reason=why)
     adapter_cls = trade_adapter_for(account.get("custodian_code"))
     if adapter_cls is None:
         return await ManualTradeAdapter().submit(

@@ -1,11 +1,14 @@
 """Held-away accounts (rep7) — read-only positions, lots and transactions for
 accounts held elsewhere, every row with its source and as-of.
 
-THE RULE — a held-away account is NEVER traded
+THE RULE — rep7b: a held-away account is traded only as its AUTHORITY allows
 ──────────────────────────────────────────────────────────────────────────────
-No rebalance, transition, harvest, custodian action or execution instruction
-ever targets one. Each trade path calls :func:`refusal` once, at its entry,
-and raises its own conflict (409) with the plain-words reason:
+By default (authority read-only) no rebalance, transition, harvest, custodian
+action or execution instruction ever targets one. An approved authority change
+(services/authority.py) opens advise (one-off trades the member executes) or
+managed (at another custodian, manual DVP settlement). Each trade path calls
+:func:`refusal` once, at its entry, and raises its own conflict (409) with the
+plain-words reason:
     rebalance / every proposal trigger   rebalance_proposals._generate
     transition (join / change model)     account_models.propose_change, rebalance_proposals.transition_preview
     approved proposal → instructions     rebalance_proposals.execute
@@ -146,17 +149,19 @@ class MakerCheckerViolation(PermissionError):
 
 
 # ── The trade-path guard ────────────────────────────────────────────────────
-def refusal(account: dict | None, action: str) -> str | None:
+# rep7b — re-keyed on AUTHORITY (services/authority.py): the same one call per
+# path, now answering "does this account's effective authority × custody allow
+# this path?". Held-away accounts default to read-only (rep7's rule, exactly);
+# an approved change to advise or managed opens the paths the matrix lists.
+def refusal(account: dict | None, action: str, *, path: str | None = None, executor: str | None = None) -> str | None:
     """The plain-words reason a trade path refuses this account, or None."""
-    if not account or not account.get("is_held_away"):
-        return None
-    return (f"{account.get('account_number_masked') or 'this account'} is a held-away account — it is held "
-            f"elsewhere and Hollisworks never trades it ({action} refused). Its positions are read-only; moving "
-            "the assets comes first.")
+    from services import authority as AU
+
+    return AU.refusal(account, action, path=path, executor=executor)
 
 
-def refuse(account: dict | None, action: str, exc_cls) -> None:
-    why = refusal(account, action)
+def refuse(account: dict | None, action: str, exc_cls, *, path: str | None = None, executor: str | None = None) -> None:
+    why = refusal(account, action, path=path, executor=executor)
     if why:
         raise exc_cls(why)
 
@@ -1204,13 +1209,19 @@ async def stale_days_for(conn, org_id, account_id) -> tuple[int, str]:
 async def dependencies(conn, org_id, account: dict) -> list[dict]:
     """The held-away accounts a proposal for ``account`` depends on: every
     held-away account of its household (wash-sale control) and of its tax
-    subject (the gain budget)."""
+    subject (the gain budget) — and, rep7b, the account itself when it is
+    held away (its data comes from outside the integrated feed)."""
     from services import rebalance_proposals as RP
 
     accts = {str(a["id"]): a for a in await RP.household_accounts(conn, org_id, account)}
     for a in await subject_accounts(conn, org_id, account):
         accts.setdefault(str(a["id"]), a)
-    ids = [k for k in accts if k != str(account["id"])]
+    # rep7b — a held-away account that is itself proposed for (advise, or managed at another custodian) depends on
+    # its OWN held-away data too; before rep7b no held-away account could have a proposal, so nothing changes for one
+    # that existed.
+    ids = [k for k in accts if k != str(account["id"]) or account.get("is_held_away")]
+    if account.get("is_held_away") and str(account["id"]) not in ids:
+        ids.append(str(account["id"]))
     if not ids:
         return []
     rows = await conn.fetch("SELECT id, account_number_masked, registration_type, tax_status FROM public.accounts "
@@ -1515,8 +1526,21 @@ async def account_panel(conn, org_id, account_id, today: date | None = None) -> 
             "sources": [source_out(s, today=today, default_days=default_days) for s in srcs],
             "providers": AD.providers(), "statement_extraction": await extraction_status(conn),
             "statements": await statement_documents(conn, org_id, account["id"]),
-            "confirmations": confs, "trade_controls": False,
-            "trade_note": "held away — Hollisworks never trades this account; moving the assets comes first"}
+            "confirmations": confs, **_trade_brief(account)}
+
+
+def _trade_brief(account: dict) -> dict:
+    """rep7b — what the account's authority allows (read-only by default: no trade control)."""
+    from services import authority as AU
+
+    paths = AU.account_actions(account)
+    e = AU.effective(account)
+    note = ("held away — Hollisworks never trades this account; moving the assets comes first"
+            if e["authority"] == "read_only" else
+            "held away — advise: one-off trades the member or another adviser executes" if e["authority"] == "advise"
+            else "held away — managed at another custodian: manual DVP settlement instructions")
+    return {"trade_controls": bool(paths), "trade_paths": paths, "authority": AU.authority_out(account),
+            "trade_note": note}
 
 
 def vocabularies() -> dict:

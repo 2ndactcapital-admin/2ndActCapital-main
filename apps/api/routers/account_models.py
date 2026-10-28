@@ -15,6 +15,8 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
                      POST /accounts/{id}/model/change                   change model (a new version + task)
                      POST /accounts/{id}/model/end                      leave the model (a new version + task)
                      POST /accounts/{id}/proposals                      "Rebalance now" / a staff-entered withdrawal
+                     POST /accounts/{id}/proposals/one-off              rep7b: an ADVISE account's one-off trade
+                                                                        (draft; member / other adviser executes)
                      POST /proposals/{id}/submit                        draft → awaiting approval (the maker)
                      POST /proposals/{id}/execute                       retry routing an approved proposal
                      POST /proposals/{id}/refresh                       executed once every instruction is done
@@ -40,6 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from routers.entities import get_org_id
 from services import account_models as AM
+from services import authority as AU
 from services import human_tasks as HT
 from services import rebalance_proposals as RP
 from services.authz import require_permission
@@ -117,6 +120,32 @@ class EndIn(_Body):
 
 class Decision(_Body):
     note: str | None = Field(default=None, max_length=2000)
+
+
+class OneOffLineIn(_Body):
+    global_security_id: UUID
+    side: Literal["buy", "sell"]
+    quantity: Decimal | None = None
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def _dec(cls, v, info):
+        return _decimal(v, info.field_name)
+
+
+class OneOffIn(_Body):
+    lines: list[OneOffLineIn] = Field(min_length=1, max_length=50)
+    executor_type: Literal["member", "other_adviser"] = "member"
+    executor_name: str | None = Field(default=None, max_length=300)
+    executor_contact: str | None = Field(default=None, max_length=500)
+    gain_budget: Decimal | None = None
+    avoid_short_term: bool = False
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("gain_budget", mode="before")
+    @classmethod
+    def _dec(cls, v, info):
+        return _decimal(v, info.field_name)
 
 
 class GenerateIn(_Body):
@@ -225,11 +254,16 @@ async def account_model(request: Request, account_id: str):
         actions.append("generate")
     if can_decide:
         actions += ["approve_change", "reject_change"]
-    if acct["is_held_away"]:
-        # rep7 — a held-away account is never traded: no join, model change, settings or proposal control
-        actions = [a for a in actions if a in ("end", "approve_change", "reject_change")]
+    # rep7 / rep7b — only the actions the account's authority × custody allows (read-only held-away: none of them)
+    allowed = set(AU.account_actions(acct))
+    gate = {"join": "join", "change_model": "change_model", "change_settings": "settings",
+            "generate": "proposal:manual"}
+    actions = [a for a in actions if a not in gate or gate[a] in allowed]
+    if "join" not in allowed:
         offer = []
-    return {"account": _account_out(acct), "links": links,
+    if perms["can_write"] and "one_off" in allowed and not AM.is_closed(acct):
+        actions.append("propose_one_off")
+    return {"account": _account_out(acct), "authority": AU.authority_out(acct), "links": links,
             "registry": [{"id": str(m["id"]), "name": m["name"], "source": m["source"],
                           "live_version_no": m["live_version_no"]} for m in offer],
             "harvesting_engines": engines, "transition_plan": plan, "proposals": proposals,
@@ -388,6 +422,20 @@ async def generate(request: Request, account_id: str, body: GenerateIn):
     row = await _act(RP.generate(pool, org_id=org_id, account_id=account_id, trigger=body.trigger,
                                  maker_kind="user", maker_id=principal.user_id, withdrawal=body.withdrawal_amount,
                                  trigger_ref={"entered_by": principal.user_id}))
+    return _proposal_result(row)
+
+
+@router.post("/accounts/{account_id}/proposals/one-off", status_code=201)
+async def generate_one_off(request: Request, account_id: str, body: OneOffIn):
+    principal = require_permission(request, MANAGE)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    row = await _act(RP.generate_one_off(
+        pool, org_id=org_id, account_id=account_id, maker_id=principal.user_id,
+        lines=[{"global_security_id": str(x.global_security_id), "side": x.side, "quantity": x.quantity}
+               for x in body.lines],
+        executor_type=body.executor_type, executor_name=body.executor_name, executor_contact=body.executor_contact,
+        gain_budget=body.gain_budget, avoid_short_term=body.avoid_short_term, note=body.note))
     return _proposal_result(row)
 
 

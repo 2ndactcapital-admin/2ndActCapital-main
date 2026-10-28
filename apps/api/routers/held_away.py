@@ -174,9 +174,10 @@ async def account_panel(request: Request, account_id: UUID):
         actions = ["add_source", "manual_import", "file_import", "link_statement", "request_confirmation"]
         if panel["statement_extraction"]["available"]:
             actions.append("statement_import")
-    # a held-away account never shows a trade control: the envelope says so and lists none
+    # rep7b — trade controls only as the account's authority allows (read-only, the default: none)
+    trade_actions = list(panel.get("trade_paths") or []) if perms["can_write"] else []
     return {**_env(principal, panel=panel, imports=imports, positions=positions, transactions=txns),
-            "actions": actions, "trade_actions": []}
+            "actions": actions, "trade_actions": trade_actions}
 
 
 @router.get("/held-away/accounts/{account_id}/positions")

@@ -5,6 +5,7 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
   view_execution     GET  /execution/instructions                   list + envelope
                      GET  /execution/instructions/{id}              detail + timeline + task + actions
                      POST /execution/instructions/{id}/letter       letter of instruction PDF (on demand)
+                     POST /execution/instructions/{id}/settlement   rep7b: DVP settlement instruction PDF (on demand)
                      GET  /execution/accounts                       account picker (masked numbers)
                      GET  /execution/accounts/{id}/lots             open lots of the account (lot picker)
                      GET  /execution/accounts/{id}/pending          pending differences
@@ -15,6 +16,7 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
                      POST  /execution/instructions/{id}/sent        mark sent (channel)
                      POST  /execution/instructions/{id}/fills       enter a fill
                      POST  /execution/instructions/{id}/reconcile   reconcile
+                     POST  /execution/instructions/{id}/reconcile-held-away   rep7b: reconcile to a held-away record
                      POST  /execution/instructions/{id}/close       close
                      POST  /execution/instructions/{id}/cancel      cancel (reason)
   approve_execution  POST  /execution/instructions/{id}/approve     (never for a maker — services.execution)
@@ -102,6 +104,11 @@ class Reconcile(_Body):
     reference: str | None = Field(default=None, max_length=500)
     note: str | None = Field(default=None, max_length=2000)
     transaction_ids: list[UUID] = Field(default_factory=list, max_length=100)
+
+
+class ReconcileHeldAway(_Body):
+    record_id: UUID
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class Close(_Body):
@@ -353,6 +360,36 @@ async def letter(request: Request, instruction_id: str, body: Letter):
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"',
                              "Cache-Control": "no-store"})
+
+
+@router.post("/execution/instructions/{instruction_id}/settlement")
+async def settlement(request: Request, instruction_id: str, body: Letter):
+    """rep7b — the DVP settlement instruction PDF (managed, another custodian),
+    on demand. Masked account numbers unless the full number is explicitly
+    chosen and typed (rep2's rule)."""
+    principal = require_permission(request, VIEW)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        pdf, filename = await X.settlement_letter(pool, org_id=org_id, instruction_id=instruction_id,
+                                                  actor_id=principal.user_id,
+                                                  include_full_number=body.include_full_number,
+                                                  full_account_number=body.full_account_number)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Cache-Control": "no-store"})
+
+
+@router.post("/execution/instructions/{instruction_id}/reconcile-held-away")
+async def reconcile_held_away(request: Request, instruction_id: str, body: ReconcileHeldAway):
+    principal = require_permission(request, MANAGE)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    return await _act(X.reconcile_from_held_away(pool, org_id=org_id, instruction_id=instruction_id,
+                                                 actor_id=principal.user_id, record_id=body.record_id,
+                                                 note=body.note))
 
 
 @router.get("/execution/accounts")
