@@ -174,14 +174,24 @@ def ONE_MINUS(d: Decimal) -> Decimal:  # noqa: N802 — reads as the formula
     return Decimal(1) - d
 
 
-async def latest_prices(conn, gsids: list[str]) -> dict[str, tuple[Decimal, date]]:
+async def latest_prices(conn, org_id, gsids: list[str], *, today: date, max_age_days: int) -> dict:
+    """marketdata1: each constituent's end-of-day price from the security-data
+    layer (internal use; the rank: custodian valuations of the org's accounts,
+    approved file uploads, adviser / platform-entered prices). {gsid: Result};
+    a Result that is not found carries the stale candidate (if any) in
+    ``tried``, so the "older than N days" message below is unchanged."""
+    from services import security_data as SD
+
     if not gsids:
         return {}
-    rows = await conn.fetch(
-        "SELECT DISTINCT ON (global_security_id) global_security_id, price, price_date "
-        "FROM portfolio.securities_global_prices WHERE global_security_id = ANY($1::uuid[]) AND price_type = 'close' "
-        "AND valid_to IS NULL AND system_to IS NULL ORDER BY global_security_id, price_date DESC", gsids)
-    return {str(r["global_security_id"]): (Decimal(str(r["price"])), r["price_date"]) for r in rows}
+    return await SD.get_bulk(conn, org_id, "eod_price", gsids, as_of=today, purpose="internal",
+                             max_age_days=max_age_days)
+
+
+def _stale_as_of(res) -> date | None:
+    """The newest stale candidate's date (the walk skipped it as too old)."""
+    dates = [date.fromisoformat(t["as_of"]) for t in (res.tried if res else []) if t.get("as_of")]
+    return max(dates) if dates else None
 
 
 def minimum_account(priced: list[tuple[Decimal, Decimal]], *, unit: Decimal, tracking_target: Decimal) -> dict:
@@ -207,30 +217,37 @@ async def q3_account_size(conn, org_id, src: RM.Sources, *, custodian_code: str,
     tracking, t_origin = await setting(conn, org_id, "replication.viability.tracking_target")
     inc, i_origin = await setting(conn, org_id, "replication.viability.fractional_increment")
     held = [x for x in c.positions if x["resolution_state"] != "cash"]
-    prices = await latest_prices(conn, [x["global_security_id"] for x in held if x["global_security_id"]])
     today = _today()
-    missing, priced, oldest = [], [], None
+    prices = await latest_prices(conn, org_id, [x["global_security_id"] for x in held if x["global_security_id"]],
+                                 today=today, max_age_days=int(max_age))
+    missing, priced, oldest, sources = [], [], None, {}
     for x in held:
         label = x["raw_ticker"] or x["raw_name"] or x["raw_cusip"]
         if not x["global_security_id"]:
             missing.append({"label": label, "why": "unresolved — no security to price"})
             continue
         hit = prices.get(x["global_security_id"])
-        if hit is None:
+        stale_on = None if hit is None or hit.found else _stale_as_of(hit)
+        if hit is None or (not hit.found and stale_on is None):
             missing.append({"label": label, "why": "no close price"})
-        elif (today - hit[1]).days > int(max_age):
-            missing.append({"label": label, "why": f"latest close is {hit[1].isoformat()} — older than "
+        elif not hit.found:
+            missing.append({"label": label, "why": f"latest close is {stale_on.isoformat()} — older than "
                                                    f"{int(max_age)} days"})
         else:
-            priced.append((Decimal(str(x["target_weight"])), hit[0]))
-            oldest = hit[1] if oldest is None or hit[1] < oldest else oldest
+            priced.append((Decimal(str(x["target_weight"])), Decimal(str(hit.value))))
+            oldest = hit.as_of if oldest is None or hit.as_of < oldest else oldest
+            s_ = sources.setdefault(hit.provider_key, {"provider": hit.provider_key, "name": hit.provider_name,
+                                                       "count": 0, "oldest_as_of": hit.as_of.isoformat()})
+            s_["count"] += 1
+            s_["oldest_as_of"] = min(s_["oldest_as_of"], hit.as_of.isoformat())
     frac = await CC.capability(conn, custodian_code, "fractional_shares")
     fractional = CC.available(frac)
     inputs = {"constituents": len(held), "priced": len(priced), "price_max_age_days": str(max_age),
               "price_max_age_days_origin": a_origin, "tracking_target": str(tracking),
               "tracking_target_origin": t_origin, "fractional_shares": frac.value,
               "fractional_evidence": frac.evidence, "account_size": str(account_size), "method": p.method,
-              "top_n": p.top_n}
+              "top_n": p.top_n, "price_data_type": "eod_price",
+              "price_sources": sorted(sources.values(), key=lambda v: v["provider"])}
     if missing:
         return _answer("account_size", "unknown",
                        f"unknown — needs prices for {len(missing)} of {len(held)} constituents (a close no older "

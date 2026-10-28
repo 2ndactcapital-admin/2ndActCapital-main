@@ -52,7 +52,7 @@ export function Trades({ envelope }) {
             ))}
             {t.instruction_id ? <a className="block text-xs text-navy underline" href={`/portfolio/instructions/${t.instruction_id}`}>Instruction</a> : null}
           </td>
-          <td>{t.price ?? "—"}<span className="block text-xs text-text-muted">{labelOf(v.price_sources, t.price_source)}{t.price_as_of ? `, as of ${t.price_as_of}` : ""}</span></td>
+          <td title={t.price != null ? `${labelOf(v.price_sources, t.price_source)}${t.price_as_of ? `, as of ${t.price_as_of}` : ""}` : "not priced"}>{t.price ?? "—"}<span className="block text-xs text-text-muted">{labelOf(v.price_sources, t.price_source)}{t.price_as_of ? `, as of ${t.price_as_of}` : ""}</span></td>
           <td>{t.side === "sell" ? `ST ${t.est_st_gain} / LT ${t.est_lt_gain}` : "—"}</td>
           <td>{t.reason}
             {t.wash_sale_flag ? <span className="mt-1 block text-xs text-[#9B2335]">Wash-sale flag: {t.wash_sale_flag.note}</span> : null}

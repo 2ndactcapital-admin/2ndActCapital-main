@@ -319,7 +319,8 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
         swap_prior = await _swap_prior(conn, org_id, account["id"], today) if settings["swap_back"] else []
         want_px = {c["key"] for v in ctx.substitutes.values() for c in v} | {p["original"] for p in swap_prior}
         px = {h.key: (h.price, h.price_as_of, h.price_source) for h in hold["holdings"] if h.price is not None}
-        px.update(await RP._unheld_prices(conn, sorted(want_px - set(px)), today - timedelta(days=stale)))
+        px.update(await RP._unheld_prices(conn, sorted(want_px - set(px)), today - timedelta(days=stale),
+                                       org_id=org_id, today=today))
 
     cands: list[dict] = []
     picks: dict[str, list[dict]] = {}

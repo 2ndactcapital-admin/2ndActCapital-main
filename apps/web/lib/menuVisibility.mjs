@@ -253,6 +253,9 @@ export const MENU_ITEMS = [
   tab("org_admin", "people", 4, "/admin/permission-sets", "Permission Sets", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "settings", 1, "/admin/settings", "Organization", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "settings", 2, "/admin/modeling/ta", "TA Model Defaults", GATE_MANAGE_ORG_SETTINGS, true),
+  // MARKETDATA1 — price sources (rank overrides, file uploads) and data quality
+  tab("org_admin", "settings", 3, "/admin/security-data/sources", "Price sources", GATE_MANAGE_ORG_SETTINGS, true),
+  tab("org_admin", "settings", 4, "/admin/security-data/quality", "Data quality", GATE_MANAGE_ORG_SETTINGS, true),
   // The Workflows API gates on PROFILE-axis keys (author_workflows,
   // view_workflow_runs, configure_workflow_triggers) that /users/me does not
   // publish. Workflows keeps its existing gate; Runs and Triggers — newly
@@ -270,6 +273,8 @@ export const MENU_ITEMS = [
   tab("platform", "tenants", 1, "/admin/platform", "Tenants", GATE_SUPER_ADMIN, true),
   tab("platform", "controls", 1, "/admin/restricted-access", "Restricted Access", GATE_SUPER_ADMIN, true),
   tab("platform", "controls", 2, "/admin/trading-authority", "Trading Authority", GATE_SUPER_ADMIN, true),
+  // MARKETDATA1 — providers, licence facts, budgets and the platform rank
+  tab("platform", "controls", 3, "/admin/security-data", "Security data", GATE_SUPER_ADMIN, true),
   tab("platform", "ai_models", 1, "/admin/model-catalog", "Model Catalog", GATE_SUPER_ADMIN, true),
   // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
   // gate is manage_org_settings, so an org admin sees the AI Models group too.

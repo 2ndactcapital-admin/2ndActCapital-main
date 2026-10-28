@@ -1,5 +1,5 @@
 {
- "app_route_count": 688,
+ "app_route_count": 701,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -10858,6 +10858,268 @@
    "name": "book",
    "note": "",
    "path": "/api/v1/replication/options/instructions/{instruction_id}/book",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "providers",
+   "note": "",
+   "path": "/api/v1/admin/security-data/providers",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.security_data",
+   "name": "update_provider",
+   "note": "",
+   "path": "/api/v1/admin/security-data/providers/{key}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "call_log",
+   "note": "",
+   "path": "/api/v1/admin/security-data/call-log",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "platform_rank",
+   "note": "",
+   "path": "/api/v1/admin/security-data/rank",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.security_data",
+   "name": "set_platform_rank",
+   "note": "",
+   "path": "/api/v1/admin/security-data/rank/{data_type}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "latest_run",
+   "note": "",
+   "path": "/api/v1/admin/security-data/runs/latest",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_replication|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings",
+     "view_replication"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "org_rank",
+   "note": "",
+   "path": "/api/v1/security-data/rank",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.security_data",
+   "name": "set_org_rank",
+   "note": "",
+   "path": "/api/v1/security-data/rank/{data_type}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_replication|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings",
+     "view_replication"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "quality",
+   "note": "",
+   "path": "/api/v1/security-data/quality",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_replication|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings",
+     "view_replication"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "lookup",
+   "note": "",
+   "path": "/api/v1/security-data/lookup",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_replication|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings",
+     "view_replication"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_data",
+   "name": "uploads",
+   "note": "",
+   "path": "/api/v1/security-data/uploads",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_data",
+   "name": "upload",
+   "note": "",
+   "path": "/api/v1/security-data/uploads",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_data",
+   "name": "decide",
+   "note": "",
+   "path": "/api/v1/security-data/uploads/{upload_id}/decision",
    "public": false,
    "write": true
   },

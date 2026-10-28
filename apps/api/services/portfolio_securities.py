@@ -314,6 +314,7 @@ _LIST_FROM = f"""
         SELECT p.price, p.price_date, p.currency_code, p.price_type, p.source
         FROM {TABLE_SEC_PRICE} p
         WHERE p.global_security_id = sg.id
+          AND p.org_id IS NULL  -- marketdata1: platform rows only; an org's uploaded file is never "platform"
           AND {_current('p')}
         ORDER BY p.price_date DESC, p.system_from DESC
         LIMIT 1
@@ -1210,7 +1211,7 @@ async def get_global_security(conn, global_security_id: str) -> dict[str, Any] |
         SELECT p.id::text AS id, p.price_date, p.price, p.currency_code,
                p.price_type, p.source
         FROM {TABLE_SEC_PRICE} p
-        WHERE p.global_security_id = $1::uuid AND {_current('p')}
+        WHERE p.global_security_id = $1::uuid AND p.org_id IS NULL AND {_current('p')}
         ORDER BY p.price_date DESC, p.system_from DESC
         LIMIT 30
         """,

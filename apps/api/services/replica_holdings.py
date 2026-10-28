@@ -6,6 +6,8 @@
                   ─► holdings source (portfolio.replica_holdings_sources —
                       data; the parser it names is code, services.replica_parsers)
                   ─► fetch ─► R2 (gzipped raw bytes) ─► snapshot + rows
+                      (marketdata1: the snapshot records provider_key = the source key — the
+                      security-data layer's regulator_filing / issuer_file providers)
 
 PLATFORM DATA. Snapshots, rows and the raw files are public source data,
 shared by every org and fetched once (owner_scope 'platform', org_id NULL).
@@ -515,8 +517,9 @@ async def ingest(pool, *, fund_global_security_id: str | None, ticker: str, sour
         snap_id = await conn.fetchval(
             f"""INSERT INTO {T_SNAP} (fund_global_security_id, as_of, source_key, source_url, accession_number,
                     file_sha256, r2_key, byte_size, row_count, total_weight, total_weight_ex_cash, status,
-                    validation, previous_snapshot_id, diff, diff_exceeds_threshold)
-                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::uuid, $15::jsonb, $16)
+                    validation, previous_snapshot_id, diff, diff_exceeds_threshold, provider_key)
+                VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::uuid, $15::jsonb, $16,
+                        $3)
                 ON CONFLICT ON CONSTRAINT replica_holdings_snapshots_file_uq DO NOTHING
                 RETURNING id""",
             str(fund_global_security_id), parsed.as_of, source["key"], fetched.url, fetched.accession, sha, key,

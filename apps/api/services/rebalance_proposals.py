@@ -140,7 +140,7 @@ WARNING_LABELS = {
 PROPOSAL_KIND_LABELS = {"model": "Model rebalance", "one_off": "One-off trade (advise)",
                         "options": "Options sleeve (manual execution only)"}
 PRICE_SOURCE_LABELS = {"account_position": "The account's own position valuation",
-                       "security_price": "Security price", "none": "No price — bought by amount",
+                       "security_price": "Security price (security-data layer: ranked source)", "none": "No price — bought by amount",
                        "adviser_quote": "An adviser-entered quote (source and as-of on the line)"}
 PLAN_ACTION_LABELS = {"keep": "Keep", "trim": "Trim", "add": "Add", "sell_now": "Sell now",
                       "sell_later": "Sell later", "sell_now_and_later": "Sell now and later",
@@ -446,16 +446,31 @@ async def household_transactions(conn, org_id, accounts: list[dict], keys: list[
     return out
 
 
-async def _unheld_prices(conn, keys: list[str], since: date) -> dict:
+async def _unheld_prices(conn, keys: list[str], since: date, *, org_id, today: date | None = None,
+                         provenance: dict | None = None) -> dict:
+    """A price for each security the account does not hold, asked of the
+    security-data layer (marketdata1) for an end-of-day price no older than
+    ``since`` (internal use — an adviser's proposal). The layer walks the rank
+    (custodian valuations of the org's other accounts, approved file uploads,
+    adviser-entered prices …) and never invents one: an unpriced security is
+    simply absent, exactly as before (it is then bought by amount). The trade
+    stores price_source 'security_price' (the CHECK's vocabulary); pass a
+    ``provenance`` dict to receive the layer's result (provider, as-of,
+    licence, quality) per security."""
+    from services import security_data as SD
+
     if not keys:
         return {}
-    rows = await conn.fetch(
-        "SELECT DISTINCT ON (global_security_id) global_security_id, price, price_date "
-        "FROM portfolio.securities_global_prices WHERE global_security_id = ANY($1::uuid[]) AND price > 0 "
-        "AND price_date >= $2 AND valid_to IS NULL AND system_to IS NULL "
-        "ORDER BY global_security_id, price_date DESC", keys, since)
-    return {str(r["global_security_id"]): (Decimal(str(r["price"])).quantize(E.QTY), r["price_date"],
-                                           "security_price") for r in rows}
+    today = today or date.today()
+    got = await SD.get_bulk(conn, org_id, "eod_price", keys, as_of=today, purpose="internal",
+                            max_age_days=max((today - since).days, 0))
+    out = {}
+    for k, r in got.items():
+        if r.found and r.value is not None and Decimal(str(r.value)) > 0:
+            out[k] = (Decimal(str(r.value)).quantize(E.QTY), r.as_of, "security_price")
+            if provenance is not None:
+                provenance[k] = r.as_dict()
+    return out
 
 
 async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdrawal: Decimal | None = None,
@@ -481,7 +496,7 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
     for h in hold["holdings"]:
         labels.setdefault(h.key, h.label)
     unheld = [k for k in tg["target"] if k != E.CASH and k not in {h.key for h in hold["holdings"]}]
-    prices = await _unheld_prices(conn, unheld, today - timedelta(days=stale_days))
+    prices = await _unheld_prices(conn, unheld, today - timedelta(days=stale_days), org_id=org_id, today=today)
     # rep6 — household wash-sale control: the context, then rule (b) on the loss lots before the plan
     own_open = await open_proposal(conn, account["id"])
     ctx = await WS.load_context(conn, org_id, account, today, exclude_proposal_ids=[own_open["id"]] if own_open
@@ -585,7 +600,8 @@ async def apply_wash_control(conn, account: dict, res: E.BuildResult, hold: dict
     subs = {c["key"] for t in res.trades for c in ctx.substitutes.get(t.key, [])} - set(px)
     if subs:
         stale = await _setting(conn, account["org_id"], STALE_SETTING, DEFAULT_STALE_DAYS, lo=0, hi=366, integer=True)
-        px.update(await _unheld_prices(conn, sorted(subs), today - timedelta(days=stale)))
+        px.update(await _unheld_prices(conn, sorted(subs), today - timedelta(days=stale), org_id=account["org_id"],
+                                        today=today))
     lines = WS.control(res, account=account, ctx=ctx, prices=px, fractional=fractional)
     warnings = []
     changed = [r for _, r in lines if r["outcome"] != "clear"]
@@ -1307,7 +1323,7 @@ async def generate_one_off(pool, *, org_id, account_id, maker_id, lines: list[di
                 raise ProposalConflict("the instructions of the approved proposal for this account are still "
                                        "working — a new proposal waits until they are closed or cancelled")
             hold = await AM.load_holdings(conn, org_id, account["id"])
-            target, labels = await _one_off_target(conn, hold, lines, today)
+            target, labels = await _one_off_target(conn, hold, lines, today, org_id=org_id)
             shim = {"gain_budget": gain_budget, "avoid_short_term": bool(avoid_short_term),
                     "short_term_wait_days": 30, "cash_floor": Decimal(0), "advice_only": False}
             c = await compute(conn, org_id, account, shim, None, today=today,
@@ -1349,7 +1365,7 @@ async def generate_one_off(pool, *, org_id, account_id, maker_id, lines: list[di
         return await load(conn, org_id, pid)
 
 
-async def _one_off_target(conn, hold: dict, lines: list[dict], today: date) -> tuple[dict, dict]:
+async def _one_off_target(conn, hold: dict, lines: list[dict], today: date, *, org_id) -> tuple[dict, dict]:
     """Current weights, with only the named securities moved to / from cash."""
     held = {h.key: h for h in hold["holdings"]}
     A, before = E.current_weights(hold["holdings"], hold["cash"])
@@ -1380,7 +1396,8 @@ async def _one_off_target(conn, hold: dict, lines: list[dict], today: date) -> t
                 raise ProposalError("a one-off buy names its quantity")
             price = h.price if h is not None and h.price is not None else None
             if price is None:
-                px = await _unheld_prices(conn, [key], today - timedelta(days=DEFAULT_STALE_DAYS))
+                px = await _unheld_prices(conn, [key], today - timedelta(days=DEFAULT_STALE_DAYS), org_id=org_id,
+                                          today=today)
                 price = px[key][0] if key in px else None
             if price is None:
                 raise ProposalConflict("no recent price for that security — a one-off buy needs one")
