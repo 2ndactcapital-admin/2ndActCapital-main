@@ -20,3 +20,4 @@ verify_rep5.py
 verify_rep6.py
 verify_rep7.py
 verify_rep7b.py
+verify_lotmethod.py

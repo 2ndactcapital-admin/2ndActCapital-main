@@ -50,6 +50,7 @@ from routers.tax import router as tax_router
 from routers.held_away import router as held_away_router
 from routers.xray import router as xray_router
 from routers.authority import router as authority_router
+from routers.lot_method import router as lot_method_router
 from routers.custodians import router as custodians_router
 from routers.human_tasks import router as human_tasks_router
 from routers.models import router as models_router
@@ -614,6 +615,7 @@ app.include_router(tax_router, prefix="/api/v1")
 app.include_router(held_away_router, prefix="/api/v1")
 app.include_router(xray_router, prefix="/api/v1")
 app.include_router(authority_router, prefix="/api/v1")
+app.include_router(lot_method_router, prefix="/api/v1")
 app.include_router(custodians_router, prefix="/api/v1")
 app.include_router(human_tasks_router, prefix="/api/v1")
 app.include_router(models_router, prefix="/api/v1")

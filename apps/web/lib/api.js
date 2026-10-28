@@ -1,11 +1,11 @@
+import { redirect } from "next/navigation";
 import { getRequestAuthClient } from "@/lib/authServer";
+import { bearerHeaders, LOGIN_PATH } from "@/lib/authHeaders.mjs";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// Resolve the user's Auth0 access token for the API audience. Returns an empty
-// header object if no token is available so callers can render an error/empty
-// state instead of crashing.
+// Resolve the user's Auth0 access token for the API audience.
 //
 // HOST-AWARE: the client is picked from the request's own Host, so a session
 // held in the Hollisworks tenant (admin.hollisworks.com) yields a token for the
@@ -13,16 +13,17 @@ const API_BASE =
 // client OUTSIDE the try keeps a Hollisworks misconfiguration fail-loud rather
 // than degrading to an unauthenticated request. Every other host resolves to
 // the existing 2nd Act client, unchanged.
+//
+// B4 — expired sign-in session: this used to catch a failing getAccessToken()
+// (e.g. an expired session whose refresh failed) and silently return {}, so
+// the page then rendered the API's "Missing or malformed Authorization header"
+// instead of sending the member back to sign in. A getAccessToken() FAILURE
+// now redirects to the login route; redirect() throws NEXT_REDIRECT from
+// bearerHeaders' onExpired callback, outside any catch, so it propagates. A
+// session that simply yields no token (no throw) still returns {} as before.
 async function authHeaders() {
   const authClient = await getRequestAuthClient();
-  try {
-    const result = await authClient.getAccessToken();
-    const token = result?.token || result?.accessToken;
-    if (token) return { Authorization: `Bearer ${token}` };
-  } catch {
-    // No token (e.g. unauthenticated render or audience not yet provisioned).
-  }
-  return {};
+  return bearerHeaders(authClient, () => redirect(LOGIN_PATH));
 }
 
 async function parseError(res) {

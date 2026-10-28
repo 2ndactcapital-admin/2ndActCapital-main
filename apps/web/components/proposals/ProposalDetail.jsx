@@ -14,6 +14,8 @@
 import { useState } from "react";
 import { amountText, labelOf, moneyText, pctText, proposalControls, securityText, vocab, weightRows } from "@/lib/proposals.mjs";
 import { matchesOf, washText } from "@/lib/tax.mjs";
+import { saleMethodText } from "@/lib/lotMethod.mjs";
+import ProposalLotMethod from "@/components/lotmethod/ProposalLotMethod";
 import { proposalStale } from "@/lib/heldAway.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -41,8 +43,9 @@ export function Trades({ envelope }) {
       <tbody>{trades.map((t) => (
         <tr key={t.id} className="border-t border-[#ece8dd] align-top">
           <td className="py-2">{t.side === "buy" ? "Buy" : "Sell"} {amountText(t)} {securityText(t)}
-            {(t.lots || []).map((l) => (
-              <span key={l.lot_id} className="block text-xs text-text-muted">lot {String(l.acquired_date || "—")}: {l.quantity} sh, cost {l.unit_cost ?? "—"}, {l.term}, est. {l.est_gain ?? "—"}</span>
+            {saleMethodText(t, envelope) ? <span className="block text-xs text-navy">Lots: {saleMethodText(t, envelope)}</span> : null}
+            {(t.lots || []).map((l, i) => (
+              <span key={l.lot_id || `avg-${i}`} className="block text-xs text-text-muted">lot {String(l.acquired_date || "—")}: {l.quantity} sh, cost {l.unit_cost ?? "—"}, {l.term}, est. {l.est_gain ?? "—"}{l.why ? ` — ${l.why}` : ""}</span>
             ))}
             {t.instruction_id ? <a className="block text-xs text-navy underline" href={`/portfolio/instructions/${t.instruction_id}`}>Instruction</a> : null}
           </td>
@@ -127,7 +130,8 @@ export default function ProposalDetail({ initialEnvelope }) {
           <ul className="mt-2 space-y-1">{warnings.map((w, i) => <li key={i}><span className="font-medium">{labelOf(v.warning_codes, w.code)}</span> — {w.message}</li>)}</ul>
         </div>
       ) : null}
-      <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Trades</h2><div className="mt-2"><Trades envelope={env} /></div></div>
+      <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Trades</h2><div className="mt-2"><Trades envelope={env} /></div>
+        <div className="mt-3"><ProposalLotMethod envelope={env} /></div></div>
       <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Weights</h2><div className="mt-2"><Weights envelope={env} /></div></div>
       {Array.isArray(p.sell_later) && p.sell_later.length ? (
         <div className={`${card} p-6 text-sm`}>

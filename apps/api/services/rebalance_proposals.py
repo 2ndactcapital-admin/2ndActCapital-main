@@ -72,6 +72,16 @@ deferred | blocked, with the matches that caused it); a deferred or blocked
 line is recorded on the proposal and is never routed to an instruction (the
 CHECK rebalance_proposal_trades_wash_route_chk backs it). Proposals made before
 rep6 keep their flag (``wash_sale_flag``) and route as they did.
+
+THE LOT METHOD (lotmethod): services.lot_method resolves the account's method
+(proposal override ?? account ?? household ?? none set = today's rule) and the
+engine applies it on every sale; the proposal records the method, its source,
+the gain preference and any adviser-picked lots, and each sale line its
+method and each lot's reason. When the method differs from the custodian's
+known default, the proposal warns and every instruction's notes say the named
+lots must be given to the custodian. :func:`override_lot_method` is the
+per-proposal override: a NEW proposal (trigger 'manual', the person its maker)
+supersedes the open draft / pending one, so its own approval approves it.
 """
 
 from __future__ import annotations
@@ -90,6 +100,7 @@ import asyncpg
 from services import account_models as AM
 from services import held_away as HA
 from services import human_tasks as HT
+from services import lot_method as LM
 from services import rebalance_engine as E
 from services import wash_sale as WS
 
@@ -120,6 +131,7 @@ WARNING_LABELS = {
     "unresolved_target": "A model position is not resolved", "no_trades": "Nothing to trade",
     "wash_sale_flag": "Possible wash sale (flag only — before rep6)", "exclusion_note": "Exclusion applied",
     "wash_sale_control": "Wash-sale control changed a trade", "wash_sale_held": "Loss lots held back (wash sale)",
+    "lot_method_mismatch": "Lot method differs from the custodian's default", "lot_method": "Lot method",
     "harvest_note": "Tax-loss harvest",
     "held_away_realized": "Includes gains realized in held-away accounts",
     "stale_held_away": "Held-away data is stale — confirm before approval",
@@ -445,7 +457,8 @@ async def _unheld_prices(conn, keys: list[str], since: date) -> dict:
 
 
 async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdrawal: Decimal | None = None,
-                  today: date | None = None, target_override: dict | None = None) -> dict:
+                  today: date | None = None, target_override: dict | None = None,
+                  lot_override: dict | None = None) -> dict:
     """Everything a proposal stores, computed (no writes). rep7b: a one-off
     (advise) passes its own ``target_override`` and no model version — the same
     lot selection, gain budget, wash-sale control and staleness apply."""
@@ -477,13 +490,17 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
         r = WS.sale_restriction(h.key, account_class=cls, ctx=ctx)
         if r:
             hold_rules[h.key] = r
+    method, eff = await LM.lot_method_for(conn, org_id, account, today, lot_override)    # lotmethod
     s = E.BuildSettings(
         sale=E.SaleSettings(today=today, gain_budget=budget, realized_ytd=ytd,
                             avoid_short_term=link["avoid_short_term"],
                             short_term_wait_days=link["short_term_wait_days"], fractional=available(frac),
-                            wash_hold=hold_rules),
+                            wash_hold=hold_rules, method=method),
         cash_floor=Decimal(str(link["cash_floor"])), min_trade=min_trade, withdrawal=withdrawal)
-    res = E.build(hold["holdings"], hold["cash"], tg["target"], labels, prices, s, tg["excluded"])
+    try:
+        res = E.build(hold["holdings"], hold["cash"], tg["target"], labels, prices, s, tg["excluded"])
+    except E.LotPickError as exc:
+        raise ProposalError(f"picked lots refused: {exc}") from exc
     warnings = list(tg["warnings"]) + [{"code": "exclusion_note", "message": n} for n in tg["notes"]] + res.warnings
     warnings += [{"code": "exclusion_note", "message": n} for n in res.notes]
     va = hold["valuation_as_of"]
@@ -510,6 +527,7 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
     if not res.trades:
         warnings.append({"code": "no_trades", "message": "the account is at its target within the rules — nothing "
                          "to trade"})
+    warnings += lot_method_warnings(eff, any(t.side == "sell" for t in res.trades))
     lines, res, w2 = await apply_wash_control(conn, account, res, hold, ctx, fractional=available(frac),
                                               today=today, prices=prices)
     warnings += w2
@@ -531,7 +549,25 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
     thr, thr_src = (await drift_threshold(conn, org_id, link, version_id)) if version_id else (None, "one_off")
     return {"result": res, "lines": lines, "warnings": warnings, "labels": labels, "holdings": hold,
             "realized_ytd": ytd, "gain_budget": budget, "fractional": available(frac), "threshold": thr,
-            "threshold_source": thr_src, "min_trade": min_trade, "today": today}
+            "threshold_source": thr_src, "min_trade": min_trade, "today": today, "lot_method": eff}
+
+
+def lot_method_warnings(eff: dict, sells: bool) -> list[dict]:
+    """The method note (only when a method is SET — 'none set' adds nothing, so
+    no existing proposal's warnings change) and the custodian mismatch."""
+    out = []
+    if eff["lot_method_source"] != "default":
+        label = E.METHOD_LABELS.get(eff["lot_method"], eff["lot_method"])
+        src = LM.SOURCE_LABELS[eff["lot_method_source"]].lower()
+        pref = E.PREFERENCE_LABELS[eff["gain_preference"]].lower()
+        out.append({"code": "lot_method", "message": f"lot method: {label} ({src}); {pref}"
+                    + ("" if eff["lot_method"] != "tax_optimized" or (eff.get("rates") or {}).get("estimated")
+                       else " — no tax profile, so today's rule ranks the lots"),
+                    "lot_method": eff["lot_method"], "source": eff["lot_method_source"]})
+    mm = LM.mismatch(eff)
+    if mm and sells:
+        out.append(mm)
+    return out
 
 
 async def apply_wash_control(conn, account: dict, res: E.BuildResult, hold: dict, ctx, *, fractional: bool,
@@ -643,7 +679,8 @@ async def _withdraw_task(pool, task_id, reason: str) -> None:
 # ── Generate ────────────────────────────────────────────────────────────────
 async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, maker_id=None,
                    auto_submit: bool = False, trigger_ref: dict | None = None, withdrawal: Decimal | None = None,
-                   today: date | None = None, harvest_plan: dict | None = None) -> dict:
+                   today: date | None = None, harvest_plan: dict | None = None,
+                   lot_override: dict | None = None) -> dict:
     """The ONE generator. Writes the proposal (draft), its trades and — for a
     join — the transition plan; supersedes an older open draft / pending one
     (never for a harvest: that raises OpenProposalExists instead);
@@ -653,12 +690,13 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
     async with account_lock(pool, _uuid(account_id, "account")):
         return await _generate(pool, org_id=org_id, account_id=account_id, trigger=trigger, maker_kind=maker_kind,
                                maker_id=maker_id, auto_submit=auto_submit, trigger_ref=trigger_ref,
-                               withdrawal=withdrawal, today=today, harvest_plan=harvest_plan)
+                               withdrawal=withdrawal, today=today, harvest_plan=harvest_plan,
+                               lot_override=lot_override)
 
 
 async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, maker_id, auto_submit: bool,
                     trigger_ref: dict | None, withdrawal: Decimal | None, today: date | None,
-                    harvest_plan: dict | None) -> dict:
+                    harvest_plan: dict | None, lot_override: dict | None = None) -> dict:
     if trigger not in TRIGGER_LABELS:
         raise ProposalError(f"trigger is one of {list(TRIGGER_LABELS)}")
     if maker_kind not in ("user", "system") or (maker_kind == "user") != (maker_id is not None):
@@ -700,7 +738,7 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
                                               today=today)
         else:
             c = await compute(conn, org_id, account, link, model["live_version_id"], withdrawal=withdrawal,
-                              today=today)
+                              today=today, lot_override=lot_override)
         expiry_days = await _setting(conn, org_id, EXPIRY_SETTING, DEFAULT_EXPIRY_DAYS, lo=1, hi=90, integer=True)
     r: E.BuildResult = c["result"]
     pid = uuid.uuid4()
@@ -768,10 +806,11 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                         trigger_ref, status, advice_only, valuation_as_of, account_value, cash_value, withdrawal_amount,
                         target_weights, before_weights, after_weights, drift_before, drift_after, est_st_gain,
                         est_lt_gain, gain_budget, gain_realized_ytd, warnings, sell_later, expires_at, maker_kind,
-                        maker_id, proposal_kind)
+                        maker_id, proposal_kind, lot_method, lot_method_source, gain_preference, realize_gains_target,
+                        lot_picks, custodian_cost_basis_method)
                     VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7, $8::jsonb, 'draft', $9, $10, $11,
                             $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19, $20, $21, $22, $23::jsonb,
-                            $24::jsonb, $25, $26, $27::uuid, $28)""",
+                            $24::jsonb, $25, $26, $27::uuid, $28, $29, $30, $31, $32, $33::jsonb, $34)""",
                 pid, str(org_id), str(account["id"]), str(link["id"]) if link else None,
                 str(model["id"]) if model else None, str(model["live_version_id"]) if model else None, trigger, _dumps({**ref, "threshold": c["threshold"],
                                                                 "threshold_source": c["threshold_source"]}),
@@ -781,20 +820,22 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                 r.drift_before, r.drift_after, r.est_st_gain.quantize(E.QTY), r.est_lt_gain.quantize(E.QTY),
                 c["gain_budget"], c["realized_ytd"].quantize(E.QTY), _dumps(c["warnings"]), _dumps(later),
                 now + timedelta(days=expiry_days), maker_kind, str(maker_id) if maker_id else None,
-                "model" if link else "one_off")
+                "model" if link else "one_off", *_method_cols(c.get("lot_method")))
             for i, (t, wash) in enumerate(c["lines"], start=1):
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
-                            price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale)
+                            price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale,
+                            lot_method)
                         VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14,
-                                $15::jsonb)""",
+                                $15::jsonb, $16)""",
                     str(org_id), pid, i, t.key, t.side, None if t.quantity is None else t.quantity.quantize(E.QTY),
                     t.notional, t.price, t.price_source, t.price_as_of,
                     _dumps([{**lot, "quantity": str(lot["quantity"]),
                              "unit_cost": _num(None if lot["unit_cost"] is None else lot["unit_cost"].quantize(E.QTY)),
                              "est_gain": _num(None if lot["est_gain"] is None else lot["est_gain"].quantize(E.QTY))}
                             for lot in t.lots]),
-                    t.est_st_gain.quantize(E.QTY), t.est_lt_gain.quantize(E.QTY), t.reason, _dumps(wash))
+                    t.est_st_gain.quantize(E.QTY), t.est_lt_gain.quantize(E.QTY), t.reason, _dumps(wash),
+                    t.lot_method if t.side == "sell" else None)
             if trigger == "join" and link:
                 await conn.execute(f"UPDATE {T_PLAN} SET valid_to = now() WHERE account_id = $1::uuid "
                                    "AND valid_to IS NULL AND system_to IS NULL", str(account["id"]))
@@ -809,6 +850,16 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                          {"trigger": trigger, "trigger_ref": ref, "trades": len(c["lines"]), "maker_kind": maker_kind,
                           "supersedes": str(superseded["id"]) if superseded else None})
     return superseded
+
+
+def _method_cols(eff: dict | None) -> tuple:
+    """(lot_method, lot_method_source, gain_preference, realize_gains_target, lot_picks, custodian method)."""
+    if not eff:
+        return (None, None, None, None, None, None)
+    picks = eff.get("lot_picks")
+    return (eff["lot_method"], eff["lot_method_source"], eff["gain_preference"],
+            None if eff["gain_preference"] != "realize_gains" else eff["realize_gains_target"],
+            _dumps(picks) if picks else None, eff.get("custodian_cost_basis_method"))
 
 
 async def transition_preview(conn, org_id, account_id, *, model_id=None, settings: dict | None = None,
@@ -831,7 +882,12 @@ async def transition_preview(conn, org_id, account_id, *, model_id=None, setting
     c = await compute(conn, org_id, account, shim, model["live_version_id"], today=today)
     return {"plan": plan_out(c["result"], c["labels"]), "warnings": c["warnings"],
             "valuation_as_of": _iso(c["holdings"]["valuation_as_of"]), "model": {"id": str(model["id"]),
-                                                                                  "name": model["name"]}}
+                                                                                  "name": model["name"]},
+            "lot_method": LM.method_out(c["lot_method"]),
+            "sale_methods": [{"key": t.key, "label": t.label, "lot_method": t.lot_method, "note": t.method_note,
+                              "lots": [{"lot_id": x["lot_id"], "quantity": str(x["quantity"]), "why": x.get("why")}
+                                       for x in t.lots]}
+                             for t in c["result"].trades if t.side == "sell"]}
 
 
 def plan_out(r: E.BuildResult, labels: dict) -> dict:
@@ -1114,7 +1170,7 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                           f"From rebalance proposal {p['id']} ({TRIGGER_LABELS[p['trigger']].lower()})"
                           + ("; ADVICE ONLY — the member decides and executes" if advice else "")
                           + ("; manual DVP settlement at the receiving custodian" if executor in ("broker", "trader")
-                             else "")))
+                             else "")) + _mismatch_note(p, trades))
     human_maker = p["maker_kind"] == "user"
     upstream = {"proposal_id": str(p["id"]), "maker_id": str(p["maker_id"]), "checker_id": str(p["checker_id"])} \
         if human_maker else None
@@ -1136,10 +1192,10 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                 await conn.execute(
                     f"""INSERT INTO {T_T} (org_id, proposal_id, line_no, global_security_id, side, quantity, notional,
                             price, price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                            wash_sale, instruction_id)
+                            wash_sale, instruction_id, lot_method)
                         SELECT org_id, proposal_id, line_no, global_security_id, side, quantity, notional, price,
                                price_source, price_as_of, lots, est_st_gain, est_lt_gain, reason, wash_sale_flag,
-                               wash_sale, $2::uuid FROM {T_T} WHERE id = $1""", t["id"], iid)
+                               wash_sale, $2::uuid, lot_method FROM {T_T} WHERE id = $1""", t["id"], iid)
             new = await _update(conn, p["id"], {"execution": {
                 "instruction_ids": ids, "routing": result.as_dict(), "executor_type": executor,
                 "held_by_wash_sale": held,
@@ -1150,6 +1206,42 @@ async def execute(pool, *, org_id, proposal_id, actor_id) -> dict:
                                                                         "reason": result.reason})
     await _publish(pool, org_id, "routed", p["id"], {"instruction_ids": ids}, actor["id"])
     return new
+
+
+def _mismatch_note(p: dict, trades: list[dict]) -> str:
+    """lotmethod — on every instruction of a proposal whose lot method differs
+    from the custodian's known default: name the specific lots there."""
+    if not p.get("lot_method") or not any(t["side"] == "sell" for t in trades):
+        return ""
+    mm = LM.mismatch({"lot_method": p["lot_method"], "custodian_cost_basis_method": p.get("custodian_cost_basis_method")})
+    return f"; LOT METHOD: {mm['message']}" if mm else ""
+
+
+async def override_lot_method(pool, *, org_id, proposal_id, actor_id, override: dict) -> dict:
+    """lotmethod — the per-proposal override. A draft (or one awaiting
+    approval) is REPLACED by a new proposal computed with the chosen method /
+    picked lots: trigger 'manual', the person its maker (so a different person
+    approves it — the override's maker-checker), the original's withdrawal
+    kept, ``trigger_ref`` naming what it overrides. The old one is superseded
+    through :func:`generate`'s own path (its task withdrawn)."""
+    clean = LM.clean_override(override)
+    async with pool.acquire() as conn:
+        await HT.assert_human(conn, actor_id, org_id)
+        p = await load(conn, org_id, proposal_id)
+    if p["status"] not in ("draft", "pending_approval"):
+        raise ProposalConflict(f"the lot method is chosen on a draft or a proposal awaiting approval (this one is "
+                               f"{p['status']})")
+    if not lot_method_overridable(p):
+        raise ProposalConflict("a harvest sells every qualifying loss lot whole, and a one-off names its own trades "
+                               "— the lot method is chosen on a model proposal")
+    ref = {"lot_method_override_of": str(p["id"]), "original_trigger": p["trigger"]}
+    try:
+        return await generate(pool, org_id=org_id, account_id=p["account_id"], trigger="manual", maker_kind="user",
+                              maker_id=actor_id, trigger_ref=ref,
+                              withdrawal=Decimal(str(p["withdrawal_amount"])) if p["withdrawal_amount"] else None,
+                              lot_override=clean)
+    except LM.LotMethodError as exc:
+        raise ProposalError(str(exc)) from exc
 
 
 def executor_for(p: dict, acct: dict) -> tuple[str, str | None, str | None]:
@@ -1594,7 +1686,9 @@ def trade_out(t: dict) -> dict:
             "est_st_gain": _num(t["est_st_gain"]), "est_lt_gain": _num(t["est_lt_gain"]), "reason": t["reason"],
             "wash_sale_flag": _loads(t["wash_sale_flag"]), "wash_sale": _loads(t.get("wash_sale")),
             "routable": WS.routable(_loads(t.get("wash_sale"))),
-            "instruction_id": str(t["instruction_id"]) if t["instruction_id"] else None}
+            "instruction_id": str(t["instruction_id"]) if t["instruction_id"] else None,
+            "lot_method": t.get("lot_method"),
+            "lot_method_label": E.METHOD_LABELS.get(t["lot_method"]) if t.get("lot_method") else None}
 
 
 def proposal_out(p: dict, account: dict | None = None) -> dict:
@@ -1620,6 +1714,10 @@ def proposal_out(p: dict, account: dict | None = None) -> dict:
             "superseded_by_id": str(p["superseded_by_id"]) if p["superseded_by_id"] else None,
             "execution": _loads(p["execution"]) or {}, "executed_at": _iso(p["executed_at"]),
             "created_at": _iso(p["created_at"]),
+            "lot_method": p.get("lot_method"), "lot_method_source": p.get("lot_method_source"),
+            "lot_method_label": E.METHOD_LABELS.get(p["lot_method"]) if p.get("lot_method") else None,
+            "gain_preference": p.get("gain_preference"), "realize_gains_target": _num(p.get("realize_gains_target")),
+            "lot_picks": _loads(p.get("lot_picks")), "custodian_cost_basis_method": p.get("custodian_cost_basis_method"),
             "account": {"account_number_masked": account["account_number_masked"],
                         "custodian_code": account["custodian_code"], "is_held_away": account["is_held_away"],
                         "is_discretionary": account["is_discretionary"]} if account else None}
@@ -1699,7 +1797,14 @@ def actions_for(p: dict, *, can_write: bool, can_approve: bool, user_id, task_op
             acts.append("execute")
     if can_approve and s == "pending_approval" and task_open and p["maker_id"] != str(user_id):
         acts += ["approve", "reject"]
+    if can_write and s in ("draft", "pending_approval") and lot_method_overridable(p):     # lotmethod
+        acts.append("override_lot_method")
     return acts
+
+
+def lot_method_overridable(p: dict) -> bool:
+    """A model proposal (not a harvest — it sells each qualifying loss lot whole)."""
+    return (p.get("proposal_kind") or "model") == "model" and p["trigger"] not in NO_SUPERSEDE_TRIGGERS
 
 
 async def accounts_overview(conn, org_id, *, model_id=None, status=None, q=None) -> list[dict]:
@@ -1780,4 +1885,5 @@ def vocabularies() -> dict:
             **WS.vocabularies(), "account_filters": [
                 {"key": "following", "label": "Following a model"},
                 {"key": "not_following", "label": "Not following a model"},
-                {"key": "open_proposal", "label": "With an open proposal"}], **AM.vocabularies()}
+                {"key": "open_proposal", "label": "With an open proposal"}], **AM.vocabularies(),
+            "lot_method": LM.vocabularies()}

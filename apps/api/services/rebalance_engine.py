@@ -32,6 +32,39 @@ gain lot that does not fit is sold only as far as it fits; what is left is
 "sell later" in the next year(s), one budget per year. A lot whose cost is
 unknown is never sold against a budget (its gain cannot be known).
 
+THE LOT-RELIEF METHOD (lotmethod) — :class:`LotMethod` on ``SaleSettings.method``
+──────────────────────────────────────────────────────────────────────────────
+Precedence, always: WASH-SALE HOLDS and HARD BLOCKS (unknown cost against a
+budget) > GUARDS (the short-term guard defers; the gain budget decides now or
+later) > THE METHOD (which lots, in what order). A method only orders lots;
+it never sells a wash-held loss lot, never sells an unknown-cost lot against a
+budget, never sells a deferred short-term gain now, never exceeds the budget.
+  default (no method set)  today's rule, EXACTLY — the code path above, unchanged.
+  tax_optimized            estimated tax per dollar raised, lowest first:
+                           (price − cost) ÷ price × the lot's combined rate (ST
+                           rate when short-term on the sale date, else LT) from
+                           the tax subject's approved rep6 profile. So a short-
+                           term loss ranks ahead of a long-term loss of the same
+                           size, a long-term gain ahead of a short-term gain.
+                           No profile → today's rule exactly, and the line says so.
+  hifo / highest_cost      highest unit cost first (the same ordering under
+                           specific identification; both names kept because
+                           custodians use both); lowest_cost the reverse;
+  fifo / lifo              oldest / newest acquisition first.
+  specific                 the adviser's picked lots (validated: an open lot of
+                           this account in this security, enough quantity, not
+                           wash-held, not unknown-cost against a budget), used
+                           as given; a shortfall is filled by today's rule, stated.
+Gain preference: prefer_long_term (ties → long-term first), st_losses_first
+(short-term losses ahead of everything), realize_gains (gain lots, long-term
+first, until the adviser's target gain is reached — the lot that crosses it is
+sold only as far as the target; it only chooses lots for sales the proposal
+already makes, never adds one). AVERAGE COST (a security in
+``LotMethod.average_cost``): no lot choice — every share carries the average
+cost; holding periods first-in-first-out; the line names no lots. The method
+selects WHICH lots fill a sale; the budget then decides now or later (losses
+among the selected go now; selected gains in the method's order while they fit).
+
 WHAT IS BOUGHT — :func:`build`
 ──────────────────────────────────────────────────────────────────────────────
 To the target weight, from the cash the sales raise above the cash target —
@@ -230,6 +263,45 @@ def lot_order_key(lot: Lot, price: Decimal, on: date):
             0 if term_of(lot, on) == "long" else 1, lot.acquired or date.max, lot.id or "")
 
 
+METHODS = ("tax_optimized", "hifo", "fifo", "lifo", "lowest_cost", "highest_cost", "specific")
+GAIN_PREFERENCES = ("prefer_long_term", "st_losses_first", "realize_gains")
+DEFAULT_METHOD = "tax_optimized"
+DEFAULT_PREFERENCE = "prefer_long_term"
+TODAY_RULE = ("today's rule: losses first (largest loss per share first), then the lowest gain per dollar raised; "
+              "long-term before short-term at equal cost; then oldest")
+METHOD_LABELS = {"tax_optimized": "Tax-optimized — lowest estimated tax per dollar raised",
+                 "hifo": "HIFO — highest cost first", "fifo": "FIFO — oldest first", "lifo": "LIFO — newest first",
+                 "lowest_cost": "Lowest cost first", "highest_cost": "Highest cost first",
+                 "specific": "Specific lots — the adviser picks them on each proposal",
+                 "average_cost": "Average cost — no lot choice", "harvest_loss": "Tax-loss harvest — each qualifying "
+                 "loss lot, whole"}
+PREFERENCE_LABELS = {"prefer_long_term": "Prefer long-term", "st_losses_first": "Short-term losses first",
+                     "realize_gains": "Realize gains up to a target"}
+
+
+class LotPickError(ValueError):
+    """An adviser's picked lot the rules refuse (closed, too small, wash-held, …)."""
+
+
+@dataclass
+class LotMethod:
+    """Which lots a sale relieves. ``LotMethod()`` with no rates = today's rule."""
+    method: str = DEFAULT_METHOD
+    gain_preference: str = DEFAULT_PREFERENCE
+    realize_target: Decimal | None = None
+    #: tax_profiles.combined_rates of the tax subject — None: no profile (or no method set: today's rule)
+    rates: dict | None = None
+    #: method 'specific' — {security: [(lot_id, quantity), …]} in the adviser's order
+    picks: dict = field(default_factory=dict)
+    #: securities carried at average cost in this account (no lot choice)
+    average_cost: frozenset = frozenset()
+    source: str = "default"
+
+    def is_today_rule(self) -> bool:
+        return (self.method == DEFAULT_METHOD and self.rates is None and self.gain_preference == DEFAULT_PREFERENCE
+                and not self.picks)
+
+
 @dataclass
 class SaleSettings:
     today: date
@@ -240,6 +312,8 @@ class SaleSettings:
     fractional: bool = False
     #: rep6 — {security: {until, reason, matches, forfeit}}: its loss lots wait (wash sale)
     wash_hold: dict = field(default_factory=dict)
+    #: lotmethod — the lot-relief method (default: today's rule)
+    method: LotMethod = field(default_factory=LotMethod)
 
 
 @dataclass
@@ -250,6 +324,8 @@ class LotSale:
     term: str
     gain: Decimal | None
     acquired: date | None
+    why: str = ""
+    average_cost: bool = False
 
 
 @dataclass
@@ -271,6 +347,8 @@ class SalePlan:
     net_gain_now: Decimal
     room_now: Decimal | None
     held: list = field(default_factory=list)
+    #: lotmethod — {security: (method key, plain note)}: what chose each holding's lots
+    method_of: dict = field(default_factory=dict)
 
 
 def _units(fractional: bool) -> Decimal:
@@ -283,7 +361,41 @@ def _floor(q: Decimal, unit: Decimal) -> Decimal:
 
 def plan_sales(requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> SalePlan:
     """``requests`` [(holding, quantity wanted)] — which lots go now, which
-    later (by year, or by the date a short-term lot turns long-term)."""
+    later (by year, or by the date a short-term lot turns long-term).
+
+    The default method is TODAY'S RULE, run by :func:`_plan_today_rule`
+    exactly as it was before lotmethod; any other method (or an average-cost
+    holding) goes through :func:`_plan_by_method`, which keeps the same guards
+    and budget and changes only which lots are selected."""
+    m = s.method or LotMethod()
+    if m.is_today_rule() and not any(h.key in m.average_cost for h, _ in requests):
+        plan = _plan_today_rule(requests, s)
+        note = _today_note(m)
+        for h, _ in requests:
+            plan.method_of[h.key] = (m.method, note)
+        for portions in plan.now.values():
+            for p in portions:
+                p.why = _today_why(p)
+        return plan
+    return _plan_by_method(requests, s)
+
+
+def _today_note(m: LotMethod) -> str:
+    if m.source == "default":
+        return f"no lot method set — {TODAY_RULE}"
+    return f"tax-optimized: no tax profile, so not estimated — {TODAY_RULE}"
+
+
+def _today_why(p: LotSale) -> str:
+    if p.gain is None:
+        return "cost basis unknown — sold only because no gain budget applies"
+    if p.gain <= 0:
+        return "a loss (or no gain) — losses first, the largest loss per share first"
+    return f"a {p.term}-term gain — the lowest gain per dollar raised that fits the budget"
+
+
+def _plan_today_rule(requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> SalePlan:
+    """TODAY'S RULE — the pre-lotmethod plan_sales body, unchanged."""
     unit = _units(s.fractional)
     budget = s.gain_budget
     room = None if budget is None else budget - s.realized_ytd
@@ -399,6 +511,347 @@ def plan_sales(requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> Sale
                     room_now=None if room is None else room, held=[x for x in held if x.get("quantity")])
 
 
+# ── The method (lotmethod) ──────────────────────────────────────────────────
+def today_key(lot: Lot, price: Decimal, on: date):
+    """Today's rule as ONE total order (the order _plan_today_rule ends up
+    selecting in): losses by lot_order_key, then unknown-cost lots, then gains
+    by gain per dollar raised (long-term first at equal, then oldest, then id)."""
+    cost = lot.unit_cost
+    lt = 0 if term_of(lot, on) == "long" else 1
+    acq, lid = lot.acquired or date.max, lot.id or ""
+    if cost is None:
+        return (1, ZERO, lt, acq, lid)
+    g = price - cost
+    if g > 0:
+        return (2, g / price, lt, acq, lid)
+    return (0, -cost, lt, acq, lid)
+
+
+def tax_per_dollar(lot: Lot, price: Decimal, on: date, rates: dict) -> Decimal | None:
+    """Estimated tax per dollar raised: (price − cost) ÷ price × the lot's
+    combined rate (ST when short-term on ``on``, else LT). None when the cost
+    or the term is unknown — never a guessed rate."""
+    if lot.unit_cost is None or price is None or price <= 0:
+        return None
+    term = term_of(lot, on)
+    if term not in ("short", "long"):
+        return None
+    rate = rates["st"] if term == "short" else rates["lt"]
+    with localcontext() as ctx:
+        ctx.prec = 60
+        return (price - lot.unit_cost) / price * rate
+
+
+def method_key(m: LotMethod, lot: Lot, price: Decimal, on: date):
+    """The method's order (smallest first). Long-term before short-term breaks
+    every tie (prefer_long_term), then oldest, then id."""
+    cost = lot.unit_cost
+    lt = 0 if term_of(lot, on) == "long" else 1
+    acq, lid = lot.acquired or date.max, lot.id or ""
+    k = m.method
+    if k in ("hifo", "highest_cost"):
+        base = (cost is None, -(cost if cost is not None else ZERO), lt, acq, lid)
+    elif k == "lowest_cost":
+        base = (cost is None, cost if cost is not None else ZERO, lt, acq, lid)
+    elif k == "fifo":
+        base = (lot.acquired is None, acq, lt, lid)
+    elif k == "lifo":
+        base = (lot.acquired is None, -(lot.acquired.toordinal()) if lot.acquired else 0, lt, lid)
+    elif k == "tax_optimized" and m.rates is not None:
+        t = tax_per_dollar(lot, price, on, m.rates)
+        base = (0, t, lt, acq, lid) if t is not None else (1, today_key(lot, price, on))
+    else:                      # tax_optimized with no profile, and the fill for 'specific'
+        base = (0, today_key(lot, price, on))
+    if m.gain_preference == "st_losses_first":
+        st_loss = cost is not None and price - cost < 0 and term_of(lot, on) == "short"
+        return (0 if st_loss else 1, base)
+    return base
+
+
+def _why(m: LotMethod, lot: Lot, price: Decimal, on: date, how: str) -> str:
+    term = term_of(lot, on)
+    cost = lot.unit_cost
+    if how == "picked":
+        return "picked by the adviser"
+    if how == "fill":
+        return "not picked — the rest of the sale filled by today's rule"
+    if how == "target":
+        return f"a {term}-term gain taken to realize the adviser's target (long-term first)"
+    if how == "average":
+        return "average cost — no lot choice; holding period first in, first out"
+    if m.gain_preference == "st_losses_first" and cost is not None and price - cost < 0 and term == "short":
+        return "a short-term loss — short-term losses first"
+    k = m.method
+    if k in ("hifo", "highest_cost"):
+        return f"highest cost first (unit cost {cost.quantize(QTY) if cost is not None else 'unknown'})"
+    if k == "lowest_cost":
+        return f"lowest cost first (unit cost {cost.quantize(QTY) if cost is not None else 'unknown'})"
+    if k == "fifo":
+        return f"oldest first (acquired {lot.acquired.isoformat() if lot.acquired else 'unknown'})"
+    if k == "lifo":
+        return f"newest first (acquired {lot.acquired.isoformat() if lot.acquired else 'unknown'})"
+    if k == "tax_optimized" and m.rates is not None:
+        t = tax_per_dollar(lot, price, on, m.rates)
+        if t is None:
+            return "cost or term unknown — not estimated; ranked after every estimated lot"
+        rate = m.rates["st"] if term == "short" else m.rates["lt"]
+        return (f"est. tax per $ raised {t.quantize(Q, rounding=ROUND_HALF_EVEN)} ({term}-term at {rate}, "
+                "profile rates — an estimate)")
+    return _today_why(LotSale(lot.id, ZERO, cost, term, None if cost is None else price - cost, lot.acquired))
+
+
+def _average_lots(h: Holding) -> tuple[list[Lot], Decimal | None]:
+    """An average-cost holding as first-in-first-out portions, every share at
+    the average cost (None when any lot's cost is unknown)."""
+    lots = sorted(h.lots, key=lambda x: (x.acquired or date.max, x.id or ""))
+    q = sum((x.quantity for x in lots), ZERO)
+    avg = None
+    if lots and q > 0 and all(x.unit_cost is not None for x in lots):
+        with localcontext() as ctx:
+            ctx.prec = 60
+            avg = sum((x.quantity * x.unit_cost for x in lots), ZERO) / q
+    return [Lot(None, x.quantity, avg, x.acquired, x.term_hint) for x in lots], avg
+
+
+def validate_picks(m: LotMethod, requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> None:
+    """The adviser's picked lots (method 'specific'): each an open lot of this
+    account in a security this sale sells, with enough quantity, not wash-held,
+    not unknown-cost against a gain budget, the picks not over the sale."""
+    sold = {h.key: (h, q) for h, q in requests}
+    for key, picks in (m.picks or {}).items():
+        if key not in sold:
+            raise LotPickError(f"lots were picked for {key}, which this proposal does not sell")
+        h, want = sold[key]
+        if key in m.average_cost:
+            raise LotPickError(f"{h.label}: held at average cost — there is no lot choice to make")
+        by_id = {x.id: x for x in h.lots if x.id}
+        seen, total = set(), ZERO
+        for lot_id, qty in picks:
+            lot = by_id.get(lot_id)
+            if lot is None:
+                raise LotPickError(f"{h.label}: lot {lot_id} is not an open lot of this account in this security")
+            if lot_id in seen:
+                raise LotPickError(f"{h.label}: lot {lot_id} is picked twice")
+            seen.add(lot_id)
+            if not isinstance(qty, Decimal) or qty <= 0:
+                raise LotPickError(f"{h.label}: a picked quantity is a decimal above zero")
+            if qty > lot.quantity:
+                raise LotPickError(f"{h.label}: lot {lot_id} holds {lot.quantity}, fewer than the {qty} picked")
+            g = None if lot.unit_cost is None else h.price - lot.unit_cost
+            if g is not None and g < 0 and key in s.wash_hold:
+                raise LotPickError(f"{h.label}: lot {lot_id} is a loss lot held back by wash-sale control until "
+                                   f"{s.wash_hold[key]['until'].isoformat()} — a method never overrides the hold")
+            if g is None and s.gain_budget is not None:
+                raise LotPickError(f"{h.label}: lot {lot_id} has no cost basis — never sold against a gain budget")
+            total += qty
+        if total > want:
+            raise LotPickError(f"{h.label}: the picked lots ({total}) are more than this sale sells ({want})")
+
+
+def _plan_by_method(requests: list[tuple[Holding, Decimal]], s: SaleSettings) -> SalePlan:
+    """Any method other than today's rule: the same guards and budget as
+    _plan_today_rule; only the SELECTION of lots differs (see the module doc)."""
+    m = s.method
+    validate_picks(m, requests, s)
+    unit = _units(s.fractional)
+    budget = s.gain_budget
+    room = None if budget is None else budget - s.realized_ytd
+    now: dict[str, list[LotSale]] = {}
+    later: list[LaterSale] = []
+    blocked: list[dict] = []
+    net = ZERO
+    wanted = {h.key: q for h, q in requests}
+    deferred, held, selected = [], [], []
+    method_of: dict = {}
+    target_left = m.realize_target if m.gain_preference == "realize_gains" else None
+    seq = 0
+    for h, _ in requests:
+        price = h.price
+        avg = h.key in m.average_cost
+        if avg:
+            lots, avg_cost = _average_lots(h)
+            method_of[h.key] = ("average_cost", "average cost — no lot choice: every share at the average cost "
+                                f"{'unknown' if avg_cost is None else avg_cost.quantize(QTY)}; holding periods first "
+                                "in, first out; the instruction names no lots")
+            order = lots
+        else:
+            lots = list(h.lots)
+            order = sorted(lots, key=lambda x: method_key(m, x, price, s.today))
+            method_of[h.key] = (m.method, _method_note(m))
+        portions = []
+        for lot in order:
+            g = None if lot.unit_cost is None else price - lot.unit_cost
+            term = term_of(lot, s.today)
+            if g is not None and g < 0 and h.key in s.wash_hold:
+                held.append({"holding": h, "lot": lot, "gain": g, "term": term})
+                continue
+            if g is None:
+                if budget is not None:
+                    blocked.append({"key": h.key, "lot_id": lot.id, "quantity": lot.quantity,
+                                    "reason": "cost basis unknown — never sold against a gain budget"})
+                    continue
+            elif s.avoid_short_term and term == "short" and g > 0 and lot.acquired is not None:
+                turns = long_term_from(lot.acquired)
+                if (turns - s.today).days <= s.short_term_wait_days:
+                    deferred.append((h, lot, turns, g))
+                    continue
+            portions.append([lot, g, term, lot.quantity])        # remaining quantity available to select
+        # selection, in the method's order (picks first for 'specific'; target gains first for realize_gains)
+        rem = wanted[h.key]
+
+        def pick(entry, q, how):
+            nonlocal rem, seq
+            lot, g, term, _ = entry
+            entry[3] -= q
+            rem -= q
+            seq += 1
+            selected.append((h, lot, q, g, term, _why(m, lot, price, s.today, "average" if avg else how),
+                             method_key(m, lot, price, s.today), seq, avg))
+
+        if m.method == "specific" and not avg:
+            by_id = {e[0].id: e for e in portions}
+            for lot_id, q in m.picks.get(h.key, []):
+                e = by_id.get(lot_id)
+                if e is None:          # picked but deferred by the short-term guard: the guard wins (stated later)
+                    continue
+                q = min(q, e[3], rem)
+                if q > 0:
+                    pick(e, q, "picked")
+            fill = sorted(portions, key=lambda e: today_key(e[0], price, s.today))
+            for e in fill:
+                if rem <= 0:
+                    break
+                q = min(e[3], rem)
+                if q > 0:
+                    pick(e, q, "fill")
+            if not m.picks.get(h.key):
+                method_of[h.key] = ("specific", f"specific: no lots picked for {h.label} — {TODAY_RULE}")
+            continue
+        if target_left is not None and target_left > 0 and not avg:
+            gains = sorted((e for e in portions if e[1] is not None and e[1] > 0),
+                           key=lambda e: (0 if e[2] == "long" else 1, method_key(m, e[0], price, s.today)))
+            for e in gains:
+                if rem <= 0 or target_left <= 0:
+                    break
+                q = min(e[3], rem, _floor(target_left / e[1], unit))
+                if q > 0:
+                    pick(e, q, "target")
+                    target_left -= q * e[1]
+        for e in portions:
+            if rem <= 0:
+                break
+            q = min(e[3], rem)
+            if q > 0:
+                pick(e, q, "method")
+
+    def take(h: Holding, lot: Lot, q: Decimal, g, term, why, avg):
+        nonlocal net
+        gain = None if g is None else q * g
+        rows = now.setdefault(h.key, [])
+        same = next((x for x in rows if lot.id is not None and x.lot_id == lot.id), None)
+        if same is not None:          # one lot selected twice (target gain + the method's fill): one instruction lot
+            same.quantity += q
+            same.gain = None if gain is None or same.gain is None else same.gain + gain
+            if why not in same.why:
+                same.why = f"{same.why}; {why}"
+        else:
+            rows.append(LotSale(lot.id, q, lot.unit_cost, term, gain, lot.acquired, why, avg))
+        wanted[h.key] -= q
+        if gain is not None:
+            net += gain
+
+    # 1. every selected loss (and zero-gain, and unknown-cost when unlimited) portion goes now — they add room
+    gains = []
+    for h, lot, q, g, term, why, key, order_no, avg in selected:
+        if g is None or g <= 0:
+            take(h, lot, q, g, term, why, avg)
+        else:
+            gains.append((h, lot, q, g, term, why, key, order_no, avg))
+    # 2. selected gains in the method's order (picks / target first: selection order) while they fit the budget
+    if m.method == "specific" or m.gain_preference == "realize_gains":
+        gains.sort(key=lambda x: x[7])
+    else:
+        gains.sort(key=lambda x: (x[6], x[7]))
+    leftover = []
+    for h, lot, q, g, term, why, _, _, avg in gains:
+        if room is None or net + q * g <= room:
+            take(h, lot, q, g, term, why, avg)
+            continue
+        fit = _floor((room - net) / g, unit) if room - net > 0 else ZERO
+        fit = min(fit, q)
+        if fit > 0:
+            take(h, lot, fit, g, term, why, avg)
+        if q - fit > 0:
+            leftover.append((h, lot, q - fit, g))
+            wanted[h.key] -= q - fit
+    # 3. what waits — exactly as today's rule schedules it
+    years: dict[int, Decimal] = {}
+    if room is not None:
+        years[s.today.year] = room - net
+
+    def schedule(h, lot, q, g, first_year, on_date, reason):
+        if g is None or g <= 0 or budget is None:
+            later.append(LaterSale(h.key, lot.id, q, first_year, on_date, None if g is None else q * g, reason))
+            return
+        y = first_year
+        while q > 0 and y < s.today.year + MAX_PLAN_YEARS:
+            r = years.setdefault(y, budget)
+            fit = q if q * g <= r else (_floor(r / g, unit) if r > 0 else ZERO)
+            if fit > 0:
+                later.append(LaterSale(h.key, lot.id, fit, y, on_date if y == first_year else None, fit * g,
+                                       reason))
+                years[y] = r - fit * g
+                q -= fit
+            y += 1
+        if q > 0:
+            later.append(LaterSale(h.key, lot.id, q, None, None, q * g,
+                                   f"{reason} — beyond {MAX_PLAN_YEARS} years at this gain budget"))
+
+    for h, lot, turns, g in deferred:
+        q = min(lot.quantity, wanted[h.key]) if wanted[h.key] > 0 else ZERO
+        if q <= 0:
+            continue
+        wanted[h.key] -= q
+        schedule(h, lot, q, g, turns.year, turns,
+                 f"short-term gain: deferred until it turns long-term on {turns.isoformat()}")
+    for h, lot, q, g in leftover:
+        schedule(h, lot, q, g, s.today.year + 1, None, "over this year's gain budget")
+    for x in held:
+        h, lot = x["holding"], x["lot"]
+        q = min(lot.quantity, wanted[h.key]) if wanted[h.key] > 0 else ZERO
+        if q <= 0:
+            continue
+        wanted[h.key] -= q
+        r = s.wash_hold[h.key]
+        x["quantity"] = q
+        later.append(LaterSale(h.key, lot.id, q, r["until"].year, r["until"], q * x["gain"],
+                               f"wash sale: loss lot held until {r['until'].isoformat()}"))
+    return SalePlan(now=now, later=later, blocked=blocked, net_gain_now=net,
+                    room_now=None if room is None else room, held=[x for x in held if x.get("quantity")],
+                    method_of=method_of)
+
+
+def _method_note(m: LotMethod) -> str:
+    label = METHOD_LABELS.get(m.method, m.method)
+    if m.method == "tax_optimized":
+        if m.rates is None:
+            note = _today_note(m)
+        else:
+            note = (f"{label}: (price − cost) ÷ price × the combined rate — ST {m.rates['st']}, LT {m.rates['lt']} "
+                    f"(profile {m.rates.get('profile_id')}, tax year {m.rates.get('tax_year')}, as of "
+                    f"{m.rates.get('as_of')}) — an estimate")
+    elif m.method == "specific":
+        note = f"{label}: the lots the adviser picked, as given; any rest filled by today's rule"
+    else:
+        note = label + (" (the same ordering as HIFO under specific identification)" if m.method == "highest_cost"
+                        else "")
+    if m.gain_preference == "st_losses_first":
+        note += "; short-term losses first"
+    elif m.gain_preference == "realize_gains":
+        note += f"; realize gains up to the adviser's target ${money(m.realize_target)} (long-term first)"
+    return note + " — wash-sale holds, hard blocks and the guards come first"
+
+
 # ── The proposal ────────────────────────────────────────────────────────────
 @dataclass
 class BuildSettings:
@@ -422,6 +875,9 @@ class TradeOut:
     est_st_gain: Decimal
     est_lt_gain: Decimal
     reason: str
+    #: lotmethod — what chose this sale's lots (None on a buy)
+    lot_method: str | None = None
+    method_note: str | None = None
 
 
 @dataclass
@@ -541,12 +997,14 @@ def build(holdings: list[Holding], cash: Decimal, target: dict[str, Decimal], la
         reason = sell_reason[h.key]
         if q < asked[h.key]:
             reason += "; part of it waits (gain budget / short-term guard — see sell later)"
+        mk, mnote = sp.method_of.get(h.key, (None, None))
         trades.append(TradeOut(h.key, h.label, "sell", q, None, h.price, h.price_source, h.price_as_of,
                                [{"lot_id": p.lot_id, "quantity": p.quantity, "unit_cost": p.unit_cost,
                                  "term": p.term, "est_gain": p.gain,
-                                 "acquired_date": p.acquired.isoformat() if p.acquired else None}
-                                for p in portions if p.lot_id],
-                               st, lt, reason))
+                                 "acquired_date": p.acquired.isoformat() if p.acquired else None, "why": p.why,
+                                 **({"average_cost": True} if p.average_cost else {})}
+                                for p in portions if p.lot_id or p.average_cost],
+                               st, lt, reason, mk, mnote))
     # buys from the cash raised above the cash target
     available = cash + proceeds - T.get(CASH, ZERO)
     wants = []

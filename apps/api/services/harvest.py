@@ -46,6 +46,13 @@ lots, and wash-sale control still applies to Hollisworks' own proposals.
 NOT ESTIMATED — needs prices: the tracking-error cost of a harvest (no licensed
 price history yet; securities_global_prices is empty).
 
+THE LOT METHOD (lotmethod). A harvest LOSS line sells each qualifying loss lot
+WHOLE — every lot is judged on its own thresholds, so there is no choice among
+lots for a method to make (the line says so: method 'harvest_loss'). The
+SWAP-BACK sale goes through plan_sales with the account's method
+(services.lot_method), so it is relieved exactly as a rebalance sale would be.
+The proposal records the account's effective method.
+
 THE CUSTODY CLIFF. Nothing here trades: a harvest is a proposal.
 """
 
@@ -74,6 +81,8 @@ DEFAULT_PCT = Decimal("0.05")
 DEFAULT_MIN = Decimal("500")
 DEFAULT_COST_BPS = Decimal("0")
 SWAP_BACK_DAYS = WS.WINDOW_DAYS + 1
+HARVEST_METHOD_NOTE = ("tax-loss harvest: each qualifying loss lot is sold whole — judged on its own thresholds, so the "
+                       "lot method has no choice to make here")
 SKIP_LABELS = {"below_threshold": "Below the loss thresholds (net of trading cost)",
                "needs_price": "Needs a price — the account cannot value the holding",
                "no_cost_basis": "No cost basis — its loss cannot be known",
@@ -276,6 +285,9 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
         rates = TP.combined_rates(profile)
         hold = await AM.load_holdings(conn, org_id, account["id"])
         engine = link["harvesting_engine"]
+        from services import lot_method as LM      # lotmethod — the swap-back sale is relieved by the account's method
+
+        method, _eff = await LM.lot_method_for(conn, org_id, account, today)
 
         async def finish(outcome, reason, cands=(), proposal_id=None):
             async with conn.transaction():
@@ -373,7 +385,9 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
                      len(vals) == len(group) else TP.NO_PROFILE if rates is None else "value partly not estimated")
         reason = (f"Tax-loss harvest: realizes an estimated loss of ${money(-(st + lt))} "
                   f"(short-term ${money(-st)}, long-term ${money(-lt)}) — {value_txt}")
-        sell = E.TradeOut(k, h.label, "sell", q, None, h.price, h.price_source, h.price_as_of, lots, st, lt, reason)
+        sell = E.TradeOut(k, h.label, "sell", q, None, h.price, h.price_source, h.price_as_of,
+                          [{**x, "why": "a qualifying loss lot — a harvest sells each one whole"} for x in lots], st, lt,
+                          reason, "harvest_loss", HARVEST_METHOD_NOTE)
         trades.append((sell, {"outcome": "clear", "rule": None, "security_id": k, "label": h.label, "matches": [],
                               "reason": "no household buy of this security, or of a pair denied with it, within 30 "
                                         "days"}))
@@ -420,7 +434,7 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
         plan = E.plan_sales([(sub, sub.quantity)], E.SaleSettings(
             today=today, gain_budget=None if link["gain_budget"] is None else Decimal(str(link["gain_budget"])),
             realized_ytd=ytd + harvest_loss, avoid_short_term=link["avoid_short_term"],
-            short_term_wait_days=link["short_term_wait_days"], fractional=fractional))
+            short_term_wait_days=link["short_term_wait_days"], fractional=fractional, method=method))
         now = plan.now.get(h.key) or []
         if not now:
             why = "; ".join(sorted({x.reason for x in plan.later})) or "nothing can be sold now"
@@ -433,12 +447,13 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
         gain = st + lt
         tax_txt = TP.NO_PROFILE if rates is None else (
             f"est. tax on the gain ${money(max(st, E.ZERO) * rates['st'] + max(lt, E.ZERO) * rates['lt'])} (estimate)")
+        mk, mnote = plan.method_of.get(h.key, (None, None))
         sell = E.TradeOut(h.key, h.label, "sell", q, None, h.price, h.price_source, h.price_as_of,
                           [{"lot_id": p.lot_id, "quantity": p.quantity, "unit_cost": p.unit_cost, "term": p.term,
-                            "est_gain": p.gain, "acquired_date": p.acquired.isoformat() if p.acquired else None}
-                           for p in now], st, lt,
+                            "est_gain": p.gain, "acquired_date": p.acquired.isoformat() if p.acquired else None,
+                            "why": p.why} for p in now if p.lot_id or p.average_cost], st, lt,
                           f"Swap back: sell the harvest replacement {h.label} ({(today - sp['run_date']).days} days "
-                          f"after the harvest) — realizes an estimated ${money(gain)}; {tax_txt}")
+                          f"after the harvest) — realizes an estimated ${money(gain)}; {tax_txt}", mk, mnote)
         trades.append((sell, {"outcome": "clear", "rule": None, "security_id": h.key, "label": h.label,
                               "matches": [], "reason": "no household buy of the replacement within 30 days"}))
         buy = _buy(s_key, ctx.label(s_key), q * h.price, px, fractional,
@@ -559,9 +574,14 @@ async def compute_for_proposal(conn, org_id, account: dict, link: dict, version_
                      else f"tax values: {TP.NO_PROFILE}"})
     thr, thr_src = await RP.drift_threshold(conn, org_id, link, version_id)
     ytd = await RP.realized_ytd(conn, org_id, account["id"], today)
+    from services import lot_method as LM      # lotmethod — the proposal records the account's effective method
+
+    _m, eff = await LM.lot_method_for(conn, org_id, account, today)
+    warnings += RP.lot_method_warnings(eff, any(t.side == "sell" for t in going))
     return {"result": res, "lines": lines, "warnings": warnings, "labels": labels, "holdings": hold,
             "realized_ytd": ytd, "gain_budget": None if link["gain_budget"] is None else Decimal(str(link["gain_budget"])),
-            "fractional": None, "threshold": thr, "threshold_source": thr_src, "min_trade": None, "today": today}
+            "fractional": None, "threshold": thr, "threshold_source": thr_src, "min_trade": None, "today": today,
+            "lot_method": eff}
 
 
 # ── Reading ─────────────────────────────────────────────────────────────────

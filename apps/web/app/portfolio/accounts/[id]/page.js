@@ -6,6 +6,7 @@ import AccountModelPanel from "@/components/proposals/AccountModelPanel";
 import AccountTaxPanel from "@/components/tax/AccountTaxPanel";
 import HeldAwayPanel from "@/components/heldaway/HeldAwayPanel";
 import AuthorityPanel from "@/components/authority/AuthorityPanel";
+import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 import OneOffForm from "@/components/authority/OneOffForm";
 
 // REP5 — one account: its model, settings, a change awaiting approval, the
@@ -51,6 +52,15 @@ export default async function AccountPage({ params }) {
       authority = null;
     }
   }
+  // LOTMETHOD — the account's lot-relief method, the custodian's own method, average-cost securities
+  let lotMethod = null;
+  if (!error) {
+    try {
+      lotMethod = await fetchAPI(`/api/v1/lot-method/accounts/${encodeURIComponent(id)}`);
+    } catch {
+      lotMethod = null;
+    }
+  }
   const holdings = Array.isArray(heldAway?.positions?.positions) ? heldAway.positions.positions : [];
   return (
     <AppShell user={session.user}>
@@ -63,6 +73,7 @@ export default async function AccountPage({ params }) {
           <div className="space-y-5">
             {heldAway ? <HeldAwayPanel initialEnvelope={heldAway} /> : null}
             {authority ? <AuthorityPanel initialEnvelope={authority} kind="account" /> : null}
+            {lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="account" /> : null}
             <OneOffForm envelope={envelope} holdings={holdings} />
             <AccountModelPanel initialEnvelope={envelope} />
             {tax ? <AccountTaxPanel envelope={tax} /> : null}

@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
 import XrayView from "@/components/xray/XrayView";
 import AuthorityPanel from "@/components/authority/AuthorityPanel";
+import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 
 // REP7 — Household → tab "X-ray": the look-through of every fund the
 // household holds (managed and held-away accounts), replicable funds and the
@@ -34,7 +35,16 @@ export default async function HouseholdPage({ params, searchParams }) {
       authority = null; // no view_authority (403): the tab says so
     }
   }
-  const name = envelope?.xray?.household?.name || authority?.household?.name || "Household";
+  // LOTMETHOD — tab "Lot method": the household's default lot-relief method (a caller without view_proposals: 403)
+  let lotMethod = null;
+  if (tab === "lot-method") {
+    try {
+      lotMethod = await fetchAPI(`/api/v1/lot-method/households/${encodeURIComponent(id)}`);
+    } catch {
+      lotMethod = null;
+    }
+  }
+  const name = envelope?.xray?.household?.name || authority?.household?.name || lotMethod?.household?.name || "Household";
   return (
     <AppShell user={session.user}>
       <p className="text-sm"><a className="text-navy underline" href="/portfolio/households">Households</a></p>
@@ -42,9 +52,12 @@ export default async function HouseholdPage({ params, searchParams }) {
       <nav className="mt-3 flex gap-4 border-b border-[#ece8dd] text-sm">
         <a className={`pb-2 ${tab === "xray" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=xray`}>X-ray</a>
         <a className={`pb-2 ${tab === "authority" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=authority`}>Authority</a>
+        <a className={`pb-2 ${tab === "lot-method" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=lot-method`}>Lot method</a>
       </nav>
       <div className="mt-4">
-        {tab === "authority" ? (authority ? <AuthorityPanel initialEnvelope={authority} kind="household" />
+        {tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />
+          : <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">The lot method is open to staff with proposal access.</div>)
+          : tab === "authority" ? (authority ? <AuthorityPanel initialEnvelope={authority} kind="household" />
           : <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">The authority setting is open to staff with authority access.</div>)
           : error ? (
           <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">{error}</div>

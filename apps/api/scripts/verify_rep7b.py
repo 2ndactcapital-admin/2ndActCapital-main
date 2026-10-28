@@ -42,6 +42,20 @@ checksum (the checksum excludes only rep7b's new column, proposal_kind).
 Every expected date is computed at the moment of the call (no TODAY fixed at
 script start). With VERIFY_NESTED=1 the regression section prints one
 '[SKIP] nested run'.
+
+Teardown mechanics: ``_verify_cleanup.cleanup`` — seeds keyed by this run's
+fixture ids (every org_id table under the fixture orgs, the fixture
+organizations and users, and this script's plan), a FK closure from
+pg_constraint that only follows children that really hold rows (values
+materialised, ``= ANY(array)``, never a nested ``IN (SELECT ...)`` walk), a
+refusal if a derived predicate reaches a row outside the fixture orgs, one
+DELETE per table child-before-parent. It prints one '[INFO] cleanup ...' line
+with the table / row / query counts and how long it took.
+
+--cleanup-only: run only the teardown (exactly as a real run does, start or
+end) and the leftover check, print 'CLEANUP_SECONDS: <s>', 'LEFTOVERS: <n>'
+and 'TOTAL: N PASS, M FAIL' (one check: zero fixture rows remain); no
+seeding, no checks, no regression, no npm. Exits 0 when clean.
 """
 
 from __future__ import annotations
@@ -76,6 +90,7 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 import main  # noqa: E402
@@ -313,65 +328,6 @@ async def operator_conn():
     return await connect(dsn)
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete for a FIXTURE-ID parent (this run's users / roles / orgs only)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
-async def fk_order(conn, tables: list[str]) -> list[str]:
-    edges = {t: set() for t in tables}
-    rows = await conn.fetch("""
-        SELECT cn.nspname || '.' || cc.relname AS child, pn.nspname || '.' || pc.relname AS parent
-        FROM pg_constraint c JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-        JOIN pg_class pc ON pc.oid = c.confrelid JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-        WHERE c.contype = 'f'""")
-    for r in rows:
-        if r["child"] in edges and r["parent"] in edges and r["child"] != r["parent"]:
-            edges[r["child"]].add(r["parent"])
-    children_of = {t: {c for c, ps in edges.items() if t in ps} for t in tables}
-    out, done = [], set()
-    while len(out) < len(tables):
-        ready = [t for t in tables if t not in done and children_of[t] <= done]
-        if not ready:
-            raise RuntimeError(f"FK cycle among {sorted(set(tables) - done)}")
-        for t in ready:
-            out.append(t)
-            done.add(t)
-    return out
-
-
 async def fixture_security_ids(conn) -> list:
     rows = await conn.fetch(
         "SELECT DISTINCT global_security_id FROM portfolio.securities_global_identifiers WHERE id_value LIKE $1",
@@ -390,75 +346,48 @@ async def org_tables(conn) -> list[str]:
         "'information_schema') ORDER BY 1")]
 
 
-async def sweep_fixture_orgs(conn, orgs: list, skip: set, log: list[str]) -> None:
-    """Rows under THIS RUN's fixture orgs in any table the plan does not name. Keyed by this run's org ids only
-    (never another script's leftover orgs); child-before-parent from pg_constraint."""
-    assert not set(orgs) & set(FOREIGN_FIXTURE_ORGS)
-    found = []
-    for t in await org_tables(conn):
-        if t in skip:
-            continue
-        if await conn.fetchval(f"SELECT EXISTS (SELECT 1 FROM {t} WHERE org_id = ANY($1::uuid[]))", orgs):
-            found.append(t)
-    if not found:
-        return
-    for t in await fk_order(conn, found):
-        status = await conn.execute(f"DELETE FROM {t} WHERE org_id = ANY($1::uuid[])", orgs)
-        n = int(status.rsplit(" ", 1)[-1])
-        if n:
-            log.append(f"{t}: {n} (sweep)")
-
-
 async def teardown() -> list[str]:
     """Operator connection, the teardown GUCs, FK child-before-parent, every DELETE keyed by this run's fixture
     ids. Audit, events, todos and workflow rows of this run go before the fixture users."""
     log: list[str] = []
     op = await operator_conn()
     try:
-        async with op.transaction():
-            await op.execute("SELECT set_config('execution.teardown', 'fixture', true), "
-                             "set_config('models.teardown', 'fixture', true), "
-                             "set_config('replica.teardown', 'fixture', true)")
-            secs = await fixture_security_ids(op)
-            users = list(USERS)
-            orgs = FIXTURE_ORGS
-            by_org = "org_id = ANY($1::uuid[])"
-            org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
-            plan = {t: (by_org, [orgs]) for t in (
-                "public.instruction_settlements", "public.account_authority_settings", "public.household_authority",
-                "public.xray_lines", "public.xray_runs", "public.stale_confirmations", "public.held_away_records",
-                "public.held_away_imports", "public.held_away_sources", "public.loss_bank_entries",
-                "public.harvest_candidates", "public.harvest_runs", "public.rebalance_proposal_trades",
-                "public.account_transition_plans", "public.rebalance_proposals", "public.account_model_links",
-                "public.execution_instruction_events", "public.execution_fills", "public.execution_instruction_lots",
-                "public.execution_instructions", "public.fee_exclusions", "public.fee_assignments",
-                "public.domain_event_deliveries", "public.domain_events", "public.workflow_run_steps",
-                "public.agent_proposals", "public.workflow_runs", "public.workflow_steps", "public.workflow_versions",
-                "public.workflow_definitions", "portfolio.replica_registry_keys", "portfolio.model_events",
-                "portfolio.model_version_positions", "portfolio.model_sleeves", "portfolio.model_versions",
-                "portfolio.models", "portfolio.replica_securities", "portfolio.tax_lots", "portfolio.transactions",
-                "portfolio.positions", "portfolio.assets", "public.account_balances_daily", "public.account_owners",
-                "public.accounts", "public.households", "public.entities", "public.org_settings")}
-            plan["public.member_todos"] = org_or_user
-            plan["public.audit_log"] = org_or_user
-            plan["portfolio.securities_global_identifiers"] = ("global_security_id = ANY($1::uuid[])", [secs])
-            plan["portfolio.securities_global"] = ("id = ANY($1::uuid[])", [secs])
-            exists = {r["t"] for r in await op.fetch(
-                "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE c.relkind = 'r'")}
-            if "public.assistant_activities" in exists:
-                plan["public.assistant_activities"] = org_or_user
-            for table in await fk_order(op, [t for t in plan if t in exists]):
-                where, args = plan[table]
-                status = await op.execute(f"DELETE FROM {table} WHERE {where}", *args)
-                n = int(status.rsplit(" ", 1)[-1])
-                if n:
-                    log.append(f"{table}: {n}")
-            await sweep_fixture_orgs(op, orgs, set(plan), log)
-            await delete_tree(op, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                              [users, f"%{TAG}%"], log=log)
-            await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [orgs], log=log)
-            await delete_tree(op, "public.organizations", "id = ANY($1::uuid[])", [orgs], log=log)
+        secs = await fixture_security_ids(op)
+        users = list(USERS)
+        orgs = FIXTURE_ORGS
+        # this run's orgs only — never another script's leftover orgs (the helper also refuses any FK-derived row
+        # outside these orgs)
+        assert not set(orgs) & set(FOREIGN_FIXTURE_ORGS)
+        by_org = "org_id = ANY($1::uuid[])"
+        org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
+        plan = {t: (by_org, [orgs]) for t in (
+            "public.instruction_settlements", "public.account_authority_settings", "public.household_authority",
+            "public.xray_lines", "public.xray_runs", "public.stale_confirmations", "public.held_away_records",
+            "public.held_away_imports", "public.held_away_sources", "public.loss_bank_entries",
+            "public.harvest_candidates", "public.harvest_runs", "public.rebalance_proposal_trades",
+            "public.account_transition_plans", "public.rebalance_proposals", "public.account_model_links",
+            "public.execution_instruction_events", "public.execution_fills", "public.execution_instruction_lots",
+            "public.execution_instructions", "public.fee_exclusions", "public.fee_assignments",
+            "public.domain_event_deliveries", "public.domain_events", "public.workflow_run_steps",
+            "public.agent_proposals", "public.workflow_runs", "public.workflow_steps", "public.workflow_versions",
+            "public.workflow_definitions", "portfolio.replica_registry_keys", "portfolio.model_events",
+            "portfolio.model_version_positions", "portfolio.model_sleeves", "portfolio.model_versions",
+            "portfolio.models", "portfolio.replica_securities", "portfolio.tax_lots", "portfolio.transactions",
+            "portfolio.positions", "portfolio.assets", "public.account_balances_daily", "public.account_owners",
+            "public.accounts", "public.households", "public.entities", "public.org_settings")}
+        plan["public.member_todos"] = org_or_user
+        plan["public.audit_log"] = org_or_user
+        plan["portfolio.securities_global_identifiers"] = ("global_security_id = ANY($1::uuid[])", [secs])
+        plan["portfolio.securities_global"] = ("id = ANY($1::uuid[])", [secs])
+        exists = {r["t"] for r in await op.fetch(
+            "SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE c.relkind = 'r'")}
+        if "public.assistant_activities" in exists:
+            plan["public.assistant_activities"] = org_or_user
+        res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
+                               gucs=("execution.teardown", "models.teardown", "replica.teardown"),
+                               cycle_order=("portfolio.model_library_entries",), label="verify_rep7b")
+        log = res["log"]
     finally:
         await close_conn(op)
     return log
@@ -1463,7 +1392,8 @@ async def y_routes(conn):
         "/api/v1/execution/instructions/{instruction_id}/settlement": "view_execution",
         "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away": "manage_execution",
     }
-    new = [k for k in gn if k not in gb]
+    # lotmethod: its routes are all under /api/v1/lot-method/ — not this script's
+    new = [k for k in gn if k not in gb and not k[1].startswith("/api/v1/lot-method/")]
     bad = [(k, gn[k].get("after")) for k in new if want.get(k[1]) not in str(gn[k].get("after"))]
     check(len(new) == len(want) and not bad, f"{len(want)} new routes, each naming its permission", f"{len(new)} "
           f"{bad[:4]}")
@@ -1489,7 +1419,14 @@ async def y_front_end(conn):
 def regression():
     section("[Y] Regression — verify_rep7.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s; only its TODAY fix "
             "changed")
-    code, diff, _ = run_cmd(["git", "diff", "-U0", BEFORE_REF, "--", "apps/api/scripts/verify_rep7.py"], REPO, 60)
+    # lotmethod: the rule below holds up to main @ merge rep7b (VC.LOTMETHOD_BASE); after it, BUGFIX2 B1 / B2 (the
+    # shared scoped cleanup, --cleanup-only, a nested timeout) may change verify_rep7.py — and nothing else may
+    code, diff, _ = run_cmd(["git", "diff", "-U0", BEFORE_REF, VC.LOTMETHOD_BASE, "--", "apps/api/scripts/verify_rep7.py"],
+                            REPO, 60)
+    b1_bad = VC.b1_diff_bad(git_show(VC.LOTMETHOD_BASE, "apps/api/scripts/verify_rep7.py"),
+                            (HERE / "verify_rep7.py").read_text(encoding="utf-8"))
+    check(not b1_bad, "verify_rep7.py: every change since the lotmethod base is BUGFIX2's cleanup (B1 / B2)",
+          f"{b1_bad[:4]}")
     changed = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
     # fix 1 — plus, exactly, y_routes' two self-checks scoped to rep7's own 19 routes (rep7b's routes excluded)
     scope = [ln.rstrip() for ln in changed[2:]]
@@ -1520,6 +1457,29 @@ async def run(name, fn, *args):
 DROPPED_CONNECTION = (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError, ConnectionError)
 
 
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown_retrying()
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await close_conn(conn)
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1530,6 +1490,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if "--cleanup-only" in sys.argv:
+        return await cleanup_only(conn)
     pre = real = None
     try:
         await run("pre-teardown", pre_teardown, conn)
