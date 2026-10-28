@@ -1177,7 +1177,7 @@ async def share_unwatermarked(request: Request, deal_id: UUID, doc_id: UUID, bod
         async with conn.transaction():
             principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
             row = await conn.fetchrow(
-                "UPDATE deal_documents SET share_unwatermarked = $3, share_unwatermarked_by = CASE WHEN $3 THEN $4 END, "
+                "UPDATE deal_documents SET share_unwatermarked = $3, share_unwatermarked_by = CASE WHEN $3 THEN $4::uuid END, "
                 "share_unwatermarked_at = CASE WHEN $3 THEN now() END, updated_at = now() WHERE id = $1 AND deal_id = $2 "
                 "AND deleted_at IS NULL RETURNING id, share_unwatermarked, share_unwatermarked_at",
                 doc_id, deal_id, body.share, UUID(str(principal.user_id)))

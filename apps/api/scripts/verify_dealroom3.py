@@ -948,7 +948,7 @@ async def y_pause(conn):
           and len(await notif(conn, "deal_access_paused_staff", U_STAFF, since)) == 1,
           "the investor and staff are told")
     code, env = await room(INV3, pl)
-    check(env["my_access"]["status"] == "paused" and env["my_access"]["paused_reason"],
+    check(bool(env["my_access"]["status"] == "paused" and env["my_access"]["paused_reason"]),
           "the room shows the paused reason", dumps(env.get("my_access")))
     code, out = await compliance(ENTITY[INV3], {"next_reverification_due": (t + timedelta(days=365)).isoformat()})
     acc = await access_row(conn, pl, INV3)

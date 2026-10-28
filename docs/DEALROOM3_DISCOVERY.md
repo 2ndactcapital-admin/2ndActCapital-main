@@ -37,9 +37,10 @@ viewer page images. All three go through one function, `services/deal_room_contr
   - **PNG / JPEG**: yes. The image is wrapped into a one-page PDF and stamped the same way (reportlab drawImage),
     and the viewer renders it like a PDF page.
   - **Everything else** (DOCX, XLSX, PPTX, CSV, ZIP, …): no. There is no pure-Python office → PDF path.
-- Task 3 rule for those other types when watermark is on: investors are refused with "This file type cannot be
-  watermarked — ask the publisher for a PDF", unless a manager marked the document `share_unwatermarked`. That
-  mark is recorded on the row (who, when) and audited.
+- Task 3 rule for those other types when watermark is on: investors are refused with the user-facing reason
+  "This file type cannot be watermarked — ask the publisher for a PDF." (`deal_room_watermark.NOT_WATERMARKABLE`),
+  unless a manager marked the document `share_unwatermarked`. That mark is recorded on the row (who, when) and
+  audited.
 - Under view-only, a type that cannot be rendered to pages is not viewable at all. Same message, because the
   original never leaves the server.
 

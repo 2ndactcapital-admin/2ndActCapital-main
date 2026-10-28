@@ -330,6 +330,8 @@ This file starts with the email item below.
 
 ## 00000000000000000000000000000000000000000000000000000000000000000. DEALROOM3 — Marketplace Deal Room Phase 3: watermarked downloads and a view-only page viewer, access expiry + pause on lapsed eligibility, the per-investor activity log (CSV), Q&A, investor advisors, Phase 3 notifications, the return-or-destroy notice, DRAFT 506(b) / 506(c) rules; verify WRITTEN, not yet run (2026-10-28)
 
+**UPDATE 2026-10-28 (dealroom3.fix1):** first run was 221 PASS / 4 FAIL. The publisher's `PUT …/share-unwatermarked` 500'd on every call: `CASE WHEN $3 THEN $4 END` left `$4` an untyped parameter inside CASE, which Postgres resolves to `text`, so the UPDATE failed at PREPARE with `DatatypeMismatchError: column "share_unwatermarked_by" is of type uuid but expression is of type text` (data-independent — the route could never succeed). Fixed with `$4::uuid`; the "investor receives it as is" FAIL was only that cascade (the download policy reads the live column). Also: verify `y_pause` wrapped the paused-reason check in `bool(...)` (it stopped the section early, so the restore checks after it have not run yet), and the 1b discovery reason was re-wrapped onto one line. Verify NOT re-run (WSL memory).
+
 **Run:** `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_dealroom3.py 2>&1 | grep -E "^\[FAIL\]|^\[FIND\]|^TOTAL"`
 (`--cleanup-only` for teardown alone). The script runs node tests, `npm run build` and, flat after teardown, the
 regression `verify_dealroom2.py` (VERIFY_NESTED=1, 2700 s). The sprint ran neither the verify script nor the build.
