@@ -1721,6 +1721,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   option_terms                             jsonb
 --   PRIMARY KEY execution_instructions_pkey: (id)
 
 -- ===== external_access_grants =====
@@ -2491,6 +2492,52 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY notifications_pkey: (id)
 
+-- ===== option_settlement_entries =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   package_id                               uuid NOT NULL
+--   leg_id                                   uuid NOT NULL
+--   contract_id                              uuid
+--   account_id                               uuid
+--   expiry                                   date NOT NULL
+--   settlement_level                         numeric
+--   settlement_quote_id                      uuid
+--   intrinsic_per_contract                   numeric
+--   contracts                                numeric
+--   amount                                   numeric
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   confirm_task_id                          uuid
+--   confirmed_by                             uuid
+--   confirmed_at                             timestamp with time zone
+--   note                                     text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY option_settlement_entries_pkey: (id)
+
+-- ===== options_tax_gate_results =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   proposal_id                              uuid NOT NULL
+--   run_id                                   uuid NOT NULL
+--   trade_id                                 uuid
+--   leg_role                                 text
+--   rule                                     text NOT NULL
+--   outcome                                  text NOT NULL
+--   reason                                   text NOT NULL
+--   pending_counsel                          boolean NOT NULL DEFAULT false
+--   inputs                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   evaluated_by                             uuid
+--   evaluated_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY options_tax_gate_results_pkey: (id)
+
 -- ===== org_ai_spend_cache =====
 --   org_id                                   uuid NOT NULL
 --   period_start                             date NOT NULL
@@ -2736,6 +2783,7 @@
 --   system_to                                timestamp with time zone
 --   wash_sale                                jsonb
 --   lot_method                               text
+--   option_leg                               jsonb
 --   PRIMARY KEY rebalance_proposal_trades_pkey: (id)
 
 -- ===== rebalance_proposals =====
@@ -3573,6 +3621,22 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY user_key_dates_pkey: (id)
 
+-- ===== portfolio.adviser_quotes =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   kind                                     text NOT NULL
+--   value                                    numeric NOT NULL
+--   source                                   text NOT NULL
+--   as_of                                    timestamp with time zone NOT NULL
+--   entered_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY adviser_quotes_pkey: (id)
+
 -- ===== portfolio.asset_identifiers =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   asset_id                                 uuid NOT NULL
@@ -4293,6 +4357,104 @@
 --   notes                                    text
 --   PRIMARY KEY note_terms_stp_policy_pkey: (id)
 
+-- ===== portfolio.option_contracts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   global_security_id                       uuid NOT NULL
+--   underlying_global_security_id            uuid NOT NULL
+--   underlying_kind                          text NOT NULL
+--   option_type                              text NOT NULL
+--   strike                                   numeric NOT NULL
+--   expiry                                   date NOT NULL
+--   exercise_style                           text NOT NULL
+--   settlement                               text NOT NULL
+--   is_flex                                  boolean NOT NULL
+--   multiplier                               numeric NOT NULL
+--   occ_symbol                               text
+--   exchange_listed                          boolean NOT NULL DEFAULT true
+--   broad_based_index                        boolean NOT NULL DEFAULT false
+--   is_mini                                  boolean NOT NULL DEFAULT false
+--   mini_ratio                               numeric
+--   terms_key                                text NOT NULL
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY option_contracts_pkey: (id)
+
+-- ===== portfolio.option_package_legs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   package_id                               uuid NOT NULL
+--   leg_no                                   integer NOT NULL
+--   role                                     text NOT NULL
+--   option_type                              text
+--   direction                                text NOT NULL
+--   ratio                                    numeric NOT NULL
+--   strike_pct                               numeric
+--   strike_level                             numeric
+--   expiry                                   date
+--   contract_id                              uuid
+--   exercise_style                           text
+--   settlement                               text
+--   is_flex                                  boolean
+--   multiplier                               numeric
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY option_package_legs_pkey: (id)
+
+-- ===== portfolio.option_packages =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_security_id                      uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   model_version_id                         uuid
+--   terms_version_id                         uuid
+--   package_no                               integer NOT NULL
+--   kind                                     text NOT NULL
+--   core_source                              text NOT NULL
+--   core_model_id                            uuid
+--   underlying_global_security_id            uuid NOT NULL
+--   outcome_start                            date NOT NULL
+--   outcome_end                              date NOT NULL
+--   start_level                              numeric
+--   start_level_quote_id                     uuid
+--   cap_pct                                  numeric
+--   buffer_pct                               numeric
+--   floor_pct                                numeric
+--   stated_cap_pct                           numeric
+--   stated_buffer_pct                        numeric
+--   stated_floor_pct                         numeric
+--   call_rule                                text
+--   call_otm_pct                             numeric
+--   call_delta                               numeric
+--   tenor_days                               integer
+--   coverage_pct                             numeric
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   rolled_from_id                           uuid
+--   notes                                    text
+--   maker_ids                                ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   status_reason                            text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY option_packages_pkey: (id)
+
 -- ===== portfolio.positions =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -4649,6 +4811,7 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   instrument_classes                       ARRAY
 --   PRIMARY KEY replica_terms_field_registry_pkey: (id)
 
 -- ===== portfolio.replica_terms_versions =====
