@@ -1,4 +1,4 @@
-# Deal Room — Phases 1 and 2 (DEALROOM1, DEALROOM2, 2026-10-22)
+# Deal Room — Phases 1, 2 and 3 (DEALROOM1, DEALROOM2 2026-10-22; DEALROOM3 2026-10-28)
 
 The Marketplace Deal Room: who may publish a deal, the data room's nine
 folders and their access levels, the agreements an investor signs, the
@@ -309,7 +309,158 @@ Phase 1 signatures get PDFs the same way.
   - PDF upload and replacement
   - "Use as master NDA"
 
+## Phase 3 (DEALROOM3, 2026-10-28) — control and insight
+
+Schema: `docs/dealroom3_part1.sql` (applied by `apps/api/scripts/_apply_dealroom3.py --schema`; `--check` re-proves
+it). Discovery: `docs/DEALROOM3_DISCOVERY.md`. Verify: `apps/api/scripts/verify_dealroom3.py`. Code:
+`services/deal_room_control.py` (one rule each), `services/deal_room_watermark.py` (pure PDF functions), routes in
+`routers/deal_room.py`, front end `components/dealroom/{DocumentViewer,QAPanel,AdvisorsPanel,ActivityPanel}.jsx`.
+
+### Settings (new rows in `deal_room_settings`, valid-axis history as before)
+
+| Setting | Values | Default |
+|---|---|---|
+| Downloads | `allowed` · `view_only` | allowed |
+| Watermark | `on` · `off` | **on for new deals**; every deal that existed before the migration keeps `off` (today's signed-URL download) until a manager turns it on |
+| Access period | `none` · `until_date` (+ date) · `days_after_approval` (+ 1–3650 days) | none |
+| Expiry notice | days before the end date (0–90) | 7 |
+| Notify publisher on | any of `request`, `signature`, `first_folder_open`, `question` | request, signature, question |
+| Offering type | `not_set` · `rule_506b` · `rule_506c` · `other` (DRAFT rules, below) | not_set |
+
+Labels come from config (`deal_room_downloads_*`, `deal_room_watermark_*`, `deal_room_access_period_*`,
+`deal_room_notify_*`, `deal_room_offering_*`, …), seeded for every org by the migration.
+
+### Documents: watermark and view-only
+
+ONE policy: `deal_room_control.document_policy`. Every document route goes through it. The folder rule
+(`deal_room_folder_open`) has always decided which folders open. The policy decides what an opened document gives:
+
+| Caller / room | Download | Viewer |
+|---|---|---|
+| Manager (publisher, delegate, staff, org admin, Super Admin) | the original (signed URL) | pages, unwatermarked |
+| Investor/advisor, watermark off, downloads allowed | today's signed URL | pages |
+| … watermark on | **no URL**: `…/documents/{id}/download` names `…/documents/{id}/file`, which streams a freshly watermarked PDF | pages, each watermarked |
+| … view_only | none: the same 404 as any refusal | pages only; the UI says view-only cannot stop screenshots |
+
+**What can be watermarked:**
+- PDF and PNG / JPEG (an image becomes one stamped page).
+- Office and other files are refused for investors with "This file type cannot be watermarked — ask the publisher for
+  a PDF", unless a manager marks the document **share unwatermarked**. That mark is recorded on the row (who, when)
+  and audited.
+
+Downloads are capped at 400 pages / 40 MB of source. Agreement pages and signed copies are never watermarked: they are
+the signed record.
+
+**The stamp, on every page:** the reader's name (an advisor's reads "…, advisor to <investor>"), the investing entity,
+the deal, the date and time (UTC), and the watermark id.
+
+**The watermark id lookup.** Each rendition (a download, or one viewer page) first writes a `deal_room_watermarks`
+row: reader, entity, the investor an advisor acts for, document, page, source SHA-256 and stamp text. Its id is what
+is printed. A manager resolves a leaked copy with `GET /deal-room/deals/{id}/watermarks/{watermark_id}`. The register
+is append-only.
+
+### Access expiry and pause
+
+- **Approval stamps `deal_access.access_ends_on`.** It comes from the access period: the date given, or the approval
+  date plus N days. A level change keeps it; restores carry it.
+- **The sweep** (`access_tick` in the scheduler cron; never an `is_test` org):
+  - The end date itself is still open; the next day the row becomes `expired`. The investor and the publisher are told.
+  - The "expiring" notice goes N days before, once per end date.
+  - A granted row whose investing entity no longer passes becomes `paused`. That means the re-verification date has
+    passed, KYC or OFAC no longer clears, or under 506(c) the accreditation is no longer third-party verified. The
+    paused row keeps `prior_level` and a `paused_reason`; the investor and staff are told.
+  - A paused row whose entity passes again is restored at its level, logged (`deal_access.restore`).
+- **At once.** `PUT /entities/{id}/compliance` runs the same pause / restore for that entity in its own transaction.
+  That route now also accepts `accreditation_verified_date` / `next_reverification_due`.
+- **Extend.** A manager extends from the grid (`decide` action `extend` + `ends_on`, audited). An expired row reopens
+  at the level it last had.
+- **What closes.** `deal_room_folder_open` opens nothing above public unless the row is `granted`. So expired, paused,
+  revoked and re-sign rows close at once. Those investors still see their signatures and signed copies.
+
+### Activity log and retention
+
+`deal_room_activity` records every investor and advisor action:
+- `room_open`
+- `folder_open` (the first one can notify the publisher)
+- `view_page` (with its watermark id)
+- `download` (with its watermark id when stamped)
+- `question`
+- `answer_read`
+
+Managers read it per investor, per document or as every event (`GET …/activity?view=investor|document|events`,
+`&format=csv`). Investors never see anyone's activity. Entering the room shows: "Opens, page views and downloads in
+this data room are recorded, and the publisher can see them."
+
+**Retention.** The activity log and the watermark register are append-only:
+- No UPDATE / DELETE policy exists, so app_service matches zero rows.
+- A trigger refuses UPDATE / DELETE / TRUNCATE.
+- The only exception is a verify teardown on an `is_test` org (operator DSN + `dealroom.activity_teardown`).
+
+Rows are kept after access ends, after a revoke and after the deal closes. There is no delete path.
+
+### Q&A
+
+Investors with granted access ask a question, either generally or about a folder they can open. Managers answer,
+withdraw (with a reason) or merge duplicates (with a reason). Questions are kept on the system axis (id stable,
+history rows); a re-answer archives the previous answer.
+
+**Who sees an answer.** Every investor (and active advisor) whose access reaches the question's folder; a general
+question reaches after_agreements. Each of them is notified, and so is the asker.
+
+**Asker identity.** It is shown to managers only. Investors get `mine` and nothing else. The 07 Q&A folder lists the
+answered questions the reader may see.
+
+### Investor advisors
+
+**Inviting.** An investor with granted access names an advisor (name, firm, role, email):
+- An existing user of the deal's org is linked.
+- An unknown email is invited through `services.invites.create_invite`, into the deal's org.
+- An address in another firm is refused (409).
+
+**Acknowledgement first.** The advisor signs an acknowledgement (typed name + consent + the text's hash: same
+confidentiality, the investor responsible) before seeing anything.
+
+**Scope.** Once active, the folder function evaluates them as the investor: exactly the investor's open folders, never
+more. They cannot sign, request, ask or invite (403).
+
+**Ending.**
+- Revoking or declining the investor revokes their advisors.
+- Expiry or pause closes the advisors' folders in the same statement.
+- The investor can remove an advisor, and so can the publisher (reason recorded).
+
+Advisors appear on the grid under their investor, and in My deal access.
+
+### Return-or-destroy notice
+
+Revoke can carry `send_return_notice`. The joinder's return-or-destroy notice is then:
+- recorded against the revoked row (text + SHA-256), in `deal_room_return_notices`, valid-axis;
+- sent in-app;
+- acknowledged by the investor with their typed name (in the room or in My deal access).
+
+The grid shows the notice as sent, then as acknowledged.
+
+### Notifications
+
+All through `NotificationBus`, in-app and email (recorded `pending` for the existing worker), published after the
+deciding transaction commits.
+- **Investor:** access approved, new document in a folder they can open, access expiring, access expired / paused /
+  restored, question answered, return-or-destroy notice.
+- **Publisher users + delegates:** new request, signature, question asked, first open of a folder. Each one only when
+  the deal's setting includes it.
+
+### Offering rules — DRAFT, pending counsel review
+
+Labelled so in the UI (config labels and the envelope's `notices.offering_draft`).
+- **rule_506b.** The teaser, room, deal page, marketplace list and Document Search are visible only to an investor
+  whose relationship with the firm began strictly before the deal's `published_at` date. One SQL definition:
+  `deal_room_offering_open`.
+  - The relationship date is the earliest `crm_relationship_dates.established_on` over the entities the user acts for.
+    When none is recorded, it is that entity's CRM `created_at`.
+  - Staff record it with `PUT /deal-room/relationship-dates/{entity}`.
+  - Publisher users and delegates always see their deal. An advisor is judged by their investor.
+- **rule_506c.** Eligibility additionally requires accreditation `third_party_verified`; self-certified is refused.
+- **not_set / other.** Today's behaviour.
+
 ## Later phases (not built)
 
-- **Phase 3** — watermarking, view-only documents, access expiry, activity
-  analytics, Q&A, investor advisors, 506(b)/(c) rules.
+- Office-file conversion to PDF (so office files can be watermarked), and an investor-facing view of their own activity.

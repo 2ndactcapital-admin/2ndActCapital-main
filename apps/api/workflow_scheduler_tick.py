@@ -77,6 +77,11 @@ Studio registry entry (once per day by a unique index; idempotent per file;
 failures recorded per fund on portfolio.replica_refresh_events, exit code 1
 when the step itself failed). REPLICA_HOLDINGS_AUTO_REFRESH=0 turns it off.
 
+DEAL-ROOM ACCESS (dealroom3). ``services.deal_room_control.access_tick`` sweeps
+every NON-test org with live deal access: granted → expired the day after the
+access end date, the "expiring" notice, granted → paused on a lapsed
+eligibility, paused → granted once it passes. Its own try, like the others.
+
 EXECUTE-BY HANDLING (rep2). Last, ``services.execution.expire_tick`` applies
 each overdue open execution instruction's own if-not-filled policy (expire /
 carry to today / ask a person) — the one automatic step in the instruction
@@ -106,6 +111,7 @@ import sys
 import asyncpg
 
 from services.database import close_pool, get_pool
+from services.deal_room_control import access_tick
 from services.edgar_index_schedule import maybe_refresh_index
 from services.execution import expire_tick
 from services.rebalance_proposals import proposals_tick
@@ -159,6 +165,18 @@ async def main() -> int:
                       f"{ {k: len(v) for k, v in expiry.items()} }")
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] execution expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # DEALROOM3 — deal-room access: expire at the end date, the expiring
+        # notice, pause on a lapsed eligibility and restore. Never a test org.
+        try:
+            rooms = await access_tick(pool)
+            moved = {k: sum(len(o.get(k, [])) for o in rooms.values()) for k in ("expired", "paused", "restored")}
+            if any(moved.values()):
+                print(f"[scheduler] deal-room access: {moved}")
+            for org, o in rooms.items():
+                for e in o.get("errors", []):
+                    print(f"[scheduler] deal-room access ({org}): {e}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] deal-room access failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         try:
             props = await proposals_tick(pool)
             errs = [e for o in props.values() for e in o.get("errors", [])]

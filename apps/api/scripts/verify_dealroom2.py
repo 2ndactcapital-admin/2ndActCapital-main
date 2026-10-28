@@ -27,10 +27,11 @@ firm template that left draft is kept forever (trigger). The ONLY removal path
 is the privileged fixture path of docs/dealroom1_part1.sql / dealroom2_part1.sql:
 the operator DSN (DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP, role postgres) with
 dealroom.signature_teardown = 'fixture' in its transaction, scoped to the
-fixture orgs (signatures: test chain only). Everything else goes FK
-child-before-parent (pg_constraint, recursive) on app_service, then every
-counted table is re-read for its exact pre-test count; real note_gold_values,
-real deals, real signatures (the platform chain) and real templates must be
+fixture orgs (signatures: test chain only). DEALROOM3 moved the whole
+teardown onto scripts/_verify_cleanup.py (one scoped transaction, FK closure
+over this run's fixture ids only — no recursive FK walk); every counted table
+is then re-read for its exact pre-test count; real note_gold_values, real
+deals, real signatures (the platform chain) and real templates must be
 unchanged.
 
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
@@ -67,8 +68,10 @@ hydrate()  # BEFORE main is imported (Settings is lru_cached)
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402
 
 BEFORE_REF = "0823d72"   # dealroom2-work base — main after the DEALROOM1 merge + snapshot
+DEALROOM2_REF = "994d8ce"  # this sprint's own commit (its routes, for the y_routes count)
 TAG = "dealroom2verify"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 
@@ -227,43 +230,12 @@ async def real_fingerprints(conn) -> dict:
     }
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete, FKs read from pg_constraint (recursively)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
+# DEALROOM3 — the teardown moved onto the shared scoped helper
+# (scripts/_verify_cleanup.py, lotmethod/BUGFIX2): ONE transaction on the
+# operator DSN with the immutability GUCs set LOCAL, keyed only by this run's
+# fixture ids, FK closure over materialised values, a refusal if any row
+# outside the fixture orgs would be reached. Replaces fk_children /
+# delete_tree / purge_privileged (the recursive FK walk). No assertion changed.
 async def operator_conn():
     dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
     if not dsn:
@@ -271,60 +243,31 @@ async def operator_conn():
     return await connect(dsn)
 
 
-async def purge_privileged(log: list) -> None:
-    """THE privileged fixture path (module docstring), fixture orgs only:
-    test-chain signatures → agreement versions → master NDAs → deal agreements
-    → the run's templates (firm rows of the fixture orgs + its own platform
-    rows, keyed by the run tag)."""
+async def teardown(conn) -> list[str]:
+    users = list(USERS)
     op = await operator_conn()
     try:
-        async with op.transaction():
-            await op.execute("SELECT set_config('dealroom.signature_teardown', 'fixture', true)")
-            for label, sql, args in (
-                ("deal_signatures", "DELETE FROM deal_signatures WHERE org_id = ANY($1::uuid[]) AND chain = 'test'",
-                 [FIXTURE_ORGS]),
-                ("agreement_versions", "DELETE FROM agreement_versions WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("deal_master_nda_deals", "DELETE FROM deal_master_nda_deals WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("deal_master_ndas", "DELETE FROM deal_master_ndas WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("deal_agreements", "DELETE FROM deal_agreements WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("agreement_templates", "DELETE FROM agreement_templates WHERE org_id = ANY($1::uuid[]) "
-                                        "OR (org_id IS NULL AND key LIKE $2)", [FIXTURE_ORGS, f"{TAG}%"]),
-            ):
-                status = await op.execute(sql, *args)
-                n = int(status.rsplit(" ", 1)[-1])
-                if n:
-                    log.append(f"{label} (privileged path): {n}")
-    finally:
-        await op.close()
-
-
-async def teardown(conn) -> list[str]:
-    log: list[str] = []
-    await purge_privileged(log)
-    users = list(USERS)
-    async with conn.transaction():
-        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
-        real_refs = await conn.fetchval(
+        real_refs = await op.fetchval(
             "SELECT count(*) FROM deals WHERE NOT (org_id = ANY($1::uuid[])) AND (created_by = ANY($2::uuid[]) "
             "OR submitted_by = ANY($2::uuid[]) OR reviewed_by = ANY($2::uuid[]))", FIXTURE_ORGS, users)
         if real_refs:
             raise RuntimeError(f"{real_refs} real deal(s) reference a fixture user — refusing to delete it")
-        real_tpl = await conn.fetchval(
+        real_tpl = await op.fetchval(
             "SELECT count(*) FROM agreement_templates WHERE (created_by = ANY($1::uuid[]) OR published_by = "
             "ANY($1::uuid[])) AND NOT (COALESCE(org_id, $2) = ANY($3::uuid[])) AND key NOT LIKE $4",
             users, NO_ORG, FIXTURE_ORGS, f"{TAG}%")
         if real_tpl:
             raise RuntimeError(f"{real_tpl} real template(s) reference a fixture user — refusing to delete it")
-        await conn.execute("DELETE FROM audit_log WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
-                           FIXTURE_ORGS, users)
-        await conn.execute("DELETE FROM config WHERE org_id = ANY($1::uuid[])", FIXTURE_ORGS)
-        await conn.execute("DELETE FROM member_todos WHERE user_id = ANY($1::uuid[]) OR org_id = ANY($2::uuid[])",
-                           users, FIXTURE_ORGS)
-        await delete_tree(conn, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                          [users, f"%{TAG}%"], log=log)
-        await delete_tree(conn, "public.organizations", "id = ANY($1::uuid[])", [FIXTURE_ORGS], log=log)
-    return log
+        org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [FIXTURE_ORGS, users])
+        plan = {"public.audit_log": org_or_user, "public.member_todos": org_or_user,
+                "public.agreement_templates": ("org_id = ANY($1::uuid[]) OR (org_id IS NULL AND key LIKE $2)",
+                                               [FIXTURE_ORGS, f"{TAG}%"])}
+        res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=users, user_sub_like=f"%{TAG}%", plan=plan,
+                               gucs=("dealroom.signature_teardown", "dealroom.activity_teardown"),
+                               label="verify_dealroom2")
+        return res["log"]
+    finally:
+        await op.close()
 
 
 async def leftovers(conn) -> int:
@@ -1264,7 +1207,11 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
+    # DEALROOM3 [FIND]: this count was already failing on main (rep1–rep7 and
+    # DEALROOM3 added routes after this sprint); DEALROOM2's own routes are the
+    # ones present at its own commit (DEALROOM2_REF) and new since BEFORE_REF.
+    own = gates(json.loads(git_show(DEALROOM2_REF, "docs/AUTHZ1_ROUTES.json") or "{}"))
+    new = [k for k in gn if k not in gb and k in own]
     check(len(new) == 14 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
           "14 new routes, all on the /deal-room surface", f"{len(new)}: {[k[1] for k in new][:3]}")
     ungated = [k for k in new if gn[k]["after"] == "none beyond auth"]

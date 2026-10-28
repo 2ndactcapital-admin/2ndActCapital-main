@@ -41,6 +41,14 @@ is one published agreement that also counts on every covered deal for the SAME
 investing entity (``deal_master_ndas``). Signature rows keep their Phase 1
 canonical record (``record_version`` 1); Phase 2 rows hash a wider record (2).
 
+DEALROOM3 (Phase 3) adds control and insight — mostly in
+``services.deal_room_control``: watermarked / view-only documents, access
+expiry and pause on a lapsed eligibility (statuses ``expired`` / ``paused``),
+the activity log, Q&A, investor advisors (role ``advisor`` here: can view,
+never manage; the folder function evaluates an ACTIVE advisor as their
+investor), return-or-destroy notices and the DRAFT 506(b) / 506(c) offering
+rules (``deal_room_offering_open`` in SQL; 506(c) in ``evaluate_eligibility``).
+
 The custody cliff: nothing here is agent-reachable. Signing is the signer's own
 request (typed name + consent) — no action-registry entry exists for it.
 """
@@ -77,7 +85,7 @@ LEVELS = ("public", "after_agreements", "after_approval", "named_only")
 LEVEL_RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
 GRANT_LEVELS = ("after_agreements", "after_approval")
 STATUSES = ("viewing", "requested", "not_eligible", "signed_awaiting", "granted", "declined", "revoked",
-            "resign_required")
+            "resign_required", "expired", "paused")
 RESIGN_POLICIES = ("keep", "resign")
 MASTER_SCOPES = ("all", "selected")
 AGREEMENT_KINDS = ("template", "upload")
@@ -85,6 +93,17 @@ SIGNABLE_STATUSES = ("requested", "resign_required")
 ELIGIBILITY_RULES = ("none", "accredited", "qualified_purchaser", "qualified_client")
 APPROVAL_MODES = ("automatic", "publisher")
 SPONSOR_DISPLAY = ("name", "code_name")
+# DEALROOM3 settings
+DOWNLOADS = ("allowed", "view_only")
+WATERMARK = ("on", "off")
+ACCESS_PERIODS = ("none", "until_date", "days_after_approval")
+NOTIFY_EVENTS = ("request", "signature", "first_folder_open", "question")
+OFFERING_TYPES = ("not_set", "rule_506b", "rule_506c", "other")
+ADVISOR_ROLES = ("lawyer", "accountant", "financial_adviser", "other")
+ADVISOR_STATUSES = ("invited", "active", "revoked")
+QUESTION_STATUSES = ("open", "answered", "withdrawn", "merged")
+ACTIVITY_ACTIONS = ("room_open", "folder_open", "view_page", "download", "question", "answer_read")
+THIRD_PARTY_VERIFIED = "third_party_verified"
 
 ACCREDITED_STATUSES = ("self_certified", "third_party_verified")
 OFAC_CLEAR = ("passed", "false_positive")
@@ -142,6 +161,15 @@ def vocabularies(lab: dict) -> dict:
         "resign_policies": vocab(lab, "deal_room_resign_", RESIGN_POLICIES),
         "master_scopes": vocab(lab, "deal_room_master_scope_", MASTER_SCOPES),
         "agreement_kinds": vocab(lab, "deal_room_kind_", AGREEMENT_KINDS),
+        "downloads": vocab(lab, "deal_room_downloads_", DOWNLOADS),
+        "watermark": vocab(lab, "deal_room_watermark_", WATERMARK),
+        "access_periods": vocab(lab, "deal_room_access_period_", ACCESS_PERIODS),
+        "notify_events": vocab(lab, "deal_room_notify_", NOTIFY_EVENTS),
+        "offering_types": vocab(lab, "deal_room_offering_", OFFERING_TYPES),
+        "advisor_roles": vocab(lab, "deal_room_advisor_role_", ADVISOR_ROLES),
+        "advisor_statuses": vocab(lab, "deal_room_advisor_status_", ADVISOR_STATUSES),
+        "question_statuses": vocab(lab, "deal_room_question_status_", QUESTION_STATUSES),
+        "activity_actions": vocab(lab, "deal_room_activity_", ACTIVITY_ACTIONS),
     }
 
 
@@ -270,9 +298,24 @@ async def default_publisher(conn, org_id, user_id, *, staff: bool) -> tuple[UUID
 # ── Rights ─────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class Rights:
-    role: str           # super_admin | staff | org_admin | publisher | delegate | none
+    role: str           # super_admin | staff | org_admin | publisher | delegate | advisor | none
     can_manage: bool
     can_view: bool
+    advisor_of: UUID | None = None      # DEALROOM3: the investor an advisor acts for
+    advisor_status: str | None = None   # invited | active
+
+
+async def advisor_row(conn, deal_id, user_id):
+    """The caller's live advisor row on a deal (invited or active), or None."""
+    return await conn.fetchrow(
+        "SELECT id, access_user_id, investor_entity_id, status, name, firm, role FROM deal_room_advisors "
+        "WHERE deal_id = $1 AND advisor_user_id = $2 AND valid_to IS NULL AND status IN ('invited', 'active')",
+        _uuid(deal_id), _uuid(user_id))
+
+
+async def offering_open(conn, deal_id, user_id) -> bool:
+    """The DRAFT 506(b) teaser rule (SQL deal_room_offering_open — one definition)."""
+    return bool(await conn.fetchval("SELECT deal_room_offering_open($1, $2)", _uuid(deal_id), _uuid(user_id)))
 
 
 async def deal_rights(conn, principal, deal) -> Rights:
@@ -299,7 +342,16 @@ async def deal_rights(conn, principal, deal) -> Rights:
             "SELECT 1 FROM deal_delegates WHERE deal_id = $1 AND user_id = $2 AND revoked_at IS NULL",
             deal["id"], _uuid(principal.user_id)):
         return Rights("delegate", True, True)
-    can_view = same_org and principal.has("view_deals") and str(deal["deal_status"]) in MEMBER_VISIBLE_STATUSES
+    visible = same_org and str(deal["deal_status"]) in MEMBER_VISIBLE_STATUSES
+    # DEALROOM3: an investor's advisor — only when they hold no access row of
+    # their own on this deal (then they are simply an investor). Can view;
+    # never manage, sign, request, ask or invite.
+    if visible and await live_access(conn, deal["id"], principal.user_id) is None:
+        adv = await advisor_row(conn, deal["id"], principal.user_id)
+        if adv is not None:
+            return Rights("advisor", False, await offering_open(conn, deal["id"], principal.user_id),
+                          advisor_of=adv["access_user_id"], advisor_status=adv["status"])
+    can_view = visible and principal.has("view_deals") and await offering_open(conn, deal["id"], principal.user_id)
     return Rights("none", False, can_view)
 
 
@@ -409,8 +461,10 @@ DOC_COLS = ("id, deal_id, folder_id, file_name, file_type, file_size_bytes, docu
 # The SQL predicate a NON-manager caller's deal documents must satisfy — used by
 # GET /deals/{id} and Document Search too. Legacy documents with no folder keep
 # their pre-DEALROOM1 rule (none remain after the backfill; fixtures may).
+# DEALROOM3: plus the DRAFT 506(b) offering rule (deal_room_offering_open), so
+# a deal hidden from the caller lists none of its documents anywhere.
 MEMBER_DOC_PREDICATE = (
-    "({a}.deleted_at IS NULL AND {a}.status = 'approved' AND ("
+    "({a}.deleted_at IS NULL AND {a}.status = 'approved' AND deal_room_offering_open({a}.deal_id, {u}) AND ("
     "({a}.folder_id IS NULL AND {a}.visible_to_members) "
     "OR ({a}.folder_id IS NOT NULL AND deal_room_folder_open({a}.folder_id, {u}))))"
 )
@@ -428,7 +482,11 @@ async def open_folder_ids(conn, deal_id, user_id) -> set:
 
 
 # ── Settings ───────────────────────────────────────────────────────────────
-SETTINGS_COLS = "eligibility_rule, approval_mode, sponsor_display, code_name, valid_from"
+SETTINGS_COLS = ("eligibility_rule, approval_mode, sponsor_display, code_name, valid_from, downloads, watermark, "
+                 "access_period, access_until, access_days, expiry_notice_days, notify_publisher_on, offering_type")
+SETTINGS_FIELDS = ("eligibility_rule", "approval_mode", "sponsor_display", "code_name", "downloads", "watermark",
+                   "access_period", "access_until", "access_days", "expiry_notice_days", "notify_publisher_on",
+                   "offering_type")
 
 
 async def room_settings(conn, deal_id) -> dict:
@@ -436,17 +494,21 @@ async def room_settings(conn, deal_id) -> dict:
         f"SELECT {SETTINGS_COLS} FROM deal_room_settings WHERE deal_id = $1 AND valid_to IS NULL",
         _uuid(deal_id))
     if row:
-        return dict(row)
-    # No row yet (a deal created before DEALROOM1 and not backfilled): the
-    # column defaults ARE the defaults — read them from the catalog, not code.
+        out = dict(row)
+        out["notify_publisher_on"] = list(out.get("notify_publisher_on") or [])
+        return out
+    # No row yet (a deal created before DEALROOM1 and not backfilled): today's
+    # behaviour — downloads allowed, no watermark (the migration's rule for
+    # existing deals), no period, offering not set.
     return {"eligibility_rule": "accredited", "approval_mode": "automatic", "sponsor_display": "name",
-            "code_name": None, "valid_from": None}
+            "code_name": None, "valid_from": None, "downloads": "allowed", "watermark": "off",
+            "access_period": "none", "access_until": None, "access_days": None, "expiry_notice_days": 7,
+            "notify_publisher_on": ["request", "signature", "question"], "offering_type": "not_set"}
 
 
 async def update_settings(conn, org_id, deal_id, changes: dict, *, actor) -> dict:
     cur = await room_settings(conn, deal_id)
-    new = {**{k: cur.get(k) for k in ("eligibility_rule", "approval_mode", "sponsor_display", "code_name")},
-           **changes}
+    new = {**{k: cur.get(k) for k in SETTINGS_FIELDS}, **changes}
     if new["eligibility_rule"] not in ELIGIBILITY_RULES:
         raise DealRoomError(422, f"eligibility_rule must be one of {', '.join(ELIGIBILITY_RULES)}")
     if new["approval_mode"] not in APPROVAL_MODES:
@@ -455,22 +517,77 @@ async def update_settings(conn, org_id, deal_id, changes: dict, *, actor) -> dic
         raise DealRoomError(422, "sponsor_display must be 'name' or 'code_name'")
     if new["sponsor_display"] == "code_name" and not (new.get("code_name") or "").strip():
         raise DealRoomError(422, "A code name is required when the teaser shows a code name.")
+    validate_phase3_settings(new)
     await conn.execute("UPDATE deal_room_settings SET valid_to = now() WHERE deal_id = $1 AND valid_to IS NULL",
                        _uuid(deal_id))
     await conn.execute(
         """
         INSERT INTO deal_room_settings (org_id, deal_id, eligibility_rule, approval_mode, sponsor_display,
-                                        code_name, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                        code_name, created_by, downloads, watermark, access_period, access_until,
+                                        access_days, expiry_notice_days, notify_publisher_on, offering_type)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::text[], $15)
         """, _uuid(org_id), _uuid(deal_id), new["eligibility_rule"], new["approval_mode"],
-        new["sponsor_display"], (new.get("code_name") or None), _uuid(actor))
+        new["sponsor_display"], (new.get("code_name") or None), _uuid(actor), new["downloads"], new["watermark"],
+        new["access_period"], new["access_until"], new["access_days"], int(new["expiry_notice_days"]),
+        list(new["notify_publisher_on"]), new["offering_type"])
     return await room_settings(conn, deal_id)
 
 
+def validate_phase3_settings(new: dict) -> None:
+    """DEALROOM3 settings — the same rules the table's CHECKs hold, as messages.
+    An access period's unused value is cleared, so switching period kinds works."""
+    if new["downloads"] not in DOWNLOADS:
+        raise DealRoomError(422, f"downloads must be one of {', '.join(DOWNLOADS)}")
+    if new["watermark"] not in WATERMARK:
+        raise DealRoomError(422, "watermark must be 'on' or 'off'")
+    if new["offering_type"] not in OFFERING_TYPES:
+        raise DealRoomError(422, f"offering_type must be one of {', '.join(OFFERING_TYPES)}")
+    if new["access_period"] not in ACCESS_PERIODS:
+        raise DealRoomError(422, f"access_period must be one of {', '.join(ACCESS_PERIODS)}")
+    if isinstance(new.get("access_until"), str):
+        new["access_until"] = date.fromisoformat(new["access_until"])
+    if new["access_period"] == "none":
+        new["access_until"] = new["access_days"] = None
+    elif new["access_period"] == "until_date":
+        new["access_days"] = None
+        if new.get("access_until") is None:
+            raise DealRoomError(422, "Choose the date access ends.")
+    else:
+        new["access_until"] = None
+        if not isinstance(new.get("access_days"), int) or not 1 <= new["access_days"] <= 3650:
+            raise DealRoomError(422, "Access days after approval must be a whole number from 1 to 3650.")
+    try:
+        n = int(new.get("expiry_notice_days"))
+    except (TypeError, ValueError):
+        n = -1
+    if not 0 <= n <= 90:
+        raise DealRoomError(422, "The expiry notice must be 0 to 90 days before the end date.")
+    notify = list(new.get("notify_publisher_on") or [])
+    bad = [e for e in notify if e not in NOTIFY_EVENTS]
+    if bad:
+        raise DealRoomError(422, f"Unknown notification event(s): {', '.join(bad)}")
+    new["notify_publisher_on"] = [e for e in NOTIFY_EVENTS if e in notify]
+
+
+def access_ends_on(settings: dict, today: date) -> date | None:
+    """The end date an approval stamps on the access row (access period)."""
+    from datetime import timedelta
+
+    if settings.get("access_period") == "until_date":
+        return settings.get("access_until")
+    if settings.get("access_period") == "days_after_approval":
+        return today + timedelta(days=int(settings["access_days"]))
+    return None
+
+
 # ── Eligibility ────────────────────────────────────────────────────────────
-async def evaluate_eligibility(conn, entity_id, rule: str, *, today: date | None = None) -> dict:
+async def evaluate_eligibility(conn, entity_id, rule: str, *, today: date | None = None,
+                               offering_type: str | None = None) -> dict:
     """Read the entity's CURRENT compliance_records row. KYC approved and OFAC
     clear are required under every rule; the rule adds accreditation / QP / QC.
+    DEALROOM3 (DRAFT, pending counsel review): under ``rule_506c`` the
+    accreditation must ALSO be third_party_verified — self-certification is
+    not enough — whatever the eligibility rule.
     Returns {eligible, rule, missing: [message…], record: {…}}."""
     today = today or date.today()
     row = await conn.fetchrow(
@@ -502,6 +619,13 @@ async def evaluate_eligibility(conn, entity_id, rule: str, *, today: date | None
             missing.append("Qualified purchaser status is not recorded on the accreditation basis.")
         if rule == "qualified_client" and not ("qualified_client" in basis or "qualified_purchaser" in basis):
             missing.append("Qualified client status is not recorded on the accreditation basis.")
+    if offering_type == "rule_506c":
+        due = rec.get("next_reverification_due")
+        if rec["accreditation_status"] != THIRD_PARTY_VERIFIED:
+            missing.append("This is a Rule 506(c) offering (DRAFT rule, pending counsel review): accreditation must be "
+                           f"verified by a third party (currently {rec['accreditation_status']}).")
+        elif rule == "none" and due is not None and due < today:
+            missing.append(f"Accreditation lapsed: re-verification was due {due.isoformat()}.")
     for k in ("accreditation_verified_date", "next_reverification_due"):
         if rec.get(k) is not None:
             rec[k] = rec[k].isoformat()
@@ -510,7 +634,7 @@ async def evaluate_eligibility(conn, entity_id, rule: str, *, today: date | None
 
 # ── Access state (valid-axis restatement) ──────────────────────────────────
 ACCESS_COLS = ("id, org_id, deal_id, user_id, entity_id, status, level_granted, eligibility, decided_by, "
-               "decided_at, reason, valid_from, prior_level, resign_after")
+               "decided_at, reason, valid_from, prior_level, resign_after, access_ends_on, paused_reason")
 _CARRY = object()
 
 
@@ -521,10 +645,13 @@ async def live_access(conn, deal_id, user_id):
 
 
 async def set_access(conn, org_id, deal_id, user_id, *, status, actor, entity_id=None, level=None,
-                     eligibility=None, decided_by=None, reason=None, prior_level=None, resign_after=_CARRY):
+                     eligibility=None, decided_by=None, reason=None, prior_level=None, resign_after=_CARRY,
+                     ends_on=_CARRY, paused_reason=None):
     """Valid-axis restatement of the live row. ``resign_after`` (the bulk
-    "require re-sign" cut-off) carries forward unless given; ``prior_level``
-    is kept only on a resign_required row (CHECK)."""
+    "require re-sign" cut-off) and ``access_ends_on`` (DEALROOM3: the access
+    period's end) carry forward unless given; ``prior_level`` is kept only on
+    a resign_required or paused row, ``paused_reason`` only on a paused one
+    (CHECKs)."""
     prev = await conn.fetchrow(
         f"UPDATE deal_access SET valid_to = now() WHERE deal_id = $1 AND user_id = $2 AND valid_to IS NULL "
         f"RETURNING {ACCESS_COLS}", _uuid(deal_id), _uuid(user_id))
@@ -536,16 +663,21 @@ async def set_access(conn, org_id, deal_id, user_id, *, status, actor, entity_id
         eligibility = json.dumps(eligibility, default=str)
     if resign_after is _CARRY:
         resign_after = prev["resign_after"] if prev is not None else None
+    if ends_on is _CARRY:
+        ends_on = prev["access_ends_on"] if prev is not None else None
     row = await conn.fetchrow(
         f"""
         INSERT INTO deal_access (org_id, deal_id, user_id, entity_id, status, level_granted, eligibility,
-                                 decided_by, decided_at, reason, created_by, prior_level, resign_after)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, CASE WHEN $9 THEN now() END, $10, $11, $12, $13)
+                                 decided_by, decided_at, reason, created_by, prior_level, resign_after,
+                                 access_ends_on, paused_reason)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, CASE WHEN $9 THEN now() END, $10, $11, $12, $13, $14, $15)
         RETURNING {ACCESS_COLS}
         """, _uuid(org_id), _uuid(deal_id), _uuid(user_id), _uuid(entity_id), status,
         level if status == "granted" else None, eligibility, _uuid(decided_by),
-        status in ("granted", "declined", "revoked", "not_eligible", "signed_awaiting", "resign_required"), reason,
-        _uuid(actor), prior_level if status == "resign_required" else None, resign_after)
+        status in ("granted", "declined", "revoked", "not_eligible", "signed_awaiting", "resign_required",
+                   "expired", "paused"), reason,
+        _uuid(actor), prior_level if status in ("resign_required", "paused") else None, resign_after, ends_on,
+        paused_reason if status == "paused" else None)
     return prev, row
 
 
@@ -1256,7 +1388,8 @@ async def apply_approval(conn, deal, user_id, *, actor):
     settings = await room_settings(conn, deal["id"])
     if settings["approval_mode"] == "automatic":
         _, row = await set_access(conn, deal["org_id"], deal["id"], user_id, status="granted",
-                                  level="after_agreements", actor=actor, reason="automatic")
+                                  level="after_agreements", actor=actor, reason="automatic",
+                                  ends_on=access_ends_on(settings, date.today()))
         await audit(conn, org_id=deal["org_id"], actor=actor, action="deal_access.auto_grant",
                     resource_id=row["id"], payload={"deal_id": deal["id"], "user_id": user_id,
                                                     "level": "after_agreements"})
@@ -1391,13 +1524,14 @@ async def request_access(pool, conn, *, principal, deal, entity_id) -> dict:
     cur = await live_access(conn, deal["id"], principal.user_id)
     if cur is not None and cur["status"] in ("revoked", "declined"):
         raise DealRoomError(409, "The publisher has closed your access to this deal. Contact them to reopen it.")
-    if cur is not None and cur["status"] in ("granted", "signed_awaiting", "resign_required"):
+    if cur is not None and cur["status"] in ("granted", "signed_awaiting", "resign_required", "expired", "paused"):
         return {"access": dict(cur), "eligibility": cur["eligibility"]}
     allowed = {e["id"] for e in await investing_entities(pool, conn, principal.org_id, principal.user_id)}
     if str(entity_id) not in allowed:
         raise DealRoomError(404, "Investing entity not found")
     settings = await room_settings(conn, deal["id"])
-    elig = await evaluate_eligibility(conn, entity_id, settings["eligibility_rule"])
+    elig = await evaluate_eligibility(conn, entity_id, settings["eligibility_rule"],
+                                      offering_type=settings.get("offering_type"))
     if not elig["eligible"]:
         _, row = await set_access(conn, deal["org_id"], deal["id"], principal.user_id, status="not_eligible",
                                   entity_id=entity_id, eligibility=elig, actor=principal.user_id,
@@ -1422,13 +1556,16 @@ async def request_access(pool, conn, *, principal, deal, entity_id) -> dict:
 
 
 # ── Decisions (the grid) ───────────────────────────────────────────────────
-DECIDE_ACTIONS = ("approve", "decline", "revoke", "require_resign")
+DECIDE_ACTIONS = ("approve", "decline", "revoke", "require_resign", "extend")
 
 
-async def decide(conn, *, actor, access_id, action: str, level: str | None, reason: str | None) -> dict:
-    """approve (choose level) / decline (reason) / revoke / require_resign.
-    Caller has checked the actor manages the row's deal. Signatures are never
-    touched."""
+async def decide(conn, *, actor, access_id, action: str, level: str | None, reason: str | None,
+                 ends_on: date | None = None, today: date | None = None) -> dict:
+    """approve (choose level) / decline (reason) / revoke / require_resign /
+    extend (DEALROOM3: a new end date; an expired row reopens at the level it
+    had). Caller has checked the actor manages the row's deal. Signatures are
+    never touched; revoking or declining also ends the investor's advisors."""
+    today = today or date.today()
     row = await conn.fetchrow(f"SELECT {ACCESS_COLS} FROM deal_access WHERE id = $1 AND valid_to IS NULL",
                               _uuid(access_id))
     if row is None:
@@ -1438,6 +1575,9 @@ async def decide(conn, *, actor, access_id, action: str, level: str | None, reas
         deal = await fetch_deal(conn, row["deal_id"])
         return await require_resign(conn, dict(deal), row["user_id"], actor=actor, cutoff=True,
                                     reason=(reason or "").strip() or "The publisher asked you to sign again.")
+    if action == "extend":
+        return await extend_access(conn, row, actor=actor, ends_on=ends_on, reason=reason, today=today)
+    kw: dict = {}
     if action == "approve":
         if level not in GRANT_LEVELS:
             raise DealRoomError(422, "Choose the level to grant: after_agreements or after_approval.")
@@ -1446,6 +1586,8 @@ async def decide(conn, *, actor, access_id, action: str, level: str | None, reas
         if not await all_signed(conn, row["deal_id"], row["user_id"]):
             raise DealRoomError(409, "This investor has not signed every agreement yet.")
         new_status = "granted"
+        if status != "granted":   # a fresh approval starts the access period; a level change keeps it
+            kw["ends_on"] = access_ends_on(await room_settings(conn, row["deal_id"]), today)
     elif action == "decline":
         if not (reason or "").strip():
             raise DealRoomError(422, "Give a reason to decline.")
@@ -1453,17 +1595,54 @@ async def decide(conn, *, actor, access_id, action: str, level: str | None, reas
             raise DealRoomError(409, "Already declined.")
         new_status, level = "declined", None
     elif action == "revoke":
-        if status not in ("granted", "signed_awaiting", "requested", "resign_required"):
+        if status not in ("granted", "signed_awaiting", "requested", "resign_required", "expired", "paused"):
             raise DealRoomError(409, "Only open or granted access can be revoked.")
         new_status, level = "revoked", None
     else:
-        raise DealRoomError(422, "action must be approve, decline, revoke or require_resign")
+        raise DealRoomError(422, "action must be approve, decline, revoke, require_resign or extend")
     _, new = await set_access(conn, row["org_id"], row["deal_id"], row["user_id"], status=new_status,
-                              level=level, decided_by=actor, actor=actor, reason=(reason or None))
+                              level=level, decided_by=actor, actor=actor, reason=(reason or None), **kw)
     await audit(conn, org_id=row["org_id"], actor=actor, action=f"deal_access.{action}", resource_id=new["id"],
                 payload={"deal_id": row["deal_id"], "user_id": row["user_id"], "from": status, "to": new_status,
-                         "level": level, "reason": reason, "previous_row": row["id"]})
+                         "level": level, "reason": reason, "previous_row": row["id"],
+                         "access_ends_on": new["access_ends_on"]})
     await close_todos(conn, row["deal_id"], row["user_id"], ["approve_request"])
+    if new_status in ("revoked", "declined"):
+        from services.deal_room_control import end_advisors
+
+        await end_advisors(conn, row["deal_id"], row["user_id"], actor=actor,
+                           reason=f"The investor's access was {new_status}.")
+    return dict(new)
+
+
+async def last_granted_level(conn, deal_id, user_id) -> str | None:
+    """The level of the investor's most recent granted row (history included)."""
+    return await conn.fetchval(
+        "SELECT level_granted FROM deal_access WHERE deal_id = $1 AND user_id = $2 AND status = 'granted' "
+        "ORDER BY valid_from DESC LIMIT 1", _uuid(deal_id), _uuid(user_id))
+
+
+async def extend_access(conn, row, *, actor, ends_on: date | None, reason: str | None, today: date) -> dict:
+    """A manager extends an access period (audited): a granted row gets the
+    new end date; an expired row reopens at the level it last had. The new
+    date must be today or later (the end date itself is still open)."""
+    if ends_on is None:
+        raise DealRoomError(422, "Choose the new end date.")
+    if ends_on < today:
+        raise DealRoomError(422, "The new end date cannot be in the past.")
+    status = row["status"]
+    if status == "granted":
+        level = row["level_granted"]
+    elif status == "expired":
+        level = await last_granted_level(conn, row["deal_id"], row["user_id"]) or "after_agreements"
+    else:
+        raise DealRoomError(409, "Only granted or expired access can be extended.")
+    _, new = await set_access(conn, row["org_id"], row["deal_id"], row["user_id"], status="granted", level=level,
+                              decided_by=actor, actor=actor, reason=(reason or "extended"), ends_on=ends_on)
+    await audit(conn, org_id=row["org_id"], actor=actor, action="deal_access.extend", resource_id=new["id"],
+                payload={"deal_id": row["deal_id"], "user_id": row["user_id"], "from": status,
+                         "previous_ends_on": row["access_ends_on"], "access_ends_on": ends_on, "level": level,
+                         "reason": reason, "previous_row": row["id"]})
     return dict(new)
 
 

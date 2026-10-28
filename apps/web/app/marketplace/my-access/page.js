@@ -39,7 +39,7 @@ export default async function MyDealAccessPage() {
             Could not load your deal access: {error}
           </div>
         ) : (
-          <MyDealAccess rows={data?.rows || []} />
+          <MyDealAccess rows={data?.rows || []} advising={data?.advising || []} />
         )}
       </div>
     </AppShell>

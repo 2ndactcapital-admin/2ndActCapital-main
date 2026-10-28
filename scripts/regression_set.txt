@@ -7,6 +7,7 @@ verify_navregroup.py
 verify_bugfix1.py
 verify_dealroom1.py
 verify_dealroom2.py
+verify_dealroom3.py
 verify_bulkfetch.py
 verify_bulkfetchui.py
 verify_bulkfetchui2.py

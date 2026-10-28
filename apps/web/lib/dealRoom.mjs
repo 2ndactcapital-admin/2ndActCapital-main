@@ -28,6 +28,8 @@ export function canWrite(envelope) {
 export function investorStep(envelope) {
   if (!envelope) return { step: "unavailable" };
   if (envelope.rights?.can_manage === true) return { step: "manage" };
+  // DEALROOM3: an advisor never signs or requests — they acknowledge, then read.
+  if (envelope.advisor) return { step: envelope.advisor.needs_ack === false ? "advisor" : "advisor_ack" };
   const access = envelope.my_access;
   if (!access) return { step: "request" };
   const s = access.status;
@@ -43,6 +45,8 @@ export function investorStep(envelope) {
   if (s === "signed_awaiting") return { step: "awaiting" };
   if (s === "not_eligible") return { step: "not_eligible", missing: access.missing || [] };
   if (["granted", "declined", "revoked"].includes(s)) return { step: s };
+  if (s === "expired") return { step: "expired", endedOn: access.access_ends_on || null };
+  if (s === "paused") return { step: "paused", reason: access.paused_reason || null };
   return { step: "request" };
 }
 
@@ -197,4 +201,84 @@ export function libraryActions(envelope, row) {
   if (row.can_publish === true) out.push("publish");
   if (row.can_add_version === true) out.push("add_version");
   return out;
+}
+
+
+// ── DEALROOM3 ──────────────────────────────────────────────────────────────
+
+/** What a reader may do with one document: exactly the server's flags.
+ *  Under view-only the server sends can_download false, so no download
+ *  control can appear; a blocked type carries its reason. */
+export function documentActions(doc) {
+  if (!doc) return [];
+  const out = [];
+  if (doc.can_view === true) out.push("view");
+  if (doc.can_download === true) out.push("download");
+  return out;
+}
+
+/** The manager's "share unwatermarked" control — only with can_write, only
+ *  for a file the server says cannot be watermarked, only when the room
+ *  watermarks. */
+export function shareUnwatermarkedControl(envelope, doc) {
+  if (!canWrite(envelope) || !doc) return false;
+  return envelope?.room_rules?.watermark === "on" && doc.watermarkable === false;
+}
+
+/** The notices a reader sees on entering the room (server text, in order). */
+export function roomNotices(envelope) {
+  const n = envelope?.notices || {};
+  return ["activity", "watermark", "view_only", "offering_draft"].map((k) => n[k]).filter(Boolean);
+}
+
+/** The deal-settings rows a manager edits — each a select over the server's
+ *  vocabulary. Nothing without can_write. */
+export function settingsRows(envelope) {
+  if (!canWrite(envelope)) return [];
+  const v = envelope?.vocabularies || {};
+  return [
+    { key: "eligibility_rule", label: "Eligibility", options: v.eligibility_rules || [] },
+    { key: "approval_mode", label: "Approval", options: v.approval_modes || [] },
+    { key: "sponsor_display", label: "Teaser sponsor", options: v.sponsor_display || [] },
+    { key: "downloads", label: "Downloads", options: v.downloads || [] },
+    { key: "watermark", label: "Watermark", options: v.watermark || [] },
+    { key: "access_period", label: "Access period", options: v.access_periods || [] },
+    { key: "offering_type", label: "Offering type", options: v.offering_types || [] },
+  ];
+}
+
+/** Q&A controls: a manager's answer / withdraw / merge only with can_write;
+ *  an investor's Ask only when the server says can_ask === true. */
+export function qaControls(qa) {
+  const p = qa?.permissions || {};
+  return {
+    ask: p.can_ask === true,
+    manage: p.can_write === true ? (qa?.vocabularies?.editable || []) : [],
+  };
+}
+
+/** The status line for an access row (grid and My deal access). */
+export function accessLine(row) {
+  if (!row) return "";
+  const parts = [row.status_label || row.status];
+  if (row.status === "paused" && row.paused_reason) parts.push(row.paused_reason);
+  if (row.access_ends_on) parts.push(`${row.status === "expired" ? "ended" : "until"} ${row.access_ends_on}`);
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** Grid actions a row offers (server vocabulary ∩ what its status allows). */
+export function rowActions(envelope, row) {
+  const all = gridActions(envelope);
+  const ext = envelope?.vocabularies?.extendable_statuses || [];
+  return all.filter((a) => a !== "extend" || ext.includes(row?.status));
+}
+
+/** Advisors listed under their investor (grid / My deal access). */
+export function advisorLines(advisors) {
+  return (advisors || []).map((a) => `${a.name}${a.firm ? `, ${a.firm}` : ""} — ${a.role_label || a.role} · ${a.status_label || a.status}`);
+}
+
+/** Whether a return-or-destroy notice still needs the investor's acknowledgement. */
+export function noticePending(notice) {
+  return Boolean(notice && !notice.acknowledged_at);
 }
