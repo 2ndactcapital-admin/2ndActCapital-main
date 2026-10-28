@@ -97,6 +97,7 @@ def _id(n: int) -> UUID:
 
 ORG_A, ORG_B, ORG_C = _id(1), _id(2), _id(3)
 FIXTURE_ORGS = [ORG_A, ORG_B, ORG_C]
+DEFAULT_ORG = UUID("00000000-0000-0000-0000-000000000001")  # 2nd Act: the asset_taxonomy catalog B6 reads its key from
 U_ADMIN1, U_ADMIN2, U_VIEWER, U_ADMIN_B, U_NEWADMIN = (_id(110 + i) for i in range(5))
 USERS = {   # org, users.role, short, rbac role, full name
     U_ADMIN1: (ORG_A, "org_admin", "admin1", "org_admin", "LOTMETHOD Admin Maker"),
@@ -1085,15 +1086,27 @@ async def y_b3(conn):
 
 async def y_b6(conn):
     section("[Y] B6: un-archive restores each deal to ITS prior stage (two deals, one transaction, one creator)")
+    # fixture fix 1: a deal must carry the lifecycle's required fields before it can be submitted; the asset class
+    # is a real super-class key read from the asset_taxonomy config (deals.asset_super_class has no CHECK / FK)
+    sc_key = await platform(conn, "SELECT config_key FROM config WHERE org_id = ANY($1::uuid[]) AND category = "
+                                  "'asset_taxonomy' AND config_key ~ '^taxonomy_sc_[0-9]+$' AND is_active "
+                                  "ORDER BY (org_id = $2) DESC, display_order, config_key LIMIT 1",
+                            [ORG_A, DEFAULT_ORG], ORG_A, fetch="fetchval")
     pool = await get_pool()
     ids = []
     with _ctx(ORG_A):
         async with pool.acquire() as c2:
             async with c2.transaction():
                 for nm in DEAL_NAMES:
-                    ids.append(await c2.fetchval("INSERT INTO deals (org_id, name, created_by) VALUES ($1, $2, $3) "
-                                                 "RETURNING id", ORG_A, nm, U_ADMIN1))
+                    ids.append(await c2.fetchval(
+                        "INSERT INTO deals (org_id, name, created_by, description, asset_super_class, target_raise, "
+                        "minimum_investment) VALUES ($1, $2, $3, $4, $5, 1000000, 25000) RETURNING id",
+                        ORG_A, nm, U_ADMIN1, f"{nm} — B6 fixture", sc_key))
             d1, d2 = ids
+            live = await c2.fetchrow("SELECT * FROM deals WHERE id = $1", d1)
+            unmet = await DLC.missing_for_submit(c2, ORG_A, dict(live))
+            check(sc_key is not None and not unmet, "B6 fixture deals carry every field the lifecycle requires before "
+                  "submit (asset class a live asset_taxonomy super-class key)", f"key={sc_key} missing={unmet}")
             async with c2.transaction():
                 await DLC.apply_status(c2, ORG_A, d1, "submitted", actor=U_ADMIN1, confirm=True)
             async with c2.transaction():

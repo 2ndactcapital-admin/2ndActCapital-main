@@ -367,6 +367,8 @@ and no `npm run build`). Run during the sprint: `authz1_routes.py` (9 new routes
   `npm run build`, and `verify_rep6.py` once with VERIFY_NESTED=1). The claude/BUGFIX1_BACKLOG.md
   file named by the sprint prompt is not in the repo; B1–B6 are recorded done here.
 
+UPDATE 2026-10-28 (lotmethod fix 1, after verify_lotmethod ran 139 PASS / 1 FAIL): NO code defect — the one FAIL was the B6 verify fixture. Its two deals were inserted with only name + creator, so `apply_status(..., 'submitted')` raised the lifecycle's own 422 (missing description, asset class, target raise, minimum investment — `marketplace.submit_required_fields`) before the un-archive scenario ran. The fixture deals now carry a description, `target_raise` 1000000, `minimum_investment` 25000 and an `asset_super_class` read live from the `asset_taxonomy` config (`taxonomy_sc_N`, ORG_A's own catalog first, else 2nd Act's — the column has no CHECK / FK); a new check proves `missing_for_submit` returns nothing for them before the stage moves. The lifecycle rule is unchanged; teardown is unchanged (deals are removed with the fixture orgs). Re-run `verify_lotmethod.py` pending (operator).
+
 ## 0000000000000000000000000000000000000000000000000000000000000000. REPLICATION STUDIO — rep7b (sprint 7b): account authority and custody — household authority (read_only / advise / managed) overridable per account, maker-checker; custody (integrated / other custodian / outside); the guard re-keyed on authority; advise one-off proposals + letter; managed at another custodian → manual DVP settlement instructions; verify WRITTEN, not yet run (2026-10-27)
 
 Design, matrix and findings 1a–1e: `docs/REPLICATION_STUDIO.md` (rep7b section).
