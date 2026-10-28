@@ -691,6 +691,17 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY cost_schedules_pkey: (id)
 
+-- ===== crm_relationship_dates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   entity_id                                uuid NOT NULL
+--   established_on                           date NOT NULL
+--   basis                                    text
+--   recorded_by                              uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY crm_relationship_dates_pkey: (id)
+
 -- ===== custodian_capabilities =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   custodian_code                           text NOT NULL
@@ -739,6 +750,8 @@
 --   valid_to                                 timestamp with time zone
 --   prior_level                              text
 --   resign_after                             timestamp with time zone
+--   access_ends_on                           date
+--   paused_reason                            text
 --   PRIMARY KEY deal_access_pkey: (id)
 
 -- ===== deal_agreements =====
@@ -815,6 +828,9 @@
 --   folder_id                                uuid
 --   deleted_at                               timestamp with time zone
 --   deleted_by                               uuid
+--   share_unwatermarked                      boolean NOT NULL DEFAULT false
+--   share_unwatermarked_by                   uuid
+--   share_unwatermarked_at                   timestamp with time zone
 --   PRIMARY KEY deal_documents_pkey: (id)
 
 -- ===== deal_folder_named =====
@@ -884,6 +900,94 @@
 --   revoked_by                               uuid
 --   PRIMARY KEY deal_master_ndas_pkey: (id)
 
+-- ===== deal_room_activity =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   entity_id                                uuid
+--   on_behalf_of_user_id                     uuid
+--   folder_id                                uuid
+--   document_id                              uuid
+--   action                                   text NOT NULL
+--   page                                     integer
+--   watermark_id                             uuid
+--   detail                                   jsonb
+--   at                                       timestamp with time zone NOT NULL DEFAULT clock_timestamp()
+--   PRIMARY KEY deal_room_activity_pkey: (id)
+
+-- ===== deal_room_advisors =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   access_user_id                           uuid NOT NULL
+--   investor_entity_id                       uuid
+--   advisor_user_id                          uuid NOT NULL
+--   name                                     text NOT NULL
+--   firm                                     text
+--   role                                     text NOT NULL
+--   email                                    text NOT NULL
+--   status                                   text NOT NULL
+--   ack_typed_name                           text
+--   ack_consent                              boolean
+--   ack_text_sha256                          text
+--   acknowledged_at                          timestamp with time zone
+--   invited_by                               uuid
+--   revoked_by                               uuid
+--   revoked_reason                           text
+--   created_by                               uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY deal_room_advisors_pkey: (id)
+
+-- ===== deal_room_answers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   question_id                              uuid NOT NULL
+--   body                                     text NOT NULL
+--   answered_by                              uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   history_of                               uuid
+--   PRIMARY KEY deal_room_answers_pkey: (id)
+
+-- ===== deal_room_questions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   folder_id                                uuid
+--   asked_by                                 uuid NOT NULL
+--   entity_id                                uuid
+--   body                                     text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'open'::text
+--   merged_into                              uuid
+--   status_reason                            text
+--   status_by                                uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   history_of                               uuid
+--   PRIMARY KEY deal_room_questions_pkey: (id)
+
+-- ===== deal_room_return_notices =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   access_id                                uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   entity_id                                uuid
+--   notice_text                              text NOT NULL
+--   notice_sha256                            text NOT NULL
+--   sent_by                                  uuid
+--   sent_at                                  timestamp with time zone NOT NULL DEFAULT now()
+--   acknowledged_at                          timestamp with time zone
+--   ack_typed_name                           text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   PRIMARY KEY deal_room_return_notices_pkey: (id)
+
 -- ===== deal_room_settings =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -895,7 +999,30 @@
 --   created_by                               uuid
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
+--   downloads                                text NOT NULL DEFAULT 'allowed'::text
+--   watermark                                text NOT NULL DEFAULT 'on'::text
+--   access_period                            text NOT NULL DEFAULT 'none'::text
+--   access_until                             date
+--   access_days                              integer
+--   expiry_notice_days                       integer NOT NULL DEFAULT 7
+--   notify_publisher_on                      ARRAY NOT NULL DEFAULT ARRAY['request'::text, 'signature'::text, 'question'::text]
+--   offering_type                            text NOT NULL DEFAULT 'not_set'::text
 --   PRIMARY KEY deal_room_settings_pkey: (id)
+
+-- ===== deal_room_watermarks =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   deal_id                                  uuid NOT NULL
+--   document_id                              uuid NOT NULL
+--   user_id                                  uuid NOT NULL
+--   entity_id                                uuid
+--   on_behalf_of_user_id                     uuid
+--   kind                                     text NOT NULL
+--   page                                     integer
+--   source_sha256                            text NOT NULL
+--   stamp_text                               text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT clock_timestamp()
+--   PRIMARY KEY deal_room_watermarks_pkey: (id)
 
 -- ===== deal_scores =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
