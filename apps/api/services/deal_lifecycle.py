@@ -136,7 +136,7 @@ async def summary(conn, org_id, *, member_statuses=None) -> list[dict]:
     ]
 
 
-async def archive_version(conn, org_id, deal_id) -> UUID | None:
+async def archive_version(conn, org_id, deal_id, at=None) -> UUID | None:
     """Copy the live row as a closed SYSTEM-axis version (id kept on the live
     row). Every column is carried — the pre-BUGFIX1 copy in update_deal omitted
     deal_stage and kept the slug, which violates deals_slug_key, so it could
@@ -145,7 +145,15 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
     BUGFIX2 (B6): the copy carries ``version_of_deal_id`` = the live deal's id,
     so :func:`prior_status` ties a version to ITS deal instead of matching on
     created_at + creator (two deals made in one transaction by one person
-    share both)."""
+    share both).
+
+    lotmethod fix 2: ``at`` is the instant the version closes (default
+    ``now()``). now() is TRANSACTION time, so every version closed in one
+    transaction — several transitions under the RLS pool's one outer
+    transaction, each its own savepoint — got the same system_to, and
+    :func:`prior_status`'s newest-first order was a coin toss (deal one,
+    draft -> submitted -> archived, came back 'draft'). apply_status passes one
+    clock_timestamp() for both this system_to and the live row's system_from."""
     return await conn.fetchval(
         """
         INSERT INTO deals (
@@ -165,14 +173,14 @@ async def archive_version(conn, org_id, deal_id) -> UUID | None:
                minimum_investment, expected_return_pct, term_months,
                deal_date, close_date, location, highlights, tags,
                is_featured, submitted_by, reviewed_by, published_at,
-               valid_from, valid_to, system_from, now(),
+               valid_from, valid_to, system_from, COALESCE($3::timestamptz, now()),
                created_by, created_at, updated_at, publisher_entity_id,
                id
         FROM deals
         WHERE id = $1 AND org_id = $2 AND valid_to IS NULL AND system_to IS NULL
         RETURNING id
         """,
-        deal_id, org_id,
+        deal_id, org_id, at,
     )
 
 
@@ -212,7 +220,7 @@ async def prior_status(conn, org_id, deal_id) -> str | None:
         SELECT h.deal_status::text FROM deals h
         WHERE h.org_id = $1 AND h.version_of_deal_id = $2 AND h.system_to IS NOT NULL
           AND h.deal_status::text <> 'archived'
-        ORDER BY h.system_to DESC LIMIT 1
+        ORDER BY h.system_to DESC, h.system_from DESC LIMIT 1
         """,
         org_id, deal_id,
     )
@@ -308,10 +316,14 @@ async def apply_status(conn, org_id, deal_id, target: str, *, actor=None,
                     "missing_fields": missing,
                 })
 
-    version_id = await archive_version(conn, org_id, deal_id)
-    params: list = [deal_id, org_id, target, key_for(stages, target)]
+    # lotmethod fix 2: ONE wall-clock instant closes the old version and opens
+    # the live one, so versions stay contiguous AND strictly ordered even when
+    # several transitions share a transaction (now() would tie them all).
+    at = await conn.fetchval("SELECT clock_timestamp()")
+    version_id = await archive_version(conn, org_id, deal_id, at)
+    params: list = [deal_id, org_id, target, key_for(stages, target), at]
     sets = ["deal_status = $3::deal_status", "deal_stage = COALESCE($4, $3::text)",
-            "system_from = now()", "updated_at = now()"]
+            "system_from = $5::timestamptz", "updated_at = now()"]
     if target == "active" and current["published_at"] is None:
         sets.append("published_at = now()")
     # Un-archive RESTORES a stage; it is not a new submission, so submitted_by
