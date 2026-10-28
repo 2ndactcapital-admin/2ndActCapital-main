@@ -341,10 +341,22 @@ async def create_entry(pool, *, org_id, actor_id, ticker: str | None, cusip: str
 
 
 # ── registry field specs ────────────────────────────────────────────────────
-async def load_registry(conn) -> list[dict]:
-    return [dict(r) for r in await conn.fetch(
+async def load_registry(conn, instrument_class: str | None = None) -> list[dict]:
+    """Every live field; with ``instrument_class``, only the fields that apply
+    to it (rep8: a field's ``instrument_classes`` NULL = every class)."""
+    rows = [dict(r) for r in await conn.fetch(
         f"SELECT * FROM {T_REG} WHERE valid_to IS NULL AND system_to IS NULL AND retired_at IS NULL "
         "ORDER BY sort_order, field_key")]
+    return rows if instrument_class is None else for_class(rows, instrument_class)
+
+
+def for_class(registry: list[dict], instrument_class: str | None) -> list[dict]:
+    """rep8: the fields of one instrument class. ``None`` (a caller that does
+    not know the class) keeps only the class-agnostic fields — exactly the
+    registry before rep8 — so an index fund's extraction never asks for buffer
+    or income terms."""
+    return [r for r in registry if not r.get("instrument_classes")
+            or (instrument_class is not None and instrument_class in r["instrument_classes"])]
 
 
 def build_specs(registry: list[dict], *, model_only: bool = True) -> list[NS.FieldSpec]:
@@ -544,14 +556,14 @@ class ExtractionRun:
 
 
 async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | None, http: httpx.AsyncClient,
-                         catalog_loader=None) -> ExtractionRun:
+                         catalog_loader=None, instrument_class: str | None = None) -> ExtractionRun:
     """Pull the prospectus, run both readers, write readings (platform).
     A run for the same document + ensemble + prompt already on record is
     REUSED — the documents and readings are shared, fetched and read once."""
     run = ExtractionRun(str(uuid.uuid4()), "blocked")
     async with pool.acquire() as conn:
         ensemble = await active_ensemble(conn)
-        registry = await load_registry(conn)
+        registry = for_class(await load_registry(conn), instrument_class)
     if ensemble is None:
         run.reason = ("no active extraction ensemble: ai_ensemble_configs has no active row for "
                       f"'{TASK_KEY}' or '{FALLBACK_TASK_KEY}'")
@@ -762,10 +774,11 @@ async def build_draft(pool, *, org_id, entry: dict, actor_id, http: httpx.AsyncC
     draft keeps every field a person corrected or changed; only fields still
     'extracted' are refreshed."""
     run = await run_extraction(pool, fund_id=str(entry["global_security_id"]), ticker=entry["ticker"],
-                               series_id=entry.get("sec_series_id"), http=http, catalog_loader=catalog_loader)
+                               series_id=entry.get("sec_series_id"), http=http, catalog_loader=catalog_loader,
+                               instrument_class=entry["instrument_class"])
     data = await _data_readings(pool, fund_id=str(entry["global_security_id"]), entry=entry)
     async with pool.acquire() as conn:
-        registry = await load_registry(conn)
+        registry = await load_registry(conn, entry["instrument_class"])     # rep8 — the class's own fields
     values = compose_values(registry, run, data, entry)
     extraction = {"run_id": run.run_id, "status": run.status, "reason": run.reason, "document_id": run.document_id,
                   "ensemble_config_id": run.ensemble_config_id, "models": run.models, "cost_usd": run.cost_usd,

@@ -14,11 +14,12 @@
  * control on a missing or partial envelope.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   approvalControls, departureLines, diffSummary, entryControls, fieldControls, formatValue, formatWeight, labelOf,
 } from "@/lib/replication.mjs";
 import ModelTab from "@/components/replication/ModelTab";
+import OptionsTab from "@/components/replication/OptionsTab";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const chipTone = { extracted: "bg-[#F5F1EB] text-[#334155]", corrected: "bg-[#E8D5A3] text-[#1B2B4B]",
@@ -246,6 +247,11 @@ export function SourcesPanel({ envelope }) {
 export default function EntryView({ initialEnvelope }) {
   const [env, setEnv] = useState(initialEnvelope);
   const [tab, setTab] = useState("terms");
+  // REP8 — a to-do's link (?tab=options) opens the Options tab
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "options" || t === "model") setTab(t);
+  }, []);
   const [query, setQuery] = useState({});
   const [msg, setMsg] = useState(null);
   const controls = entryControls(env);
@@ -269,10 +275,10 @@ export default function EntryView({ initialEnvelope }) {
       <div>
         <p className="text-xs text-text-muted">{entry.disclosure}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {["terms", "holdings", "sources", "model"].map((t) => (
+          {["terms", "holdings", "sources", "model", "options"].map((t) => (
             <button key={t} type="button" onClick={() => setTab(t)}
               className={`rounded px-3 py-1 text-sm ${tab === t ? "bg-navy text-white" : "bg-[#F5F1EB] text-navy"}`}>
-              {t === "terms" ? "Terms" : t === "holdings" ? "Holdings" : t === "sources" ? "Sources" : "Model"}
+              {t === "terms" ? "Terms" : t === "holdings" ? "Holdings" : t === "sources" ? "Sources" : t === "model" ? "Model" : "Options"}
             </button>
           ))}
           <span className="flex-1" />
@@ -285,6 +291,7 @@ export default function EntryView({ initialEnvelope }) {
       {tab === "holdings" ? <HoldingsPanel envelope={env} onQuery={(q) => { const next = { ...query, ...q }; setQuery(next); reload(next); }} /> : null}
       {tab === "sources" ? <SourcesPanel envelope={env} /> : null}
       {tab === "model" ? <ModelTab entryId={entry.id} /> : null}
+      {tab === "options" ? <OptionsTab entryId={entry.id} /> : null}
     </div>
   );
 }

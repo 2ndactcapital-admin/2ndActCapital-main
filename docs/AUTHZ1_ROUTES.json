@@ -1,5 +1,5 @@
 {
- "app_route_count": 671,
+ "app_route_count": 688,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -10490,6 +10490,376 @@
    "path": "/api/v1/replication/models/{model_id}/spec",
    "public": false,
    "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "options_sleeve",
+   "note": "",
+   "path": "/api/v1/replication/options/entries/{entry_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_models+manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "build",
+   "note": "",
+   "path": "/api/v1/replication/options/entries/{entry_id}/build",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "get_package",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "payoff",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}/payoff",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "settlements",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}/settlements",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "price",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}/price",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "submit",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "approve",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "reject",
+   "note": "",
+   "path": "/api/v1/replication/options/packages/{package_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "list_quotes",
+   "note": "",
+   "path": "/api/v1/replication/options/quotes",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "enter_quote",
+   "note": "",
+   "path": "/api/v1/replication/options/quotes",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "list_contracts",
+   "note": "",
+   "path": "/api/v1/replication/options/contracts",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "define_contract",
+   "note": "",
+   "path": "/api/v1/replication/options/contracts",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "propose",
+   "note": "",
+   "path": "/api/v1/replication/options/accounts/{account_id}/proposals",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_options",
+   "name": "gate",
+   "note": "",
+   "path": "/api/v1/replication/options/proposals/{proposal_id}/gate",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "rerun_gate",
+   "note": "",
+   "path": "/api/v1/replication/options/proposals/{proposal_id}/gate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_options",
+   "name": "book",
+   "note": "",
+   "path": "/api/v1/replication/options/instructions/{instruction_id}/book",
+   "public": false,
+   "write": true
   },
   {
    "after": "authz view_execution",

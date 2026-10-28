@@ -32,6 +32,15 @@ public.substitution_denials (active, either direction). Nothing is ever
 inferred; an APPROVED substitute is not identical (unless a denial says so —
 a denial overrides a set).
 
+rep8 (additive — never weakens the rule above): an OPTION counts as its
+underlying's EXPOSURE. Two securities are also substantially identical when
+their exposures are (an option on X and X; two options on the same index), or
+when a denial pairs their exposures (an adviser's denial "SPX ↔ SPY" makes a
+SPX option identical to SPY). The exposure of a non-option is itself, so every
+earlier answer is unchanged. Option trades in the household events count
+conservatively by side (a written put opened is a 'sell' event of possibly
+unknown loss) — the options tax gate applies the acquisition rules precisely.
+
 THE RULES — the outcome of every trade: clear | replaced | deferred | blocked
 ──────────────────────────────────────────────────────────────────────────────
   (a) a BUY of S inside a household loss window of S (or a denied pair) →
@@ -54,7 +63,7 @@ it is not held, but the matches are recorded on it.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_DOWN, Decimal
 
@@ -122,13 +131,22 @@ class Context:
     substitutes: dict[str, list[dict]]
     labels: dict[str, str]
     fallback: str = "defer"
+    #: rep8 — option contract → its underlying (the exposure key); absent = the security itself
+    exposure: dict[str, str] = field(default_factory=dict)
 
     def label(self, key: str) -> str:
         return self.labels.get(key, key)
 
 
+def exposure_of(key: str, ctx: Context) -> str:
+    return (getattr(ctx, "exposure", None) or {}).get(key, key)
+
+
 def identical(a: str, b: str, ctx: Context) -> bool:
-    return a == b or frozenset((a, b)) in ctx.denials
+    if a == b or frozenset((a, b)) in ctx.denials:
+        return True
+    ea, eb = exposure_of(a, ctx), exposure_of(b, ctx)          # rep8 — an option is its underlying's exposure
+    return (ea, eb) != (a, b) and (ea == eb or frozenset((ea, eb)) in ctx.denials)
 
 
 def _overlaps(e: Event, lo: date, hi: date) -> bool:
@@ -164,7 +182,14 @@ def matching_buys(key: str, ctx: Context, extra: list[Event] | tuple = ()) -> li
 def _why_identical(a: str, b: str, ctx: Context) -> str:
     if a == b:
         return "the same security"
-    d = ctx.denials.get(frozenset((a, b))) or {}
+    d = ctx.denials.get(frozenset((a, b)))
+    if d is None:
+        ea, eb = exposure_of(a, ctx), exposure_of(b, ctx)
+        if ea == eb:
+            return f"an option on the same issuer / index exposure ({ctx.label(ea)})"
+        d = ctx.denials.get(frozenset((ea, eb))) or {}
+        return (f"an option whose underlying is a denied pair ({d.get('rule', 'denial')}: "
+                f"{d.get('reason') or 'substantially identical'})")
     return f"a denied pair ({d.get('rule', 'denial')}: {d.get('reason') or 'substantially identical'})"
 
 
@@ -474,8 +499,28 @@ async def load_context(conn, org_id, account: dict, today: date, *, exclude_prop
         for c in v:
             c["label"] = labels.get(c["key"], c["key"])
     fb = await _setting(conn, org_id, FALLBACK_SETTING, "defer")
-    return Context(today=today, events=events, denials=denials, substitutes=subs_map, labels=labels,
-                   fallback=fb if fb in FALLBACKS else "defer")
+    ctx = Context(today=today, events=events, denials=denials, substitutes=subs_map, labels=labels,
+                  fallback=fb if fb in FALLBACKS else "defer")
+    await add_exposures(conn, ctx, keys)          # rep8 — options count as their underlying's exposure
+    return ctx
+
+
+async def add_exposures(conn, ctx: Context, keys) -> None:
+    """rep8: map every option contract among ``keys`` to its underlying, and
+    label the underlyings. Never removes anything from the context."""
+    ids = sorted({str(k) for k in keys if k})
+    if not ids:
+        return
+    rows = await conn.fetch(
+        "SELECT global_security_id, underlying_global_security_id FROM portfolio.option_contracts "
+        "WHERE global_security_id = ANY($1::uuid[]) AND valid_to IS NULL AND system_to IS NULL", ids)
+    new = {str(r["global_security_id"]): str(r["underlying_global_security_id"]) for r in rows}
+    if not new:
+        return
+    ctx.exposure = {**(getattr(ctx, "exposure", None) or {}), **new}
+    missing = {k for k in set(new) | set(new.values()) if k not in ctx.labels}
+    if missing:
+        ctx.labels.update(await security_labels(conn, missing))
 
 
 async def _lots_loss(conn, lots: list[dict], price: Decimal | None) -> bool | None:
