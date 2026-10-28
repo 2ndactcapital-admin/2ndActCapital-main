@@ -1985,18 +1985,16 @@ async def y_routes(conn):
     removed = [k for k in gb if k not in gn]
     check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
           f"{changed[:5]} {removed[:5]}")
-    # rep7 fix-1: routes under prefixes later sprints added (rep7's /held-away/ and /xray/) are not rep6's
-    # lotmethod [FIND]: this count already failed at main @ merge rep7b (41, not 31) — rep7's reconcile route and
-    # rep7b's /authority/…, one-off and settlement routes were never excluded here; scoped now to rep6's own, as
-    # rep7b fix 1 scoped verify_rep7's (and lotmethod's /lot-method/… excluded)
-    later = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),
-             (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),
-             (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),
-             (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}
-    new = [k for k in gn if k not in gb and k not in later and not k[1].startswith(
-        ("/api/v1/held-away/", "/api/v1/xray/", "/api/v1/authority/", "/api/v1/lot-method/"))]
-    tax =[k for k in new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
+    # rep8: every later sprint added routes and this count kept going stale (rep7, rep7b, lotmethod, dealroom3,
+    # rep8). rep6's own routes are fixed: those added between BEFORE_REF and the rep6 merge (ead5a7f). Count
+    # those, then prove each one still exists today with the same gate — later sprints' routes are not rep6's.
+    rep6_done = gates(json.loads(git_show("ead5a7f", "docs/AUTHZ1_ROUTES.json") or "{}"))
+    new = [k for k in rep6_done if k not in gb]
+    tax = [k for k in new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
     check(len(new) == len(tax) == 31, "31 new routes, all under /tax/… and /harvest/…", f"{len(new)} {len(tax)}")
+    drifted = [k for k in new if k not in gn or (rep6_done[k].get("after"), rep6_done[k].get("expect")) !=
+               (gn[k].get("after"), gn[k].get("expect"))]
+    check(bool(new) and not drifted, "rep6's 31 routes all still exist with the same gate", f"{drifted[:5]}")
 
     def want(k):
         if "GET" in k[0]:
