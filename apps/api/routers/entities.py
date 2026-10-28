@@ -1389,7 +1389,7 @@ async def get_compliance(request: Request, entity_id: UUID):
 async def update_compliance(
     request: Request, entity_id: UUID, body: ComplianceRecordUpdate
 ):
-    require_permission(request, "manage_compliance")  # AUTHZ1
+    principal = require_permission(request, "manage_compliance")  # AUTHZ1
     org_id = get_org_id(request)
     pool = await get_pool()
     updates = body.model_dump(exclude_unset=True)
@@ -1451,6 +1451,14 @@ async def update_compliance(
                 old=dict(existing) if existing else None,
                 new=dict(row),
             )
+            # DEALROOM3 — a deal room's access follows this record AT ONCE: a
+            # lapse pauses the entity's granted access, a fix restores it (same
+            # transaction; notifications after commit).
+            from services import deal_room_control as DRC
+
+            outbox = DRC.Outbox()
+            await DRC.recheck_entity(conn, org_id, entity_id, actor=principal.user_id, outbox=outbox)
+    await outbox.publish(pool)
     return ComplianceRecordResponse(**dict(row))
 
 

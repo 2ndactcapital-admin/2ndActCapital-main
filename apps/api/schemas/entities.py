@@ -533,6 +533,10 @@ class ComplianceRecordUpdate(BaseModel):
     aml_risk_rating: AmlRiskRating | None = None
     accreditation_status: AccreditationStatus | None = None
     accreditation_basis: str | None = None
+    # DEALROOM3: the dates the deal room's eligibility reads (a re-verification
+    # date in the past pauses deal-room access at once; a new one restores it)
+    accreditation_verified_date: date | None = None
+    next_reverification_due: date | None = None
     pep_status: bool | None = None
     pep_details: str | None = None
     notes: str | None = None

@@ -30,6 +30,17 @@ DEALROOM2 adds: agreement versions (keep / require re-signing), uploaded PDF
 agreements with a page viewer, the firm template library, the master NDA, and
 the signed copy as a PDF with a certificate page. org_id is only ever the caller's (get_org_id) or
 the deal row's own — never a body or path value. Request models forbid extras.
+
+DEALROOM3 adds (services/deal_room_control.py): watermarked renditions and the
+view-only page viewer (documents/{id}/download | file | pages), access expiry
+and pause (decide → extend; the scheduler sweep), the activity log and its
+manager views / CSV, Q&A, investor advisors, the return-or-destroy notice, the
+DRAFT 506(b) / 506(c) offering rules and the CRM relationship date. One more
+scope gate:
+
+  _require_deal_party     a deal viewer (above), or a user holding an access
+                          row on the deal in their own org (a revoked / expired
+                          investor acknowledging a return-or-destroy notice)
 """
 
 from __future__ import annotations
@@ -38,19 +49,21 @@ import html
 import json
 import os
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from routers.entities import get_org_id
 from services import deal_room as R
+from services import deal_room_control as C
 from services import deal_room_library as L
 from services import deal_room_pdf as P
 from services import deal_room_templates as T
+from services import deal_room_watermark as W
 from services import storage
 from services.authz import (
     require_active,
@@ -68,7 +81,9 @@ EDITABLE_DEAL_FIELDS = (
     "sponsor_entity_id", "sponsor_name_override", "target_raise", "minimum_investment",
     "expected_return_pct", "term_months", "deal_date", "close_date", "location", "highlights", "tags",
 )
-SETTINGS_EDITABLE = ("eligibility_rule", "approval_mode", "sponsor_display", "code_name")
+SETTINGS_EDITABLE = ("eligibility_rule", "approval_mode", "sponsor_display", "code_name", "downloads", "watermark",
+                     "access_period", "access_until", "access_days", "expiry_notice_days", "notify_publisher_on",
+                     "offering_type")
 
 
 class _Body(BaseModel):
@@ -129,6 +144,14 @@ class SettingsEdit(_Body):
     approval_mode: str | None = None
     sponsor_display: str | None = None
     code_name: str | None = None
+    downloads: str | None = None              # DEALROOM3
+    watermark: str | None = None
+    access_period: str | None = None
+    access_until: date | None = None
+    access_days: int | None = None
+    expiry_notice_days: int | None = None
+    notify_publisher_on: list[str] | None = None
+    offering_type: str | None = None
 
 
 class DelegateAdd(_Body):
@@ -211,6 +234,52 @@ class Decision(_Body):
     action: str
     level: str | None = None
     reason: str | None = None
+    ends_on: date | None = None               # DEALROOM3: extend
+    send_return_notice: bool = False          # DEALROOM3: revoke
+
+
+class QuestionCreate(_Body):
+    body: str = Field(min_length=3, max_length=4000)
+    folder_id: UUID | None = None
+
+
+class AnswerBody(_Body):
+    body: str = Field(min_length=2, max_length=8000)
+
+
+class ReasonBody(_Body):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class MergeBody(_Body):
+    into_id: UUID
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class AdvisorInvite(_Body):
+    name: str = Field(min_length=2, max_length=200)
+    firm: str | None = Field(default=None, max_length=200)
+    role: str
+    email: str = Field(min_length=3, max_length=320)
+
+
+class AdvisorAck(_Body):
+    typed_name: str
+    consent: bool
+    text_sha256: str
+
+
+class NoticeAck(_Body):
+    typed_name: str
+
+
+class ShareUnwatermarked(_Body):
+    share: bool
+
+
+class RelationshipDate(_Body):
+    established_on: date
+    basis: str | None = Field(default=None, max_length=500)
 
 
 def _http(exc: R.DealRoomError) -> HTTPException:
@@ -257,6 +326,27 @@ async def _require_deal_viewer(request: Request, conn, deal_id):
     if not (rights.can_manage or rights.can_view):
         raise HTTPException(status_code=404, detail="Deal not found")
     return principal, deal, rights
+
+
+async def _require_deal_party(request: Request, conn, deal_id):
+    """A deal viewer, or (DEALROOM3) a user with an access row on the deal in
+    their own org — a revoked / expired investor reading or acknowledging
+    their return-or-destroy notice after the deal left the marketplace."""
+    principal = require_active(request)
+    deal = await _deal_or_404(conn, principal, deal_id)
+    rights = await R.deal_rights(conn, principal, deal)
+    if rights.can_manage or rights.can_view:
+        return principal, deal, rights
+    if str(deal["org_id"]) == str(principal.org_id) and await conn.fetchval(
+            "SELECT 1 FROM deal_access WHERE deal_id = $1 AND user_id = $2 LIMIT 1", deal["id"],
+            UUID(str(principal.user_id))):
+        return principal, deal, rights
+    raise HTTPException(status_code=404, detail="Deal not found")
+
+
+def _refuse_advisor(rights) -> None:
+    if rights.role == "advisor":
+        raise HTTPException(status_code=403, detail=C.ADVISOR_REFUSED)
 
 
 async def _require_publisher_or_staff(request: Request, conn):
@@ -531,7 +621,7 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
     manage = rights.can_manage
     open_ids = None if manage else await R.open_folder_ids(conn, deal["id"], principal.user_id)
     docs = await conn.fetch(
-        f"SELECT {R.DOC_COLS} FROM deal_documents WHERE deal_id = $1 AND folder_id IS NOT NULL "
+        f"SELECT {R.DOC_COLS}, share_unwatermarked FROM deal_documents WHERE deal_id = $1 AND folder_id IS NOT NULL "
         f"AND deleted_at IS NULL AND ($2::boolean OR status = 'approved') ORDER BY created_at",
         deal["id"], manage)
     named = {}
@@ -542,6 +632,14 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
                 "WHERE f.deal_id = $1 AND n.removed_at IS NULL", deal["id"]):
             named.setdefault(r["folder_id"], []).append({"user_id": str(r["user_id"]), "name": r["name"]})
     status = access["status"] if access else None
+    # DEALROOM3: an advisor reads AS the investor they advise, and only after
+    # acknowledging; every document carries what the caller may do with it.
+    advisor_pending = rights.role == "advisor" and rights.advisor_status != "active"
+    if rights.role == "advisor":
+        inv_access = await R.live_access(conn, deal["id"], rights.advisor_of)
+        status = inv_access["status"] if inv_access else None
+        if advisor_pending:
+            open_ids = set()
     out_folders = []
     for f in folders:
         eff = R.effective_level(f, by_id)
@@ -549,9 +647,11 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
         reason = None
         if not is_open:
             key = {"revoked": "revoked", "declined": "declined", "not_eligible": "not_eligible",
-                   "resign_required": "resign_required"}.get(status) \
+                   "resign_required": "resign_required", "expired": "expired", "paused": "paused"}.get(status) \
                 or (eff if status in ("requested", "signed_awaiting", "granted") else "view")
             reason = lab.get(f"deal_room_lock_{key}")
+            if advisor_pending:
+                reason = "Sign the advisor acknowledgement to open the investor's folders."
         entry = {
             "id": str(f["id"]), "key": f["key"], "label": R.folder_label(f, lab), "sort_order": f["sort_order"],
             "access_level": f["access_level"], "effective_level": eff,
@@ -560,11 +660,24 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
             "open": bool(is_open), "lock_reason": reason,
         }
         if is_open:
-            entry["documents"] = [
-                {"id": str(d["id"]), "file_name": d["file_name"], "file_type": d["file_type"],
-                 "file_size_bytes": d["file_size_bytes"], "status": d["status"],
-                 "created_at": d["created_at"].isoformat()}
-                for d in docs if d["folder_id"] == f["id"]]
+            entry["documents"] = []
+            for d in docs:
+                if d["folder_id"] != f["id"]:
+                    continue
+                pol = C.document_policy(settings, dict(d), manage=manage)
+                entry["documents"].append({
+                    "id": str(d["id"]), "file_name": d["file_name"], "file_type": d["file_type"],
+                    "file_size_bytes": d["file_size_bytes"], "status": d["status"],
+                    "created_at": d["created_at"].isoformat(),
+                    "can_download": pol["download"] is not None, "can_view": pol["pages"],
+                    "watermarked": pol["watermark"], "blocked_reason": pol["reason"],
+                    **({"share_unwatermarked": bool(d["share_unwatermarked"]),
+                        "watermarkable": pol["kind"] is not None} if manage else {})})
+            if f["key"] == "07_qa":
+                entry["answered_questions"] = [
+                    {"id": q["id"], "body": q["body"], "answer": q["answer"], "answered_at": q["answered_at"]}
+                    for q in await C.questions_for(conn, deal, manage=manage, user_id=principal.user_id, lab=lab)
+                    if q["status"] == "answered"]
         if manage:
             entry["named"] = named.get(f["id"], [])
         out_folders.append(entry)
@@ -612,6 +725,8 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
             if access["entity_id"] else None, "entity_name": entity_name,
             "missing": (elig or {}).get("missing", []), "reason": access["reason"],
             "decided_at": access["decided_at"].isoformat() if access["decided_at"] else None,
+            "access_ends_on": access["access_ends_on"].isoformat() if access["access_ends_on"] else None,
+            "paused_reason": access["paused_reason"],
         },
         "agreements": [
             {"id": str(a["id"]), "title": a["title"], "kind": a["kind"], "template_key": a["template_key"],
@@ -630,9 +745,37 @@ async def _room_envelope(pool, conn, principal, deal, rights) -> dict:
             for a in agreements],
         "vocabularies": {**R.vocabularies(lab),
                          "editable": ["deal", "settings", "folders", "documents", "agreements", "delegates",
-                                      "versions", "master_nda"]
+                                      "versions", "master_nda", "share_unwatermarked", "questions", "advisors",
+                                      "activity"]
                          if manage else []},
     }
+    envelope["room_rules"] = {"downloads": settings["downloads"], "watermark": settings["watermark"],
+                              "offering_type": settings["offering_type"]}
+    envelope["notices"] = {
+        "activity": C.ACTIVITY_NOTICE if not manage else None,
+        "view_only": C.VIEW_ONLY_NOTICE if settings["downloads"] == "view_only" else None,
+        "watermark": C.WATERMARK_NOTICE if settings["watermark"] == "on" and not manage else None,
+        "offering_draft": C.OFFERING_DRAFT_NOTE if settings["offering_type"] in ("rule_506b", "rule_506c") else None,
+    }
+    if rights.role == "advisor":
+        adv = await R.advisor_row(conn, deal["id"], principal.user_id)
+        envelope["advisor"] = {
+            "status": rights.advisor_status, "needs_ack": advisor_pending,
+            "investor_name": await conn.fetchval("SELECT COALESCE(full_name, email) FROM users WHERE id = $1",
+                                                 rights.advisor_of),
+            "role": adv["role"] if adv else None,
+            "role_label": lab.get(f"deal_room_advisor_role_{adv['role']}") if adv else None,
+            "investor_status": status, "investor_status_label": lab.get(f"deal_room_status_{status}") if status else None}
+        envelope["agreements"] = []
+    elif not manage and access is not None:
+        envelope["advisors"] = await C.advisors_of(conn, deal["id"], principal.user_id, lab)
+        notice = await C.live_notice(conn, deal["id"], principal.user_id)
+        envelope["return_notice"] = None if notice is None else {
+            "text": notice["notice_text"], "sent_at": notice["sent_at"].isoformat(),
+            "acknowledged_at": notice["acknowledged_at"].isoformat() if notice["acknowledged_at"] else None}
+    if not manage:
+        reader = await C.reader_context(conn, deal, principal, rights)
+        await C.log_activity(conn, deal, reader, "room_open")
     if manage:
         envelope["settings"] = _jsonable(settings)
         master = await R.live_master(conn, deal.get("publisher_entity_id"))
@@ -824,6 +967,15 @@ async def upload_room_document(request: Request, deal_id: UUID, folder_id: UUID,
                 "VALUES ($1, $2, 'deal_room.document_upload', 'deal_documents', $3, $4::jsonb)",
                 deal["org_id"], UUID(str(principal.user_id)), row["id"],
                 json.dumps({"folder_id": str(folder_id), "file_name": file.filename}))
+            # DEALROOM3: everyone the folder is open to right now (investors and
+            # active advisors) — and nobody else — hears of the new document.
+            readers = await C.folder_readers(conn, deal_id, folder_id)
+            lab = await R.labels(conn, deal["org_id"])
+    outbox = C.Outbox()
+    outbox.add(deal, readers, "deal_room_new_document", "New document in the data room",
+               f"{file.filename} was added to {R.folder_label(folder, lab)} in {deal['name']}.",
+               {"document_id": str(row["id"]), "folder_id": str(folder_id)})
+    await outbox.publish(pool)
     out = _jsonable(dict(row))
     out.pop("r2_key", None)
     out.pop("r2_bucket", None)
@@ -872,26 +1024,197 @@ async def delete_room_document(request: Request, deal_id: UUID, doc_id: UUID):
     return {"deleted": True}
 
 
+async def _room_document(request: Request, conn, deal_id, doc_id):
+    """ONE gate for a data-room document's content (DEALROOM3). Managers: any
+    live document of the deal. Anyone else: the document's folder must be open
+    to them (member_doc_sql → deal_room_folder_open + the offering rule), and an
+    advisor must have acknowledged. Every refusal is the SAME 404. Returns
+    (principal, deal, rights, doc, settings, policy)."""
+    principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+    cols = "id, deal_id, folder_id, file_name, file_type, r2_key, r2_bucket, share_unwatermarked"
+    if rights.can_manage:
+        doc = await conn.fetchrow(f"SELECT {cols} FROM deal_documents WHERE id = $1 AND deal_id = $2 "
+                                  "AND deleted_at IS NULL", doc_id, deal_id)
+    else:
+        doc = await conn.fetchrow(
+            f"SELECT {cols} FROM deal_documents dd WHERE id = $1 AND deal_id = $2 "
+            f"AND folder_id IS NOT NULL AND {R.member_doc_sql('dd', '$3::uuid')}",
+            doc_id, deal_id, UUID(str(principal.user_id)))
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if rights.role == "advisor" and rights.advisor_status != "active":
+        raise HTTPException(status_code=404, detail="Document not found")   # nothing before the acknowledgement
+    settings = await R.room_settings(conn, deal_id)
+    pol = C.document_policy(settings, dict(doc), manage=rights.can_manage)
+    return principal, deal, rights, dict(doc), settings, pol
+
+
 @router.get("/deal-room/deals/{deal_id}/documents/{doc_id}/download")
 async def download_room_document(request: Request, deal_id: UUID, doc_id: UUID):
-    """A short-lived signed R2 URL — only when the document's folder is open to
-    the caller. Every refusal is the SAME 404 (no existence leak)."""
+    """What a download hands out, by the room's settings (services.deal_room_control.document_policy):
+    managers — a short-lived signed URL to the original; watermark off and downloads allowed — today's
+    signed URL; watermark on — NO URL: the API's own rendition route, which streams a freshly
+    watermarked copy; view-only — the same 404 as any refusal (no download route answers); a type
+    that cannot be watermarked — 409 with the reason, unless the manager shared it unwatermarked."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
-        if rights.can_manage:
-            doc = await conn.fetchrow("SELECT id, file_name, r2_key, r2_bucket FROM deal_documents WHERE id = $1 "
-                                      "AND deal_id = $2 AND deleted_at IS NULL", doc_id, deal_id)
-        else:
-            doc = await conn.fetchrow(
-                f"SELECT id, file_name, r2_key, r2_bucket FROM deal_documents dd WHERE id = $1 AND deal_id = $2 "
-                f"AND folder_id IS NOT NULL AND {R.member_doc_sql('dd', '$3::uuid')}",
-                doc_id, deal_id, UUID(str(principal.user_id)))
-        if doc is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+        principal, deal, rights, doc, settings, pol = await _room_document(request, conn, deal_id, doc_id)
+        if pol["download"] is None:
+            if settings["downloads"] == "view_only" and not rights.can_manage:
+                raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=409, detail=pol["reason"] or "This document cannot be downloaded.")
+        if pol["download"] == "watermarked":
+            return {"href": f"/api/deal-room/deals/{deal_id}/documents/{doc_id}/file", "watermarked": True,
+                    "file_name": doc["file_name"]}
+        if not rights.can_manage:
+            reader = await C.reader_context(conn, deal, principal, rights)
+            await C.log_activity(conn, deal, reader, "download", folder_id=doc["folder_id"], document_id=doc["id"],
+                                 detail={"mode": "original"})
     expires = 300
     url = await run_in_threadpool(storage.get_signed_url, doc["r2_key"], expires, doc["r2_bucket"])
-    return {"url": url, "expires_in": expires, "file_name": doc["file_name"]}
+    return {"url": url, "expires_in": expires, "file_name": doc["file_name"], "watermarked": False}
+
+
+@router.get("/deal-room/deals/{deal_id}/documents/{doc_id}/file")
+async def watermarked_room_document(request: Request, deal_id: UUID, doc_id: UUID):
+    """The watermarked rendition, generated on request and streamed (never a
+    URL to the original): every page stamped with the reader's name, investing
+    entity, the deal, the date and time and a watermark id recorded in
+    deal_room_watermarks. Only when the document's policy is 'watermarked'."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, rights, doc, settings, pol = await _room_document(request, conn, deal_id, doc_id)
+        if pol["download"] != "watermarked":
+            raise HTTPException(status_code=404, detail="Document not found")
+        try:
+            _, data = await R.read_document_bytes(conn, doc["id"])
+            kind = W.kind_of(None, None, data[:16])
+            if kind is None:
+                raise R.DealRoomError(409, W.NOT_WATERMARKABLE)
+            source = await run_in_threadpool(W.as_pdf, data, kind)
+            if len(source) > W.MAX_BYTES or await run_in_threadpool(W.page_count, source) > W.MAX_PAGES:
+                raise R.DealRoomError(413, W.TOO_LARGE)
+        except R.DealRoomError as exc:
+            raise _http(exc) from exc
+        reader = await C.reader_context(conn, deal, principal, rights)
+        at = datetime.now(timezone.utc)
+        wid, lines = await C.record_watermark(conn, deal, doc, reader, kind="download", page=None,
+                                              source_sha256=R.sha256_bytes(data), at=at)
+        pdf = await run_in_threadpool(W.watermark_pdf, source, lines)
+        await C.log_activity(conn, deal, reader, "download", folder_id=doc["folder_id"], document_id=doc["id"],
+                             watermark_id=wid, detail={"mode": "watermarked"})
+    stem = (doc["file_name"] or "document").rsplit(".", 1)[0]
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{stem}-watermarked.pdf"', "Cache-Control": "no-store",
+        "X-Watermark-Id": str(wid)})
+
+
+@router.get("/deal-room/deals/{deal_id}/documents/{doc_id}/pages")
+async def room_document_pages(request: Request, deal_id: UUID, doc_id: UUID):
+    """The viewer's page list: how many pages, whether they are watermarked."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        _, _, _, doc, _, pol = await _room_document(request, conn, deal_id, doc_id)
+        if not pol["pages"]:
+            raise HTTPException(status_code=409, detail=pol["reason"] or W.NOT_VIEWABLE)
+        try:
+            _, data = await R.read_document_bytes(conn, doc["id"])
+        except R.DealRoomError as exc:
+            raise _http(exc) from exc
+    kind = W.kind_of(None, None, data[:16])
+    if kind is None:
+        raise HTTPException(status_code=409, detail=W.NOT_VIEWABLE)
+    n = await run_in_threadpool(W.page_count, await run_in_threadpool(W.as_pdf, data, kind))
+    return {"document_id": str(doc_id), "file_name": doc["file_name"], "page_count": n,
+            "watermarked": pol["watermark"], "download": pol["download"] is not None,
+            "pages": [f"/api/deal-room/deals/{deal_id}/documents/{doc_id}/pages/{i}" for i in range(1, n + 1)]}
+
+
+@router.get("/deal-room/deals/{deal_id}/documents/{doc_id}/pages/{page}")
+async def room_document_page(request: Request, deal_id: UUID, doc_id: UUID, page: int):
+    """One page as PNG (the view-only viewer; the original never leaves the
+    server). Watermarked when the room's watermark is on; every view logged."""
+    if page < 1:
+        raise HTTPException(status_code=422, detail="pages start at 1")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, rights, doc, settings, pol = await _room_document(request, conn, deal_id, doc_id)
+        if not pol["pages"]:
+            raise HTTPException(status_code=409, detail=pol["reason"] or W.NOT_VIEWABLE)
+        try:
+            _, data = await R.read_document_bytes(conn, doc["id"])
+        except R.DealRoomError as exc:
+            raise _http(exc) from exc
+        kind = W.kind_of(None, None, data[:16])
+        if kind is None:
+            raise HTTPException(status_code=409, detail=W.NOT_VIEWABLE)
+        source = await run_in_threadpool(W.as_pdf, data, kind)
+        try:
+            one = await run_in_threadpool(W.single_page, source, page - 1)
+        except IndexError as exc:
+            raise HTTPException(status_code=404, detail="No such page") from exc
+        wid = None
+        if not rights.can_manage:
+            reader = await C.reader_context(conn, deal, principal, rights)
+            if pol["watermark"]:
+                wid, lines = await C.record_watermark(conn, deal, doc, reader, kind="page", page=page,
+                                                      source_sha256=R.sha256_bytes(data), at=datetime.now(timezone.utc))
+                one = await run_in_threadpool(W.watermark_pdf, one, lines)
+            await C.log_activity(conn, deal, reader, "view_page", folder_id=doc["folder_id"], document_id=doc["id"],
+                                 page=page, watermark_id=wid)
+    png = await run_in_threadpool(W.page_png, one, 0)
+    headers = {"Cache-Control": "no-store"}
+    if wid:
+        headers["X-Watermark-Id"] = str(wid)
+    return Response(content=png, media_type="image/png", headers=headers)
+
+
+@router.put("/deal-room/deals/{deal_id}/documents/{doc_id}/share-unwatermarked")
+async def share_unwatermarked(request: Request, deal_id: UUID, doc_id: UUID, body: ShareUnwatermarked):
+    """A manager lets investors have a file that cannot be watermarked as it is (recorded + audited)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            row = await conn.fetchrow(
+                "UPDATE deal_documents SET share_unwatermarked = $3, share_unwatermarked_by = CASE WHEN $3 THEN $4::uuid END, "
+                "share_unwatermarked_at = CASE WHEN $3 THEN now() END, updated_at = now() WHERE id = $1 AND deal_id = $2 "
+                "AND deleted_at IS NULL RETURNING id, share_unwatermarked, share_unwatermarked_at",
+                doc_id, deal_id, body.share, UUID(str(principal.user_id)))
+            if row is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            await conn.execute(
+                "INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, payload) "
+                "VALUES ($1, $2, 'deal_room.share_unwatermarked', 'deal_documents', $3, $4::jsonb)",
+                deal["org_id"], UUID(str(principal.user_id)), doc_id, json.dumps({"share": body.share}))
+    return _jsonable(dict(row))
+
+
+@router.post("/deal-room/deals/{deal_id}/folders/{folder_id}/open")
+async def open_room_folder(request: Request, deal_id: UUID, folder_id: UUID):
+    """An investor (or advisor) opens a folder: logged; the publisher is told
+    of the first open when the deal's settings ask for it. A closed folder is
+    a 404 and logs nothing."""
+    pool = await get_pool()
+    outbox = C.Outbox()
+    async with pool.acquire() as conn:
+        principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+        f = await _folder(conn, deal_id, folder_id)
+        if rights.can_manage:
+            return {"folder_id": str(folder_id), "logged": False}
+        if rights.role == "advisor" and rights.advisor_status != "active":
+            raise HTTPException(status_code=404, detail="Folder not found")
+        if not await conn.fetchval("SELECT deal_room_folder_open($1, $2)", folder_id, UUID(str(principal.user_id))):
+            raise HTTPException(status_code=404, detail="Folder not found")
+        reader = await C.reader_context(conn, deal, principal, rights)
+        await C.log_activity(conn, deal, reader, "folder_open", folder_id=folder_id)
+        if await C.first_folder_open(conn, deal_id, principal.user_id, folder_id):
+            lab = await R.labels(conn, deal["org_id"])
+            await C.publisher_notify(conn, outbox, deal, "first_folder_open", "deal_room_first_folder_open",
+                                     "Folder opened", f"An investor opened {R.folder_label(f, lab)} in "
+                                                      f"{deal['name']} for the first time.")
+    await outbox.publish(pool)
+    return {"folder_id": str(folder_id), "logged": True}
 
 
 # ── Agreements ─────────────────────────────────────────────────────────────
@@ -1009,22 +1332,29 @@ async def publish_agreement(request: Request, deal_id: UUID, agreement_id: UUID)
 async def request_room_access(request: Request, deal_id: UUID, body: AccessRequest):
     require_permission(request, "indicate_interest")
     pool = await get_pool()
+    outbox = C.Outbox()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            principal, deal, _ = await _require_deal_viewer(request, conn, deal_id)
+            principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+            _refuse_advisor(rights)
+            before = await R.live_access(conn, deal["id"], principal.user_id)
             try:
                 caller = principal
                 out = await R.request_access(pool, conn, principal=caller, deal=deal, entity_id=body.entity_id)
             except R.DealRoomError as exc:
                 raise _http(exc) from exc
+            if before is None or before["status"] in ("viewing", "not_eligible"):
+                await C.publisher_notify(conn, outbox, deal, "request", "deal_room_access_requested",
+                                         "New access request", f"An investor requested access to {deal['name']}.")
         lab = await R.labels(conn, deal["org_id"])
+    await outbox.publish(pool)
     acc = out["access"]
     elig = out["eligibility"]
     if isinstance(elig, str):
         elig = json.loads(elig)
     if acc["status"] == "granted":
         await _notify(pool, deal, [principal.user_id], "deal_access_granted", "Deal room open",
-                      f"Your access to {deal['name']} is open.")
+                      f"Your access to {deal['name']} is open.", channels=C.CHANNELS)
     return {"status": acc["status"], "status_label": lab.get(f"deal_room_status_{acc['status']}"),
             "level_granted": acc["level_granted"], "eligible": bool((elig or {}).get("eligible")),
             "missing": (elig or {}).get("missing", [])}
@@ -1084,9 +1414,11 @@ async def sign_agreement(request: Request, deal_id: UUID, agreement_id: UUID, bo
     pool = await get_pool()
     ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or \
         (request.client.host if request.client else None)
+    outbox = C.Outbox()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            principal, deal, _ = await _require_deal_viewer(request, conn, deal_id)
+            principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+            _refuse_advisor(rights)
             try:
                 caller = principal
                 out = await R.sign(conn, principal=caller, deal=deal, agreement_id=agreement_id,
@@ -1095,23 +1427,27 @@ async def sign_agreement(request: Request, deal_id: UUID, agreement_id: UUID, bo
                                    user_agent=request.headers.get("user-agent"), today=date.today())
             except R.DealRoomError as exc:
                 raise _http(exc) from exc
+            await C.publisher_notify(conn, outbox, deal, "signature", "deal_room_agreement_signed",
+                                     "Agreement signed", f"An investor signed an agreement for {deal['name']}.",
+                                     {"complete": out["complete"]})
+    await outbox.publish(pool)
     access = out["access"] or {}
     if out["complete"]:
         if access.get("status") == "granted":
             await _notify(pool, deal, [principal.user_id], "deal_access_granted", "Deal room open",
-                          f"Your access to {deal['name']} is open.")
+                          f"Your access to {deal['name']} is open.", channels=C.CHANNELS)
     return {"signature_id": str(out["signature"]["id"]), "record_sha256": out["signature"]["record_sha256"],
             "signed_at": out["signature"]["signed_at"].isoformat(), "complete": out["complete"],
             "version": out["version"], "document_sha256": out["signature"]["document_sha256"],
             "status": access.get("status"), "level_granted": access.get("level_granted")}
 
 
-async def _notify(pool, deal, user_ids, event, title, body) -> None:
+async def _notify(pool, deal, user_ids, event, title, body, channels=None) -> None:
     try:
         from services.notifications import notification_bus
 
         await notification_bus.publish(pool, deal["org_id"], event, title, body, [str(u) for u in user_ids],
-                                       resource_type="deal", resource_id=deal["id"])
+                                       resource_type="deal", resource_id=deal["id"], channels=channels)
     except Exception as exc:  # noqa: BLE001 — best effort, never blocks the decision
         print(f"[deal_room] notify failed ({event}): {exc}")
 
@@ -1216,7 +1552,7 @@ async def my_access(request: Request):
         rows = await conn.fetch(
             """
             SELECT a.deal_id, d.name AS deal_name, a.status, a.level_granted, a.decided_at, a.valid_from,
-                   e.display_name AS entity_name
+                   e.display_name AS entity_name, a.access_ends_on, a.paused_reason
             FROM deal_access a
             JOIN deals d ON d.id = a.deal_id AND d.valid_to IS NULL AND d.system_to IS NULL
             LEFT JOIN entities e ON e.id = a.entity_id AND e.valid_to IS NULL AND e.system_to IS NULL
@@ -1245,6 +1581,19 @@ async def my_access(request: Request):
             reqs, state = await R.access_state(conn, dict(deal), principal.user_id)
             to_sign[r["deal_id"]] = [{"agreement_id": str(a["id"]), "title": a["title"],
                                       "version": a["current_version"]} for a in reqs if not state[a["id"]]["ok"]]
+        # DEALROOM3: the investor's own advisors and return-or-destroy notices;
+        # and the deals the caller advises someone on.
+        advisors = {r["deal_id"]: await C.advisors_of(conn, r["deal_id"], principal.user_id, lab) for r in rows}
+        notices = {r["deal_id"]: await C.live_notice(conn, r["deal_id"], principal.user_id) for r in rows}
+        advising = await conn.fetch(
+            """
+            SELECT ad.deal_id, d.name AS deal_name, ad.status, ad.role, COALESCE(u.full_name, u.email) AS investor_name
+            FROM deal_room_advisors ad
+            JOIN deals d ON d.id = ad.deal_id AND d.valid_to IS NULL AND d.system_to IS NULL
+            JOIN users u ON u.id = ad.access_user_id
+            WHERE ad.advisor_user_id = $1 AND ad.valid_to IS NULL AND ad.status IN ('invited', 'active')
+            ORDER BY ad.valid_from DESC
+            """, UUID(str(principal.user_id)))
     by_deal: dict = {}
     for s in sigs:
         by_deal.setdefault(s["deal_id"], []).append({
@@ -1258,7 +1607,22 @@ async def my_access(request: Request):
         "level_label": lab.get(f"deal_room_level_{r['level_granted']}") if r["level_granted"] else None,
         "entity_name": r["entity_name"], "since": r["valid_from"].isoformat(),
         "to_sign": to_sign.get(r["deal_id"], []),
-        "signatures": by_deal.get(r["deal_id"], [])} for r in rows]}
+        "access_ends_on": r["access_ends_on"].isoformat() if r["access_ends_on"] else None,
+        "paused_reason": r["paused_reason"],
+        "advisors": advisors.get(r["deal_id"], []),
+        "return_notice": _notice_out(notices.get(r["deal_id"])),
+        "signatures": by_deal.get(r["deal_id"], [])} for r in rows],
+        "advising": [{"deal_id": str(a["deal_id"]), "deal_name": a["deal_name"], "status": a["status"],
+                      "status_label": lab.get(f"deal_room_advisor_status_{a['status']}"),
+                      "role_label": lab.get(f"deal_room_advisor_role_{a['role']}"),
+                      "investor_name": a["investor_name"], "needs_ack": a["status"] == "invited"} for a in advising]}
+
+
+def _notice_out(n) -> dict | None:
+    if n is None:
+        return None
+    return {"text": n["notice_text"], "sha256": n["notice_sha256"], "sent_at": n["sent_at"].isoformat(),
+            "acknowledged_at": n["acknowledged_at"].isoformat() if n["acknowledged_at"] else None}
 
 
 # ── The access grid ────────────────────────────────────────────────────────
@@ -1326,7 +1690,7 @@ async def access_grid(
         rows = await conn.fetch(
             f"""
             SELECT a.id, a.deal_id, a.user_id, a.entity_id, a.status, a.level_granted, a.decided_at, a.reason,
-                   a.prior_level, a.resign_after,
+                   a.prior_level, a.resign_after, a.access_ends_on, a.paused_reason,
                    a.valid_from AS since, d.name AS deal_name, d.publisher_entity_id,
                    COALESCE(pe.display_name, '—') AS publisher_name, o.name AS firm_name,
                    COALESCE(u.full_name, u.email) AS investor_name, e.display_name AS entity_name,
@@ -1351,6 +1715,31 @@ async def access_grid(
             states[r["id"]] = await R.signature_state(conn, deal_row, reqs, r["user_id"], r["entity_id"],
                                                       r["resign_after"]) if deal_row else {}
         lab = await R.labels(conn, principal.org_id)
+        # DEALROOM3: each investor's advisors (under the investor) and any
+        # return-or-destroy notice on the row's deal.
+        pairs = [(r["deal_id"], r["user_id"]) for r in rows]
+        adv_by: dict = {}
+        notice_by: dict = {}
+        if pairs:
+            deal_ids = list({d for d, _ in pairs})
+            user_ids = list({u for _, u in pairs})
+            for a in await conn.fetch(
+                    "SELECT deal_id, access_user_id, advisor_user_id, name, firm, role, status, acknowledged_at, "
+                    "revoked_reason FROM deal_room_advisors WHERE deal_id = ANY($1::uuid[]) AND access_user_id = "
+                    "ANY($2::uuid[]) AND valid_to IS NULL ORDER BY valid_from", deal_ids, user_ids):
+                adv_by.setdefault((a["deal_id"], a["access_user_id"]), []).append({
+                    "advisor_user_id": str(a["advisor_user_id"]), "name": a["name"], "firm": a["firm"],
+                    "role": a["role"], "role_label": lab.get(f"deal_room_advisor_role_{a['role']}"),
+                    "status": a["status"], "status_label": lab.get(f"deal_room_advisor_status_{a['status']}"),
+                    "acknowledged_at": a["acknowledged_at"].isoformat() if a["acknowledged_at"] else None,
+                    "revoked_reason": a["revoked_reason"]})
+            for n in await conn.fetch(
+                    "SELECT deal_id, user_id, sent_at, acknowledged_at FROM deal_room_return_notices WHERE deal_id = "
+                    "ANY($1::uuid[]) AND user_id = ANY($2::uuid[]) AND valid_to IS NULL ORDER BY sent_at",
+                    deal_ids, user_ids):
+                notice_by[(n["deal_id"], n["user_id"])] = {
+                    "sent_at": n["sent_at"].isoformat(),
+                    "acknowledged_at": n["acknowledged_at"].isoformat() if n["acknowledged_at"] else None}
 
     def col_key(a):
         return "master_nda" if a.get("is_master") else (a["template_key"] or f"upload:{a['id']}")
@@ -1401,7 +1790,11 @@ async def access_grid(
             "prior_level": r["prior_level"],
             "status": r["status"], "status_label": lab.get(f"deal_room_status_{r['status']}"),
             "decided_by": r["decided_by_name"], "decided_at": r["decided_at"].isoformat() if r["decided_at"] else None,
-            "reason": r["reason"], "group": r["group_label"]})
+            "reason": r["reason"], "group": r["group_label"],
+            "access_ends_on": r["access_ends_on"].isoformat() if r["access_ends_on"] else None,
+            "paused_reason": r["paused_reason"],
+            "advisors": adv_by.get((r["deal_id"], r["user_id"]), []),
+            "return_notice": notice_by.get((r["deal_id"], r["user_id"]))})
     return {
         "rows": out_rows, "total": total, "page": page, "page_size": page_size, "scope": scope,
         "group_by": group_by, "agreement_columns": columns,
@@ -1409,6 +1802,7 @@ async def access_grid(
                         "read_permission": "deal publisher / delegate / manage_deals / manage_org_settings",
                         "write_permission": "deal publisher / delegate / manage_deals / manage_org_settings"},
         "vocabularies": {**R.vocabularies(lab), "group_by": list(GROUPS), "actions": list(R.DECIDE_ACTIONS),
+                         "extendable_statuses": ["granted", "expired"],
                          "grant_levels": [v for v in R.vocabularies(lab)["levels"] if v["key"] in R.GRANT_LEVELS],
                          "editable": ["status"], "inline_editable": []},
     }
@@ -1421,12 +1815,15 @@ async def decide_access(request: Request, body: Decision):
     audited in its own transaction with the change."""
     pool = await get_pool()
     results = []
+    if body.send_return_notice and body.action != "revoke":
+        raise HTTPException(status_code=422, detail="A return-or-destroy notice goes with a revoke.")
     async with pool.acquire() as conn:
         principal, scope, ids = await _require_grid_scope(request, conn)
         for access_id in body.access_ids:
             try:
+                notice = None
                 async with conn.transaction():
-                    row = await conn.fetchrow("SELECT deal_id, org_id FROM deal_access WHERE id = $1 "
+                    row = await conn.fetchrow("SELECT deal_id, org_id, status FROM deal_access WHERE id = $1 "
                                               "AND valid_to IS NULL", access_id)
                     if row is None:
                         raise R.DealRoomError(404, "Access request not found (it may have changed — reload).")
@@ -1434,11 +1831,25 @@ async def decide_access(request: Request, body: Decision):
                     if deal is None or not (await R.deal_rights(conn, principal, dict(deal))).can_manage:
                         raise R.DealRoomError(404, "Access request not found (it may have changed — reload).")
                     new = await R.decide(conn, actor=principal.user_id, access_id=access_id, action=body.action,
-                                         level=body.level, reason=body.reason)
-                results.append({"id": str(access_id), "ok": True, "new_id": str(new["id"]), "status": new["status"]})
-                if new["status"] == "granted":
+                                         level=body.level, reason=body.reason, ends_on=body.ends_on)
+                    if body.action == "revoke" and body.send_return_notice:
+                        notice = await C.send_return_notice(conn, dict(deal), new, actor=principal.user_id)
+                results.append({"id": str(access_id), "ok": True, "new_id": str(new["id"]), "status": new["status"],
+                                "access_ends_on": new["access_ends_on"].isoformat() if new.get("access_ends_on")
+                                else None, "return_notice_id": str(notice["id"]) if notice else None})
+                if notice is not None:
+                    await _notify(pool, dict(deal), [new["user_id"]], "deal_room_return_notice",
+                                  "Return or destroy deal materials",
+                                  f"Your access to {deal['name']} was withdrawn. Please return or destroy the "
+                                  "materials you received and acknowledge the notice in My deal access.",
+                                  channels=C.CHANNELS)
+                if body.action == "extend":
+                    await _notify(pool, dict(deal), [new["user_id"]], "deal_access_extended", "Deal room access extended",
+                                  f"Your access to {deal['name']} now runs until {new['access_ends_on'].isoformat()}.",
+                                  channels=C.CHANNELS)
+                elif new["status"] == "granted":
                     await _notify(pool, dict(deal), [new["user_id"]], "deal_access_granted", "Deal room open",
-                                  f"Your access to {deal['name']} is open.")
+                                  f"Your access to {deal['name']} is open.", channels=C.CHANNELS)
                 elif new["status"] == "resign_required":
                     await _notify(pool, dict(deal), [new["user_id"]], "deal_access_resign_required",
                                   "Re-signing required", f"Sign the agreements for {deal['name']} again to reopen "
@@ -1807,3 +2218,264 @@ async def publish_library_template(request: Request, template_id: UUID):
             n = await L.in_use(conn, t["id"])
     return _library_row({**t, "in_use": n}, principal)
 
+
+
+# ── DEALROOM3: Q&A ─────────────────────────────────────────────────────────
+@router.get("/deal-room/deals/{deal_id}/questions")
+async def list_questions(request: Request, deal_id: UUID):
+    """Managers: the queue (every live question, with its asker). Investors and
+    advisors: their own questions plus every ANSWERED question their access
+    reaches — never another investor's identity. Reading answers is logged."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+        if rights.role == "advisor" and rights.advisor_status != "active":
+            raise HTTPException(status_code=404, detail="Deal not found")
+        lab = await R.labels(conn, deal["org_id"])
+        rows = await C.questions_for(conn, deal, manage=rights.can_manage, user_id=principal.user_id, lab=lab)
+        reader = None
+        if not rights.can_manage:
+            reader = await C.reader_context(conn, deal, principal, rights)
+            seen = {r["detail"] for r in await conn.fetch(
+                "SELECT detail->>'question_id' AS detail FROM deal_room_activity WHERE deal_id = $1 AND user_id = $2 "
+                "AND action = 'answer_read'", deal["id"], UUID(str(principal.user_id)))}
+            for q in rows:
+                if q["status"] == "answered" and q["id"] not in seen:
+                    await C.log_activity(conn, deal, reader, "answer_read", folder_id=q["folder_id"],
+                                         detail={"question_id": q["id"]})
+        can_ask = bool(not rights.can_manage and rights.role != "advisor" and reader is not None
+                       and reader["access"] is not None and reader["access"]["status"] == "granted")
+    return {"rows": rows,
+            "permissions": {"can_read": True, "can_write": rights.can_manage, "can_ask": can_ask,
+                            "is_super_admin": bool(principal.is_super_admin), "read_permission": "view_deals",
+                            "write_permission": "deal publisher / delegate / manage_deals"},
+            "vocabularies": {"question_statuses": R.vocab(lab, "deal_room_question_status_", R.QUESTION_STATUSES),
+                             "editable": ["answer", "withdraw", "merge"] if rights.can_manage else [],
+                             "inline_editable": []}}
+
+
+@router.post("/deal-room/deals/{deal_id}/questions", status_code=201)
+async def ask_question(request: Request, deal_id: UUID, body: QuestionCreate):
+    """An investor with granted access asks — generally, or about a folder they can open."""
+    pool = await get_pool()
+    outbox = C.Outbox()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+            _refuse_advisor(rights)
+            if rights.can_manage:
+                raise HTTPException(status_code=409, detail="Managers answer questions; investors ask them.")
+            reader = await C.reader_context(conn, deal, principal, rights)
+            try:
+                q = await C.ask(conn, deal, reader, body=body.body, folder_id=body.folder_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+            await C.publisher_notify(conn, outbox, deal, "question", "deal_room_question_asked", "New question",
+                                     f"An investor asked a question about {deal['name']}.",
+                                     {"question_id": str(q["id"])})
+    await outbox.publish(pool)
+    return {"id": str(q["id"]), "status": q["status"], "folder_id": str(q["folder_id"]) if q["folder_id"] else None}
+
+
+@router.post("/deal-room/deals/{deal_id}/questions/{question_id}/answer")
+async def answer_question(request: Request, deal_id: UUID, question_id: UUID, body: AnswerBody):
+    """Publish an answer to every investor whose access reaches the question's folder (general →
+    after_agreements); each of them is notified, the asker included."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            try:
+                ans, audience = await C.answer(conn, deal, question_id, body=body.body, actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    outbox = C.Outbox()
+    outbox.add(deal, audience, "deal_room_question_answered", "A question was answered",
+               f"A question about {deal['name']} has an answer in the data room's Q&A.",
+               {"question_id": str(question_id)})
+    await outbox.publish(pool)
+    return {"question_id": str(question_id), "answer_id": str(ans["id"]), "recipients": len(audience)}
+
+
+@router.post("/deal-room/deals/{deal_id}/questions/{question_id}/withdraw")
+async def withdraw_question(request: Request, deal_id: UUID, question_id: UUID, body: ReasonBody):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            try:
+                q = await C.withdraw(conn, deal, question_id, reason=body.reason, actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return {"id": str(q["id"]), "status": q["status"]}
+
+
+@router.post("/deal-room/deals/{deal_id}/questions/{question_id}/merge")
+async def merge_question(request: Request, deal_id: UUID, question_id: UUID, body: MergeBody):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+            try:
+                q = await C.merge(conn, deal, question_id, into_id=body.into_id, reason=body.reason,
+                                  actor=principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return {"id": str(q["id"]), "status": q["status"], "merged_into": str(q["merged_into"])}
+
+
+# ── DEALROOM3: advisors ────────────────────────────────────────────────────
+@router.post("/deal-room/deals/{deal_id}/advisors", status_code=201)
+async def invite_room_advisor(request: Request, deal_id: UUID, body: AdvisorInvite):
+    """An investor with granted access names an advisor (an existing user of the firm is linked;
+    otherwise invited through the usermgmt1 path). The advisor sees nothing until they acknowledge."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+            _refuse_advisor(rights)
+            if rights.can_manage:
+                raise HTTPException(status_code=409, detail="Advisors are named by investors with access.")
+            reader = await C.reader_context(conn, deal, principal, rights)
+            try:
+                adv = await C.invite_advisor(conn, deal, reader, name=body.name, firm=body.firm, role=body.role,
+                                             email=body.email)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    await _notify(pool, deal, [adv["advisor_user_id"]], "deal_room_advisor_invited", "Advisor invitation",
+                  f"You have been asked to review {deal['name']} as an advisor. Sign the acknowledgement to begin.",
+                  channels=C.CHANNELS)
+    return {"advisor_user_id": str(adv["advisor_user_id"]), "status": adv["status"], "how": adv["how"]}
+
+
+@router.get("/deal-room/deals/{deal_id}/advisors")
+async def list_room_advisors(request: Request, deal_id: UUID):
+    """Managers: every advisor on the deal, under their investor. An investor: their own."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+        _refuse_advisor(rights)
+        lab = await R.labels(conn, deal["org_id"])
+        rows = await C.advisors_of(conn, deal_id, None if rights.can_manage else principal.user_id, lab)
+    return {"rows": rows, "permissions": {"can_read": True, "can_write": rights.can_manage,
+                                          "is_super_admin": bool(principal.is_super_admin),
+                                          "read_permission": "view_deals",
+                                          "write_permission": "deal publisher / delegate / manage_deals"},
+            "vocabularies": {"advisor_roles": R.vocab(lab, "deal_room_advisor_role_", R.ADVISOR_ROLES),
+                             "editable": ["remove"] if rights.can_manage else [], "inline_editable": []}}
+
+
+@router.post("/deal-room/deals/{deal_id}/advisors/{advisor_user_id}/remove")
+async def remove_room_advisor(request: Request, deal_id: UUID, advisor_user_id: UUID, body: ReasonBody):
+    """The investor removes their own advisor; a manager removes any advisor (reason recorded)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+            _refuse_advisor(rights)
+            try:
+                row = await C.remove_advisor(conn, deal, advisor_user_id, actor=principal.user_id, reason=body.reason,
+                                             by_investor=None if rights.can_manage else principal.user_id)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return {"advisor_user_id": str(advisor_user_id), "status": row["status"]}
+
+
+@router.get("/deal-room/deals/{deal_id}/advisor-acknowledgement")
+async def get_advisor_ack(request: Request, deal_id: UUID):
+    """The acknowledgement text an invited advisor signs (and its hash)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+        if rights.role != "advisor":
+            raise HTTPException(status_code=404, detail="No advisor invitation for you on this deal.")
+        adv = await R.advisor_row(conn, deal_id, principal.user_id)
+        text = await C.advisor_ack_text(conn, deal, adv)
+    return {"text": text, "text_sha256": C.sha256_text(text), "status": adv["status"]}
+
+
+@router.post("/deal-room/deals/{deal_id}/advisor-acknowledgement")
+async def sign_advisor_ack(request: Request, deal_id: UUID, body: AdvisorAck):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, rights = await _require_deal_viewer(request, conn, deal_id)
+            if rights.role != "advisor":
+                raise HTTPException(status_code=404, detail="No advisor invitation for you on this deal.")
+            try:
+                row = await C.acknowledge(conn, deal, principal, typed_name=body.typed_name, consent=body.consent,
+                                          text_sha256=body.text_sha256)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return {"status": row["status"], "acknowledged_at": row["acknowledged_at"].isoformat()}
+
+
+# ── DEALROOM3: the return-or-destroy notice ────────────────────────────────
+@router.post("/deal-room/deals/{deal_id}/return-notice/acknowledge")
+async def acknowledge_return_notice(request: Request, deal_id: UUID, body: NoticeAck):
+    """The investor confirms they returned or destroyed the materials (typed name)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            principal, deal, _ = await _require_deal_party(request, conn, deal_id)
+            try:
+                row = await C.acknowledge_notice(conn, deal, principal, typed_name=body.typed_name)
+            except R.DealRoomError as exc:
+                raise _http(exc) from exc
+    return {"acknowledged_at": row["acknowledged_at"].isoformat()}
+
+
+# ── DEALROOM3: activity (managers only) and the watermark lookup ───────────
+@router.get("/deal-room/deals/{deal_id}/activity")
+async def deal_activity(request: Request, deal_id: UUID, view: str = Query("investor"),
+                        format: str = Query("json")):
+    """Per investor (first / last open, documents viewed / downloaded, pages), per document, or every
+    event — JSON or CSV. Managers only: an investor never sees anyone's activity. Kept after access
+    ends and after the deal closes (append-only; no delete path)."""
+    if view not in C.ACTIVITY_VIEWS or format not in ("json", "csv"):
+        raise HTTPException(status_code=422, detail="view must be investor, document or events; format json or csv")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal, deal, _ = await _require_deal_manager(request, conn, deal_id)
+        rows = await C.activity_rows(conn, deal_id, view)
+        lab = await R.labels(conn, deal["org_id"])
+    if format == "csv":
+        return PlainTextResponse(C.activity_csv(rows), media_type="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="deal-activity-{view}.csv"', "Cache-Control": "no-store"})
+    return {"view": view, "rows": _jsonable(rows),
+            "permissions": {"can_read": True, "can_write": False, "is_super_admin": bool(principal.is_super_admin),
+                            "read_permission": "deal publisher / delegate / manage_deals", "write_permission": None},
+            "vocabularies": {"views": list(C.ACTIVITY_VIEWS),
+                             "activity_actions": R.vocab(lab, "deal_room_activity_", R.ACTIVITY_ACTIONS),
+                             "editable": [], "inline_editable": []}}
+
+
+@router.get("/deal-room/deals/{deal_id}/watermarks/{watermark_id}")
+async def lookup_watermark(request: Request, deal_id: UUID, watermark_id: UUID):
+    """A watermark id printed on a leaked page → the person, entity, document and time it was made for."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _require_deal_manager(request, conn, deal_id)
+        w = await C.lookup_watermark(conn, watermark_id)
+    if w is None or str(w["deal_id"]) != str(deal_id):
+        raise HTTPException(status_code=404, detail="Watermark not found")
+    return _jsonable(w)
+
+
+# ── DEALROOM3: CRM relationship date (the DRAFT 506(b) rule's input) ───────
+@router.put("/deal-room/relationship-dates/{entity_id}")
+async def put_relationship_date(request: Request, entity_id: UUID, body: RelationshipDate):
+    """Staff record when the firm's relationship with a CRM entity began (history kept)."""
+    principal = require_any_permission(request, PUBLISHER_ADMIN_PERMS)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if not await conn.fetchval("SELECT 1 FROM entities WHERE id = $1 AND org_id = $2 AND valid_to IS NULL "
+                                       "AND system_to IS NULL", entity_id, UUID(str(org_id))):
+                raise HTTPException(status_code=404, detail="Entity not found")
+            row = await C.set_relationship_date(conn, org_id, entity_id, established_on=body.established_on,
+                                                basis=body.basis, actor=principal.user_id)
+            await R.audit(conn, org_id=org_id, actor=principal.user_id, action="deal_room.relationship_date",
+                          resource_id=entity_id, payload=body.model_dump())
+    return _jsonable(row)

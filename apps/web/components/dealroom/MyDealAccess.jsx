@@ -5,9 +5,30 @@
  * DEALROOM2: each signature shows its agreement version and links the PDF
  * copy (with its certificate page); a deal needing re-signing lists what to
  * sign.
+ * DEALROOM3: the access end date or paused reason, the investor's advisors, a
+ * return-or-destroy notice (acknowledged here), and the deals the caller
+ * advises someone on.
  */
-export default function MyDealAccess({ rows = [] }) {
+import { accessLine, advisorLines, noticePending } from "@/lib/dealRoom.mjs";
+import { ReturnNotice } from "@/components/dealroom/DataRoom";
+
+export default function MyDealAccess({ rows = [], advising = [] }) {
+  const advisingList = advising.length > 0 && (
+    <section className="mb-4 rounded-[6px] border border-[#ece8dd] bg-white p-5" data-testid="advising">
+      <h3 className="text-base font-semibold text-navy">Deals you advise on</h3>
+      <ul className="mt-2 space-y-1 text-sm text-text-secondary">
+        {advising.map((a) => (
+          <li key={a.deal_id}>
+            <a href={`/marketplace/${a.deal_id}?tab=documents`} className="text-navy hover:underline">{a.deal_name}</a>
+            {` — for ${a.investor_name} (${a.role_label || "advisor"}) · ${a.status_label || a.status}`}
+            {a.needs_ack ? " · acknowledgement needed" : ""}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
   if (!rows.length) {
+    if (advisingList) return advisingList;
     return (
       <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">
         You have not requested access to any deal yet.
@@ -15,6 +36,8 @@ export default function MyDealAccess({ rows = [] }) {
     );
   }
   return (
+    <>
+    {advisingList}
     <ul className="space-y-4" data-testid="my-deal-access">
       {rows.map((r) => (
         <li key={r.deal_id} className="rounded-[6px] border border-[#ece8dd] bg-white p-5">
@@ -23,9 +46,18 @@ export default function MyDealAccess({ rows = [] }) {
               {r.deal_name}
             </a>
             <span className="text-sm text-text-secondary">
-              {r.status_label}{r.level_label ? ` · ${r.level_label}` : ""}
+              {accessLine(r)}{r.level_label ? ` · ${r.level_label}` : ""}
             </span>
           </div>
+          {(r.advisors || []).length > 0 && (
+            <ul className="mt-2 text-xs text-text-muted" data-testid="my-advisors">
+              {advisorLines(r.advisors).map((l) => <li key={l}>Advisor: {l}</li>)}
+            </ul>
+          )}
+          {r.return_notice && !noticePending(r.return_notice) && (
+            <p className="mt-2 text-xs text-text-muted">Return-or-destroy notice acknowledged {r.return_notice.acknowledged_at.slice(0, 10)}.</p>
+          )}
+          {noticePending(r.return_notice) && <ReturnNotice dealId={r.deal_id} notice={r.return_notice} />}
           {r.entity_name && <p className="mt-1 text-xs text-text-muted">Investing through {r.entity_name}</p>}
           {r.status === "resign_required" && (
             <div className="mt-3 rounded border border-[#9B2335]/30 p-3 text-sm text-text-secondary" data-testid="to-sign">
@@ -59,5 +91,6 @@ export default function MyDealAccess({ rows = [] }) {
         </li>
       ))}
     </ul>
+    </>
   );
 }

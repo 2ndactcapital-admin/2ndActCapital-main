@@ -485,6 +485,11 @@ async def list_deals(
     elif not staff:
         params.append(list(MEMBER_VISIBLE_STATUSES))
         conditions.append(f"deal_status = ANY(${len(params)})")
+    if not staff:
+        # DEALROOM3 — the DRAFT 506(b) offering rule (SQL deal_room_offering_open,
+        # the one definition the deal room and Document Search also use).
+        params.append(UUID(str(user_id)))
+        conditions.append(f"deal_room_offering_open(id, ${len(params)}::uuid)")
 
     if deal_stage:
         # BUGFIX1 — the Stage filter is the lifecycle: a config key (or a raw
@@ -602,6 +607,9 @@ async def get_deal(request: Request, deal_id: UUID):
         if row is None:
             raise HTTPException(status_code=404, detail="Deal not found")
         if not staff and row["deal_status"] not in MEMBER_VISIBLE_STATUSES:
+            raise HTTPException(status_code=404, detail="Deal not found")
+        # DEALROOM3 — the DRAFT 506(b) offering rule: the same 404.
+        if not staff and not await deal_room.offering_open(conn, deal_id, user_id):
             raise HTTPException(status_code=404, detail="Deal not found")
 
         ids = [deal_id]

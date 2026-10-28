@@ -1,5 +1,5 @@
 {
- "app_route_count": 652,
+ "app_route_count": 671,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -2428,6 +2428,96 @@
    "write": false
   },
   {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "watermarked_room_document",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}/file",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "room_document_pages",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}/pages",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "room_document_page",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}/pages/{page}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.deal_room",
+   "name": "share_unwatermarked",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/documents/{doc_id}/share-unwatermarked",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "open_room_folder",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/folders/{folder_id}/open",
+   "public": false,
+   "write": true
+  },
+  {
    "after": "none beyond auth",
    "before": "\u2014",
    "before_effect": "new route",
@@ -2912,6 +3002,262 @@
    "name": "publish_library_template",
    "note": "",
    "path": "/api/v1/deal-room/library/{template_id}/publish",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "list_questions",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/questions",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "ask_question",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/questions",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "answer_question",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/questions/{question_id}/answer",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "withdraw_question",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/questions/{question_id}/withdraw",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "merge_question",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/questions/{question_id}/merge",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "invite_room_advisor",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/advisors",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "list_room_advisors",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/advisors",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "remove_room_advisor",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/advisors/{advisor_user_id}/remove",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "get_advisor_ack",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/advisor-acknowledgement",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "sign_advisor_ack",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/advisor-acknowledgement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.deal_room",
+   "name": "acknowledge_return_notice",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/return-notice/acknowledge",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "deal_activity",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/activity",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "deal room scope (publisher users, delegates, manage_deals, org admin, super admin)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.deal_room",
+   "name": "lookup_watermark",
+   "note": "",
+   "path": "/api/v1/deal-room/deals/{deal_id}/watermarks/{watermark_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_deals|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_deals",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.deal_room",
+   "name": "put_relationship_date",
+   "note": "",
+   "path": "/api/v1/deal-room/relationship-dates/{entity_id}",
    "public": false,
    "write": true
   },

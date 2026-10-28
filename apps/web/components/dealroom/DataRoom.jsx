@@ -19,12 +19,24 @@
  * version; signed agreements list their version and a PDF copy; managers
  * upload PDFs, save new versions (keep signers / require re-signing) and set
  * the publisher's master NDA — every control behind can_write === true.
+ *
+ * DEALROOM3: documents carry the server's per-document flags (can_view /
+ * can_download / blocked_reason): View opens the page viewer (never the
+ * original); Download appears only when can_download === true — under
+ * view-only it never does. Entering the room shows the activity notice;
+ * expired / paused investors see why and their signatures, no folders; Q&A,
+ * advisors (and an advisor's acknowledgement), a return-or-destroy notice,
+ * and for managers the new settings rows and the activity view.
  */
 
 import { useState } from "react";
-import { agreementControls, canWrite, folderRows, investorStep, signatureLine, signEnabled, signPayload }
-  from "@/lib/dealRoom.mjs";
+import { agreementControls, canWrite, documentActions, folderRows, investorStep, noticePending, roomNotices,
+  settingsRows, shareUnwatermarkedControl, signatureLine, signEnabled, signPayload } from "@/lib/dealRoom.mjs";
 import AgreementViewer from "@/components/dealroom/AgreementViewer";
+import DocumentViewer from "@/components/dealroom/DocumentViewer";
+import QAPanel from "@/components/dealroom/QAPanel";
+import ActivityPanel from "@/components/dealroom/ActivityPanel";
+import { AdvisorAcknowledgement, InvestorAdvisors } from "@/components/dealroom/AdvisorsPanel";
 
 const CARD = "rounded-[6px] border border-[#ece8dd] bg-white";
 
@@ -54,6 +66,9 @@ function LockIcon() {
 export function FolderList({ envelope, manage, levels, onChange, setError }) {
   const rows = folderRows(envelope);
   const dealId = envelope?.deal?.id;
+  const [viewer, setViewer] = useState(null);
+  const [opened, setOpened] = useState({});
+  const docsOf = (f) => envelope.folders.find((x) => x.id === f.id)?.documents || [];
   const run = async (fn) => {
     try {
       setError?.(null);
@@ -69,7 +84,19 @@ export function FolderList({ envelope, manage, levels, onChange, setError }) {
         <li key={f.id} className="py-3" style={{ paddingLeft: `${f.depth * 20}px` }} data-folder={f.label}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-medium text-navy">
-              {!f.open && <LockIcon />} {f.label}
+              {!f.open && <LockIcon />}{" "}
+              {f.open && !manage ? (
+                <button type="button" className="hover:underline" data-action="open-folder"
+                  onClick={async () => {
+                    // the open is recorded once per visit (the activity log; first open may notify the
+                    // publisher) — no room refresh, which would log a second room open
+                    if (opened[f.id]) return;
+                    try {
+                      await call(`deals/${dealId}/folders/${f.id}/open`, { method: "POST" });
+                      setOpened((x) => ({ ...x, [f.id]: true }));
+                    } catch (e) { setError?.(e.message); }
+                  }}>{f.label}</button>
+              ) : f.label}
               <span className="ml-2 text-xs font-normal text-text-muted">{f.levelLabel}</span>
             </div>
             {manage && (
@@ -105,25 +132,62 @@ export function FolderList({ envelope, manage, levels, onChange, setError }) {
           {f.open && (
             <ul className="mt-2 space-y-1">
               {f.documents.length === 0 && <li className="text-xs text-text-muted">No documents yet.</li>}
-              {f.documents.map((d) => (
-                <li key={d.id} className="flex items-center justify-between text-sm text-text-secondary">
-                  <button type="button" className="text-left hover:text-navy hover:underline" onClick={() =>
-                    run(async () => {
-                      const { url } = await call(`deals/${dealId}/documents/${d.id}/download`);
-                      window.open(url, "_blank", "noopener");
-                    })}>{d.file_name}</button>
-                  {manage && (
-                    <button type="button" className="text-xs text-[#9B2335] hover:underline"
-                      onClick={() => run(() => call(`deals/${dealId}/documents/${d.id}`, { method: "DELETE" }))}>
-                      Remove
-                    </button>
-                  )}
+              {docsOf(f).map((d) => {
+                const acts = documentActions(d);
+                return (
+                  <li key={d.id} className="text-sm text-text-secondary" data-document={d.file_name}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{d.file_name}{d.watermarked ? <span className="ml-2 text-xs text-text-muted">watermarked</span> : null}</span>
+                      <span className="flex items-center gap-3 text-xs">
+                        {acts.includes("view") && (
+                          <button type="button" className="text-navy hover:underline" data-action="view"
+                            onClick={() => run(async () => setViewer(await call(`deals/${dealId}/documents/${d.id}/pages`)))}>
+                            View
+                          </button>
+                        )}
+                        {acts.includes("download") && (
+                          <button type="button" className="text-navy hover:underline" data-action="download"
+                            onClick={() => run(async () => {
+                              const out = await call(`deals/${dealId}/documents/${d.id}/download`);
+                              window.open(out.url || out.href, "_blank", "noopener");
+                            })}>Download</button>
+                        )}
+                        {shareUnwatermarkedControl(envelope, d) && (
+                          <label className="flex items-center gap-1 text-text-muted" data-action="share-unwatermarked">
+                            <input type="checkbox" defaultChecked={d.share_unwatermarked === true}
+                              onChange={(e) => run(() => call(`deals/${dealId}/documents/${d.id}/share-unwatermarked`,
+                                { method: "PUT", body: { share: e.target.checked } }))} />
+                            Share unwatermarked
+                          </label>
+                        )}
+                        {manage && (
+                          <button type="button" className="text-[#9B2335] hover:underline"
+                            onClick={() => run(() => call(`deals/${dealId}/documents/${d.id}`, { method: "DELETE" }))}>
+                            Remove
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                    {d.blocked_reason && <p className="mt-0.5 text-xs text-text-muted" data-blocked>{d.blocked_reason}</p>}
+                  </li>
+                );
+              })}
+              {(envelope.folders.find((x) => x.id === f.id)?.answered_questions || []).map((q) => (
+                <li key={q.id} className="border-l-2 border-[#C5A880] pl-3 text-sm text-text-secondary">
+                  <p className="font-medium text-navy">{q.body}</p>
+                  <p>{q.answer}</p>
                 </li>
               ))}
             </ul>
           )}
         </li>
       ))}
+      {viewer && (
+        <li className="py-3">
+          <DocumentViewer dealId={dealId} info={viewer} viewOnlyNotice={envelope?.notices?.view_only}
+            onClose={() => setViewer(null)} />
+        </li>
+      )}
     </ul>
   );
 }
@@ -246,6 +310,22 @@ export function InvestorPanel({ envelope, onChange }) {
       {(state.step === "declined" || state.step === "revoked") && (
         <p className="mt-3 text-sm text-text-secondary">{access?.reason || ""}</p>
       )}
+      {state.step === "expired" && (
+        <p className="mt-3 text-sm text-text-secondary" data-testid="expired-notice">
+          Your access period ended{state.endedOn ? ` on ${state.endedOn}` : ""}. Your signed agreements stay below;
+          ask the publisher to extend your access.
+        </p>
+      )}
+      {state.step === "paused" && (
+        <p className="mt-3 text-sm text-[#9B2335]" data-testid="paused-notice">
+          Your access is paused: {state.reason} It reopens automatically once your record is updated.
+        </p>
+      )}
+      {state.step === "granted" && access?.access_ends_on && (
+        <p className="mt-1 text-xs text-text-muted">Access until {access.access_ends_on}.</p>
+      )}
+      {noticePending(envelope?.return_notice) && <ReturnNotice dealId={dealId} notice={envelope.return_notice}
+        onDone={onChange} />}
 
       {(envelope?.agreements || []).some((a) => a.signature_id) && (
         <ul className="mt-4 space-y-1 border-t border-border pt-3 text-xs text-text-muted">
@@ -261,6 +341,30 @@ export function InvestorPanel({ envelope, onChange }) {
       )}
       {error && <p className="mt-3 text-sm text-[#9B2335]" role="alert">{error}</p>}
     </section>
+  );
+}
+
+export function ReturnNotice({ dealId, notice, onDone }) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState(null);
+  return (
+    <div className="mt-4 rounded border border-[#9B2335]/30 p-3 text-sm" data-testid="return-notice">
+      <pre className="whitespace-pre-wrap font-sans text-text-secondary">{notice.text}</pre>
+      <label className="mt-2 block text-text-secondary">Type your full name to confirm
+        <input className="mt-1 block w-full rounded border border-border px-2 py-1.5" value={name}
+          onChange={(e) => setName(e.target.value)} />
+      </label>
+      <button type="button" disabled={name.trim().length < 2}
+        className="mt-2 rounded bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        onClick={async () => {
+          try {
+            await call(`deals/${dealId}/return-notice/acknowledge`, { method: "POST", body: { typed_name: name } });
+            if (onDone) await onDone();
+            else window.location.reload();
+          } catch (e) { setError(e.message); }
+        }}>I have returned or destroyed the materials</button>
+      {error && <p className="mt-2 text-[#9B2335]" role="alert">{error}</p>}
+    </div>
   );
 }
 
@@ -400,6 +504,14 @@ function ManagerPanel({ envelope, templates, onChange, setError }) {
   const [form, setForm] = useState({
     eligibility_rule: s.eligibility_rule, approval_mode: s.approval_mode,
     sponsor_display: s.sponsor_display, code_name: s.code_name || "",
+    downloads: s.downloads, watermark: s.watermark, access_period: s.access_period,
+    access_until: s.access_until || "", access_days: s.access_days ?? "", expiry_notice_days: s.expiry_notice_days ?? 7,
+    notify_publisher_on: s.notify_publisher_on || [], offering_type: s.offering_type,
+  });
+  const payload = () => ({
+    ...form, access_until: form.access_period === "until_date" ? form.access_until || null : null,
+    access_days: form.access_period === "days_after_approval" ? Number(form.access_days) || null : null,
+    expiry_notice_days: Number(form.expiry_notice_days),
   });
   const [delegate, setDelegate] = useState("");
   const run = async (fn) => {
@@ -421,19 +533,56 @@ function ManagerPanel({ envelope, templates, onChange, setError }) {
     <div className="space-y-6" data-testid="manager-panel">
       <section className={`${CARD} p-5`}>
         <h3 className="text-base font-semibold text-navy">Room settings</h3>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm text-text-secondary">
-          <label>Eligibility{sel("eligibility_rule", v.eligibility_rules)}</label>
-          <label>Approval{sel("approval_mode", v.approval_modes)}</label>
-          <label>Teaser sponsor{sel("sponsor_display", v.sponsor_display)}</label>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm text-text-secondary" data-testid="settings-rows">
+          {settingsRows(envelope).map((row) => (
+            <label key={row.key} data-setting={row.key}>{row.label}{sel(row.key, row.options)}</label>
+          ))}
           {form.sponsor_display === "code_name" && (
             <label>Code name
               <input className="mt-1 block w-full rounded border border-border px-2 py-1.5" value={form.code_name}
                 onChange={(e) => setForm({ ...form, code_name: e.target.value })} />
             </label>
           )}
+          {form.access_period === "until_date" && (
+            <label>Access ends on
+              <input type="date" className="mt-1 block w-full rounded border border-border px-2 py-1.5"
+                value={form.access_until} onChange={(e) => setForm({ ...form, access_until: e.target.value })} />
+            </label>
+          )}
+          {form.access_period === "days_after_approval" && (
+            <label>Days after approval
+              <input type="number" min={1} className="mt-1 block w-full rounded border border-border px-2 py-1.5"
+                value={form.access_days} onChange={(e) => setForm({ ...form, access_days: e.target.value })} />
+            </label>
+          )}
+          {form.access_period !== "none" && (
+            <label>Warn the investor (days before the end)
+              <input type="number" min={0} max={90} className="mt-1 block w-full rounded border border-border px-2 py-1.5"
+                value={form.expiry_notice_days} onChange={(e) => setForm({ ...form, expiry_notice_days: e.target.value })} />
+            </label>
+          )}
+          <fieldset className="sm:col-span-2" data-setting="notify_publisher_on">
+            <legend>Notify the publisher on</legend>
+            <div className="mt-1 flex flex-wrap gap-3">
+              {(v.notify_events || []).map((ev) => (
+                <label key={ev.key} className="flex items-center gap-1">
+                  <input type="checkbox" checked={form.notify_publisher_on.includes(ev.key)} onChange={(e) => setForm({
+                    ...form, notify_publisher_on: e.target.checked ? [...form.notify_publisher_on, ev.key]
+                      : form.notify_publisher_on.filter((k) => k !== ev.key) })} />
+                  {ev.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {["rule_506b", "rule_506c"].includes(form.offering_type) && envelope.notices?.offering_draft && (
+            <p className="sm:col-span-2 text-xs text-[#9B2335]" data-testid="offering-draft">{envelope.notices.offering_draft}</p>
+          )}
+          {form.downloads === "view_only" && (
+            <p className="sm:col-span-2 text-xs text-text-muted">View-only deters copying but cannot stop screenshots.</p>
+          )}
         </div>
         <button type="button" className="mt-3 rounded bg-navy px-4 py-2 text-sm font-medium text-white"
-          onClick={() => run(() => call(`deals/${dealId}/settings`, { method: "PUT", body: form }))}>Save settings</button>
+          onClick={() => run(() => call(`deals/${dealId}/settings`, { method: "PUT", body: payload() }))}>Save settings</button>
       </section>
 
       <section className={`${CARD} p-5`}>
@@ -482,6 +631,21 @@ function ManagerPanel({ envelope, templates, onChange, setError }) {
   );
 }
 
+function QaLoader({ envelope }) {
+  const [qa, setQa] = useState(null);
+  const [error, setError] = useState(null);
+  if (qa) return <QAPanel dealId={envelope.deal.id} initial={qa} folders={folderRows(envelope)} />;
+  return (
+    <section className={`${CARD} p-5`}>
+      <h3 className="text-base font-semibold text-navy">Questions and answers</h3>
+      <button type="button" className="mt-2 text-sm text-navy hover:underline" onClick={async () => {
+        try { setQa(await call(`deals/${envelope.deal.id}/questions`)); } catch (e) { setError(e.message); }
+      }}>Open Q&amp;A</button>
+      {error && <p className="mt-2 text-sm text-[#9B2335]" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 export default function DataRoom({ initialEnvelope, templates = [] }) {
   const [envelope, setEnvelope] = useState(initialEnvelope);
   const [error, setError] = useState(null);
@@ -490,15 +654,27 @@ export default function DataRoom({ initialEnvelope, templates = [] }) {
   }
   const manage = canWrite(envelope);
   const refresh = async () => setEnvelope(await call(`deals/${envelope.deal.id}`));
+  const notices = roomNotices(envelope);
+  const step = investorStep(envelope).step;
+  const showQa = manage || step === "granted" || step === "advisor";
   return (
     <div className="space-y-6">
-      {!manage && <InvestorPanel envelope={envelope} onChange={refresh} />}
+      {!manage && notices.length > 0 && (
+        <div className={`${CARD} p-4 text-sm text-text-secondary`} data-testid="room-notices">
+          {notices.map((n) => <p key={n}>{n}</p>)}
+        </div>
+      )}
+      {!manage && envelope.advisor && <AdvisorAcknowledgement envelope={envelope} onChange={refresh} />}
+      {!manage && !envelope.advisor && <InvestorPanel envelope={envelope} onChange={refresh} />}
       <section className={`${CARD} p-5`}>
         <h3 className="text-base font-semibold text-navy">Data room</h3>
         <FolderList envelope={envelope} manage={manage} levels={envelope.vocabularies?.levels || []}
           onChange={refresh} setError={setError} />
       </section>
+      {showQa && <QaLoader envelope={envelope} />}
+      {!manage && !envelope.advisor && envelope.advisors && <InvestorAdvisors envelope={envelope} onChange={refresh} />}
       {manage && <ManagerPanel envelope={envelope} templates={templates} onChange={refresh} setError={setError} />}
+      {manage && <ActivityPanel envelope={envelope} />}
       {error && <p className="text-sm text-[#9B2335]" role="alert">{error}</p>}
     </div>
   );

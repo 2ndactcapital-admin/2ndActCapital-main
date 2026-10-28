@@ -14,11 +14,17 @@
  * master NDA signed <date>", or the stale version) from the row's
  * `agreement_detail`; the status filter includes resign_required (from the
  * vocabulary); "Require re-sign" is a bulk action like the others.
+ *
+ * DEALROOM3: an "Access" column (status line with the end date or the paused
+ * reason), the investor's advisors under them, the return-or-destroy notice
+ * and its acknowledgement; bulk "Extend" (a new end date, audited) and an
+ * optional "send return-or-destroy notice" with Revoke — every control from
+ * the envelope's actions, none without can_write.
  */
 
 import { useCallback, useState } from "react";
 import DataGrid from "@/components/ui/DataGrid";
-import { gridActions, gridCell, gridColumns } from "@/lib/dealRoom.mjs";
+import { accessLine, advisorLines, gridActions, gridCell, gridColumns } from "@/lib/dealRoom.mjs";
 
 const SORT_KEYS = { investor_name: "investor", deal_name: "deal", publisher_name: "publisher",
   status_label: "status", decided: "decided_at" };
@@ -31,6 +37,21 @@ export function gridColumnDefs(envelope, { selected, toggle }) {
   }));
   const group = { field: "group", headerName: envelope?.group_by === "all" ? "" : "Group", enableSorting: false,
     cell: (_v, row) => row.group };
+  cols.push({
+    field: "access", headerName: "Access · advisors", enableSorting: false,
+    cell: (_v, row) => (
+      <div className="text-xs" data-access-row={row.id}>
+        <div>{accessLine(row)}</div>
+        {advisorLines(row.advisors).map((l) => <div key={l} className="text-text-muted">Advisor: {l}</div>)}
+        {row.return_notice && (
+          <div className="text-text-muted">
+            Return-or-destroy notice sent {row.return_notice.sent_at.slice(0, 10)} —{" "}
+            {row.return_notice.acknowledged_at ? `acknowledged ${row.return_notice.acknowledged_at.slice(0, 10)}` : "not yet acknowledged"}
+          </div>
+        )}
+      </div>
+    ),
+  });
   if (!actions.length) return [group, ...cols];
   return [{
     field: "select", headerName: "", enableSorting: false,
@@ -48,6 +69,8 @@ export default function AccessGrid({ initialEnvelope }) {
   const [selected, setSelected] = useState([]);
   const [level, setLevel] = useState("after_agreements");
   const [reason, setReason] = useState("");
+  const [endsOn, setEndsOn] = useState("");
+  const [sendNotice, setSendNotice] = useState(false);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -79,7 +102,8 @@ export default function AccessGrid({ initialEnvelope }) {
       const res = await fetch("/api/deal-room/access/decide", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ access_ids: selected, action, level: action === "approve" ? level : null,
-          reason: reason || null }),
+          reason: reason || null, ends_on: action === "extend" ? endsOn || null : null,
+          send_return_notice: action === "revoke" ? sendNotice : false }),
       });
       const data = await res.json().catch(() => ({}));
       const results = data.results || data.detail?.results || [];
@@ -142,9 +166,23 @@ export default function AccessGrid({ initialEnvelope }) {
             <button type="button" disabled={busy || !selected.length} onClick={() => decide("require_resign")}
               className="rounded border border-navy px-3 py-1.5 text-navy disabled:opacity-50">Require re-sign</button>
           )}
+          {actions.includes("extend") && (
+            <>
+              <input type="date" aria-label="New end date" className="rounded border border-border px-2 py-1" value={endsOn}
+                onChange={(e) => setEndsOn(e.target.value)} />
+              <button type="button" disabled={busy || !selected.length || !endsOn} onClick={() => decide("extend")}
+                className="rounded border border-navy px-3 py-1.5 text-navy disabled:opacity-50">Extend</button>
+            </>
+          )}
           {actions.includes("revoke") && (
-            <button type="button" disabled={busy || !selected.length} onClick={() => decide("revoke")}
-              className="rounded border border-[#9B2335] px-3 py-1.5 text-[#9B2335] disabled:opacity-50">Revoke</button>
+            <>
+              <label className="flex items-center gap-1 text-xs text-text-secondary">
+                <input type="checkbox" checked={sendNotice} onChange={(e) => setSendNotice(e.target.checked)} />
+                Send return-or-destroy notice
+              </label>
+              <button type="button" disabled={busy || !selected.length} onClick={() => decide("revoke")}
+                className="rounded border border-[#9B2335] px-3 py-1.5 text-[#9B2335] disabled:opacity-50">Revoke</button>
+            </>
           )}
         </div>
       )}
