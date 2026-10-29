@@ -3695,6 +3695,102 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY commitments_pkey: (id)
 
+-- ===== portfolio.data_provider_entitlements =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   provider_key                             text NOT NULL
+--   note                                     text
+--   granted_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY data_provider_entitlements_pkey: (id)
+
+-- ===== portfolio.data_providers =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   key                                      text NOT NULL
+--   name                                     text NOT NULL
+--   kind                                     text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'not_connected'::text
+--   capabilities                             ARRAY NOT NULL DEFAULT '{}'::text[]
+--   lic_internal_use                         boolean NOT NULL DEFAULT false
+--   lic_member_display                       text NOT NULL DEFAULT 'not_allowed'::text
+--   lic_redistribution                       boolean NOT NULL DEFAULT false
+--   retention_after_cancel                   text NOT NULL DEFAULT 'unknown'::text
+--   attribution                              text
+--   terms_note                               text
+--   confirmed_on                             date
+--   daily_call_budget                        integer
+--   requires_entitlement                     boolean NOT NULL DEFAULT false
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY data_providers_pkey: (id)
+
+-- ===== portfolio.data_quality_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   data_type                                text NOT NULL
+--   subject_key                              text NOT NULL
+--   global_security_id                       uuid
+--   event_date                               date NOT NULL
+--   kind                                     text NOT NULL
+--   provider_key                             text NOT NULL DEFAULT ''::text
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   run_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY data_quality_events_pkey: (id)
+
+-- ===== portfolio.data_source_rank =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   data_type                                text NOT NULL
+--   provider_key                             text NOT NULL
+--   rank                                     integer NOT NULL
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   set_by                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY data_source_rank_pkey: (id)
+
+-- ===== portfolio.data_uploads =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   data_type                                text NOT NULL
+--   file_name                                text NOT NULL
+--   file_sha256                              text NOT NULL
+--   mapping                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   licence                                  jsonb NOT NULL
+--   row_count                                integer NOT NULL
+--   accepted_count                           integer NOT NULL
+--   rejects                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   staged_rows                              jsonb NOT NULL DEFAULT '[]'::jsonb
+--   status                                   text NOT NULL DEFAULT 'pending_approval'::text
+--   uploaded_by                              uuid NOT NULL
+--   decided_by                               uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY data_uploads_pkey: (id, system_from)
+
 -- ===== portfolio.distribution_participants =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   canonical_name                           text NOT NULL
@@ -3949,6 +4045,25 @@
 --   last_seen                                timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE external_references_org_source_ext_type_key: (org_id, source_system, external_id, record_type)
 --   PRIMARY KEY external_references_pkey: (id)
+
+-- ===== portfolio.index_levels =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   index_key                                text NOT NULL
+--   global_security_id                       uuid
+--   level_date                               date NOT NULL
+--   value                                    numeric NOT NULL
+--   provider_key                             text NOT NULL
+--   as_of                                    timestamp with time zone NOT NULL DEFAULT now()
+--   quality_flags                            ARRAY NOT NULL DEFAULT '{}'::text[]
+--   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   org_id                                   uuid
+--   upload_id                                uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY index_levels_pkey: (id)
 
 -- ===== portfolio.model_column_mappings =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -4482,6 +4597,24 @@
 --   account_id                               uuid
 --   PRIMARY KEY positions_pkey: (id)
 
+-- ===== portfolio.provider_call_log =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   provider_key                             text NOT NULL
+--   call_date                                date NOT NULL DEFAULT ((now() AT TIME ZONE 'utc'::text))::date
+--   calls                                    integer NOT NULL
+--   data_type                                text
+--   ok                                       boolean NOT NULL
+--   error                                    text
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY provider_call_log_pkey: (id)
+
 -- ===== portfolio.reference_filing_supplements =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   reference_filing_id                      uuid NOT NULL
@@ -4578,6 +4711,8 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   provider_key                             text
+--   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
 --   UNIQUE replica_holdings_snapshots_file_uq: (fund_global_security_id, as_of, source_key, file_sha256)
 --   PRIMARY KEY replica_holdings_snapshots_pkey: (id)
 
@@ -4892,6 +5027,12 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   provider_key                             text
+--   as_of                                    timestamp with time zone
+--   quality_flags                            ARRAY NOT NULL DEFAULT '{}'::text[]
+--   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   org_id                                   uuid
+--   upload_id                                uuid
 --   PRIMARY KEY securities_global_corporate_actions_pkey: (id)
 
 -- ===== portfolio.securities_global_identifiers =====
@@ -4953,6 +5094,12 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   provider_key                             text
+--   as_of                                    timestamp with time zone
+--   quality_flags                            ARRAY NOT NULL DEFAULT '{}'::text[]
+--   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   org_id                                   uuid
+--   upload_id                                uuid
 --   PRIMARY KEY securities_global_prices_pkey: (id)
 
 -- ===== portfolio.securities_global_relationships =====
@@ -4977,6 +5124,21 @@
 --   resolved_by                              uuid
 --   resolved_at                              timestamp with time zone
 --   PRIMARY KEY securities_global_relationships_pkey: (id)
+
+-- ===== portfolio.security_data_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   run_trigger                              text NOT NULL
+--   status                                   text NOT NULL
+--   started_at                               timestamp with time zone NOT NULL
+--   finished_at                              timestamp with time zone NOT NULL
+--   summary                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_data_runs_pkey: (id)
 
 -- ===== portfolio.structured_note_issuers =====
 --   filer_cik                                text NOT NULL
