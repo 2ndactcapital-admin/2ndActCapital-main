@@ -1165,8 +1165,12 @@ async def y_quality(conn):
           f"{fa.fetch_calls} {fb.fetch_calls} {calls} {sorted(lv)} {[dict(r) for r in be]}")
     r2 = await pool_call(lambda pool: SDN.run_nightly(pool, providers=registry(), trigger="test", today=today(), steps=("refresh",),
                                                       ranks=ranks, coverage_fn=cov))
-    be2 = int(await platform(conn, "SELECT count(*) FROM portfolio.data_quality_events WHERE run_id = $1 AND kind = "
-                                   "'budget_exhausted'", r2.run_id, fetch="fetchval"))
+    # one LIVE quality event per item, day, kind and provider (data_quality_events_live_uq): IDX3's event from the
+    # first run stands, so the second run adds IDX1 and IDX2 — the day holds exactly three, one per series
+    be2 = int(await platform(conn, "SELECT count(*) FROM portfolio.data_quality_events WHERE kind = 'budget_exhausted' "
+                                   "AND provider_key = $1 AND subject_key = ANY($2::text[]) AND event_date = $3 AND "
+                                   "valid_to IS NULL AND system_to IS NULL", f"{PKEY}fa", list(IDX_KEYS), today(),
+                             fetch="fetchval"))
     check(bool(fa.fetch_calls == IDX_KEYS[:2] and fb.fetch_calls == IDX_KEYS[2:] + IDX_KEYS and be2 == 3),
           "same day again: the first source's budget is spent (0 left) — every series goes to the next source",
           f"{fa.fetch_calls} {fb.fetch_calls} {be2}")
