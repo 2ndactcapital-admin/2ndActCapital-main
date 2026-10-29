@@ -297,6 +297,42 @@ export function LetterPanel({ envelope }) {
   );
 }
 
+/**
+ * REP9 — "Print order execution sheet" on every broker / desk / trader
+ * instruction: the manual route is always offered. When an automated route is
+ * available for the account the server asks why manual was chosen; the choice
+ * and the reason are recorded on the timeline.
+ */
+export function OrderSheetPanel({ envelope }) {
+  const d = envelope?.instruction || {};
+  const c = instructionControls(envelope);
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState(null);
+  if (!c.orderSheet) return null;
+  async function download() {
+    setMsg(null);
+    const res = await fetch(`/api/execution/blocks/instructions/${d.id}/sheet`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reason ? { manual_reason: reason } : {}),
+    });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); setMsg(data.error || "Could not generate the sheet"); return; }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = `order-execution-sheet-${String(d.id).slice(0, 8)}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+  }
+  return (
+    <div className={`${card} p-6 text-sm`}>
+      <h2 className="text-lg font-semibold text-navy">Order execution sheet</h2>
+      <p className="mt-1 text-text-muted">Print it and give it to the broker of your choice; enter the fills by hand. Masked account reference, no member names.</p>
+      {d.block ? <p className="mt-1">In block <a className="text-navy underline" href={`/portfolio/blocks/${d.block.block_id}`}>{String(d.block.block_id).slice(0, 8)}</a>.</p> : null}
+      <input className={`${input} mt-2`} placeholder="Why manual (asked when an automated route is available)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <div className="mt-3"><button type="button" className={primary} onClick={download}>Print order execution sheet</button></div>
+      {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
+    </div>
+  );
+}
+
 export default function InstructionDetail({ initialEnvelope }) {
   const [env, setEnv] = useState(initialEnvelope);
   const id = env?.instruction?.id;
@@ -313,6 +349,7 @@ export default function InstructionDetail({ initialEnvelope }) {
       <TaskPanel envelope={env} onDone={reload} />
       <Fills envelope={env} onDone={reload} />
       <LetterPanel envelope={env} />
+      <OrderSheetPanel envelope={env} />
       <Timeline envelope={env} />
     </div>
   );

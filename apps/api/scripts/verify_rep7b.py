@@ -1392,11 +1392,13 @@ async def y_routes(conn):
         "/api/v1/execution/instructions/{instruction_id}/settlement": "view_execution",
         "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away": "manage_execution",
     }
-    # lotmethod: its routes are all under /api/v1/lot-method/ — not this script's
-    new = [k for k in gn if k not in gb and not k[1].startswith("/api/v1/lot-method/")]
-    bad = [(k, gn[k].get("after")) for k in new if want.get(k[1]) not in str(gn[k].get("after"))]
-    check(len(new) == len(want) and not bad, f"{len(want)} new routes, each naming its permission", f"{len(new)} "
-          f"{bad[:4]}")
+    # rep9 fix — scoped to rep7b's OWN routes (``want``), never "every route added since a base commit": later
+    # sprints (lotmethod, rep8, marketdata1, rep9 …) add routes of their own, and each proves its own
+    mine = {k: gn[k] for k in gn if k[1] in want}
+    bad = [(k, gn[k].get("after")) for k in mine if want[k[1]] not in str(gn[k].get("after"))]
+    missing = sorted(set(want) - {k[1] for k in mine})
+    check(len(mine) == len(want) and not bad and not missing,
+          f"rep7b's {len(want)} routes still exist, each naming its permission", f"{len(mine)} {bad[:4]} {missing[:4]}")
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

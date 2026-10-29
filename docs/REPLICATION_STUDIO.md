@@ -1514,3 +1514,208 @@ Lines that still read "not estimated — needs prices", with the missing data ty
 need a daily `eod_price` **history** of the fund and the replica constituents, and no free
 source carries one. The harvest plan's tracking-error note is also unchanged. A vendor plugs in
 behind the same layer when a real use case needs it.
+
+## rep9 — block trading, allocation and DVP settlement, manual-first (2026-10-29)
+
+Approved account instructions are combined into a **block**: one order for many accounts. The
+allocation between accounts is set under the firm's written policy and **fixed before execution**.
+A broker, desk or trader of the adviser's choice executes the block. The **manual route is always
+offered**: print the order execution sheet, hand it to the broker, enter the fills by hand. Fills
+are booked at the **average price**. Each account's share settles to its own custodian, DVP when
+that custodian is not the integrated one. Nothing is sent electronically. A FIX router interface
+exists, but no router is connected.
+
+Code: `services/blocks.py` (lifecycle), `services/block_allocation.py` (the arithmetic, pure),
+`services/order_sheet.py` (the PDF), `services/execution_routers.py` (the FIX interface),
+`routers/blocks.py` (30 routes under `/api/v1/execution/blocks/…`). Schema `docs/rep9_part1.sql`
+adds 8 tables, each with a policy for every operation.
+
+### Task 1 findings (rep9)
+
+- **1a — the life of an approved trade.** `rebalance_proposals.execute` →
+  `custody/trading.route_trade_list` → `ManualTradeAdapter` → `execution.create_instructions`
+  (`execution_instructions` + `execution_instruction_lots`, and `instruction_settlements` for a
+  managed account at another custodian) → mark sent → `execution_fills` → reconcile → close.
+  - A block sits **above** these instructions: `block_allocations.instruction_id`. The
+    single-account flow is unchanged with one exception: an instruction held in an OPEN block
+    (planned / fixed allocation) is sent, filled and cancelled only through the block, and rep2's
+    execute-by sweep skips it.
+- **FIND — fills never write `portfolio.tax_lots` for equities.** rep2 records each fill, with its
+  lots as jsonb, on the instruction. The book's lots arrive from the custodian feed or the
+  held-away import at reconcile. rep9 books each account's share the same way: a rep2 fill at the
+  average price, carrying that account's own lots. There is no second write path into the book.
+- **1b — eligibility.** An instruction can join a block only when it is:
+  - approved, or the carried remainder of an earlier block;
+  - for a quantity (not a notional amount) and not an option leg;
+  - on an account with authority managed and custody integrated or another custodian;
+  - on a discretionary account (`accounts.is_discretionary`), not from a rep5 `advice_only`
+    proposal;
+  - executed by a broker, trader or custodian desk;
+  - still inside its execute-by date.
+
+  A block has one security, one side, one executor and one execute-by date. Advise and read-only
+  accounts are never in a block. An ineligible instruction is listed with its plain reason, and
+  the system suggests groupings by security / side / executor / window.
+- **1c — the omnibus account** is `execution_accounts`. It records the firm's own account at a
+  broker: masked reference, DVP-capable flag. It is an org-level record, never a member account
+  (no FK to `public.accounts`). The receiving side of each allocation is either the integrated
+  custodian, or rep7b's receiving details on the account (`account_authority_settings`).
+- **1d — rounding.** An account takes fractional shares only when its custodian's
+  `fractional_shares` capability is an evidenced 'yes'. Every real custodian is 'unknown' today,
+  so in practice every account is whole shares.
+- **1e — the sheet vs rep2's letter.** The letter is for a member or another adviser. The sheet
+  adds the executing account, the allocation table with each allocation's settlement instruction,
+  the price guidance's source and as-of, and the firm contact. It never shows a member name.
+- **Permissions.** Three new permissions: `view_blocks`, `manage_blocks`, `approve_blocks`
+  (org_admin by default, and in `rbac.ensure_org_admin_role`). `approve_proposals` was not
+  reused: approving a block fixes an allocation across several accounts under the firm's policy,
+  a different act from approving one account's proposal. The sheet for a single instruction keeps
+  rep2's `view_execution`, the same gate as its letter.
+
+### Block lifecycle
+
+`draft → pending_approval → approved → sent → partially_filled → filled → allocated → settled → closed`,
+or `cancelled`. Both the service and `public.trade_blocks_guard` enforce it.
+
+- **Build** (manage_blocks). Needs an APPROVED allocation policy. Refused, with every reason, when
+  any chosen instruction is ineligible; nobody is dropped silently.
+  - **Opposite sides are never netted.** A selection that mixes buy and sell is refused.
+  - **Cross-trade risk.** If a live block of the opposite side exists for the same security and
+    the same window, the new block is flagged and needs a reason.
+  - A broker or trader block names an active executing account. That account must be DVP-capable
+    if any allocation settles DVP.
+- **Approve** (approve_blocks; a human task, maker-checker in the service, the engine and a DB
+  CHECK). Approval **fixes** each allocation (`planned → fixed`). From then on the database
+  refuses any change to `allocated_quantity`. Before approval, the precheck re-reads every
+  instruction and refuses if any is no longer eligible.
+- **Mark sent** records the channel and the person on the block and on every account instruction.
+- **Fills** are entered against the block: quantity, price, time, venue. The block never takes
+  more than its total. The average price is recomputed from the fills each time, never entered.
+- **Allocate** (a person's act; one transaction). See the arithmetic below. The block's
+  if-not-filled rule handles any unfilled remainder:
+  - **cancel** — each instruction is completed short (`completes = true`);
+  - **carry** — each instruction keeps its remainder working, and can join a later block;
+  - **ask** — a to-do goes to the makers and the managers.
+- **Corrections** after allocation go only through `allocation_corrections`: a reason, approved by
+  a second person on a human task.
+  - The block's filled total never changes; shares only move between accounts. A settled
+    allocation is not corrected this way.
+  - The database refuses any `final_quantity` change that does not carry a newly approved
+    correction. The original state stays on record (system axis).
+  - rep2's fill rows are immutable, so the correction is carried on the allocation (the block's
+    book of record and its settlement) and on the instruction's timeline as an event.
+- **Execute-by** (`blocks.expire_tick`, in the cron entrypoint after rep2's, never on a test org):
+  - a block not yet working is cancelled;
+  - a working block with no fills follows its rule (cancel / carry to today / ask);
+  - a partially filled block gets a to-do to allocate (or carries).
+
+  Every one of these is logged with no actor.
+
+### Allocation arithmetic (`services/block_allocation.py`)
+
+- **Average price** = Σ(quantity × price) / Σ quantity, to 6 decimal places, rounded half up.
+- **Pre-trade, `pro_rata_requested`.** Each account's allocated quantity is what its instruction
+  still needs. A request below the policy minimum is refused at build, as is a fractional request
+  on a whole-share account.
+- **Full fill.** Every account gets exactly its fixed allocation.
+- **Partial fill, `pro_rata_allocated`.**
+  1. Each account's exact share is filled × allocated / Σ allocated.
+  2. An account whose exact share is below the minimum gets **zero, with the reason**; the rest
+     are re-apportioned, repeating until none is below the minimum.
+  3. Each share is rounded down to the account's unit (1, or 0.00000001 for a fractional
+     account).
+  4. Whole shares left over go out one at a time: largest remainder first, ties by account id,
+     never above an account's fixed allocation.
+  5. Any part-share left over goes to the first fractional account in that same order.
+  6. The total always equals the filled quantity exactly. If it cannot, allocation is refused
+     with the reason.
+- **Lots (sells).** Each account relieves only its own instructed lots. When it receives less than
+  it asked for, they are relieved pro rata by the same largest-remainder rule (ties by lot id).
+
+### The always-manual rule
+
+The **order execution sheet** is a PDF generated on demand and never stored. It carries:
+- firm, executing account (masked), security (name, ticker, CUSIP), side, total quantity;
+- price guidance with the reference source and as-of;
+- execute-by and the if-not-filled rule;
+- the allocation table: masked account, quantity, receiving custodian, and the DVP or receive
+  instruction for each allocation;
+- the firm contact and the block id.
+
+It **never** carries a member name or a full account number (this module has no `reveal()`).
+Generating it is logged.
+
+The same sheet is offered for **one account instruction** whose executor is a broker, desk or
+trader (`order_sheet` in rep2's action list), so manual is available on every trade the platform
+proposes. When an automated route is available for that account (managed at its integrated
+custodian, and that custodian's `equity_trading_api` an evidenced 'yes'), the adviser gives a
+reason for choosing manual. The choice and the reason are recorded on the instruction's timeline.
+
+The reference price is never invented. It is either the adviser's typed price (source 'adviser',
+as of that time) or the security-data layer's (provider + as-of). With neither, the sheet says
+"no reference price on record", and a range order is refused.
+
+### DVP settlement and reconciliation
+
+- **Integrated custodian.** The custodian receives the allocation versus payment; its desk is
+  instructed, as today.
+- **Another custodian.** rep7b's `instruction_settlements` row is rewritten from the block's trade
+  date (the UTC date of the last fill): the creation-day row is closed and a new one written,
+  settling T+1 counting **weekends only — no holiday calendar** (stated on the sheet).
+- **Status per allocation:** pending → affirmed → settled, or failed. Each status is entered by a
+  person, or settled by matching a record: a `portfolio.transactions` row from the custodian feed,
+  or a rep7 `held_away_records` transaction, with the same account, security, side and quantity.
+  - **failed** needs the reason and opens a to-do for the makers and the managers, naming the
+    allocation and the counterparty.
+- **Close rule.** The block settles automatically when every allocation is settled or cancelled
+  (a zero allocation is cancelled). Only then can a person close it.
+- **Instructions.** Each account instruction then reconciles and closes through rep2, unchanged.
+
+### FIX router interface and the "add a router" checklist
+
+`services/execution_routers.py` defines the interface: `submit_block`, `cancel_block`,
+`execution_reports`, `send_allocations`.
+- The registry holds one entry, the FIX router (Flyer or similar), marked **not connected**.
+- Every method raises `RouterNotConnected`. There is no client code and no network.
+- Choosing route `fix` is refused with that reason. The database admits `route = 'manual'` only
+  (`trade_blocks_route_chk`).
+
+Adding a router:
+1. A signed agreement with the router and its executing broker; the firm's best-execution review
+   covers it.
+2. A subclass of `ExecutionRouter`:
+   - submit_block → NewOrderSingle, with the executing account as the FIX account;
+   - cancel_block → OrderCancelRequest;
+   - execution_reports → ExecutionReport, turned into `block_fills`;
+   - send_allocations → AllocationInstruction, with masked references and settlement details.
+3. Credentials in Doppler only, read at call time, never logged.
+4. `connected = True` only after a certification run against the router's test venue, recorded
+   with its evidence.
+5. A migration widening `trade_blocks_route_chk`. The verify must prove manual is still offered
+   and is still the default.
+6. Router fills go through the same allocation path: the average price is computed here, never
+   taken from the router.
+
+### Open compliance items (notes — not decided by the code)
+
+Shown in the Blocks and Allocation policy screens:
+- the written aggregation and allocation policy, and its Form ADV disclosure;
+- the best-execution review;
+- trade-away commissions (recorded per block in `block_charges`, adviser-entered);
+- receiving-custodian DVP agreements;
+- whether Altruist accepts DVP deliveries in.
+
+The policy text is an org setting the firm writes (`allocation_policies`, versioned, approved by a
+second person). The code enforces only its mechanics.
+
+### Screens
+
+- **Portfolio → Blocks:** the list and the builder — suggested groupings, eligible and ineligible
+  (with reasons), the allocation preview under the policy.
+- **The block page:** approve, the sheet, fills, allocate, settlement status, corrections,
+  charges, the timeline.
+- **Settings → Allocation policy:** versions, approve.
+- **Settings → Executing accounts.**
+- **Every broker / desk / trader instruction:** "Print order execution sheet".
+
+All controls come from the envelope's flags and the server's `actions` list, and fail closed.
