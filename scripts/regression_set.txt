@@ -23,3 +23,4 @@ verify_rep7.py
 verify_rep7b.py
 verify_lotmethod.py
 verify_rep8.py
+verify_marketdata1.py

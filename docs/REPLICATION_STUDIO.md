@@ -1488,3 +1488,29 @@ All 17 routes are in AUTHZ1_ROUTES. Envelopes carry vocabularies for leg roles, 
 1. `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_rep8.py`. It runs `node --test`, `npm run build`, and the `verify_rep6.py` regression (VERIFY_NESTED=1, 2700 s).
 2. Redeploy the API and the scheduler cron service, because the tick now runs the options sweep. Refresh the schema snapshot.
 3. Before any real options trade: confirm Altruist's options level and FLEX access, record them in custodian capabilities, and get counsel's answer on the straddle question.
+
+## MARKETDATA1 — "needs prices" through the security-data layer (2026-10-28)
+
+Every price reader now asks the vendor-neutral layer (`services/security_data`, see
+`docs/SECURITY_DATA_DESIGN.md`) for a data type. No paid vendor is connected. The first free
+source is the custodian's own valuation of a position (market value ÷ quantity on the position
+date). It is internal use for the org, and shown to a member only for that member's own holdings.
+
+Lines that now fill from free sources (labelled estimate, with source and as-of):
+- **Viability Q3 (minimum account)**: a constituent the org holds in any account is priced from
+  its custodian valuation, or from an approved file upload or an adviser / platform price.
+  `inputs.price_sources` gives provider, count and oldest as-of. When a constituent is unpriced,
+  the message is unchanged ("unknown — needs prices for N of M …"), and `inputs.price_data_type`
+  names `eod_price`.
+- **Proposals (rep5), harvest replacements (rep6), one-off buys (rep7b)**: an unheld security
+  the org holds elsewhere is now bought by quantity at the layer's price
+  (`price_source = 'security_price'`, as-of on the line, hover shows both). An unpriced one is
+  bought by amount, as before.
+- **X-ray embedded gain**: the figure is unchanged (the line's own valuation). It now carries
+  `price_provenance` from the layer (provider, as-of, licence).
+
+Lines that still read "not estimated — needs prices", with the missing data type named in
+`needs_prices_missing`: tracking error, harvest value of switching, after-tax performance. They
+need a daily `eod_price` **history** of the fund and the replica constituents, and no free
+source carries one. The harvest plan's tracking-error note is also unchanged. A vendor plugs in
+behind the same layer when a real use case needs it.

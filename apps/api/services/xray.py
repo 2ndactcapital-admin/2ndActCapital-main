@@ -89,6 +89,14 @@ FUND_TYPES = ("fund", "private_fund", "index")
 SECTOR_KEYS = ("Sector", "sector", "GICS Sector", "gics_sector", "Sector Name")
 UNCLASSIFIED = "unclassified"
 NEEDS_PRICES = "not estimated — needs prices"
+# marketdata1: the data type each "needs prices" line is waiting for. A custodian valuation prices a holding
+# TODAY; these need a daily price HISTORY of the fund and of the replica's constituents (eod_price history) —
+# no free source carries one yet (a vendor plugs in behind the same layer).
+NEEDS_PRICES_MISSING = {
+    "tracking_error": "eod_price history — daily closes of the fund and of every replica constituent",
+    "harvest_benefit": "eod_price history — daily closes of the fund and of its replacement",
+    "after_tax_performance": "eod_price history — daily closes of every holding over the period",
+}
 NO_PROFILE = "not estimated — no tax profile"
 NO_FEE_SCHEDULE = "no fee schedule"
 NO_MODEL = "no model yet"
@@ -537,6 +545,17 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
     gain = {"label": "estimate", "inputs": {"lots": len(lots), "price": _s(None if price is None else
                                                                             price.quantize(Decimal("0.0001"))),
                                             "price_source": "the position's own valuation", "as_of": line["as_of"]}}
+    # marketdata1: the same valuation as the security-data layer's custodian provider sees it for THIS account —
+    # its source, as-of and licence are what a screen shows on hover. The figure itself stays the line's own
+    # market value ÷ quantity (exact, unchanged); the layer adds provenance only.
+    if price is not None:
+        from services import security_data as SD
+        pv = await SD.get(conn, org_id, "eod_price", sec, as_of=today, purpose="internal", account_ids=[str(a["id"])],
+                          max_age_days=36500)
+        if pv.found:
+            gain["inputs"]["price_provenance"] = {"provider_key": pv.provider_key, "provider_name": pv.provider_name,
+                                                  "as_of": pv.as_of.isoformat(), "label": pv.label,
+                                                  "quality": pv.quality, "licence": pv.licence}
     if known:
         gain.update(amount=str(money(st + lt)), short_term=str(money(st)), long_term=str(money(lt)))
     else:
@@ -576,6 +595,8 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
     out["break_even"] = break_even(Decimal(tax["amount"]) if tax.get("amount") is not None else None, diff)
     out["harvest_benefit"] = NEEDS_PRICES
     out["tracking_error"] = NEEDS_PRICES
+    # marketdata1: what is missing, by data type (the messages above are unchanged)
+    out["needs_prices_missing"] = {k: NEEDS_PRICES_MISSING[k] for k in ("harvest_benefit", "tracking_error")}
     if held and (a.get("authority") or "read_only") == "read_only":
         out["status_lines"].append(HELD_AWAY_NOTE)
     out["join"] = join_eligibility(a, model, out["replicable"])

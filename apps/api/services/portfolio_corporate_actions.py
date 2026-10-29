@@ -162,6 +162,9 @@ SPINOFF = "spinoff"
 ACTION_TYPES = frozenset({
     SPLIT, REVERSE_SPLIT, SPINOFF, "merger", "name_change", "cusip_change",
     "tender", "delisting",
+    # marketdata1: the security-data layer records dividends here too (recorded,
+    # never applied — apply_corporate_action refuses them by name)
+    "cash_dividend", "stock_dividend",
 })
 
 # The subset this sprint knows how to APPLY. The rest can be recorded — the fact

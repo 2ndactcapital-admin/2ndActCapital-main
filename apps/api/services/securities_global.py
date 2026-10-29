@@ -714,8 +714,8 @@ async def add_price(
             f"""
             INSERT INTO {TABLE_PRICE}
                 (global_security_id, price_date, price, currency_code,
-                 price_type, source)
-            VALUES ($1::uuid, $2, $3, $4, $5, $6)
+                 price_type, source, provider_key, as_of)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, 'platform_entry', now())
             RETURNING id::text
             """,
             row["id"], price_date, amount, currency_code, price_type, source,
