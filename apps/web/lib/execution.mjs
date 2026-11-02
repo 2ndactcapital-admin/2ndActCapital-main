@@ -51,6 +51,8 @@ export function instructionControls(envelope) {
     approve: decide && has("approve"),
     reject: decide && has("reject"),
     letter: isTrue(p.can_read) && has("letter"),
+    // REP9 — the order execution sheet (broker / desk / trader): the manual route, always offered
+    orderSheet: isTrue(p.can_read) && has("order_sheet"),
   };
 }
 

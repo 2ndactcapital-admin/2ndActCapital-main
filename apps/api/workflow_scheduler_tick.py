@@ -82,7 +82,8 @@ every NON-test org with live deal access: granted → expired the day after the
 access end date, the "expiring" notice, granted → paused on a lapsed
 eligibility, paused → granted once it passes. Its own try, like the others.
 
-EXECUTE-BY HANDLING (rep2). Last, ``services.execution.expire_tick`` applies
+EXECUTE-BY HANDLING (rep2; rep9 adds ``services.blocks.expire_tick`` for trade blocks right after it).
+Last, ``services.execution.expire_tick`` applies
 each overdue open execution instruction's own if-not-filled policy (expire /
 carry to today / ask a person) — the one automatic step in the instruction
 lifecycle, always logged with no actor. It changes statuses only; nothing is
@@ -113,6 +114,7 @@ import asyncpg
 from services.database import close_pool, get_pool
 from services.deal_room_control import access_tick
 from services.edgar_index_schedule import maybe_refresh_index
+from services.blocks import expire_tick as blocks_expire_tick
 from services.execution import expire_tick
 from services.rebalance_proposals import proposals_tick
 from services.replica_schedule import maybe_refresh_holdings
@@ -165,6 +167,13 @@ async def main() -> int:
                       f"{ {k: len(v) for k, v in expiry.items()} }")
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] execution expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # REP9 — trade blocks at execute-by (cancel / carry / a to-do). Never a test org.
+        try:
+            bexp = await blocks_expire_tick(pool)
+            if any(bexp.values()):
+                print(f"[scheduler] trade blocks at execute-by: { {k: len(v) for k, v in bexp.items()} }")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] block expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # DEALROOM3 — deal-room access: expire at the end date, the expiring
         # notice, pause on a lapsed eligibility and restore. Never a test org.
         try:

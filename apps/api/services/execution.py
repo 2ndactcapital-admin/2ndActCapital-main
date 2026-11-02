@@ -70,6 +70,7 @@ EXECUTOR_LABELS = {
     "other_adviser": "Other adviser", "trader": "Trader",
 }
 LETTER_EXECUTORS = ("member", "other_adviser")
+SHEET_EXECUTORS = ("broker", "custodian_desk", "trader")      # rep9 — an order execution sheet
 SIDE_LABELS = {"buy": "Buy", "sell": "Sell"}
 PRICE_KIND_LABELS = {"market": "At market", "limit": "Limit", "range": "Acceptable range around a reference price"}
 IF_NOT_FILLED_LABELS = {"cancel": "Cancel it", "carry": "Carry to the next day", "ask": "Ask me"}
@@ -86,7 +87,8 @@ ACTION_LABELS = {
     "ask": "Not filled — decision requested", "letter": "Letter of instruction generated",
 }
 DOCUMENT_LABELS = {"letter_of_instruction": "Letter of instruction",
-                   "dvp_settlement_instruction": "DVP settlement instruction"}
+                   "dvp_settlement_instruction": "DVP settlement instruction",
+                   "order_execution_sheet": "Order execution sheet"}
 # Fields a draft edit may change (everything else is lifecycle).
 EDITABLE_FIELDS = ("quantity", "notional", "price_kind", "limit_price", "range_low", "range_high", "reference_price",
                    "reference_at", "wash_sale_notes", "executor_type", "executor_name", "executor_contact",
@@ -355,6 +357,16 @@ async def _human(conn, actor_id, org_id) -> dict:
         return await HT.assert_human(conn, actor_id, org_id)
     except HT.AgentActorRefused as exc:
         raise ExecutionError(str(exc)) from exc
+
+
+async def _refuse_in_block(conn, instruction_id, what: str) -> None:
+    """rep9 — an instruction held in an OPEN block allocation (planned / fixed)
+    is sent, filled and cancelled through its block, never on its own."""
+    bid = await conn.fetchval("SELECT block_id FROM public.block_allocations WHERE instruction_id = $1::uuid "
+                              "AND system_to IS NULL AND status IN ('planned', 'fixed') LIMIT 1", str(instruction_id))
+    if bid:
+        raise ExecutionConflict(f"this instruction is in block {bid} — {what} it through the block (or cancel the "
+                                "block first)")
 
 
 def _need(row: dict, statuses: tuple[str, ...], what: str) -> None:
@@ -700,6 +712,8 @@ async def _transition(pool, *, org_id, instruction_id, actor_id, allowed: tuple[
         async with conn.transaction():
             row = await load(conn, org_id, instruction_id, for_update=True)
             _need(row, allowed, what)
+            if action in ("mark_sent", "cancel"):
+                await _refuse_in_block(conn, row["id"], "send or cancel" if action == "mark_sent" else "cancel")
             extra = fields(actor) if callable(fields) else fields
             new = await _update(conn, row["id"], {"status": to_status, **extra})
             ref = await _event(conn, org_id=org_id, instruction_id=row["id"], action=action,
@@ -741,6 +755,7 @@ async def enter_fill(pool, *, org_id, instruction_id, actor_id, quantity: Decima
         async with conn.transaction():
             row = await load(conn, org_id, instruction_id, for_update=True)
             _need(row, ("sent", "partially_filled"), "enter a fill on")
+            await _refuse_in_block(conn, row["id"], "fill")     # rep9 — a block's fills are booked by its allocation
             if lots:
                 await _validate_lots(conn, org_id, row["account_id"], row["global_security_id"], row["side"], lots,
                                      quantity)
@@ -856,7 +871,8 @@ async def expire_due(pool, *, today: date | None = None, org_id=None) -> dict:
     async with pool.acquire() as conn:
         args: list = [today]
         sql = (f"SELECT id, org_id FROM {T_INS} WHERE system_to IS NULL AND status = ANY($2::text[]) "
-               "AND execute_by < $1")
+               "AND execute_by < $1 AND NOT EXISTS (SELECT 1 FROM public.block_allocations ba WHERE ba.instruction_id = "
+               f"{T_INS}.id AND ba.system_to IS NULL AND ba.status IN ('planned', 'fixed'))")    # rep9
         args.append(list(OPEN_STATUSES))
         if org_id:
             args.append(str(org_id))
@@ -1106,6 +1122,9 @@ async def detail(conn, org_id, instruction_id) -> dict:
     out["account_authority"] = AU.authority_out(acct)
     out["approval_refused"] = _approval_refusal(acct, row) if row["status"] in ("draft", "pending_approval") else None
     out["held_away"] = bool(acct["is_held_away"])
+    from services import blocks as BK          # rep9 — the block this instruction is (or was) allocated in
+
+    out["block"] = await BK.block_of_instruction(conn, org_id, row["id"])
     return out
 
 
@@ -1116,7 +1135,8 @@ def vocabularies() -> dict:
     return {
         "statuses": pairs(STATUS_LABELS), "open_statuses": list(OPEN_STATUSES),
         "executor_types": pairs(EXECUTOR_LABELS), "letter_executor_types": list(LETTER_EXECUTORS),
-        "sides": pairs(SIDE_LABELS), "price_kinds": pairs(PRICE_KIND_LABELS),
+        "sheet_executor_types": list(SHEET_EXECUTORS), "sides": pairs(SIDE_LABELS),
+        "price_kinds": pairs(PRICE_KIND_LABELS),
         "if_not_filled": pairs(IF_NOT_FILLED_LABELS), "sources": pairs(SOURCE_LABELS),
         "sent_channels": pairs(SENT_CHANNEL_LABELS), "reconcile_methods": pairs(RECONCILE_METHOD_LABELS),
         "actions": pairs(ACTION_LABELS), "documents": pairs(DOCUMENT_LABELS), "editable": [],
@@ -1147,8 +1167,13 @@ def actions_for(row: dict, *, can_write: bool, can_approve: bool, user_id, task_
     if row.get("approval_refused"):
         # rep7b — the account's authority refuses it (e.g. a pre-rep7 draft on a read-only held-away account)
         acts = [a for a in acts if a not in ("submit", "approve")]
+    if (row.get("block") or {}).get("open"):
+        # rep9 — held in an open block: sent, filled and cancelled through the block
+        acts = [a for a in acts if a not in ("mark_sent", "fill", "cancel")]
     if row.get("executor_type") in LETTER_EXECUTORS:
         acts.append("letter")
+    if row.get("executor_type") in SHEET_EXECUTORS and row.get("quantity") is not None:
+        acts.append("order_sheet")             # rep9 — the manual route, always offered
     if row.get("settlement"):
         acts.append("settlement_instruction")
     if can_write and s == "filled" and row.get("held_away"):

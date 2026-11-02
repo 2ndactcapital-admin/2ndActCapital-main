@@ -276,6 +276,11 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_authority", "authority", "view"),
     ("manage_authority", "authority", "manage"),
     ("approve_authority", "authority", "approve"),
+    # rep9 — block trading: build / send / fill / allocate / settle blocks; approve blocks, allocation policies and
+    # allocation corrections (maker-checker).
+    ("view_blocks", "blocks", "view"),
+    ("manage_blocks", "blocks", "manage"),
+    ("approve_blocks", "blocks", "approve"),
 )
 
 

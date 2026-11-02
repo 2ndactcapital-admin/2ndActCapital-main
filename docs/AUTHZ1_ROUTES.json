@@ -1,5 +1,5 @@
 {
- "app_route_count": 701,
+ "app_route_count": 731,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -11540,6 +11540,666 @@
    "path": "/api/v1/execution/securities",
    "public": false,
    "write": false
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.blocks",
+   "name": "list_blocks",
+   "note": "",
+   "path": "/api/v1/execution/blocks",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.blocks",
+   "name": "candidates",
+   "note": "",
+   "path": "/api/v1/execution/blocks/candidates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "preview",
+   "note": "",
+   "path": "/api/v1/execution/blocks/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.blocks",
+   "name": "routers_",
+   "note": "",
+   "path": "/api/v1/execution/blocks/routers",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.blocks",
+   "name": "policies",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/policies",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "request_policy",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/policies",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "approve_policy",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/policies/{policy_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "reject_policy",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/policies/{policy_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.blocks",
+   "name": "execution_accounts",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/execution-accounts",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "add_execution_account",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/execution-accounts",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.blocks",
+   "name": "edit_execution_account",
+   "note": "",
+   "path": "/api/v1/execution/blocks/settings/execution-accounts/{account_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_execution",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_execution"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "instruction_sheet",
+   "note": "",
+   "path": "/api/v1/execution/blocks/instructions/{instruction_id}/sheet",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "approve_correction",
+   "note": "",
+   "path": "/api/v1/execution/blocks/corrections/{correction_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "reject_correction",
+   "note": "",
+   "path": "/api/v1/execution/blocks/corrections/{correction_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "build",
+   "note": "",
+   "path": "/api/v1/execution/blocks",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.blocks",
+   "name": "get_block",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "submit",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "approve",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "reject",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "sent",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/sent",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "fill",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/fills",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "allocate",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/allocate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "settlement",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/allocations/{allocation_id}/settlement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "settlement_match",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/allocations/{allocation_id}/settlement-match",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "correction",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/corrections",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "charge",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/charges",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "close_charge",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/charges/{charge_id}/close",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "close",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/close",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "cancel",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/cancel",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_blocks",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_blocks"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blocks",
+   "name": "sheet",
+   "note": "",
+   "path": "/api/v1/execution/blocks/{block_id}/sheet",
+   "public": false,
+   "write": true
   },
   {
    "after": "authz view_proposals",

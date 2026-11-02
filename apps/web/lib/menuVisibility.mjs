@@ -74,6 +74,10 @@ export const GATE_VIEW_REPLICATION = { perm: "view_replication", strict: true };
 // REP2 — Portfolio → Instructions. GET /execution/instructions requires
 // view_execution (Super Admin first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_EXECUTION = { perm: "view_execution", strict: true };
+// REP9 — Portfolio → Blocks and Settings → Allocation policy / Executing
+// accounts. Every /execution/blocks GET requires view_blocks (Super Admin
+// first); STRICT so no envelope hides the tabs.
+export const GATE_VIEW_BLOCKS = { perm: "view_blocks", strict: true };
 // REP3 — Portfolio → Models. GET /models requires view_models (Super Admin
 // first); STRICT so no envelope hides the tab.
 export const GATE_VIEW_MODELS = { perm: "view_models", strict: true };
@@ -228,6 +232,8 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 11, "/portfolio/accounts", "Accounts", GATE_VIEW_PROPOSALS, false),
   // REP6 — the tax engine: harvest dashboard, substitutions, profiles, declared trades.
   tab("main", "portfolio", 12, "/portfolio/tax", "Tax", GATE_VIEW_TAX, false),
+  // REP9 — block trading: build, approve, print the order execution sheet, fills, allocation, settlement.
+  tab("main", "portfolio", 14, "/portfolio/blocks", "Blocks", GATE_VIEW_BLOCKS, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
@@ -256,6 +262,9 @@ export const MENU_ITEMS = [
   // MARKETDATA1 — price sources (rank overrides, file uploads) and data quality
   tab("org_admin", "settings", 3, "/admin/security-data/sources", "Price sources", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "settings", 4, "/admin/security-data/quality", "Data quality", GATE_MANAGE_ORG_SETTINGS, true),
+  // REP9 — the firm's allocation policy (versions, second-person approval) and its executing accounts
+  tab("org_admin", "settings", 5, "/admin/allocation-policy", "Allocation policy", GATE_VIEW_BLOCKS, true),
+  tab("org_admin", "settings", 6, "/admin/executing-accounts", "Executing accounts", GATE_VIEW_BLOCKS, true),
   // The Workflows API gates on PROFILE-axis keys (author_workflows,
   // view_workflow_runs, configure_workflow_triggers) that /users/me does not
   // publish. Workflows keeps its existing gate; Runs and Triggers — newly
