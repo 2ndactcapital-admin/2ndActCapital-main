@@ -41,6 +41,13 @@ and real models / securities / fee schedules / workflow rows / users are
 compared by count + checksum.
 
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+
+Teardown mechanics (VHK1): ``_verify_cleanup.cleanup`` — seeds keyed by this
+run's fixture ids, a materialised FK closure, one DELETE per table; it prints
+one '[INFO] cleanup ...' line with its time. --cleanup-only: only the teardown
+and the leftover check ('CLEANUP_SECONDS', 'LEFTOVERS', 'TOTAL'); no seeding,
+no checks, no regression, no npm. --self-checks-only: only the git / route
+self-checks (no Doppler, no database, no network).
 """
 
 from __future__ import annotations
@@ -71,6 +78,57 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / other files as rep3 left them), stdlib + git only. Each ends at rep3's OWN merge
+# (or HEAD on its branch), never the working tree, so a later sprint's routes or edits cannot break them.
+# --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep3"
+BEFORE_REF = "93aaf23"   # rep3-work base — main after "merge rep2" + schema refresh
+MODEL_PERMS = ("view_models", "manage_models", "approve_models")
+
+
+def self_other_files(check, find):
+    # what rep3 did to verify_rep1.py / verify_rep2.py / the importer — read at rep3's own end ref, not today (later
+    # sprints edit those scripts freely; their own guards cover their edits)
+    end = VS.sprint_end_ref(SPRINT_KEY)[1]
+    r1 = VS.own_text(SPRINT_KEY, "apps/api/scripts/verify_rep1.py") or ""
+    r2 = VS.own_text(SPRINT_KEY, "apps/api/scripts/verify_rep2.py") or ""
+    check("source = 'workflow_user_task'" in r1 and "approval human task is completed" in r1
+          and "replica_terms_approval' AND related_id = $1\", UUID" not in r1,
+          "verify_rep1.py asserts the human-task path (only its approval-task checks changed)", f"at {end}")
+    check("plan.exceptions" in r2 and 'c["unmatched"] == 1' not in r2,
+          "verify_rep2.py reads the exception count from plan.exceptions (the importer is unchanged)", f"at {end}")
+    imp_end = VS.own_text(SPRINT_KEY, "apps/api/services/custody/importer.py")
+    imp_before = VS.git_show(BEFORE_REF, "apps/api/services/custody/importer.py")
+    check(imp_end is not None and imp_end == imp_before, "the importer is byte-identical (rep3 left it unchanged)",
+          f"{BEFORE_REF} → {end}")
+
+
+def self_routes(check, find):
+    # rep3's own routes: BEFORE_REF → rep3's own merge. (VHK1: the by-path "/api/v1/models" filter — needed only
+    # while rep4's /replication routes showed up against the working tree — is now an assertion that EVERY new
+    # route is under /models.)
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    changed = [k for k in R.before if k in R.end and R.before[k].get("after") != R.end[k].get("after")]
+    check(len(R.before) > 0 and not changed and not R.removed, "rep3 changed or removed no existing route's gate",
+          f"{R.where()}; {changed[:5]} {R.removed[:5]}")
+    models = [k for k in R.new if k[1].startswith("/api/v1/models")]
+    check(len(R.new) == len(models) == 28 and all(any(p in str(R.end[k].get("after")) for p in MODEL_PERMS)
+                                                  for k in R.new),
+          "28 new routes under /models, each naming a model permission", f"{R.where()}; {len(R.new)} {len(models)}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "rep3's 28 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_other_files(check, find)
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -80,8 +138,8 @@ import httpx  # noqa: E402
 import openpyxl  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402
 
-BEFORE_REF = "93aaf23"   # rep3-work base — main after "merge rep2" + schema refresh
 TAG = "rep3verify"
 PREFIX = "ZZRM"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -108,7 +166,6 @@ USERS = {   # org, users.role, short, rbac role, full name
     U_NEWADMIN: (ORG_C, "member", "newadmin", None, "REP3 New Org Admin"),
     U_PLAT: (PLATFORM_ORG, "super_admin", "plat", None, "REP3 Platform Publisher"),
 }
-MODEL_PERMS = ("view_models", "manage_models", "approve_models")
 ENT_A, ACCT_A = _id(201), _id(301)
 CODE_ALT = "ALTRUIST"
 CUSIP = {"A": "ZZRM00011", "B": "ZZRM00012", "C": "ZZRM00013", "D": "ZZRM00019", "F": "ZZRM00021"}
@@ -237,67 +294,6 @@ async def operator_conn():
     return await connect(dsn)
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete for a FIXTURE-ID parent (users / roles / orgs
-    of this run only), FKs read from pg_constraint (recursively)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
-async def fk_order(conn, tables: list[str]) -> list[str]:
-    """``tables`` sorted child-before-parent from pg_constraint (Kahn)."""
-    edges = {t: set() for t in tables}
-    rows = await conn.fetch("""
-        SELECT cn.nspname || '.' || cc.relname AS child, pn.nspname || '.' || pc.relname AS parent
-        FROM pg_constraint c JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-        JOIN pg_class pc ON pc.oid = c.confrelid JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-        WHERE c.contype = 'f'""")
-    for r in rows:
-        if r["child"] in edges and r["parent"] in edges and r["child"] != r["parent"]:
-            edges[r["child"]].add(r["parent"])
-    children_of = {t: {c for c, ps in edges.items() if t in ps} for t in tables}
-    out, done = [], set()
-    while len(out) < len(tables):
-        ready = [t for t in tables if t not in done and children_of[t] <= done]
-        if not ready:
-            raise RuntimeError(f"FK cycle among {sorted(set(tables) - done)}")
-        for t in ready:
-            out.append(t)
-            done.add(t)
-    return out
-
-
 async def fixture_security_ids(conn) -> list:
     rows = await conn.fetch(
         "SELECT DISTINCT global_security_id FROM portfolio.securities_global_identifiers WHERE id_value LIKE $1",
@@ -306,7 +302,8 @@ async def fixture_security_ids(conn) -> list:
 
 
 async def teardown(_conn=None) -> list[str]:
-    """Operator connection, models/replica teardown = 'fixture', every DELETE keyed by fixture ids."""
+    """Operator connection, models/replica/execution teardown = 'fixture' (LOCAL, ONE transaction), every DELETE keyed
+    by fixture ids: the model-family pre-pass, then ``_verify_cleanup.cleanup`` (VHK1: replaces delete_tree)."""
     log: list[str] = []
     op = await operator_conn()
     try:
@@ -333,7 +330,11 @@ async def teardown(_conn=None) -> list[str]:
                 "SELECT id FROM portfolio.model_events WHERE org_id = ANY($1::uuid[]) OR model_id = ANY($2::uuid[]) "
                 "OR actor_id = ANY($3::uuid[]) OR library_entry_id = ANY($4::uuid[])", orgs, models, users, entries)]
             sources = events + versions
-            steps = (
+            # VHK1: the models <-> library entries FK cycle is ROW-level here (an org-shelf entry points at a fixture
+            # model; a library-sourced fixture model points back at the entry), so no single DELETE per table can
+            # take it — this model-family pre-pass (the old order, same rows) runs first in the SAME transaction;
+            # _verify_cleanup.cleanup takes everything else.
+            model_steps = (
                 ("model_events", "DELETE FROM portfolio.model_events WHERE id = ANY($1::uuid[])", [events]),
                 ("model_upload_events", "DELETE FROM portfolio.model_upload_events WHERE org_id = ANY($1::uuid[])",
                  [orgs]),
@@ -350,45 +351,31 @@ async def teardown(_conn=None) -> list[str]:
                 ("model_library_entries", "DELETE FROM portfolio.model_library_entries WHERE id = ANY($1::uuid[])",
                  [entries]),
                 ("models", "DELETE FROM portfolio.models WHERE id = ANY($1::uuid[])", [models]),
-                ("model_column_mappings", "DELETE FROM portfolio.model_column_mappings WHERE org_id = ANY($1::uuid[])",
-                 [orgs]),
-                ("member_todos", "DELETE FROM member_todos WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
-                 [orgs, users]),
-                ("domain_event_deliveries", "DELETE FROM domain_event_deliveries WHERE org_id = ANY($1::uuid[]) OR "
-                 "domain_event_id IN (SELECT id FROM domain_events WHERE source_id = ANY($2::uuid[]))", [orgs, sources]),
-                ("domain_events", "DELETE FROM domain_events WHERE org_id = ANY($1::uuid[]) OR (org_id = $3 AND "
-                                  "source_id = ANY($2::uuid[]))", [orgs, sources, PLATFORM_ORG]),
-                ("audit_log", "DELETE FROM audit_log WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[]) OR "
-                              "resource_id = ANY($3::uuid[])", [orgs, users, sources]),
-                ("workflow_run_steps", "DELETE FROM workflow_run_steps WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("workflow_runs", "DELETE FROM workflow_runs WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("workflow_steps", "DELETE FROM workflow_steps WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("workflow_versions", "DELETE FROM workflow_versions WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("workflow_definitions", "DELETE FROM workflow_definitions WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("replica_terms_actions", "DELETE FROM portfolio.replica_terms_actions WHERE org_id = ANY($1::uuid[])",
-                 [orgs]),
-                ("document_field_corrections", "DELETE FROM document_field_corrections WHERE org_id = ANY($1::uuid[])",
-                 [orgs]),
-                ("replica_terms_versions", "DELETE FROM portfolio.replica_terms_versions WHERE org_id = "
-                                           "ANY($1::uuid[])", [orgs]),
-                ("replica_securities", "DELETE FROM portfolio.replica_securities WHERE org_id = ANY($1::uuid[])",
-                 [orgs]),
-                ("accounts", "DELETE FROM public.accounts WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("entities", "DELETE FROM public.entities WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("org_settings", "DELETE FROM public.org_settings WHERE org_id = ANY($1::uuid[])", [orgs]),
-                ("securities_global_identifiers", "DELETE FROM portfolio.securities_global_identifiers WHERE "
-                                                  "global_security_id = ANY($1::uuid[])", [secs]),
-                ("securities_global", "DELETE FROM portfolio.securities_global WHERE id = ANY($1::uuid[])", [secs]),
             )
-            for label, sql, args in steps:
+            for label, sql, args in model_steps:
                 status = await op.execute(sql, *args)
                 n = int(status.rsplit(" ", 1)[-1])
                 if n:
                     log.append(f"{label}: {n}")
-            await delete_tree(op, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                              [users, f"%{TAG}%"], log=log)
-            await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [orgs], log=log)
-            await delete_tree(op, "public.organizations", "id = ANY($1::uuid[])", [orgs], log=log)
+            by_org = "org_id = ANY($1::uuid[])"
+            org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
+            plan = {
+                "portfolio.model_column_mappings": (by_org, [orgs]),
+                "public.member_todos": org_or_user,
+                "public.domain_event_deliveries": (
+                    "org_id = ANY($1::uuid[]) OR domain_event_id IN (SELECT id FROM public.domain_events WHERE "
+                    "source_id = ANY($2::uuid[]))", [orgs, sources]),
+                "public.domain_events": ("org_id = ANY($1::uuid[]) OR (org_id = $3 AND source_id = ANY($2::uuid[]))",
+                                         [orgs, sources, PLATFORM_ORG]),
+                "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[]) OR "
+                                     "resource_id = ANY($3::uuid[])", [orgs, users, sources]),
+                "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
+                "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
+            }
+            res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
+                                   gucs=("models.teardown", "replica.teardown", "execution.teardown"),
+                                   cycle_order=("portfolio.model_library_entries",), label="verify_rep3")
+            log += res["log"]
     finally:
         await op.close()
     return log
@@ -1445,15 +1432,7 @@ async def y_rep1(conn):
           "the checker's approval completes the task; replica_terms_actions still logs it", f"{c2}")
     c3, _ = await api(U_ADMIN2, "POST", path, {"note": "again"})
     check(c3 == 409, "approving an approved version is still 409", f"{c3}")
-    r1 = (API_DIR / "scripts" / "verify_rep1.py").read_text(encoding="utf-8")
-    r2 = (API_DIR / "scripts" / "verify_rep2.py").read_text(encoding="utf-8")
-    check("source = 'workflow_user_task'" in r1 and "approval human task is completed" in r1
-          and "replica_terms_approval' AND related_id = $1\", UUID" not in r1,
-          "verify_rep1.py asserts the human-task path (only its approval-task checks changed)")
-    check("plan.exceptions" in r2 and 'c["unmatched"] == 1' not in r2,
-          "verify_rep2.py reads the exception count from plan.exceptions (the importer is unchanged)")
-    imp_now = (API_DIR / "services" / "custody" / "importer.py").read_text(encoding="utf-8")
-    check(imp_now == git_show(BEFORE_REF, "apps/api/services/custody/importer.py"), "the importer is byte-identical")
+    self_other_files(check, find)
 
 
 async def y_isolation(conn):
@@ -1554,21 +1533,7 @@ async def y_new_org(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    # by path: later sprints add routes of their own (rep4: /replication/...) — rep3's are the /models ones
-    new = [k for k in gn if k not in gb and k[1].startswith("/api/v1/models")]
-    check(len(new) == 28 and all(any(p in str(gn[k].get("after")) for p in MODEL_PERMS) for k in new),
-          "28 new routes under /models, each naming a model permission", f"{len(new)}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1625,6 +1590,40 @@ async def guard_prefix(conn) -> bool:
 DROPPED_CONNECTION = (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError, ConnectionError)
 
 
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    if not await guard_prefix(conn):        # the same reserved-prefix guard a real run makes before its teardown
+        await conn.close()
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+        return 1
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    op = await operator_conn()
+    try:
+        swept = await VC.leftover_count(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%")
+    finally:
+        await op.close()
+    print(f"[INFO] leftovers: script list {left}, every org_id table {swept}")
+    left = max(left, swept)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1635,6 +1634,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if VS.CLEANUP_FLAG in sys.argv:
+        return await cleanup_only(conn)
     pre = real = None
     try:
         if not await guard_prefix(conn):

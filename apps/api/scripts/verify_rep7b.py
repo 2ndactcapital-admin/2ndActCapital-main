@@ -82,6 +82,104 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only. Each ends at rep7b's OWN merge (or HEAD on its
+# branch) — lotmethod's part at lotmethod's own merge — never the working tree, so a later sprint's routes or edits
+# cannot break them. --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no database, no network.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep7b"
+BEFORE_REF = "9ed75ae"   # main @ merge rep7 — the rep7b-work base
+REP7 = "apps/api/scripts/verify_rep7.py"
+# fix 1 — the exact diff lines of verify_rep7.py's y_routes scoping (beyond its TODAY fix), checked in regression()
+REP7_ROUTE_SCOPE_DIFF = (
+    '-    new = [k for k in gn if k not in gb]',
+    "+    # rep7b fix 1 — scoped to rep7's own routes: rep7b (built on this branch after rep7) added these 11; any other",
+    '+    # new route still fails the count',
+    '+    rep7b_added = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),',
+    '+                   (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),',
+    '+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),',
+    '+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}',
+    '+    new = [k for k in gn if k not in gb and k not in rep7b_added and not k[1].startswith("/api/v1/authority/")]',
+    '-    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/…", f"{len(new)} {len(mine)}")',
+    '+    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/… (rep7b\'s /authority/… and "',
+    '+          "its 4 other routes excluded)", f"{len(new)} {len(mine)} {[k for k in new if k not in mine][:4]}")',
+)
+#: lotmethod's own edit to verify_rep7.py's y_routes (its base → its merge), stripped
+LOTMETHOD_REP7_ROUTE_SCOPE = (
+    'new = [k for k in gn if k not in gb and k not in rep7b_added and not k[1].startswith("/api/v1/authority/")]',
+    "# lotmethod: its routes are all under /api/v1/lot-method/ — not this script's",
+    "new = [k for k in gn if k not in gb and k not in rep7b_added",
+    'and not k[1].startswith(("/api/v1/authority/", "/api/v1/lot-method/"))]',
+)
+REP7B_ROUTE_PERMS = {
+    "/api/v1/authority/vocabulary": "view_authority", "/api/v1/authority/households/{household_id}": "view_authority",
+    "/api/v1/authority/accounts/{account_id}": "view_authority",
+    "/api/v1/authority/households/{household_id}/changes": "manage_authority",
+    "/api/v1/authority/accounts/{account_id}/changes": "manage_authority",
+    "/api/v1/authority/changes/{change_id}/approve": "approve_authority",
+    "/api/v1/authority/changes/{change_id}/reject": "approve_authority",
+    "/api/v1/accounts/{account_id}/proposals/one-off": "manage_proposals",
+    "/api/v1/xray/households/{household_id}/one-off": "manage_proposals",
+    "/api/v1/execution/instructions/{instruction_id}/settlement": "view_execution",
+    "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away": "manage_execution",
+}
+
+
+def self_rep7_diff(check, find):
+    # lotmethod (BUGFIX2 B1 / B2: the shared scoped cleanup, --cleanup-only, a nested timeout) changed verify_rep7.py
+    # from its base (VC.LOTMETHOD_BASE = rep7b's merge) to ITS OWN merge — and nothing else. Later sprints' edits to
+    # verify_rep7.py are their own guards' business (VHK1).
+    b1 = VS.own_lines(REP7, VC.LOTMETHOD_BASE, "lotmethod")
+    b1_bad = VC.b1_diff_bad(b1.old or "", b1.new or "")
+    # VHK1 [FIND]: lotmethod ALSO scoped rep7's route count past its own /lot-method/ routes (one more stale-route fix
+    # of exactly the class VHK1 removes). This guard never accounted for it, so it failed on main from lotmethod on;
+    # those exact lines are listed here — anything else lotmethod changed must still be B1 / B2.
+    lm_scope = [f"{sign}{n} {fn}: {t[:60]}" for sign, n, fn, t in b1.changed if fn == "y_routes"]
+    b1_rest = [x for x in b1_bad if x not in lm_scope]
+    check(bool(b1.old) and bool(b1.new) and not b1_rest and [x.split(": ", 1)[1] for x in lm_scope] ==
+          [t[:60] for t in LOTMETHOD_REP7_ROUTE_SCOPE],
+          "verify_rep7.py: every change lotmethod made (its base → its own merge) is BUGFIX2's cleanup (B1 / B2), plus "
+          "exactly its route-count scoping past /lot-method/", f"{b1.where()}; {b1_rest[:4]} {lm_scope[:4]}")
+    # rep7b's own edits to verify_rep7.py: BEFORE_REF → rep7b's own merge
+    code, diff, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, REP7, args=("-U0",))
+    changed = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    # fix 1 — plus, exactly, y_routes' two self-checks scoped to rep7's own 19 routes (rep7b's routes excluded)
+    scope = [ln.rstrip() for ln in changed[2:]]
+    check(code == 0 and len(changed) >= 2 and "TODAY + timedelta(days=STALE_DAYS)" in changed[0]
+          and "date.today() + timedelta(days=STALE_DAYS)" in changed[1] and scope == list(REP7_ROUTE_SCOPE_DIFF),
+          "verify_rep7.py differs from main (rep7b's own diff) only by the expires_on expectation computed at the call "
+          "and the route self-checks scoped to rep7's own routes",
+          f"{BEFORE_REF} → {VS.sprint_end_ref(SPRINT_KEY)[1]}; {changed[:2]} "
+          f"unexpected={[x for x in scope if x not in REP7_ROUTE_SCOPE_DIFF][:3]} "
+          f"{len(scope)}/{len(REP7_ROUTE_SCOPE_DIFF)}")
+
+
+def self_routes(check, find):
+    # rep7b's own routes: BEFORE_REF → rep7b's own merge (VHK1 replaces rep9 fix's by-path scoping with the pinned
+    # diff — it is the same set, asserted exactly); each still exists today with the same gate.
+    want = REP7B_ROUTE_PERMS
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "no existing route's gate changed or vanished",
+          f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    bad = [(k, R.end[k].get("after")) for k in R.new if k[1] not in want or want[k[1]] not in str(R.end[k].get("after"))]
+    missing = sorted(set(want) - {k[1] for k in R.new})
+    check(len(R.new) == len(want) and not bad and not missing,
+          f"rep7b's {len(want)} new routes, each naming its permission", f"{R.where()}; {len(R.new)} {bad[:4]} "
+          f"{missing[:4]}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, f"rep7b's {len(want)} routes all still exist today with the same gate",
+          f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_rep7_diff(check, find)
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -90,7 +188,6 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
-import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 import main  # noqa: E402
@@ -112,7 +209,6 @@ from services.custody.base import AccountNumber  # noqa: E402
 from services.custody.registry import get_or_create_salt  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = "9ed75ae"   # main @ merge rep7 — the rep7b-work base
 TAG = "rep7bverify"
 PREFIX = "ZZR7B"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -615,20 +711,6 @@ SEED_CHECK_LITERALS = (
     ("portfolio.replica_securities", "replica_securities_status_chk", ("active",)),
     ("portfolio.models", "models_source_chk", ("upload",)),
 )
-# fix 1 — the exact diff lines of verify_rep7.py's y_routes scoping (beyond its TODAY fix), checked in regression()
-REP7_ROUTE_SCOPE_DIFF = (
-    '-    new = [k for k in gn if k not in gb]',
-    "+    # rep7b fix 1 — scoped to rep7's own routes: rep7b (built on this branch after rep7) added these 11; any other",
-    '+    # new route still fails the count',
-    '+    rep7b_added = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),',
-    '+                   (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),',
-    '+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),',
-    '+                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}',
-    '+    new = [k for k in gn if k not in gb and k not in rep7b_added and not k[1].startswith("/api/v1/authority/")]',
-    '-    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/…", f"{len(new)} {len(mine)}")',
-    '+    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/… (rep7b\'s /authority/… and "',
-    '+          "its 4 other routes excluded)", f"{len(new)} {len(mine)} {[k for k in new if k not in mine][:4]}")',
-)
 SEED_INSTRUMENT_CLASS = "index_etf"
 SEED_REGISTRATION, SEED_TAX_STATUS = "individual", "taxable"
 
@@ -844,20 +926,18 @@ async def y_migration(conn):
     real = [dict(r) for r in await platform(
         conn, "SELECT id, org_id, account_number_masked, is_held_away FROM public.accounts WHERE NOT (org_id = "
               "ANY($1::uuid[])) AND valid_to IS NULL AND system_to IS NULL", FIXTURE_ORGS)]
-    diffs, rows_for_real = [], 0
+    per = []   # (account, paths whose allowed / refused verdict changed, has a settings row / non-default source)
     for a in real:
         acct = await in_org(lambda c, a=a: AM.load_account(c, a["org_id"], a["id"]), a["org_id"], True)
-        for p in AU.ALL_PATHS:
-            before = (not a["is_held_away"]) if p != "one_off" else False
-            if AU.path_allowed(acct, p) != before:
-                diffs.append(f"{a['account_number_masked']}:{p}")
-        rows_for_real += 0 if acct["authority_source"] == "default" and acct["settings_id"] is None else 1
-    if not real:   # rep9 fix 1 — lotmethod's cleanup removed the leftover REP2 orgs that held the only accounts
-        find("migration: no existing account outside this run's orgs", "none exist today — the rule below is "
-             "asserted for every such account when any exist")
-    check(not diffs and rows_for_real == 0,
-          f"the {len(real)} existing account(s), loaded through the real loader: every path allowed / refused exactly "
-          "as before, every one on the migrated default (no settings row)", f"{diffs[:5]}")
+        moved = [p for p in AU.ALL_PATHS
+                 if AU.path_allowed(acct, p) != ((not a["is_held_away"]) if p != "one_off" else False)]
+        per.append((a, moved, not (acct["authority_source"] == "default" and acct["settings_id"] is None)))
+    # rep9 fix 1 / VHK1 — lotmethod's cleanup removed the leftover REP2 orgs that held the only accounts: an empty
+    # set is a [FIND]; the rule is asserted for EVERY existing account when any exist.
+    VS.when_empty(per, "the existing account(s) outside this run's orgs, loaded through the real loader: every path "
+                  "allowed / refused exactly as before, every one on the migrated default (no settings row)",
+                  lambda r: not r[1] and not r[2], check=check, find=find,
+                  detail=lambda bad: f"{[(r[0]['account_number_masked'], r[1], r[2]) for r in bad[:5]]}")
     drafts = await platform(
         conn, """SELECT i.id, i.org_id, i.status, i.executor_type, i.maker_id, i.created_at, i.cancelled_at
                  FROM public.execution_instructions i JOIN public.accounts a ON a.id = i.account_id
@@ -871,15 +951,15 @@ async def y_migration(conn):
         acts = X.actions_for({**d, "maker_ids": d.get("maker_ids") or []}, can_write=True, can_approve=True,
                              user_id=uuid.uuid4(), task_open=False)
         outs.append((d["status"], d.get("approval_refused") or "", acts, r["cancelled_at"]))
-    if not drafts:   # rep9 fix 1 — the only held-away draft sat in a leftover REP2 org lotmethod's cleanup removed
-        find("migration: no existing held-away draft instruction", "none exist today — the rule is asserted for "
-             "every such draft when any exist, and proven below on an identical draft in this run's org")
-    check(all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts
-                                   and cancelled is None for st, why, acts, cancelled in outs),
-          "the existing held-away DRAFT instruction(s): read through the real detail — approval refused with the "
-          "plain reason (read-only), no submit action, still draft (neither deleted nor cancelled)",
-          f"{[(str(r['id'])[:8], r['executor_type'], str(r['created_at'])[:10]) for r in drafts]} "
-          f"{[o[1][:90] for o in outs]}")
+    # rep9 fix 1 / VHK1 — the only held-away draft sat in a leftover REP2 org lotmethod's cleanup removed: an empty set
+    # is a [FIND]; the rule is asserted for every such draft when any exist, and proven below on an identical draft
+    # in this run's org.
+    VS.when_empty(list(zip(drafts, outs)), "the existing held-away DRAFT instruction(s): read through the real "
+                  "detail — approval refused with the plain reason (read-only), no submit action, still draft "
+                  "(neither deleted nor cancelled)",
+                  lambda r: (r[1][0] == "draft" and "held-away" in r[1][1] and "read-only" in r[1][1]
+                             and "submit" not in r[1][2] and r[1][3] is None), check=check, find=find,
+                  detail=lambda bad: f"{[(str(r[0]['id'])[:8], r[0]['executor_type'], str(r[0]['created_at'])[:10], r[1][1][:90]) for r in bad]}")
     # the same rule, proven on an identical draft in this run's org: submit refused, nothing written
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.current_org_id', $1, true), "
@@ -1376,37 +1456,7 @@ async def y_isolation(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    want = {
-        "/api/v1/authority/vocabulary": "view_authority", "/api/v1/authority/households/{household_id}": "view_authority",
-        "/api/v1/authority/accounts/{account_id}": "view_authority",
-        "/api/v1/authority/households/{household_id}/changes": "manage_authority",
-        "/api/v1/authority/accounts/{account_id}/changes": "manage_authority",
-        "/api/v1/authority/changes/{change_id}/approve": "approve_authority",
-        "/api/v1/authority/changes/{change_id}/reject": "approve_authority",
-        "/api/v1/accounts/{account_id}/proposals/one-off": "manage_proposals",
-        "/api/v1/xray/households/{household_id}/one-off": "manage_proposals",
-        "/api/v1/execution/instructions/{instruction_id}/settlement": "view_execution",
-        "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away": "manage_execution",
-    }
-    # rep9 fix — scoped to rep7b's OWN routes (``want``), never "every route added since a base commit": later
-    # sprints (lotmethod, rep8, marketdata1, rep9 …) add routes of their own, and each proves its own
-    mine = {k: gn[k] for k in gn if k[1] in want}
-    bad = [(k, gn[k].get("after")) for k in mine if want[k[1]] not in str(gn[k].get("after"))]
-    missing = sorted(set(want) - {k[1] for k in mine})
-    check(len(mine) == len(want) and not bad and not missing,
-          f"rep7b's {len(want)} routes still exist, each naming its permission", f"{len(mine)} {bad[:4]} {missing[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1429,23 +1479,7 @@ async def y_front_end(conn):
 def regression():
     section("[Y] Regression — verify_rep7.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s; only its TODAY fix "
             "changed")
-    # lotmethod: the rule below holds up to main @ merge rep7b (VC.LOTMETHOD_BASE); after it, BUGFIX2 B1 / B2 (the
-    # shared scoped cleanup, --cleanup-only, a nested timeout) may change verify_rep7.py — and nothing else may
-    code, diff, _ = run_cmd(["git", "diff", "-U0", BEFORE_REF, VC.LOTMETHOD_BASE, "--", "apps/api/scripts/verify_rep7.py"],
-                            REPO, 60)
-    b1_bad = VC.b1_diff_bad(git_show(VC.LOTMETHOD_BASE, "apps/api/scripts/verify_rep7.py"),
-                            (HERE / "verify_rep7.py").read_text(encoding="utf-8"))
-    check(not b1_bad, "verify_rep7.py: every change since the lotmethod base is BUGFIX2's cleanup (B1 / B2)",
-          f"{b1_bad[:4]}")
-    changed = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
-    # fix 1 — plus, exactly, y_routes' two self-checks scoped to rep7's own 19 routes (rep7b's routes excluded)
-    scope = [ln.rstrip() for ln in changed[2:]]
-    check(code == 0 and len(changed) >= 2 and "TODAY + timedelta(days=STALE_DAYS)" in changed[0]
-          and "date.today() + timedelta(days=STALE_DAYS)" in changed[1] and scope == list(REP7_ROUTE_SCOPE_DIFF),
-          "verify_rep7.py differs from main only by the expires_on expectation computed at the call and the route "
-          "self-checks scoped to rep7's own routes",
-          f"{changed[:2]} unexpected={[x for x in scope if x not in REP7_ROUTE_SCOPE_DIFF][:3]} "
-          f"{len(scope)}/{len(REP7_ROUTE_SCOPE_DIFF)}")
+    self_rep7_diff(check, find)
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep7.py")], REPO, timeout=2700, env=env)
     total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)

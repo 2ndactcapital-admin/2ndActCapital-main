@@ -167,6 +167,10 @@ If the sprint posts a journal entry (or writes to any table with an
 immutability trigger), teardown must disable/re-enable that trigger
 around its own scoped delete — see "teardown vs. immutability
 triggers" below.
+Follow docs/VERIFY_RULES.md (VHK1): self-checks end at the sprint's
+own merge (apps/api/scripts/_verify_self.py), empty real data is a
+[FIND], dates at the call, teardown via _verify_cleanup.cleanup, and
+--self-checks-only / --cleanup-only in the script.
 ```
 
 **Why "THERE IS NO HUMAN AVAILABLE" matters**: without it, Claude Code sometimes stops mid-task waiting for confirmation that will never come. This line is load-bearing, not decoration.

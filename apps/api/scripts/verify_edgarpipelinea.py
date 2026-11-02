@@ -86,12 +86,31 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only. Each ends at edgarpipelinea's OWN commit on
+# main (it landed without a merge commit), never the working tree. --self-checks-only runs just these, BEFORE the
+# Doppler bootstrap — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "edgarpipelinea"
+
+
+def self_checks(check, find):
+    """edgarpipelinea has no since-base comparison (VHK1 Task 1a found none — its migration drift check reads today's
+    migration files against today's schema); run_self_checks still proves its end point."""
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
+from _db_connect import connect as db_connect, resolve_dsn  # noqa: E402
 
 import asyncpg  # noqa: E402
 
@@ -387,46 +406,107 @@ FIXTURE_LINES = [
 ]
 
 
-async def teardown_fixtures(conn) -> None:
+OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
+
+
+async def operator_conn():
+    """The operator (postgres) connection the shared scoped cleanup runs on (VHK1)."""
+    dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
+    if not dsn:
+        raise RuntimeError(f"no operator DSN for the fixture teardown path: {how}")
+    return await db_connect(dsn)
+
+
+def cleanup_plan() -> dict[str, tuple[str, list]]:
+    """Every predicate the old per-table teardown deleted by, keyed by this run's own fixture ids (the fixture org's
+    rows in every org_id table are seeded by _verify_cleanup itself)."""
+    users = list(FIXTURE_USERS)
+    runs = list(STATE["pipeline_runs"])
+    wr = list(STATE["workflow_runs"])
+    return {
+        "public.audit_log": ("org_id = $1::uuid OR user_id = ANY($2::uuid[])", [ORG, users]),
+        "public.assistant_activities": ("org_id = $1::uuid OR user_id = ANY($2::uuid[])", [ORG, users]),
+        "public.agent_proposals": ("org_id = $1::uuid OR proposed_by = ANY($2::uuid[])", [ORG, users]),
+        "public.user_roles": ("user_id = ANY($1::uuid[]) OR role_id IN (SELECT id FROM public.roles "
+                              "WHERE org_id = $2::uuid)", [users, ORG]),
+        "public.role_permissions": ("role_id IN (SELECT id FROM public.roles WHERE org_id = $1::uuid)", [ORG]),
+        "public.roles": ("org_id = $1::uuid", [ORG]),
+        "public.users": ("id = ANY($1::uuid[]) OR auth0_sub = ANY($2::text[])", [users, [_sub(u) for u in users]]),
+        "portfolio.reference_filings": ("accession_number LIKE $1", [ACC_PREFIX + "%"]),
+        "portfolio.edgar_index_filings": ("accession_number LIKE $1", [ACC_PREFIX + "%"]),
+        "portfolio.structured_note_issuers": ("filer_cik = ANY($1::text[])", [FIXTURE_CIKS]),
+        "portfolio.edgar_pipeline_lease": ("lease_name = $1", [VERIFY_LEASE]),
+        # as before: this run's own runs, every trigger_source = 'verify' run, and the nightly workflow's runs
+        "portfolio.edgar_pipeline_runs": ("id = ANY($1::uuid[]) OR trigger_source = 'verify' "
+                                          "OR workflow_run_id = ANY($2::uuid[])", [runs, wr]),
+        "public.member_todos": ("related_type = 'workflow_run' AND related_id = ANY($1::uuid[])", [wr]),
+        "public.workflow_run_steps": ("workflow_run_id = ANY($1::uuid[])", [wr]),
+        "public.workflow_runs": ("id = ANY($1::uuid[])", [wr]),
+    }
+
+
+async def teardown_fixtures(conn) -> list[str]:
+    """VHK1: the shared scoped cleanup (_verify_cleanup.cleanup) — ONE transaction on the operator DSN with
+    app.is_super_admin = 'true' set LOCAL (the GUC the old per-table teardown set), seeds keyed by this run's
+    fixture ids, FK closure over children that really hold rows, child-before-parent, one DELETE per table."""
     from services import edgar_pipeline as p
 
-    async with conn.transaction():
-        await _super(conn)
-        await conn.execute("DELETE FROM audit_log WHERE org_id = $1 OR user_id = ANY($2::uuid[])",
-                           ORG, FIXTURE_USERS)
-        await conn.execute("DELETE FROM assistant_activities WHERE org_id = $1 OR user_id = ANY($2::uuid[])",
-                           ORG, FIXTURE_USERS)
-        await conn.execute("DELETE FROM agent_proposals WHERE org_id = $1 OR proposed_by = ANY($2::uuid[])",
-                           ORG, FIXTURE_USERS)
-        await conn.execute(
-            "DELETE FROM user_roles WHERE user_id = ANY($1::uuid[]) "
-            "OR role_id IN (SELECT id FROM roles WHERE org_id = $2)", FIXTURE_USERS, ORG)
-        await conn.execute("DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE org_id = $1)", ORG)
-        await conn.execute("DELETE FROM roles WHERE org_id = $1", ORG)
-        await conn.execute(
-            "DELETE FROM users WHERE id = ANY($1::uuid[]) OR auth0_sub = ANY($2::text[])",
-            FIXTURE_USERS, [_sub(u) for u in FIXTURE_USERS])
-        await conn.execute("DELETE FROM organizations WHERE id = $1", ORG)
-
-        await conn.execute("DELETE FROM portfolio.reference_filings WHERE accession_number LIKE $1",
-                           ACC_PREFIX + "%")
-        await conn.execute("DELETE FROM portfolio.edgar_index_filings WHERE accession_number LIKE $1",
-                           ACC_PREFIX + "%")
-        await conn.execute("DELETE FROM portfolio.structured_note_issuers WHERE filer_cik = ANY($1::text[])",
-                           FIXTURE_CIKS)
-        await conn.execute("DELETE FROM portfolio.edgar_pipeline_lease WHERE lease_name = $1", VERIFY_LEASE)
-        if STATE["pipeline_runs"]:
-            await conn.execute("DELETE FROM portfolio.edgar_pipeline_runs WHERE id = ANY($1::uuid[])",
-                               list(STATE["pipeline_runs"]))
-        await conn.execute("DELETE FROM portfolio.edgar_pipeline_runs WHERE trigger_source = 'verify'")
-        if STATE["workflow_runs"]:
-            wr = list(STATE["workflow_runs"])
-            await conn.execute("DELETE FROM portfolio.edgar_pipeline_runs WHERE workflow_run_id = ANY($1::uuid[])", wr)
-            await conn.execute(
-                "DELETE FROM member_todos WHERE related_type = 'workflow_run' AND related_id = ANY($1::uuid[])", wr)
-            await conn.execute("DELETE FROM workflow_run_steps WHERE workflow_run_id = ANY($1::uuid[])", wr)
-            await conn.execute("DELETE FROM workflow_runs WHERE id = ANY($1::uuid[])", wr)
+    op = await operator_conn()
+    try:
+        async with op.transaction():
+            await op.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+            res = await VC.cleanup(op, orgs=[ORG], users=list(FIXTURE_USERS), plan=cleanup_plan(),
+                                   label="verify_edgarpipelinea")
+    finally:
+        await op.close()
     _ = p  # imported for its side effect of failing loud if the module is broken
+    return res["log"]
+
+
+async def fixture_leftovers(conn) -> dict:
+    left = await rls_row(conn, """SELECT
+        (SELECT count(*) FROM portfolio.edgar_index_filings WHERE accession_number LIKE $1) AS filings,
+        (SELECT count(*) FROM portfolio.edgar_index_filing_filers WHERE accession_number LIKE $1) AS filers,
+        (SELECT count(*) FROM portfolio.reference_filings WHERE accession_number LIKE $1) AS refs,
+        (SELECT count(*) FROM portfolio.structured_note_issuers WHERE filer_cik = ANY($2::text[])) AS issuers,
+        (SELECT count(*) FROM portfolio.edgar_pipeline_runs WHERE id = ANY($3::uuid[])) AS runs,
+        (SELECT count(*) FROM portfolio.edgar_pipeline_lease WHERE lease_name = $4) AS lease,
+        (SELECT count(*) FROM users WHERE id = ANY($5::uuid[])) AS users,
+        (SELECT count(*) FROM workflow_runs WHERE id = ANY($6::uuid[])) AS wf_runs""",
+        ACC_PREFIX + "%", FIXTURE_CIKS, list(STATE["pipeline_runs"]), VERIFY_LEASE, FIXTURE_USERS,
+        list(STATE["workflow_runs"]))
+    return dict(left)
+
+
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same fixture-row teardown as a real run (teardown_fixtures), then the leftover check —
+    no seeding, no checks, no R2, no regression, no npm. (A killed run's R2 test objects are removed by the next
+    full run's teardown_and_restore, which needs the bucket.)"""
+    t0 = time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown_fixtures(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = time.monotonic() - t0
+    left = await fixture_leftovers(conn)
+    op = await operator_conn()
+    try:
+        swept = await VC.leftover_count(op, orgs=[ORG], users=list(FIXTURE_USERS), extra=[
+            (f"SELECT count(*) FROM {t} WHERE {w}", a) for t, (w, a) in cleanup_plan().items()
+            if not t.startswith("public.")])
+    finally:
+        await op.close()
+    print(f"[INFO] leftovers: script list {sum(left.values())} {left}, every org_id table + plan {swept}")
+    n = max(sum(left.values()), swept)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {n}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(n == 0, "--cleanup-only: zero fixture rows remain", f"{n}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
 
 
 async def seed(conn) -> None:
@@ -895,6 +975,11 @@ async def fetch_section(conn, bucket: str) -> None:
     fixtures_in_sample = sorted(a for a in sample if a == F_BAD or a.startswith(ACC_PREFIX))
     check(not fixtures_in_sample, "the real sample contains no fixture accession (the bad accession included)",
           f"fixtures_in_sample={fixtures_in_sample}")
+    # VHK1: the never-fetched real 'selected' rows the sample draws from deplete as the real pipeline fetches them —
+    # none left is a FIND (every fetch expectation below is derived from those real filings, so nothing can run)
+    if VS.when_empty(sample, "never-fetched real 'selected' 424B2s exist to sample for the fetch tests",
+                     lambda a: not a.startswith(ACC_PREFIX), check=check, find=find) is None:
+        return
     check(len(groups) >= 5 and n_real >= 8,
           f"a fixed sample of {n_real} real 424B2s (up to 2 per group, >= 8) across >= 5 issuer groups, plus "
           "the one deliberately bad accession", f"n_real={n_real} groups={sorted(groups)}")
@@ -1393,18 +1478,8 @@ async def teardown_and_restore(conn, bucket, fp_before, iss_before) -> None:
                        acc, cik)
 
     await teardown_fixtures(conn)
-    left = await rls_row(conn, """SELECT
-        (SELECT count(*) FROM portfolio.edgar_index_filings WHERE accession_number LIKE $1) AS filings,
-        (SELECT count(*) FROM portfolio.edgar_index_filing_filers WHERE accession_number LIKE $1) AS filers,
-        (SELECT count(*) FROM portfolio.reference_filings WHERE accession_number LIKE $1) AS refs,
-        (SELECT count(*) FROM portfolio.structured_note_issuers WHERE filer_cik = ANY($2::text[])) AS issuers,
-        (SELECT count(*) FROM portfolio.edgar_pipeline_runs WHERE id = ANY($3::uuid[])) AS runs,
-        (SELECT count(*) FROM portfolio.edgar_pipeline_lease WHERE lease_name = $4) AS lease,
-        (SELECT count(*) FROM users WHERE id = ANY($5::uuid[])) AS users,
-        (SELECT count(*) FROM workflow_runs WHERE id = ANY($6::uuid[])) AS wf_runs""",
-        ACC_PREFIX + "%", FIXTURE_CIKS, list(STATE["pipeline_runs"]), VERIFY_LEASE, FIXTURE_USERS,
-        list(STATE["workflow_runs"]))
-    check(all(v == 0 for v in dict(left).values()), "zero fixture rows remain", f"{dict(left)}")
+    left = await fixture_leftovers(conn)
+    check(all(v == 0 for v in left.values()), "zero fixture rows remain", f"{left}")
     fp_after = await manifest_fingerprint(conn)
     check(fp_after == fp_before, "the real manifest's fingerprint (row count + md5 of every row) is unchanged",
           f"before={fp_before} after={fp_after}")
@@ -1446,6 +1521,8 @@ async def main_async() -> int:
     REGISTRY.sync_catalog = _noop_sync   # main.py's startup hook writes the REAL org's catalog
 
     conn = await asyncpg.connect(dsn, statement_cache_size=0, ssl="require")
+    if VS.CLEANUP_FLAG in sys.argv:          # VHK1: teardown + leftover check only
+        return await cleanup_only(conn)
     bucket = None
     fp_before = iss_before = None
     try:
@@ -1460,6 +1537,11 @@ async def main_async() -> int:
             # corpus (one real object probed by its stored key, never a literal).
             key = await rls_val(conn, "SELECT r2_key FROM portfolio.reference_filings "
                                       "WHERE content_encoding = 'identity' AND r2_key IS NOT NULL LIMIT 1")
+            # VHK1: no stored real object to probe is a FIND, not a FAIL (the name check above still holds)
+            if VS.when_empty([key] if key else [], "a stored real EDGAR object exists to probe the bucket with",
+                             lambda k: bool(k), check=check, find=find) is None:
+                key = None
+        if bucket is not None and key is not None:
             try:
                 await asyncio.to_thread(lambda: _s3().head_object(Bucket=bucket, Key=key))
                 holds = True

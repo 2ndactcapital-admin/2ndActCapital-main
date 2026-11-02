@@ -68,6 +68,55 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at rep8's OWN merge (or HEAD on its branch), never
+# the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep8"
+BEFORE_REF = "5681d30"   # main @ merge dealroom3 — the rep8-work base
+NEW_ROUTES = {
+    ("GET", "/api/v1/replication/options/entries/{entry_id}"): "view_replication",
+    ("POST", "/api/v1/replication/options/entries/{entry_id}/build"): "manage_models",
+    ("GET", "/api/v1/replication/options/packages/{package_id}"): "view_replication",
+    ("GET", "/api/v1/replication/options/packages/{package_id}/payoff"): "view_replication",
+    ("GET", "/api/v1/replication/options/packages/{package_id}/settlements"): "view_replication",
+    ("POST", "/api/v1/replication/options/packages/{package_id}/price"): "manage_replication",
+    ("POST", "/api/v1/replication/options/packages/{package_id}/submit"): "manage_replication",
+    ("POST", "/api/v1/replication/options/packages/{package_id}/approve"): "approve_replication",
+    ("POST", "/api/v1/replication/options/packages/{package_id}/reject"): "approve_replication",
+    ("GET", "/api/v1/replication/options/quotes"): "view_replication",
+    ("POST", "/api/v1/replication/options/quotes"): "manage_replication",
+    ("GET", "/api/v1/replication/options/contracts"): "view_replication",
+    ("POST", "/api/v1/replication/options/contracts"): "manage_replication",
+    ("POST", "/api/v1/replication/options/accounts/{account_id}/proposals"): "manage_proposals",
+    ("GET", "/api/v1/replication/options/proposals/{proposal_id}/gate"): "view_proposals",
+    ("POST", "/api/v1/replication/options/proposals/{proposal_id}/gate"): "manage_proposals",
+    ("POST", "/api/v1/replication/options/instructions/{instruction_id}/book"): "manage_execution",
+}
+
+
+def self_routes(check, find):
+    # rep8's own routes: BEFORE_REF → its own merge; each must still exist today with the same gate.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "rep8 changed or removed no existing route's gate",
+          f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    bad = [(k, R.end[k].get("after")) for k in R.new if NEW_ROUTES.get((k[0][0] if k[0] else "", k[1])) is None
+           or NEW_ROUTES[(k[0][0], k[1])] not in str(R.end[k].get("after"))]
+    check(len(R.new) == len(NEW_ROUTES) and not bad, f"{len(NEW_ROUTES)} new routes, all under /replication/options/, "
+          "each naming its permission", f"{R.where()}; {len(R.new)} {bad[:4]}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, f"rep8's {len(R.new)} routes all still exist today with the same gate",
+          f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -96,7 +145,6 @@ from services.custody.base import AccountNumber  # noqa: E402
 from services.custody.registry import get_or_create_salt  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = "5681d30"   # main @ merge dealroom3 — the rep8-work base
 TAG = "rep8verify"
 PREFIX = "ZZR8"
 NAME_PREFIX = "REP8 VERIFY"
@@ -156,25 +204,6 @@ COUNTED = (
 NEW_ORG_TABLES = ("portfolio.adviser_quotes", "portfolio.option_packages", "portfolio.option_package_legs",
                   "public.options_tax_gate_results", "public.option_settlement_entries")
 NEW_TABLES = ("portfolio.option_contracts",) + NEW_ORG_TABLES
-NEW_ROUTES = {
-    ("GET", "/api/v1/replication/options/entries/{entry_id}"): "view_replication",
-    ("POST", "/api/v1/replication/options/entries/{entry_id}/build"): "manage_models",
-    ("GET", "/api/v1/replication/options/packages/{package_id}"): "view_replication",
-    ("GET", "/api/v1/replication/options/packages/{package_id}/payoff"): "view_replication",
-    ("GET", "/api/v1/replication/options/packages/{package_id}/settlements"): "view_replication",
-    ("POST", "/api/v1/replication/options/packages/{package_id}/price"): "manage_replication",
-    ("POST", "/api/v1/replication/options/packages/{package_id}/submit"): "manage_replication",
-    ("POST", "/api/v1/replication/options/packages/{package_id}/approve"): "approve_replication",
-    ("POST", "/api/v1/replication/options/packages/{package_id}/reject"): "approve_replication",
-    ("GET", "/api/v1/replication/options/quotes"): "view_replication",
-    ("POST", "/api/v1/replication/options/quotes"): "manage_replication",
-    ("GET", "/api/v1/replication/options/contracts"): "view_replication",
-    ("POST", "/api/v1/replication/options/contracts"): "manage_replication",
-    ("POST", "/api/v1/replication/options/accounts/{account_id}/proposals"): "manage_proposals",
-    ("GET", "/api/v1/replication/options/proposals/{proposal_id}/gate"): "view_proposals",
-    ("POST", "/api/v1/replication/options/proposals/{proposal_id}/gate"): "manage_proposals",
-    ("POST", "/api/v1/replication/options/instructions/{instruction_id}/book"): "manage_execution",
-}
 
 S: dict = {}
 NETWORK_CALLS: list[str] = []
@@ -1197,23 +1226,7 @@ async def y_isolation(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now_ = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now_)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
-    bad = [(k, gn[k].get("after")) for k in new if NEW_ROUTES.get((k[0][0] if k[0] else "", k[1])) is None
-           or NEW_ROUTES[(k[0][0], k[1])] not in str(gn[k].get("after"))]
-    check(len(new) == len(NEW_ROUTES) and not bad, f"{len(NEW_ROUTES)} new routes, all under /replication/options/, "
-          "each naming its permission", f"{len(new)} {bad[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

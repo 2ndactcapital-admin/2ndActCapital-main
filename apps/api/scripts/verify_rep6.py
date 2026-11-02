@@ -79,6 +79,101 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only. Each ends at rep6's OWN merge (or HEAD on its
+# branch), never the working tree, so a later sprint's routes or edits cannot break them. --self-checks-only runs just
+# these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep6"
+BEFORE_REF = "f1b0eb0"   # rep6-work base — main after the rep5 merge + schema refresh
+REP5 = "apps/api/scripts/verify_rep5.py"
+
+
+def self_rep5_diff(check, find):
+    # lotmethod (BUGFIX2 B1 / B2: the shared scoped cleanup, --cleanup-only, the nested verify_rep2 timeout 1200 →
+    # 2700 s) changed verify_rep5.py from its base (VC.LOTMETHOD_BASE) to ITS OWN merge — and nothing else; later
+    # sprints' edits to verify_rep5.py are their own guards' business (VHK1).
+    b1 = VS.own_lines(REP5, VC.LOTMETHOD_BASE, "lotmethod")
+    b1_bad = VC.b1_diff_bad(b1.old or "", b1.new or "")
+    check(bool(b1.old) and bool(b1.new) and not b1_bad, "verify_rep5.py: every change lotmethod made (its base → its "
+          "own merge) is BUGFIX2's cleanup (B1) or its nested timeout (B2)", f"{b1.where()}; {b1_bad[:4]}")
+
+    # rep6's own edits to verify_rep5.py: BEFORE_REF → rep6's own merge. (VHK1 removed the "rep7 superseded rep5"
+    # y_join / y_execution exclusion: it was needed only while the end point was main @ merge rep7b.)
+    own = VS.own_lines(REP5, BEFORE_REF, SPRINT_KEY)
+
+    def ok(fn, text):
+        s = text.strip()
+        if fn == "y_wash":
+            return True
+        if fn == "seed" and ("pix" in s or s.startswith("#")):
+            return True
+        # fix-5: diagnostics only — the drift / calm / maker-refused checks print the account's open proposals
+        # (open_props) in their detail text; no assertion changed
+        if fn in ("open_prop", "open_props") or "open_props" in s:
+            return True
+        if fn == "y_proposals" and (s.startswith('f"{drift}') or s.startswith('f"{calm}')
+                                    or s.startswith('check(calm.get("action") == "none" and cp is None,')):
+            return True
+        if fn == "y_execution" and ("prop_row(conn, ORG_A, pid)" in s or s == 'st = pr["status"]'
+                                    or s.startswith('f"{c1} {st}')):
+            return True
+        if fn == "y_execution":
+            return s.startswith("#") or any(w in s for w in ("wash", "routed", "fl_rows", "flagged", 'startswith("[")'))
+        # fix-2: the teardown retry (TEARDOWN_RETRYABLE sits after teardown, so fn_at names it teardown) — and the
+        # two call sites in main_async that switched to it
+        if fn in ("teardown", "teardown_retrying"):
+            return True
+        if fn == "main_async":
+            return bool(re.search(r"\bteardown(_retrying)?\b", s))
+        # fix-2: the fixture orgs are is_test, so the schedulers never act on them
+        if fn == "seed":
+            return "is_test" in s or "INSERT INTO organizations (id, name, slug) VALUES" in s
+        return False
+
+    bad = [f"{sign}{n} {fn}: {t[:60]}" for sign, n, fn, t in own.changed if not ok(fn, t)]
+    check(bool(own.old) and bool(own.new) and len(own.changed) > 0 and not bad, "every changed line of verify_rep5.py "
+          "(rep6's own diff) is in y_wash (the flag checks, restated as outcomes), the IRA X buy fixture (10 → 31 "
+          "days), y_execution's 'flags never block' check, or fix-2's teardown retry / is_test fixture orgs",
+          f"{own.where()}; {len(own.changed)} changed; {bad[:4]}")
+    find("verify_rep5 lines changed", "seed: the IRA's X buy moved from 10 to 31 days ago (a 10-day buy is now control "
+         "and would hold the transition's X loss lot — the transition arithmetic checks depend on it; rule b is proven "
+         "here instead); y_wash: the four flag checks restated as control outcomes (the IRA loss → clear, day 31 → "
+         "clear, 45 days → clear, a gain → clear) plus 'no flag is written'; y_execution: 'flags never block' → 'every "
+         "clear / replaced line has its instruction'")
+
+
+def self_routes(check, find):
+    # rep6's own routes: BEFORE_REF → rep6's own merge (the rep8 fix, ead5a7f, now via the shared helper). Each must
+    # still exist today with the same gate; later sprints' routes are not rep6's.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "rep6 changed or removed no existing route's gate",
+          f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    tax = [k for k in R.new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
+    check(len(R.new) == len(tax) == 31, "31 new routes, all under /tax/… and /harvest/…",
+          f"{R.where()}; {len(R.new)} {len(tax)}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "rep6's 31 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+    def want(k):
+        if "GET" in k[0]:
+            return "view_tax"
+        return "approve_tax" if k[1].endswith(("/approve", "/reject", "/retire")) else "manage_tax"
+
+    bad = [(k, R.end[k].get("after")) for k in tax if want(k) not in str(R.end[k].get("after"))]
+    check(not bad, "each names its tax permission: GET view_tax; approve / reject / retire approve_tax; every other "
+          "write manage_tax", f"{bad[:4]}")
+
+
+def self_checks(check, find):
+    self_rep5_diff(check, find)
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -87,7 +182,6 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
-import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 # Every import at the top (after hydrate: the pool reads DATABASE_URL lazily, on first get_pool()).
@@ -112,7 +206,6 @@ from services.custody.registry import get_or_create_salt, trade_custodian_key  #
 from services.custody.trading import TradeList  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = "f1b0eb0"   # rep6-work base — main after the rep5 merge + schema refresh
 TAG = "rep6verify"
 PREFIX = "ZZR6"
 CAP_TEST = "zz_rep6_cust"
@@ -159,10 +252,20 @@ ACCOUNTS = {   # id: (org, custodian_code, registration, tax_status, household, 
     # fix 5: the lock-bypassed race's own account (follows m3, no model_change proposal), its own household
     ACCT_RACE: (ORG_A, "ALTRUIST", "individual", "taxable", None, ENT_RACE, "ZZ60000009"),
 }
-TODAY = date.today()
-VAL = TODAY - timedelta(days=1)
-YEAR = TODAY.year
-YEAR_START = date(YEAR, 1, 1)
+
+
+def today() -> date:
+    """VHK1: the date AT THE CALL — for expectations the server computes from its own clock."""
+    return date.today()
+
+
+def anchor_seed_dates() -> None:
+    """VHK1: the fixture anchor dates, captured once when seed() writes the fixtures (never at module level).
+    Fixture dates, fixture keys (S["pos"][(acct, key, seed_val)]), declared trades and expectations derived from a
+    fixture's own stored date (a wash-sale window's end, a loss bank's tax year) read these."""
+    d = date.today()
+    S.update(seed_day=d, seed_val=d - timedelta(days=1), seed_year_start=date(d.year, 1, 1))
+
 # the HH_A profile (adviser-entered) — combined rates computed exactly below
 HH_RATES = {"federal_ordinary_rate": "0.37", "federal_lt_rate": "0.2", "niit_applies": True, "state_code": "NY",
             "state_rate": "0.0685", "city": "New York", "city_rate": "0.03876", "city_lt_rate": "0.03"}
@@ -600,7 +703,7 @@ async def ctx_for(account_id, today=None) -> WS.Context:
     acct = await account_row(account_id)
     with _ctx(ORG_A):
         async with pool.acquire() as c2:
-            return await WS.load_context(c2, ORG_A, acct, today or TODAY)
+            return await WS.load_context(c2, ORG_A, acct, today or date.today())
 
 
 def by_line(trades) -> dict:
@@ -712,6 +815,7 @@ async def y_seed_literals(conn):
 
 
 async def seed(conn) -> None:
+    anchor_seed_dates()
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b"), (ORG_C, "c")):
@@ -762,7 +866,7 @@ async def seed(conn) -> None:
         await conn.execute(
             "INSERT INTO public.custodian_capabilities (custodian_code, capability_key, value, evidence_kind, "
             "evidence, as_of, version_no) VALUES ($1, 'custodian_tax_loss_harvesting', 'yes', 'assumed', "
-            "'REP6 verify fixture', $2, 1)", CAP_TEST, TODAY)
+            "'REP6 verify fixture', $2, 1)", CAP_TEST, S["seed_day"])
         salts = {}
         for org in (ORG_A, ORG_B):
             await conn.execute("SELECT set_config('app.current_org_id', $1, true)", str(org))
@@ -785,7 +889,7 @@ async def seed(conn) -> None:
             assets[key] = aid
         S["assets"], S["pos"], S["lots"] = assets, {}, {}
 
-        async def position(acct, key, qty, mv, as_of=VAL):
+        async def position(acct, key, qty, mv, as_of=S["seed_val"]):
             org, ent = ACCOUNTS[acct][0], ACCOUNTS[acct][5]
             pid = uuid.uuid4()
             await conn.execute(
@@ -825,19 +929,19 @@ async def seed(conn) -> None:
         for key, days, price, cost, realized, term in (("S", 5, 40, 600, -200, "short"), ("W", 10, 30, 600, -300, "long"),
                                                        ("RHX", 3, 10, 200, -100, "short")):
             p = await position(ACCT_T2, key, 0, 0)
-            t = await txn(p, "sell", TODAY - timedelta(days=days), 10, price)
-            await lot(f"T2_{key}", p, 10, cost, TODAY - timedelta(days=100) if term == "short" else date(2020, 1, 2),
+            t = await txn(p, "sell", S["seed_day"] - timedelta(days=days), 10, price)
+            await lot(f"T2_{key}", p, 10, cost, S["seed_day"] - timedelta(days=100) if term == "short" else date(2020, 1, 2),
                       term, status="closed", realized=realized, closing=t)
-        await txn(await position(ACCT_T2, "H6", 0, 0), "buy", TODAY - timedelta(days=10), 5, 10)
+        await txn(await position(ACCT_T2, "H6", 0, 0), "buy", S["seed_day"] - timedelta(days=10), 5, 10)
         # ACCT_IRA — bought X 10 days ago; sold Q at a loss 5 days ago (an IRA loss: no window)
         p = await position(ACCT_IRA, "X", 10, 1000)
         await lot("IRA_X", p, 10, 500, date(2020, 1, 2), "long")
-        await txn(p, "buy", TODAY - timedelta(days=10), 10, 100)
+        await txn(p, "buy", S["seed_day"] - timedelta(days=10), 10, 100)
         p = await position(ACCT_IRA, "Q", 0, 0)
-        t = await txn(p, "sell", TODAY - timedelta(days=5), 5, 40)
+        t = await txn(p, "sell", S["seed_day"] - timedelta(days=5), 5, 40)
         await lot("IRA_Q", p, 5, 250, date(2022, 1, 3), "long", status="closed", realized=-50, closing=t)
         # ACCT_H — the harvest account
-        await lot("LH1", await position(ACCT_H, "H1", 100, 5000), 100, 6500, TODAY - timedelta(days=100), "short")
+        await lot("LH1", await position(ACCT_H, "H1", 100, 5000), 100, 6500, S["seed_day"] - timedelta(days=100), "short")
         await lot("LH2", await position(ACCT_H, "H2", 50, 4000), 50, 5000, date(2020, 1, 2), "long")
         await lot("LH3A", await position(ACCT_H, "H3A", 10, 5000), 10, 5505, date(2021, 1, 4), "long")
         await lot("LH3B", await position(ACCT_H, "H3B", 200, 20000), 200, 20600, date(2021, 1, 4), "long")
@@ -849,19 +953,19 @@ async def seed(conn) -> None:
         await lot("LNC", await position(ACCT_CUST, "NC", 10, 1000), 10, 2000, date(2021, 1, 4), "long")
         # ACCT_LB — the loss bank: four closed lots this year, and an open lot a fill will sell
         px = await position(ACCT_LB, "LBX", 10, 400)
-        await lot("LBF", px, 10, 600, TODAY - timedelta(days=100), "short")
+        await lot("LBF", px, 10, 600, S["seed_day"] - timedelta(days=100), "short")
         py = await position(ACCT_LB, "LBY", 0, 0)
         for name, realized, term in (("LB_STG", 1000, "short"), ("LB_STL", -5000, "short"), ("LB_LTG", 500, "long"),
                                      ("LB_LTL", -200, "long")):
-            t = await txn(py, "sell", YEAR_START, 10, 100)
-            await lot(name, py, 10, 1000 - realized, date(2020, 1, 2) if term == "long" else YEAR_START, term,
+            t = await txn(py, "sell", S["seed_year_start"], 10, 100)
+            await lot(name, py, 10, 1000 - realized, date(2020, 1, 2) if term == "long" else S["seed_year_start"], term,
                       status="closed", realized=realized, closing=t)
         for acct, cash in ((ACCT_T1, 10000), (ACCT_T2, 5000), (ACCT_IRA, 10000), (ACCT_H, 1000), (ACCT_SOLO, 1000),
                            (ACCT_CUST, 1000), (ACCT_LB, 0), (ACCT_RACE, 1000)):
             await conn.execute(
                 "INSERT INTO public.account_balances_daily (org_id, account_id, as_of_date, total_market_value, "
                 "cash_value, margin_balance, accrued_income, source_system, source_confidence, is_billing_source, "
-                "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'CONFIRMED', true, true)", ORG_A, acct, VAL,
+                "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'CONFIRMED', true, true)", ORG_A, acct, S["seed_val"],
                 D(cash))
         # rule denials' evidence: two registry funds on the same index (approved rep1 terms), two share classes
         for key, series in (("IX1", None), ("IX2", None), ("SC1", f"{PREFIX}S000001"), ("SC2", f"{PREFIX}S000001")):
@@ -977,8 +1081,8 @@ async def y_schema(conn):
 
 async def y_profiles(conn):
     section("[Y] Profiles and carryforwards: maker-checker; exact combined rates; no profile → not estimated")
-    body = {"subject_type": "household", "subject_id": str(HH_A), "tax_year": YEAR,
-            "filing_status": "married_filing_jointly", **HH_RATES, "as_of": (TODAY - timedelta(days=2)).isoformat(),
+    body = {"subject_type": "household", "subject_id": str(HH_A), "tax_year": today().year,
+            "filing_status": "married_filing_jointly", **HH_RATES, "as_of": (today() - timedelta(days=2)).isoformat(),
             "source_note": "REP6 verify — the adviser's planning memo"}
     cv, ov = await api(U_TAXVIEW, "POST", "/api/v1/tax/profiles", body)
     c, o = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", body)
@@ -987,7 +1091,7 @@ async def y_profiles(conn):
           "pending_approval", "enter: a view_tax holder is refused naming manage_tax; an org admin's identical "
           "request is accepted (awaiting approval)", f"{cv} {c} {str(o)[:160]}")
     cf_, of_ = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", {**body, "federal_ordinary_rate": 0.37})
-    cm, om = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", {**body, "tax_year": YEAR + 1,
+    cm, om = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", {**body, "tax_year": today().year + 1,
                                                                   "federal_lt_rate": None})
     check(cf_ == 422 and cm == 422, "a JSON float is refused (422); a missing rate is refused — never assumed",
           f"{cf_} {cm} {str(om)[:120]}")
@@ -1022,7 +1126,7 @@ async def y_profiles(conn):
     with _ctx(ORG_A):
         pool = await pool_()
         async with pool.acquire() as c3:
-            none = await TP.profile_for_account(c3, ORG_A, await AM.load_account(c3, ORG_A, ACCT_SOLO), YEAR)
+            none = await TP.profile_for_account(c3, ORG_A, await AM.load_account(c3, ORG_A, ACCT_SOLO), today().year)
     cp, op = await api(U_ADMIN1, "GET", f"/api/v1/tax/accounts/{ACCT_SOLO}")
     rates = ((op.get("panel") or {}).get("rates") or {})
     check(none is None and TP.combined_rates(None) is None and cp == 200 and rates.get("estimated") is False
@@ -1030,7 +1134,7 @@ async def y_profiles(conn):
           "no approved profile → the panel's rates read 'not estimated — no tax profile' with no number at all",
           f"{cp} {rates}")
     # a carryforward into this year for the ledger member, approved the same way
-    cfb = {"subject_type": "entity", "subject_id": str(ENT_LB), "tax_year": YEAR, "st_amount": "0",
+    cfb = {"subject_type": "entity", "subject_id": str(ENT_LB), "tax_year": today().year, "st_amount": "0",
            "lt_amount": "1000", "source_document": "REP6 verify — prior-year Schedule D, line 14"}
     c, o = await api(U_ADMIN1, "POST", "/api/v1/tax/carryforwards", cfb)
     cid = (o.get("carryforward") or {}).get("id")
@@ -1121,7 +1225,7 @@ async def y_substitutions(conn):
 async def declare(sub_type, sub_id, key, side, days_ago, loss=None, cls="taxable", amount=None, term=None):
     body = {"subject_type": sub_type, "subject_id": str(sub_id), "account_description": "REP6 verify outside account",
             "account_tax_class": cls, "global_security_id": str(S[f"sec_{key}"]), "side": side,
-            "trade_date": (TODAY - timedelta(days=days_ago)).isoformat(), "source_note": "REP6 verify — declared"}
+            "trade_date": (S["seed_day"] - timedelta(days=days_ago)).isoformat(), "source_note": "REP6 verify — declared"}
     if side == "sell":
         body["loss"] = loss or "yes"
         if amount is not None:
@@ -1140,26 +1244,26 @@ async def y_wash_rules(conn):
         codes.append(c)
     cf, of = await api(U_ADMIN1, "POST", "/api/v1/tax/declared-trades", {
         "subject_type": "household", "subject_id": str(HH_A), "account_description": "x", "global_security_id":
-        str(S["sec_Z30"]), "side": "buy", "trade_date": (TODAY + timedelta(days=1)).isoformat(), "source_note": "x"})
+        str(S["sec_Z30"]), "side": "buy", "trade_date": (today() + timedelta(days=1)).isoformat(), "source_note": "x"})
     check(codes == [201] * 5 and cf == 422, "declared outside trades recorded (a future date refused — a declared "
           "trade has happened)", f"{codes} {cf}")
     ctx = await ctx_for(ACCT_T1)
     r30 = WS.evaluate_buy(str(S["sec_Z30"]), account_class="taxable", ctx=ctx)
     r31 = WS.evaluate_buy(str(S["sec_Z31"]), account_class="taxable", ctx=ctx)
-    check(r30["outcome"] == "deferred" and r30["until"] == (TODAY + timedelta(days=1)).isoformat()
+    check(r30["outcome"] == "deferred" and r30["until"] == (S["seed_day"] + timedelta(days=1)).isoformat()
           and any(m["source"] == "declared_outside" for m in r30["matches"]) and r31["outcome"] == "clear",
           "a BUY 30 days after a household loss sale is NOT clear (deferred to the exact first clear day, day 31); "
           "31 days after is clear — the loss sale a DECLARED outside trade", f"{r30['outcome']} {r30.get('until')} "
           f"{r31['outcome']}")
     s30 = WS.sale_restriction(str(S["sec_B30"]), account_class="taxable", ctx=ctx)
     s31 = WS.sale_restriction(str(S["sec_B31"]), account_class="taxable", ctx=ctx)
-    check(s30 is not None and s30["until"] == TODAY + timedelta(days=1) and s31 is None,
+    check(s30 is not None and s30["until"] == S["seed_day"] + timedelta(days=1) and s31 is None,
           "a LOSS SALE 30 days after a household buy is NOT clear (its loss lots wait for day 31); 31 days after is "
           "clear", f"{s30 and s30['until']} {s31}")
     # forward edges (a planned loss sale reserves its next 30 days; rule d) — pure, the same functions
-    fwd = WS.Context(TODAY, [WS.Event("F30", "sell", TODAY + timedelta(days=30), TODAY + timedelta(days=30), True, None,
+    fwd = WS.Context(S["seed_day"], [WS.Event("F30", "sell", S["seed_day"] + timedelta(days=30), S["seed_day"] + timedelta(days=30), True, None,
                                       "x", "taxable", "proposal"),
-                             WS.Event("F31", "sell", TODAY + timedelta(days=31), TODAY + timedelta(days=31), True, None,
+                             WS.Event("F31", "sell", S["seed_day"] + timedelta(days=31), S["seed_day"] + timedelta(days=31), True, None,
                                       "x", "taxable", "proposal")], {}, {}, {})
     check(WS.evaluate_buy("F30", account_class="taxable", ctx=fwd)["outcome"] == "deferred"
           and WS.evaluate_buy("F31", account_class="taxable", ctx=fwd)["outcome"] == "clear",
@@ -1209,7 +1313,7 @@ async def y_wash_proposals(conn):
           "rule a: the model's buy of S → a buy of R1 (the approved substitute) for the same dollars; S itself is not "
           "bought", f"{c} {c2} {[(str(k[0])[-4:], k[1], k[2]) for k in b]}")
     rw = b.get((S["sec_W"], "buy", "deferred"))
-    check(rw is not None and (jl(rw["wash_sale"]) or {}).get("until") == (TODAY + timedelta(days=21)).isoformat(),
+    check(rw is not None and (jl(rw["wash_sale"]) or {}).get("until") == (S["seed_day"] + timedelta(days=21)).isoformat(),
           "rule a: the buy of W (the spouse sold it at a loss 10 days ago; no substitute) → DEFERRED to the exact "
           "first clear day (+21)", f"{(jl(rw['wash_sale']) or {}).get('until') if rw else None}")
     xs = b.get((S["sec_X"], "sell", "clear"))
@@ -1217,13 +1321,13 @@ async def y_wash_proposals(conn):
     wxd = jl(xd["wash_sale"]) if xd else {}
     check(xs is not None and [x["lot_id"] for x in jl(xs["lots"])] == [str(S["lots"]["LX_GAIN"])]
           and xd is not None and [x["lot_id"] for x in jl(xd["lots"])] == [str(S["lots"]["LX_LOSS"])]
-          and wxd.get("until") == (TODAY + timedelta(days=21)).isoformat() and wxd.get("forfeit") is True
+          and wxd.get("until") == (S["seed_day"] + timedelta(days=21)).isoformat() and wxd.get("forfeit") is True
           and "PERMANENTLY" in wxd.get("reason", "") and "IRA" in wxd.get("reason", ""),
           "rule b: the loss sale of X after the household IRA bought X 10 days ago → its LOSS lot deferred to day +21 "
           "(the reason says the IRA purchase would forfeit it permanently); the GAIN lot is sold now instead (stated)",
           f"{wxd.get('until')} {wxd.get('forfeit')}")
     yd = b.get((S["sec_Y"], "sell", "deferred"))
-    check(yd is not None and (jl(yd["wash_sale"]) or {}).get("until") == (TODAY + timedelta(days=26)).isoformat()
+    check(yd is not None and (jl(yd["wash_sale"]) or {}).get("until") == (S["seed_day"] + timedelta(days=26)).isoformat()
           and any(m["source"] == "declared_outside" for m in (jl(yd["wash_sale"]) or {}).get("matches", [])),
           "a DECLARED outside buy of Y (5 days ago) holds Y's loss sale to day +26")
     vs = b.get((S["sec_V"], "sell", "clear"))
@@ -1241,7 +1345,7 @@ async def y_wash_proposals(conn):
           "replaced by R1", f"{[(str(k[0])[-4:], k[1], k[2]) for k in bi]}")
     # rule d: T1's pending proposal sells V at a loss → the spouse's later proposal to BUY V is deferred
     t1 = await prop_row(conn, ORG_A, pid)
-    end = max(t1["expires_at"].date(), TODAY) + timedelta(days=RP.DEFAULT_EXECUTE_WITHIN)
+    end = max(t1["expires_at"].date(), today()) + timedelta(days=RP.DEFAULT_EXECUTE_WITHIN)
     c, c2, pt2, _, _ = await join(ACCT_T2, S["m2"])
     S["p_t2"] = pt2
     bt2 = by_line(await trades_rows(conn, ORG_A, pt2) if pt2 else [])
@@ -1282,7 +1386,7 @@ async def y_wash_proposals(conn):
     vi = next((i for i in ins if i["global_security_id"] == S["sec_V"]), None)
     ctx2 = await ctx_for(ACCT_T2)
     r = WS.evaluate_buy(str(S["sec_V"]), account_class="taxable", ctx=ctx2)
-    check(vi is not None and r["outcome"] == "deferred" and r["until"] == (max(vi["execute_by"], TODAY)
+    check(vi is not None and r["outcome"] == "deferred" and r["until"] == (max(vi["execute_by"], today())
                                                                            + timedelta(days=31)).isoformat()
           and any(m["source"] == "instruction" for m in r["matches"])
           and not any(m["source"] == "proposal" and m["ref"] == str(pid) for m in r["matches"]),
@@ -1364,7 +1468,7 @@ async def y_harvest(conn):
     cs, os_ = await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_H}/scan", {})
     scan = os_.get("scan") or {}
     run = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2 AND "
-                                    "valid_to IS NULL AND system_to IS NULL", ACCT_H, TODAY, fetch="fetchrow")
+                                    "valid_to IS NULL AND system_to IS NULL", ACCT_H, today(), fetch="fetchrow")
     cd = await cands_of(conn, run["id"]) if run else {}
     S["h_run"] = run
     rates = jl(run["rates"]) if run else {}
@@ -1396,7 +1500,7 @@ async def y_harvest(conn):
           and h4["est_tax_value"] is None, "an unpriced holding is skipped: 'needs a price' (never a guessed price)")
     check(h5 is not None and h5["skip_reason"] == "no_clear_replacement" and h6 is not None
           and h6["skip_reason"] == "recent_household_buy" and (jl(h6["wash_sale"]) or {}).get("until") ==
-          (TODAY + timedelta(days=21)).isoformat(),
+          (S["seed_day"] + timedelta(days=21)).isoformat(),
           "no approved substitute → skipped with the reason; the spouse's buy of H6 10 days ago holds its harvest "
           "(wash sale, clear from +21)")
     tried = (jl(h1["wash_sale"]) or {}).get("tried") if h1 else []
@@ -1434,7 +1538,7 @@ async def y_harvest(conn):
           "a guessed quantity")
     cs2, os2 = await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_H}/scan", {})
     nr = await scoped(conn, ORG_A, "SELECT count(*) FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2",
-                      ACCT_H, TODAY, fetch="fetchval")
+                      ACCT_H, today(), fetch="fetchval")
     nh = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND trigger = "
                                    "'harvest' AND archived_from_id IS NULL AND trigger_ref->>'run_id' = $2", ACCT_H,
                       str(run["id"]), fetch="fetchval")
@@ -1467,7 +1571,7 @@ async def y_harvest_guards(conn):
     read_at = await conn.fetchval("SELECT clock_timestamp()")
     await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_SOLO}/scan", {})
     rs = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2",
-                      ACCT_SOLO, TODAY, fetch="fetchrow")
+                      ACCT_SOLO, today(), fetch="fetchrow")
     ps_after = await prop_row(conn, ORG_A, ps) if ps else None
     n_arch = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE archived_from_id = $1 "
                                        "AND GREATEST(system_from, created_at, system_to) > $2",
@@ -1492,7 +1596,7 @@ async def y_harvest_guards(conn):
     c, c2, pc, _, _ = await join(ACCT_CUST, S["m3"], {"harvesting_engine": "custodian", "harvest_enabled": True})
     await api(U_ADMIN1, "POST", f"/api/v1/harvest/accounts/{ACCT_CUST}/scan", {})
     rc = await scoped(conn, ORG_A, "SELECT * FROM public.harvest_runs WHERE account_id = $1 AND run_date = $2",
-                      ACCT_CUST, TODAY, fetch="fetchrow")
+                      ACCT_CUST, today(), fetch="fetchrow")
     nhc = await scoped(conn, ORG_A, "SELECT count(*) FROM public.rebalance_proposals WHERE account_id = $1 AND trigger = "
                                     "'harvest'", ACCT_CUST, fetch="fetchval")
     lc = await trades_rows(conn, ORG_A, pc) if pc else []
@@ -1607,16 +1711,16 @@ async def y_harvest_swap_back(conn, run, hp2, h1):
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.current_org_id', $1, true), set_config('app.is_super_admin', "
                            "'false', true)", str(ORG_A))
-        await position(ACCT_H, "H1", 0, 0, as_of=TODAY)
-        await position(ACCT_H, "H2", 0, 0, as_of=TODAY)
-        await lot("LRH1", await position(ACCT_H, "RH1", 100, 5100, as_of=TODAY), 100, 5000, TODAY, "short")
-        ph = S["pos"][(ACCT_H, "H1", TODAY)]
-        t = await txn(ph, "sell", TODAY, 100, 50)
-        await lot("LH1_CLOSED", ph, 100, 6500, TODAY - timedelta(days=100), "short", status="closed", realized=-1500,
+        await position(ACCT_H, "H1", 0, 0, as_of=S["seed_day"])
+        await position(ACCT_H, "H2", 0, 0, as_of=S["seed_day"])
+        await lot("LRH1", await position(ACCT_H, "RH1", 100, 5100, as_of=S["seed_day"]), 100, 5000, S["seed_day"], "short")
+        ph = S["pos"][(ACCT_H, "H1", S["seed_day"])]
+        t = await txn(ph, "sell", S["seed_day"], 100, 50)
+        await lot("LH1_CLOSED", ph, 100, 6500, S["seed_day"] - timedelta(days=100), "short", status="closed", realized=-1500,
                   closing=t)
     with _ctx(ORG_A):
-        d30 = await HV.scan_account(pool, org_id=ORG_A, account_id=ACCT_H, today=TODAY + timedelta(days=30))
-        d31 = await HV.scan_account(pool, org_id=ORG_A, account_id=ACCT_H, today=TODAY + timedelta(days=31))
+        d30 = await HV.scan_account(pool, org_id=ORG_A, account_id=ACCT_H, today=S["seed_day"] + timedelta(days=30))
+        d31 = await HV.scan_account(pool, org_id=ORG_A, account_id=ACCT_H, today=S["seed_day"] + timedelta(days=31))
     c30 = await cands_of(conn, d30["run_id"]) if d30.get("run_id") else {}
     c31 = await cands_of(conn, d31["run_id"]) if d31.get("run_id") else {}
     sb = c31.get((S["sec_RH1"], "swap_back"))
@@ -1641,7 +1745,7 @@ async def lb_entries(conn, live_only=True):
 
 
 async def ledger(uid=U_ADMIN1):
-    c, o = await api(uid, "GET", f"/api/v1/tax/loss-bank?subject_type=entity&subject_id={ENT_LB}&tax_year={YEAR}")
+    c, o = await api(uid, "GET", f"/api/v1/tax/loss-bank?subject_type=entity&subject_id={ENT_LB}&tax_year={S["seed_day"].year}")
     return c, (o.get("ledger") or {}), o
 
 
@@ -1652,7 +1756,7 @@ async def y_loss_bank(conn):
     lbf = str(S["lots"]["LBF"])
     tl = TradeList(account_id=ACCT_LB, trades=[{"global_security_id": str(S["sec_LBX"]), "side": "sell", "quantity": "10",
                                                 "lot_instructions": [{"tax_lot_id": lbf, "quantity": "10"}]}],
-                   executor_type="member", execute_by=TODAY + timedelta(days=3))
+                   executor_type="member", execute_by=today() + timedelta(days=3))
     with _ctx(ORG_A):
         async with pool.acquire() as c3:
             acct = await X.load_account(c3, ORG_A, ACCT_LB)
@@ -1663,7 +1767,7 @@ async def y_loss_bank(conn):
         await X.mark_sent(pool, org_id=ORG_A, instruction_id=iid, actor_id=U_ADMIN1, channel="email")
         await X.enter_fill(pool, org_id=ORG_A, instruction_id=iid, actor_id=U_ADMIN1, quantity=D(10), price=D(40),
                            filled_at=datetime.now(timezone.utc) - timedelta(minutes=1), lots=[(lbf, D(10))])
-    cd, _ = await declare("entity", ENT_LB, "LBY", "sell", (TODAY - YEAR_START).days, loss="yes", amount="-300",
+    cd, _ = await declare("entity", ENT_LB, "LBY", "sell", (S["seed_day"] - S["seed_year_start"]).days, loss="yes", amount="-300",
                           term="short")
     c1, o1 = await api(U_ADMIN1, "POST", "/api/v1/tax/loss-bank/refresh", {})
     rows = await lb_entries(conn)
@@ -1691,9 +1795,9 @@ async def y_loss_bank(conn):
           and lg.get("after_tax_performance") == TP.NEEDS_PRICES,
           "no profile → the tax value reads 'not estimated — no tax profile'; after-tax performance 'not estimated — "
           "needs prices'")
-    body = {"subject_type": "entity", "subject_id": str(ENT_LB), "tax_year": YEAR,
+    body = {"subject_type": "entity", "subject_id": str(ENT_LB), "tax_year": S["seed_day"].year,
             "filing_status": "married_filing_separately", "federal_ordinary_rate": "0.35", "federal_lt_rate": "0.15",
-            "niit_applies": False, "as_of": TODAY.isoformat(), "source_note": "REP6 verify — MFS member"}
+            "niit_applies": False, "as_of": today().isoformat(), "source_note": "REP6 verify — MFS member"}
     c, o = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", body)
     c2, _ = await api(U_ADMIN2, "POST", f"/api/v1/tax/profiles/{(o.get('profile') or {}).get('id')}/approve", {})
     c, lg, _ = await ledger()
@@ -1702,7 +1806,7 @@ async def y_loss_bank(conn):
           ("1500.00", "1500.00", "3000.00", "700.00"),
           "married filing separately: the limit is $1,500 → carry ST 3,000 and LT 700", f"{n}")
     check(tv.get("estimated") is True and tv.get("label") == "estimate" and tv.get("realized_losses_value") == "1955.00"
-          and (tv.get("rates") or {}).get("as_of") == TODAY.isoformat() and "DEFERRAL" in (tv.get("note") or ""),
+          and (tv.get("rates") or {}).get("as_of") == body["as_of"] and "DEFERRAL" in (tv.get("note") or ""),
           "the tax value is labelled 'estimate' with the rates and their as-of: 5,500 × 35% + 200 × 15% = 1,955.00; the "
           "benefit's decay stated (a deferral)", f"{tv}")
     c3, o3 = await api(U_ADMIN1, "POST", "/api/v1/tax/loss-bank/refresh", {})
@@ -1715,7 +1819,7 @@ async def y_loss_bank(conn):
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.current_org_id', $1, true), set_config('app.is_super_admin', "
                            "'false', true)", str(ORG_A))
-        t = await txn(S["pos"][(ACCT_LB, "LBX", VAL)], "sell", TODAY, 10, 39)
+        t = await txn(S["pos"][(ACCT_LB, "LBX", S["seed_val"])], "sell", S["seed_day"], 10, 39)
         upd = await conn.fetch("UPDATE portfolio.tax_lots SET status = 'closed', realized_gain_loss = -210, "
                                "closing_transaction_id = $2 WHERE id = $1 RETURNING id", S["lots"]["LBF"], t)
     c4, o4 = await api(U_ADMIN1, "POST", "/api/v1/tax/loss-bank/refresh", {})
@@ -1783,80 +1887,7 @@ async def y_substitutions_late(conn):
 
 async def y_rep5_diff(conn):
     section("[Y] rep5: proposals carry wash-sale outcomes; verify_rep5.py changed ONLY where it asserted the flag")
-    old = git_show(BEFORE_REF, "apps/api/scripts/verify_rep5.py").splitlines()
-    # lotmethod: the rule below holds up to main @ merge rep7b (VC.LOTMETHOD_BASE); after it, BUGFIX2 B1 / B2 (the
-    # shared scoped cleanup, --cleanup-only, the nested verify_rep2 timeout 1200 → 2700 s) may change verify_rep5.py
-    # — and nothing else may (checked separately below)
-    base_text = git_show(VC.LOTMETHOD_BASE, "apps/api/scripts/verify_rep5.py")
-    new = base_text.splitlines()
-    b1_bad = VC.b1_diff_bad(base_text, (HERE / "verify_rep5.py").read_text(encoding="utf-8"))
-    check(bool(base_text) and not b1_bad, "verify_rep5.py: every change since the lotmethod base is BUGFIX2's "
-          "cleanup (B1) or its nested timeout (B2)", f"{b1_bad[:4]}")
-
-    def fn_at(lines, i):
-        for k in range(min(i, len(lines) - 1), -1, -1):
-            m = re.match(r"(?:async )?def (\w+)", lines[k])
-            if m:
-                return m.group(1)
-        return None
-
-    def ok(fn, text):
-        s = text.strip()
-        if fn == "y_wash":
-            return True
-        if fn == "seed" and ("pix" in s or s.startswith("#")):
-            return True
-        # fix-5: diagnostics only — the drift / calm / maker-refused checks print the account's open proposals
-        # (open_props) in their detail text; no assertion changed
-        if fn in ("open_prop", "open_props") or "open_props" in s:
-            return True
-        if fn == "y_proposals" and (s.startswith('f"{drift}') or s.startswith('f"{calm}')
-                                    or s.startswith('check(calm.get("action") == "none" and cp is None,')):
-            return True
-        # rep7 superseded rep5 here: a held-away account never joins a model — y_join's refused join and its
-        # response check, and y_execution's member-executes loop without ACCT_HELD
-        if fn in ("y_join", "y_execution") and (any(w in s for w in ("ACCT_HELD", "held-away", "rep7")) or s in (
-                '"settings": {}})', 'f"{ch} {str(oh)[:160]}")', 'joins = {ACCT_ADV: ("m2", {}), ACCT_SYS: ("m3", {}),',
-                'for acct, why in ((ACCT_ADV, None),):')):
-            return True
-        if fn == "y_execution" and ("prop_row(conn, ORG_A, pid)" in s or s == 'st = pr["status"]'
-                                    or s.startswith('f"{c1} {st}')):
-            return True
-        if fn == "y_execution":
-            return s.startswith("#") or any(w in s for w in ("wash", "routed", "fl_rows", "flagged", 'startswith("[")'))
-        # fix-2: the teardown retry (TEARDOWN_RETRYABLE sits after teardown, so fn_at names it teardown) — and the
-        # two call sites in main_async that switched to it
-        if fn in ("teardown", "teardown_retrying"):
-            return True
-        if fn == "main_async":
-            return bool(re.search(r"\bteardown(_retrying)?\b", s))
-        # fix-2: the fixture orgs are is_test, so the schedulers never act on them
-        if fn == "seed":
-            return "is_test" in s or "INSERT INTO organizations (id, name, slug) VALUES" in s
-        return False
-
-    bad, changed = [], 0
-    sm = difflib.SequenceMatcher(None, old, new, autojunk=False)
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            continue
-        for i in range(i1, i2):
-            changed += 1
-            if not ok(fn_at(old, i), old[i]):
-                bad.append(f"-{i + 1} {fn_at(old, i)}: {old[i].strip()[:60]}")
-        for j in range(j1, j2):
-            changed += 1
-            if not ok(fn_at(new, j), new[j]):
-                bad.append(f"+{j + 1} {fn_at(new, j)}: {new[j].strip()[:60]}")
-    check(bool(old) and changed > 0 and not bad, "every changed line of verify_rep5.py is in y_wash (the flag checks, "
-          "restated as outcomes), the IRA X buy fixture (10 → 31 days), y_execution's 'flags never block' check, or "
-          "fix-2's teardown retry / is_test fixture orgs",
-          f"{changed} changed; {bad[:4]}")
-    find("verify_rep5 lines changed", "seed: the IRA's X buy moved from 10 to 31 days ago (a 10-day buy is now control "
-         "and would hold the transition's X loss lot — the transition arithmetic checks depend on it; rule b is proven "
-         "here instead); y_wash: the four flag checks restated as control outcomes (the IRA loss → clear, day 31 → "
-         "clear, 45 days → clear, a gain → clear) plus 'no flag is written'; y_execution: 'flags never block' → 'every "
-         "clear / replaced line has its instruction'")
+    self_rep5_diff(check, find)
 
 
 async def y_isolation(conn):
@@ -1867,8 +1898,8 @@ async def y_isolation(conn):
     check(who["u"] == "app_service" and who["b"] is False, "the verify connection is app_service with "
           "rolbypassrls = false", f"{who['u']} {who['b']}")
     cb, ob = await api(U_ADMIN_B, "POST", "/api/v1/tax/profiles", {
-        "subject_type": "entity", "subject_id": str(ENT_B), "tax_year": YEAR, "filing_status": "married_filing_jointly",
-        "federal_ordinary_rate": "0.32", "federal_lt_rate": "0.15", "niit_applies": False, "as_of": TODAY.isoformat(),
+        "subject_type": "entity", "subject_id": str(ENT_B), "tax_year": today().year, "filing_status": "married_filing_jointly",
+        "federal_ordinary_rate": "0.32", "federal_lt_rate": "0.15", "niit_applies": False, "as_of": today().isoformat(),
         "source_note": "REP6 verify — org B"})
     a_in_a = await scoped(conn, ORG_A, "SELECT count(*) FROM public.tax_profiles WHERE org_id = $1", ORG_A,
                           fetch="fetchval")
@@ -1895,16 +1926,16 @@ async def y_isolation(conn):
         (await api(U_ADMIN_B, "GET", f"/api/v1/harvest/runs/{run_id}"))[0],
         (await api(U_ADMIN_B, "POST", f"/api/v1/tax/profiles/{S['hh_profile']['id']}/approve", {}))[0],
         (await api(U_ADMIN_B, "POST", "/api/v1/tax/profiles", {
-            "subject_type": "household", "subject_id": str(HH_A), "tax_year": YEAR + 1,
+            "subject_type": "household", "subject_id": str(HH_A), "tax_year": today().year + 1,
             "filing_status": "married_filing_jointly", "federal_ordinary_rate": "0.3", "federal_lt_rate": "0.1",
-            "niit_applies": False, "as_of": TODAY.isoformat(), "source_note": "x"}))[0],
+            "niit_applies": False, "as_of": today().isoformat(), "source_note": "x"}))[0],
         (await api(U_ADMIN_B, "POST", f"/api/v1/harvest/accounts/{ACCT_H}/scan", {}))[0],
     ]
     check(codes == [404] * 6, "another org's account, run, profile and household are a 404 both directions (reads, an "
           "approval, a profile for another org's household, a scan)", f"{codes}")
     # gates both ways on identical requests
     dbody = {"subject_type": "household", "subject_id": str(HH_A), "account_description": "REP6 verify outside",
-             "global_security_id": str(S["sec_K"]), "side": "buy", "trade_date": TODAY.isoformat(),
+             "global_security_id": str(S["sec_K"]), "side": "buy", "trade_date": today().isoformat(),
              "source_note": "REP6 verify"}
     cv, ov = await api(U_TAXVIEW, "POST", "/api/v1/tax/declared-trades", dbody)
     ca, oa = await api(U_ADMIN1, "POST", "/api/v1/tax/declared-trades", dbody)
@@ -1923,13 +1954,13 @@ async def y_isolation(conn):
           "read: a member without view_tax is refused naming it; the viewer reads the dashboard", f"{cm} {cv}")
     hidden = [(await api(U_MEMBER, "GET", p))[0] for p in (
         f"/api/v1/tax/accounts/{ACCT_T1}", f"/api/v1/tax/loss-bank?subject_type=entity&subject_id={ENT_LB}"
-        f"&tax_year={YEAR}", "/api/v1/harvest/runs", f"/api/v1/harvest/runs/{run_id}", "/api/v1/tax/profiles",
+        f"&tax_year={today().year}", "/api/v1/harvest/runs", f"/api/v1/harvest/runs/{run_id}", "/api/v1/tax/profiles",
         "/api/v1/tax/substitutions", "/api/v1/tax/declared-trades", "/api/v1/tax/subjects")]
     check(hidden == [403] * 8, "tax data is never visible without view_tax (every read 403)", f"{hidden}")
     # envelopes: the viewer gets no actions; the maker none on her own pending row; a checker approve / reject
     c, o = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", {
-        "subject_type": "entity", "subject_id": str(ENT_SOLO), "tax_year": YEAR, "filing_status": "married_filing_jointly",
-        "federal_ordinary_rate": "0.24", "federal_lt_rate": "0.15", "niit_applies": False, "as_of": TODAY.isoformat(),
+        "subject_type": "entity", "subject_id": str(ENT_SOLO), "tax_year": today().year, "filing_status": "married_filing_jointly",
+        "federal_ordinary_rate": "0.24", "federal_lt_rate": "0.15", "niit_applies": False, "as_of": today().isoformat(),
         "source_note": "REP6 verify — pending"})
     pend = (o.get("profile") or {}).get("id")
     _, ev = await api(U_TAXVIEW, "GET", "/api/v1/tax/profiles")
@@ -1973,37 +2004,7 @@ async def y_new_org(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    # rep8: every later sprint added routes and this count kept going stale (rep7, rep7b, lotmethod, dealroom3,
-    # rep8). rep6's own routes are fixed: those added between BEFORE_REF and the rep6 merge (ead5a7f). Count
-    # those, then prove each one still exists today with the same gate — later sprints' routes are not rep6's.
-    rep6_done = gates(json.loads(git_show("ead5a7f", "docs/AUTHZ1_ROUTES.json") or "{}"))
-    new = [k for k in rep6_done if k not in gb]
-    tax = [k for k in new if k[1].startswith(("/api/v1/tax/", "/api/v1/harvest/"))]
-    check(len(new) == len(tax) == 31, "31 new routes, all under /tax/… and /harvest/…", f"{len(new)} {len(tax)}")
-    drifted = [k for k in new if k not in gn or (rep6_done[k].get("after"), rep6_done[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    check(bool(new) and not drifted, "rep6's 31 routes all still exist with the same gate", f"{drifted[:5]}")
-
-    def want(k):
-        if "GET" in k[0]:
-            return "view_tax"
-        return "approve_tax" if k[1].endswith(("/approve", "/reject", "/retire")) else "manage_tax"
-
-    bad = [(k, gn[k].get("after")) for k in tax if want(k) not in str(gn[k].get("after"))]
-    check(not bad, "each names its tax permission: GET view_tax; approve / reject / retire approve_tax; every other "
-          "write manage_tax", f"{bad[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

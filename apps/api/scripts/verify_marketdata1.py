@@ -73,6 +73,65 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / unchanged-files), stdlib + git only. Each ends at marketdata1's OWN merge (or
+# HEAD on its branch), never the working tree, so a later sprint's routes or edits cannot break them.
+# --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "marketdata1"
+BEFORE_REF = "afdbc6d"   # main @ "chore: refresh schema snapshot" — the marketdata1-work base
+NEW_ROUTES = {
+    ("GET", "/api/v1/admin/security-data/providers"): "super_admin",
+    ("PUT", "/api/v1/admin/security-data/providers/{key}"): "super_admin",
+    ("GET", "/api/v1/admin/security-data/call-log"): "super_admin",
+    ("GET", "/api/v1/admin/security-data/rank"): "super_admin",
+    ("PUT", "/api/v1/admin/security-data/rank/{data_type}"): "super_admin",
+    ("GET", "/api/v1/admin/security-data/runs/latest"): "super_admin",
+    ("GET", "/api/v1/security-data/rank"): "manage_org_settings",
+    ("PUT", "/api/v1/security-data/rank/{data_type}"): "manage_org_settings",
+    ("GET", "/api/v1/security-data/quality"): "manage_org_settings",
+    ("GET", "/api/v1/security-data/lookup"): "manage_org_settings",
+    ("GET", "/api/v1/security-data/uploads"): "manage_org_settings",
+    ("POST", "/api/v1/security-data/uploads"): "manage_org_settings",
+    ("POST", "/api/v1/security-data/uploads/{upload_id}/decision"): "manage_org_settings",
+}
+MKT_UNCHANGED = ("apps/api/services/market_data", "apps/api/scripts/market_data_nightly.py", "apps/api/routers/market_data.py")
+
+
+def self_mkt_unchanged(check, find):
+    # marketdata1 left mkt01–03 alone: its own diff (BEFORE_REF → its own merge) touches none of these paths. A later
+    # sprint may change them; its own verify covers that (VHK1).
+    code, out, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, *MKT_UNCHANGED, args=("--stat",))
+    check(bool(code == 0 and out.strip() == ""), "services/market_data, the indicator nightly entrypoint and its "
+          "router are byte-identical to the base at marketdata1's own merge",
+          f"{BEFORE_REF} → {VS.sprint_end_ref(SPRINT_KEY)[1]}; " + out.strip()[:300])
+
+
+def self_routes(check, find):
+    # marketdata1's own routes: BEFORE_REF → its own merge; each must still exist today with the same gate.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(bool(len(R.before) > 0 and not R.changed and not R.removed), "marketdata1 changed or removed no existing "
+          "route's gate", f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    mine = {k: v for k, v in R.end.items() if "/security-data" in k[1]}
+    bad = [(k, v.get("after")) for k, v in mine.items() if NEW_ROUTES.get((k[0][0] if k[0] else "", k[1])) is None
+           or NEW_ROUTES[(k[0][0], k[1])] not in str(v.get("after"))]
+    missing = [k for k in NEW_ROUTES if not any(k == (m[0][0], m[1]) for m in mine)]
+    check(bool(len(mine) == len(NEW_ROUTES) and not bad and not missing),
+          f"this sprint's {len(NEW_ROUTES)} routes exist at its own merge, each naming its gate",
+          f"{R.where()}; {len(mine)} {bad[:4]} {missing[:4]}")
+    drifted = VS.still_gated(R, list(mine))
+    check(bool(mine and not drifted), f"marketdata1's {len(mine)} routes all still exist today with the same gate",
+          f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_mkt_unchanged(check, find)
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -112,7 +171,6 @@ from services.security_data.providers.sec_nport import NportProvider  # noqa: E4
 from services.security_data.providers.vendor_stub import VendorStubProvider  # noqa: E402
 from services.security_data.types import Point, SecurityDataError  # noqa: E402
 
-BEFORE_REF = "afdbc6d"   # main @ "chore: refresh schema snapshot" — the marketdata1-work base
 TAG = "md1verify"
 PREFIX = "ZZMD1"
 PKEY = "zzmd1"
@@ -181,21 +239,6 @@ NEW_TABLES = ("portfolio.data_providers", "portfolio.data_source_rank", "portfol
               "portfolio.data_uploads", "portfolio.index_levels", "portfolio.data_quality_events",
               "portfolio.provider_call_log", "portfolio.security_data_runs")
 NEW_ORG_TABLES = ("portfolio.data_provider_entitlements", "portfolio.data_uploads")
-NEW_ROUTES = {
-    ("GET", "/api/v1/admin/security-data/providers"): "super_admin",
-    ("PUT", "/api/v1/admin/security-data/providers/{key}"): "super_admin",
-    ("GET", "/api/v1/admin/security-data/call-log"): "super_admin",
-    ("GET", "/api/v1/admin/security-data/rank"): "super_admin",
-    ("PUT", "/api/v1/admin/security-data/rank/{data_type}"): "super_admin",
-    ("GET", "/api/v1/admin/security-data/runs/latest"): "super_admin",
-    ("GET", "/api/v1/security-data/rank"): "manage_org_settings",
-    ("PUT", "/api/v1/security-data/rank/{data_type}"): "manage_org_settings",
-    ("GET", "/api/v1/security-data/quality"): "manage_org_settings",
-    ("GET", "/api/v1/security-data/lookup"): "manage_org_settings",
-    ("GET", "/api/v1/security-data/uploads"): "manage_org_settings",
-    ("POST", "/api/v1/security-data/uploads"): "manage_org_settings",
-    ("POST", "/api/v1/security-data/uploads/{upload_id}/decision"): "manage_org_settings",
-}
 
 S: dict = {}
 NETWORK_CALLS: list[str] = []
@@ -1284,10 +1327,7 @@ async def y_readers(conn):
 
 async def y_mkt_unchanged(conn):
     section("[Y] mkt01–03 indicator behaviour unchanged (read gate, nightly, store)")
-    code, out, _ = run_cmd(["git", "diff", "--stat", BEFORE_REF, "--", "apps/api/services/market_data",
-                            "apps/api/scripts/market_data_nightly.py", "apps/api/routers/market_data.py"], REPO, 60)
-    check(bool(code == 0 and out.strip() == ""), "services/market_data, the indicator nightly entrypoint and its "
-          "router are byte-identical to the base", out.strip()[:300])
+    self_mkt_unchanged(check, find)
     from services.market_data import access as MA
     check(bool(MA.MARKET_DATA_READ_PERMISSION is None and callable(MA.require_market_data_read)),
           "the indicator read gate (market_data.access) is unchanged")
@@ -1355,24 +1395,7 @@ async def y_isolation(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now_ = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now_)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(bool(len(gb) > 0 and not changed and not removed), "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    mine = {k: v for k, v in gn.items() if "/security-data" in k[1]}
-    bad = [(k, v.get("after")) for k, v in mine.items() if NEW_ROUTES.get((k[0][0] if k[0] else "", k[1])) is None
-           or NEW_ROUTES[(k[0][0], k[1])] not in str(v.get("after"))]
-    missing = [k for k in NEW_ROUTES if not any(k == (m[0][0], m[1]) for m in mine)]
-    check(bool(len(mine) == len(NEW_ROUTES) and not bad and not missing),
-          f"this sprint's {len(NEW_ROUTES)} routes exist, each naming its gate", f"{len(mine)} {bad[:4]} {missing[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(bool(code == 0 and "CURRENT" in out), "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

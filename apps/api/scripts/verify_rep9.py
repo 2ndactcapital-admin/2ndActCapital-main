@@ -72,6 +72,129 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only. Each ends at rep9's OWN merge (or HEAD on its
+# branch), never the working tree, so a later sprint's routes or edits to verify_rep7b.py cannot break them.
+# --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep9"
+BEFORE_REF = "87ad248"   # main @ 'refresh schema snapshot' after the marketdata1 merge — the rep9-work base
+# this sprint's own routes (from its own diff) and the gate each names — never "every route added since a base"
+ROUTES = {
+    ("GET", "/api/v1/execution/blocks"): "view_blocks",
+    ("POST", "/api/v1/execution/blocks"): "manage_blocks",
+    ("GET", "/api/v1/execution/blocks/candidates"): "view_blocks",
+    ("POST", "/api/v1/execution/blocks/preview"): "view_blocks",
+    ("GET", "/api/v1/execution/blocks/routers"): "view_blocks",
+    ("GET", "/api/v1/execution/blocks/settings/policies"): "view_blocks",
+    ("POST", "/api/v1/execution/blocks/settings/policies"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/settings/policies/{policy_id}/approve"): "approve_blocks",
+    ("POST", "/api/v1/execution/blocks/settings/policies/{policy_id}/reject"): "approve_blocks",
+    ("GET", "/api/v1/execution/blocks/settings/execution-accounts"): "view_blocks",
+    ("POST", "/api/v1/execution/blocks/settings/execution-accounts"): "manage_blocks",
+    ("PATCH", "/api/v1/execution/blocks/settings/execution-accounts/{account_id}"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/instructions/{instruction_id}/sheet"): "view_execution",
+    ("POST", "/api/v1/execution/blocks/corrections/{correction_id}/approve"): "approve_blocks",
+    ("POST", "/api/v1/execution/blocks/corrections/{correction_id}/reject"): "approve_blocks",
+    ("GET", "/api/v1/execution/blocks/{block_id}"): "view_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/submit"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/approve"): "approve_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/reject"): "approve_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/sent"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/fills"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/allocate"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/allocations/{allocation_id}/settlement"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/allocations/{allocation_id}/settlement-match"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/corrections"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/charges"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/charges/{charge_id}/close"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/close"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/cancel"): "manage_blocks",
+    ("POST", "/api/v1/execution/blocks/{block_id}/sheet"): "view_blocks",
+}
+# the exact diff of verify_rep7b.py since the base: its route self-check scoped to its own routes, and (rep9 fix 1)
+# its three stale checks — the decided matrix gains rep8's 'options' path; zero existing accounts / held-away
+# drafts report a [FIND] (still asserting the rule for every row that exists) — nothing else
+REP7B_ROUTE_SCOPE_DIFF = (
+    '-    ("managed", "integrated"): (MODEL | EXEC, ("custodian_desk", "broker", "member", "other_adviser", "trader")),',
+    '-    ("managed", "other_custodian"): (MODEL | EXEC, ("broker", "trader", "member", "other_adviser")),',
+    "+    # rep9 fix 1 — rep8 added the 'options' (options-sleeve proposal) path: managed × integrated / other_custodian only",
+    '+    ("managed", "integrated"): (MODEL | {"options"} | EXEC, ("custodian_desk", "broker", "member", "other_adviser",',
+    '+                                                             "trader")),',
+    '+    ("managed", "other_custodian"): (MODEL | {"options"} | EXEC, ("broker", "trader", "member", "other_adviser")),',
+    '-    check(len(real) > 0 and not diffs and rows_for_real == 0,',
+    "+    if not real:   # rep9 fix 1 — lotmethod's cleanup removed the leftover REP2 orgs that held the only accounts",
+    '+        find("migration: no existing account outside this run\'s orgs", "none exist today — the rule below is "',
+    '+             "asserted for every such account when any exist")',
+    '+    check(not diffs and rows_for_real == 0,',
+    '-    check(len(drafts) >= 1 and all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts',
+    "+    if not drafts:   # rep9 fix 1 — the only held-away draft sat in a leftover REP2 org lotmethod's cleanup removed",
+    '+        find("migration: no existing held-away draft instruction", "none exist today — the rule is asserted for "',
+    '+             "every such draft when any exist, and proven below on an identical draft in this run\'s org")',
+    '+    check(all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts',
+    "-    # lotmethod: its routes are all under /api/v1/lot-method/ — not this script's",
+    '-    new = [k for k in gn if k not in gb and not k[1].startswith("/api/v1/lot-method/")]',
+    '-    bad = [(k, gn[k].get("after")) for k in new if want.get(k[1]) not in str(gn[k].get("after"))]',
+    '-    check(len(new) == len(want) and not bad, f"{len(want)} new routes, each naming its permission", f"{len(new)} "',
+    '-          f"{bad[:4]}")',
+    '+    # rep9 fix — scoped to rep7b\'s OWN routes (``want``), never "every route added since a base commit": later',
+    '+    # sprints (lotmethod, rep8, marketdata1, rep9 …) add routes of their own, and each proves its own',
+    '+    mine = {k: gn[k] for k in gn if k[1] in want}',
+    '+    bad = [(k, gn[k].get("after")) for k in mine if want[k[1]] not in str(gn[k].get("after"))]',
+    '+    missing = sorted(set(want) - {k[1] for k in mine})',
+    '+    check(len(mine) == len(want) and not bad and not missing,',
+    '+          f"rep7b\'s {len(want)} routes still exist, each naming its permission", f"{len(mine)} {bad[:4]} {missing[:4]}")',
+)
+
+
+def _gates_by_method(d):
+    return {(m, r["path"]): r for r in (d or {}).get("routes", []) for m in (r.get("methods") or [])}
+
+
+def self_routes(check, find):
+    # rep9's own routes: BEFORE_REF → its own merge (gates, its own diff of routers/blocks.py); each must still exist
+    # today with the same gate.
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    gb = _gates_by_method(json.loads(VS.git_show(BEFORE_REF, VS.ROUTES_JSON) or "{}"))
+    ge = _gates_by_method(json.loads(VS.git_show(end, VS.ROUTES_JSON) or "{}"))
+    gt = _gates_by_method(json.loads((REPO / VS.ROUTES_JSON).read_text(encoding="utf-8")))
+    changed = [k for k in gb if k in ge and VS.gate_of(gb[k]) != VS.gate_of(ge[k])]
+    removed = [k for k in gb if k not in ge]
+    check(len(gb) > 0 and not changed and not removed, "rep9 changed or removed no existing route's gate",
+          f"{BEFORE_REF} → {how}; {changed[:5]} {removed[:5]}")
+    code, diff, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, "apps/api/routers/blocks.py")
+    decl = re.findall(r'^\+@router\.(get|post|patch|put|delete)\("([^"]+)"', diff, re.M)
+    mine = {(m.upper(), "/api/v1" + p) for m, p in decl}
+    check(code == 0 and mine == set(ROUTES), f"this sprint's own diff declares exactly its {len(ROUTES)} routes",
+          f"{how}; {len(mine)} extra={sorted(mine - set(ROUTES))[:3]} missing={sorted(set(ROUTES) - mine)[:3]}")
+    bad = [(k, (ge.get(k) or {}).get("after")) for k, perm in ROUTES.items()
+           if k not in ge or perm not in str(ge[k].get("after")) or k in gb]
+    check(not bad, f"each of the {len(ROUTES)} exists at rep9's own merge, is new, and names its permission",
+          f"{how}; {bad[:4]}")
+    drifted = [k for k in ROUTES if k in ge and (k not in gt or VS.gate_of(gt[k]) != VS.gate_of(ge[k]))]
+    check(not drifted, f"rep9's {len(ROUTES)} routes all still exist today with the same gate", f"{drifted[:4]}")
+
+
+def self_rep7b_diff(check, find):
+    # rep9's own edits to verify_rep7b.py: BEFORE_REF → rep9's own merge, exactly REP7B_ROUTE_SCOPE_DIFF. A later
+    # sprint may edit verify_rep7b.py freely; its own guard covers its edits (VHK1).
+    code, diff, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, "apps/api/scripts/verify_rep7b.py", args=("-U0",))
+    changed = [ln.rstrip() for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+    check(code == 0 and changed == list(REP7B_ROUTE_SCOPE_DIFF),
+          "verify_rep7b.py differs from the base (at rep9's own merge) only by its route self-check scoped to its own "
+          "11 routes and rep9 fix 1's three stale checks (options in the matrix; [FIND] on zero existing rows)",
+          f"{VS.sprint_end_ref(SPRINT_KEY)[1]}; unexpected={[x for x in changed if x not in REP7B_ROUTE_SCOPE_DIFF][:3]} "
+          f"{len(changed)}/{len(REP7B_ROUTE_SCOPE_DIFF)}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+    self_rep7b_diff(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -97,7 +220,6 @@ from services.custody.base import AccountNumber  # noqa: E402
 from services.custody.registry import get_or_create_salt  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = "87ad248"   # main @ 'refresh schema snapshot' after the marketdata1 merge — the rep9-work base
 TAG = "rep9verify"
 PREFIX = "ZZR9B"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -157,39 +279,6 @@ COUNTED = (
 NEW_TABLES = ("public.execution_accounts", "public.allocation_policies", "public.trade_blocks",
               "public.allocation_corrections", "public.block_allocations", "public.block_fills", "public.block_charges",
               "public.block_events")
-# this sprint's own routes (from its own diff) and the gate each names — never "every route added since a base"
-ROUTES = {
-    ("GET", "/api/v1/execution/blocks"): "view_blocks",
-    ("POST", "/api/v1/execution/blocks"): "manage_blocks",
-    ("GET", "/api/v1/execution/blocks/candidates"): "view_blocks",
-    ("POST", "/api/v1/execution/blocks/preview"): "view_blocks",
-    ("GET", "/api/v1/execution/blocks/routers"): "view_blocks",
-    ("GET", "/api/v1/execution/blocks/settings/policies"): "view_blocks",
-    ("POST", "/api/v1/execution/blocks/settings/policies"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/settings/policies/{policy_id}/approve"): "approve_blocks",
-    ("POST", "/api/v1/execution/blocks/settings/policies/{policy_id}/reject"): "approve_blocks",
-    ("GET", "/api/v1/execution/blocks/settings/execution-accounts"): "view_blocks",
-    ("POST", "/api/v1/execution/blocks/settings/execution-accounts"): "manage_blocks",
-    ("PATCH", "/api/v1/execution/blocks/settings/execution-accounts/{account_id}"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/instructions/{instruction_id}/sheet"): "view_execution",
-    ("POST", "/api/v1/execution/blocks/corrections/{correction_id}/approve"): "approve_blocks",
-    ("POST", "/api/v1/execution/blocks/corrections/{correction_id}/reject"): "approve_blocks",
-    ("GET", "/api/v1/execution/blocks/{block_id}"): "view_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/submit"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/approve"): "approve_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/reject"): "approve_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/sent"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/fills"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/allocate"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/allocations/{allocation_id}/settlement"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/allocations/{allocation_id}/settlement-match"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/corrections"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/charges"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/charges/{charge_id}/close"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/close"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/cancel"): "manage_blocks",
-    ("POST", "/api/v1/execution/blocks/{block_id}/sheet"): "view_blocks",
-}
 # Every literal the seed and the tests write into a CHECK-constrained column — checked against the live catalog.
 SEED_CHECK_LITERALS = (
     ("public.trade_blocks", "trade_blocks_executor_chk", ("broker", "trader", "custodian_desk")),
@@ -225,39 +314,6 @@ SEED_CHECK_LITERALS = (
     ("portfolio.securities_global_identifiers", "sec_global_ident_type_chk", ("cusip", "ticker")),
 )
 
-# the exact diff of verify_rep7b.py since the base: its route self-check scoped to its own routes, and (rep9 fix 1)
-# its three stale checks — the decided matrix gains rep8's 'options' path; zero existing accounts / held-away
-# drafts report a [FIND] (still asserting the rule for every row that exists) — nothing else
-REP7B_ROUTE_SCOPE_DIFF = (
-    '-    ("managed", "integrated"): (MODEL | EXEC, ("custodian_desk", "broker", "member", "other_adviser", "trader")),',
-    '-    ("managed", "other_custodian"): (MODEL | EXEC, ("broker", "trader", "member", "other_adviser")),',
-    "+    # rep9 fix 1 — rep8 added the 'options' (options-sleeve proposal) path: managed × integrated / other_custodian only",
-    '+    ("managed", "integrated"): (MODEL | {"options"} | EXEC, ("custodian_desk", "broker", "member", "other_adviser",',
-    '+                                                             "trader")),',
-    '+    ("managed", "other_custodian"): (MODEL | {"options"} | EXEC, ("broker", "trader", "member", "other_adviser")),',
-    '-    check(len(real) > 0 and not diffs and rows_for_real == 0,',
-    "+    if not real:   # rep9 fix 1 — lotmethod's cleanup removed the leftover REP2 orgs that held the only accounts",
-    '+        find("migration: no existing account outside this run\'s orgs", "none exist today — the rule below is "',
-    '+             "asserted for every such account when any exist")',
-    '+    check(not diffs and rows_for_real == 0,',
-    '-    check(len(drafts) >= 1 and all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts',
-    "+    if not drafts:   # rep9 fix 1 — the only held-away draft sat in a leftover REP2 org lotmethod's cleanup removed",
-    '+        find("migration: no existing held-away draft instruction", "none exist today — the rule is asserted for "',
-    '+             "every such draft when any exist, and proven below on an identical draft in this run\'s org")',
-    '+    check(all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts',
-    "-    # lotmethod: its routes are all under /api/v1/lot-method/ — not this script's",
-    '-    new = [k for k in gn if k not in gb and not k[1].startswith("/api/v1/lot-method/")]',
-    '-    bad = [(k, gn[k].get("after")) for k in new if want.get(k[1]) not in str(gn[k].get("after"))]',
-    '-    check(len(new) == len(want) and not bad, f"{len(want)} new routes, each naming its permission", f"{len(new)} "',
-    '-          f"{bad[:4]}")',
-    '+    # rep9 fix — scoped to rep7b\'s OWN routes (``want``), never "every route added since a base commit": later',
-    '+    # sprints (lotmethod, rep8, marketdata1, rep9 …) add routes of their own, and each proves its own',
-    '+    mine = {k: gn[k] for k in gn if k[1] in want}',
-    '+    bad = [(k, gn[k].get("after")) for k in mine if want[k[1]] not in str(gn[k].get("after"))]',
-    '+    missing = sorted(set(want) - {k[1] for k in mine})',
-    '+    check(len(mine) == len(want) and not bad and not missing,',
-    '+          f"rep7b\'s {len(want)} routes still exist, each naming its permission", f"{len(mine)} {bad[:4]} {missing[:4]}")',
-)
 
 S: dict = {}
 NETWORK_CALLS: list[str] = []
@@ -1514,26 +1570,7 @@ async def y_isolation(conn):
 async def y_routes(conn):
     section("[Y] This sprint's routes (from its own diff) exist, each gated and in AUTHZ1_ROUTES.json; no existing "
             "gate changed; --check CURRENT")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(m, r["path"]): r for r in d.get("routes", []) for m in (r.get("methods") or [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    code, diff, _ = run_cmd(["git", "diff", BEFORE_REF, "--", "apps/api/routers/blocks.py"], REPO, 60)
-    decl = re.findall(r'^\+@router\.(get|post|patch|put|delete)\("([^"]+)"', diff, re.M)
-    mine = {(m.upper(), "/api/v1" + p) for m, p in decl}
-    check(mine == set(ROUTES), f"this sprint's own diff declares exactly its {len(ROUTES)} routes",
-          f"{len(mine)} extra={sorted(mine - set(ROUTES))[:3]} missing={sorted(set(ROUTES) - mine)[:3]}")
-    bad = [(k, (gn.get(k) or {}).get("after")) for k, perm in ROUTES.items()
-           if k not in gn or perm not in str(gn[k].get("after")) or k in gb]
-    check(not bad, f"each of the {len(ROUTES)} still exists, is new, and names its permission", f"{bad[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1556,13 +1593,7 @@ async def y_front_end(conn):
 
 def regression():
     section("[Y] Regression — verify_rep7b.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s")
-    code, diff, _ = run_cmd(["git", "diff", "-U0", BEFORE_REF, "--", "apps/api/scripts/verify_rep7b.py"], REPO, 60)
-    changed = [ln.rstrip() for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
-    check(code == 0 and changed == list(REP7B_ROUTE_SCOPE_DIFF),
-          "verify_rep7b.py differs from the base only by its route self-check scoped to its own 11 routes and "
-          "rep9 fix 1's three stale checks (options in the matrix; [FIND] on zero existing rows)",
-          f"unexpected={[x for x in changed if x not in REP7B_ROUTE_SCOPE_DIFF][:3]} {len(changed)}/"
-          f"{len(REP7B_ROUTE_SCOPE_DIFF)}")
+    self_rep7b_diff(check, find)
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_rep7b.py")], REPO, timeout=2700, env=env)
     total = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)

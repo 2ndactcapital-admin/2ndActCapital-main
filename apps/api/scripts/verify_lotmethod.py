@@ -50,6 +50,63 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only. Each ends at lotmethod's OWN merge (or HEAD on
+# its branch), never the working tree, so a later sprint's routes or edits to the scripts lotmethod changed cannot
+# break them. --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "lotmethod"
+BEFORE_REF = VC.LOTMETHOD_BASE   # main @ merge rep7b — the lotmethod-work base
+
+
+def self_b2_b5(check, find):
+    # B2 / B5 are lotmethod's edits to OTHER verify scripts: read them as lotmethod left them (its own merge), not
+    # the working tree — a later sprint may edit those scripts freely (VHK1).
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    src5 = VS.own_text(SPRINT_KEY, "apps/api/scripts/verify_rep5.py") or ""
+    m = re.search(r'run_cmd\(\[sys\.executable, str\(HERE / "verify_rep2\.py"\)\][^)]*timeout=(\d+)', src5)
+    check(bool(m) and m.group(1) == "2700", "B2: verify_rep5's nested verify_rep2 timeout is 2700 s (as lotmethod "
+          "left it)", f"{how}; " + (m.group(0)[-60:] if m else "not found"))
+    ur = VS.own_text(SPRINT_KEY, "apps/api/scripts/verify_underlyingresolution.py") or ""
+    scan = re.search(r"for base in \(([^)]*)\)", ur)
+    check("print(f\"TOTAL: {passed} PASS, {failed} FAIL\")" in ur and bool(scan) and "apps/api/scripts" not in
+          scan.group(1), "B5: verify_underlyingresolution prints 'TOTAL: N PASS, M FAIL'; its code scan excludes "
+          "apps/api/scripts (as lotmethod left it)", f"{how}; " + (scan.group(1)[:120] if scan else "no scan"))
+    wm = VS.own_text(SPRINT_KEY, "apps/api/scripts/verify_workflowmgr5.py") or ""
+    pf = VS.own_text(SPRINT_KEY, "apps/api/scripts/verify_workflowpermsfix.py") or ""
+    check("granted to NO seeded Profile by default" not in wm and "workflowpermsfix" in wm
+          and "EXPECTED_PROFILE_GRANTS" in pf, "B5: verify_workflowmgr5's assertion is the workflowpermsfix grants "
+          "(Org Admin / Adviser / CSA / Ops), not 'NO seeded profile' (as lotmethod left it)", how)
+
+
+def self_routes(check, find):
+    # lotmethod's own routes: BEFORE_REF → its own merge; each must still exist today with the same gate.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "lotmethod changed or removed no existing route's gate",
+          f"{R.where()}; {R.changed[:4]} {R.removed[:4]}")
+
+    def want(k):
+        if "GET" in k[0]:
+            return "view_proposals"
+        return "approve_proposals" if k[1].endswith(("/approve", "/reject")) else "manage_proposals"
+
+    bad = [(k, R.end[k].get("after")) for k in R.new if want(k) not in str(R.end[k].get("after"))]
+    check(len(R.new) == 9 and all(k[1].startswith("/api/v1/lot-method/") for k in R.new) and not bad,
+          "9 new routes, all under /lot-method/…, each naming its proposal permission",
+          f"{R.where()}; {len(R.new)} {bad[:3]}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "lotmethod's 9 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_b2_b5(check, find)
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -58,7 +115,6 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
-import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 import main  # noqa: E402
@@ -79,7 +135,6 @@ from services.custody.base import AccountNumber  # noqa: E402
 from services.custody.registry import get_or_create_salt  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = VC.LOTMETHOD_BASE   # main @ merge rep7b — the lotmethod-work base
 TAG = "lotmethodverify"
 PREFIX = "ZZLM"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -545,9 +600,10 @@ async def y_task1(conn):
     any_ = set.union(*sets) if sets else set()
     granted = {n for n, _, _ in rbac.ORG_ADMIN_DEFAULT_PERMISSIONS} | {rbac.ORG_ADMIN_PERMISSION}
     S["b3_every"] = every
-    check(bool(sets) and every <= granted, f"1e: every permission ALL {len(sets)} real org_admin roles hold is in "
-          "ensure_org_admin_role's grant (rep2 → rep7b already extended it; B3's premise was stale)",
-          f"missing {sorted(every - granted)}")
+    # VHK1: no real org_admin role at all is a [FIND] (nothing real to compare), not a FAIL; with roles, the rule holds
+    VS.when_empty([every] if sets else [], f"1e: every permission ALL {len(sets)} real org_admin roles hold is in "
+                  "ensure_org_admin_role's grant (rep2 → rep7b already extended it; B3's premise was stale)",
+                  lambda e: e <= granted, check=check, find=find, detail=lambda bad: f"missing {sorted(every - granted)}")
     find("1e outlier", f"held by SOME real org_admin only, not granted to a new org: {sorted(any_ - granted)} "
          "(review_agent_proposals: one org's grant, by no migration — adding it would widen a new org's admin "
          "beyond what another real org's admin holds)")
@@ -1169,49 +1225,15 @@ async def y_rep2_leftovers(conn):
 
 def y_b2_b5():
     section("[Y] B2 / B4 / B5 proven")
-    src5 = (HERE / "verify_rep5.py").read_text(encoding="utf-8")
-    m = re.search(r'run_cmd\(\[sys\.executable, str\(HERE / "verify_rep2\.py"\)\][^)]*timeout=(\d+)', src5)
-    check(bool(m) and m.group(1) == "2700", "B2: verify_rep5's nested verify_rep2 timeout is 2700 s",
-          m.group(0)[-60:] if m else "not found")
+    self_b2_b5(check, find)
     code, out, err = run_cmd(["node", "--test", "tests/bugfix2/"], WEB_DIR, timeout=300)
     check(code == 0 and re.search(r"^# fail 0", out, re.M) is not None, "B4: the node test proves an expired session "
           "redirects to the login (lib/authHeaders.mjs, the one place in lib/api.js)", (out + err)[-200:])
-    ur = (HERE / "verify_underlyingresolution.py").read_text(encoding="utf-8")
-    scan = re.search(r"for base in \(([^)]*)\)", ur)
-    check("print(f\"TOTAL: {passed} PASS, {failed} FAIL\")" in ur and bool(scan) and "apps/api/scripts" not in
-          scan.group(1), "B5: verify_underlyingresolution prints 'TOTAL: N PASS, M FAIL'; its code scan excludes "
-          "apps/api/scripts", scan.group(1)[:120] if scan else "no scan")
-    wm = (HERE / "verify_workflowmgr5.py").read_text(encoding="utf-8")
-    pf = (HERE / "verify_workflowpermsfix.py").read_text(encoding="utf-8")
-    check("granted to NO seeded Profile by default" not in wm and "workflowpermsfix" in wm
-          and "EXPECTED_PROFILE_GRANTS" in pf, "B5: verify_workflowmgr5's assertion is the workflowpermsfix grants "
-          "(Org Admin / Adviser / CSA / Ops), not 'NO seeded profile'")
 
 
 def y_routes():
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; no existing gate changed; --check CURRENT")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:4]} {removed[:4]}")
-    new = [k for k in gn if k not in gb]
-
-    def want(k):
-        if "GET" in k[0]:
-            return "view_proposals"
-        return "approve_proposals" if k[1].endswith(("/approve", "/reject")) else "manage_proposals"
-
-    bad = [(k, gn[k].get("after")) for k in new if want(k) not in str(gn[k].get("after"))]
-    check(len(new) == 9 and all(k[1].startswith("/api/v1/lot-method/") for k in new) and not bad,
-          "9 new routes, all under /lot-method/…, each naming its proposal permission", f"{len(new)} {bad[:3]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
