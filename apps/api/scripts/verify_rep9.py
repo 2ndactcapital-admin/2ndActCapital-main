@@ -60,8 +60,8 @@ import re
 import subprocess
 import sys
 import traceback
+import io
 import uuid
-import zlib
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, localcontext
 from uuid import UUID
@@ -225,8 +225,26 @@ SEED_CHECK_LITERALS = (
     ("portfolio.securities_global_identifiers", "sec_global_ident_type_chk", ("cusip", "ticker")),
 )
 
-# the exact diff of verify_rep7b.py since the base: its route self-check scoped to its own routes, nothing else
+# the exact diff of verify_rep7b.py since the base: its route self-check scoped to its own routes, and (rep9 fix 1)
+# its three stale checks — the decided matrix gains rep8's 'options' path; zero existing accounts / held-away
+# drafts report a [FIND] (still asserting the rule for every row that exists) — nothing else
 REP7B_ROUTE_SCOPE_DIFF = (
+    '-    ("managed", "integrated"): (MODEL | EXEC, ("custodian_desk", "broker", "member", "other_adviser", "trader")),',
+    '-    ("managed", "other_custodian"): (MODEL | EXEC, ("broker", "trader", "member", "other_adviser")),',
+    "+    # rep9 fix 1 — rep8 added the 'options' (options-sleeve proposal) path: managed × integrated / other_custodian only",
+    '+    ("managed", "integrated"): (MODEL | {"options"} | EXEC, ("custodian_desk", "broker", "member", "other_adviser",',
+    '+                                                             "trader")),',
+    '+    ("managed", "other_custodian"): (MODEL | {"options"} | EXEC, ("broker", "trader", "member", "other_adviser")),',
+    '-    check(len(real) > 0 and not diffs and rows_for_real == 0,',
+    "+    if not real:   # rep9 fix 1 — lotmethod's cleanup removed the leftover REP2 orgs that held the only accounts",
+    '+        find("migration: no existing account outside this run\'s orgs", "none exist today — the rule below is "',
+    '+             "asserted for every such account when any exist")',
+    '+    check(not diffs and rows_for_real == 0,',
+    '-    check(len(drafts) >= 1 and all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts',
+    "+    if not drafts:   # rep9 fix 1 — the only held-away draft sat in a leftover REP2 org lotmethod's cleanup removed",
+    '+        find("migration: no existing held-away draft instruction", "none exist today — the rule is asserted for "',
+    '+             "every such draft when any exist, and proven below on an identical draft in this run\'s org")',
+    '+    check(all(st == "draft" and "held-away" in why and "read-only" in why and "submit" not in acts',
     "-    # lotmethod: its routes are all under /api/v1/lot-method/ — not this script's",
     '-    new = [k for k in gn if k not in gb and not k[1].startswith("/api/v1/lot-method/")]',
     '-    bad = [(k, gn[k].get("after")) for k in new if want.get(k[1]) not in str(gn[k].get("after"))]',
@@ -243,7 +261,9 @@ REP7B_ROUTE_SCOPE_DIFF = (
 
 S: dict = {}
 NETWORK_CALLS: list[str] = []
-ADAPTER_CALLS: list[str] = []
+ADAPTER_CALLS: list[str] = []          # adapters reached OUTSIDE fixture setup — any block path; must stay empty
+SETUP_ADAPTER_CALLS: list[str] = []    # rep9 fix 1: rep2's POST /execution/instructions (route_trade_list) in setup
+_IN_SETUP = [False]
 _n_pass = 0
 _n_fail = 0
 
@@ -358,14 +378,14 @@ def exp_partial(slots: list[tuple[str, str, Decimal, Decimal]], filled: Decimal,
 
 
 def pdf_text(pdf: bytes) -> str:
-    """Every content stream of a reportlab PDF, inflated (pageCompression=1 → FlateDecode)."""
-    out = []
-    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf, re.S):
-        try:
-            out.append(zlib.decompress(m.group(1)).decode("latin-1"))
-        except zlib.error:
-            out.append(m.group(1).decode("latin-1", "replace"))
-    return "\n".join(out)
+    """The PDF's text layer, page by page, through pypdf (a dependency already).
+
+    rep9 fix 1: the old raw inflate found NOTHING — reportlab writes its content streams as
+    [/ASCII85Decode /FlateDecode] and the 'stream … endstream' regex matched zero streams, so every text
+    assertion saw an empty string. pypdf applies the filters and the font encoding."""
+    from pypdf import PdfReader
+
+    return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf)).pages)
 
 
 # ═══ DB helpers (verify's own app_service connection; RLS context explicit) ═══
@@ -592,7 +612,7 @@ def install_stubs():
         orig = cls.submit
 
         async def recording(self, ctx, trade_list, *a, _orig=orig, _name=cls.__name__, **kw):
-            ADAPTER_CALLS.append(f"{_name}:{trade_list.account_id}")
+            (SETUP_ADAPTER_CALLS if _IN_SETUP[0] else ADAPTER_CALLS).append(f"{_name}:{trade_list.account_id}")
             return await _orig(self, ctx, trade_list, *a, **kw)
 
         cls.submit = recording
@@ -628,7 +648,13 @@ async def instruction(acct, key, side, qty=None, *, executor="broker", lots=None
         trade["quantity"] = str(qty)
     body = {"account_id": str(acct), "trades": [trade], "executor_type": executor, "executor_name": BROKER,
             "execute_by": (by or S["by"]).isoformat(), "if_not_filled": rule}
-    c, o = await api(U_ADMIN1, "POST", "/api/v1/execution/instructions", body)
+    # rep9 fix 1 — fixture setup: rep2's own creation path routes through custody/trading.route_trade_list, which
+    # picks the custodian's adapter (Altruist → manual). That is setup, not a block path: recorded apart.
+    _IN_SETUP[0] = True
+    try:
+        c, o = await api(U_ADMIN1, "POST", "/api/v1/execution/instructions", body)
+    finally:
+        _IN_SETUP[0] = False
     iid = ((o.get("routing") or {}).get("instruction_ids") or [None])[0]
     codes = [c]
     if iid and approve:
@@ -876,7 +902,8 @@ async def y_eligibility(conn):
     for name, acct, key, side, qty, ex in (
             ("buy_A1", A1, "K", "buy", "200", "broker"), ("buy_A2", A2, "K", "buy", "6", "broker"),
             ("buy_A3", A3, "K", "buy", "100.5", "broker"), ("buy_A4", A4, "K", "buy", "100", "broker"),
-            ("sell_A2", A2, "K", "sell", "3", "broker"), ("buy_A7", A7, "K", "buy", "10", "broker"),
+            ("sell_A2", A2, "K", "sell", "8", "broker"), ("sell_A2_small", A2, "K", "sell", "3", "broker"),
+            ("buy_A7", A7, "K", "buy", "10", "broker"),
             ("adv_A5", A5, "K", "buy", "10", "member")):
         iid, codes = await instruction(acct, key, side, qty, executor=ex)
         made[name] = iid
@@ -980,6 +1007,20 @@ async def y_build_approve(conn):
     check(err is not None and getattr(err, "sqlstate", "") == "42501" and "fixed at approval" in str(err),
           "the database refuses any change to a fixed allocation (app_service, RLS context set)", f"{err!r}")
     # cross-trade risk: a sell block of the same security, same window
+    # rep9 fix 1 — reproduce the original failure first: a sell BELOW the policy minimum (3 < 5) used to be refused
+    # on the minimum alone, the cross-trade risk never reported. Now the refusal names both; nothing is written.
+    n_before = int(await scoped(conn, ORG_A, "SELECT count(*) FROM public.trade_blocks WHERE system_to IS NULL",
+                                fetch="fetchval"))
+    css, oss = await api(U_ADMIN1, "POST", "/api/v1/execution/blocks",
+                         {"instruction_ids": [S["ins"]["sell_A2_small"]], "execution_account_id": S["ea"],
+                          "executor_name": BROKER})
+    n_after = int(await scoped(conn, ORG_A, "SELECT count(*) FROM public.trade_blocks WHERE system_to IS NULL",
+                               fetch="fetchval"))
+    check(css == 409 and "minimum allocation" in str(oss) and "cross-trade" in str(oss) and bid in str(oss)
+          and n_after == n_before,
+          "a below-minimum sell in the buy block's window: the refusal names the minimum AND the cross-trade risk "
+          "(the buy block named) — the flag is never hidden by another refusal; no block written",
+          f"{css} {str(oss)[:240]} {n_before}->{n_after}")
     sb = {"instruction_ids": [S["ins"]["sell_A2"]], "execution_account_id": S["ea"], "executor_name": BROKER}
     cx, ox = await api(U_ADMIN1, "POST", "/api/v1/execution/blocks", sb)
     cx2, ox2 = await api(U_ADMIN1, "POST", "/api/v1/execution/blocks", {**sb, "cross_reason": "REP9 verify: the "
@@ -1319,7 +1360,7 @@ async def y_single_sheet(conn):
     section("[Y] Order execution sheet for ONE broker instruction; manual always offered; the choice over an "
             "available automated route recorded with its reason")
     i_auto, ca = await instruction(A3, "M", "buy", "5", rule="cancel")
-    i_plain, cp = await instruction(A1, "M", "buy", "3", rule="cancel")
+    i_plain, cp = await instruction(A1, "M", "buy", "6", rule="cancel")   # fix 1: ≥ the minimum (y_expiry blocks it)
     S["ins"]["m_A3"], S["ins"]["m_A1"] = i_auto, i_plain
     cg, og = await api(U_ADMIN1, "GET", f"/api/v1/execution/instructions/{i_plain}")
     check(ca == [201, 200, 200] and cp == [201, 200, 200] and cg == 200 and "order_sheet" in (og.get("actions") or []),
@@ -1369,8 +1410,13 @@ async def y_fix(conn):
     check(d == "CHECK ((route = 'manual'::text))", "the database admits route 'manual' only", f"{d}")
     check(RT.route_refusal("manual") is None and "not connected" in (RT.route_refusal("fix") or ""),
           "manual is always available; fix is refused with the reason", "")
+    # rep9 fix 1 — the spy is live (rep2's setup path DID reach Altruist's adapter for A1) and nothing outside setup
+    # — build / approve / sent / fills / allocate / settle / sheets / corrections — reached any adapter
+    check(any(c_.startswith("AltruistTradeAdapter:") and c_.endswith(str(A1)) for c_ in SETUP_ADAPTER_CALLS),
+          "the adapter spy is live: fixture setup (rep2's POST /execution/instructions → route_trade_list) reached "
+          "AltruistTradeAdapter for the integrated Altruist account", f"{SETUP_ADAPTER_CALLS[:3]}")
     check(NETWORK_CALLS == [] and ADAPTER_CALLS == [], "no network call and no custodian adapter reached by any "
-          "block path", f"{NETWORK_CALLS[:3]} {ADAPTER_CALLS[:3]}")
+          "block path", f"{NETWORK_CALLS[:3]} {ADAPTER_CALLS}")
 
 
 async def y_expiry(conn):
@@ -1390,11 +1436,13 @@ async def y_expiry(conn):
                       bid)
     al = await scoped(conn, ORG_A, "SELECT status FROM public.block_allocations WHERE block_id = $1 AND system_to IS "
                                    "NULL", bid)
-    check(c == 201 and iid not in sweep["expired"] and S["ins"]["m_A3"] in sweep["expired"]
+    check(c == 201 and bid is not None and b is not None and iid not in sweep["expired"]
+          and S["ins"]["m_A3"] in sweep["expired"]
           and bid in bsweep["cancelled"] and b["status"] == "cancelled" and "execute-by" in (b["cancel_reason"] or "")
           and len(ev) == 1 and ev[0]["actor_id"] is None and all(r["status"] == "cancelled" for r in al),
           "rep2's sweep skips the blocked instruction (and still expires another); the draft block is cancelled at "
-          "its execute-by, logged with no actor, its allocations cancelled", f"{c} {sweep} {bsweep} {dict(b)}")
+          "its execute-by, logged with no actor, its allocations cancelled",
+          f"{c} {str(o)[:200]} {sweep} {bsweep} {dict(b) if b else None}")
 
 
 async def y_isolation(conn):
@@ -1511,7 +1559,8 @@ def regression():
     code, diff, _ = run_cmd(["git", "diff", "-U0", BEFORE_REF, "--", "apps/api/scripts/verify_rep7b.py"], REPO, 60)
     changed = [ln.rstrip() for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
     check(code == 0 and changed == list(REP7B_ROUTE_SCOPE_DIFF),
-          "verify_rep7b.py differs from the base only by its route self-check scoped to its own 11 routes",
+          "verify_rep7b.py differs from the base only by its route self-check scoped to its own 11 routes and "
+          "rep9 fix 1's three stale checks (options in the matrix; [FIND] on zero existing rows)",
           f"unexpected={[x for x in changed if x not in REP7B_ROUTE_SCOPE_DIFF][:3]} {len(changed)}/"
           f"{len(REP7B_ROUTE_SCOPE_DIFF)}")
     env = os.environ | {"VERIFY_NESTED": "1", "SKIP_BUILD": "1"}

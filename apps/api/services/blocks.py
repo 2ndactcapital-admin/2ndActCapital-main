@@ -737,9 +737,10 @@ async def _plan(conn, org_id, instruction_ids: list, policy: dict | None, today:
     ids = list(dict.fromkeys(_uuid(i, "instruction") for i in instruction_ids))
     if not ids:
         raise BlockError("choose the approved instructions to block")
-    members, refused = [], []
+    members, refused, loaded = [], [], []
     for iid in ids:
         ins = await X.load(conn, org_id, iid)
+        loaded.append(ins)
         m = await _member(conn, org_id, ins, today)
         if m["reason"]:
             refused.append({**_member_out(m), "reason": m["reason"]})
@@ -773,7 +774,12 @@ async def _plan(conn, org_id, instruction_ids: list, policy: dict | None, today:
             m["allocated"] = alloc[k]
             final_members.append(m)
     first = final_members[0]["instruction"] if final_members else None
-    return {"members": final_members, "refused": refused,
+    # rep9 fix 1 — what the cross-trade check reads: the chosen instructions' own security / side / window, even when
+    # every one of them is refused (below the minimum, ineligible) — so the flag is reported alongside any refusal
+    b = ok[0]["instruction"] if ok else (loaded[0] if loaded else None)
+    basis = ({"global_security_id": str(b["global_security_id"]), "side": b["side"], "execute_by": b["execute_by"]}
+             if b is not None and b.get("global_security_id") and b.get("side") else None)
+    return {"members": final_members, "refused": refused, "basis": basis,
             "global_security_id": str(first["global_security_id"]) if first else None,
             "side": first["side"] if first else None, "executor_type": first["executor_type"] if first else None,
             "execute_by": first["execute_by"] if first else None,
@@ -803,8 +809,10 @@ async def preview(conn, org_id, instruction_ids: list, *, typed_reference: Decim
            "total_quantity": str(plan["total"]), "side": plan["side"], "executor_type": plan["executor_type"],
            "execute_by": _iso(plan["execute_by"]), "global_security_id": plan["global_security_id"],
            "crosses": [], "reference": None}
+    if plan["basis"]:
+        bs = plan["basis"]
+        out["crosses"] = await _crosses(conn, org_id, bs["global_security_id"], bs["side"], bs["execute_by"])
     if plan["members"]:
-        out["crosses"] = await _crosses(conn, org_id, plan["global_security_id"], plan["side"], plan["execute_by"])
         ref = await reference_price(conn, org_id, plan["global_security_id"], typed=typed_reference,
                                     typed_at=typed_at, today=today)
         out["reference"] = {**ref, "price": _num(ref["price"]), "as_of": _iso(ref["as_of"])}
@@ -838,9 +846,18 @@ async def build_block(pool, *, org_id, actor_id, instruction_ids: list, route: s
             raise BlockConflict("no approved allocation policy — the firm writes its policy in Settings → Allocation "
                                 "policy and a second person approves it before any block is built")
         plan = await _plan(conn, org_id, instruction_ids, policy, today)
+        # rep9 fix 1 — the cross-trade check runs BEFORE any other refusal is raised and is reported alongside it
+        # (it used to run last, so a below-minimum or ineligible pick hid an opposite-side block in the same window)
+        bs = plan["basis"]
+        crosses = (await _crosses(conn, org_id, bs["global_security_id"], bs["side"], bs["execute_by"])
+                   if bs else [])
+        cross_why = (f"cross-trade risk: a {('sell' if bs['side'] == 'buy' else 'buy')} block of the same security in "
+                     f"the same window exists ({', '.join(crosses)}) — the two are never netted; give a reason to "
+                     "build this block alongside it") if crosses and not (cross_reason or "").strip() else None
         if plan["refused"]:
             raise BlockConflict("not every instruction can join this block: " + "; ".join(
-                f"{r['account_number_masked']}: {r['reason']}" for r in plan["refused"]))
+                f"{r['account_number_masked']}: {r['reason']}" for r in plan["refused"])
+                + (f"; and {cross_why}" if cross_why else ""))
         if not plan["members"]:
             raise BlockError("no eligible instruction was chosen")
         executor = plan["executor_type"]
@@ -866,11 +883,8 @@ async def build_block(pool, *, org_id, actor_id, instruction_ids: list, route: s
         if auto and route == "manual" and not (manual_reason or "").strip():
             raise BlockConflict("an automated route is available for this block (" + "; ".join(auto_notes) + ") — "
                                 "say why you choose the manual route; that choice is recorded")
-        crosses = await _crosses(conn, org_id, plan["global_security_id"], plan["side"], plan["execute_by"])
-        if crosses and not (cross_reason or "").strip():
-            raise BlockConflict(f"cross-trade risk: a {('sell' if plan['side'] == 'buy' else 'buy')} block of the same "
-                                f"security in the same window exists ({', '.join(crosses)}) — the two are never "
-                                "netted; give a reason to build this block alongside it")
+        if cross_why:
+            raise BlockConflict(cross_why)
         ref = await reference_price(conn, org_id, plan["global_security_id"], typed=reference_price_typed,
                                     typed_at=reference_at, today=today)
         if price_kind == "range" and ref["price"] is None:

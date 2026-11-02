@@ -105,8 +105,9 @@ class NotConnectedRouter(ExecutionRouter):
         self._refuse()
 
 
-NOT_CONNECTED_REASON = ("no FIX router is contracted or connected (rep9 builds the interface only — no client code, "
-                        "no network). Use the manual route: print the order execution sheet, give it to a broker of "
+# rep9 fix 1 — the spec's word is "not connected"; the reason says so (it used to read "contracted or connected")
+NOT_CONNECTED_REASON = ("the FIX router is not connected — none is contracted (rep9 builds the interface only — no "
+                        "client code, no network). Use the manual route: print the order execution sheet, give it to a broker of "
                         "your choice and enter the fills by hand")
 
 _REGISTRY: dict[str, ExecutionRouter] = {
