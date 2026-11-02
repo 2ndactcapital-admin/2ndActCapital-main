@@ -369,6 +369,53 @@
 --   UNIQUE ai_system_one_models_key_key: (key)
 --   PRIMARY KEY ai_system_one_models_pkey: (id)
 
+-- ===== allocation_corrections =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   block_id                                 uuid NOT NULL
+--   changes                                  jsonb NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY allocation_corrections_pkey: (id)
+
+-- ===== allocation_policies =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   method                                   text NOT NULL DEFAULT 'pro_rata_requested'::text
+--   minimum_allocation                       numeric NOT NULL DEFAULT 0
+--   rounding_rule                            text NOT NULL DEFAULT 'largest_remainder_then_account'::text
+--   partial_fill_rule                        text NOT NULL DEFAULT 'pro_rata_allocated'::text
+--   policy_text                              text NOT NULL
+--   adv_reference                            text
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY allocation_policies_pkey: (id)
+
 -- ===== altruist_connections =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -534,6 +581,93 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY billing_groups_pkey: (id)
+
+-- ===== block_allocations =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   block_id                                 uuid NOT NULL
+--   instruction_id                           uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   requested_quantity                       numeric NOT NULL
+--   allocated_quantity                       numeric NOT NULL
+--   quantity_unit                            numeric NOT NULL
+--   final_quantity                           numeric
+--   average_price                            numeric
+--   zero_reason                              text
+--   settlement_kind                          text NOT NULL
+--   receiving_custodian                      text NOT NULL
+--   settlement_id                            uuid
+--   settlement_status                        text
+--   settlement_method                        text
+--   settlement_reference                     text
+--   settlement_note                          text
+--   fail_reason                              text
+--   settlement_updated_by                    uuid
+--   settlement_updated_at                    timestamp with time zone
+--   correction_id                            uuid
+--   status                                   text NOT NULL DEFAULT 'planned'::text
+--   created_by                               uuid NOT NULL
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY block_allocations_pkey: (id)
+
+-- ===== block_charges =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   block_id                                 uuid NOT NULL
+--   kind                                     text NOT NULL
+--   amount                                   numeric NOT NULL
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   payee                                    text
+--   trade_away                               boolean NOT NULL DEFAULT false
+--   note                                     text
+--   entered_by                               uuid NOT NULL
+--   closed_reason                            text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY block_charges_pkey: (id)
+
+-- ===== block_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   block_id                                 uuid NOT NULL
+--   allocation_id                            uuid
+--   action                                   text NOT NULL
+--   from_status                              text
+--   to_status                                text NOT NULL
+--   actor_id                                 uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY block_events_pkey: (id)
+
+-- ===== block_fills =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   block_id                                 uuid NOT NULL
+--   quantity                                 numeric NOT NULL
+--   price                                    numeric NOT NULL
+--   filled_at                                timestamp with time zone NOT NULL
+--   venue                                    text
+--   note                                     text
+--   entered_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY block_fills_pkey: (id)
 
 -- ===== chart_of_accounts =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -1618,6 +1752,25 @@
 --   created_by                               uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY entity_tax_ids_pkey: (id)
+
+-- ===== execution_accounts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   broker_name                              text NOT NULL
+--   account_reference_masked                 text NOT NULL
+--   dvp_capable                              boolean NOT NULL
+--   contact                                  text
+--   notes                                    text
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   created_by                               uuid NOT NULL
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY execution_accounts_pkey: (id)
 
 -- ===== execution_fills =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -3260,6 +3413,65 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE teams_org_id_name_key: (org_id, name)
 --   PRIMARY KEY teams_pkey: (id)
+
+-- ===== trade_blocks =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   side                                     text NOT NULL
+--   total_quantity                           numeric NOT NULL
+--   executor_type                            text NOT NULL
+--   executor_name                            text
+--   executor_contact                         text
+--   execution_account_id                     uuid
+--   route                                    text NOT NULL DEFAULT 'manual'::text
+--   automated_route_available                boolean NOT NULL DEFAULT false
+--   manual_reason                            text
+--   price_kind                               text NOT NULL DEFAULT 'market'::text
+--   limit_price                              numeric
+--   range_low                                numeric
+--   range_high                               numeric
+--   reference_price                          numeric
+--   reference_at                             timestamp with time zone
+--   reference_source                         text
+--   reference_provider                       text
+--   reference_as_of                          date
+--   execute_by                               date NOT NULL
+--   if_not_filled                            text NOT NULL
+--   policy_id                                uuid NOT NULL
+--   cross_flag                               boolean NOT NULL DEFAULT false
+--   cross_reason                             text
+--   firm_contact                             text
+--   notes                                    text
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   maker_ids                                ARRAY NOT NULL
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   sent_by                                  uuid
+--   sent_at                                  timestamp with time zone
+--   sent_channel                             text
+--   sent_note                                text
+--   filled_quantity                          numeric NOT NULL DEFAULT 0
+--   average_price                            numeric
+--   allocated_by                             uuid
+--   allocated_at                             timestamp with time zone
+--   remainder_handling                       text
+--   settled_at                               timestamp with time zone
+--   closed_by                                uuid
+--   closed_at                                timestamp with time zone
+--   cancelled_by                             uuid
+--   cancelled_at                             timestamp with time zone
+--   cancel_reason                            text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY trade_blocks_pkey: (id)
 
 -- ===== trading_authority_grants =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
