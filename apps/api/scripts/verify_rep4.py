@@ -40,6 +40,13 @@ exact pre-test count and real models / entries / terms / prices / fee
 schedules / snapshots / capabilities / users are compared by count + checksum.
 
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+
+Teardown mechanics (VHK1): ``_verify_cleanup.cleanup`` — seeds keyed by this
+run's fixture ids, a materialised FK closure, one DELETE per table; it prints
+one '[INFO] cleanup ...' line with its time. --cleanup-only: only the teardown
+and the leftover check ('CLEANUP_SECONDS', 'LEFTOVERS', 'TOTAL'); no seeding,
+no checks, no regression, no npm. --self-checks-only: only the git / route
+self-checks (no Doppler, no database, no network).
 """
 
 from __future__ import annotations
@@ -69,6 +76,42 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at rep4's OWN merge (or HEAD on its branch), never
+# the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep4"
+BEFORE_REF = "3c09f92"   # rep4-work base — main after "merge rep3" + schema refresh
+
+
+def self_routes(check, find):
+    # rep4's own routes: BEFORE_REF → rep4's own merge (the old count of everything new since BEFORE_REF against
+    # the working tree went stale with rep5's routes)
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    changed = [k for k in R.before if k in R.end and R.before[k].get("after") != R.end[k].get("after")]
+    check(len(R.before) > 0 and not changed and not R.removed, "rep4 changed or removed no existing route's gate",
+          f"{R.where()}; {changed[:5]} {R.removed[:5]}")
+    new, gn = R.new, R.end
+    perms = ("view_replication", "manage_models", "view_models")
+    check(len(new) == 8 and all(k[1].startswith("/api/v1/replication/") for k in new)
+          and all(gn[k]["module"] == "routers.replication_models" for k in new)
+          and all(any(p in str(gn[k].get("after")) for p in perms) for k in new)
+          and all("manage_models" in gn[k]["after"] and "view_replication" in gn[k]["after"]
+                  for k in new if k[0] == ("POST",) and k[1].endswith(("/models", "/models/preview"))),
+          "8 new routes under /replication, each naming its permission (build + preview need both)",
+          f"{R.where()}; {len(new)}")
+    drifted = VS.still_gated(R)
+    check(bool(new) and not drifted, "rep4's 8 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -77,8 +120,8 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402
 
-BEFORE_REF = "3c09f92"   # rep4-work base — main after "merge rep3" + schema refresh
 TAG = "rep4verify"
 PREFIX = "ZZRF"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -105,7 +148,18 @@ CUSIP = {**{k: f"ZZRF0001{i + 1}" for i, k in enumerate(STOCKS)},
          **{k: f"ZZRF0002{i + 1}" for i, k in enumerate("FHGKL")}}
 TICKER = {**{k: f"ZZRF{k}" for k in STOCKS}, **{k: f"ZZRF{k}" for k in "FHGKL"}}
 ENTRY = {"F": _id(201), "H": _id(202), "G": _id(203), "K": _id(204), "L": _id(205), "FB": _id(206)}
-TODAY = datetime.now(timezone.utc).date()
+
+
+def today() -> date:
+    """VHK1: the server's own clock, read AT THE CALL (UTC date, as the module-level TODAY was) — for every price /
+    capability date whose expectation the server judges against its own today (freshness)."""
+    return datetime.now(timezone.utc).date()
+
+
+def seed_day() -> date:
+    """VHK1: the fixture anchor — captured once when seed() starts, never at module import. Snapshot as-of dates
+    are laid out relative to it (their ORDER and spacing are the fixture)."""
+    return S.setdefault("seed_day", today())
 UNMATCHED_TEXT = "ZZRF UNMATCHED HOLDING (cusip ZZRF00099)"
 
 COUNTED = (
@@ -272,128 +326,57 @@ async def operator_conn():
     return await connect(dsn)
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete for a FIXTURE-ID parent (users / roles / orgs
-    of this run only), FKs read from pg_constraint (recursively)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
-async def fk_order(conn, tables: list[str]) -> list[str]:
-    """``tables`` sorted child-before-parent from pg_constraint (Kahn)."""
-    edges = {t: set() for t in tables}
-    rows = await conn.fetch("""
-        SELECT cn.nspname || '.' || cc.relname AS child, pn.nspname || '.' || pc.relname AS parent
-        FROM pg_constraint c JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-        JOIN pg_class pc ON pc.oid = c.confrelid JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-        WHERE c.contype = 'f'""")
-    for r in rows:
-        if r["child"] in edges and r["parent"] in edges and r["child"] != r["parent"]:
-            edges[r["child"]].add(r["parent"])
-    children_of = {t: {c for c, ps in edges.items() if t in ps} for t in tables}
-    out, done = [], set()
-    while len(out) < len(tables):
-        ready = [t for t in tables if t not in done and children_of[t] <= done]
-        if not ready:
-            raise RuntimeError(f"FK cycle among {sorted(set(tables) - done)}")
-        for t in ready:
-            out.append(t)
-            done.add(t)
-    return out
-
-
 async def teardown(_conn=None) -> list[str]:
-    """Operator connection, models/replica teardown = 'fixture'; every DELETE keyed by fixture ids, ordered
-    child-before-parent from pg_constraint."""
+    """Operator connection, models/replica/execution teardown = 'fixture' (LOCAL, one transaction); every seed keyed
+    by fixture ids — ``_verify_cleanup.cleanup`` (VHK1: replaces fk_order + delete_tree; same rows)."""
     log: list[str] = []
     op = await operator_conn()
     try:
-        async with op.transaction():
-            await op.execute("SELECT set_config('models.teardown', 'fixture', true), "
-                             "set_config('replica.teardown', 'fixture', true), "
-                             "set_config('execution.teardown', 'fixture', true)")
-            secs = await fixture_security_ids(op)
-            users = list(USERS)
-            orgs = FIXTURE_ORGS
-            snaps = [r["id"] for r in await op.fetch(
-                "SELECT id FROM portfolio.replica_holdings_snapshots WHERE fund_global_security_id = ANY($1::uuid[])",
-                secs)]
-            by_org = "org_id = ANY($1::uuid[])"
-            deletes = {
-                "portfolio.replica_viability_reports": (by_org, [orgs]),
-                "portfolio.replica_model_specs": (by_org, [orgs]),
-                "portfolio.replica_registry_keys": (by_org, [orgs]),
-                "portfolio.model_events": (by_org, [orgs]),
-                "portfolio.model_version_positions": (by_org, [orgs]),
-                "portfolio.model_sleeves": (by_org, [orgs]),
-                "portfolio.model_versions": (by_org, [orgs]),
-                "portfolio.models": (by_org, [orgs]),
-                "public.member_todos": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
-                "public.domain_event_deliveries": (by_org, [orgs]),
-                "public.domain_events": (by_org, [orgs]),
-                "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
-                "public.workflow_run_steps": (by_org, [orgs]),
-                "public.workflow_runs": (by_org, [orgs]),
-                "public.workflow_steps": (by_org, [orgs]),
-                "public.workflow_versions": (by_org, [orgs]),
-                "public.workflow_definitions": (by_org, [orgs]),
-                "portfolio.replica_terms_actions": (by_org, [orgs]),
-                "public.document_field_corrections": (by_org, [orgs]),
-                "portfolio.replica_terms_versions": (by_org, [orgs]),
-                "portfolio.replica_securities": (by_org, [orgs]),
-                "public.fee_schedule_tiers": (by_org, [orgs]),
-                "public.fee_schedules": (by_org, [orgs]),
-                "public.org_settings": (by_org, [orgs]),
-                "portfolio.securities_global_prices": ("global_security_id = ANY($1::uuid[])", [secs]),
-                "portfolio.replica_holdings_rows": ("snapshot_id = ANY($1::uuid[])", [snaps]),
-                "portfolio.replica_holdings_snapshots": ("id = ANY($1::uuid[])", [snaps]),
-                "portfolio.securities_global_relationships": (
-                    "from_global_security_id = ANY($1::uuid[]) OR to_global_security_id = ANY($1::uuid[]) "
-                    "OR proposed_global_security_id = ANY($1::uuid[])", [secs]),
-                "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
-                "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
-            }
-            for table in await fk_order(op, list(deletes)):
-                where, args = deletes[table]
-                status = await op.execute(f"DELETE FROM {table} WHERE {where}", *args)
-                n = int(status.rsplit(" ", 1)[-1])
-                if n:
-                    log.append(f"{table}: {n}")
-            await delete_tree(op, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                              [users, f"%{TAG}%"], log=log)
-            await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [orgs], log=log)
-            await delete_tree(op, "public.organizations", "id = ANY($1::uuid[])", [orgs], log=log)
+        secs = await fixture_security_ids(op)
+        users = list(USERS)
+        orgs = FIXTURE_ORGS
+        snaps = [r["id"] for r in await op.fetch(
+            "SELECT id FROM portfolio.replica_holdings_snapshots WHERE fund_global_security_id = ANY($1::uuid[])",
+            secs)]
+        by_org = "org_id = ANY($1::uuid[])"
+        deletes = {
+            "portfolio.replica_viability_reports": (by_org, [orgs]),
+            "portfolio.replica_model_specs": (by_org, [orgs]),
+            "portfolio.replica_registry_keys": (by_org, [orgs]),
+            "portfolio.model_events": (by_org, [orgs]),
+            "portfolio.model_version_positions": (by_org, [orgs]),
+            "portfolio.model_sleeves": (by_org, [orgs]),
+            "portfolio.model_versions": (by_org, [orgs]),
+            "portfolio.models": (by_org, [orgs]),
+            "public.member_todos": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
+            "public.domain_event_deliveries": (by_org, [orgs]),
+            "public.domain_events": (by_org, [orgs]),
+            "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
+            "public.workflow_run_steps": (by_org, [orgs]),
+            "public.workflow_runs": (by_org, [orgs]),
+            "public.workflow_steps": (by_org, [orgs]),
+            "public.workflow_versions": (by_org, [orgs]),
+            "public.workflow_definitions": (by_org, [orgs]),
+            "portfolio.replica_terms_actions": (by_org, [orgs]),
+            "public.document_field_corrections": (by_org, [orgs]),
+            "portfolio.replica_terms_versions": (by_org, [orgs]),
+            "portfolio.replica_securities": (by_org, [orgs]),
+            "public.fee_schedule_tiers": (by_org, [orgs]),
+            "public.fee_schedules": (by_org, [orgs]),
+            "public.org_settings": (by_org, [orgs]),
+            "portfolio.securities_global_prices": ("global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.replica_holdings_rows": ("snapshot_id = ANY($1::uuid[])", [snaps]),
+            "portfolio.replica_holdings_snapshots": ("id = ANY($1::uuid[])", [snaps]),
+            "portfolio.securities_global_relationships": (
+                "from_global_security_id = ANY($1::uuid[]) OR to_global_security_id = ANY($1::uuid[]) "
+                "OR proposed_global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
+        }
+        res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=deletes,
+                               gucs=("models.teardown", "replica.teardown", "execution.teardown"),
+                               cycle_order=("portfolio.model_library_entries",), label="verify_rep4")
+        log = res["log"]
     finally:
         await op.close()
     return log
@@ -598,6 +581,8 @@ async def seed(conn) -> None:
     from services import rbac
     from services import securities_global as SG
 
+    S["seed_day"] = today()   # VHK1: the fixture anchor, captured at seed time
+
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b")):
@@ -652,9 +637,9 @@ async def seed(conn) -> None:
     await insert_terms(conn, org=ORG_A, key="K", version_no=1, values=term_values(**F_TERMS), approved=False,
                        maker=U_ADMIN1)
     # snapshots
-    S["snap_F1"] = await insert_snapshot(conn, fund="F", as_of=TODAY - timedelta(days=60), source_key="ssga_spdr",
+    S["snap_F1"] = await insert_snapshot(conn, fund="F", as_of=seed_day() - timedelta(days=60), source_key="ssga_spdr",
                                          status="live", rows=stock_rows(F_S1), label="F1")
-    S["snap_H1"] = await insert_snapshot(conn, fund="H", as_of=TODAY - timedelta(days=60), source_key="sec_nport",
+    S["snap_H1"] = await insert_snapshot(conn, fund="H", as_of=seed_day() - timedelta(days=60), source_key="sec_nport",
                                          status="live", label="H1", rows=[
             {"name": "REP4 VERIFY A", "ticker": TICKER["A"], "cusip": CUSIP["A"], "asset_type": "equity",
              "gsid": S["sec_A"], "state": "resolved", "weight": "0.5"},
@@ -663,11 +648,11 @@ async def seed(conn) -> None:
             {"name": "ZZRF UNMATCHED HOLDING", "ticker": "ZZRFU", "cusip": "ZZRF00099", "asset_type": "equity",
              "state": "unresolved", "rel": S["rel_U"], "weight": "0.1"},
             {"name": "E-MINI FUTURE", "asset_type": "future", "state": "not_applicable", "weight": "0.1"}])
-    S["snap_G1"] = await insert_snapshot(conn, fund="G", as_of=TODAY - timedelta(days=2), source_key="ssga_spdr",
+    S["snap_G1"] = await insert_snapshot(conn, fund="G", as_of=seed_day() - timedelta(days=2), source_key="ssga_spdr",
                                          status="live", rows=stock_rows(F_S1), label="G1")
-    S["snap_K1"] = await insert_snapshot(conn, fund="K", as_of=TODAY - timedelta(days=2), source_key="ssga_spdr",
+    S["snap_K1"] = await insert_snapshot(conn, fund="K", as_of=seed_day() - timedelta(days=2), source_key="ssga_spdr",
                                          status="live", rows=stock_rows(F_S1), label="K1")
-    S["snap_L1"] = await insert_snapshot(conn, fund="L", as_of=TODAY - timedelta(days=2), source_key="ssga_spdr",
+    S["snap_L1"] = await insert_snapshot(conn, fund="L", as_of=seed_day() - timedelta(days=2), source_key="ssga_spdr",
                                          status="needs_review", rows=stock_rows(F_S1), label="L1")
 
 
@@ -1036,18 +1021,18 @@ async def y_viability(conn):
     check(a3["status"] == "unknown" and "needs prices for 5 of 5 constituents" in a3["reason"]
           and len(a3["missing"]) == 5 and all("no close price" in m for m in a3["missing"]),
           "Q3 no prices at all → 'unknown — needs prices for 5 of 5 constituents', each named", f"{a3.get('reason')}")
-    await set_prices(conn, PRICES, TODAY - timedelta(days=10))
+    await set_prices(conn, PRICES, today() - timedelta(days=10))
     c, r = await viability(U_VIEWER, "F", custodian_code="altruist")
     a3 = answer(r, "account_size")
     check(a3["status"] == "unknown" and "5 of 5" in a3["reason"] and all("older than 5 days" in m for m in a3["missing"]),
           "Q3 stale prices (10 days) → still unknown — a stale price is never used", f"{a3.get('missing', [])[:1]}")
-    await set_prices(conn, {k: v for k, v in PRICES.items() if k != "E"}, TODAY)
+    await set_prices(conn, {k: v for k, v in PRICES.items() if k != "E"}, today())
     c, r = await viability(U_VIEWER, "F", custodian_code="altruist")
     a3 = answer(r, "account_size")
     check(a3["status"] == "unknown" and "needs prices for 1 of 5" in a3["reason"]
           and any(TICKER["E"] in m for m in a3["missing"]),
           "Q3 one fresh price missing → 'needs prices for 1 of 5' (never estimated)", f"{a3.get('reason')}")
-    await set_prices(conn, {"E": PRICES["E"]}, TODAY)
+    await set_prices(conn, {"E": PRICES["E"]}, today())
     c, r = await viability(U_VIEWER, "F", custodian_code="altruist")
     a3 = answer(r, "account_size")
     # independent: whole shares, unit 1: hold = max(p/w) = 10/0.004 = 2500; track = Σp / 0.005 = 385/0.005 = 77000
@@ -1071,7 +1056,7 @@ async def y_viability(conn):
 
     async def frac_yes(conn_, code, key):
         if key == "fractional_shares":
-            return CC.Capability("yes", "verify_rep4 in-process stub", TODAY, "assumed")
+            return CC.Capability("yes", "verify_rep4 in-process stub", today(), "assumed")
         return await real_cap(conn_, code, key)
 
     pool = await get_pool()
@@ -1186,7 +1171,7 @@ async def y_monitoring(conn):
         return
     pool = await get_pool()
     m1 = S["m1"]
-    S["snap_F2"] = await insert_snapshot(conn, fund="F", as_of=TODAY - timedelta(days=30), source_key="ssga_spdr",
+    S["snap_F2"] = await insert_snapshot(conn, fund="F", as_of=seed_day() - timedelta(days=30), source_key="ssga_spdr",
                                          status="live", rows=stock_rows(F_S2), label="F2", previous=S["snap_F1"],
                                          diff={"first_snapshot": False, "added": [], "removed": [], "moves": [],
                                                "turnover": "0.05"})
@@ -1259,7 +1244,7 @@ async def y_monitoring(conn):
           "the review task's approval makes the drafted version live",
           f"{c} {str(o)[:120]}")
     # under threshold, through the real hook (rep1's refresh calls RS.monitor_models with its IngestResult)
-    S["snap_F3"] = await insert_snapshot(conn, fund="F", as_of=TODAY, source_key="ssga_spdr", status="live",
+    S["snap_F3"] = await insert_snapshot(conn, fund="F", as_of=seed_day(), source_key="ssga_spdr", status="live",
                                          rows=stock_rows(F_S3), label="F3", previous=S["snap_F2"],
                                          diff={"first_snapshot": False, "added": [], "removed": [], "moves": [],
                                                "turnover": "0.001"})
@@ -1280,7 +1265,7 @@ async def y_monitoring(conn):
           "under the threshold (turnover 0.098%) → logged 'within tolerance', no draft (through rep1's refresh hook)",
           f"{hook} {d3.get('turnover')}")
     # a needs_review snapshot is never used
-    S["snap_Fnr"] = await insert_snapshot(conn, fund="F", as_of=TODAY, source_key="ssga_spdr", status="needs_review",
+    S["snap_Fnr"] = await insert_snapshot(conn, fund="F", as_of=seed_day(), source_key="ssga_spdr", status="needs_review",
                                           rows=stock_rows({"A": "0.9", "B": "0.1"}), label="Fnr")
     nr = H.IngestResult(S["sec_F"], TICKER["F"], "ssga_spdr", False, created=True, snapshot_id=str(S["snap_Fnr"]),
                         status="needs_review")
@@ -1455,25 +1440,7 @@ async def y_isolation(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
-    perms = ("view_replication", "manage_models", "view_models")
-    check(len(new) == 8 and all(k[1].startswith("/api/v1/replication/") for k in new)
-          and all(gn[k]["module"] == "routers.replication_models" for k in new)
-          and all(any(p in str(gn[k].get("after")) for p in perms) for k in new)
-          and all("manage_models" in gn[k]["after"] and "view_replication" in gn[k]["after"]
-                  for k in new if k[0] == ("POST",) and k[1].endswith(("/models", "/models/preview"))),
-          "8 new routes under /replication, each naming its permission (build + preview need both)", f"{len(new)}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1533,6 +1500,40 @@ async def guard_prefix(conn) -> bool:
 DROPPED_CONNECTION = (asyncpg.ConnectionDoesNotExistError, asyncpg.InterfaceError, ConnectionError)
 
 
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    if not await guard_prefix(conn):        # the same reserved-prefix guard a real run makes before its teardown
+        await conn.close()
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+        return 1
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    op = await operator_conn()
+    try:
+        swept = await VC.leftover_count(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%")
+    finally:
+        await op.close()
+    print(f"[INFO] leftovers: script list {left}, every org_id table {swept}")
+    left = max(left, swept)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1543,6 +1544,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if VS.CLEANUP_FLAG in sys.argv:
+        return await cleanup_only(conn)
     pre = real = None
     try:
         if not await guard_prefix(conn):

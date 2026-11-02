@@ -78,6 +78,63 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / byte-identical), stdlib + git only. Each ends at rep2's OWN merge (or HEAD on its
+# branch), never the working tree, so a later sprint's routes or edits cannot break them. --self-checks-only runs just
+# these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep2"
+BEFORE_REF = "ff61884"   # rep2-work base — main after the rep1 merge + schema refresh
+EXECUTION_PERMS = ("view_execution", "manage_execution", "approve_execution")
+
+
+def self_csv(check, find):
+    # rep2 left csv_adapter / importer / base byte-identical and only APPENDED to registry.py — BEFORE_REF → rep2's
+    # own merge (later sprints may change these files; their own verifies cover that).
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    same = []
+    for f in ("services/custody/csv_adapter.py", "services/custody/importer.py", "services/custody/base.py"):
+        old, new = VS.git_show(BEFORE_REF, f"apps/api/{f}"), VS.own_text(SPRINT_KEY, f"apps/api/{f}")
+        same.append((f, old is not None and old == new))
+    check(all(ok for _, ok in same), "csv_adapter.py, importer.py, base.py are byte-identical to main (as rep2 left "
+          "them)", f"{BEFORE_REF} → {how}; {same}")
+    before_reg = (VS.git_show(BEFORE_REF, "apps/api/services/custody/registry.py") or "").rstrip()
+    end_reg = VS.own_text(SPRINT_KEY, "apps/api/services/custody/registry.py") or ""
+    check(bool(before_reg) and end_reg.startswith(before_reg), "registry.py: main's text is kept verbatim; rep2 only "
+          "APPENDS the trade-adapter map", f"{BEFORE_REF} → {how}")
+
+
+def self_routes(check, find):
+    # rep2's own routes: BEFORE_REF → rep2's own merge. VHK1 removed the by-path prefix filter that kept later
+    # sprints' routes (rep3 /models, rep4 /replication …) out of the count — at rep2's merge there are none.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "no existing route's gate changed or vanished",
+          f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    prefixes = ("/api/v1/execution/", "/api/v1/custodians/", "/api/v1/human-tasks/")
+    new = [k for k in R.new if k[1].startswith(prefixes)]
+    check(len(R.new) == len(new) == 21, "21 new routes under /execution, /custodians, /human-tasks",
+          f"{R.where()}; {len(R.new)} {len(new)}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "rep2's 21 routes all still exist today with the same gate", f"{drifted[:5]}")
+    g = R.end
+    ok_gate = all(
+        any(p in str(g[k].get("after")) for p in EXECUTION_PERMS) if k[1].startswith("/api/v1/execution/")
+        else (str(g[k].get("after")) == ("staff or authz manage_org_settings" if "GET" in k[0] else "super_admin"))
+        if k[1].startswith("/api/v1/custodians/")
+        else True for k in new)
+    check(ok_gate, "execution routes name their execution permission; capabilities: staff or manage_org_settings "
+          "read / super_admin write",
+          f"{[(k[1][-40:], g[k].get('after')) for k in new][:4]}")
+
+
+def self_checks(check, find):
+    self_csv(check, find)
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -88,7 +145,6 @@ import httpx  # noqa: E402
 import _authz1_common as C  # noqa: E402
 import _verify_cleanup as VC  # noqa: E402
 
-BEFORE_REF = "ff61884"   # rep2-work base — main after the rep1 merge + schema refresh
 TAG = "rep2verify"
 PREFIX = "ZZRQ"
 CAP_TEST = "zz_rep2_custodian"
@@ -118,7 +174,6 @@ USERS = {   # org, users.role, short, rbac role, full name
     U_ADMIN_B: (ORG_B, "org_admin", "adminb", "org_admin", "REP2 Org B Admin"),
     U_NEWADMIN: (ORG_C, "member", "newadmin", None, "REP2 New Org Admin"),
 }
-EXECUTION_PERMS = ("view_execution", "manage_execution", "approve_execution")
 SIX_PERMS = EXECUTION_PERMS + ("view_replication", "manage_replication", "approve_replication")
 
 ENT_A, ENT_B = _id(201), _id(202)
@@ -127,7 +182,12 @@ ASSET_A, ASSET_B, ASSET_HELD = _id(401), _id(402), _id(403)
 POS_A, POS_B, POS_HELD = _id(411), _id(412), _id(413)
 LOT_A1, LOT_A2, LOT_B1, LOT_HELD1 = _id(421), _id(422), _id(423), _id(424)
 CODE_ALT, CODE_OTHER, CODE_B = "ZZ_REP2_ALTRUIST", "ZZ_REP2_OTHER", "ZZ_REP2_BORG"
-TODAY = date.today()
+
+
+def today() -> date:
+    """VHK1: the date AT THE CALL — never fixed at script start (a run crossing midnight)."""
+    return date.today()
+
 
 COUNTED = (
     "public.users", "public.organizations", "public.roles", "public.user_roles", "public.role_permissions",
@@ -397,7 +457,7 @@ def body_for(account, security, *, side="sell", quantity="10", lots=None, execut
          "lot_instructions": lots or []}
     b = {"account_id": str(account), "trades": [t], "executor_type": executor,
          "executor_name": "Pat Example", "executor_contact": "pat@example.invalid",
-         "execute_by": (execute_by or (TODAY + timedelta(days=7))).isoformat(), "if_not_filled": if_not_filled}
+         "execute_by": (execute_by or (today() + timedelta(days=7))).isoformat(), "if_not_filled": if_not_filled}
     b.update(extra)
     return b
 
@@ -490,6 +550,7 @@ async def seed(conn) -> None:
     from services.custody.base import AccountNumber
     from services.custody.registry import get_or_create_salt
 
+    S["seed_day"] = today()   # VHK1: the fixture anchor date, captured when the fixtures are written
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b"), (ORG_C, "c")):
@@ -555,9 +616,9 @@ async def seed(conn) -> None:
                                                                                          ACCT_HELD)):
             await conn.execute("INSERT INTO portfolio.positions (id, org_id, owner_entity_id, asset_id, as_of_date, "
                                "quantity, authority, source_system, account_id) VALUES ($1, $2, $3, $4, $5, 100, "
-                               "'manual', 'manual', $6)", pos, ORG_A, ENT_A, asset, TODAY, acct)
+                               "'manual', 'manual', $6)", pos, ORG_A, ENT_A, asset, S["seed_day"], acct)
         for lot, pos, qty, acq, term in ((LOT_A1, POS_A, 60, date(2020, 1, 2), "long"),
-                                         (LOT_A2, POS_A, 40, TODAY - timedelta(days=30), "short"),
+                                         (LOT_A2, POS_A, 40, S["seed_day"] - timedelta(days=30), "short"),
                                          (LOT_B1, POS_B, 100, date(2021, 3, 4), "long"),
                                          (LOT_HELD1, POS_HELD, 100, date(2022, 5, 6), "long")):
             await conn.execute("INSERT INTO portfolio.tax_lots (id, org_id, position_id, acquired_date, quantity, "
@@ -787,7 +848,7 @@ async def y_capabilities(conn):
           and missing.value == "unknown" and CC.available(missing) is False,
           "capability() helper: 'unknown' (and no record) are NOT available; only an evidenced positive is")
     body = {"value": "yes", "evidence_kind": "url", "evidence": "https://example.invalid/rep2-doc",
-            "as_of": TODAY.isoformat()}
+            "as_of": today().isoformat()}
     before = await platform(conn, "SELECT count(*) FROM custodian_capabilities WHERE custodian_code = $1", CAP_TEST,
                             fetch="fetchval")
     code_a, out_a = await api(U_ADMIN1, "PUT", f"/api/v1/custodians/capabilities/{CAP_TEST}/margin", body)
@@ -1042,7 +1103,7 @@ async def y_instructions(conn):
     check((await instr_row(conn, ORG_A, i4))["status"] == "cancelled" and t4["status"] == "cancelled"
           and t4["rstat"] == "cancelled", "cancelling while awaiting approval withdraws the engine task")
     # execute-by: expire / carry / ask (the only automatic step, logged with no actor)
-    # The date is read HERE, not from the module-level TODAY: a run that crosses midnight would otherwise
+    # The date is read HERE, at the call: a run that crosses midnight would otherwise
     # create with yesterday's date, the service refuses it as past (422), and every read below sees nothing.
     today = date.today()
     c5, o5, i5 = await create(U_ADMIN1, ACCT_ALT, sa, quantity="1", lots=[], execute_by=today, if_not_filled="cancel")
@@ -1296,14 +1357,7 @@ async def y_csv(conn):
     from services.custody import importer
     from services.custody import registered_adapters as CU_registered_adapters
 
-    same = []
-    for f in ("services/custody/csv_adapter.py", "services/custody/importer.py", "services/custody/base.py"):
-        same.append((f, git_show(BEFORE_REF, f"apps/api/{f}") == (API_DIR / f).read_text(encoding="utf-8")))
-    check(all(ok for _, ok in same), "csv_adapter.py, importer.py, base.py are byte-identical to main", f"{same}")
-    before_reg = git_show(BEFORE_REF, "apps/api/services/custody/registry.py").rstrip()
-    now_reg = (API_DIR / "services/custody/registry.py").read_text(encoding="utf-8")
-    check(bool(before_reg) and now_reg.startswith(before_reg), "registry.py: main's text is kept verbatim; rep2 only "
-          "APPENDS the trade-adapter map")
+    self_csv(check, find)
     # Main's code and this branch's each run in their OWN subprocess over the same fixture file. Exec'ing main's
     # csv_adapter into this process would re-register 'csv' in the live registry (refused, rightly: a second
     # class on one key). Main's custody package is written from git into a temp `services` package of its own.
@@ -1366,29 +1420,7 @@ async def y_csv(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    prefixes = ("/api/v1/execution/", "/api/v1/custodians/", "/api/v1/human-tasks/")
-    # by path: later sprints (rep3 /models, rep4 /replication) add routes past BEFORE_REF of their own
-    new = [k for k in gn if k not in gb and k[1].startswith(prefixes)]
-    check(len(new) == 21, "21 new routes under /execution, /custodians, /human-tasks", f"{len(new)}")
-    ok_gate = all(
-        any(p in str(gn[k].get("after")) for p in EXECUTION_PERMS) if k[1].startswith("/api/v1/execution/")
-        else (str(gn[k].get("after")) == ("staff or authz manage_org_settings" if "GET" in k[0] else "super_admin"))
-        if k[1].startswith("/api/v1/custodians/")
-        else True for k in new)
-    check(ok_gate, "execution routes name their execution permission; capabilities: staff or manage_org_settings "
-          "read / super_admin write",
-          f"{[(k[1][-40:], gn[k].get('after')) for k in new][:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

@@ -75,6 +75,46 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at rep5's OWN merge (or HEAD on its branch), never
+# the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep5"
+BEFORE_REF = "1717482"   # rep5-work base — main after the rep4 merge + schema refresh
+
+
+def self_routes(check, find):
+    # rep5's own routes: BEFORE_REF → rep5's own merge. VHK1 dropped the by-path filter that kept later sprints'
+    # routes out of the count; the prefix rule is now asserted on EVERY route rep5 added.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "no existing route's gate changed or vanished",
+          f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    new = [k for k in R.new if k[1].startswith("/api/v1/proposals") or (
+        k[1].startswith("/api/v1/accounts/{account_id}/") and ("/model" in k[1] or k[1].endswith("/proposals")))]
+    check(len(R.new) == len(new) == 17, "17 new routes under /accounts/{id}/model…, /accounts/{id}/proposals, "
+          "/proposals…", f"{R.where()}; {len(R.new)} {len(new)}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "rep5's 17 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+    def want(k):
+        if "GET" in k[0]:
+            return "view_proposals"
+        return "approve_proposals" if k[1].endswith(("/approve", "/reject")) else "manage_proposals"
+
+    bad = [(k, R.end[k].get("after")) for k in new if want(k) not in str(R.end[k].get("after"))]
+    check(not bad, "each names its proposal permission: GET view, decide approve, every other write manage",
+          f"{bad[:4]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -83,7 +123,6 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
-import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 # Every import at the top (after hydrate: the pool reads DATABASE_URL lazily, on first get_pool()).
@@ -107,7 +146,6 @@ from services.custody.registry import get_or_create_salt, trade_custodian_key  #
 from services.custody.trading import TradeList  # noqa: E402
 from services.database import close_pool, get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = "1717482"   # rep5-work base — main after the rep4 merge + schema refresh
 TAG = "rep5verify"
 PREFIX = "ZZR5"
 CAP_TEST = "zz_rep5_frac"
@@ -155,9 +193,19 @@ ACCOUNTS = {   # id: (org, custodian_code, registration, tax_status, household, 
 }
 ENTRY_F = _id(501)
 FS1 = _id(511)
-TODAY = date.today()
-VAL = TODAY - timedelta(days=1)
-YEAR_START = date(TODAY.year, 1, 1)
+
+
+def today() -> date:
+    """VHK1: the date AT THE CALL — for expectations the server computes from its own clock."""
+    return date.today()
+
+
+def anchor_seed_dates() -> None:
+    """VHK1: the fixture anchor dates, captured once when seed() writes the fixtures (never at module level).
+    Fixture dates, fixture keys and expectations derived from a fixture's own stored date read these."""
+    d = date.today()
+    S.update(seed_day=d, seed_val=d - timedelta(days=1), seed_year_start=date(d.year, 1, 1))
+
 
 COUNTED = (
     "public.users", "public.organizations", "public.roles", "public.user_roles", "public.role_permissions",
@@ -613,6 +661,7 @@ async def y_seed_literals(conn):
 
 
 async def seed(conn) -> None:
+    anchor_seed_dates()
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b"), (ORG_C, "c")):
@@ -659,7 +708,7 @@ async def seed(conn) -> None:
             await conn.execute(
                 "INSERT INTO public.custodian_capabilities (custodian_code, capability_key, value, evidence_kind, "
                 "evidence, as_of, version_no) VALUES ($1, $2, $3, 'assumed', 'REP5 verify fixture', $4, 1)",
-                CAP_TEST, key, value, TODAY)
+                CAP_TEST, key, value, S["seed_day"])
         salts = {}
         for org in (ORG_A, ORG_B):
             await conn.execute("SELECT set_config('app.current_org_id', $1, true)", str(org))
@@ -671,7 +720,7 @@ async def seed(conn) -> None:
                 "registration_type, tax_status, primary_entity_id, household_id, is_discretionary, is_held_away, "
                 "closed_on) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
                 aid, org, n.masked, n.hashed(salts[org]), code, reg, tax, ENT_A if org == ORG_A else ENT_B, hh, disc,
-                held, (TODAY - timedelta(days=10)) if closed else None)
+                held, (S["seed_day"] - timedelta(days=10)) if closed else None)
         assets = {}
         for key in ("A", "B", "X", "F", "U"):
             aid = uuid.uuid4()
@@ -684,7 +733,7 @@ async def seed(conn) -> None:
         S["assets"] = assets
         S["pos"] = {}
 
-        async def position(acct, key, qty, mv, org=ORG_A, asset=None, as_of=VAL):
+        async def position(acct, key, qty, mv, org=ORG_A, asset=None, as_of=S["seed_val"]):
             pid = uuid.uuid4()
             await conn.execute(
                 "INSERT INTO portfolio.positions (id, org_id, owner_entity_id, asset_id, as_of_date, quantity, "
@@ -720,22 +769,22 @@ async def seed(conn) -> None:
         S["LA1"] = await lot(pma, 60, 3600, date(2020, 1, 2), "long")
         S["LA2"] = await lot(pma, 40, 1200, date(2021, 3, 4), "long")
         S["LX1"] = await lot(pmx, 50, 2000, date(2019, 5, 6), "long")
-        S["LX2_ACQ"] = TODAY - timedelta(days=360)
+        S["LX2_ACQ"] = S["seed_day"] - timedelta(days=360)
         S["LX2"] = await lot(pmx, 30, 1200, S["LX2_ACQ"], "short")
         S["LX3"] = await lot(pmx, 20, 2400, date(2018, 7, 8), "long")
         S["LF1"] = await lot(pmf, 10, 900, date(2020, 2, 3), "long")
-        ytd = await txn(pma, "sell", YEAR_START, 5, 70)
+        ytd = await txn(pma, "sell", S["seed_year_start"], 5, 70)
         await lot(pma, 5, 290, date(2019, 1, 2), "long", status="closed", realized=300, closing=ytd)
         # ACCT_IRA — the household's IRA (wash-sale evidence)
         pia = await position(ACCT_IRA, "A", 10, 500)
         pix = await position(ACCT_IRA, "X", 10, 1000)
         pib = await position(ACCT_IRA, "B", 10, 1000)
-        ia_sell = await txn(pia, "sell", TODAY - timedelta(days=5), 5, 49)
+        ia_sell = await txn(pia, "sell", S["seed_day"] - timedelta(days=5), 5, 49)
         await lot(pia, 5, 295, date(2022, 1, 3), "long", status="closed", realized=-50, closing=ia_sell)
         # rep6: 31 days, not 10 — day 31 is outside the wash window, so the transition's X loss lot still
         # sells now (a 10-day IRA buy is now CONTROL, not a flag: it would hold the loss lot back; verify_rep6 proves it)
-        await txn(pix, "buy", TODAY - timedelta(days=31), 10, 100)
-        ib_sell = await txn(pib, "sell", TODAY - timedelta(days=45), 5, 92)
+        await txn(pix, "buy", S["seed_day"] - timedelta(days=31), 10, 100)
+        ib_sell = await txn(pib, "sell", S["seed_day"] - timedelta(days=45), 5, 92)
         await lot(pib, 5, 540, date(2022, 1, 3), "long", status="closed", realized=-80, closing=ib_sell)
         # the others
         await lot(await position(ACCT_ADV, "A", 100, 5000), 100, 4000, date(2020, 1, 2), "long")
@@ -753,7 +802,7 @@ async def seed(conn) -> None:
             await conn.execute(
                 "INSERT INTO public.account_balances_daily (org_id, account_id, as_of_date, total_market_value, "
                 "cash_value, margin_balance, accrued_income, source_system, source_confidence, is_billing_source, "
-                "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'CONFIRMED', true, true)", org, acct, VAL, D(cash))
+                "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'CONFIRMED', true, true)", org, acct, S["seed_val"], D(cash))
         await conn.execute("SELECT set_config('app.current_org_id', $1, true)", str(ORG_A))
         await conn.execute(
             "INSERT INTO portfolio.replica_securities (id, org_id, global_security_id, instrument_class, ticker, "
@@ -1029,7 +1078,7 @@ async def y_transition(conn):
     acts = {h["key"]: h["action"] for h in hold}
     yrs = sorted(int(x["year"]) for x in later if x["year"] is not None)
     check(plan is not None and acts.get(str(su)) == "cannot_value" and acts.get(str(sx)) == "sell_now_and_later"
-          and acts.get(str(sf)) == "sell_now" and plan["years_to_complete"] == (yrs[-1] - TODAY.year + 1)
+          and acts.get(str(sf)) == "sell_now" and plan["years_to_complete"] == (yrs[-1] - today().year + 1)
           and plan["years_to_complete"] >= 2,
           "the plan: keep / sell now / sell later by year, the years to complete at the budget", f"{acts} "
           f"{plan['years_to_complete'] if plan else None}")
@@ -1040,10 +1089,10 @@ async def y_transition(conn):
             h = await AM.load_holdings(c2, ORG_A, ACCT_MAIN)
     hx = next((x for x in h["holdings"] if x.key == str(sx)), None)
     lot_eq_lt = E.Lot("lt", D(10), D(40), date(2015, 1, 1))
-    lot_eq_st = E.Lot("st", D(10), D(40), TODAY - timedelta(days=100))
+    lot_eq_st = E.Lot("st", D(10), D(40), S["seed_day"] - timedelta(days=100))
     order = [x.id for x in sorted((hx.lots if hx else []) + [lot_eq_lt, lot_eq_st],
-                                  key=lambda x: E.lot_order_key(x, hx.price if hx else D(1), TODAY))]
-    check(hx is not None and hx.price == D(100) and hx.price_source == "account_position" and hx.price_as_of == VAL
+                                  key=lambda x: E.lot_order_key(x, hx.price if hx else D(1), S["seed_day"]))]
+    check(hx is not None and hx.price == D(100) and hx.price_source == "account_position" and hx.price_as_of == S["seed_val"]
           and order[0] == str(S["LX3"]) and order.index("lt") < order.index("st"),
           "loaded from the account's own positions: price 100 = market value / quantity as of the valuation date; "
           "order losses first, and at EQUAL cost long-term before short-term", f"{order}")
@@ -1059,7 +1108,7 @@ async def y_proposals(conn):
     by = {(r["global_security_id"], r["side"]): r for r in trades}
     ba, bb, bc = by.get((S["sec_A"], "buy")), by.get((S["sec_B"], "buy")), by.get((S["sec_C"], "buy"))
     check(ba is not None and ba["quantity"] is not None and D(ba["quantity"]) == D(ba["quantity"]).to_integral_value()
-          and ba["price_source"] == "account_position" and D(ba["price"]) == D(50) and ba["price_as_of"] == VAL,
+          and ba["price_source"] == "account_position" and D(ba["price"]) == D(50) and ba["price_as_of"] == S["seed_val"],
           "a priced buy is WHOLE shares at the account's own price (Altruist fractional_shares 'unknown')",
           f"{dict(ba) if ba else None}")
     check(bb is not None and bc is not None and bb["quantity"] is None and bb["notional"] is not None
@@ -1076,7 +1125,7 @@ async def y_proposals(conn):
             hold = await AM.load_holdings(c2, ORG_A, ACCT_FRAC)
     fbuy = next((t for t in cf["result"].trades if t.side == "buy"), None)
     whole = E.build(hold["holdings"], hold["cash"], {str(S["sec_A"]): D("0.9"), "cash": D("0.1")}, {}, {},
-                    E.BuildSettings(sale=E.SaleSettings(TODAY, None, fractional=False), min_trade=D(100)))
+                    E.BuildSettings(sale=E.SaleSettings(S["seed_day"], None, fractional=False), min_trade=D(100)))
     wbuy = next((t for t in whole.trades if t.side == "buy"), None)
     check(cf["fractional"] is True and fbuy is not None and fbuy.quantity != fbuy.quantity.to_integral_value()
           and wbuy is not None and wbuy.quantity == wbuy.quantity.to_integral_value() and wbuy.quantity < fbuy.quantity,
@@ -1087,9 +1136,9 @@ async def y_proposals(conn):
         async with pool.acquire() as c2:
             hm = await AM.load_holdings(c2, ORG_A, ACCT_MAIN)
     tgt = {str(S["sec_A"]): D("0.4"), str(S["sec_B"]): D("0.3"), str(S["sec_C"]): D("0.2"), "cash": D("0.1")}
-    loose = E.build(hm["holdings"], hm["cash"], tgt, {}, {}, E.BuildSettings(sale=E.SaleSettings(TODAY, None),
+    loose = E.build(hm["holdings"], hm["cash"], tgt, {}, {}, E.BuildSettings(sale=E.SaleSettings(S["seed_day"], None),
                                                                              min_trade=D(0)))
-    tight = E.build(hm["holdings"], hm["cash"], tgt, {}, {}, E.BuildSettings(sale=E.SaleSettings(TODAY, None),
+    tight = E.build(hm["holdings"], hm["cash"], tgt, {}, {}, E.BuildSettings(sale=E.SaleSettings(S["seed_day"], None),
                                                                              min_trade=D(3000)))
 
     def dollars(t):
@@ -1198,7 +1247,7 @@ async def y_proposals(conn):
                            "'false', true)", str(ORG_A))
         await conn.execute("INSERT INTO portfolio.positions (org_id, owner_entity_id, asset_id, as_of_date, quantity, "
                            "market_value, authority, source_system, account_id) VALUES ($1, $2, $3, $4, 90, 4600, "
-                           "'manual', 'manual', $5)", ORG_A, ENT_A, S["assets"]["A"], TODAY, ACCT_CALM)
+                           "'manual', 'manual', $5)", ORG_A, ENT_A, S["assets"]["A"], S["seed_day"], ACCT_CALM)
     c, o = await api(U_ADMIN2, "POST", f"/api/v1/proposals/{mp.get('id')}/approve", {})
     ep = await prop_row(conn, ORG_A, mp.get("id"))
     check(c == 409 and ep is not None and ep["status"] == "expired" and "valuation moved" in (ep["status_reason"] or ""),
@@ -1291,7 +1340,7 @@ async def y_execution(conn):
                                   "routed_via, routing_reason, status, maker_id, maker_ids, approved_by, approved_at) "
                                   "VALUES ($1, $2, $3, 'buy', 1, 'market', 'member', $4, 'ask', 'manual', 'manual', 'x', "
                                   "'approved', $5, ARRAY[$5::uuid], $6, now())",
-                     ORG_A, ACCT_MAIN, S["sec_A"], TODAY + timedelta(days=3), U_ADMIN1, U_ADMIN2, fetch="execute")
+                     ORG_A, ACCT_MAIN, S["sec_A"], today() + timedelta(days=3), U_ADMIN1, U_ADMIN2, fetch="execute")
         check(False, "the database refuses an instruction inserted approved without a proposal")
     except asyncpg.InsufficientPrivilegeError:
         check(True, "the database refuses an instruction inserted 'approved' that no approved proposal backs")
@@ -1303,7 +1352,7 @@ async def y_execution(conn):
     except asyncpg.InsufficientPrivilegeError:
         check(True, "a lot cannot be added to an approved instruction after the transaction that created it")
     tl = TradeList(account_id=ACCT_MAIN, trades=[{"global_security_id": S["sec_A"], "side": "buy", "quantity": "1"}],
-                   executor_type="member", execute_by=TODAY + timedelta(days=3), source="proposal", source_ref=pid)
+                   executor_type="member", execute_by=today() + timedelta(days=3), source="proposal", source_ref=pid)
     try:
         with _ctx(ORG_A):
             async with pool.acquire() as c3:
@@ -1494,30 +1543,7 @@ async def y_new_org(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb and (k[1].startswith("/api/v1/proposals") or (
-        k[1].startswith("/api/v1/accounts/{account_id}/") and ("/model" in k[1] or k[1].endswith("/proposals"))))]
-    check(len(new) == 17, "17 new routes under /accounts/{id}/model…, /accounts/{id}/proposals, /proposals…",
-          f"{len(new)}")
-
-    def want(k):
-        if "GET" in k[0]:
-            return "view_proposals"
-        return "approve_proposals" if k[1].endswith(("/approve", "/reject")) else "manage_proposals"
-
-    bad = [(k, gn[k].get("after")) for k in new if want(k) not in str(gn[k].get("after"))]
-    check(not bad, "each names its proposal permission: GET view, decide approve, every other write manage",
-          f"{bad[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

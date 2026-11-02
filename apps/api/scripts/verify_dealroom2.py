@@ -35,6 +35,11 @@ deals, real signatures (the platform chain) and real templates must be
 unchanged.
 
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
+
+--cleanup-only (VHK1): only the teardown
+and the leftover check ('CLEANUP_SECONDS', 'LEFTOVERS', 'TOTAL'); no seeding,
+no checks, no regression, no npm. --self-checks-only: only the git / route
+self-checks (no Doppler, no database, no network).
 """
 
 from __future__ import annotations
@@ -61,6 +66,39 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at dealroom2's OWN merge (or HEAD on its branch),
+# never the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "dealroom2"
+BEFORE_REF = "0823d72"   # dealroom2-work base — main after the DEALROOM1 merge + snapshot
+
+
+def self_routes(check, find):
+    # dealroom2's own routes: BEFORE_REF → dealroom2's own merge. (VHK1 removed DEALROOM2_REF = 994d8ce, the
+    # DEALROOM3 [FIND] fix that intersected today's new routes with the sprint's own commit — the merge 416a763 is
+    # that same end point, via the shared helper.)
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    changed = [k for k in R.before if k in R.end and R.before[k].get("after") != R.end[k].get("after")]
+    check(len(R.before) > 0 and not changed and not R.removed, "dealroom2 changed or removed no existing route's gate",
+          f"{R.where()}; {changed[:5]} {R.removed[:5]}")
+    new = R.new
+    check(len(new) == 14 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
+          "14 new routes, all on the /deal-room surface", f"{R.where()}; {len(new)}: {[k[1] for k in new][:4]}")
+    ungated = [k for k in new if R.end[k]["after"] == "none beyond auth"]
+    check(not ungated, "every new route names its gate", f"{ungated}")
+    drifted = VS.still_gated(R)
+    check(bool(new) and not drifted, "dealroom2's 14 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -70,8 +108,6 @@ import httpx  # noqa: E402
 import _authz1_common as C  # noqa: E402
 import _verify_cleanup as VC  # noqa: E402
 
-BEFORE_REF = "0823d72"   # dealroom2-work base — main after the DEALROOM1 merge + snapshot
-DEALROOM2_REF = "994d8ce"  # this sprint's own commit (its routes, for the y_routes count)
 TAG = "dealroom2verify"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 
@@ -1196,26 +1232,7 @@ async def y_chain(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route has a gate and is in AUTHZ1_ROUTES.json (--check CURRENT); no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    # DEALROOM3 [FIND]: this count was already failing on main (rep1–rep7 and
-    # DEALROOM3 added routes after this sprint); DEALROOM2's own routes are the
-    # ones present at its own commit (DEALROOM2_REF) and new since BEFORE_REF.
-    own = gates(json.loads(git_show(DEALROOM2_REF, "docs/AUTHZ1_ROUTES.json") or "{}"))
-    new = [k for k in gn if k not in gb and k in own]
-    check(len(new) == 14 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
-          "14 new routes, all on the /deal-room surface", f"{len(new)}: {[k[1] for k in new][:3]}")
-    ungated = [k for k in new if gn[k]["after"] == "none beyond auth"]
-    check(not ungated, "every new route names its gate", f"{ungated}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=300)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1266,6 +1283,36 @@ async def run(name, fn, *args):
         traceback.print_exc()
 
 
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    op = await operator_conn()
+    try:
+        swept = await VC.leftover_count(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%")
+    finally:
+        await op.close()
+    print(f"[INFO] leftovers: script list {left}, every org_id table {swept}")
+    left = max(left, swept)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1276,6 +1323,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if VS.CLEANUP_FLAG in sys.argv:
+        return await cleanup_only(conn)
     pre = real = None
     try:
         await run("pre-teardown", teardown, conn)

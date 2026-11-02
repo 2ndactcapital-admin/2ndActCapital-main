@@ -63,6 +63,38 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at dealroom3's OWN merge (or HEAD on its branch),
+# never the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "dealroom3"
+BEFORE_REF = "376f8ef"   # dealroom3-work base — main after "merge lotmethod"
+
+
+def self_routes(check, find):
+    # dealroom3's own routes: BEFORE_REF → dealroom3's own merge (the old count of everything new since BEFORE_REF
+    # against the working tree would go stale with the next sprint's routes)
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    changed = [k for k in R.before if k in R.end and R.before[k].get("after") != R.end[k].get("after")]
+    check(len(R.before) > 0 and not changed and not R.removed, "dealroom3 changed or removed no existing route's gate",
+          f"{R.where()}; {changed[:5]} {R.removed[:5]}")
+    new = R.new
+    check(len(new) == 19 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
+          "19 new routes, all on the /deal-room surface", f"{R.where()}; {len(new)}: {[k[1] for k in new][:4]}")
+    ungated = [k for k in new if R.end[k]["after"] == "none beyond auth"]
+    check(not ungated, "every new route names its gate", f"{ungated}")
+    drifted = VS.still_gated(R)
+    check(bool(new) and not drifted, "dealroom3's 19 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -72,7 +104,6 @@ import httpx  # noqa: E402
 import _authz1_common as AC  # noqa: E402
 import _verify_cleanup as VC  # noqa: E402
 
-BEFORE_REF = "376f8ef"   # dealroom3-work base — main after "merge lotmethod"
 TAG = "dealroom3verify"
 PREFIX = "99000000-0000-0000-0000-0000000d3"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -1408,22 +1439,7 @@ async def y_gates(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json (--check CURRENT); no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    new = [k for k in gn if k not in gb]
-    check(len(new) == 19 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
-          "19 new routes, all on the /deal-room surface", f"{len(new)}: {[k[1] for k in new][:4]}")
-    ungated = [k for k in new if gn[k]["after"] == "none beyond auth"]
-    check(not ungated, "every new route names its gate", f"{ungated}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

@@ -1,0 +1,69 @@
+# Verify rules
+
+Rules every `apps/api/scripts/verify_*.py` follows, beyond the "Verify Script
+Discipline" section of `CLAUDE.md` and the verification template in
+`docs/SPRINT_WORKFLOW_STANDARD.md`. Each rule below exists because the lack of
+it broke a real script. `apps/api/scripts/verify_vhk1.py` checks the
+regression set (`scripts/regression_set.txt`) against them.
+
+## Self-checks end at the sprint's own merge; empty real data is a FIND; dates at the call; fast scoped cleanup; --self-checks-only and --cleanup-only in every script (VHK1, 2026-11-02)
+
+In two weeks, nine fix rounds went to checks that failed because a **later**
+sprint added routes or edited an older verify script, or because test data was
+cleaned up. The checked feature never broke. Examples: verify_rep6's "31 new
+routes" (broken by rep7, rep7b, lotmethod, dealroom3 and rep8), verify_rep7's
+route checks, the changed-line guards on verify_rep5 / verify_rep7,
+verify_rep7b's "existing accounts" checks, and a `TODAY` fixed at script start
+that went wrong on a run past midnight.
+
+1. **Self-checks end at the sprint's own merge.** A check about what a sprint
+   did compares its `BEFORE_REF` with **the sprint's own end point**, never
+   the working tree. That covers its new routes, the existing gates it left
+   alone, the lines it changed in another file, and the files it kept
+   byte-identical. The end point is the sprint's merge commit on main, or
+   `HEAD` while the sprint is still on its branch. Use
+   `apps/api/scripts/_verify_self.py`:
+   - `VS.sprint_end_ref(key)`: the end point, and its description for the
+     check's detail.
+   - `VS.own_routes(BEFORE_REF, key)`: `.new`, `.changed` and `.removed`,
+     before → end.
+   - `VS.still_gated(R)`: each of the sprint's routes exists **today** with
+     the same gate. This is the one part that reads the working tree on
+     purpose.
+   - `VS.own_lines(path, BEFORE_REF, key)` and `VS.own_diff(...)`: changed-line
+     and diff guards over other files, before → end. A later sprint may edit
+     that file freely. Its own guard covers its own edits.
+   - Never compare against `main:` either. It moves with every merge.
+   - A new sprint adds its merge to `VS.SPRINT_MERGES` when it merges. Until
+     then the lookup finds `merge <key>` by subject, and an unmerged sprint
+     ends at HEAD.
+2. **Empty real data is a FIND.** Some rules hold over real rows: existing
+   accounts, existing instructions, held-away drafts. Use
+   `VS.when_empty(rows, label, rule, check=check, find=find)`. It reports a
+   `[FIND]` ("none exist today") when there are no rows. When rows exist, it
+   asserts the rule for **every** row. Fixtures prove the rule itself.
+3. **Dates at the call.** No module-level `TODAY` / `NOW` / `VAL` / `YEAR`.
+   If an expectation is compared with something the server computes from its
+   own clock, compute the date at the check (`today()`). Fixture dates, and
+   expectations derived from a fixture's stored date, use a date captured
+   when the fixtures are seeded.
+4. **Fast scoped cleanup.** Teardown and pre-run cleanup go through
+   `_verify_cleanup.cleanup`. It is keyed by the script's own fixture ids and
+   runs as one transaction, with an FK closure that only follows children
+   holding rows. Immutability GUCs are passed as `gucs=`. Never write a
+   recursive `delete_tree` walk or an unconditional TRUNCATE.
+5. **`--self-checks-only` and `--cleanup-only` in every script.**
+   - `--self-checks-only` runs the git / route / changed-line self-checks
+     only: stdlib and git, no Doppler, no database, no network, no npm. It
+     prints `TOTAL: N PASS, M FAIL` in seconds. The dispatch sits **before**
+     `hydrate()` and every heavy import:
+     `if __name__ == "__main__" and VS.requested(): sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))`.
+   - `--cleanup-only` runs the teardown and the leftover check, then prints
+     `CLEANUP_SECONDS`, `LEFTOVERS` and `TOTAL`.
+   - `authz1_routes.py --check` (routes vs the docs, both from the working
+     tree) is not a since-base check. It stays in the full run.
+
+Proof that later sprints no longer break the set: verify_vhk1 makes a
+throwaway commit in a temporary `git worktree`. The commit adds a fake route
+and edits verify_rep5.py. Every script's `--self-checks-only` must still
+report 0 FAIL from there. The record is in `docs/VHK1_SELF_CHECKS.md`.

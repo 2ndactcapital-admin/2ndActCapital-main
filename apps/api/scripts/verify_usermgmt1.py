@@ -52,7 +52,25 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
-from _db_connect import admin_dsn, connect, hydrate  # noqa: E402
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only, each ending at usermgmt1's OWN merge (or HEAD
+# on its branch), never the working tree. --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no
+# database, no network, no npm. usermgmt1's only git read is before-only (the f115737 list query JOINs user_roles),
+# so self_checks adds nothing beyond the end-point check.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "usermgmt1"
+BEFORE_REF = "f115737"  # main before USERMGMT1
+
+
+def self_checks(check, find):
+    return None
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
+from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported: Settings() reads HOLLISWORKS_AUTH0_* once
 
@@ -60,7 +78,7 @@ import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
 
-BEFORE_REF = "f115737"  # main before USERMGMT1
+OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 PURGE_RECORD = REPO / "docs" / "USERMGMT1_FIXTURE_PURGE.json"
 TAG = "usermgmt1verify"
 SUB_LIKE = f"%{TAG}%"
@@ -214,6 +232,7 @@ _FK_CACHE: dict = {}
 
 
 async def fk_children(conn, table: str):
+    """Every FK child column of ``table`` (pg_constraint) — used by 1c's reference listing, not by the teardown."""
     if table not in _FK_CACHE:
         _FK_CACHE[table] = await conn.fetch("""
             SELECT cn.nspname || '.' || cc.relname AS child,
@@ -229,26 +248,6 @@ async def fk_children(conn, table: str):
     return _FK_CACHE[table]
 
 
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete, FKs read from pg_constraint (recursively).
-    A table already on the current path (self-reference / cycle) is skipped,
-    so a cycle can only make the parent DELETE fail loudly."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
 USER_WHERE = "(id = ANY($1::uuid[]) OR auth0_sub LIKE $2 OR email LIKE $3 OR org_id = ANY($4::uuid[]))"
 # This run's own fixtures, NULL-safe so the NOT form keeps a row with no sub:
 # seeded ids (incl. the retired deleted-*@deleted.invalid row), pending subs,
@@ -257,21 +256,34 @@ OWN_FIXTURE_WHERE = ("(id = ANY($1::uuid[]) OR COALESCE(auth0_sub, '') LIKE $2 O
                      "OR COALESCE(org_id = ANY($3::uuid[]), false))")
 
 
-async def teardown(conn) -> list[str]:
-    log: list[str] = []
-    async with conn.transaction():
-        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
-        ids = [r["id"] for r in await conn.fetch(
-            f"SELECT id FROM users WHERE {USER_WHERE}", FIXTURE_USERS, SUB_LIKE, EMAIL_LIKE, FIXTURE_ORGS)]
-        # Rows pointing at a fixture user WITHOUT an FK.
-        await conn.execute("DELETE FROM member_todos WHERE related_type = 'users' AND related_id = ANY($1::uuid[])", ids)
-        await conn.execute("DELETE FROM audit_log WHERE resource_id = ANY($1::uuid[]) OR org_id = ANY($2::uuid[])",
-                           ids, FIXTURE_ORGS)
-        await conn.execute("DELETE FROM user_identities WHERE auth0_sub LIKE $1 OR user_id = ANY($2::uuid[])",
-                           SUB_LIKE, ids)
-        await delete_tree(conn, "public.users", "id = ANY($1::uuid[])", [ids], log=log)
-        await delete_tree(conn, "public.organizations", "id = ANY($1::uuid[])", [FIXTURE_ORGS], log=log)
-    return log
+async def operator_conn():
+    dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
+    if not dsn:
+        raise RuntimeError(f"no operator DSN for the fixture teardown path: {how}")
+    return await connect(dsn)
+
+
+async def teardown(_conn=None) -> list[str]:
+    """VHK1: the shared scoped cleanup (_verify_cleanup) on the operator DSN, keyed by this run's fixture ids — the
+    fixture users (id / sub / email / fixture org), the fixture orgs, and the rows that point at a fixture user
+    WITHOUT an FK (alerts, audit rows, identities) exactly as the old teardown deleted them."""
+    op = await operator_conn()
+    try:
+        uargs = [FIXTURE_USERS, SUB_LIKE, EMAIL_LIKE, FIXTURE_ORGS]
+        ids = [r["id"] for r in await op.fetch(f"SELECT id FROM public.users WHERE {USER_WHERE}", *uargs)]
+        plan = {
+            "public.users": (USER_WHERE, uargs),
+            "public.member_todos": ("related_type = 'users' AND related_id = ANY($1::uuid[])", [ids]),
+            "public.audit_log": ("resource_id = ANY($1::uuid[]) OR org_id = ANY($2::uuid[])", [ids, FIXTURE_ORGS]),
+            "public.user_identities": ("auth0_sub LIKE $1 OR user_id = ANY($2::uuid[])", [SUB_LIKE, ids]),
+        }
+        async with op.transaction():       # the old teardown's super-admin GUC, LOCAL, around the cleanup's own tx
+            await op.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+            res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=list(FIXTURE_USERS) + ids, user_sub_like=SUB_LIKE,
+                                   plan=plan, label="verify_usermgmt1")
+        return res["log"]
+    finally:
+        await op.close()
 
 
 async def leftovers(conn) -> int:
@@ -283,7 +295,35 @@ async def leftovers(conn) -> int:
                         fetch="fetchval")
     n += await platform(conn, "SELECT count(*) FROM audit_log WHERE org_id = ANY($1::uuid[])", FIXTURE_ORGS,
                         fetch="fetchval")
+    op = await operator_conn()      # VHK1: plus every org_id table under the fixture orgs
+    try:
+        n += await VC.leftover_count(op, orgs=FIXTURE_ORGS, users=list(FIXTURE_USERS), user_sub_like=SUB_LIKE)
+    finally:
+        await op.close()
     return int(n)
+
+
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
 
 
 def platform_issuer() -> str:
@@ -479,12 +519,16 @@ async def y_task1(conn):
         GROUP BY u.id ORDER BY u.email""", FIXTURE_ORGS, SUB_LIKE, EMAIL_LIKE)
     from services import email as email_service
 
+    derived = []
     for r in rows:
         idents = json.loads(r["idents"]) if isinstance(r["idents"], str) else r["idents"]
         methods = user_admin.sign_in_methods(org_id=r["org_id"], auth0_sub=r["auth0_sub"], identities=idents)
+        derived.append((r["id"], methods))
         find(f"1b real account {email_service.redact_email(r['email'])}",
              "; ".join(f"{m['tenant']} · {m['method']} ({m['linked_via']})" for m in methods) or "never signed in")
-    check(len(rows) > 0, "1b: every active real account's sign-in method was derived from the DB", f"{len(rows)}")
+    # VHK1: no active real account is a [FIND], not a FAIL; the derivation is still asserted for every one that exists
+    VS.when_empty(derived, "1b: every active real account's sign-in method was derived from the DB",
+                  lambda d: isinstance(d[1], list), check=check, find=find)
 
     from _usermgmt1_hygiene import classify
 
@@ -1020,6 +1064,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if "--cleanup-only" in sys.argv:
+        return await cleanup_only(conn)
     pre = None
     real_before = None
     try:

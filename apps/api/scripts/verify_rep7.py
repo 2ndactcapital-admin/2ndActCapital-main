@@ -81,6 +81,50 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at rep7's OWN merge (or HEAD on its branch), never
+# the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep7"
+BEFORE_REF = "759b7e4"   # rep7-work base — main after the rep6 merge + schema refresh
+
+
+def self_routes(check, find):
+    # rep7's own routes: BEFORE_REF → rep7's own merge. VHK1 removed the exclusion lists the working-tree end point
+    # needed — rep7b fix 1's four rep7b routes + /authority/…, and lotmethod's /lot-method/… — none exist at rep7's
+    # merge, so every route rep7 added must be one of its 19.
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    check(len(R.before) > 0 and not R.changed and not R.removed, "no existing route's gate changed or vanished",
+          f"{R.where()}; {R.changed[:5]} {R.removed[:5]}")
+    mine = [k for k in R.new if k[1].startswith(("/api/v1/held-away/", "/api/v1/xray/"))]
+    check(len(R.new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/…",
+          f"{R.where()}; {len(R.new)} {len(mine)} {[k for k in R.new if k not in mine][:4]}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "rep7's 19 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+    def want(k):
+        if k[1].startswith("/api/v1/xray/"):
+            if "GET" in k[0]:
+                return "view_replication"
+            return "manage_proposals" if k[1].endswith("/join") else "manage_replication"
+        if "GET" in k[0]:
+            return "view_held_away"
+        return "approve_held_away" if k[1].endswith(("/approve", "/reject")) else "manage_held_away"
+
+    bad = [(k, R.end[k].get("after")) for k in mine if want(k) not in str(R.end[k].get("after"))]
+    check(not bad, "each names its permission (held-away view / manage / approve; X-ray view_replication, runs "
+          "manage_replication, join manage_proposals)", f"{bad[:4]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -89,7 +133,6 @@ import asyncpg  # noqa: E402
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
-import _verify_cleanup as VC  # noqa: E402
 
 sys.path.insert(0, str(API_DIR))
 # Every import at the top (after hydrate: the pool reads DATABASE_URL lazily, on first get_pool()).
@@ -117,7 +160,6 @@ from services.custody.base import AccountNumber  # noqa: E402
 from services.custody.registry import get_or_create_salt  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 
-BEFORE_REF = "759b7e4"   # rep7-work base — main after the rep6 merge + schema refresh
 TAG = "rep7verify"
 PREFIX = "ZZR7"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -164,8 +206,12 @@ ACCOUNTS = {   # id: (org, custodian_code, registration, tax_status, household, 
 }
 DOC_A = _id(401)
 FS1 = _id(501)
-TODAY = date.today()
-YEAR = TODAY.year
+
+
+def today() -> date:
+    """VHK1: the date AT THE CALL — never fixed at script start (a run crossing midnight)."""
+    return date.today()
+
 STALE_DAYS = 30
 CENT = Decimal("0.01")
 
@@ -603,7 +649,7 @@ def tk(key):
 
 
 def ago(n: int) -> str:
-    return (TODAY - timedelta(days=n)).isoformat()
+    return (today() - timedelta(days=n)).isoformat()
 
 
 # Every literal the seed and the tests write into a CHECK-constrained column — checked against the live catalog.
@@ -753,6 +799,7 @@ async def guard_prefix(conn) -> bool:
 
 
 async def seed(conn) -> None:
+    S["seed_day"] = today()   # VHK1: the fixture anchor date, captured when the fixtures are written
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         for org, nm in ((ORG_A, "a"), (ORG_B, "b"), (ORG_C, "c")):
@@ -825,7 +872,7 @@ async def seed(conn) -> None:
             await conn.execute(
                 "INSERT INTO portfolio.positions (id, org_id, owner_entity_id, asset_id, as_of_date, quantity, "
                 "market_value, authority, source_system, account_id) VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', "
-                "'manual', $8)", pid, ORG_A, ACCOUNTS[acct][5], assets[key], TODAY - timedelta(days=1), D(qty),
+                "'manual', $8)", pid, ORG_A, ACCOUNTS[acct][5], assets[key], S["seed_day"] - timedelta(days=1), D(qty),
                 D(mv), acct)
             await conn.execute(
                 "INSERT INTO portfolio.tax_lots (org_id, position_id, acquired_date, quantity, adjusted_cost, "
@@ -845,7 +892,7 @@ async def seed(conn) -> None:
                 "INSERT INTO public.account_balances_daily (org_id, account_id, as_of_date, total_market_value, "
                 "cash_value, margin_balance, accrued_income, source_system, source_confidence, is_billing_source, "
                 "is_final) VALUES ($1, $2, $3, 0, $4, 0, 0, 'manual', 'CONFIRMED', true, true)", ORG_A, acct,
-                TODAY - timedelta(days=1), D(cash))
+                S["seed_day"] - timedelta(days=1), D(cash))
         # the registry: FUND (terms, holdings, a model, a viability verdict, a fee schedule) and FUND3 (holdings only)
         for key in ("FUND", "FUND3"):
             rs = uuid.uuid4()
@@ -861,7 +908,7 @@ async def seed(conn) -> None:
             "$4, $5, now()) RETURNING id", ORG_A, S["entry_FUND"],
             json.dumps({"expense_ratio_net_pct": {"value": "0.09"}}), U_ADMIN1, U_ADMIN2)
         S["terms_FUND"] = tv
-        S["snap_as_of"] = TODAY - timedelta(days=20)
+        S["snap_as_of"] = S["seed_day"] - timedelta(days=20)
         S["snap_FUND"] = await snapshot(conn, "FUND", [("C1", "0.5", "Information Technology"),
                                                        ("C2", "0.3", "Health Care"), ("C3", "0.2", None)])
         S["snap_FUND3"] = await snapshot(conn, "FUND3", [("C1", "0.6", "Information Technology"), ("C4", "0.4", "Energy")])
@@ -953,7 +1000,7 @@ async def y_imports(conn):
     section("[Y] Imports: rep3 mapping, rejects with reasons, draft changes nothing, maker-checker, as-of versions "
             "kept; statements never Claude, 'no extraction models configured' when none")
     # an earlier version (as of 60 days ago) → approved
-    c, o = await manual_import(ACCT_XH, TODAY - timedelta(days=60),
+    c, o = await manual_import(ACCT_XH, today() - timedelta(days=60),
                                [{"ticker": tk("FUND"), "quantity": "400", "market_value": "40000",
                                  "acquired_date": "2019-01-02", "cost": "36000"}])
     c2, o2 = await approve_import(o.get("id"))
@@ -965,7 +1012,7 @@ async def y_imports(conn):
            f"{tk('STK')},abc,10,,\n{PREFIX}NOPE,5,50,,\n,7,70,,\n").encode()
     c, o = await api(U_ADMIN1, "POST", f"/api/v1/held-away/accounts/{ACCT_XH}/imports/file",
                      files={"file": ("zz_rep7_positions.csv", csv, "text/csv")},
-                     data={"as_of": (TODAY - timedelta(days=1)).isoformat()})
+                     data={"as_of": (today() - timedelta(days=1)).isoformat()})
     S["xh_file"] = o.get("id")
     codes = sorted(r["code"] for r in o.get("rejects") or [])
     check(c == 201 and o.get("status") == "draft" and o.get("rows_read") == 4 and o.get("rows_accepted") == 1
@@ -991,18 +1038,18 @@ async def y_imports(conn):
                                      "AND p.system_to IS NULL", ACCT_XH)
     old = await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.positions WHERE account_id = $1 AND as_of_date = $2 "
                                     "AND valid_to IS NOT NULL AND system_to IS NULL", ACCT_XH,
-                       TODAY - timedelta(days=60), fetch="fetchval")
+                       today() - timedelta(days=60), fetch="fetchval")
     check(c == 200 and o.get("status") == "approved" and len(live) == 1 and live[0]["quantity"] == D(500)
-          and live[0]["as_of_date"] == TODAY - timedelta(days=1) and str(live[0]["import_id"]) == S["xh_file"]
+          and live[0]["as_of_date"] == today() - timedelta(days=1) and str(live[0]["import_id"]) == S["xh_file"]
           and int(old) == 1, "a second person approves: the positions are replaced as of the date with their source "
           "and import; the earlier version is kept (closed on the valid axis)", f"{c} {[dict(x) for x in live]} {old}")
     c, o = await api(U_VIEWER, "GET", f"/api/v1/held-away/accounts/{ACCT_XH}/positions?as_of="
-                                      f"{(TODAY - timedelta(days=30)).isoformat()}")
+                                      f"{(today() - timedelta(days=30)).isoformat()}")
     pp = o.get("positions") or []
     check(c == 200 and len(pp) == 1 and pp[0]["quantity"] == "400" and pp[0]["as_of"] == ago(60),
           "the earlier as-of version is still readable", f"{c} {pp[:1]}")
     # an import older than the account's data: refused BEFORE the task commits — draft, task open
-    c, o = await manual_import(ACCT_XH, TODAY - timedelta(days=90), [{"ticker": tk("FUND"), "quantity": "1"}])
+    c, o = await manual_import(ACCT_XH, today() - timedelta(days=90), [{"ticker": tk("FUND"), "quantity": "1"}])
     c2, o2 = await approve_import(o.get("id"))
     row = await scoped(conn, ORG_A, "SELECT status, approval_task_id FROM public.held_away_imports WHERE id = $1 AND "
                                     "system_to IS NULL", o.get("id"), fetch="fetchrow")
@@ -1014,7 +1061,7 @@ async def y_imports(conn):
     # a refused file is still logged; it can only be rejected
     c, o = await api(U_ADMIN1, "POST", f"/api/v1/held-away/accounts/{ACCT_XH}/imports/file",
                      files={"file": ("zz_rep7.xlsm", b"PK\x03\x04macro", "application/octet-stream")},
-                     data={"as_of": TODAY.isoformat()})
+                     data={"as_of": today().isoformat()})
     c2, o2 = await approve_import(o.get("id"))
     check(c == 201 and [r["code"] for r in o.get("rejects") or []] == ["file_refused"] and c2 == 409,
           "a refused file (macro workbook) is logged as a draft with the reason and cannot be approved",
@@ -1028,7 +1075,7 @@ async def y_statements(conn):
     c, o = await api(U_ADMIN1, "POST", f"/api/v1/held-away/accounts/{ACCT_XH}/statements",
                      {"document_id": str(DOC_A)})
     check(c == 201, "a Chancery document is linked to the held-away account", f"{c} {o}")
-    body = {"document_id": str(DOC_A), "as_of": TODAY.isoformat()}
+    body = {"document_id": str(DOC_A), "as_of": today().isoformat()}
     if int(real) == 0:
         c, o = await api(U_ADMIN1, "POST", f"/api/v1/held-away/accounts/{ACCT_XH}/imports/statement", body)
         _, panel = await api(U_ADMIN1, "GET", f"/api/v1/held-away/accounts/{ACCT_XH}")
@@ -1090,7 +1137,7 @@ async def y_held_away_data(conn):
         check(c == 201 and bool(S[f"decl_{key}"]), f"declared outside {side} of {key} recorded", f"{c} {str(o)[:120]}")
     with _ctx(ORG_A):
         await LB.ingest(pool, org_id=ORG_A)
-    ctx0 = await in_org(lambda c_: WS.load_context(c_, ORG_A, S["acct_M"], TODAY))
+    ctx0 = await in_org(lambda c_: WS.load_context(c_, ORG_A, S["acct_M"], today()))
     pre = [e for e in ctx0.events if e.key == str(S["sec_DQ"])]
     check(len(pre) == 1 and pre[0].source == "declared_outside", "before the held-away feed: the declared buy counts "
           "once (as declared)", f"{[e.source for e in pre]}")
@@ -1106,7 +1153,8 @@ async def y_held_away_data(conn):
             r.update(realized_gain_loss=real, term=term)
         rows.append(r)
     S["ha_tx"] = tx
-    c, o = await manual_import(ACCT_HA, TODAY - timedelta(days=1), rows)
+    S["ha_asof"] = today() - timedelta(days=1)   # VHK1: the held-away data's own as-of (y_staleness reads it)
+    c, o = await manual_import(ACCT_HA, S["ha_asof"], rows)
     c2, o2 = await approve_import(o.get("id"))
     S["ha_import"] = o.get("id")
     check(c == 201 and o.get("rows_accepted") == 10 and c2 == 200 and o2.get("status") == "approved",
@@ -1122,7 +1170,7 @@ async def y_held_away_data(conn):
 async def y_wash(conn):
     section("[Y] Wash-sale with held-away lots / transactions incl. the held-away IRA block; a declared trade matched "
             "once; both window edges")
-    ctx = await in_org(lambda c_: WS.load_context(c_, ORG_A, S["acct_M"], TODAY))
+    ctx = await in_org(lambda c_: WS.load_context(c_, ORG_A, S["acct_M"], today()))
     sk = lambda k: str(S[f"sec_{k}"])  # noqa: E731
     ev_s = [e for e in ctx.events if e.key == sk("S")]
     check(len(ev_s) == 1 and ev_s[0].source == "held_away" and ev_s[0].side == "buy"
@@ -1149,7 +1197,7 @@ async def y_wash(conn):
           "the IRA held elsewhere is one of the household's accounts (tax-advantaged) — its buys count with "
           "permanent-forfeit weight")
     ira_ctx = await in_org(lambda c_: WS.load_context(c_, ORG_A, ira[0] | {"primary_entity_id": ENT_A,
-                                                                           "household_id": HH_A}, TODAY))
+                                                                           "household_id": HH_A}, today()))
     b2 = WS.evaluate_buy(sk("Q"), account_class=WS.tax_class(ira[0]), ctx=ira_ctx)
     check(b2["outcome"] == "blocked", "the held-away IRA's own household context blocks the same buy (rule c)",
           b2["outcome"])
@@ -1166,12 +1214,12 @@ async def y_wash(conn):
 async def y_gain_and_bank(conn):
     section("[Y] Gain budget and loss bank count held-away realized results exactly, idempotent")
     expected = sum((D(real) for key, side, days, qty, price, real, term in S["ha_tx"]
-                    if real is not None and (TODAY - timedelta(days=days)).year == YEAR), Decimal(0))
+                    if real is not None and (today() - timedelta(days=days)).year == today().year), Decimal(0))
     n_lots = sum(1 for key, side, days, qty, price, real, term in S["ha_tx"]
-                 if real is not None and (TODAY - timedelta(days=days)).year == YEAR)
-    ytd = await in_org(lambda c_: RP.realized_ytd(c_, ORG_A, ACCT_M, TODAY))
-    own = await in_org(lambda c_: RP.realized_ytd(c_, ORG_A, ACCT_M, TODAY, include_held_away=False))
-    el = await in_org(lambda c_: HA.realized_elsewhere(c_, ORG_A, S["acct_M"], TODAY))
+                 if real is not None and (today() - timedelta(days=days)).year == today().year)
+    ytd = await in_org(lambda c_: RP.realized_ytd(c_, ORG_A, ACCT_M, today()))
+    own = await in_org(lambda c_: RP.realized_ytd(c_, ORG_A, ACCT_M, today(), include_held_away=False))
+    el = await in_org(lambda c_: HA.realized_elsewhere(c_, ORG_A, S["acct_M"], today()))
     check(own == 0 and ytd == expected and el["amount"] == expected and el["lots"] == n_lots
           and el["accounts"] == [str(ACCT_HA)],
           f"realized YTD for the managed account = its own 0 + {expected} realized in the held-away account",
@@ -1245,7 +1293,7 @@ async def y_guard(conn):
                                                      "quantity": "1", "price_guidance": {"kind": "limit", "limit_price": "101.25"},
                                                      "lot_instructions": []}],
                 "executor_type": "member", "executor_name": "Pat Example", "executor_contact": "pat@example.invalid",
-                "execute_by": (TODAY + timedelta(days=7)).isoformat(), "if_not_filled": "cancel"}
+                "execute_by": (today() + timedelta(days=7)).isoformat(), "if_not_filled": "cancel"}
 
     n0 = await scoped(conn, ORG_A, "SELECT count(*) FROM public.execution_instructions WHERE account_id = $1",
                       ACCT_HA, fetch="fetchval")
@@ -1276,11 +1324,12 @@ async def y_guard(conn):
 
 async def y_staleness(conn):
     section("[Y] Staleness: threshold edge, approval refused until confirmed, confirmation expiry")
-    check(HA.is_stale(TODAY - timedelta(days=STALE_DAYS), TODAY, STALE_DAYS) is False
-          and HA.is_stale(TODAY - timedelta(days=STALE_DAYS + 1), TODAY, STALE_DAYS) is True
-          and HA.is_stale(None, TODAY, STALE_DAYS) is True,
+    check(HA.is_stale(today() - timedelta(days=STALE_DAYS), today(), STALE_DAYS) is False
+          and HA.is_stale(today() - timedelta(days=STALE_DAYS + 1), today(), STALE_DAYS) is True
+          and HA.is_stale(None, today(), STALE_DAYS) is True,
           "the rule: exactly stale_after_days old is not stale; one day over is; no data is stale")
-    asof_ha = TODAY - timedelta(days=1)
+    # the date the held-away data was imported as of (set where it is imported; at the call if that never ran)
+    asof_ha = S.get("ha_asof") or today() - timedelta(days=1)
     at = await in_org(lambda c_: HA.staleness(c_, ORG_A, S["acct_M"], asof_ha + timedelta(days=STALE_DAYS)))
     over = await in_org(lambda c_: HA.staleness(c_, ORG_A, S["acct_M"], asof_ha + timedelta(days=STALE_DAYS + 1)))
     ha_at = next((x for x in at if x["account_id"] == str(ACCT_HA)), {})
@@ -1289,7 +1338,7 @@ async def y_staleness(conn):
           "the held-away account's data, exactly at the threshold day: not stale; one day over: stale",
           f"{ha_at.get('age_days')} {ha_at.get('stale')} / {ha_over.get('age_days')} {ha_over.get('stale')}")
     # the IRA held away: data 31 days old (stale today)
-    c, o = await manual_import(ACCT_HIRA, TODAY - timedelta(days=STALE_DAYS + 1),
+    c, o = await manual_import(ACCT_HIRA, today() - timedelta(days=STALE_DAYS + 1),
                                [{"ticker": tk("IR"), "quantity": "10", "market_value": "1000"}])
     c2, _ = await approve_import(o.get("id"))
     check(c == 201 and c2 == 200, "the held-away IRA's data (31 days old) is approved")
@@ -1331,7 +1380,7 @@ async def y_staleness(conn):
     ca, oa = await api(approver, "POST", f"/api/v1/proposals/{pid}/approve", {})
     check(ca == 200, "with the confirmation, the proposal is approved", f"{ca} {str(oa)[:160]}")
     # newer data expires the confirmation
-    c, o = await manual_import(ACCT_HIRA, TODAY - timedelta(days=2),
+    c, o = await manual_import(ACCT_HIRA, today() - timedelta(days=2),
                                [{"ticker": tk("IR"), "quantity": "10", "market_value": "1100"}])
     c2, _ = await approve_import(o.get("id"))
     row = await scoped(conn, ORG_A, "SELECT status, closed_reason FROM public.stale_confirmations WHERE id = $1 AND "
@@ -1434,8 +1483,8 @@ async def y_xray(conn):
           "'held away — moving the assets comes first'", f"{fm.get('actions')} {fh.get('join')}")
     # the household's tax profile → transition tax and break-even exact
     c, o = await api(U_ADMIN1, "POST", "/api/v1/tax/profiles", {
-        "subject_type": "household", "subject_id": str(HH_X), "tax_year": YEAR, "filing_status": "married_filing_jointly",
-        "federal_ordinary_rate": "0.37", "federal_lt_rate": "0.2", "niit_applies": True, "as_of": TODAY.isoformat(),
+        "subject_type": "household", "subject_id": str(HH_X), "tax_year": today().year, "filing_status": "married_filing_jointly",
+        "federal_ordinary_rate": "0.37", "federal_lt_rate": "0.2", "niit_applies": True, "as_of": today().isoformat(),
         "source_note": "REP7 verify"})
     c2, _ = await api(U_ADMIN2, "POST", f"/api/v1/tax/profiles/{(o.get('profile') or {}).get('id')}/approve", {})
     _, o3 = await xray()
@@ -1544,7 +1593,7 @@ async def y_isolation(conn):
           "an org admin reads it", f"{cm} {cl} {ca}")
     cn, on = await api(U_MEMBER, "GET", f"/api/v1/held-away/accounts/{ACCT_HA}")
     check(cn == 403 and "view_held_away" in str(on), "held-away data is never visible without view_held_away")
-    body = {"as_of": TODAY.isoformat(), "rows": [{"ticker": tk("G"), "quantity": "1"}]}
+    body = {"as_of": today().isoformat(), "rows": [{"ticker": tk("G"), "quantity": "1"}]}
     cv, ov = await api(U_VIEWER, "POST", f"/api/v1/held-away/accounts/{ACCT_HA}/imports/manual", body)
     ca, oa = await api(U_ADMIN1, "POST", f"/api/v1/held-away/accounts/{ACCT_HA}/imports/manual", body)
     check(cv == 403 and "manage_held_away" in str(ov) and ca == 201, "gates both ways on the identical import: the "
@@ -1586,43 +1635,7 @@ async def y_new_org(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and (gb[k].get("after"), gb[k].get("expect")) !=
-               (gn[k].get("after"), gn[k].get("expect"))]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    # rep7b fix 1 — scoped to rep7's own routes: rep7b (built on this branch after rep7) added these 11; any other
-    # new route still fails the count
-    rep7b_added = {(("POST",), "/api/v1/xray/households/{household_id}/one-off"),
-                   (("POST",), "/api/v1/accounts/{account_id}/proposals/one-off"),
-                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/settlement"),
-                   (("POST",), "/api/v1/execution/instructions/{instruction_id}/reconcile-held-away")}
-    # lotmethod: its routes are all under /api/v1/lot-method/ — not this script's
-    new = [k for k in gn if k not in gb and k not in rep7b_added
-           and not k[1].startswith(("/api/v1/authority/", "/api/v1/lot-method/"))]
-    mine = [k for k in new if k[1].startswith(("/api/v1/held-away/", "/api/v1/xray/"))]
-    check(len(new) == len(mine) == 19, "19 new routes, all under /held-away/… and /xray/… (rep7b's /authority/… and "
-          "its 4 other routes excluded)", f"{len(new)} {len(mine)} {[k for k in new if k not in mine][:4]}")
-
-    def want(k):
-        if k[1].startswith("/api/v1/xray/"):
-            if "GET" in k[0]:
-                return "view_replication"
-            return "manage_proposals" if k[1].endswith("/join") else "manage_replication"
-        if "GET" in k[0]:
-            return "view_held_away"
-        return "approve_held_away" if k[1].endswith(("/approve", "/reject")) else "manage_held_away"
-
-    bad = [(k, gn[k].get("after")) for k in mine if want(k) not in str(gn[k].get("after"))]
-    check(not bad, "each names its permission (held-away view / manage / approve; X-ray view_replication, runs "
-          "manage_replication, join manage_proposals)", f"{bad[:4]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 

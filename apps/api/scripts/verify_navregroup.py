@@ -57,6 +57,72 @@ from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
+
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only, each ending at navregroup's OWN merge (a911ac7,
+# content-identical to its branch tip e97718f — the old NAVREGROUP_REF), never the working tree. --self-checks-only
+# runs just these, BEFORE the DB bootstrap — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "navregroup"
+BASELINE_REF = "e581844"   # the commit this sprint started from (pinned: HEAD moves)
+GATE_TOKENS = re.compile(r"require_permission|_require_\w+\(|has_permission|can_manage_org_settings|is_super_admin"
+                         r"|require_staff|is_org_admin")
+# VHK1 removed LATER_SPRINT_PAGE_CHANGES (usermgmt1 / bugfix1 page edits) and LATER_SPRINT_NEW_PAGES (bugfix1's
+# comingSoon pages): both existed only because the page checks read the working tree. At navregroup's own merge
+# neither later sprint's change exists, so neither list is needed.
+
+
+def self_urls_unchanged(check, find):
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    stored = json.loads(VS.own_text(SPRINT_KEY, "docs/NAVREGROUP_BASELINE.json") or "{}")
+    sample = sorted(set().union(*(stored.get("personas", {}).get(p, {}).get("reachable", [])
+                                  for p in ("plain_member", "org_admin_manage_org_settings", "super_admin"))))
+    changed_pages, existence_diff = [], []
+    allowed_heading_edit = re.compile(r'^[+-](import \{ labelFor \} from "@/lib/menuVisibility";|'
+                                      r'\s*<h1 className="text-3xl font-semibold text-navy">.*</h1>)$')
+    for href in sample:
+        if href == "/admin":
+            continue     # rebuilt on purpose as the grouped overview — checked separately (full run)
+        rel = f"apps/web/app{href}/page.js"
+        before = VS.git_show(BASELINE_REF, rel)
+        after = VS.git_show(end, rel)
+        if (before is not None) != (after is not None):
+            existence_diff.append(href)
+            continue
+        if before is None:
+            continue
+        code, diff, _ = VS.own_diff(BASELINE_REF, SPRINT_KEY, rel)
+        lines = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
+        if code != 0 or any(not allowed_heading_edit.match(ln) for ln in lines):
+            changed_pages.append(href)
+    check(len(sample) > 0 and not existence_diff,
+          "every sampled URL resolves to a page at navregroup's end iff it did at the baseline (3 dead links stay 404)",
+          f"{BASELINE_REF} → {how}; {len(sample)} URLs; differ {existence_diff}")
+    check(not changed_pages, "no sampled page changed (navregroup's own diff) beyond its heading reading the "
+          "definition's label", f"{BASELINE_REF} → {how}; {changed_pages}")
+    drift = []
+    _, listing, _ = VS.git("ls-tree", "--name-only", end, "apps/api/routers/")
+    for rel in sorted(x for x in listing.splitlines() if x.endswith(".py")):
+        before = VS.git_show(BASELINE_REF, rel)
+        if before is None:
+            continue
+        own = VS.git_show(end, rel) or ""
+        b, a = len(GATE_TOKENS.findall(before)), len(GATE_TOKENS.findall(own))
+        expected = 1 if rel.endswith("/vdr.py") else 0
+        if a - b != expected:
+            drift.append(f"{rel.rsplit('/', 1)[-1]}: {b}->{a}")
+    check(bool(listing.strip()) and not drift, "router gate calls unchanged (navregroup's own diff) except the one "
+          "added on GET /vdr-proposals", f"{BASELINE_REF} → {how}; {drift}")
+
+
+def self_checks(check, find):
+    self_urls_unchanged(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 
 import asyncpg  # noqa: E402
@@ -72,8 +138,6 @@ SIDEBAR = WEB_DIR / "components" / "Sidebar.jsx"
 MENU = WEB_DIR / "lib" / "menuVisibility.mjs"
 HARNESS = HERE.parent / "menuvisibility_harness.mjs"
 BASELINE_GEN = HERE.parent / "navregroup_baseline.mjs"
-BASELINE_REF = "e581844"   # the commit this sprint started from (pinned: HEAD moves)
-NAVREGROUP_REF = "e97718f"  # navregroup's own commit — the "after" side of scope checks
 
 TAG = "navregroup-verify"
 TOKEN = "nvrgrpverifytoken"          # in every fixture filename; asserted unused first
@@ -196,7 +260,7 @@ def allowed(defs: dict[str, str], column: str) -> set[str]:
     return out
 
 
-# ═══ Teardown — FK order from pg_constraint; counts as the backstop ═══════
+# ═══ Teardown — scoped predicates (the shared _verify_cleanup); counts as the backstop ═══════
 PREDICATES = {
     "public.vdr_deal_proposals": ("id = $1 OR org_id = $2", lambda: [PROPOSAL, ORG]),
     "public.document_drops": ("id = $1 OR org_id = $2", lambda: [DROP, ORG]),
@@ -211,28 +275,6 @@ PREDICATES = {
 TOUCHED = tuple(PREDICATES)
 COUNTED = TOUCHED + ("public.users", "public.organizations", "public.roles", "public.user_roles",
                      "public.role_permissions", "portfolio.note_gold_values")
-
-
-async def delete_order(conn) -> list[str]:
-    rows = await conn.fetch(
-        """SELECT n1.nspname || '.' || c1.relname AS child, n2.nspname || '.' || c2.relname AS parent
-             FROM pg_constraint k
-             JOIN pg_class c1 ON c1.oid = k.conrelid JOIN pg_namespace n1 ON n1.oid = c1.relnamespace
-             JOIN pg_class c2 ON c2.oid = k.confrelid JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
-            WHERE k.contype::text = 'f'""")
-    tables = set(TOUCHED)
-    children: dict[str, set[str]] = {t: set() for t in tables}
-    for r in rows:
-        if r["child"] in tables and r["parent"] in tables and r["child"] != r["parent"]:
-            children[r["parent"]].add(r["child"])
-    order, remaining = [], set(tables)
-    while remaining:
-        ready = sorted(t for t in remaining if not (children[t] & remaining))
-        if not ready:
-            raise RuntimeError(f"FK cycle among {sorted(remaining)}")
-        order += ready
-        remaining -= set(ready)
-    return order
 
 
 async def fixture_user_ids(conn) -> list:
@@ -256,25 +298,68 @@ async def fixture_counts(conn) -> dict[str, int]:
     return out
 
 
-async def teardown(conn) -> None:
+OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
+
+
+async def operator_conn():
+    from _db_connect import connect, resolve_dsn
+
+    dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
+    if not dsn:
+        raise RuntimeError(f"no operator DSN for the fixture teardown path: {how}")
+    return await connect(dsn)
+
+
+async def teardown(conn) -> list[str]:
+    """VHK1: the shared scoped cleanup (_verify_cleanup) on the operator DSN — seeded by exactly the old teardown's
+    predicates (PREDICATES, the fixture-named entities, audit / assistant rows of the fixture users, the fixture
+    roles, users and org); the FK closure takes user_roles / role_permissions / notifications."""
     uids = await fixture_user_ids(conn)
-    for t in await delete_order(conn):
-        where, args = PREDICATES[t]
-        await rls_exec(conn, f"DELETE FROM {t} WHERE {where}", *args())
-    await rls_exec(conn, "DELETE FROM entities WHERE display_name LIKE $1 AND org_id = $2", ENTITY_PREFIX + "%", ORG)
-    async with conn.transaction():
-        await _super(conn)
-        await conn.execute("DELETE FROM audit_log WHERE org_id = $1 OR user_id = ANY($2::uuid[])", ORG, uids)
-        await conn.execute("DELETE FROM assistant_activities WHERE org_id = $1 OR user_id = ANY($2::uuid[])", ORG, uids)
-        await conn.execute("DELETE FROM notifications WHERE org_id = $1", ORG)   # org_id NOT NULL per snapshot
-        await conn.execute("DELETE FROM user_roles WHERE user_id = ANY($1::uuid[]) "
-                           "OR role_id IN (SELECT id FROM roles WHERE org_id = $2)", uids, ORG)
-        await conn.execute("DELETE FROM role_permissions WHERE role_id IN "
-                           "(SELECT id FROM roles WHERE org_id = $1 OR id = ANY($2::uuid[]))",
-                           ORG, [ROLE_MEMBER, ROLE_DEALS])
-        await conn.execute("DELETE FROM roles WHERE org_id = $1 OR id = ANY($2::uuid[])", ORG, [ROLE_MEMBER, ROLE_DEALS])
-        await conn.execute("DELETE FROM users WHERE id = ANY($1::uuid[])", uids)
-        await conn.execute("DELETE FROM organizations WHERE id = $1", ORG)
+    plan = {t: (w, a()) for t, (w, a) in PREDICATES.items()}
+    plan["public.entities"] = ("id = ANY($1::uuid[]) OR org_id = $2 OR (display_name LIKE $3 AND org_id = $2)",
+                               [FIXTURE_ENTITIES, ORG, ENTITY_PREFIX + "%"])
+    plan["public.audit_log"] = ("org_id = $1 OR user_id = ANY($2::uuid[])", [ORG, uids])
+    plan["public.assistant_activities"] = ("org_id = $1 OR user_id = ANY($2::uuid[])", [ORG, uids])
+    plan["public.user_roles"] = ("user_id = ANY($1::uuid[]) OR role_id = ANY($2::uuid[])",
+                                 [uids, [ROLE_MEMBER, ROLE_DEALS]])
+    plan["public.roles"] = ("org_id = $1 OR id = ANY($2::uuid[])", [ORG, [ROLE_MEMBER, ROLE_DEALS]])
+    plan["public.users"] = ("id = ANY($1::uuid[]) OR auth0_sub = ANY($2::text[]) OR email LIKE $3",
+                            [FIXTURE_USERS, [_sub(u) for u in FIXTURE_USERS], FIXTURE_EMAIL_LIKE])
+    op = await operator_conn()
+    try:
+        async with op.transaction():       # the old teardown's super-admin GUC, LOCAL, around the cleanup's own tx
+            await _super(op)
+            res = await VC.cleanup(op, orgs=[ORG], users=uids, plan=plan, label="verify_navregroup")
+        return res["log"]
+    finally:
+        await op.close()
+
+
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+    seconds = _time.monotonic() - t0
+    left = sum((await fixture_counts(conn)).values())
+    op = await operator_conn()
+    try:
+        left += await VC.leftover_count(op, orgs=[ORG], users=FIXTURE_USERS)
+    finally:
+        await op.close()
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
 
 
 async def table_counts(conn) -> dict[str, int]:
@@ -552,89 +637,13 @@ def git_show(path: str) -> str | None:
     return out if code == 0 else None
 
 
-GATE_TOKENS = re.compile(r"require_permission|_require_\w+\(|has_permission|can_manage_org_settings|is_super_admin"
-                         r"|require_staff|is_org_admin")
-
-
-# Sampled pages a LATER sprint changed on purpose, with the sprint named. For
-# these the heading-only check reads navregroup's own commit (NAVREGROUP_REF),
-# not the working tree, so this sprint's scope is still proven.
-LATER_SPRINT_PAGE_CHANGES = {
-    "/admin/users": "usermgmt1 (People & Access rebuilt the user management page)",
-    "/spvs": "bugfix1 (SPV-01: the list card renders the one commitment summary)",
-    "/portfolio": "bugfix1 (MKT-01: the status badge shows the lifecycle label)",
-    "/portfolio/commitments": "bugfix1 (PORT-02: the caller's commitments listed above the id lookup)",
-    "/portfolio/positions": "bugfix1 (PORT-01: the empty-holdings explanation)",
-    "/portfolio/securities": "bugfix1 (PORT-01: the empty-holdings explanation)",
-}
-
-# Pages a LATER sprint created where navregroup left a dead (404) link, with the
-# sprint named: BUGFIX1 hid these three from every menu (comingSoon flag) and
-# gave each URL a branded "Coming soon" page instead of the bare 404.
-LATER_SPRINT_NEW_PAGES = {
-    "/community": "bugfix1 (comingSoon page)",
-    "/insurance": "bugfix1 (comingSoon page)",
-    "/portfolio-reporting": "bugfix1 (comingSoon page)",
-}
-
-
 def y_urls_unchanged() -> None:
     section("[Y] Every pre-existing URL keeps its page and its server gate (member, org admin, super admin)")
-    stored = json.loads(BASELINE_JSON.read_text(encoding="utf-8"))
-    sample = sorted(set().union(*(stored["personas"][p]["reachable"]
-                                  for p in ("plain_member", "org_admin_manage_org_settings", "super_admin"))))
-    changed_pages, existence_diff = [], []
-    allowed_heading_edit = re.compile(r'^[+-](import \{ labelFor \} from "@/lib/menuVisibility";|'
-                                      r'\s*<h1 className="text-3xl font-semibold text-navy">.*</h1>)$')
-    for href in sample:
-        if href == "/admin":
-            continue     # rebuilt on purpose as the grouped overview — checked separately below
-        rel = f"apps/web/app{href}/page.js"
-        before = git_show(rel)
-        now_path = REPO / rel
-        if (before is not None) != now_path.exists():
-            if before is None and href in LATER_SPRINT_NEW_PAGES:
-                print(f"[INFO] {href}: page added by sprint {LATER_SPRINT_NEW_PAGES[href]}")
-                continue
-            existence_diff.append(href)
-            continue
-        if before is None:
-            continue
-        later = LATER_SPRINT_PAGE_CHANGES.get(href)
-        if later:
-            print(f"[INFO] {href}: intended change by sprint {later} — checked at {NAVREGROUP_REF}")
-            code, diff, _ = run_cmd(["git", "diff", BASELINE_REF, NAVREGROUP_REF, "--", rel], REPO, timeout=60)
-        else:
-            code, diff, _ = run_cmd(["git", "diff", BASELINE_REF, "--", rel], REPO, timeout=60)
-        lines = [ln for ln in diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
-        if any(not allowed_heading_edit.match(ln) for ln in lines):
-            changed_pages.append(href)
-    check(len(sample) > 0 and not existence_diff,
-          "every sampled URL resolves to a page now iff it did at the baseline (3 dead links stay 404)",
-          f"{len(sample)} URLs; differ {existence_diff}")
-    check(not changed_pages, "no sampled page changed beyond its heading reading the definition's label",
-          f"{changed_pages}")
+    self_urls_unchanged(check, find)
     admin = (REPO / "apps/web/app/admin/page.js").read_text(encoding="utf-8")
     check('const session = await getHostSession();' in admin
           and 'if (!session) redirect("/auth/login?returnTo=/admin");' in admin,
           "/admin (rebuilt as the grouped overview) keeps the same session gate and URL")
-    drift = []
-    for router in sorted((API_DIR / "routers").glob("*.py")):
-        rel = f"apps/api/routers/{router.name}"
-        before = git_show(rel)
-        if before is None:
-            continue
-        # Pinned to navregroup's own commit, not the working tree: later sprints
-        # (AUTHZ1 added gates to nine routers) legitimately move HEAD, and a
-        # check of THIS sprint's scope must not read their changes as drift.
-        c2, own, _ = run_cmd(["git", "show", f"{NAVREGROUP_REF}:{rel}"], REPO, timeout=60)
-        own = own if c2 == 0 else router.read_text(encoding="utf-8")
-        b, a = len(GATE_TOKENS.findall(before)), len(GATE_TOKENS.findall(own))
-        expected = 1 if router.name == "vdr.py" else 0
-        if a - b != expected:
-            drift.append(f"{router.name}: {b}->{a}")
-    check(not drift, "router gate calls unchanged except the one added on GET /vdr-proposals",
-          f"{drift}")
 
 
 async def y_docsearch(conn, url) -> None:
@@ -839,6 +848,8 @@ async def main_async() -> int:
         return 1
     os.environ["DATABASE_URL"] = url
     conn = await asyncpg.connect(url, statement_cache_size=0)
+    if "--cleanup-only" in sys.argv:
+        return await cleanup_only(conn)
     pre_counts = gold_before = docs_before = None
 
     async def run(name, fn, *a):

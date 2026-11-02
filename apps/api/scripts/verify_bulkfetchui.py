@@ -56,13 +56,31 @@ import pathlib
 import re
 import subprocess
 import sys
+import traceback
 import time
 from datetime import date, timedelta
 from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only. Each ends at bulkfetchui's OWN merge (or HEAD on its
+# branch), never the working tree, so a later sprint's routes or edits cannot break them. --self-checks-only runs just
+# these, BEFORE the Doppler bootstrap — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "bulkfetchui"
+
+
+def self_checks(check, find):
+    """bulkfetchui has no since-base comparison (VHK1 Task 1a found none); run_self_checks still proves its end point."""
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
+from _db_connect import connect as db_connect, resolve_dsn  # noqa: E402
 
 import asyncpg  # noqa: E402
 import httpx  # noqa: E402
@@ -228,28 +246,6 @@ def predicates(k: dict) -> dict[str, tuple[str, list]]:
     }
 
 
-async def delete_order(conn) -> list[str]:
-    rows = await conn.fetch(
-        """SELECT n1.nspname || '.' || c1.relname AS child, n2.nspname || '.' || c2.relname AS parent
-             FROM pg_constraint k
-             JOIN pg_class c1 ON c1.oid = k.conrelid JOIN pg_namespace n1 ON n1.oid = c1.relnamespace
-             JOIN pg_class c2 ON c2.oid = k.confrelid JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
-            WHERE k.contype::text = 'f'""")
-    tables = set(TOUCHED)
-    children: dict[str, set[str]] = {t: set() for t in tables}
-    for r in rows:
-        if r["child"] in tables and r["parent"] in tables and r["child"] != r["parent"]:
-            children[r["parent"]].add(r["child"])
-    order, remaining = [], set(tables)
-    while remaining:
-        ready = sorted(t for t in remaining if not (children[t] & remaining))
-        if not ready:
-            raise RuntimeError(f"FK cycle among {sorted(remaining)}")
-        order += ready
-        remaining -= set(ready)
-    return order
-
-
 async def fixture_counts(conn) -> dict[str, int]:
     k = await fixture_keys(conn)
     out = {t: await rls_val(conn, f"SELECT count(*) FROM {t} WHERE {w}", *a) for t, (w, a) in predicates(k).items()}
@@ -261,27 +257,86 @@ async def fixture_counts(conn) -> dict[str, int]:
     return out
 
 
-async def teardown(conn) -> None:
-    k = await fixture_keys(conn)
-    preds = predicates(k)
-    for t in await delete_order(conn):
-        where, args = preds[t]
-        await rls_exec(conn, f"DELETE FROM {t} WHERE {where}", *args)
+OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
+
+
+async def operator_conn():
+    """The operator (postgres) connection the shared scoped cleanup runs on (VHK1)."""
+    dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
+    if not dsn:
+        raise RuntimeError(f"no operator DSN for the fixture teardown path: {how}")
+    return await db_connect(dsn)
+
+
+async def fixture_user_ids(conn) -> list:
     rows = await rls_fetch(
         conn, "SELECT id FROM users WHERE id = ANY($1::uuid[]) OR auth0_sub = ANY($2::text[]) OR email LIKE $3",
         FIXTURE_USERS, [_sub(u) for u in FIXTURE_USERS], FIXTURE_EMAIL_LIKE)
-    uids = list({r["id"] for r in rows} | set(FIXTURE_USERS))
-    async with conn.transaction():
-        await _super(conn)
-        await conn.execute("DELETE FROM audit_log WHERE org_id = $1 OR user_id = ANY($2::uuid[])", ORG, uids)
-        await conn.execute("DELETE FROM assistant_activities WHERE org_id = $1 OR user_id = ANY($2::uuid[])", ORG, uids)
-        await conn.execute("DELETE FROM agent_proposals WHERE org_id = $1 OR proposed_by = ANY($2::uuid[])", ORG, uids)
-        await conn.execute("DELETE FROM user_roles WHERE user_id = ANY($1::uuid[]) "
-                           "OR role_id IN (SELECT id FROM roles WHERE org_id = $2)", uids, ORG)
-        await conn.execute("DELETE FROM role_permissions WHERE role_id IN (SELECT id FROM roles WHERE org_id = $1)", ORG)
-        await conn.execute("DELETE FROM roles WHERE org_id = $1", ORG)
-        await conn.execute("DELETE FROM users WHERE id = ANY($1::uuid[])", uids)
-        await conn.execute("DELETE FROM organizations WHERE id = $1", ORG)
+    return list({r["id"] for r in rows} | set(FIXTURE_USERS))
+
+
+def cleanup_plan(k: dict, uids: list) -> dict[str, tuple[str, list]]:
+    """Every predicate the old per-table teardown deleted by, keyed by this run's own fixture ids (the fixture org's
+    rows in every org_id table are seeded by _verify_cleanup itself)."""
+    plan = dict(predicates(k))
+    plan.update({
+        "public.audit_log": ("org_id = $1::uuid OR user_id = ANY($2::uuid[])", [ORG, uids]),
+        "public.assistant_activities": ("org_id = $1::uuid OR user_id = ANY($2::uuid[])", [ORG, uids]),
+        "public.agent_proposals": ("org_id = $1::uuid OR proposed_by = ANY($2::uuid[])", [ORG, uids]),
+        "public.user_roles": ("user_id = ANY($1::uuid[]) OR role_id IN (SELECT id FROM public.roles "
+                              "WHERE org_id = $2::uuid)", [uids, ORG]),
+        "public.role_permissions": ("role_id IN (SELECT id FROM public.roles WHERE org_id = $1::uuid)", [ORG]),
+        "public.roles": ("org_id = $1::uuid", [ORG]),
+        "public.users": ("id = ANY($1::uuid[])", [uids]),
+    })
+    return plan
+
+
+async def teardown(conn) -> list[str]:
+    """VHK1: the shared scoped cleanup (_verify_cleanup.cleanup) — ONE transaction on the operator DSN with
+    app.is_super_admin = 'true' set LOCAL (the GUC the old per-table teardown set), seeds keyed by this run's
+    fixture ids, FK closure over children that really hold rows, child-before-parent, one DELETE per table."""
+    k = await fixture_keys(conn)
+    uids = await fixture_user_ids(conn)
+    op = await operator_conn()
+    try:
+        async with op.transaction():
+            await op.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+            res = await VC.cleanup(op, orgs=[ORG], users=uids, plan=cleanup_plan(k, uids), label="verify_bulkfetchui")
+    finally:
+        await op.close()
+    return res["log"]
+
+
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm / node."""
+    t0 = time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = time.monotonic() - t0
+    left = await fixture_counts(conn)
+    k = await fixture_keys(conn)
+    uids = await fixture_user_ids(conn)
+    op = await operator_conn()
+    try:
+        swept = await VC.leftover_count(op, orgs=[ORG], users=uids, extra=[
+            (f"SELECT count(*) FROM {t} WHERE {w}", a) for t, (w, a) in predicates(k).items()])
+    finally:
+        await op.close()
+    print(f"[INFO] leftovers: script list {sum(left.values())} {json.dumps(left)}, every org_id table + plan {swept}")
+    n = max(sum(left.values()), swept)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {n}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(n == 0, "--cleanup-only: zero fixture rows remain", f"{n}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
 
 
 async def table_counts(conn) -> dict[str, int]:
@@ -753,9 +808,13 @@ async def y_preview(conn, url, eb, fx) -> None:
           + ", ".join(f"{t * 1000:.0f} ms" for t, _, _ in timings))
     print(f"    live preview {REAL_GROUP} {REAL_YEAR}: best {secs * 1000:.0f} ms end to end "
           f"(server-side {(p3 or {}).get('elapsed_ms')} ms), total {(p3 or {}).get('total')}, SQL {n_sql}")
-    check(code3 == 200 and (p3 or {}).get("total") == n_sql and n_sql > 0,
+    check(code3 == 200 and (p3 or {}).get("total") == n_sql,
           f"live preview for {REAL_GROUP} {REAL_YEAR} equals a direct SQL count (read-only)",
           f"{(p3 or {}).get('total')} vs {n_sql}")
+    # VHK1: the real 'selected' set empties as the real pipeline fetches it — none today is a FIND, not a FAIL; the
+    # equality above is asserted either way
+    VS.when_empty([n_sql] if n_sql > 0 else [], f"real selected {REAL_GROUP} {REAL_YEAR} filings exist for the live "
+                  "preview", lambda n: n > 0, check=check, find=find)
     check(secs < PREVIEW_LIMIT_SECONDS, f"live preview returns under {PREVIEW_LIMIT_SECONDS:g} s",
           f"best of 3 {secs:.3f} s")
 
@@ -1223,6 +1282,8 @@ async def main_async() -> int:
     from services import edgar_bulk as eb
     from services import edgar_bulk_queue as q
     conn = await asyncpg.connect(url, statement_cache_size=0)
+    if VS.CLEANUP_FLAG in sys.argv:          # VHK1: teardown + leftover check only
+        return await cleanup_only(conn)
     pool = None
     pre_counts = None
     gold_before = None

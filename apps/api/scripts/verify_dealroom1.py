@@ -55,6 +55,42 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route / changed-line), stdlib + git only, each ending at dealroom1's OWN merge (or HEAD
+# on its branch), never the working tree, so a later sprint's routes cannot break them (rep1 … rep9, dealroom2/3 all
+# added routes past BEFORE_REF, and "the new routes are exactly the /deal-room surface" failed on every one).
+# --self-checks-only runs just these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
+import _verify_cleanup as VC  # noqa: E402  (stdlib only)
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "dealroom1"
+BEFORE_REF = "b07c839"   # dealroom1-work base — the pre-sprint code
+
+
+def self_routes(check, find):
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    gb = {k: r.get("after") for k, r in R.before.items()}
+    ge = {k: r.get("after") for k, r in R.end.items()}
+    changed = [k for k in gb if k in ge and gb[k] != ge[k]]
+    check(len(gb) > 0 and not changed, "no existing route's gate changed (AUTHZ1_ROUTES.json, dealroom1's own diff)",
+          f"{R.where()}; {changed[:5]}")
+    new = R.new
+    check(len(new) > 0 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
+          "the new routes are exactly the /deal-room surface", f"{R.where()}; {len(new)}")
+    ungated = [k for k in new if ge[k] == "none beyond auth"
+               and (k[0] != ("GET",) or k[1] not in ("/api/v1/deal-room/me", "/api/v1/deal-room/templates",
+                                                      "/api/v1/deal-room/my-access"))]
+    check(not ungated, "every new route names a gate (the three self-scoped GETs are require_active)", f"{ungated}")
+    drifted = VS.still_gated(R)
+    check(bool(new) and not drifted, "dealroom1's routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -63,7 +99,6 @@ import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
 
-BEFORE_REF = "b07c839"   # dealroom1-work base — the pre-sprint code
 TAG = "dealroom1verify"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 
@@ -186,43 +221,6 @@ async def gold_fingerprint(conn) -> tuple[int, str]:
     return int(row["n"]), row["s"]
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete, FKs read from pg_constraint (recursively)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
 async def operator_conn():
     dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
     if not dsn:
@@ -247,27 +245,35 @@ async def purge_fixture_signatures() -> int:
         await op.close()
 
 
-async def teardown(conn) -> list[str]:
+async def teardown(_conn=None) -> list[str]:
+    """VHK1: the privileged signature purge first (unchanged — test chain only, its own GUC), then the shared scoped
+    cleanup (_verify_cleanup) on the operator DSN, inside one transaction with the old teardown's super-admin GUC and
+    its real-deal guard. The cleanup does NOT get the signature GUC: a non-test signature under a fixture org still
+    fails loudly, as before."""
     log: list[str] = []
     n = await purge_fixture_signatures()
     if n:
         log.append(f"deal_signatures (privileged path): {n}")
     users = list(USERS)
-    async with conn.transaction():
-        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
-        real_refs = await conn.fetchval(
-            "SELECT count(*) FROM deals WHERE NOT (org_id = ANY($1::uuid[])) AND (created_by = ANY($2::uuid[]) "
-            "OR submitted_by = ANY($2::uuid[]) OR reviewed_by = ANY($2::uuid[]))", FIXTURE_ORGS, users)
-        if real_refs:
-            raise RuntimeError(f"{real_refs} real deal(s) reference a fixture user — refusing to delete it")
-        await conn.execute("DELETE FROM audit_log WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
-                           FIXTURE_ORGS, users)
-        await conn.execute("DELETE FROM config WHERE org_id = ANY($1::uuid[])", FIXTURE_ORGS)
-        await conn.execute("DELETE FROM member_todos WHERE user_id = ANY($1::uuid[]) OR org_id = ANY($2::uuid[])",
-                           users, FIXTURE_ORGS)
-        await delete_tree(conn, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                          [users, f"%{TAG}%"], log=log)
-        await delete_tree(conn, "public.organizations", "id = ANY($1::uuid[])", [FIXTURE_ORGS], log=log)
+    orgs = FIXTURE_ORGS
+    op = await operator_conn()
+    try:
+        async with op.transaction():
+            await op.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+            real_refs = await op.fetchval(
+                "SELECT count(*) FROM deals WHERE NOT (org_id = ANY($1::uuid[])) AND (created_by = ANY($2::uuid[]) "
+                "OR submitted_by = ANY($2::uuid[]) OR reviewed_by = ANY($2::uuid[]))", orgs, users)
+            if real_refs:
+                raise RuntimeError(f"{real_refs} real deal(s) reference a fixture user — refusing to delete it")
+            plan = {
+                "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
+                "public.member_todos": ("user_id = ANY($1::uuid[]) OR org_id = ANY($2::uuid[])", [users, orgs]),
+            }
+            res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
+                                   label="verify_dealroom1")
+        log += res["log"]
+    finally:
+        await op.close()
     return log
 
 
@@ -284,7 +290,35 @@ async def leftovers(conn) -> int:
         ("SELECT count(*) FROM audit_log WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
     ):
         n += int(await platform(conn, sql, *args, fetch="fetchval"))
+    op = await operator_conn()      # VHK1: plus every org_id table under the fixture orgs
+    try:
+        n += await VC.leftover_count(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%")
+    finally:
+        await op.close()
     return n
+
+
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
 
 
 # ═══ Seed ═══════════════════════════════════════════════════════════════════
@@ -490,12 +524,14 @@ async def y_migration(conn):
                 AND p.revoked_at IS NULL) AS cap
         FROM deals d WHERE d.valid_to IS NULL AND d.system_to IS NULL AND NOT (d.org_id = ANY($1::uuid[]))
           AND d.created_at <= (SELECT max(granted_at) FROM entity_publishers WHERE is_house)""", FIXTURE_ORGS)
-    check(len(live) > 0 and {r["id"] for r in live} <= rep_ids,
-          "every pre-sprint live deal is in the migration report", f"{len(live)} live, {len(rep_ids)} reported")
-    bad = [str(r["id"]) for r in live if not (r["publisher_entity_id"] and r["nine"] == 9 and r["st"] == 1
-                                               and r["cap"] == 1)]
-    check(len(live) > 0 and not bad, "each has a publisher (with the capability), nine standard folders, one "
-                                      "settings row — counts equal SQL", f"bad {bad}")
+    # VHK1: no pre-sprint live deal left (real data retired / cleaned up) is a [FIND], not a FAIL; every one that
+    # exists must still satisfy both rules
+    VS.when_empty(live, "every pre-sprint live deal is in the migration report", lambda r: r["id"] in rep_ids,
+                  check=check, find=find, detail=lambda bad: f"{[str(r['id']) for r in bad]}, {len(rep_ids)} reported")
+    VS.when_empty(live, "each has a publisher (with the capability), nine standard folders, one settings row — "
+                        "counts equal SQL",
+                  lambda r: bool(r["publisher_entity_id"] and r["nine"] == 9 and r["st"] == 1 and r["cap"] == 1),
+                  check=check, find=find, detail=lambda bad: f"bad {[str(r['id']) for r in bad]}")
     by_deal = {UUID(d["deal_id"]): d for d in report["deals"]}
     mism = [str(r["id"]) for r in live if str(r["publisher_entity_id"]) != by_deal[r["id"]]["publisher_entity_id"]]
     check(not mism, "the publisher on each deal is the one the report names", f"{mism}")
@@ -1014,23 +1050,7 @@ async def y_grid(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route has a gate and is in AUTHZ1_ROUTES.json (--check CURRENT); no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    check(len(gb) > 0 and not changed, "no existing route's gate changed (AUTHZ1_ROUTES.json before vs now)",
-          f"{changed[:5]}")
-    new = [k for k in gn if k not in gb]
-    check(len(new) > 0 and all(k[1].startswith("/api/v1/deal-room/") for k in new),
-          "the new routes are exactly the /deal-room surface", f"{len(new)}")
-    ungated = [k for k in new if gn[k]["after"] == "none beyond auth"
-               and (k[0] != ("GET",) or k[1] not in ("/api/v1/deal-room/me", "/api/v1/deal-room/templates",
-                                                      "/api/v1/deal-room/my-access"))]
-    check(not ungated, "every new route names a gate (the three self-scoped GETs are require_active)", f"{ungated}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=300)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1083,6 +1103,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if "--cleanup-only" in sys.argv:
+        return await cleanup_only(conn)
     pre = gold = None
     try:
         await run("pre-teardown", teardown, conn)

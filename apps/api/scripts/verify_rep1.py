@@ -29,7 +29,13 @@ TEARDOWN (start and end): the operator DSN (role postgres) with
 replica.teardown = 'fixture' in its transaction — the only path past the
 immutability triggers — FK child-before-parent, then every counted table is
 re-read for its exact pre-test count and the real security-master rows are
-compared by count + checksum.
+compared by count + checksum. Mechanics (VHK1): ``_verify_cleanup.cleanup`` —
+seeds keyed by this run's fixture ids, a materialised FK closure, one DELETE per
+table; it prints one '[INFO] cleanup ...' line with its time.
+
+--cleanup-only: only the teardown and the leftover check ('CLEANUP_SECONDS',
+'LEFTOVERS', 'TOTAL'). --self-checks-only: only the git / route self-checks
+(no Doppler, no database, no network).
 
 With VERIFY_NESTED=1 the regression section prints one '[SKIP] nested run'.
 """
@@ -58,6 +64,46 @@ REPO = API_DIR.parents[1]
 WEB_DIR = REPO / "apps" / "web"
 sys.path.insert(0, str(HERE))
 
+# ── VHK1: self-checks (git / route), stdlib + git only. Each ends at rep1's OWN merge (or HEAD on its branch), never
+# the working tree, so a later sprint's routes cannot break them. --self-checks-only runs just these, BEFORE
+# hydrate() — no Doppler, no database, no network, no npm.
+import _verify_self as VS  # noqa: E402
+
+SPRINT_KEY = "rep1"
+BEFORE_REF = "fb4205d"   # rep1-work base — main after the bulkfetchui3 merge
+
+
+def self_routes(check, find):
+    # rep1's own routes: BEFORE_REF → rep1's own merge. (VHK1: the "rep1's OWN routes by path" scoping — needed only
+    # while later sprints' routes showed up against the working tree — is now an exact-set assertion.)
+    R = VS.own_routes(BEFORE_REF, SPRINT_KEY)
+    changed = [k for k in R.before if k in R.end and R.before[k].get("after") != R.end[k].get("after")]
+    check(len(R.before) > 0 and not changed and not R.removed, "rep1 changed or removed no existing route's gate",
+          f"{R.where()}; {changed[:5]} {R.removed[:5]}")
+    reg = "/api/v1/replication/registry"
+    rep1 = {(("GET",), reg): "view_replication", (("GET",), "/api/v1/replication/lookup"): "manage_replication",
+            (("POST",), reg): "manage_replication", (("GET",), f"{reg}/{{entry_id}}"): "view_replication",
+            (("POST",), f"{reg}/{{entry_id}}/holdings/refresh"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/extract"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/corrections"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/changes"): "manage_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/{{version_id}}/approve"): "approve_replication",
+            (("POST",), f"{reg}/{{entry_id}}/terms/{{version_id}}/reject"): "approve_replication"}
+    check(len(rep1) == 10 and set(R.new) == set(rep1) and all(k[1].startswith("/api/v1/replication/") for k in rep1),
+          "10 new routes, all under /replication", f"{R.where()}; {sorted(set(R.new) ^ set(rep1))[:5]}")
+    bad = [(k[1], R.end.get(k, {}).get("after")) for k in rep1 if not (k in R.end and rep1[k] in str(R.end[k].get("after")))]
+    check(not bad, "every new route names its replication gate", f"{bad[:3]}")
+    drifted = VS.still_gated(R)
+    check(bool(R.new) and not drifted, "rep1's 10 routes all still exist today with the same gate", f"{drifted[:5]}")
+
+
+def self_checks(check, find):
+    self_routes(check, find)
+
+
+if __name__ == "__main__" and VS.requested():
+    sys.exit(VS.run_self_checks(self_checks, SPRINT_KEY, __file__))
+
 from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
@@ -67,8 +113,8 @@ os.environ.pop("REPLICA_HOLDINGS_AUTO_REFRESH", None)
 import httpx  # noqa: E402
 
 import _authz1_common as C  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402
 
-BEFORE_REF = "fb4205d"   # rep1-work base — main after the bulkfetchui3 merge
 TAG = "rep1verify"
 PREFIX = "ZZRP"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
@@ -192,43 +238,6 @@ async def real_fingerprints(conn) -> dict:
     }
 
 
-_FK_CACHE: dict = {}
-
-
-async def fk_children(conn, table: str):
-    if table not in _FK_CACHE:
-        _FK_CACHE[table] = await conn.fetch("""
-            SELECT cn.nspname || '.' || cc.relname AS child,
-                   array_agg(ca.attname ORDER BY k.ord) AS child_cols,
-                   array_agg(pa.attname ORDER BY k.ord) AS parent_cols
-            FROM pg_constraint c
-            JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(ck, pk, ord) ON true
-            JOIN pg_class cc ON cc.oid = c.conrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-            JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.ck
-            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.pk
-            WHERE c.contype::text = 'f' AND c.confrelid = $1::regclass
-            GROUP BY c.oid, cn.nspname, cc.relname""", table)
-    return _FK_CACHE[table]
-
-
-async def delete_tree(conn, table: str, where: str, params: list, depth=0, log=None, path=()):
-    """Child-before-parent delete, FKs read from pg_constraint (recursively)."""
-    if depth > 14:
-        raise RuntimeError(f"FK recursion too deep at {table} via {' > '.join(path)}")
-    path = path + (table,)
-    for fk in await fk_children(conn, table):
-        if fk["child"] in path:
-            continue
-        cc = ", ".join(f'"{c}"' for c in fk["child_cols"])
-        pc = ", ".join(f'"{c}"' for c in fk["parent_cols"])
-        await delete_tree(conn, fk["child"], f"({cc}) IN (SELECT {pc} FROM {table} WHERE {where})",
-                          params, depth + 1, log, path)
-    status = await conn.execute(f"DELETE FROM {table} WHERE {where}", *params)
-    n = int(status.rsplit(" ", 1)[-1])
-    if n and log is not None:
-        log.append(f"{table}: {n}")
-
-
 async def operator_conn():
     dsn, how = await resolve_dsn(OPERATOR_DSN_VAR)
     if not dsn:
@@ -244,70 +253,38 @@ async def fixture_security_ids(conn) -> list:
 
 
 async def teardown(_conn=None) -> list[str]:
-    """Operator connection, replica.teardown = 'fixture', FK child-before-parent."""
-    log: list[str] = []
+    """Operator connection, replica.teardown = 'fixture' (LOCAL, one transaction), every seed keyed by this run's
+    fixture ids — ``_verify_cleanup.cleanup`` (VHK1: replaces the recursive delete_tree walk; same rows)."""
     op = await operator_conn()
     try:
-        async with op.transaction():
-            await op.execute("SELECT set_config('replica.teardown', 'fixture', true)")
-            secs = await fixture_security_ids(op)
-            users = list(USERS)
-            steps = (
-                ("member_todos", "DELETE FROM member_todos WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
-                 [FIXTURE_ORGS, users]),
-                ("domain_event_deliveries", "DELETE FROM domain_event_deliveries WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("domain_events", "DELETE FROM domain_events WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("audit_log", "DELETE FROM audit_log WHERE org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])",
-                 [FIXTURE_ORGS, users]),
-                # rep3: terms approvals are human tasks — the engine's rows in the fixture orgs
-                ("workflow_run_steps", "DELETE FROM workflow_run_steps WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("workflow_runs", "DELETE FROM workflow_runs WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("workflow_steps", "DELETE FROM workflow_steps WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("workflow_versions", "DELETE FROM workflow_versions WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
-                ("workflow_definitions", "DELETE FROM workflow_definitions WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("replica_terms_actions", "DELETE FROM portfolio.replica_terms_actions WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("document_field_corrections", "DELETE FROM document_field_corrections WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("replica_terms_versions", "DELETE FROM portfolio.replica_terms_versions WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("replica_securities", "DELETE FROM portfolio.replica_securities WHERE org_id = ANY($1::uuid[])",
-                 [FIXTURE_ORGS]),
-                ("replica_term_readings", "DELETE FROM portfolio.replica_term_readings "
-                                          "WHERE fund_global_security_id = ANY($1::uuid[])", [secs]),
-                ("ai_ensemble_configs", "DELETE FROM ai_ensemble_configs WHERE notes = $1", [TAG]),
-                ("replica_source_documents", "DELETE FROM portfolio.replica_source_documents "
-                                             "WHERE fund_global_security_id = ANY($1::uuid[])", [secs]),
-                ("replica_holdings_rows", "DELETE FROM portfolio.replica_holdings_rows WHERE snapshot_id IN (SELECT id "
-                                          "FROM portfolio.replica_holdings_snapshots WHERE fund_global_security_id = "
-                                          "ANY($1::uuid[]))", [secs]),
-                ("replica_holdings_snapshots", "DELETE FROM portfolio.replica_holdings_snapshots "
-                                               "WHERE fund_global_security_id = ANY($1::uuid[])", [secs]),
-                ("replica_refresh_events (finish)", "DELETE FROM portfolio.replica_refresh_events WHERE run_date >= "
-                                                    "'2099-01-01' AND phase = 'finish'", []),
-                ("replica_refresh_events (claim)", "DELETE FROM portfolio.replica_refresh_events WHERE run_date >= "
-                                                   "'2099-01-01'", []),
-                ("securities_global_relationships", "DELETE FROM portfolio.securities_global_relationships WHERE "
-                 "from_global_security_id = ANY($1::uuid[]) OR to_global_security_id = ANY($1::uuid[]) "
-                 "OR proposed_global_security_id = ANY($1::uuid[])", [secs]),
-                ("securities_global_identifiers", "DELETE FROM portfolio.securities_global_identifiers "
-                                                  "WHERE global_security_id = ANY($1::uuid[])", [secs]),
-                ("securities_global", "DELETE FROM portfolio.securities_global WHERE id = ANY($1::uuid[])", [secs]),
-            )
-            for label, sql, args in steps:
-                status = await op.execute(sql, *args)
-                n = int(status.rsplit(" ", 1)[-1])
-                if n:
-                    log.append(f"{label}: {n}")
-            await delete_tree(op, "public.users", "id = ANY($1::uuid[]) OR auth0_sub LIKE $2",
-                              [users, f"%{TAG}%"], log=log)
-            await delete_tree(op, "public.roles", "org_id = ANY($1::uuid[])", [FIXTURE_ORGS], log=log)
-            await delete_tree(op, "public.organizations", "id = ANY($1::uuid[])", [FIXTURE_ORGS], log=log)
+        secs = await fixture_security_ids(op)
+        snaps = [r["id"] for r in await op.fetch(
+            "SELECT id FROM portfolio.replica_holdings_snapshots WHERE fund_global_security_id = ANY($1::uuid[])", secs)]
+        users = list(USERS)
+        orgs = FIXTURE_ORGS
+        by_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
+        plan = {
+            "public.member_todos": by_user,
+            "public.audit_log": by_user,
+            # the global (org_id NULL) rows hang off the fixture funds — listed so the closure never has to reach them
+            "portfolio.replica_term_readings": ("fund_global_security_id = ANY($1::uuid[])", [secs]),
+            "public.ai_ensemble_configs": ("notes = $1", [TAG]),
+            "portfolio.replica_source_documents": ("fund_global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.replica_holdings_rows": ("snapshot_id = ANY($1::uuid[])", [snaps]),
+            "portfolio.replica_holdings_snapshots": ("id = ANY($1::uuid[])", [snaps]),
+            # the 2099 daily-refresh claims and their finish rows (self-FK claim_id: one DELETE takes both)
+            "portfolio.replica_refresh_events": ("run_date >= '2099-01-01'", []),
+            "portfolio.securities_global_relationships": (
+                "from_global_security_id = ANY($1::uuid[]) OR to_global_security_id = ANY($1::uuid[]) "
+                "OR proposed_global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
+            "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
+        }
+        res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
+                               gucs=("replica.teardown",), cycle_order=(), label="verify_rep1")
+        return res["log"]
     finally:
         await op.close()
-    return log
 
 
 async def leftovers(conn) -> int:
@@ -1292,34 +1269,7 @@ async def y_refresh(conn):
 
 async def y_routes(conn):
     section("[Y] Every new route gated and in AUTHZ1_ROUTES.json; --check CURRENT; no existing gate changed")
-    before = json.loads(git_show(BEFORE_REF, "docs/AUTHZ1_ROUTES.json") or "{}")
-    now = json.loads((REPO / "docs" / "AUTHZ1_ROUTES.json").read_text(encoding="utf-8"))
-
-    def gates(d):
-        return {(tuple(r.get("methods") or []), r["path"]): r for r in d.get("routes", [])}
-
-    gb, gn = gates(before), gates(now)
-    changed = [k for k in gb if k in gn and gb[k].get("after") != gn[k].get("after")]
-    removed = [k for k in gb if k not in gn]
-    check(len(gb) > 0 and not changed and not removed, "no existing route's gate changed or vanished",
-          f"{changed[:5]} {removed[:5]}")
-    # rep1's OWN routes by path — later sprints (rep2, rep3 …) add routes past BEFORE_REF, so a count of
-    # everything new since the baseline stops describing rep1 the moment they merge
-    reg = "/api/v1/replication/registry"
-    rep1 = {(("GET",), reg): "view_replication", (("GET",), "/api/v1/replication/lookup"): "manage_replication",
-            (("POST",), reg): "manage_replication", (("GET",), f"{reg}/{{entry_id}}"): "view_replication",
-            (("POST",), f"{reg}/{{entry_id}}/holdings/refresh"): "manage_replication",
-            (("POST",), f"{reg}/{{entry_id}}/terms/extract"): "manage_replication",
-            (("POST",), f"{reg}/{{entry_id}}/terms/corrections"): "manage_replication",
-            (("POST",), f"{reg}/{{entry_id}}/terms/changes"): "manage_replication",
-            (("POST",), f"{reg}/{{entry_id}}/terms/{{version_id}}/approve"): "approve_replication",
-            (("POST",), f"{reg}/{{entry_id}}/terms/{{version_id}}/reject"): "approve_replication"}
-    missing = [k for k in rep1 if k not in gn or k in gb]
-    check(len(rep1) == 10 and not missing and all(k[1].startswith("/api/v1/replication/") for k in rep1),
-          "10 new routes, all under /replication", f"{missing[:5]}")
-    check(all(k in gn and rep1[k] in str(gn[k].get("after")) for k in rep1),
-          "every new route names its replication gate",
-          f"{[(k[1], gn.get(k, {}).get('after')) for k in rep1 if not (k in gn and rep1[k] in str(gn[k].get('after')))][:3]}")
+    self_routes(check, find)
     code, out, err = run_cmd([sys.executable, str(HERE / "authz1_routes.py"), "--check"], REPO, timeout=600)
     check(code == 0 and "CURRENT" in out, "authz1_routes.py --check: CURRENT", (out + err)[-200:])
 
@@ -1371,6 +1321,40 @@ async def guard_prefix(conn) -> bool:
     return check(n == 0, f"the reserved test prefix {PREFIX} matches no real security-master row", f"{n}")
 
 
+async def cleanup_only(conn) -> int:
+    """``--cleanup-only``: the same teardown as a real run, then the leftover check — no seeding, no checks, no
+    regression, no npm."""
+    if not await guard_prefix(conn):        # the same reserved-prefix guard a real run makes before its teardown
+        await conn.close()
+        print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+        return 1
+    import time as _time
+
+    t0 = _time.monotonic()
+    log: list[str] = []
+    try:
+        log = await teardown(conn)
+    except Exception as exc:  # noqa: BLE001
+        check(False, "cleanup raised", f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+    seconds = _time.monotonic() - t0
+    left = await leftovers(conn)
+    op = await operator_conn()
+    try:
+        swept = await VC.leftover_count(op, orgs=FIXTURE_ORGS, users=list(USERS), user_sub_like=f"%{TAG}%")
+    finally:
+        await op.close()
+    print(f"[INFO] leftovers: script list {left}, every org_id table {swept}")
+    left = max(left, swept)
+    print(f"CLEANUP_SECONDS: {seconds:.1f}")
+    print(f"LEFTOVERS: {left}")
+    print(f"[INFO] cleanup removed: {log}")
+    await conn.close()
+    check(left == 0, "--cleanup-only: zero fixture rows remain", f"{left}")
+    print(f"\nTOTAL: {_n_pass} PASS, {_n_fail} FAIL")
+    return 0 if _n_fail == 0 else 1
+
+
 async def main_async() -> int:
     dsn, how = await admin_dsn()
     if not dsn:
@@ -1381,6 +1365,8 @@ async def main_async() -> int:
     print(f"[INFO] database via {how}")
     conn = await connect(dsn)
     install_stubs()
+    if VS.CLEANUP_FLAG in sys.argv:
+        return await cleanup_only(conn)
     pre = real = None
     try:
         if not await guard_prefix(conn):
