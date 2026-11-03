@@ -946,16 +946,28 @@ def regression_harness_existing() -> None:
         return
     sa = d["superAdminNoProfiles"]
     check(len(d["gates"]) == len(d["allHrefs"]) > 0, "every menu gate enumerated")
-    check(all(h in sa["visible"] for h in d["allHrefs"]), "a super_admin with ZERO Profiles sees every item")
-    check(len(d["superAdminNoRoles"]["visible"]) == len(d["allHrefs"])
-          and len(d["superAdminGrantedAdmin"]["visible"]) == len(d["allHrefs"]),
-          "super_admin with no roles / granted admin sees every item")
+    # VHK2 FIX 1: BUGFIX1's comingSoon items are hidden from EVERY menu on purpose (no page exists), so "every item"
+    # means every item that is not comingSoon — and the comingSoon ones must be hidden from Super Admin too.
+    soon = d.get("comingSoon")
+    shown = [h for h in d["allHrefs"] if h not in (soon or [])]
+    sas = {"no_profiles": sa["visible"], "no_roles": d["superAdminNoRoles"]["visible"],
+           "granted_admin": d["superAdminGrantedAdmin"]["visible"]}
+    check(isinstance(soon, list) and all(h in sa["visible"] for h in shown),
+          "a super_admin with ZERO Profiles sees every item (every item that is not comingSoon)",
+          f"missing {[h for h in shown if h not in sa['visible']]}")
+    check(all(sorted(v) == sorted(shown) for k, v in sas.items() if k != "no_profiles")
+          and all(h in sas["no_roles"] and h in sas["granted_admin"] for h in shown),
+          "super_admin with no roles / granted admin sees every item (every item that is not comingSoon)",
+          f"{ {k: sorted(set(shown) - set(v)) for k, v in sas.items()} }")
+    check(not any(h in v for v in sas.values() for h in (soon or [])),
+          "BUGFIX1's comingSoon items are hidden from every Super Admin menu", f"comingSoon {soon}")
     check(all(h in sa["visibleAdmin"] for h in d["adminIndexHrefs"]), "/admin index agrees for super admin")
     check(d["gateOmittingSuperAdmin"] is True, "a role gate omitting super_admin still admits platform staff")
     for reg in d["regressions"]:
         check(reg["unchanged"] is True or reg.get("authz1_expected") is True,
               f"REGRESSION — {reg['name']}'s menu matches the legacy rule (or differs by exactly AUTHZ1's "
-              "default-allow removal)", f"lost {reg.get('lost')}")
+              "default-allow removal)", f"lost {reg.get('lost')}; expected (derived) {reg.get('expected_loss')}; "
+              f"AUTHZ1's hand list inside it: {reg.get('hand_floor')}")
 
 
 def regression_bulkfetchui2() -> None:

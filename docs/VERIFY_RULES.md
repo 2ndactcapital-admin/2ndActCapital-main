@@ -20,8 +20,9 @@ that went wrong on a run past midnight.
    did compares its `BEFORE_REF` with **the sprint's own end point**, never
    the working tree. That covers its new routes, the existing gates it left
    alone, the lines it changed in another file, and the files it kept
-   byte-identical. The end point is the sprint's merge commit on main, or
-   `HEAD` while the sprint is still on its branch. Use
+   byte-identical. The end point is the sprint's own branch tip (its merge
+   commit's **second parent**; see rule 9), or `HEAD` while the sprint is
+   still on its branch. Use
    `apps/api/scripts/_verify_self.py`:
    - `VS.sprint_end_ref(key)`: the end point, and its description for the
      check's detail.
@@ -95,6 +96,19 @@ sample. Each feature still worked; the snapshot did not.
    immutability GUC to `_verify_cleanup.cleanup(gucs=...)` — the way the
    sprint that made it append-only tears down its own rows — scoped by the
    script's fixture ids.
+
+9. **A sprint's own change set = its merge's second parent against the merge
+   base** — `git diff <merge>^1...<merge>^2` (three-dot), i.e.
+   `merge-base(<merge>^1, <merge>^2)..<merge>^2`. Never the merge commit
+   itself, and never first-parent history: when another sprint merged into
+   main while this one was on its branch, the merge commit's tree carries that
+   sprint's work too. (VHK2 FIX 1, 2026-11-03: aibudget1 merged before vhk2,
+   so "265f15c → merge vhk2" listed aibudget1's `routers/ai_ensembles.py`,
+   `AUTHZ1_ROUTES.json` and `menuVisibility.mjs` as VHK2's — three false FAILs.)
+   `VS.sprint_end_ref` returns the second parent; `VS.sprint_base_ref` the
+   merge base; `VS.own_base_ok` requires `BEFORE_REF` to lie between them, and
+   `own_routes` / `own_lines` / `own_diff` raise when it does not. Never take
+   "main at the merge" as `<merge>^1` — use `VS.sprint_base_ref`.
 
 `apps/api/scripts/verify_vhk2.py` scans the regression set for these
 patterns; each remaining hit is a listed invariant in `docs/VHK2_FINDINGS.md`.

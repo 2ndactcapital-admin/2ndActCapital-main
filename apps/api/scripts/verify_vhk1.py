@@ -258,7 +258,11 @@ def y_static(names: list[str]) -> None:
 def y_helper() -> None:
     section("[Y] The helper's rules, in-process (no database)")
     end, how = VS.sprint_end_ref("rep6")
-    check(end == "ead5a7f" and "own merge" in how, "a merged sprint ends at its own merge (rep6 → ead5a7f)", how)
+    # VHK2 FIX 1: a merged sprint ends at its own BRANCH TIP — its merge's second parent — never the merge commit
+    # (whose tree also carries sprints merged into main meanwhile).
+    tip = VS.git("rev-parse", "--short", "ead5a7f^2")[1].strip()
+    check(end == tip == "f8f5741" and VS.sprint_merge("rep6") == "ead5a7f" and "own merge ead5a7f" in how,
+          "a merged sprint ends at its own branch tip, its merge's second parent (rep6 → merge ead5a7f → f8f5741)", how)
     end, how = VS.sprint_end_ref("zz-not-a-sprint-vhk1")
     check(end == "HEAD" and "not merged" in how, "a sprint with no merge on main ends at HEAD (its branch)", how)
     bad = [k for k, sha in VS.SPRINT_MERGES.items() if VS.git("rev-parse", "--verify", f"{sha}^2")[0] != 0]

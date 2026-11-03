@@ -141,8 +141,22 @@ const AUTHZ1_LEGACY_LOSS = {
     "/admin/users", "/admin/vdr-proposals", "/admin/workflows", "/portfolio/transactions"],
 };
 
+// VHK2 FIX 1 — the items the legacy rule showed a role-less account ONLY through
+// its `roles.length === 0` default-allow branch, DERIVED from MENU_ITEMS: the
+// legacy rule over the same fixture minus the legacy rule with that branch off.
+// The hand list above stays a floor (each of its hrefs must be in here); a later
+// sprint's non-strict perm-gated item (MARKETDATA1's security-data tabs) is the
+// same AUTHZ1 default-allow removal and is derived, never frozen.
+function legacyDefaultAllowOnly(me) {
+  if ((me?.roles ?? []).length !== 0) return [];
+  const without = legacyVisible({ ...me, roles: ["__has_a_role__"] });
+  return legacyVisible(me).filter((h) => !without.includes(h));
+}
+
 const result = {
   allHrefs: hrefs(MENU_ITEMS),
+  // BUGFIX1 hides these from EVERY menu on purpose (no page exists yet).
+  comingSoon: [...COMING_SOON],
   adminIndexHrefs: hrefs(MENU_ITEMS.filter((i) => i.adminIndex)),
 
   // Task 1b/1c: enumerate every gate so the report is generated from the real
@@ -191,11 +205,16 @@ const result = {
     const now = hrefs(visibleMenuItems(me)).filter((h) => !strictHrefs.has(h));
     const before = legacyVisible(me).filter((h) => !strictHrefs.has(h) && !COMING_SOON.includes(h));
     const lost = before.filter((h) => !now.includes(h)).sort();
-    const expectedLoss = [...(AUTHZ1_LEGACY_LOSS[name] ?? [])].sort();
+    const handLoss = [...(AUTHZ1_LEGACY_LOSS[name] ?? [])].sort();
+    const expectedLoss = legacyDefaultAllowOnly(me)
+      .filter((h) => !strictHrefs.has(h) && !COMING_SOON.includes(h)).sort();
+    const handFloor = handLoss.every((h) => expectedLoss.includes(h));
     return {
       name, now, before, unchanged: sameSet(now, before), lost, expected_loss: expectedLoss,
-      // unchanged, OR changed by exactly the AUTHZ1 default-allow removal.
-      authz1_expected: sameSet(lost, expectedLoss) && now.every((h) => before.includes(h)),
+      hand_loss: handLoss, hand_floor: handFloor,
+      // unchanged, OR changed by exactly the AUTHZ1 default-allow removal (derived;
+      // AUTHZ1's own hand list must be inside it).
+      authz1_expected: handFloor && sameSet(lost, expectedLoss) && now.every((h) => before.includes(h)),
     };
   }),
 

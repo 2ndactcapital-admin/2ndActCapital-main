@@ -14,10 +14,15 @@ A self-check about what a sprint did (its new routes, the gates it left alone,
 the lines it changed in another script, the files it kept byte-identical)
 compares ``BEFORE_REF`` with **the sprint's own end point**:
 
-* its merge commit on main (``merge <sprint>``) once merged — every merge's
-  first parent is that sprint's own base, so base → merge is exactly that
-  sprint's work (checked in VHK1 Task 1b);
+* its merge's SECOND parent (the sprint branch's own tip) once merged — a sprint's own change set is that tip
+  against the merge base, ``merge-base(<merge>^1, <merge>^2)..<merge>^2``. NEVER the merge commit itself: the
+  merge's tree also carries every sprint merged into main while this one was on its branch (VHK2 FIX 1 —
+  aibudget1 merged first, so "265f15c → merge vhk2" showed aibudget1's router, route record and menu as VHK2's);
 * ``HEAD`` while the sprint is still on its branch.
+
+``BEFORE_REF`` must lie on the sprint's own line — the merge base is its ancestor and it is an ancestor of the tip
+— so ``BEFORE_REF..tip`` holds only the sprint's own commits; ``own_base_ok`` asserts it, and every
+``own_routes`` / ``own_lines`` / ``own_diff`` call raises when it does not hold.
 
 What the sprint added must still exist today with the same gate
 (``still_gated``) — that part reads the working tree on purpose. A later
@@ -95,6 +100,9 @@ SPRINT_MERGES = {
     "marketdata1": "ab9d823",
     "rep9": "afcae0b",
     "rep10": "c6f7077",
+    "vhk1": "bfdfe16",
+    "aibudget1": "bd63420",
+    "vhk2": "9dbfee0",            # merged AFTER aibudget1: its first parent bd63420 is not its base (c6f7077)
 }
 
 #: Sprints that never had a merge commit — committed on main's first-parent line directly. Their end point is the
@@ -133,10 +141,63 @@ def _merge_named(sha: str, key: str) -> tuple[bool, str]:
 
 
 _END_CACHE: dict[str, tuple[str, str]] = {}
+_MERGE_OF: dict[str, str] = {}
+
+
+def _tip_of(sprint_key: str, merge: str, subject: str) -> tuple[str, str]:
+    """(the merge's second parent, how) — the sprint branch's own tip."""
+    code, tip, err = git("rev-parse", "--short", f"{merge}^2")
+    if code != 0:
+        raise RuntimeError(f"{merge} has no second parent: {err.strip()[:120]}")
+    tip = tip.strip()
+    _MERGE_OF[sprint_key] = merge
+    return tip, (f"{sprint_key}'s own branch tip {tip} (second parent of its own merge {merge} on main, "
+                 f"'{subject.strip()[:50]}')")
+
+
+def sprint_merge(sprint_key: str) -> str | None:
+    """The sprint's merge commit on main, or None (landed directly, or not merged yet)."""
+    sprint_end_ref(sprint_key)
+    return _MERGE_OF.get(sprint_key)
+
+
+def sprint_base_ref(sprint_key: str) -> str:
+    """Where the sprint's own line starts: merge-base(<merge>^1, <merge>^2) once merged (main as it stood when the
+    branch last took it — NOT the merge's first parent, which may carry sprints merged meanwhile); the landed
+    commit's parent; merge-base(main, HEAD) while still on its branch."""
+    end, _ = sprint_end_ref(sprint_key)
+    merge = sprint_merge(sprint_key)
+    if merge:
+        code, out, _ = git("merge-base", f"{merge}^1", f"{merge}^2")
+    elif end == "HEAD":
+        code, out, _ = git("merge-base", "main", "HEAD")
+    else:
+        code, out, _ = git("rev-parse", f"{end}^1")
+    if code != 0 or not out.strip():
+        raise RuntimeError(f"cannot resolve {sprint_key}'s base")
+    return git("rev-parse", "--short", out.strip())[1].strip()
+
+
+def own_base_ok(before_ref: str, sprint_key: str) -> tuple[bool, str]:
+    """BEFORE_REF lies on the sprint's own line: the sprint's base is an ancestor of it (or it), and it is an
+    ancestor of the sprint's end. Then ``BEFORE_REF..end`` holds only the sprint's own commits."""
+    end, _ = sprint_end_ref(sprint_key)
+    base = sprint_base_ref(sprint_key)
+    a = git("merge-base", "--is-ancestor", base, before_ref)[0] == 0
+    b = git("merge-base", "--is-ancestor", before_ref, end)[0] == 0
+    return a and b, (f"{sprint_key}: base {base} {'≤' if a else 'NOT an ancestor of'} {before_ref}; "
+                     f"{before_ref} {'≤' if b else 'NOT an ancestor of'} end {end}")
+
+
+def _require_own_base(before_ref: str, sprint_key: str) -> None:
+    ok, why = own_base_ok(before_ref, sprint_key)
+    if not ok:
+        raise RuntimeError(f"{before_ref} → {sprint_key}'s end would include commits that are not its own: {why}")
 
 
 def sprint_end_ref(sprint_key: str) -> tuple[str, str]:
-    """(ref, how) — the sprint's merge commit on main if it exists, else HEAD (still on its branch)."""
+    """(ref, how) — the sprint's own branch tip (its merge's SECOND parent) once merged, the commit itself when it
+    landed on main directly, else HEAD (still on its branch). Never the merge commit: see RULE above."""
     if sprint_key in _END_CACHE:
         return _END_CACHE[sprint_key]
     sha = SPRINT_MERGES.get(sprint_key)
@@ -151,7 +212,7 @@ def sprint_end_ref(sprint_key: str) -> tuple[str, str]:
         ok, subject = _merge_named(sha, sprint_key)
         if not ok:
             raise RuntimeError(f"SPRINT_MERGES[{sprint_key!r}] = {sha} is not a merge on main naming it ({subject})")
-        res = (sha, f"{sprint_key}'s own merge {sha} on main ('{subject[:60]}')")
+        res = _tip_of(sprint_key, sha, subject)
     else:
         code, out, _ = git("log", "--merges", "--reverse", "--format=%h%x00%s", "main")
         hit = None
@@ -161,7 +222,7 @@ def sprint_end_ref(sprint_key: str) -> tuple[str, str]:
                 hit = (h, subject)
                 break
         if hit:
-            res = (hit[0], f"{sprint_key}'s own merge {hit[0]} on main ('{hit[1][:60]}')")
+            res = _tip_of(sprint_key, hit[0], hit[1])
         else:
             head = git("rev-parse", "--short", "HEAD")[1].strip()
             res = ("HEAD", f"{sprint_key} is not merged on main yet — HEAD ({head}, the sprint's own branch)")
@@ -192,7 +253,8 @@ def routes_today() -> dict:
 
 
 class OwnRoutes:
-    """The routes a sprint added, BEFORE_REF -> its own end ref (never the working tree).
+    """The routes a sprint added, BEFORE_REF -> its own end ref (its branch tip; never the merge commit, never the
+    working tree).
 
     before / end / today: {key: record}; new: keys added by the sprint; changed / removed: routes that existed at
     BEFORE_REF whose gate the SPRINT changed or removed (before -> end); end_ref / how: the end point and why."""
@@ -200,6 +262,7 @@ class OwnRoutes:
     def __init__(self, before_ref: str, sprint_key: str):
         self.before_ref = before_ref
         self.end_ref, self.how = sprint_end_ref(sprint_key)
+        _require_own_base(before_ref, sprint_key)
         self.before = routes_at(before_ref)
         self.end = routes_at(self.end_ref)
         self.today = routes_today()
@@ -245,6 +308,7 @@ class OwnLines:
         self.path = path
         self.before_ref = base_ref or before_ref
         self.end_ref, self.how = sprint_end_ref(sprint_key)
+        _require_own_base(self.before_ref, sprint_key)
         self.old = git_show(self.before_ref, path)
         self.new = git_show(self.end_ref, path)
         o = (self.old or "").splitlines()
@@ -269,13 +333,15 @@ def own_lines(path: str, before_ref: str, sprint_key: str, base_ref: str | None 
 
 
 def own_diff(before_ref: str, sprint_key: str, *paths: str, args: tuple = ()) -> tuple[int, str, str]:
-    """``git diff [args] BEFORE_REF <end ref> -- paths`` — the sprint's own diff, never the working tree."""
+    """``git diff [args] BEFORE_REF <end ref> -- paths`` — the sprint's own diff (BEFORE_REF on its own line → its
+    branch tip), never the merge commit, never the working tree."""
     end, _ = sprint_end_ref(sprint_key)
+    _require_own_base(before_ref, sprint_key)
     return git("diff", *args, before_ref, end, "--", *paths)
 
 
 def own_text(sprint_key: str, path: str) -> str | None:
-    """A file as the sprint left it (its end ref)."""
+    """A file as the sprint left it (its end ref — its branch tip once merged)."""
     return git_show(sprint_end_ref(sprint_key)[0], path)
 
 

@@ -300,6 +300,39 @@ def self_checks(check, find):
         c, d, _ = VS.own_diff(BEFORE_REF, SPRINT_KEY, doc)
         check(c == 0 and not d.strip(), f"{doc} is byte-identical across VHK2 (no gate or nav visibility changed)",
               d[:300])
+    y_range(rows, check)
+
+
+#: aibudget1 merged into main BEFORE vhk2 (bd63420, vhk2's merge's first parent); these are its files, never VHK2's
+AIBUDGET1_BEFORE_REF = "c6f7077"   # verify_aibudget1.py's BEFORE_REF
+AIBUDGET1_FILES = ("apps/api/routers/ai_ensembles.py", "docs/AUTHZ1_ROUTES.json", "apps/web/lib/menuVisibility.mjs")
+
+
+def y_range(rows, check) -> None:
+    """VHK2 FIX 1: a sprint's own change set is its merge's SECOND parent against the merge base. Reproduce the
+    2026-11-03 failure (the merge commit as the end point lists aibudget1's files as VHK2's), then show the rule."""
+    own = {r[-1] for r in rows}
+    merge = VS.sprint_merge(SPRINT_KEY)
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    ok, why = VS.own_base_ok(BEFORE_REF, SPRINT_KEY)
+    check(ok and end != "HEAD" and merge and end != merge, f"VHK2's end point is its branch tip, not its merge: {how}",
+          f"{why}; end {end}; merge {merge}")
+    if not merge:
+        return
+    c, old_out, _ = VS.git("diff", "--name-only", BEFORE_REF, merge)
+    old_files = set(old_out.splitlines())
+    check(c == 0 and set(AIBUDGET1_FILES) <= old_files,
+          f"reproduced: {BEFORE_REF} → the merge commit {merge} lists aibudget1's {len(AIBUDGET1_FILES)} files as VHK2's",
+          f"{sorted(set(AIBUDGET1_FILES) - old_files)} missing from the old range")
+    check(not (set(AIBUDGET1_FILES) & own), "fixed: VHK2's own range (to its merge's second parent) lists none of "
+          "aibudget1's files", f"{sorted(set(AIBUDGET1_FILES) & own)}")
+    c3, three, _ = VS.git("diff", "--name-only", f"{merge}^1...{merge}^2")
+    check(c3 == 0 and own <= set(three.splitlines()) and not (set(AIBUDGET1_FILES) & set(three.splitlines())),
+          f"VHK2's range is inside `git diff {merge}^1...{merge}^2` (three-dot: merge base → second parent)",
+          f"outside: {sorted(own - set(three.splitlines()))[:5]}")
+    ab_own = {ln for ln in VS.own_diff(AIBUDGET1_BEFORE_REF, "aibudget1", args=("--name-only",))[1].splitlines()}
+    check(set(AIBUDGET1_FILES) <= ab_own, "aibudget1's own range (c6f7077 → its branch tip) does list its three files",
+          f"{sorted(set(AIBUDGET1_FILES) - ab_own)}")
 
 
 if __name__ == "__main__" and VS.requested():
@@ -307,10 +340,18 @@ if __name__ == "__main__" and VS.requested():
 
 
 #: the same query run_regressions.sh's DEFAULT_WORKER_CHECK runs, in a subprocess of this interpreter
+#: VHK2 FIX 1: the DSN is hydrated from Doppler over HTTPS and probed (``_db_connect.admin_dsn``), the way every other
+#: verify gets it — never ``os.environ["DATABASE_URL"]`` as inherited, which run_sprint's Step 3 sources from the stale
+#: apps/api/.env (2026-11-03: InvalidPasswordError, so verify_bulkfetchui never ran).
 WORKER_CHECK = """
-import asyncio, os, asyncpg
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+from _db_connect import admin_dsn, connect
 async def main():
-    c = await asyncpg.connect(os.environ["DATABASE_URL"], statement_cache_size=0)
+    dsn, how = await admin_dsn()
+    if not dsn:
+        raise SystemExit("no working DATABASE_URL from Doppler: " + how)
+    c = await connect(dsn)
     try:
         async with c.transaction():
             await c.execute("SET LOCAL app.is_super_admin = 'true'")
@@ -324,7 +365,7 @@ asyncio.run(main())
 
 
 def live_laptop_workers() -> tuple[int | None, str]:
-    code, out, err = run_cmd([sys.executable, "-c", WORKER_CHECK], REPO, 120)
+    code, out, err = run_cmd([sys.executable, "-c", WORKER_CHECK, str(HERE)], REPO, 120)
     last = (out.strip().splitlines() or [""])[-1].strip()
     return (int(last) if code == 0 and last.isdigit() else None), tail(out + err, 300)
 
