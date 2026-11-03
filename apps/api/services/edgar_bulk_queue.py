@@ -165,22 +165,74 @@ def _parse_date(v, name: str) -> date:
         raise BulkQueueError(f"{name} must be a YYYY-MM-DD date, got {v!r}") from None
 
 
+# The newest finished-or-running bulk run with a measured rate (measured_rate).
+MEASURED_RATE_SQL = """SELECT id, progress FROM portfolio.edgar_pipeline_runs
+                WHERE run_kind = 'bulk_fetch' AND (progress ? 'rate_per_second')
+                  AND (progress->>'done')::int >= 100
+                ORDER BY COALESCE(heartbeat_at, finished_at, requested_at) DESC LIMIT 1"""
+
+# PREVIEWPERF — everything the preview reads except the scope counts, in ONE
+# statement. Measured 2026-11-03: the preview's SQL is ~25 ms in total, but it
+# ran 28 statements (7 platform_scope blocks: savepoint, set_config, prepare +
+# execute, release) at 23–86 ms per round trip from the laptop to Supabase —
+# 0.65–2.4 s of latency. Each sub-select embeds the SAME SQL text the standalone
+# function runs (eb.SOURCES_SQL / CATALOG_* / LAST_INDEXED_SQL / STORED_BYTES_SQL,
+# MEASURED_RATE_SQL), so the two can never drift. $1 = the source name; the
+# catalog uses that source's include statuses exactly as institution_catalog does.
+PREVIEW_SNAPSHOT_SQL = f"""
+SELECT (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.name) FROM ({eb.SOURCES_SQL}) s) AS sources,
+       (SELECT jsonb_agg(to_jsonb(c) ORDER BY {eb.CATALOG_ORDER})
+          FROM (SELECT {eb.CATALOG_COLUMNS} FROM {eb.CATALOG_FROM.format(
+              statuses="(SELECT filer_include_status FROM portfolio.edgar_sources "
+                       "WHERE is_active AND name = $1)::text[]")}) c) AS catalog,
+       ({eb.LAST_INDEXED_SQL}) AS last_indexed,
+       ({eb.STORED_BYTES_SQL}) AS stored_bytes,
+       (SELECT to_jsonb(m) FROM ({MEASURED_RATE_SQL}) m) AS measured
+"""
+
+
+def _json_value(v):
+    return json.loads(v) if isinstance(v, str) else v
+
+
+async def preview_snapshot(conn, source_name: str) -> dict:
+    """PREVIEW_SNAPSHOT_SQL, decoded. The caller holds the platform_scope."""
+    r = await conn.fetchrow(PREVIEW_SNAPSHOT_SQL, source_name)
+    return {
+        "sources": [eb._source_from_row(x) for x in (_json_value(r["sources"]) or [])],
+        "catalog_rows": _json_value(r["catalog"]) or [],
+        "last_indexed": r["last_indexed"],
+        "stored_bytes": int(r["stored_bytes"] or 0),
+        "measured": _json_value(r["measured"]),
+    }
+
+
 async def validate_params(conn, raw: dict) -> tuple[dict, eb.Scope]:
     """Validate the screen's choices and normalise them to the params a worker
     runs. Raises BulkQueueError (422) — or 409 with the last indexed date when
-    To is past the index ("Refresh the index first")."""
+    To is past the index ("Refresh the index first"). One read (the preview
+    snapshot), then :func:`_validate`."""
+    async with platform_scope(conn):
+        snap = await preview_snapshot(conn, (raw or {}).get("source") or eb.DEFAULT_SOURCE)
+    return _validate(raw, snap)
+
+
+def _validate(raw: dict, snap: dict) -> tuple[dict, eb.Scope]:
+    """validate_params' rules against a snapshot already read. Pure — the
+    preview and the queue run the same checks in the same order."""
     raw = dict(raw or {})
-    source = await eb.load_source(conn, raw.get("source") or eb.DEFAULT_SOURCE)
+    source = eb.pick_source(snap["sources"], raw.get("source") or eb.DEFAULT_SOURCE)
     banks = raw.get("banks") or []
     if isinstance(banks, str):
         banks = eb.parse_bank_names(banks)
     if not banks:
         raise BulkQueueError("pick at least one institution")
     try:
-        insts = await eb.resolve_institutions(conn, source, [str(b) for b in banks])
+        insts = eb.pick_institutions(eb.catalog_from_rows(source, snap["catalog_rows"]), source,
+                                     [str(b) for b in banks])
     except eb.BulkUsageError as exc:
         raise BulkQueueError(str(exc)) from exc
-    last = await eb.last_indexed_date(conn)
+    last = snap["last_indexed"]
     d_from = _parse_date(raw.get("from"), "From")
     d_to = _parse_date(raw.get("to"), "To") if raw.get("to") else last
     if last is None or d_to > last:
@@ -243,11 +295,11 @@ def run_options_from_params(params: dict, run_id, **overrides) -> eb.RunOptions:
 async def measured_rate(conn) -> dict | None:
     """The newest finished-or-running bulk run's own measured filings/second."""
     async with platform_scope(conn):
-        r = await conn.fetchrow(
-            """SELECT id, progress FROM portfolio.edgar_pipeline_runs
-                WHERE run_kind = 'bulk_fetch' AND (progress ? 'rate_per_second')
-                  AND (progress->>'done')::int >= 100
-                ORDER BY COALESCE(heartbeat_at, finished_at, requested_at) DESC LIMIT 1""")
+        r = await conn.fetchrow(MEASURED_RATE_SQL)
+    return _measured(r)
+
+
+def _measured(r) -> dict | None:
     if not r:
         return None
     p = _as_dict(r["progress"])
@@ -255,12 +307,22 @@ async def measured_rate(conn) -> dict | None:
 
 
 async def preview(conn, raw: dict) -> dict:
-    """The dry run (edgar_bulk.plan_scope) for the screen. WRITES NOTHING."""
+    """The dry run (edgar_bulk.plan_scope's numbers) for the screen. WRITES NOTHING.
+
+    PREVIEWPERF: TWO statements inside ONE platform_scope — the snapshot
+    (sources, catalog, last indexed date, stored bytes, measured rate) and the
+    scope counts for every institution at once — then validate_params' own
+    rules (_validate) and plan_scope's own arithmetic (eb.plan_from_counts) in
+    Python. Same answers as validate_params + plan_scope + measured_rate +
+    last_indexed_date, 5 round trips instead of 28."""
     t0 = time.perf_counter()
-    params, scope = await validate_params(conn, raw)
+    async with platform_scope(conn):
+        snap = await preview_snapshot(conn, (raw or {}).get("source") or eb.DEFAULT_SOURCE)
+        params, scope = _validate(raw, snap)
+        counts = await eb.count_scope(conn, scope)
     peek_effective = params["peek"] and not wants_preliminaries(params)
-    plan = await eb.plan_scope(conn, scope, rate=params["max_rps"], concurrency=params["concurrency"],
-                               peek=peek_effective,
+    plan = eb.plan_from_counts(counts, rate=params["max_rps"], concurrency=params["concurrency"],
+                               peek=peek_effective, stored_bytes_now=snap["stored_bytes"],
                                prelim_share=0.0 if wants_preliminaries(params) else eb.PRELIMINARY_SHARE)
     counts = plan["counts"]
     years = sorted({y for c in counts.values() for y in c["years"]})
@@ -274,14 +336,14 @@ async def preview(conn, raw: dict) -> dict:
                         "count": c["filers"].get(f.cik, 0)} for f in inst.filers],
         })
     est = dict(plan["estimate"])
-    m = await measured_rate(conn)
+    m = _measured(snap["measured"])
     if m and m.get("filings_per_second"):
         est["measured_filings_per_second"] = m["filings_per_second"]
         est["eta_seconds_at_measured_rate"] = round(plan["total"] / m["filings_per_second"])
     return {
         "params": params, "institutions": institutions, "years": [str(y) for y in years],
         "total": plan["total"], "estimate": est, "peek_effective": peek_effective,
-        "last_indexed_date": str(await eb.last_indexed_date(conn)),
+        "last_indexed_date": str(snap["last_indexed"]),
         "elapsed_ms": round((time.perf_counter() - t0) * 1000),
     }
 

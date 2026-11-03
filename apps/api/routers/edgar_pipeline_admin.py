@@ -51,6 +51,7 @@ from services import edgar_bulk_queue as bulkq
 from services import edgar_cohorts as cohorts
 from services import edgar_inventory as inventory
 from services import edgar_pipeline, edgar_pipeline_admin as admin
+from services.authz import principal_of
 from services.database import get_pool
 from services.rbac import is_super_admin, load_principal
 from services.users import ensure_user
@@ -61,6 +62,17 @@ PERMISSION = "super_admin"
 
 
 async def _require_super_admin(request: Request) -> str:
+    # PREVIEWPERF: the middleware has already loaded the request's DB Principal
+    # (AUTHZ1) — read it instead of a second pool transaction + users read (5
+    # round trips, ~130–430 ms from the laptop). Same row, same rule:
+    # Principal.is_super_admin is rbac.is_super_admin of the admitted users row,
+    # which is what rbac.load_principal + is_super_admin computed here before.
+    # No cached Principal (a path the middleware skipped) → the original DB path.
+    principal = principal_of(request)
+    if principal is not None:
+        if not principal.is_super_admin:
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        return principal.user_id
     pool = await get_pool()
     async with pool.acquire() as conn:
         actor_id = await ensure_user(conn, request)

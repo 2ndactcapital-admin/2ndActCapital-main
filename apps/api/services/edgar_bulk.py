@@ -157,20 +157,41 @@ def _source_from_row(r) -> Source:
     )
 
 
+# PREVIEWPERF: the read SQL of the sources, the catalog, the last indexed date and
+# the stored bytes lives in these constants so that the one-statement preview
+# snapshot (edgar_bulk_queue.preview_snapshot) embeds the SAME text the
+# standalone functions run — never a second copy that can drift.
+SOURCES_SQL = "SELECT * FROM portfolio.edgar_sources WHERE is_active"
+CATALOG_COLUMNS = "filer_cik, issuer_group, filer_name, filer_role, credit_entity"
+CATALOG_FROM = "portfolio.structured_note_issuers WHERE include_status = ANY({statuses})"
+CATALOG_ORDER = "issuer_group, filer_cik"
+LAST_INDEXED_SQL = "SELECT max(filing_date) FROM portfolio.edgar_index_filings"
+STORED_BYTES_SQL = """SELECT COALESCE(sum(COALESCE(compressed_byte_size, byte_size, 0)
+                               + COALESCE(text_compressed_byte_size, 0)), 0)
+                 FROM portfolio.reference_filings"""
+
+
 async def load_sources(conn) -> list[Source]:
     async with platform_scope(conn):
-        rows = await conn.fetch(
-            "SELECT * FROM portfolio.edgar_sources WHERE is_active ORDER BY name")
+        rows = await conn.fetch(f"{SOURCES_SQL} ORDER BY name")
     return [_source_from_row(r) for r in rows]
 
 
-async def load_source(conn, name: str) -> Source:
-    sources = {s.name: s for s in await load_sources(conn)}
-    if name not in sources:
-        raise BulkUsageError(f"unknown source {name!r}; active sources: {sorted(sources) or 'none'}")
-    src = sources[name]
+def pick_source(sources: list[Source], name: str) -> Source:
+    """``name`` among the active sources, or BulkUsageError listing them; fails
+    loud on an unknown classifier. Pure — shared by load_source and the preview
+    snapshot."""
+    by_name = {s.name: s for s in sources}
+    if name not in by_name:
+        raise BulkUsageError(f"unknown source {name!r}; active sources: {sorted(by_name) or 'none'}")
+    src = by_name[name]
     src.classify("")   # fail loud now on an unknown classifier, not per filing
     return src
+
+
+async def load_source(conn, name: str) -> Source:
+    return pick_source(await load_sources(conn), name)
+
 
 
 # ═══ Institutions (issuer groups) -> filer entities ═════════════════════════
@@ -199,11 +220,15 @@ async def institution_catalog(conn, source: Source) -> dict[str, Institution]:
         return {source.name: Institution(source.name, [Filer(c, c) for c in source.filer_ciks])}
     async with platform_scope(conn):
         rows = await conn.fetch(
-            """SELECT filer_cik, issuer_group, filer_name, filer_role, credit_entity
-                 FROM portfolio.structured_note_issuers
-                WHERE include_status = ANY($1::text[])
-                ORDER BY issuer_group, filer_cik""",
+            f"SELECT {CATALOG_COLUMNS} FROM {CATALOG_FROM.format(statuses='$1::text[]')} ORDER BY {CATALOG_ORDER}",
             list(source.filer_include_status))
+    return catalog_from_rows(source, rows)
+
+
+def catalog_from_rows(source: Source, rows) -> dict[str, Institution]:
+    """Catalog rows (CATALOG_COLUMNS, in CATALOG_ORDER) -> institutions. Pure."""
+    if source.filer_source == "explicit":
+        return {source.name: Institution(source.name, [Filer(c, c) for c in source.filer_ciks])}
     out: dict[str, Institution] = {}
     for r in rows:
         out.setdefault(r["issuer_group"], Institution(r["issuer_group"], [])).filers.append(
@@ -218,7 +243,11 @@ def parse_bank_names(raw: str | None) -> list[str]:
 async def resolve_institutions(conn, source: Source, names: list[str]) -> list[Institution]:
     """``--banks`` names (case-insensitive) -> institutions, in the order given.
     An unknown name is an error that lists every valid one."""
-    catalog = await institution_catalog(conn, source)
+    return pick_institutions(await institution_catalog(conn, source), source, names)
+
+
+def pick_institutions(catalog: dict[str, Institution], source: Source, names: list[str]) -> list[Institution]:
+    """``names`` resolved against a loaded catalog (the rules above). Pure."""
     by_fold = {k.casefold(): v for k, v in catalog.items()}
     if not names:
         raise BulkUsageError("--banks is required; valid names: " + ", ".join(sorted(catalog)))
@@ -280,7 +309,7 @@ def _scope_args(scope: Scope, ciks: list[str]) -> list:
 
 async def last_indexed_date(conn) -> date | None:
     async with platform_scope(conn):
-        return await conn.fetchval("SELECT max(filing_date) FROM portfolio.edgar_index_filings")
+        return await conn.fetchval(LAST_INDEXED_SQL)
 
 
 async def check_dates_indexed(conn, date_to: date) -> date | None:
@@ -297,19 +326,35 @@ async def check_dates_indexed(conn, date_to: date) -> date | None:
 async def scope_counts(conn, scope: Scope) -> dict:
     """{institution: {"filers": {cik: n}, "years": {year: n}, "total": n}} for the
     rows still to do."""
+    async with platform_scope(conn):
+        return await count_scope(conn, scope)
+
+
+async def count_scope(conn, scope: Scope) -> dict:
+    """scope_counts WITHOUT its own platform_scope (the caller holds one).
+
+    PREVIEWPERF: ONE statement for every institution (the union of their CIKs,
+    grouped by CIK and year), split per institution here. It used to be one
+    platform_scope + query per institution — 5 round trips each; the SQL itself
+    is ~20 ms (edgar_index_filings_selected_count_idx), the round trips were the
+    cost. A CIK listed under two institutions counts for both, exactly as the
+    per-institution queries did."""
+    ciks = list(dict.fromkeys(c for inst in scope.institutions for c in inst.ciks))
+    rows = await conn.fetch(
+        f"""SELECT f.primary_issuer_cik AS cik, extract(year FROM f.filing_date)::int AS y,
+                   count(*)::int AS n
+              FROM portfolio.edgar_index_filings f
+             WHERE {_SCOPE_WHERE}
+             GROUP BY 1, 2""",
+        *_scope_args(scope, ciks))
+    by_cik: dict[str, list] = defaultdict(list)
+    for r in rows:
+        by_cik[r["cik"]].append(r)
     out = {}
     for inst in scope.institutions:
-        async with platform_scope(conn):
-            rows = await conn.fetch(
-                f"""SELECT f.primary_issuer_cik AS cik, extract(year FROM f.filing_date)::int AS y,
-                           count(*)::int AS n
-                      FROM portfolio.edgar_index_filings f
-                     WHERE {_SCOPE_WHERE}
-                     GROUP BY 1, 2""",
-                *_scope_args(scope, inst.ciks))
         filers = {c: 0 for c in inst.ciks}
         years: dict[int, int] = defaultdict(int)
-        for r in rows:
+        for r in (r for c in dict.fromkeys(inst.ciks) for r in by_cik.get(c, ())):
             filers[r["cik"]] = filers.get(r["cik"], 0) + r["n"]
             years[r["y"]] += r["n"]
         out[inst.name] = {"filers": filers, "years": dict(sorted(years.items())),
@@ -373,10 +418,7 @@ def estimate(n: int, *, rate: float, concurrency: int, peek: bool,
 
 async def stored_bytes(conn) -> int:
     async with platform_scope(conn):
-        return int(await conn.fetchval(
-            """SELECT COALESCE(sum(COALESCE(compressed_byte_size, byte_size, 0)
-                               + COALESCE(text_compressed_byte_size, 0)), 0)
-                 FROM portfolio.reference_filings""") or 0)
+        return int(await conn.fetchval(STORED_BYTES_SQL) or 0)
 
 
 def _fmt_eta(seconds: float) -> str:
@@ -391,12 +433,21 @@ async def plan_scope(conn, scope: Scope, *, rate: float, concurrency: int, peek:
     """The dry run's numbers without the printing: counts per institution
     (per filer entity and per year), the total, and the ETA / storage
     estimate. READ-ONLY. Used by ``dry_run`` (the CLI) and by the API's bulk
-    preview, so the screen and the command line can never disagree."""
+    preview (through :func:`plan_from_counts`, with counts and stored bytes it
+    read in its own single platform_scope), so the screen and the command line
+    can never disagree."""
     counts = await scope_counts(conn, scope)
+    return plan_from_counts(counts, rate=rate, concurrency=concurrency, peek=peek, limit=limit,
+                            prelim_share=prelim_share, stored_bytes_now=await stored_bytes(conn))
+
+
+def plan_from_counts(counts: dict, *, rate: float, concurrency: int, peek: bool, stored_bytes_now: int,
+                     limit: int | None = None, prelim_share: float = PRELIMINARY_SHARE) -> dict:
+    """plan_scope's arithmetic on counts already read. Pure."""
     total = sum(c["total"] for c in counts.values())
     n = min(total, limit) if limit else total
     est = estimate(n, rate=rate, concurrency=concurrency, peek=peek, prelim_share=prelim_share,
-                   stored_bytes_now=await stored_bytes(conn))
+                   stored_bytes_now=stored_bytes_now)
     return {"counts": counts, "total": total, "estimate": est}
 
 
