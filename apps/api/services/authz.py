@@ -108,17 +108,41 @@ def _claim_list(claims: dict, keys) -> list[str]:
     return []
 
 
+# PREVIEWPERF FIX 1 — the Principal in ONE statement (was four: the users row,
+# rbac.fetch_role_names, rbac.fetch_permission_names, and for a Super Admin
+# rbac.fetch_all_permission_names). Same predicates as those helpers: roles and
+# permissions only through roles of the user's OWN org (u.org_id, NOT NULL);
+# the whole catalog only when users.role is the super-admin string ($2). Each
+# round trip costs 40-200 ms from a laptop to the pooler, and this runs on
+# every authenticated request. Not a cache: read fresh, every request.
+# Callers append "FROM users u ..." (and may prepend a CTE / extra columns).
+PRINCIPAL_COLUMNS = """
+    u.id, u.org_id, u.email, u.role, u.status, u.is_active,
+    ARRAY(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+           WHERE ur.user_id = u.id AND r.org_id = u.org_id
+           ORDER BY r.name) AS role_names,
+    ARRAY(SELECT DISTINCT p.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+           JOIN role_permissions rp ON rp.role_id = ur.role_id
+           JOIN permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = u.id AND r.org_id = u.org_id) AS permission_names,
+    CASE WHEN u.role = $2 THEN ARRAY(SELECT name FROM permissions) END AS catalog_names"""
+
+PRINCIPAL_BY_ID_SQL = f"SELECT {PRINCIPAL_COLUMNS} FROM users u WHERE u.id = $1"
+
+
 async def load_principal(conn, user_id, *, claims: dict | None = None,
                          resolved_via: str = "sub") -> Principal | None:
-    """Build the Principal for ``user_id`` from the DB (rbac's queries).
+    """Build the Principal for ``user_id`` from the DB — one statement.
 
     A row that is not admitted gets NO roles, NO permissions, not staff, not
     super — fail closed regardless of what is granted to it.
     """
-    row = await conn.fetchrow(
-        "SELECT id, org_id, email, role, status, is_active FROM users WHERE id = $1",
-        UUID(str(user_id)),
-    )
+    row = await conn.fetchrow(PRINCIPAL_BY_ID_SQL, UUID(str(user_id)), rbac.SUPER_ADMIN_ROLE)
+    return principal_from_row(row, claims=claims, resolved_via=resolved_via)
+
+
+def principal_from_row(row, *, claims: dict | None = None, resolved_via: str = "sub") -> Principal | None:
+    """The Principal for a row carrying PRINCIPAL_COLUMNS (None for no row)."""
     if row is None:
         return None
     org_id = str(row["org_id"])
@@ -130,14 +154,14 @@ async def load_principal(conn, user_id, *, claims: dict | None = None,
     perms: set[str] = set()
     is_super = False
     if admitted:
-        is_super = rbac.is_super_admin(dict(row))
-        roles = await rbac.fetch_role_names(conn, row["id"], org_id)
-        perms = await rbac.fetch_permission_names(conn, row["id"], org_id)
+        is_super = rbac.is_super_admin({"role": row["role"]})
+        roles = list(row["role_names"] or [])
+        perms = set(row["permission_names"] or [])
         if TEST_MODE and claims:
             roles = sorted(set(roles) | set(_claim_list(claims, _TEST_ROLES_CLAIMS)))
             perms |= set(_claim_list(claims, _TEST_PERMISSIONS_CLAIMS))
         if is_super:
-            perms |= await rbac.fetch_all_permission_names(conn)
+            perms |= set(row["catalog_names"] or [])
 
     return Principal(
         user_id=str(row["id"]),
