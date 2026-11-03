@@ -101,7 +101,7 @@ class Decision(_Body):
 
 class QuoteIn(_Body):
     global_security_id: str = Field(min_length=1, max_length=64)
-    kind: Literal["premium", "index_level", "underlying_price", "implied_vol"]
+    kind: Literal["premium", "index_level", "underlying_price", "implied_vol", "note_price", "treasury_yield"]
     value: str = Field(min_length=1, max_length=40)
     source: str = Field(min_length=1, max_length=500)
     as_of: datetime

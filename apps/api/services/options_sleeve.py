@@ -86,7 +86,10 @@ ROLE_SHAPE = {"long_put_atm": ("put", "long"), "short_put_buffer_end": ("put", "
               "short_call_cap": ("call", "short"), "short_call_income": ("call", "short"),
               "long_put_tail": ("put", "long")}
 QUOTE_KIND_LABELS = {"premium": "Option premium (per share of the multiplier)", "index_level": "Index level",
-                     "underlying_price": "Underlying price (stock or fund)", "implied_vol": "Implied volatility"}
+                     "underlying_price": "Underlying price (stock or fund)", "implied_vol": "Implied volatility",
+                     # rep11 — a structured note's price (% of par) and a Treasury yield (% a year, annual compounding)
+                     "note_price": "Note price (% of par)",
+                     "treasury_yield": "Treasury yield (% a year, annual compounding)"}
 STATUS_LABELS = {"draft": "Draft", "approved": "Approved", "rejected": "Rejected", "rolled": "Rolled",
                  "expired": "Expired"}
 CORE_SOURCE_LABELS = {"index_replica": "The underlying basket (an approved index replica)",

@@ -97,6 +97,34 @@ export function Funds({ envelope, onJoin, onOneOff }) {
   );
 }
 
+/** REP11 — each held structured note: its verdict and stated terms (always), "replicable alternative" when the
+ * firm has an approved replica, and the estimate only as the server sends it (withheld for a member without an
+ * approved hypothetical-performance policy). */
+export function HeldNotes({ envelope }) {
+  const x = envelope?.xray;
+  const notes = Array.isArray(x?.notes) ? x.notes : [];
+  if (!notes.length) return <p className="text-text-muted">No structured note with extracted terms is held.</p>;
+  return (
+    <ul className="space-y-2">{notes.map((n, i) => (
+      <li key={i} className="border-t border-[#ece8dd] pt-2">
+        <p><span className="font-semibold">{n.label}</span> ({n.account}) — {n.verdict ? n.verdict.verdict_label : "no verdict yet"}
+          {n.verdict?.is_preliminary ? ` · ${n.verdict.preliminary_text}` : ""}</p>
+        <p className="text-text-muted">{n.terms?.archetype_label} · {n.terms?.basket_label} · cap {n.terms?.cap_pct ?? "—"} · protection {n.terms?.protection_label} {n.terms?.protection_pct ?? ""} · final valuation {n.terms?.final_valuation_date ?? "—"} · issuer {n.terms?.credit_entity ?? "—"}</p>
+        <p className="text-text-muted">Distribution and fees: {n.distribution?.known ? "stated in the filing (see the note)" : n.distribution?.text}</p>
+        {n.replicable_alternative ? <p><a className="text-navy underline" href={n.replicable_alternative.link}>{n.replicable_alternative.label}</a> — {n.replicable_alternative.mapping_label}</p>
+          : <p className="text-text-muted">{n.alternative_text}</p>}
+        {n.estimate ? <p>{noteEstimate(n.estimate)}</p> : null}
+        <a className="text-xs text-navy underline" href={`/portfolio/replication/notes/${n.security_id}`}>The note analysis</a>
+      </li>))}</ul>
+  );
+}
+
+function noteEstimate(est) {
+  if (!est || typeof est !== "object") return null;
+  if (est.withheld === true) return `Estimate withheld — ${est.text || "staff use only"}`;
+  return est.text || null;
+}
+
 export default function XrayView({ initialEnvelope }) {
   const [env, setEnv] = useState(initialEnvelope);
   const [msg, setMsg] = useState(null);
@@ -155,6 +183,7 @@ export default function XrayView({ initialEnvelope }) {
         {rov.length ? <ul className="mt-1">{rov.map((o) => <li key={o.model_id}>With {o.name} (followed): {o.shared} shared, overlap {pct(o.overlap_weight)}</li>)}</ul> : null}
       </div>
       <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Replicable funds</h2><div className="mt-2"><Funds envelope={env} onJoin={join} onOneOff={oneOff} /></div></div>
+      <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Structured notes</h2><div className="mt-2"><HeldNotes envelope={env} /></div></div>
       <div className={`${card} p-6`}>
         <h2 className="text-lg font-semibold text-navy">Holdings</h2>
         <table className="mt-2 w-full">

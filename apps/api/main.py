@@ -48,6 +48,7 @@ from routers.replication_options import router as replication_options_router
 from routers.security_data import router as security_data_router
 from routers.blocks import router as blocks_router
 from routers.replication_rep10 import router as replication_rep10_router
+from routers.replication_notes import router as replication_notes_router
 from routers.tax_gifts import router as tax_gifts_router
 from routers.execution import router as execution_router
 from routers.account_models import router as account_models_router
@@ -619,6 +620,7 @@ app.include_router(security_data_router, prefix="/api/v1")
 app.include_router(execution_router, prefix="/api/v1")
 app.include_router(blocks_router, prefix="/api/v1")    # rep9 — block trading
 app.include_router(replication_rep10_router, prefix="/api/v1")    # rep10 — tilts, completion, backtests
+app.include_router(replication_notes_router, prefix="/api/v1")    # rep11 — structured notes
 app.include_router(tax_gifts_router, prefix="/api/v1")    # rep10 — charitable lot gifting
 app.include_router(account_models_router, prefix="/api/v1")
 app.include_router(tax_router, prefix="/api/v1")

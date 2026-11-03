@@ -217,6 +217,16 @@ async def main() -> int:
                     print(f"[scheduler] rep10 ({org}): {e}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] rep10 reminders failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # REP11 — the note-replicability verdicts (platform; idempotent — a new row only when a note's live terms
+        # changed). Its own step: a problem here never stops another.
+        try:
+            from services.note_replication import run_verdicts as note_verdicts
+
+            nv = await note_verdicts(pool)
+            if nv["computed"] or nv["closed"]:
+                print(f"[scheduler] note verdicts: {nv['computed']} computed, {nv['closed']} closed")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] note verdicts failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # AIBUDGET1 — the daily document-reading runs, inside each model's daily budget. Its own step, last.
         try:
             daily = await daily_tick(pool)

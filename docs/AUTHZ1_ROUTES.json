@@ -1,5 +1,5 @@
 {
- "app_route_count": 772,
+ "app_route_count": 782,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12732,6 +12732,226 @@
    "name": "policy_reject",
    "note": "",
    "path": "/api/v1/replication/hypothetical-policy/{policy_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_notes",
+   "name": "list_notes",
+   "note": "",
+   "path": "/api/v1/replication/notes",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "run_verdicts",
+   "note": "",
+   "path": "/api/v1/replication/notes/verdicts/run",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_notes",
+   "name": "get_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/replicas/{replica_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_notes",
+   "name": "get_note",
+   "note": "",
+   "path": "/api/v1/replication/notes/{note_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "build_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/{note_id}/replicas",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "price_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/replicas/{replica_id}/price",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "submit_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/replicas/{replica_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "archive_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/replicas/{replica_id}/archive",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "approve_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/replicas/{replica_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_notes",
+   "name": "reject_replica",
+   "note": "",
+   "path": "/api/v1/replication/notes/replicas/{replica_id}/reject",
    "public": false,
    "write": true
   },

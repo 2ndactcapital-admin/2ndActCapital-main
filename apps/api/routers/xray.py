@@ -164,7 +164,22 @@ async def household_xray(request: Request, household_id: UUID):
         _raise(exc)
     perms = _permissions(principal)
     _join_actions(x, perms)
+    await _note_visibility(pool, principal, org_id, x)
     return {**_env(principal, xray=x, runs=runs), "actions": ["run"] if perms["can_write"] else []}
+
+
+async def _note_visibility(pool, principal, org_id, x: dict) -> None:
+    """rep11 — the held-note marker: verdict and stated terms always; replica-cost / embedded-fee figures only for
+    staff (Super Admin, a staff role, an org admin), or for a member under an approved hypothetical-performance
+    policy whose audience is staff_and_members (rep10)."""
+    from services import hypothetical_policy as HP
+    from services import note_replication as NR
+
+    staff = bool(principal.is_super_admin or principal.is_staff or ORG_ADMIN in principal.permissions)
+    async with pool.acquire() as conn:
+        gate = HP.gate(await HP.current(conn, org_id))
+    x["notes"] = NR.member_filter(x.get("notes") or [], staff=staff, gate=gate)
+    x["notes_gate"] = gate
 
 
 @router.get("/xray/runs/{run_id}")
