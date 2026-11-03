@@ -9,8 +9,11 @@ import asyncio
 from collections import Counter
 from dataclasses import dataclass, field
 
+from services import ai_budget
 from services.note_extraction import documents, store
-from services.note_extraction.cascade import EnsembleSlots, NoteOutcome, run_note, run_static_sources
+from services.note_extraction.cascade import (
+    TASK_KEY, EnsembleSlots, NoteOutcome, run_note, run_static_sources,
+)
 from services.note_extraction.readers import ReaderConfig, build_messages
 from services.note_extraction.schema import FieldSpec
 from services.note_extraction.spend import (
@@ -69,21 +72,45 @@ class RunSummary:
     statuses: Counter = field(default_factory=Counter)
     spent_usd: float = 0.0
     outcomes: list[NoteOutcome] = field(default_factory=list)
+    failed_ids: list[str] = field(default_factory=list)      # aibudget1: notes that could not be loaded
+    stop_exc: BaseException | None = None                    # aibudget1: the SpendCapReached / BudgetReached
+    sliced: bool = False                                     # aibudget1: stopped by stop_when, queue not finished
 
 
 async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: EnsembleSlots, *,
                     catalog: dict, spend_cap_usd: float, run_kind: str, config: dict,
                     participant_rows: list[dict], created_by=None, downloader=None,
                     keep_outcomes: bool = False, progress=None,
-                    issuer_groups: dict[str, str] | None = None) -> RunSummary:
+                    issuer_groups: dict[str, str] | None = None, stop_when=None) -> RunSummary:
     """Sequential over notes (the two readers inside a note run concurrently).
     Stops CLEANLY when the next call would cross the cap: the note in flight is
     not staged; every finished note is.
 
     A BULK run: every model it will call must have a proxy price or a manual
     price (spend.priced_catalog_for_bulk) — refused with UnpricedModelError
-    before the run row exists otherwise — and the cap then uses that price."""
+    before the run row exists otherwise — and the cap then uses that price.
+
+    aibudget1: every call runs inside the ensemble's daily-budget scope
+    (services.ai_budget — reused when the daily run already opened it): a
+    BudgetReached stops the run exactly like the spending cap. ``stop_when``
+    (a no-argument callable) is checked between notes — the daily run's time
+    slice; the run then ends 'completed' with ``summary.sliced``."""
     catalog = await priced_catalog_for_bulk(conn, catalog, bulk_deployments(slots))
+    ensemble = None
+    if slots.ensemble_config_id:
+        row = await conn.fetchrow("SELECT * FROM ai_ensemble_configs WHERE id = $1::uuid", str(slots.ensemble_config_id))
+        ensemble = dict(row) if row else None
+    task_key = (ensemble or {}).get("task_key") or TASK_KEY
+    async with ai_budget.job_scope(task_key, ensemble, catalog=catalog):
+        return await _run_notes(conn, filing_ids, specs, slots, catalog=catalog, spend_cap_usd=spend_cap_usd,
+                                run_kind=run_kind, config=config, participant_rows=participant_rows,
+                                created_by=created_by, downloader=downloader, keep_outcomes=keep_outcomes,
+                                progress=progress, issuer_groups=issuer_groups, stop_when=stop_when)
+
+
+async def _run_notes(conn, filing_ids, specs, slots, *, catalog, spend_cap_usd, run_kind, config,
+                     participant_rows, created_by, downloader, keep_outcomes, progress, issuer_groups,
+                     stop_when) -> RunSummary:
     spend = SpendTracker(cap_usd=spend_cap_usd)
     run_id = await store.create_run(conn, run_kind=run_kind, spend_cap_usd=spend_cap_usd,
                                     config=config, ensemble_config_id=slots.ensemble_config_id,
@@ -91,10 +118,14 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
     summary = RunSummary(run_id, "running")
     try:
         for fid in filing_ids:
+            if stop_when is not None and stop_when():
+                summary.sliced = True
+                break
             try:
                 doc = await documents.load_document(conn, fid, downloader=downloader)
             except Exception as exc:  # noqa: BLE001 — one unreadable filing never stops the run
                 summary.statuses["load_failed"] += 1
+                summary.failed_ids.append(fid)
                 if progress:
                     progress(fid, f"load failed: {exc}")
                 continue
@@ -107,6 +138,7 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
                 # them (readings only — the note is not staged).
                 await store.insert_readings(conn, getattr(exc, "partial_readings", []))
                 summary.status, summary.stop_reason = "stopped_spend_cap", str(exc)
+                summary.stop_exc = exc
                 break
             await persist_outcome(conn, outcome, run_id=run_id, ensemble_config_id=slots.ensemble_config_id)
             summary.notes_done += 1
@@ -117,7 +149,7 @@ async def run_notes(conn, filing_ids: list[str], specs: list[FieldSpec], slots: 
                 progress(fid, f"{outcome.status} ${outcome.cost_usd:.5f} (run ${spend.spent_usd:.4f})")
             if summary.notes_done % 10 == 0:
                 await store.update_run_progress(conn, run_id, notes_done=summary.notes_done)
-        else:
+        if summary.status == "running":
             summary.status = "completed"
     except Exception as exc:  # noqa: BLE001
         summary.status, summary.stop_reason = "failed", f"{type(exc).__name__}: {exc}"

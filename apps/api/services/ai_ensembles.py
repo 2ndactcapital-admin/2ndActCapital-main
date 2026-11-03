@@ -25,13 +25,23 @@ in the SAME transaction. Each slot's exact version is snapshotted into the
 *_version columns at creation — permanent provenance.
 
 NOTE: extraction does NOT read the active ensemble yet — next sprint.
+(UPDATE aibudget1: replica_terms, note_extraction.cascade and held_away read it.)
+
+aibudget1 — each slot's daily BUDGET (unlimited | tokens_per_day |
+usd_per_day) is part of the same immutable row, so a budget change is a new
+config through activate_ensemble; services.ai_budget enforces it at the call.
+A public_data_only model is unselectable for a job that is not a public-data
+job (the services.model_catalog rule), with the reason in the envelope.
 """
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal, InvalidOperation
 
 import asyncpg
 
+from services import ai_budget
+from services.model_catalog import PUBLIC_DATA_TASK_KEYS
 from services.system_one import list_system_one_models
 
 # Ensemble tasks. Keys, not display labels. note_terms_extraction = noteextractb1.
@@ -39,6 +49,24 @@ from services.system_one import list_system_one_models
 KNOWN_TASK_KEYS = frozenset({"note_terms_hazard", "note_terms_extraction", "replica_terms_extraction",
                              "statement_positions"})  # rep7: held-away statement extraction (never Claude)
 AVAILABLE = "available"
+
+# aibudget1 — each job's display label and kind of data, served in the envelope
+# (never hard-coded in the UI). 'public' = public SEC filings, the only jobs a
+# public_data_only (data-sharing) model may serve; services.model_catalog.
+# PUBLIC_DATA_TASK_KEYS stays the one source of that rule.
+TASK_LABELS = {
+    "note_terms_hazard": "Structured-note hazard fields",
+    "note_terms_extraction": "Structured-note terms (424B2 / FWP pricing supplements)",
+    "replica_terms_extraction": "Fund prospectus terms (Replication Studio)",
+    "statement_positions": "Member account statements (held-away positions)",
+}
+TASK_ORDER = ("note_terms_extraction", "replica_terms_extraction", "statement_positions", "note_terms_hazard")
+
+
+def task_info(task_key: str) -> dict:
+    public = task_key in PUBLIC_DATA_TASK_KEYS
+    return {"task_key": task_key, "label": TASK_LABELS.get(task_key, task_key), "public_data": public,
+            "data_label": "Public SEC filings" if public else "Member data — never sent to a data-sharing model"}
 
 
 class EnsembleValidationError(ValueError):
@@ -66,7 +94,10 @@ def _upstream_versions() -> dict[str, str]:
     return {name: next(iter(v)) for name, v in out.items() if len(v) == 1}
 
 
-async def llm_options(conn) -> list[dict]:
+async def llm_options(conn, task_key: str | None = None) -> list[dict]:
+    """Every catalog LLM with whether it is selectable. With ``task_key``
+    (aibudget1), a public_data_only model is unselectable for a job that is not
+    a public-data job — the existing guard's rule, shown with its reason."""
     from services.litellm_credentials import chat_capable_models
     from services.model_catalog import list_catalog
 
@@ -92,6 +123,9 @@ async def llm_options(conn) -> list[dict]:
             reason = version_error or (
                 "no single exact version on the live proxy — cannot snapshot it"
             )
+        if reason is None and task_key is not None and m.get("public_data_only") \
+                and task_key not in PUBLIC_DATA_TASK_KEYS:
+            reason = public_data_refusal(model_id, task_key)
         out.append({
             "model_id": model_id,
             "display_name": m["display_name"],
@@ -101,8 +135,17 @@ async def llm_options(conn) -> list[dict]:
             "model_version": versions.get(model_id),
             "selectable": reason is None,
             "unavailable_reason": reason,
+            "public_data_only": bool(m.get("public_data_only")),
+            # aibudget1: the budget control's preselection — a data-sharing model's
+            # allowance is a number the super admin enters, never unlimited by default.
+            "default_budget_kind": ai_budget.TOKENS_PER_DAY if m.get("public_data_only") else ai_budget.UNLIMITED,
         })
     return out
+
+
+def public_data_refusal(model_id: str, task_key: str) -> str:
+    return (f"'{model_id}' is public-data-only (its provider project shares data) — it may serve only public-data "
+            f"jobs ({', '.join(sorted(PUBLIC_DATA_TASK_KEYS))}), not '{task_key}'")
 
 
 def _row_out(r) -> dict:
@@ -113,6 +156,11 @@ def _row_out(r) -> dict:
     for k in ("created_at", "activated_at", "retired_at"):
         if d.get(k) is not None:
             d[k] = d[k].isoformat()
+    for k in ("model_1_budget_value", "model_2_budget_value"):
+        if d.get(k) is not None:
+            v = Decimal(d[k])
+            kind = d.get(k.replace("_value", "_kind"))
+            d[k] = str(v.quantize(Decimal(1))) if kind == ai_budget.TOKENS_PER_DAY else str(v.quantize(Decimal("0.01")))
     return d
 
 
@@ -152,12 +200,24 @@ def blocker_for(llms: list[dict], system_ones: list[dict]) -> str | None:
 async def get_picker(conn, task_key: str) -> dict:
     if task_key not in KNOWN_TASK_KEYS:
         raise EnsembleValidationError(f"unknown task_key '{task_key}'")
-    llms = await llm_options(conn)
+    llms = await llm_options(conn, task_key)
     system_ones = await list_system_one_models(conn)
     default = next((o for o in system_ones if o["is_default"]), None)
     history = await list_ensembles(conn, task_key)
+    usage = await ai_budget.usage_today(conn, [o["model_id"] for o in llms])
     return {
         "task_key": task_key,
+        "task": task_info(task_key),
+        # aibudget1 — the budget control's vocabulary, the day boundary, and each
+        # model's usage TODAY across every job (the allowance is shared).
+        "vocabularies": {
+            "budget_kinds": [dict(k) for k in ai_budget.BUDGET_KIND_OPTIONS],
+            "semantics_template": ai_budget.SEMANTICS_TEMPLATE,
+            "unlimited_template": ai_budget.UNLIMITED_TEMPLATE,
+            "shared_rule": ai_budget.SHARED_RULE,
+        },
+        "day_boundary": {**ai_budget.DAY_BOUNDARY, "today": ai_budget.utc_today().isoformat()},
+        "usage_today": {o["model_id"]: usage.get(o["model_id"]) or empty_usage() for o in llms},
         "llm_options": llms,
         "system_one_options": system_ones,
         "default_system_one_model": default["key"] if default else None,
@@ -167,6 +227,48 @@ async def get_picker(conn, task_key: str) -> dict:
         "active": next((r for r in history if r["is_active"]), None),
         "history": history,
     }
+
+
+def empty_usage() -> dict:
+    return {"budget_day": ai_budget.utc_today().isoformat(), "input_tokens": 0, "output_tokens": 0,
+            "total_tokens": 0, "cost_usd": "0.000000", "reserved_tokens": 0, "reserved_usd": "0.000000", "calls": 0}
+
+
+def validate_budget(slot: str, option: dict, kind, value) -> tuple[str, Decimal | None]:
+    """(kind, value) for one slot. Omitted kind = the model's own default
+    (unlimited unless it is a data-sharing model, which needs a number)."""
+    if kind is None:
+        kind = option.get("default_budget_kind") or ai_budget.UNLIMITED
+        if kind != ai_budget.UNLIMITED and value is None:
+            raise EnsembleValidationError(
+                f"{slot}: '{option['model_id']}' is a data-sharing model — enter its daily budget "
+                "(tokens per day or dollars per day) or choose Unlimited explicitly")
+    if kind not in ai_budget.BUDGET_KINDS:
+        raise EnsembleValidationError(f"{slot}: unknown budget kind '{kind}' "
+                                      f"(one of {', '.join(ai_budget.BUDGET_KINDS)})")
+    if kind == ai_budget.UNLIMITED:
+        if value is not None:
+            raise EnsembleValidationError(f"{slot}: an unlimited budget takes no amount")
+        return kind, None
+    if value is None or isinstance(value, bool):
+        raise EnsembleValidationError(f"{slot}: a {kind.replace('_', ' ')} budget needs a positive amount")
+    try:
+        dec = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise EnsembleValidationError(f"{slot}: budget amount '{value}' is not a number") from exc
+    if not dec.is_finite() or dec <= 0:
+        raise EnsembleValidationError(f"{slot}: the budget amount must be positive (got {value})")
+    if kind == ai_budget.TOKENS_PER_DAY:
+        if dec != dec.to_integral_value():
+            raise EnsembleValidationError(f"{slot}: a token budget is a whole number of tokens (got {value})")
+        dec = dec.quantize(Decimal(1))
+    else:
+        if dec != dec.quantize(Decimal("0.01")):
+            raise EnsembleValidationError(f"{slot}: a dollar budget is in whole cents (got {value})")
+        dec = dec.quantize(Decimal("0.01"))
+    if dec >= Decimal("1e18"):
+        raise EnsembleValidationError(f"{slot}: the budget amount is too large")
+    return kind, dec
 
 
 def validate_selection(
@@ -212,7 +314,9 @@ def validate_selection(
 
 async def activate_ensemble(
     conn, task_key: str, model_1: str, model_2: str, system_one_model: str,
-    created_by, notes: str | None = None,
+    created_by, notes: str | None = None, *,
+    model_1_budget_kind: str | None = None, model_1_budget_value=None,
+    model_2_budget_kind: str | None = None, model_2_budget_value=None,
 ) -> dict:
     """Validate, then retire the current active config and insert the new one
     in ONE transaction. Returns {"ensemble", "retired_id"}.
@@ -222,9 +326,12 @@ async def activate_ensemble(
     version snapshot is the one current at commit. A race between two
     activations is settled by the one-active-per-task partial unique index.
     """
-    llms = await llm_options(conn)
+    llms = await llm_options(conn, task_key)
     system_ones = await list_system_one_models(conn)
     e1, e2, s1 = validate_selection(llms, system_ones, task_key, model_1, model_2, system_one_model)
+    # aibudget1 — each model's daily budget is part of the (immutable) assignment.
+    b1 = validate_budget("Model 1", e1, model_1_budget_kind, model_1_budget_value)
+    b2 = validate_budget("Model 2", e2, model_2_budget_kind, model_2_budget_value)
 
     try:
         async with conn.transaction():
@@ -261,8 +368,9 @@ async def activate_ensemble(
                 INSERT INTO ai_ensemble_configs (
                     task_key, model_1, model_1_version, model_2, model_2_version,
                     system_one_model, system_one_model_version,
-                    is_active, created_by, activated_at, notes
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, now(), $9)
+                    is_active, created_by, activated_at, notes,
+                    model_1_budget_kind, model_1_budget_value, model_2_budget_kind, model_2_budget_value
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, now(), $9, $10, $11::numeric, $12, $13::numeric)
                 RETURNING *
                 """,
                 task_key,
@@ -270,6 +378,7 @@ async def activate_ensemble(
                 e2["model_id"], e2["model_version"],
                 s1["key"], s1_now["model_version"],
                 created_by, notes,
+                b1[0], b1[1], b2[0], b2[1],
             )
     except asyncpg.UniqueViolationError as exc:
         raise EnsembleConflictError(

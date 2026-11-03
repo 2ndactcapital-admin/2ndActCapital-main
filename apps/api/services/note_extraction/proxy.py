@@ -96,14 +96,34 @@ async def _post(path: str, body: dict, timeout: float) -> ProxyResponse:
 
 
 async def chat(body: dict, *, timeout: float = DEFAULT_TIMEOUT) -> ProxyResponse:
-    """POST /v1/chat/completions with the no-fallback + raw-model flags forced on."""
+    """POST /v1/chat/completions with the no-fallback + raw-model flags forced on.
+
+    aibudget1: inside a ``services.ai_budget`` scope (every ensemble job opens
+    one) the call first takes its reservation against the model's daily budget
+    — a pre-made pair reservation, or its own — and raises
+    ``ai_budget.BudgetReached`` WITHOUT calling when a limited budget would be
+    crossed. After the call the reservation becomes the recorded usage. Outside
+    a scope nothing changes."""
+    from services import ai_budget
+
     body = dict(body)
     body["disable_fallbacks"] = True
     meta = dict(body.get("metadata") or {})
     meta[RAW_MODEL_METADATA_KEY] = True
     body["metadata"] = meta
-    CALLS["chat"] += 1
-    return await _post("/v1/chat/completions", body, timeout)
+    scope = ai_budget.current()
+    if scope is None:
+        CALLS["chat"] += 1
+        return await _post("/v1/chat/completions", body, timeout)
+    res = await scope.before_call(body)            # may raise BudgetReached: no call is made
+    try:
+        CALLS["chat"] += 1
+        resp = await _post("/v1/chat/completions", body, timeout)
+    except BaseException:
+        await scope.abandon(res)
+        raise
+    await scope.after_call(res, resp)
+    return resp
 
 
 async def jev(body: dict, *, timeout: float = 120.0) -> ProxyResponse:

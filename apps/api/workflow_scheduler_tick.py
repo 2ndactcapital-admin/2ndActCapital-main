@@ -97,6 +97,14 @@ instructions are all done, re-sweep recent 'model.version_approved' events
 valuation (after the holdings refresh above). It only ever writes PROPOSALS;
 nothing trades. Its own step.
 
+DAILY DOCUMENT READING (aibudget1). Last, ``services.ai_daily_runs.daily_tick``:
+after 00:05 UTC (AI_DAILY_RUN_START_UTC), each public-data document job with an
+active ensemble config and a non-empty queue (note terms, fund prospectus terms)
+reads its queue until it is empty or a model's daily budget stops it; a run
+proceeds in time slices (AI_DAILY_RUN_SLICE_SECONDS, default 240) so this tick
+still exits, and the next tick continues it. Member statements are never read
+here. One scheduled run per job per UTC day; AI_DAILY_RUNS=0 turns it off.
+
 TEST ORGS (rep6 fix 2). No step here acts on a verify fixture org
 (``organizations.is_test``, services.orgs): the holdings refresh, its review
 tasks and model monitoring, the execute-by sweep and the proposals tick all
@@ -114,6 +122,7 @@ import asyncpg
 from services.database import close_pool, get_pool
 from services.deal_room_control import access_tick
 from services.edgar_index_schedule import maybe_refresh_index
+from services.ai_daily_runs import daily_tick
 from services.blocks import expire_tick as blocks_expire_tick
 from services.execution import expire_tick
 from services.rebalance_proposals import proposals_tick
@@ -208,6 +217,16 @@ async def main() -> int:
                     print(f"[scheduler] rep10 ({org}): {e}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] rep10 reminders failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # AIBUDGET1 — the daily document-reading runs, inside each model's daily budget. Its own step, last.
+        try:
+            daily = await daily_tick(pool)
+            if daily.get("action") == "ran":
+                acted = {k: v for k, v in daily["jobs"].items()
+                         if v.get("action") not in ("no_config", "queue_empty", "already", "never_scheduled")}
+                if acted:
+                    print(f"[scheduler] daily document runs: {acted}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] daily document runs failed: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
         await conn.close()
         await close_pool()

@@ -1,5 +1,5 @@
 {
- "app_route_count": 769,
+ "app_route_count": 772,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -7566,6 +7566,60 @@
    "name": "create_ai_ensemble",
    "note": "",
    "path": "/api/v1/admin/ai/ensembles",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_ensembles",
+   "name": "read_ai_jobs",
+   "note": "",
+   "path": "/api/v1/admin/ai/jobs",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_ensembles",
+   "name": "read_ai_daily_runs",
+   "note": "",
+   "path": "/api/v1/admin/ai/daily-runs",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_ensembles",
+   "name": "run_ai_daily_job_now",
+   "note": "",
+   "path": "/api/v1/admin/ai/daily-runs/{task_key}/run",
    "public": false,
    "write": true
   },

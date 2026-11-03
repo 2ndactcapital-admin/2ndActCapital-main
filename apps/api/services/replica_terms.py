@@ -72,7 +72,7 @@ from typing import Any
 import httpx
 from starlette.concurrency import run_in_threadpool
 
-from services import edgar_fetch, html_text, storage
+from services import ai_budget, edgar_fetch, html_text, storage
 from services import human_tasks as HT
 from services import replica_holdings as H
 from services.note_extraction import proxy
@@ -91,6 +91,7 @@ TASK_KEY = "replica_terms_extraction"
 FALLBACK_TASK_KEY = "note_terms_extraction"
 PROMPT_VERSION = "replica.terms.reader.v1"
 DOC_WINDOW_CHARS = 60_000
+READER_MAX_TOKENS = 3000
 
 ORIGINS = ("extracted", "corrected", "deliberate")
 ORIGIN_LABELS = {"extracted": "Extracted", "corrected": "Corrected", "deliberate": "Deliberate change"}
@@ -502,7 +503,7 @@ def build_messages(specs, window: str, *, fund_label: str, form_type: str) -> tu
 async def read_one(slot: str, deployment: str, specs, messages, prefix_hash: str, catalog: dict) -> Call:
     dep = catalog.get(deployment)
     call = Call(slot, deployment, prefix_hash=prefix_hash)
-    body = {"model": deployment, "messages": messages, "max_tokens": 3000,
+    body = {"model": deployment, "messages": messages, "max_tokens": READER_MAX_TOKENS,
             "metadata": {"tags": ["usage:replica_terms_extraction", f"slot:{slot}"]}}
     if dep is not None and dep.supports_response_schema:
         body["response_format"] = {"type": "json_schema",
@@ -543,6 +544,18 @@ async def read_one(slot: str, deployment: str, specs, messages, prefix_hash: str
     return call
 
 
+async def read_pair(ensemble: dict, slots: list[str], specs, messages, prefix_hash: str, catalog: dict) -> list[Call]:
+    """Both readers, under the task's daily-budget scope (aibudget1): the two
+    calls are reserved together before either is made — a model out of budget
+    raises ai_budget.BudgetReached and NEITHER call is made (never a one-model
+    reading). Reuses the scope the daily run opened."""
+    chars = sum(len(m["content"]) for m in messages)
+    async with ai_budget.job_scope(TASK_KEY, ensemble, catalog=catalog):
+        async with ai_budget.pair([(slots[0], chars, READER_MAX_TOKENS), (slots[1], chars, READER_MAX_TOKENS)]):
+            return list(await asyncio.gather(*(read_one(s, d, specs, messages, prefix_hash, catalog)
+                                               for s, d in (("model_1", slots[0]), ("model_2", slots[1])))))
+
+
 @dataclass
 class ExtractionRun:
     run_id: str
@@ -553,6 +566,7 @@ class ExtractionRun:
     models: list = field(default_factory=list)
     readings: list = field(default_factory=list)      # dicts as stored
     cost_usd: float = 0.0
+    budget_reached: Any = None                        # aibudget1: the ai_budget.BudgetReached that stopped it
 
 
 async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | None, http: httpx.AsyncClient,
@@ -583,10 +597,13 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
         return run
     run.document_id = str(doc["id"])
     async with pool.acquire() as conn:
+        # aibudget1: reuse keys on the SAME TWO MODELS, not the config id — a
+        # budget-only change activates a new config row and must never re-read.
         prior = await conn.fetchval(
-            f"SELECT extraction_run_id FROM {T_READ} WHERE source_document_id = $1::uuid AND ensemble_config_id = "
-            "$2::uuid AND prompt_version = $3 AND system_to IS NULL ORDER BY created_at DESC LIMIT 1",
-            run.document_id, run.ensemble_config_id, PROMPT_VERSION)
+            f"SELECT r.extraction_run_id FROM {T_READ} r JOIN public.ai_ensemble_configs e ON e.id = "
+            "r.ensemble_config_id WHERE r.source_document_id = $1::uuid AND r.prompt_version = $2 "
+            "AND r.system_to IS NULL AND e.model_1 = $3 AND e.model_2 = $4 ORDER BY r.created_at DESC LIMIT 1",
+            run.document_id, PROMPT_VERSION, slots[0], slots[1])
         if prior:
             run.run_id, run.status = str(prior), "reused"
             run.readings = [dict(r) for r in await conn.fetch(
@@ -595,8 +612,14 @@ async def run_extraction(pool, *, fund_id: str, ticker: str, series_id: str | No
     specs = build_specs(registry)
     window, offset = doc_window(doc["extracted_text"] or "", ticker)
     messages, prefix_hash = build_messages(specs, window, fund_label=ticker.upper(), form_type=doc["form_type"])
-    calls = await asyncio.gather(*(read_one(s, d, specs, messages, prefix_hash, catalog)
-                                   for s, d in (("model_1", slots[0]), ("model_2", slots[1]))))
+    try:
+        calls = await read_pair(ensemble, slots, specs, messages, prefix_hash, catalog)
+    except ai_budget.BudgetReached as exc:
+        run.reason, run.budget_reached = f"daily model budget reached: {exc}", exc
+        return run
+    except ai_budget.BudgetConfigError as exc:
+        run.reason = f"daily model budget cannot be enforced: {exc}"
+        return run
     index = TextIndex(doc["extracted_text"] or "")
     smap = NS.spec_map(specs)
     records = []

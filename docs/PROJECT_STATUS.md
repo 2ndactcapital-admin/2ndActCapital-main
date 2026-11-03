@@ -328,6 +328,75 @@ This file starts with the email item below.
 
 ---
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000. AI MODEL BUDGETS — aibudget1: daily model budgets on the ensemble picker, enforced at the call, and a daily document-reading run inside them; verify WRITTEN, not yet run (2026-11-03)
+
+Joe (2026-11-03): "when assigning models to jobs, for this document reading job, that is where you pick the budget
+after you pick the model for both models. An option is 'unlimited'." Built for OpenAI's complimentary daily tokens on
+traffic shared with OpenAI; vendor-neutral. Full design: `docs/LITELLM_INTEGRATION_DESIGN_V1.md` §14.9.
+
+Schema `docs/aibudget1_part1.sql` is APPLIED (`scripts/_apply_aibudget1.py`: pre-check — no views over
+ai_ensemble_configs, only the retire-only trigger, 0 rows; then SCHEMA OK). Four budget columns on
+`ai_ensemble_configs` (kind unlimited | tokens_per_day | usd_per_day; value NULL iff unlimited, positive, whole for
+tokens — 4 CHECKs); the retire-only trigger compares whole rows, so budgets are immutable with no trigger change and a
+budget change is a NEW config row. `public.ai_daily_usage` (the shared per-model ledger, PK (budget_day, deployment))
+and `public.ai_daily_runs` (one scheduled run per job per UTC day, one running run per job — partial unique indexes),
+both platform-wide, RLS for all four operations on app.is_super_admin. No business rows.
+
+Code: `services/ai_budget.py` (limits, the atomic reserve / settle ledger, the scope, `pair`), the hook in
+`services/note_extraction/proxy.chat` (the one chokepoint of every ensemble call), pair reservations in
+`cascade._run_note` (both reader pairs), `replica_terms.read_pair` and `held_away.read_statement_pair`, a job scope in
+`runner.run_notes`; `services/ai_daily_runs.py` (the two public-data jobs, lease-claimed time slices, the scheduler step
+wired LAST into `workflow_scheduler_tick.py`, "run now"); `services/ai_ensembles.py` (budgets in activation, the
+public-data refusal per job, the envelope: budget vocabulary, day boundary, today's usage per model); routes
+`GET /admin/ai/jobs`, `GET /admin/ai/daily-runs`, `POST /admin/ai/daily-runs/{task_key}/run` (super_admin; in
+`docs/AUTHZ1_ROUTES.json`, `--check` CURRENT). Web: the budget control right after each model select
+(`components/admin/EnsembleBudget.jsx` in `EnsemblePanel`), the new tab AI Models → Model Jobs (`/admin/ai-jobs`: the
+daily runs + every job's picker), `node --test tests/aibudget/` 11/11 and the full `node --test tests/` 452 / 0 fail
+(run in the sprint; `npm run build` was not).
+
+Verify `apps/api/scripts/verify_aibudget1.py` is WRITTEN, NOT RUN (`--self-checks-only` run after the commit). Its
+regression section re-runs `verify_ensemblesystemone.py` once, flat, after teardown, VERIFY_NESTED=1, 2700 s.
+
+UPDATE (aibudget1 fix 1, 2026-11-03): the re-run was 129 PASS / 1 FAIL, the FAIL in the verify_ensemblesystemone regression ([Y] "an INSERT failing after the retire rolls the retire back", raised=TypeError). **VERIFY defect, not code**: its `broken_llm_options(c)` stub took one argument while aibudget1's `activate_ensemble` now calls `llm_options(conn, task_key)` → TypeError on the function's first line, before any SQL, so the rollback was never exercised. The code was right: a None version still reaches the INSERT. The stub now forwards `*args, **kwargs`, and the assertion is unchanged. One-off `scripts/_oneoff_aibudget1_fix1.py` 3/3: it reproduced the TypeError (zero statements issued), and with the corrected stub it got NotNullViolation on the INSERT after the retire UPDATE ran, with #2 still active, 2 rows, and 0 fixture rows left. verify_ensemblesystemone has no `--self-checks-only` mode (it ignores argv), so it was compile-checked only and not run. The full verify_aibudget1 re-run is still owed.
+
+Task 1 findings:
+- 1a. note_terms_extraction: 5,366 manifest rows `ready_for_extraction` (all with a stored document), 0 staged → 5,366
+  queued; started today only by `scripts/run_note_extraction_pilot.py` (reads the active ensemble). replica_terms_
+  extraction: started per registry entry by a person (`build_draft` → `run_extraction`; reads the active ensemble, with
+  a note_terms_extraction fallback); 0 live registry entries in any org → 0 queued. statement_positions: started by the
+  member flow (`held_away.create_statement_import`); member data, never scheduled. No ensemble config is active
+  (0 rows), so no job runs until Joe assigns models.
+- 1b. Every note reader call row (`note_term_readings`, `__call__`, model_1/model_2/escalation) carries input and output
+  tokens (100 rows, 0 missing); replica readings carry tokens (0 rows today). **[FIND] the statement reader
+  (`held_away._proxy_reader`) records no tokens anywhere** — so the ledger is a table, not a view over the readings.
+  Jev (System One) goes through `/typesafe`, not a Model 1/2 call, and is not budgeted. The app reads no LiteLLM spend
+  log (app_service cannot read the litellm schema).
+- 1c. Day boundary: midnight UTC, computed by the database at each reserve (`(now() AT TIME ZONE 'UTC')::date`), shown
+  on the picker and the daily-run screen.
+- 1d. gpt-5-mini → `openai/gpt-5-mini`, gpt-5-nano → `openai/gpt-5-nano`, DB-stored deployments, both registered
+  against the key NAME `OPENAI_API_KEY` (Doppler prd_lite_llm). /model/info exposes no OpenAI project or organization,
+  so whether that project has data sharing ON is not readable from the platform — an operator step. Not changed.
+- 1e. Picker: GET → llm_options / system_one_options / preselected / blocker / active / history / permissions; POST →
+  task_key, model_1, model_2, system_one_model, notes. Only the hazard task had a picker on screen
+  (`/admin/pricing/note-terms-queue`); the document jobs had none → the new Model Jobs page.
+- **[FIND] the statement path never ran the public-data guard** (it calls the proxy directly, not through
+  `services.extraction`), and the picker did not refuse a data-sharing model for statement_positions. Both closed: the
+  picker refuses it with the reason, and `held_away._refuse_sharing_models` refuses it at the call.
+- [FIND] replica terms reuse keyed on the config id, so a budget-only change (a new config row) would have re-read every
+  prospectus. Reuse (and the daily queue) now key on the same two models.
+- [FIND] Input tokens are an estimate (chars / 4); output is bounded by max_tokens. A prompt that tokenizes denser can
+  record slightly more input than it reserved — the next reservation sees the true total. The statement reader sends
+  no max_tokens; under a LIMITED budget ai_budget injects `AI_BUDGET_DEFAULT_MAX_TOKENS` (16,000).
+- [FIND] Earlier verify scripts that run `run_notes` / the statement import with a faked proxy now write
+  `ai_daily_usage` rows for their fixture model names (their teardowns do not know the table). Harmless to budgets
+  (fixture names); a later housekeeping sprint may add the table to those teardowns.
+- Open: a crash between reserve and settle leaves that day's reservation in place until the day ends (no sweep).
+  The daily note run's per-run dollar cap is `AI_DAILY_RUN_SPEND_CAP_USD` (unset = none; the budgets are the limit).
+
+Operator steps (also in the design doc): enable data sharing on the OpenAI project behind `OPENAI_API_KEY`; read the
+daily complimentary amounts on OpenAI's dashboard; AI Models → Model Jobs → assign Model 1 / Model 2 with those
+numbers as tokens-per-day budgets for the two document jobs (note terms, fund prospectus terms).
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000. TILTS, COMPLETION, GIFTING, BACKTEST — rep10: phase 2 complete; verify WRITTEN, not yet run (2026-11-02)
 
 Replication Studio sprint 10 of 15. Full method, math and open items: `docs/REPLICATION_STUDIO.md` (rep10 section).

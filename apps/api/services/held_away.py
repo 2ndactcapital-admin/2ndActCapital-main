@@ -753,6 +753,44 @@ async def _proxy_reader(model: str, text: str, as_of: date) -> list[dict]:
 STATEMENT_READER = _proxy_reader
 
 
+def _statement_prompt_chars(text: str, as_of: date) -> int:
+    return len(STATEMENT_INSTRUCTIONS) + len(f"Statement as of {as_of.isoformat()}:\n\n") + len(text[:120_000])
+
+
+async def read_statement_pair(ens: dict, models: list[str], text: str, as_of: date) -> list[list[dict]]:
+    """aibudget1: both readers under the statement task's daily-budget scope —
+    the two calls are reserved together before either is made; a model out of
+    budget stops the import with neither call made (never a one-model reading).
+    The statement reader sets no max_tokens of its own; under a LIMITED budget
+    ai_budget injects its default ceiling so the reservation is a real bound."""
+    from services import ai_budget
+
+    chars = _statement_prompt_chars(text, as_of)
+    mt = ai_budget.default_max_tokens()
+    try:
+        async with ai_budget.job_scope(STATEMENT_TASK_KEY, ens):
+            async with ai_budget.pair([(m, chars, mt) for m in models]):
+                return [await STATEMENT_READER(m, text, as_of) for m in models]
+    except ai_budget.BudgetReached as exc:
+        raise HeldAwayConflict(f"daily model budget reached — try again after midnight UTC: {exc}") from exc
+    except ai_budget.BudgetConfigError as exc:
+        raise HeldAwayConflict(f"the statement models' daily budget cannot be enforced: {exc}") from exc
+
+
+async def _refuse_sharing_models(conn, models: list[str], org_id) -> None:
+    """aibudget1 Task 1: this path calls the proxy directly, so the
+    public-data guard in services.extraction never ran on it. A member's
+    statement is never sent to a public_data_only (data-sharing) model."""
+    from services.model_catalog import PublicDataOnlyError, assert_model_allowed_for_task
+
+    for m in models:
+        try:
+            await assert_model_allowed_for_task(conn, m, task_key=STATEMENT_TASK_KEY, org_id=org_id)
+        except PublicDataOnlyError as exc:
+            raise HeldAwayConflict(f"statements are member data and are never sent to a data-sharing model: {exc}") \
+                from exc
+
+
 def _row_key(r: dict) -> tuple:
     from services.model_upload import cell_text, to_decimal
 
@@ -786,13 +824,14 @@ async def create_statement_import(pool, *, org_id, actor_id, account_id, documen
         models = [ens["model_1"], ens["model_2"]]
         if is_claude(*models, ens.get("system_one_model")):
             raise HeldAwayConflict("the statement ensemble names a Claude model — statements are never read by Claude")
+        await _refuse_sharing_models(conn, models, org_id)
         text = await conn.fetchval("SELECT extracted_text FROM public.document_extractions WHERE document_id = $1::uuid "
                                    "AND org_id = $2::uuid AND extracted_text IS NOT NULL ORDER BY created_at DESC "
                                    "LIMIT 1", str(document_id), str(org_id))
     if not (text or "").strip():
         raise HeldAwayConflict("the document has no extracted text yet — Chancery has not read it; enter the "
                                "positions manually from the document")
-    readings = [await STATEMENT_READER(m, text, as_of) for m in models]
+    readings = await read_statement_pair(ens, models, text, as_of)
     a = {_row_key(r): r for r in readings[0]}
     b = {_row_key(r): r for r in readings[1]}
     agreed = [a[k] for k in a if k in b]
