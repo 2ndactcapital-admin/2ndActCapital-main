@@ -84,6 +84,18 @@ def iso(v):
     return v.isoformat() if v is not None else None
 
 
+def local_day(ts: datetime | None, tz=None) -> date | None:
+    """The calendar day of a stored timestamp ON THE SAME CLOCK as ``date.today()`` (the server's local zone; ``tz``
+    only for a test). rep10 fix 1: asyncpg returns timestamptz in UTC, so ``ts.date()`` is the UTC day — west of
+    UTC, a letter sent at 21:55 ET on Nov 2 is "sent Nov 3" and a same-evening receipt dated Nov 2 (``date.today()``)
+    was refused as "received before the letter was sent"."""
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        return ts.date()
+    return ts.astimezone(tz).date()
+
+
 def money(v: Decimal) -> Decimal:
     from decimal import ROUND_HALF_EVEN
 

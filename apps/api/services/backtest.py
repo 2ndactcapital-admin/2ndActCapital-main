@@ -271,7 +271,7 @@ async def model_versions(conn, org_id, model_id) -> list[dict]:
             k = v["global_security_id"] if v["resolution_state"] != "cash" and v["global_security_id"] else E.CASH
             w[k] = w.get(k, C.ZERO) + Decimal(str(v["weight"]))
         out.append({"id": str(r["id"]), "version_no": r["version_no"],
-                    "approved_on": r["approved_at"].date() if r["approved_at"] else None, "weights": w})
+                    "approved_on": C.local_day(r["approved_at"]), "weights": w})
     return out
 
 

@@ -679,7 +679,7 @@ async def mark_received(pool, *, org_id, actor_id, gift_id, received_on: date, n
         g = await load(conn, org_id, gift_id)
         if g["status"] != "sent":
             raise C.Rep10Conflict(f"cannot mark received a gift that is {STATUS_LABELS[g['status']].lower()}")
-        if g["sent_at"] and received_on < g["sent_at"].date():
+        if g["sent_at"] and received_on < C.local_day(g["sent_at"]):   # rep10 fix 1: local day, not the UTC day
             raise C.Rep10Error("the shares cannot be received before the letter was sent")
         lots = await lots_of(conn, g["id"])
         entered = {str(k): v for k, v in (prices or {}).items()}

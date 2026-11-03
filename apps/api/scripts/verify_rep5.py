@@ -778,7 +778,12 @@ async def seed(conn) -> None:
         # ACCT_IRA — the household's IRA (wash-sale evidence)
         pia = await position(ACCT_IRA, "A", 10, 500)
         pix = await position(ACCT_IRA, "X", 10, 1000)
-        pib = await position(ACCT_IRA, "B", 10, 1000)
+        # rep10 fix 1: market value UNKNOWN (was 1000). Since marketdata1 (6423d80) the unheld-price lookup asks the
+        # security-data layer, whose custodian provider prices a security from ANY of the org's accounts (market
+        # value ÷ quantity) — so this IRA valuation priced sec_B at 100.00 and the "unpriced buy is by NOTIONAL"
+        # check below lost its premise. The IRA still holds B (the wash-sale evidence: the sale 45 days ago and its
+        # closed loss lot are unchanged); only its valuation is missing, so no source holds a price for sec_B.
+        pib = await position(ACCT_IRA, "B", 10, None)
         ia_sell = await txn(pia, "sell", S["seed_day"] - timedelta(days=5), 5, 49)
         await lot(pia, 5, 295, date(2022, 1, 3), "long", status="closed", realized=-50, closing=ia_sell)
         # rep6: 31 days, not 10 — day 31 is outside the wash window, so the transition's X loss lot still
@@ -1111,6 +1116,14 @@ async def y_proposals(conn):
           and ba["price_source"] == "account_position" and D(ba["price"]) == D(50) and ba["price_as_of"] == S["seed_val"],
           "a priced buy is WHOLE shares at the account's own price (Altruist fractional_shares 'unknown')",
           f"{dict(ba) if ba else None}")
+    # rep10 fix 1: the premise itself, asserted — no account in the org values sec_B or sec_C (the layer's custodian
+    # provider prices from ANY of the org's accounts), so "unpriced" is a fact of the fixture, not an assumption
+    valued = int(await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.positions p JOIN portfolio.assets a ON "
+                              "a.id = p.asset_id WHERE p.org_id = $1 AND a.global_security_id = ANY($2::uuid[]) AND "
+                              "p.quantity > 0 AND p.market_value > 0 AND p.valid_to IS NULL AND p.system_to IS NULL",
+                              ORG_A, [S["sec_B"], S["sec_C"]], fetch="fetchval"))
+    check(valued == 0, "premise: no account in the org values sec_B / sec_C (the IRA holds B with no valuation)",
+          f"{valued} valued position(s)")
     check(bb is not None and bc is not None and bb["quantity"] is None and bb["notional"] is not None
           and bc["notional"] is not None and bb["price_source"] == "none" and bb["price"] is None,
           "an unpriced buy is by NOTIONAL (an amount), never a guessed quantity",

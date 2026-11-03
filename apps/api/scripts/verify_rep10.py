@@ -152,6 +152,9 @@ from services import gifts as G  # noqa: E402
 from services import human_tasks as HT  # noqa: E402
 from services import models as M  # noqa: E402
 from services import rbac  # noqa: E402
+from services import rebalance_proposals as RP  # noqa: E402
+from services import rep10_common as RC  # noqa: E402
+from services import security_data as SD  # noqa: E402
 from services import rep10_sweeps as SW  # noqa: E402
 from services import securities_global as SG  # noqa: E402
 from services import tilts as TL  # noqa: E402
@@ -167,6 +170,8 @@ PREFIX = "ZZR10"
 OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 SEC_KEYS = ("K1", "K2", "K3", "FUND", "STK")
 SEC_NAMES = {k: f"REP10 VERIFY {k}" for k in SEC_KEYS}
+# rep10 fix 1: a security NO source holds a price for (created in y_no_data; torn down by name / PREFIX identifier)
+SEC_NAMES["NP"] = "REP10 VERIFY NP"
 SEC_TYPES = {"FUND": "fund"}
 HH_NAME = "REP10 Verify Household"
 DONEE_RAW = "ZZ10DONEE456789"          # the donee account's full number — must never reach the DB or a PDF
@@ -696,6 +701,26 @@ async def y_task1(conn):
          "library or member-visibility flag existed; modelled on rep9's allocation policy (authority_change_guard)")
 
 
+def y_local_day():
+    """rep10 fix 1 (FAIL B, a CODE defect): pure — reproduce, then the fix. The verify ran at ~21:55 ET on Nov 2:
+    the letter's sent_at (timestamptz → asyncpg returns UTC) was 01:55 UTC Nov 3, so ``sent_at.date()`` said Nov 3 and
+    a receipt dated today (``date.today()`` = Nov 2) was refused as "received before the letter was sent" (422)."""
+    from datetime import datetime, timezone
+
+    section("[Y] FAIL B — the received date vs the sent date, on one clock")
+    et = timezone(timedelta(hours=-5))
+    sent = datetime(2026, 11, 3, 1, 55, tzinfo=timezone.utc)          # 21:55 ET, Nov 2
+    received = date(2026, 11, 2)
+    check(received < sent.date(), "REPRODUCED: the old rule compared the local receipt day with the UTC day of "
+          "sent_at — a same-evening receipt (Nov 2) looked earlier than the letter (Nov 3 UTC)", f"{sent.date()}")
+    check(RC.local_day(sent, et) == received and not received < RC.local_day(sent, et)
+          and RC.local_day(datetime(2026, 11, 2, 23, 0, tzinfo=et), et) == received
+          and RC.local_day(None) is None,
+          "fixed: rep10_common.local_day puts sent_at on date.today()'s clock — a same-day receipt is accepted, a "
+          "genuinely earlier one is still refused", f"{RC.local_day(sent, et)}")
+    check(date(2026, 11, 1) < RC.local_day(sent, et), "a receipt the day BEFORE the letter is still refused")
+
+
 async def y_schema(conn):
     section("[Y] Schema landed, RLS for every operation")
     code, out, err = run_cmd([sys.executable, str(HERE / "_apply_rep10.py"), "--verify"], REPO, timeout=600)
@@ -1030,18 +1055,24 @@ async def y_completion(conn):
           "data older than the threshold: completion NOT applied, the account named, 'confirm' offered", f"{v.get('applied')} {need}")
     c3, o3 = await api(U_ADMIN1, "POST", f"{_R}/completion/accounts/{A_M}/confirm",
                        {"held_away_account_id": str(A_ADV)})
-    task = (o3.get("confirmation") or {}).get("task_id")
-    pool = await get_pool()
-    try:
-        await HT.complete_task(pool, org_id=ORG_A, task_id=task, actor_id=U_ADMIN2, outcome="done",
-                               note="REP10 verify — statement checked")
-        done = True
-    except Exception as exc:  # noqa: BLE001
-        done = False
-        print(f"[INFO] confirm task: {type(exc).__name__}: {exc}")
+    conf = o3.get("confirmation") or {}
+    # rep10 fix 1 (FAIL A, a VERIFY defect): the task was completed by calling HT.complete_task on a pool connection
+    # with NO org RLS context, so assert_human's users read matched zero rows → AgentActorRefused "the actor is not an
+    # admitted user" and nothing was confirmed. An adviser confirms through rep7's own human route, as verify_rep7 does.
+    c5, o5 = await api(U_ADMIN2, "POST", f"/api/v1/held-away/confirmations/{conf.get('id')}/confirm",
+                       {"note": "REP10 verify — statement checked"})
+    crow = await scoped(conn, ORG_A, "SELECT status, confirmed_by, as_of_confirmed FROM public.stale_confirmations "
+                                     "WHERE id = $1 AND valid_to IS NULL AND system_to IS NULL",
+                        UUID(conf["id"]) if conf.get("id") else None, fetch="fetchrow") if conf.get("id") else None
+    check(c3 == 200 and c5 == 200 and conf.get("purpose") == "general" and crow is not None
+          and crow["status"] == "confirmed" and crow["confirmed_by"] == U_ADMIN2,
+          "the adviser confirms the stale as-of through rep7's human route (task completed by an admitted user; "
+          "re-read: status confirmed, by the checker)",
+          f"{c3} {str(o3)[:200]} | {c5} {str(o5)[:200]} | {dict(crow) if crow else None}")
     c4, v4 = await api(U_ADMIN1, "GET", f"{_R}/completion/accounts/{A_M}")
-    check(c3 == 200 and done and v4.get("applied") is True,
-          "after the adviser confirms that as-of (rep7's task), completion applies again", f"{c3} {done} {v4.get('reasons')}")
+    check(c3 == 200 and c5 == 200 and v4.get("applied") is True and not v4.get("needs_confirmation"),
+          "after the adviser confirms that as-of (rep7's task), completion applies again",
+          f"{c3} {c5} {v4.get('applied')} {v4.get('reasons')} {v4.get('needs_confirmation')}")
 
 
 async def y_consolidation(conn):
@@ -1165,16 +1196,18 @@ async def y_gifts(conn):
     gd = await scoped(conn, ORG_A, "SELECT received_on FROM public.gift_proposals WHERE id = $1 AND system_to IS NULL",
                       UUID(gid), fetch="fetchval")
     check(c1 == 200 and c2 == 200 and (o2.get("gift") or {}).get("gift_date") == recv.isoformat() and gd == recv,
-          "gift date = the date the donee's account received the shares (entered; re-read)", f"{c1} {c2} {gd}")
-    c3, _ = await api(U_ADMIN1, "POST", f"{_T}/{gid}/acknowledged", {"acknowledged_on": recv.isoformat(),
-                                                                     "reference": "DAF receipt 1"})
+          "gift date = the date the donee's account received the shares (entered; re-read)",
+          f"{c1} {c2} {gd} body={str(o2)[:300]}")
+    c3, o3 = await api(U_ADMIN1, "POST", f"{_T}/{gid}/acknowledged", {"acknowledged_on": recv.isoformat(),
+                                                                      "reference": "DAF receipt 1"})
     c4, o4 = await api(U_ADMIN1, "POST", f"{_T}/{gid}/rebuy")
     rp = (o4.get("gift") or {}).get("rebuy_proposal_ids") or []
     prow = await scoped(conn, ORG_A, "SELECT account_id, trigger_ref FROM public.rebalance_proposals WHERE id = $1",
                         UUID(rp[0]) if rp else None, fetch="fetchrow") if rp else None
     check(c3 == 200 and c4 == 200 and len(rp) == 1 and prow is not None and prow["account_id"] == A_M
           and "gift_rebuy" in str(prow["trigger_ref"]) and "wash-sale" in str(o4.get("rebuy_note")),
-          "rebuy: a rep5 proposal for the giving account (same security), the wash-sale note stated", f"{c3} {c4} {rp}")
+          "rebuy: a rep5 proposal for the giving account (same security), the wash-sale note stated",
+          f"{c3} {c4} {rp} ack={str(o3)[:200]} rebuy={str(o4)[:300]}")
     S["gift"] = gid
 
 
@@ -1245,6 +1278,51 @@ async def y_sweep(conn):
     r2 = await SW.tick(pool, org_id=ORG_A, include_test_orgs=True)
     check(str(ORG_A) in r2 and not r2[str(ORG_A)]["errors"], "named explicitly, the fixture org's sweep runs clean",
           f"{r2.get(str(ORG_A))}")
+
+
+async def y_no_data(conn):
+    """rep10 fix 1 (FAIL D): a price exists only where a source holds one for THAT org (or the platform). Proven
+    through every reader rep5 / rep10 use: layer.get, get_bulk, history, rep10_common.longest_history and
+    rebalance_proposals' unheld-price lookup — for (a) a security no source holds anywhere and (b) org B asking for
+    K1, which org A holds (custodian valuation) AND has 70 days of synthetic csv_upload history for. Org A's own K1
+    read is the positive control (the same calls DO find it), so the negatives are not vacuous."""
+    section("[Y] No data → not found: get / get_bulk / history / longest_history / the proposal price lookup")
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        np_ = await SG.create_security(conn, name=SEC_NAMES["NP"], security_type="equity", is_super_admin=True)
+        await SG.add_identifier(conn, global_security_id=np_, id_type="cusip", id_value=f"{PREFIX}NP01",
+                                is_super_admin=True)
+    S["sec_NP"] = UUID(str(np_))
+    t = today()
+    start = t - timedelta(days=400)
+    k1, np_s = sec("K1"), str(S["sec_NP"])
+
+    async def reads(org, key):
+        async def fn(c):
+            g = await SD.get(c, org, "eod_price", key, as_of=t, purpose="internal")
+            b = await SD.get_bulk(c, org, "eod_price", [key], as_of=t, purpose="internal")
+            h = await SD.history(c, org, "eod_price", key, start=start, end=t, purpose="internal")
+            lh = await RC.longest_history(c, org, key, start, t)
+            px = await RP._unheld_prices(c, [key], t - timedelta(days=30), org_id=org, today=t)
+            return {"get": bool(g.found), "get_bulk": bool(b.get(key) is not None and b[key].found),
+                    "history": bool(h.found and h.value), "longest_history": lh is not None, "unheld_price": key in px,
+                    "detail": {"get": (g.provider_key, str(g.value)), "price": str(px.get(key))}}
+        return await in_org(fn, org)
+
+    na = await reads(ORG_A, np_s)
+    nb = await reads(ORG_B, k1)
+    pa = await reads(ORG_A, k1)
+    flags = ("get", "get_bulk", "history", "longest_history", "unheld_price")
+    check(not any(na[f] for f in flags), "a security no source holds (org A): found = false through get, get_bulk, "
+          "history and longest_history; the proposal lookup has no price (bought by notional)", f"{na}")
+    check(not any(nb[f] for f in flags), "org B, which holds no data for K1, finds nothing — org A's custodian "
+          "valuation and its synthetic history are invisible to it", f"{nb}")
+    check(all(pa[f] for f in flags), "control: org A's own K1 IS found through the same five calls (the negatives "
+          "above are not vacuous)", f"{pa}")
+    find("FAIL D source", "verify_rep5's sec_B was priced by marketdata1's custodian provider from rep5's OWN fixture: "
+         "ACCT_IRA holds B (10 shares, market value 1000, as of seed_val) → 1000 ÷ 10 = 100.00 as of yesterday. A "
+         "real valuation in the same org — correct layer behaviour since 6423d80, not a rep10 leak; verify_rep5's "
+         "fixture now values that IRA position as unknown so sec_B is genuinely unpriced")
 
 
 async def y_isolation(conn):
@@ -1392,6 +1470,7 @@ async def main_async() -> int:
         pre = await counts(conn)
         real = await real_fingerprints(conn)
         await run("task 1", y_task1, conn)
+        y_local_day()
         await run("schema", y_schema, conn)
         await run("seed literals", y_seed_literals, conn)
         if S.get("literals_ok"):
@@ -1405,6 +1484,8 @@ async def main_async() -> int:
             if S.get("days"):
                 await run("backtest", y_backtest, conn)
             await run("sweep", y_sweep, conn)
+            if S.get("days"):
+                await run("no data → not found", y_no_data, conn)
             if S.get("gift") and S.get("backtest"):
                 await run("isolation + gates", y_isolation, conn)
             else:

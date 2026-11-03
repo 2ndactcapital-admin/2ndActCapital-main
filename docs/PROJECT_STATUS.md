@@ -366,6 +366,27 @@ Findings:
 - Open for counsel / CPA (shown on the screens): the hypothetical-performance policy and who may see a backtest;
   AGI limits and carryover (estimates); itemizing; Form 8283; donee acceptance of in-kind securities; state
   deductibility; factor-score data licences.
+- **UPDATE 2026-11-02 — rep10 fix 1** (first run: 142 PASS / 4 FAIL). A = VERIFY: the stale-data confirmation
+  task was completed via `HT.complete_task` on a pool connection with no org RLS context. The `users` read
+  matched zero rows, which raised AgentActorRefused, so nothing was confirmed. The verify now confirms through
+  rep7's `POST /held-away/confirmations/{id}/confirm` as the checker and re-reads the row. completion.py was not
+  changed. B = CODE: `gifts.mark_received` compared the local received date with `sent_at.date()`, which is the
+  UTC day. At 21:55 ET a same-evening receipt was refused as "received before the letter was sent" (422). Fixed
+  with `rep10_common.local_day`; backtest's version `approved_on` had the same bug and is fixed too. A pure verify
+  check reproduces the bug, then proves the fix. C = consequence of B: `acknowledge` needs 'received' and `rebuy`
+  needs received/acknowledged, so both returned 409. The earlier A_M proposals are drafts, which `generate`
+  supersedes, so rep5's one-open rule was not the cause. Bodies are now printed. D = VERIFY (rep5's fixture), not
+  a rep10 leak. sec_B was priced by marketdata1's custodian provider from rep5's OWN fixture: ACCT_IRA holds B,
+  10 sh at mv 1000, as of seed_val → 100.00 as of 2026-11-01. That behaviour exists since 6423d80, and this was the
+  first verify_rep5 run after it. rep10 did not touch the layer's get / get_bulk / history; `longest_history` is
+  read only by rep10's backtest and tilts. Fix: that IRA position's market value is now unknown, and a new
+  premise check asserts no account values B or C. The "unpriced → notional" assertion is unchanged. verify_rep10
+  gains a "no data → not found" section, with a positive control; no missed teardown table was found. Task 4
+  probe `scripts/_rep10fix1_probe.py`, 8 PASS / 0 FAIL: P1 with no source → found = false through get, get_bulk,
+  history, longest_history and `_unheld_prices` ('none'). FAIL D reproduced: a 10 sh / $1000 position → custodian
+  100 as of 2026-11-01 ('security_price'); invisible to P2; with mv NULL → not found. P2's synthetic csv_upload
+  history (42 days) is found by P2 and P1 still finds nothing. Teardown removed 53 rows; 0 remain. Self-checks:
+  rep10 5/0, rep5 5/0, rep6 7/0. verify_rep10 / verify_rep5 were NOT re-run (operator memory limit).
 
 ## 00000000000000000000000000000000000000000000000000000000000000000000. VERIFY HOUSEKEEPING — vhk1: self-checks pinned to each sprint's own merge; verify WRITTEN, not yet run (2026-11-02)
 
