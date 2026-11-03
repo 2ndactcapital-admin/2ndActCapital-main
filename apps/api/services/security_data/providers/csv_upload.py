@@ -14,7 +14,7 @@ class CsvUploadProvider(BaseProvider):
     key = "csv_upload"
     # fund_holdings: NOT from uploads this sprint — rep1's holdings store is platform-only
     # (replica_holdings_snapshots_platform_chk), so an org's file would publish to every org.
-    capabilities = frozenset({"eod_price", "corporate_action", "index_level"})
+    capabilities = frozenset({"eod_price", "corporate_action", "index_level", "factor_score"})   # rep10: factor_score
 
     async def read(self, conn, ctx, data_type, subjects, *, end: date, start: date | None = None) -> dict:
         if data_type == "eod_price":
@@ -23,4 +23,6 @@ class CsvUploadProvider(BaseProvider):
             return await store.index_levels(conn, ctx.org_id, self.key, subjects, end=end, start=start)
         if data_type == "corporate_action":
             return await store.corporate_actions(conn, ctx.org_id, self.key, subjects, end=end, start=start)
+        if data_type == "factor_score":
+            return await store.factor_scores(conn, ctx.org_id, self.key, subjects, end=end, start=start)
         return {}

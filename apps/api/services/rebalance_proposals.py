@@ -329,9 +329,13 @@ async def _ticker_map(conn, tickers: set[str]) -> dict[str, str]:
     return {r["t"]: str(r["global_security_id"]) for r in rows}
 
 
-async def target_for(conn, org_id, link: dict, version_id) -> dict:
+async def target_for(conn, org_id, link: dict, version_id, *, adjust: bool = True, today: date | None = None) -> dict:
     """The model's look-through weights, minus the account's exclusions by its
-    exclusion policy (exact), with labels."""
+    exclusion policy (exact), with labels. rep10: then (``adjust``) the account's
+    APPROVED tilt set and its completion (services.tilts / services.completion) —
+    after the exclusions, before the engine, so the cash floor, lot method, gain
+    budget and wash-sale control still apply on top. An account with neither gets
+    exactly the dict it always got."""
     from services import models as M
 
     lt = await M.look_through(conn, version_id)
@@ -363,8 +367,56 @@ async def target_for(conn, org_id, link: dict, version_id) -> dict:
             n = await conn.fetchval("SELECT name FROM portfolio.securities_global WHERE id = $1::uuid", gid)
             labels[gid] = n or gid
     tgt, notes = E.apply_exclusions(target, excluded, link["exclusion_policy"], alternates, labels)
-    return {"target": tgt, "labels": labels, "alternates": alternates, "excluded": excluded, "notes": notes,
-            "warnings": warnings}
+    out = {"target": tgt, "labels": labels, "alternates": alternates, "excluded": excluded, "notes": notes,
+           "warnings": warnings}
+    if adjust and link.get("account_id") and version_id:
+        await _rep10_adjust(conn, org_id, link, version_id, out, today or date.today())
+    return out
+
+
+async def _rep10_adjust(conn, org_id, link: dict, version_id, out: dict, today: date) -> None:
+    """rep10 — the approved tilt set, then completion, on the target after exclusions (in place). Records the
+    model weight (after exclusions) and each step's effect for the proposal's lines; a step that cannot apply says
+    why in a warning and leaves the target as it was."""
+    from services import completion as CO
+    from services import tilts as TL
+
+    model_w = dict(out["target"])
+    t = await TL.for_target(conn, org_id, link["account_id"], version_id, out["target"], out["labels"], today)
+    if t is not None:
+        if t["applied"]:
+            out["target"] = t["result"]["final"]
+            out["tilt"] = {"set_id": str(t["set"]["id"]), "version_no": t["set"]["version_no"], "name": t["set"]["name"],
+                           "deltas": t["result"]["deltas"]}
+            out["warnings"].append({"code": "tilt", "message": f"tilt set v{t['set']['version_no']} "
+                                    f"({t['set']['name']}) applied after exclusions — "
+                                    + "; ".join(t["result"]["notes"] or ["see the model / tilt / final weights"]),
+                                    "tilt_set_id": str(t["set"]["id"])})
+        else:
+            out["warnings"].append({"code": "tilt_not_applied", "message": "the approved tilt set no longer fits the "
+                                    "model and was NOT applied: " + "; ".join(t["reasons"]),
+                                    "tilt_set_id": str(t["set"]["id"])})
+    account = await AM.load_account(conn, org_id, link["account_id"])
+    c = await CO.for_target(conn, org_id, account, out["target"], out["labels"], today)
+    if c is not None:
+        if c["applied"]:
+            pre = dict(out["target"])
+            out["target"] = c["result"]["weights"]
+            out["completion"] = {"household_value": str(c["result"]["household_value"]),
+                                 "account_value": str(c["result"]["account_value"]), "excess": c["result"]["excess"],
+                                 "deltas": {k: E.qw(out["target"].get(k, E.ZERO) - pre.get(k, E.ZERO))
+                                            for k in set(pre) | set(out["target"])}}
+            out["warnings"].append({"code": "completion", "message": "completion: the target nets out the household's "
+                                    "exposure held elsewhere so the household total matches the model"
+                                    + (f"; {len(c['result']['excess'])} security(ies) over target elsewhere — "
+                                       "not traded" if c["result"]["excess"] else ""),
+                                    "excess": c["result"]["excess"]})
+            for n in c["result"]["notes"]:
+                out["warnings"].append({"code": "completion", "message": n})
+        else:
+            out["warnings"].append({"code": "completion_not_applied", "message": "; ".join(c["reasons"])})
+    if "tilt" in out or "completion" in out:
+        out["model_target"] = model_w
 
 
 async def realized_ytd(conn, org_id, account_id, today: date, *, include_held_away: bool = True) -> Decimal:
@@ -484,7 +536,8 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
 
     today = today or date.today()
     hold = await AM.load_holdings(conn, org_id, account["id"])
-    tg = target_override if target_override is not None else await target_for(conn, org_id, link, version_id)
+    tg = target_override if target_override is not None else await target_for(conn, org_id, link, version_id,
+                                                                              today=today)
     key = trade_custodian_key(account.get("custodian_code")) or "manual"
     frac = await capability(conn, key, "fractional_shares")
     trading = await capability(conn, key, "equity_trading_api")
@@ -566,7 +619,30 @@ async def compute(conn, org_id, account: dict, link: dict, version_id, *, withdr
     thr, thr_src = (await drift_threshold(conn, org_id, link, version_id)) if version_id else (None, "one_off")
     return {"result": res, "lines": lines, "warnings": warnings, "labels": labels, "holdings": hold,
             "realized_ytd": ytd, "gain_budget": budget, "fractional": available(frac), "threshold": thr,
-            "threshold_source": thr_src, "min_trade": min_trade, "today": today, "lot_method": eff}
+            "threshold_source": thr_src, "min_trade": min_trade, "today": today, "lot_method": eff,
+            "model_target": tg.get("model_target"), "tilt": tg.get("tilt"), "completion": tg.get("completion")}
+
+
+def _target_out(r: E.BuildResult, c: dict) -> list[dict]:
+    """The proposal's target lines. rep10: with a tilt or completion in effect each line also carries the model
+    weight (after exclusions), the tilt, the completion adjustment and the final weight; otherwise exactly rep5's."""
+    rows = _weights_out(r.target, c["labels"])
+    if not c.get("model_target"):
+        return rows
+    mt = c["model_target"]
+    tilt = (c.get("tilt") or {}).get("deltas") or {}
+    comp = (c.get("completion") or {}).get("deltas") or {}
+    keys = {x["key"] for x in rows}
+    for k in mt:
+        if k not in keys:
+            rows.append({"key": k, "label": "Cash" if k == E.CASH else c["labels"].get(k, k), "weight": "0"})
+    for x in rows:
+        k = x["key"]
+        x["model_weight"] = str(E.qw(mt.get(k, E.ZERO)))
+        x["tilt"] = str(E.qw(tilt.get(k, E.ZERO)))
+        x["completion"] = str(E.qw(comp.get(k, E.ZERO)))
+        x["final_weight"] = x["weight"]
+    return rows
 
 
 def lot_method_warnings(eff: dict, sells: bool) -> list[dict]:
@@ -698,7 +774,7 @@ async def _withdraw_task(pool, task_id, reason: str) -> None:
 async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, maker_id=None,
                    auto_submit: bool = False, trigger_ref: dict | None = None, withdrawal: Decimal | None = None,
                    today: date | None = None, harvest_plan: dict | None = None,
-                   lot_override: dict | None = None) -> dict:
+                   lot_override: dict | None = None, target_override: dict | None = None) -> dict:
     """The ONE generator. Writes the proposal (draft), its trades and — for a
     join — the transition plan; supersedes an older open draft / pending one
     (never for a harvest: that raises OpenProposalExists instead);
@@ -709,12 +785,13 @@ async def generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, m
         return await _generate(pool, org_id=org_id, account_id=account_id, trigger=trigger, maker_kind=maker_kind,
                                maker_id=maker_id, auto_submit=auto_submit, trigger_ref=trigger_ref,
                                withdrawal=withdrawal, today=today, harvest_plan=harvest_plan,
-                               lot_override=lot_override)
+                               lot_override=lot_override, target_override=target_override)
 
 
 async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, maker_id, auto_submit: bool,
                     trigger_ref: dict | None, withdrawal: Decimal | None, today: date | None,
-                    harvest_plan: dict | None, lot_override: dict | None = None) -> dict:
+                    harvest_plan: dict | None, lot_override: dict | None = None,
+                    target_override: dict | None = None) -> dict:
     if trigger not in TRIGGER_LABELS:
         raise ProposalError(f"trigger is one of {list(TRIGGER_LABELS)}")
     if maker_kind not in ("user", "system") or (maker_kind == "user") != (maker_id is not None):
@@ -756,7 +833,7 @@ async def _generate(pool, *, org_id, account_id, trigger: str, maker_kind: str, 
                                               today=today)
         else:
             c = await compute(conn, org_id, account, link, model["live_version_id"], withdrawal=withdrawal,
-                              today=today, lot_override=lot_override)
+                              today=today, lot_override=lot_override, target_override=target_override)
         expiry_days = await _setting(conn, org_id, EXPIRY_SETTING, DEFAULT_EXPIRY_DAYS, lo=1, hi=90, integer=True)
     r: E.BuildResult = c["result"]
     pid = uuid.uuid4()
@@ -833,7 +910,7 @@ async def _write_generated(pool, *, org_id, account, link, model, c, r, pid, now
                 str(model["id"]) if model else None, str(model["live_version_id"]) if model else None, trigger, _dumps({**ref, "threshold": c["threshold"],
                                                                 "threshold_source": c["threshold_source"]}),
                 advice_only, c["holdings"]["valuation_as_of"], r.account_value.quantize(E.QTY),
-                r.cash.quantize(E.QTY), withdrawal, _dumps(_weights_out(r.target, c["labels"])),
+                r.cash.quantize(E.QTY), withdrawal, _dumps(_target_out(r, c)),
                 _dumps(_weights_out(r.before, c["labels"])), _dumps(_weights_out(r.after, c["labels"])),
                 r.drift_before, r.drift_after, r.est_st_gain.quantize(E.QTY), r.est_lt_gain.quantize(E.QTY),
                 c["gain_budget"], c["realized_ytd"].quantize(E.QTY), _dumps(c["warnings"]), _dumps(later),

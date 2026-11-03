@@ -1,5 +1,5 @@
 {
- "app_route_count": 731,
+ "app_route_count": 769,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12198,6 +12198,838 @@
    "name": "sheet",
    "note": "",
    "path": "/api/v1/execution/blocks/{block_id}/sheet",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_sets",
+   "note": "",
+   "path": "/api/v1/replication/tilts/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_preview",
+   "note": "",
+   "path": "/api/v1/replication/tilts/accounts/{account_id}/preview",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_create",
+   "note": "",
+   "path": "/api/v1/replication/tilts/accounts/{account_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_lines",
+   "note": "",
+   "path": "/api/v1/replication/tilts/sets/{set_id}/lines",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_submit",
+   "note": "",
+   "path": "/api/v1/replication/tilts/sets/{set_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_archive",
+   "note": "",
+   "path": "/api/v1/replication/tilts/sets/{set_id}/archive",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_approve",
+   "note": "",
+   "path": "/api/v1/replication/tilts/sets/{set_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "tilt_reject",
+   "note": "",
+   "path": "/api/v1/replication/tilts/sets/{set_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "completion_view",
+   "note": "",
+   "path": "/api/v1/replication/completion/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "completion_settings",
+   "note": "",
+   "path": "/api/v1/replication/completion/accounts/{account_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "completion_confirm",
+   "note": "",
+   "path": "/api/v1/replication/completion/accounts/{account_id}/confirm",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "consolidation_view",
+   "note": "",
+   "path": "/api/v1/replication/consolidation/households/{household_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "consolidation_act",
+   "note": "",
+   "path": "/api/v1/replication/consolidation/households/{household_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "backtests",
+   "note": "",
+   "path": "/api/v1/replication/backtests",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "backtest_run",
+   "note": "",
+   "path": "/api/v1/replication/backtests",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "backtest_detail",
+   "note": "",
+   "path": "/api/v1/replication/backtests/{backtest_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "backtest_pdf",
+   "note": "",
+   "path": "/api/v1/replication/backtests/{backtest_id}/pdf",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "none beyond auth",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "active"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "member_backtests",
+   "note": "",
+   "path": "/api/v1/replication/member/backtests",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "policy_list",
+   "note": "",
+   "path": "/api/v1/replication/hypothetical-policy",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_hypothetical_policy",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_hypothetical_policy"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "policy_request",
+   "note": "",
+   "path": "/api/v1/replication/hypothetical-policy",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_hypothetical_policy",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_hypothetical_policy"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "policy_approve",
+   "note": "",
+   "path": "/api/v1/replication/hypothetical-policy/{policy_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_hypothetical_policy",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_hypothetical_policy"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_rep10",
+   "name": "policy_reject",
+   "note": "",
+   "path": "/api/v1/replication/hypothetical-policy/{policy_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "gifts",
+   "note": "",
+   "path": "/api/v1/tax/gifts",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "donees",
+   "note": "",
+   "path": "/api/v1/tax/gifts/donees",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "candidates",
+   "note": "",
+   "path": "/api/v1/tax/gifts/candidates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "add_donee",
+   "note": "",
+   "path": "/api/v1/tax/gifts/donees",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "retire_donee",
+   "note": "",
+   "path": "/api/v1/tax/gifts/donees/{donee_id}/retire",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "propose",
+   "note": "",
+   "path": "/api/v1/tax/gifts",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "gift",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "submit",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/submit",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "approve",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "reject",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "letter",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/letter",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "sent",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/sent",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "received",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/received",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "acknowledged",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/acknowledged",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "rebuy",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/rebuy",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.tax_gifts",
+   "name": "cancel",
+   "note": "",
+   "path": "/api/v1/tax/gifts/{gift_id}/cancel",
    "public": false,
    "write": true
   },

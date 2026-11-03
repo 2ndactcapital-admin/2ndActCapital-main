@@ -117,6 +117,7 @@ from services.edgar_index_schedule import maybe_refresh_index
 from services.blocks import expire_tick as blocks_expire_tick
 from services.execution import expire_tick
 from services.rebalance_proposals import proposals_tick
+from services.rep10_sweeps import tick as rep10_tick
 from services.replica_schedule import maybe_refresh_holdings
 from services.workflow_scheduler import run_scheduler_tick
 
@@ -196,6 +197,17 @@ async def main() -> int:
                 print(f"[scheduler] rebalance proposals: {e}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] rebalance proposals failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # REP10 — year-end gift reminders and completion staleness. Never a test org; never a backtest.
+        try:
+            r10 = await rep10_tick(pool)
+            moved = {k: sum(len(o.get(k, [])) for o in r10.values()) for k in ("gifts", "completion")}
+            if any(moved.values()):
+                print(f"[scheduler] rep10 reminders: {moved}")
+            for org, o in r10.items():
+                for e in o.get("errors", []):
+                    print(f"[scheduler] rep10 ({org}): {e}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] rep10 reminders failed: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
         await conn.close()
         await close_pool()

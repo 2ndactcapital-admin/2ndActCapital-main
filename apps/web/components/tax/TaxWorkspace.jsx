@@ -12,6 +12,7 @@ import HarvestDashboard from "@/components/tax/HarvestDashboard";
 import Substitutions from "@/components/tax/Substitutions";
 import Profiles from "@/components/tax/Profiles";
 import DeclaredTrades from "@/components/tax/DeclaredTrades";
+import CharitableGifts from "@/components/tax/CharitableGifts";
 import { get } from "@/components/tax/common";
 
 const VIEWS = [
@@ -19,6 +20,8 @@ const VIEWS = [
   { key: "substitutions", label: "Substitutions", path: "tax/substitutions" },
   { key: "profiles", label: "Profiles", path: "tax/profiles" },
   { key: "declared", label: "Declared outside trades", path: "tax/declared-trades" },
+  // REP10 — charitable lot gifting (loads its own envelope from /tax/gifts)
+  { key: "gifts", label: "Charitable gifts", path: "tax/gifts" },
 ];
 
 export default function TaxWorkspace({ initialEnvelope, initialView = "harvest" }) {
@@ -41,7 +44,7 @@ export default function TaxWorkspace({ initialEnvelope, initialView = "harvest" 
   }
   function open(key) {
     setView(key);
-    if (!envs[key]) load(key);
+    if (!envs[key] && key !== "gifts") load(key);
   }
   const env = envs[view];
   return (
@@ -54,7 +57,8 @@ export default function TaxWorkspace({ initialEnvelope, initialView = "harvest" 
       </div>
       <div className="mt-5">
         {err ? <p className="text-sm text-[#9B2335]">{err}</p> : null}
-        {!env ? <p className="text-sm text-text-muted">Loading…</p> : null}
+        {!env && view !== "gifts" ? <p className="text-sm text-text-muted">Loading…</p> : null}
+        {view === "gifts" ? <CharitableGifts /> : null}
         {env && view === "harvest" ? <HarvestDashboard envelope={env} onReload={() => load("harvest")} /> : null}
         {env && view === "substitutions" ? <Substitutions envelope={env} onReload={() => load("substitutions")} /> : null}
         {env && view === "profiles" ? <Profiles envelope={env} subjects={subjects || []} onReload={() => load("profiles")} /> : null}

@@ -5,6 +5,7 @@ import { fetchAPI } from "@/lib/api";
 import XrayView from "@/components/xray/XrayView";
 import AuthorityPanel from "@/components/authority/AuthorityPanel";
 import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
+import ConsolidatePanel from "@/components/replication/ConsolidatePanel";
 
 // REP7 — Household → tab "X-ray": the look-through of every fund the
 // household holds (managed and held-away accounts), replicable funds and the
@@ -53,9 +54,11 @@ export default async function HouseholdPage({ params, searchParams }) {
         <a className={`pb-2 ${tab === "xray" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=xray`}>X-ray</a>
         <a className={`pb-2 ${tab === "authority" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=authority`}>Authority</a>
         <a className={`pb-2 ${tab === "lot-method" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=lot-method`}>Lot method</a>
+        <a className={`pb-2 ${tab === "consolidate" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=consolidate`}>Consolidate</a>
       </nav>
       <div className="mt-4">
-        {tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />
+        {tab === "consolidate" ? <ConsolidatePanel householdId={id} />
+          : tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />
           : <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">The lot method is open to staff with proposal access.</div>)
           : tab === "authority" ? (authority ? <AuthorityPanel initialEnvelope={authority} kind="household" />
           : <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">The authority setting is open to staff with authority access.</div>)

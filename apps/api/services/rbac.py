@@ -281,6 +281,8 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("view_blocks", "blocks", "view"),
     ("manage_blocks", "blocks", "manage"),
     ("approve_blocks", "blocks", "approve"),
+    # rep10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure); maker-checker.
+    ("manage_hypothetical_policy", "hypothetical_policy", "manage"),
 )
 
 

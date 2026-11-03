@@ -58,6 +58,39 @@ async def corporate_actions(conn, org_id, provider_key: str, gsids: list[str], *
     return out
 
 
+async def factor_scores(conn, org_id, provider_key: str, subjects: list[str], *, end: date,
+                        start: date | None) -> dict:
+    """rep10 — subjects are "<global security id>:<factor>"; a malformed subject is simply absent (never a guess).
+    The score is the number the approved file states, with its date."""
+    import re
+
+    pairs = {}
+    for s_ in subjects or []:
+        gsid, _, factor = str(s_).partition(":")
+        if re.fullmatch(r"[0-9a-fA-F-]{36}", gsid) and re.fullmatch(r"[a-z][a-z0-9_]{0,39}", factor):
+            pairs[s_] = (gsid.lower(), factor)
+    if not pairs:
+        return {}
+    rows = await conn.fetch(
+        "SELECT global_security_id, factor, score_date, score, licence, quality_flags, org_id, upload_id "
+        "FROM portfolio.security_factor_scores WHERE global_security_id = ANY($1::uuid[]) AND factor = ANY($2::text[]) "
+        "AND provider_key = $3 AND score_date <= $4 AND ($5::date IS NULL OR score_date >= $5::date) "
+        "AND (org_id IS NULL OR org_id = $6::uuid) AND " + LIVE +
+        " ORDER BY global_security_id, factor, score_date DESC",
+        sorted({g for g, _ in pairs.values()}), sorted({f for _, f in pairs.values()}), provider_key, end, start,
+        str(org_id))
+    wanted = {v: k for k, v in pairs.items()}
+    out: dict = {}
+    for r in rows:
+        subject = wanted.get((str(r["global_security_id"]), r["factor"]))
+        if subject is None or (start is None and subject in out):
+            continue
+        out.setdefault(subject, []).append(Point(d(r["score"]), r["score_date"], provider_key, _lic(r["licence"]),
+                                                 list(r["quality_flags"] or []),
+                                                 {"upload_id": str(r["upload_id"])} if r["upload_id"] else {}))
+    return out
+
+
 async def holdings_snapshots(conn, provider_key: str, fund_gsids: list[str], *, end: date) -> dict:
     if not fund_gsids:
         return {}

@@ -13,7 +13,7 @@ from services.security_data.providers.base import BaseProvider, FetchOutcome
 
 
 class VendorStubProvider(BaseProvider):
-    capabilities = frozenset({"eod_price", "corporate_action", "index_level", "option_quote", "fx"})
+    capabilities = frozenset({"eod_price", "corporate_action", "index_level", "option_quote", "fx", "factor_score"})
     fetches = frozenset()
     connected = False
 
