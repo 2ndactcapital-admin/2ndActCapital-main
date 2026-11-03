@@ -845,8 +845,11 @@ async def activation(conn) -> None:
     # retire did not survive.
     real_llm_options = ens.llm_options
 
-    async def broken_llm_options(c):
-        opts = await real_llm_options(c)
+    # aibudget1 fix 1: forward every argument. activate_ensemble now calls
+    # llm_options(conn, task_key); a one-arg stub raised TypeError on its first
+    # line, BEFORE the retire, so the rollback property went unexercised.
+    async def broken_llm_options(c, *args, **kwargs):
+        opts = await real_llm_options(c, *args, **kwargs)
         for o in opts:
             if o["model_id"] == "claude-haiku":
                 o["model_version"] = None  # NOT NULL on model_1_version -> INSERT fails

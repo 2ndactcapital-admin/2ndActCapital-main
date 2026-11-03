@@ -357,6 +357,8 @@ daily runs + every job's picker), `node --test tests/aibudget/` 11/11 and the fu
 Verify `apps/api/scripts/verify_aibudget1.py` is WRITTEN, NOT RUN (`--self-checks-only` run after the commit). Its
 regression section re-runs `verify_ensemblesystemone.py` once, flat, after teardown, VERIFY_NESTED=1, 2700 s.
 
+UPDATE (aibudget1 fix 1, 2026-11-03): the re-run was 129 PASS / 1 FAIL, the FAIL in the verify_ensemblesystemone regression ([Y] "an INSERT failing after the retire rolls the retire back", raised=TypeError). **VERIFY defect, not code**: its `broken_llm_options(c)` stub took one argument while aibudget1's `activate_ensemble` now calls `llm_options(conn, task_key)` → TypeError on the function's first line, before any SQL, so the rollback was never exercised. The code was right: a None version still reaches the INSERT. The stub now forwards `*args, **kwargs`, and the assertion is unchanged. One-off `scripts/_oneoff_aibudget1_fix1.py` 3/3: it reproduced the TypeError (zero statements issued), and with the corrected stub it got NotNullViolation on the INSERT after the retire UPDATE ran, with #2 still active, 2 rows, and 0 fixture rows left. verify_ensemblesystemone has no `--self-checks-only` mode (it ignores argv), so it was compile-checked only and not run. The full verify_aibudget1 re-run is still owed.
+
 Task 1 findings:
 - 1a. note_terms_extraction: 5,366 manifest rows `ready_for_extraction` (all with a stored document), 0 staged → 5,366
   queued; started today only by `scripts/run_note_extraction_pilot.py` (reads the active ensemble). replica_terms_
