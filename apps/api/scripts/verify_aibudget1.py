@@ -262,7 +262,7 @@ async def real_fingerprints(conn) -> dict:
         "staging": await fingerprint(conn, "SELECT id, status FROM portfolio.note_extraction_staging"),
         "replica_readings": await fingerprint(conn, "SELECT id, extraction_run_id FROM "
                                                     "portfolio.replica_term_readings"),
-        "filings": await fingerprint(conn, "SELECT id, pipeline_status, reference_filing_id FROM "
+        "filings": await fingerprint(conn, "SELECT accession_number, pipeline_status, reference_filing_id FROM "
                                            "portfolio.edgar_index_filings"),
     }
 
