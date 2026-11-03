@@ -553,6 +553,30 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY audit_log_pkey: (id)
 
+-- ===== backtests =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   fund_security_id                         uuid NOT NULL
+--   household_id                             uuid
+--   window_preset                            text NOT NULL
+--   start_date                               date NOT NULL
+--   end_date                                 date NOT NULL
+--   settings                                 jsonb NOT NULL
+--   coverage                                 jsonb NOT NULL
+--   status                                   text NOT NULL
+--   result                                   jsonb
+--   not_estimated_reason                     text
+--   hypothetical                             boolean NOT NULL DEFAULT true
+--   policy_id                                uuid
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY backtests_pkey: (id)
+
 -- ===== billing_group_members =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -669,6 +693,29 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY block_fills_pkey: (id)
 
+-- ===== charitable_donees =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   name                                     text NOT NULL
+--   kind                                     text NOT NULL
+--   ein                                      text NOT NULL
+--   receiving_broker                         text NOT NULL
+--   dtc_participant                          text NOT NULL
+--   account_number_masked                    text NOT NULL
+--   account_number_hash                      text NOT NULL
+--   contact                                  text
+--   notes                                    text
+--   status                                   text NOT NULL DEFAULT 'active'::text
+--   created_by                               uuid NOT NULL
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY charitable_donees_pkey: (id)
+
 -- ===== chart_of_accounts =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -685,6 +732,22 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY chart_of_accounts_pkey: (id)
+
+-- ===== completion_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   count_elsewhere                          boolean NOT NULL DEFAULT false
+--   count_authorities                        ARRAY NOT NULL DEFAULT ARRAY['read_only'::text, 'advise'::text]
+--   stale_after_days                         integer
+--   reason                                   text NOT NULL
+--   set_by                                   uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY completion_settings_pkey: (id)
 
 -- ===== compliance_override_requests =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
@@ -2145,6 +2208,86 @@
 --   UNIQUE fx_rates_pair_date_type_key: (base_ccy, quote_ccy, as_of_date, rate_type)
 --   PRIMARY KEY fx_rates_pkey: (id)
 
+-- ===== gift_lots =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   gift_proposal_id                         uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   tax_lot_id                               uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   quantity                                 numeric NOT NULL
+--   unit_cost                                numeric NOT NULL
+--   acquired_date                            date NOT NULL
+--   holding_period                           text NOT NULL
+--   price_at_proposal                        numeric NOT NULL
+--   price_as_of                              date NOT NULL
+--   price_source                             text NOT NULL
+--   fmv_at_proposal                          numeric NOT NULL
+--   gain_at_proposal                         numeric NOT NULL
+--   fmv_at_receipt                           numeric
+--   receipt_price                            numeric
+--   receipt_price_source                     text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY gift_lots_pkey: (id)
+
+-- ===== gift_proposals =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   household_id                             uuid
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid NOT NULL
+--   member_entity_id                         uuid NOT NULL
+--   donee_id                                 uuid NOT NULL
+--   donee_kind                               text NOT NULL
+--   tax_year                                 integer NOT NULL
+--   target_amount                            numeric
+--   agi_estimate                             numeric
+--   agi_source                               text
+--   agi_as_of                                date
+--   itemizes                                 text NOT NULL
+--   itemizes_source                          text NOT NULL
+--   itemizes_as_of                           date NOT NULL
+--   prior_carryforward                       numeric NOT NULL DEFAULT 0
+--   prior_carryforward_source                text NOT NULL
+--   prior_carryforward_as_of                 date NOT NULL
+--   rebuy                                    text NOT NULL DEFAULT 'none'::text
+--   comparison                               jsonb NOT NULL
+--   rates                                    jsonb NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   submitted_by                             uuid
+--   submitted_at                             timestamp with time zone
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   decision_note                            text
+--   sent_by                                  uuid
+--   sent_at                                  timestamp with time zone
+--   sent_channel                             text
+--   received_on                              date
+--   received_by                              uuid
+--   received_note                            text
+--   acknowledged_on                          date
+--   acknowledged_by                          uuid
+--   acknowledgement_ref                      text
+--   rebuy_proposal_ids                       ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   cancelled_by                             uuid
+--   cancelled_at                             timestamp with time zone
+--   cancel_reason                            text
+--   notes                                    text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY gift_proposals_pkey: (id)
+
 -- ===== harvest_candidates =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -2338,6 +2481,29 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   created_by                               uuid
 --   PRIMARY KEY households_pkey: (id)
+
+-- ===== hypothetical_performance_policies =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   policy_text                              text NOT NULL
+--   audience                                 text NOT NULL
+--   disclosure_text                          text NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   superseded_reason                        text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY hypothetical_performance_policies_pkey: (id)
 
 -- ===== instruction_settlements =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -3413,6 +3579,51 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   UNIQUE teams_org_id_name_key: (org_id, name)
 --   PRIMARY KEY teams_pkey: (id)
+
+-- ===== tilt_lines =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   tilt_set_id                              uuid NOT NULL
+--   line_no                                  integer NOT NULL
+--   kind                                     text NOT NULL
+--   subject                                  text NOT NULL
+--   subject_label                            text
+--   delta                                    numeric NOT NULL
+--   reason                                   text NOT NULL
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY tilt_lines_pkey: (id)
+
+-- ===== tilt_sets =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   version_no                               integer NOT NULL
+--   name                                     text NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_id                                 uuid NOT NULL
+--   submitted_by                             uuid
+--   submitted_at                             timestamp with time zone
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   archived_reason                          text
+--   metrics                                  jsonb
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY tilt_sets_pkey: (id)
 
 -- ===== trade_blocks =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -5351,6 +5562,25 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY security_data_runs_pkey: (id)
+
+-- ===== portfolio.security_factor_scores =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   global_security_id                       uuid NOT NULL
+--   factor                                   text NOT NULL
+--   score_date                               date NOT NULL
+--   score                                    numeric NOT NULL
+--   provider_key                             text NOT NULL
+--   org_id                                   uuid
+--   upload_id                                uuid
+--   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   quality_flags                            ARRAY NOT NULL DEFAULT '{}'::text[]
+--   as_of                                    timestamp with time zone NOT NULL DEFAULT now()
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_factor_scores_pkey: (id)
 
 -- ===== portfolio.structured_note_issuers =====
 --   filer_cik                                text NOT NULL
