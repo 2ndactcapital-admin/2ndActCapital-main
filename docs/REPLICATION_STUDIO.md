@@ -1826,3 +1826,188 @@ staff_and_members, and then shows only the member's own households' backtests.
   the donee's acceptance of in-kind securities; state deductibility.
 - Factor-score data licences.
 - Not built: reserving an open gift's lots against a rep5 sale.
+
+## rep11 — note replication from the 424B2 terms (PHASE 3 BEGINS: structured notes, 2026-11-03)
+
+Sprint 11 of 15 starts phase 3 (structured notes; rep12 = note-versus-replica across new issues).
+Thesis (Joe): the public filing shows what a note really is. Hollisworks shows a member what
+they own, what it is worth, and what a transparent replica would look like. Schema:
+`docs/rep11_part1.sql` (applied). Service: `services/note_replication.py`. Routes:
+`routers/replication_notes.py`. Verify: `apps/api/scripts/verify_rep11.py` (written, not yet run).
+
+### Task 1 findings (live database, 2026-11-03)
+
+- **1a "the" terms.** `portfolio.securities_global_note_terms` has 54 live rows, one per note,
+  with no note holding two live rows. Final 48 / preliminary 6; the prompt said 47 / 7, and the
+  live mix moves. The current terms of a note are its live rows ranked restated > final >
+  preliminary, then the newest `valid_from` (`current_of`). **`routing_decision` is NULL on all
+  54**, so STP routing never ran on them and "approved" cannot be read from routing. Needs
+  review = `extraction_confidence` other than `high` (28 of 54), `routing_decision = 'queued'`, a
+  used field whose `field_status` is `extraction_failed`, or a value on the wrong scale (below).
+- **1a underlyings.** These come from `portfolio.securities_global_relationships`
+  (`underlying_of`): 97 edges, 69 ambiguous (a known index proposed) and 28 unresolved.
+  **Zero are resolved**, so no real note can be built until a Super Admin confirms its
+  underlying in the underlying-resolution queue.
+- **1a distribution and fees.** These are not on the terms row. They are only in
+  `note_term_readings` (`distribution` [{name, role, fee_max_pct}], `agent_commission_pct`,
+  `total_fees_pct`, `estimated_value_pct`, `price_to_public_pct`) for the same filing. **None
+  of those readings belong to the 54 notes' filings today**, so every note shows "not in the
+  extracted terms". The lookup is wired: a human reading first, then the newest; a model
+  reading is labelled "not reviewed".
+- **1c builder inputs.** These are the strike as a % of the start level, the ratio, expiry =
+  the final valuation date, the outcome period = initial → final valuation date, and the
+  underlying from the one resolved edge. The start level is the underlying's level quote **on
+  the initial valuation date**; nothing is guessed.
+- **1d holdings.** 0 live positions hold any of the 54 notes (positions → `assets.global_security_id`
+  → `securities_global` → terms), and 0 assets are structured notes.
+- **1e parent.** `option_packages` requires `replica_security_id` and `model_id` (NOT NULL), so a
+  note replica is its own parent: `public.note_replicas` + `note_replica_legs`. These reuse
+  rep8's `find_or_create_contract`, adviser quotes, `level_kind`, `PLeg` / `package_value` /
+  `intrinsic` (the same payoff math) and `contract_out`.
+
+### Verdict rules (`assess`, RULE_VERSION rep11.1; the platform table `portfolio.note_replicability`)
+
+Each **not-replicable** feature found adds its own reason, and a note can carry several:
+
+| code | feature | the plain reason |
+|---|---|---|
+| autocall | archetype autocallable, an autocall frequency, or an autocall barrier | early redemption depends on the path; static European options cannot stop on a call date |
+| worst_of | basket_type worst_of | "Worst-of three underlyings — a replica would need correlation, which listed options cannot provide" (the count of edges) |
+| basket | basket_type basket | an option on the basket's combined level; no listed option on that basket; per-component options pay more |
+| decrement_index | is_decrement_index | a fixed daily deduction; no listed / FLEX options are written on it |
+| contingent_coupon | coupon_barrier_pct present | a strip of digital options, one per observation date |
+| memory_coupon | reading coupon_memory = true | a missed coupon is paid later if the underlying recovers (path) |
+| daily_barrier | reading barrier_observation daily / continuous | a knock-in on the whole path |
+| no_mapping | archetype other / not extracted | no payoff shape this build maps |
+
+**Replicable** notes get one of four mappings:
+
+| mapping | archetype | verdict | replica |
+|---|---|---|---|
+| buffer_package | buffered_note, single | static | underlying + long put 100% + short put at 100% − buffer (a floor: long put at the floor) + participation calls at 100% (p > 1 long p − 1; p < 1 short 1 − p) + short call ×p at 100% + cap ÷ p |
+| principal_protected | principal_protected, single | static | Treasury zero repaying principal (face 100%, maturing at the final valuation) + the downside legs + long calls ×p at 100% + short calls ×p at 100% + cap ÷ p |
+| digital_call_spread | digital, single | **approximate** | Treasury (face 100%) + the downside legs + a call spread long / short (digital ÷ ε)× at 100% / 100% + ε |
+| reverse_convertible | reverse_convertible, single | static | Treasury (face 100% + coupon × tenor) + a short put at 100% (or where the buffer ends) |
+
+- **Total return.** A note on a total-return index is **approximate**: listed options settle
+  on the price index.
+- **Protection semantics, stated for Joe to confirm.**
+  - `buffer`: `protection_pct` is the first loss absorbed.
+  - `floor`: `protection_pct` is the minimum repaid as a fraction of principal (1 =
+    principal protected). This matches the principal-protected rows. A knock-in barrier
+    labelled `floor` would be an extraction error.
+  - `cap_pct` is the maximum return.
+  - `participation_rate` is the upside multiple; absent means 1×.
+  - `coupon_rate` is a fraction per year, paid at maturity in the replica.
+- **Wrong-scale values are review flags, never guessed:**
+  - a cap > 1 is probably the total payout;
+  - a coupon > 1 is probably a percent;
+  - a buffer outside 0–100% or a floor outside (0, 1];
+  - a participation on a digital note.
+- **Preliminary** terms are marked "preliminary — final terms may differ" and may be built.
+  Terms that **need review** are marked and are never built.
+- **The job** is `run_verdicts`, a platform job under `app.is_super_admin`. It runs as a step
+  of the cron tick and from POST /replication/notes/verdicts/run. It writes a new row only
+  when the terms fingerprint changes (the payoff fields, field_status, confidence, the
+  features read, the edge count and RULE_VERSION). It closes the earlier row (`valid_to`),
+  and closes the verdicts of terms that are no longer live. It is idempotent.
+
+**The verdict counts over today's 54 notes** (the job, run once as `app_service`; a second run
+wrote nothing):
+
+- **static 11** (buffered single 9, principal-protected 2);
+- **approximate 3** (digital single);
+- **not replicable 40.** Reasons, overlapping: autocall 31, worst-of 22, contingent coupon 22,
+  decrement index 5, basket 2, other 1.
+- **Needing review:** 8 of the 14 replicable notes (5 static, 3 approximate). Review reasons
+  across all 54 notes: confidence 28, extraction failed 8, coupon scale 6, cap scale 5, dates
+  missing 2, digital participation 1, protection scale 1, protection missing 1.
+- **Buildable today: 0**, because no underlying link is confirmed.
+
+### Replica construction and the payoff
+
+- **Build** is a POST that creates a DRAFT. It is refused (409, the reasons listed, **nothing
+  written**) for a not-replicable note, terms that need review, terms that lack a payoff field,
+  or an underlying that is not one confirmed edge.
+- **Option legs** are FLEX European by default: cash-settled on an index and physical
+  otherwise. Broad-based must be stated for an index (it decides Section 1256).
+- **Contracts** come through rep8's `find_or_create_contract`, at strike level = start level ×
+  strike % (cents, half-even), with expiry = the final valuation date. With no start-level
+  quote, the strikes stay as percentages and the replica reads "not priced: the underlying's
+  level on <initial date>". Pricing later sets the level on a draft.
+- **Computed against stated.** `computed_terms` reads cap / buffer / floor / participation
+  (and the digital amount or coupon) **back from the legs**, in exact Decimal, next to the
+  note's stated values, and shows any difference.
+- **Payoff.** Note value(s) = 1 + note_return(s − 1). Replica value(s) = Σ underlying ratio·s
+  + Σ Treasury face + Σ ±ratio·intrinsic(K, s). Both are drawn on one grid from −100% to +100%
+  (step `replication.notes.payoff_step_pct`, default 5%) plus every strike edge. It needs
+  strikes only, so it is always available.
+- **Approximation.** The digital is exact everywhere except underlying returns in [0, ε). There
+  the replica pays less, by at most the digital amount at exactly 0%, falling linearly to
+  nothing at ε. ε = `replication.notes.digital_spread_pct`, default 1%.
+- **Legs are manual instructions.** Every leg is shown as a manual instruction ("Buy … — manual,
+  through the custodian's options desk"). Nothing trades, and no execution instruction is
+  written.
+- **Maker-checker.** draft → pending_approval (a human task, `approve_replication`, never a
+  maker or a pricer) → approved | back to draft with the note. An approved replica supersedes
+  the earlier approved one (archived). **"Becomes a model / registry entry" means the approved
+  replica is the firm's registry entry for that note** — the X-ray's "replicable alternative".
+  It does **not** create a `portfolio.models` version: model versions are weight-based and
+  cannot carry option legs at a ratio. Wiring an approved note replica into a model and
+  account proposals is open (a rep12 candidate).
+
+### Pricing rule (an ESTIMATE, per 100 of principal)
+
+- **Quote kinds.** `adviser_quotes` gains `note_price` (% of par, on a structured note) and
+  `treasury_yield` (% a year, annual compounding, on a fixed-income security). They are
+  entered through rep8's POST /replication/options/quotes.
+- **Underlying:** ratio × current level ÷ start level × 100.
+- **Option:** ± ratio × premium ÷ start level × 100. Without a premium, the contract's **own**
+  entered implied vol (% a year) is priced through Black–Scholes in Decimal, with no dividends
+  and r = ln(1 + Treasury yield); the input is labelled.
+- **Treasury:** face × 100 × (1 + y)^−(days ÷ 365), days from the yield quote's as-of to the
+  leg's maturity.
+- **Embedded fee** = note price − replica cost, to four decimals. Every input is listed with
+  its quote id, source and as-of; the estimate's as-of is the oldest input.
+- **Missing inputs.** With any input missing, the result is "not priced — enter a quote —
+  missing: …", naming each gap.
+- **Comparisons** are insert-only rows (`public.note_replica_comparisons`); a CHECK holds fee =
+  note − cost.
+- **SSVI is not used.** `services.pricing.ssvi_surface` calibrates from call / put price pairs
+  (`min_quotes_per_slice` = 8 per expiry) and refuses maturities beyond 2.5 years. Notes run
+  1–6 years, and adviser quotes are one contract at a time. Nothing is fitted or extrapolated.
+
+### Member visibility
+
+- **Always visible.** The verdict and the stated terms are factual and always shown to the
+  household's own members: the X-ray marker, the note page.
+- **Hypothetical figures.** Replica cost and embedded-fee figures follow rep10's
+  hypothetical-performance policy. Staff see them: Super Admin, a staff role, or an org admin
+  (`manage_org_settings`). A member sees them only under an approved policy whose audience is
+  `staff_and_members`, with its disclosure. Otherwise the X-ray and the replica page carry
+  "Estimate withheld — no hypothetical-performance policy approved — staff use only".
+- **The X-ray marker.** Each held note shows its verdict, stated terms, distribution / fees
+  (or "not in the extracted terms"), and "replicable alternative" linking the firm's approved
+  replica. Without one it reads "no approved replica" or "not replicable with listed options".
+
+### Screens
+
+Replication → **Notes** (`/portfolio/replication/notes`, filter by verdict / archetype / issuer /
+underlying, Recompute verdicts for `manage_replication`); a note's page (terms with the filing
+link, verdict and reasons, payoff overlay, legs, replicas, builder, differences, counsel items);
+a replica's page (`/portfolio/replication/notes/replicas/{id}` — legs as manual instructions,
+computed vs stated, payoff, pricing, submit / approve / reject / archive); the X-ray's
+**Structured notes** card. Controls from `lib/rep11.mjs`, failing closed.
+
+### Open counsel / Joe items (on screen and here; never decided in code)
+
+- **Tax.** The note (prepaid forward, or a contingent payment debt instrument) versus the
+  replica (Section 1256 index options, 60/40, marked to market). The straddle question has
+  been pending with counsel since rep8.
+- **Marketing.** Whether showing members an embedded-fee estimate is hypothetical performance /
+  marketing. The firm's policy (rep10) governs it, and counsel confirms.
+- **Credit disclosure.** The issuer-credit disclosure wording.
+- **Protection semantics.** The `floor` and `cap_pct` scale interpretations above. Joe confirms
+  them against filings.
+- **Before any real note can be built.** Its underlying edge must be confirmed, and its terms
+  reviewed where flagged.

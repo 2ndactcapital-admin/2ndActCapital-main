@@ -446,6 +446,11 @@ async def compute(conn, org_id, household_id, *, today: date | None = None) -> d
                          f"{threshold * 100:.2f}% single-name threshold"} for e in by_security if e["flag"]]
     status_lines = [STATUS_LINES["tracking_error"], STATUS_LINES["harvest_benefit"],
                     STATUS_LINES["after_tax_performance"]]
+    # rep11 — each held structured note: verdict, stated terms, distribution / fees when known, and "replicable
+    # alternative" when the firm has an approved replica. Figures are filtered per viewer by the router.
+    from services import note_replication as NR
+
+    notes = await NR.xray_notes(conn, org_id, holdings)
     return {"household": {"id": str(hh["id"]), "name": hh["name"]}, "as_of": today.isoformat(),
             "accounts": [{"id": str(a["id"]), "account_number_masked": a["account_number_masked"],
                           "held_away": a["is_held_away"], "registration_type": a["registration_type"],
@@ -454,7 +459,8 @@ async def compute(conn, org_id, household_id, *, today: date | None = None) -> d
             "total_market_value": str(money(total)), "unvalued_holdings": unvalued,
             "holdings": holdings, "constituents": constituents, "by_security": by_security, "by_sector": by_sector,
             "concentration": {"threshold": str(threshold), "setting": CONCENTRATION_SETTING, "flags": flags},
-            "overlap": overlap, "replica_overlap": replica_overlap, "funds": funds, "status_lines": status_lines,
+            "overlap": overlap, "replica_overlap": replica_overlap, "funds": funds, "notes": notes,
+            "status_lines": status_lines,
             "label": "estimate"}
 
 

@@ -31,3 +31,4 @@ verify_aibudget1.py
 verify_vhk2.py
 verify_previewperf.py
 verify_previewperffix1.py
+verify_rep11.py

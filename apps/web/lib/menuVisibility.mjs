@@ -237,6 +237,8 @@ export const MENU_ITEMS = [
   // REP10 — tilts + completion per account, and the hypothetical backtest (view_replication)
   tab("main", "portfolio", 15, "/portfolio/replication/tilts", "Tilts", GATE_VIEW_REPLICATION, false),
   tab("main", "portfolio", 16, "/portfolio/replication/backtest", "Backtest", GATE_VIEW_REPLICATION, false),
+  // REP11 — structured notes: verdicts, replicas and the note-versus-replica comparison (view_replication)
+  tab("main", "portfolio", 17, "/portfolio/replication/notes", "Notes", GATE_VIEW_REPLICATION, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
