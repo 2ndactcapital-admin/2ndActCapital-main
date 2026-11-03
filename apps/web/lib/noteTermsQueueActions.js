@@ -71,7 +71,7 @@ export async function loadEnsembleAction(taskKey) {
   }
 }
 
-export async function activateEnsembleAction(taskKey, model1, model2, systemOneModel, notes) {
+export async function activateEnsembleAction(taskKey, model1, model2, systemOneModel, notes, budgets) {
   try {
     const result = await activateAiEnsemble({
       task_key: taskKey,
@@ -79,6 +79,8 @@ export async function activateEnsembleAction(taskKey, model1, model2, systemOneM
       model_2: model2,
       system_one_model: systemOneModel,
       notes: notes || null,
+      // aibudget1 — model_{1,2}_budget_kind / _value; the server validates them.
+      ...(budgets || {}),
     });
     return { ok: true, result };
   } catch (error) {

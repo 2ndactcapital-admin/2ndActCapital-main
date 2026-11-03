@@ -3,6 +3,9 @@ model catalog.
 
     GET    /admin/ai/ensembles?task_key=...                 picker envelope + active + history (super_admin)
     POST   /admin/ai/ensembles                              activate a new immutable config (super_admin)
+    GET    /admin/ai/jobs                                   every ensemble job, its label and data kind (super_admin)
+    GET    /admin/ai/daily-runs                             today's run per daily job + the last 30 days (super_admin)
+    POST   /admin/ai/daily-runs/{task_key}/run              "run now": same rules, same budget (super_admin)
     GET    /admin/system-one-catalog                        System One catalog (any authenticated user; can_write = super_admin)
     POST   /admin/system-one-catalog                        add an entry (super_admin)
     DELETE /admin/system-one-catalog/{key}                  remove an entry (super_admin)
@@ -24,12 +27,16 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from routers.entities import get_org_id
+from services import ai_budget
+from services import ai_daily_runs as DR
 from services.ai_ensembles import (
     EnsembleConflictError,
     EnsembleValidationError,
     KNOWN_TASK_KEYS,
+    TASK_ORDER,
     activate_ensemble,
     get_picker,
+    task_info,
 )
 from services.database import get_pool
 from services.rbac import is_super_admin, load_principal
@@ -56,6 +63,12 @@ class EnsembleBody(BaseModel):
     model_2: str
     system_one_model: str
     notes: str | None = None
+    # aibudget1 — each model's daily budget, chosen right after the model.
+    # Omitted kind = the model's default (unlimited unless it is a data-sharing model).
+    model_1_budget_kind: str | None = None
+    model_1_budget_value: int | float | str | None = None
+    model_2_budget_kind: str | None = None
+    model_2_budget_value: int | float | str | None = None
 
 
 class SystemOneCreate(BaseModel):
@@ -130,6 +143,8 @@ async def create_ai_ensemble(request: Request, body: EnsembleBody):
             result = await activate_ensemble(
                 conn, body.task_key, body.model_1, body.model_2, body.system_one_model,
                 created_by=principal.get("id"), notes=body.notes,
+                model_1_budget_kind=body.model_1_budget_kind, model_1_budget_value=body.model_1_budget_value,
+                model_2_budget_kind=body.model_2_budget_kind, model_2_budget_value=body.model_2_budget_value,
             )
         except EnsembleValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -138,6 +153,65 @@ async def create_ai_ensemble(request: Request, body: EnsembleBody):
         except asyncpg.InsufficientPrivilegeError as exc:
             raise _rls_refusal(exc) from exc
     return {**result, "permissions": _permissions(True)}
+
+
+# ── aibudget1: jobs and the daily document-reading runs ─────────────────────
+
+def _ordered_task_keys() -> list[str]:
+    return [k for k in TASK_ORDER if k in KNOWN_TASK_KEYS] + sorted(k for k in KNOWN_TASK_KEYS if k not in TASK_ORDER)
+
+
+@router.get("/admin/ai/jobs")
+async def read_ai_jobs(request: Request):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _require_super_admin(conn, request)
+    return {
+        "rows": [{**task_info(k), "daily": k in DR.JOBS and k not in DR.NEVER_SCHEDULED}
+                 for k in _ordered_task_keys()],
+        "permissions": _permissions(True),
+        "day_boundary": {**ai_budget.DAY_BOUNDARY, "today": ai_budget.utc_today().isoformat()},
+    }
+
+
+@router.get("/admin/ai/daily-runs")
+async def read_ai_daily_runs(request: Request):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await _require_super_admin(conn, request)
+    rows = await DR.overview(pool)
+    return {
+        "rows": rows,
+        "permissions": _permissions(True),
+        "vocabularies": {
+            "statuses": [{"key": k, "label": v} for k, v in DR.STATUS_LABELS.items()],
+            "triggers": [{"key": k, "label": v} for k, v in DR.TRIGGER_LABELS.items()],
+            "budget_kinds": [dict(k) for k in ai_budget.BUDGET_KIND_OPTIONS],
+            "never_scheduled": [task_info(k) for k in DR.NEVER_SCHEDULED],
+        },
+        "day_boundary": {**ai_budget.DAY_BOUNDARY, "today": ai_budget.utc_today().isoformat()},
+        "schedule": {"starts_after_utc": "%02d:%02d" % DR.start_after(), "enabled": DR.auto_enabled(),
+                     "history_days": DR.HISTORY_DAYS},
+    }
+
+
+@router.post("/admin/ai/daily-runs/{task_key}/run", status_code=202)
+async def run_ai_daily_job_now(request: Request, task_key: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        principal = await _require_super_admin(conn, request)
+    if task_key not in DR.JOBS or task_key in DR.NEVER_SCHEDULED:
+        raise HTTPException(status_code=422, detail=f"'{task_key}' is not a daily document job "
+                                                    f"({', '.join(sorted(DR.JOBS))})")
+    cfg = await DR.JOBS[task_key].load_config(pool)
+    if cfg is None:
+        raise HTTPException(status_code=409, detail=f"no active ensemble config for '{task_key}' — assign "
+                                                    "Model 1 and Model 2 first")
+    try:
+        run = await DR.run_now(pool, task_key, started_by=principal.get("id"))
+    except DR.RunConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"run": run, "permissions": _permissions(True)}
 
 
 # ── System One catalog ──────────────────────────────────────────────────────

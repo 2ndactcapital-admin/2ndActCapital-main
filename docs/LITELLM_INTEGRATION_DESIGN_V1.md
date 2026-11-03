@@ -1140,3 +1140,61 @@ small (about $42 per billion input tokens). Recorded, not fixed.
 `DISABLE_SCHEMA_UPDATE=true`, so the upgrade needs a supervised migration of
 the `litellm` schema. After it, replace the generic endpoint with the native
 route and re-run Verify now.
+
+## 14.9 · aibudget1 — daily model budgets per job, and the daily document-reading run (2026-11-03)
+
+**What it is.** When the super admin assigns Model 1 and Model 2 to an ensemble job (AI Models → Model Jobs,
+`/admin/ai-jobs`; the hazard task keeps its panel on the review-queue page), each model gets a budget picked right
+after the model: **Unlimited**, **Tokens per day** (a whole number, input + output) or **Dollars per day** (cents).
+The budget is part of the immutable `ai_ensemble_configs` row (`model_{1,2}_budget_kind / _value`), so changing a
+budget activates a new config row and retires the old one — the history shows every config's budgets. The number is
+whatever the super admin reads off the provider's dashboard: OpenAI's complimentary daily tokens for traffic shared
+with OpenAI (help article 10306912) are not published and have moved (March 2026: up to 1M/day for gpt-5.4 and older,
+up to 10M/day for the mini group; users reported 250k / 2.5M). The code never assumes them.
+
+**The shared-allowance rule.** The allowance belongs to the MODEL, not to a job. `public.ai_daily_usage` counts tokens
+in / out, cost, reservations and calls per (budget day, deployment) across every job, and a job's budget for a model
+is checked against that shared total. On screen: "This job stops for the day when <model> has used <budget> today
+across Hollisworks." An unlimited job's usage still counts against another job's limited budget on the same model.
+
+**The day boundary.** Midnight UTC. The budget day is computed by the database inside each reservation
+(`(now() AT TIME ZONE 'UTC')::date`), never at import and never from a host clock.
+
+**Enforcement at the call** (`services/ai_budget.py`). Every ensemble call goes through
+`services/note_extraction/proxy.chat`. Inside a job's budget scope that function first reserves the call's estimate —
+prompt characters / 4 + max_tokens, and the same tokens priced from the deployment's proxy (or manual) price — with one
+atomic `UPDATE … WHERE used + reserved + estimate <= budget RETURNING` per model. A reservation that would cross a
+limited budget raises `BudgetReached` (model, kind, budget, used) and the call is not made; the run stops cleanly
+(`stopped_budget`). After the call the reservation becomes the provider-reported usage. Concurrent runs cannot
+overspend: the second reservation re-evaluates the WHERE after the first commits. Output is bounded by max_tokens;
+input is an estimate. A dollar budget on a model with no price is refused before any call.
+
+**Never a one-model reading.** An ensemble compares two readings, so both models' calls for a document are reserved
+together, all or nothing (`ai_budget.pair`: the cascade's reader pair and its fuller-text retry, replica terms'
+`read_pair`, the statement import's `read_statement_pair`). When either model is out of budget, neither call is made.
+
+**The public-data rule for sharing models.** A `public_data_only` catalog model (the OpenAI project that shares data)
+may serve only the public-data jobs in `services.model_catalog.PUBLIC_DATA_TASK_KEYS` (note terms, fund prospectus
+terms, the EDGAR inventory). The picker shows it as unselectable for any other job, with the reason, and activation
+refuses it (422). The statement import — which calls the proxy directly — now also refuses it at the call
+(`held_away._refuse_sharing_models`). A sharing model's budget control starts at Tokens per day, never Unlimited.
+
+**The daily run** (`services/ai_daily_runs.py`, wired last into `workflow_scheduler_tick.py`). After 00:05 UTC
+(`AI_DAILY_RUN_START_UTC`), each public-data document job with an active config and a non-empty queue reads its queue in
+the job's own order until it is empty (`finished_queue_empty`) or a budget stops it (`stopped_budget`, naming the
+model). Note terms: manifest rows `ready_for_extraction` with no staging row, stratified by issuer × year, through
+`runner.run_notes`. Fund prospectus terms: funds of live registry entries in non-test orgs with no reading under the
+current prompt from the same two models, through `replica_terms.run_extraction` (an org's draft still comes from a
+person's refresh, which then reuses these readings). Member statements are never run here. One scheduled run per job
+per UTC day; at most one running run per job; the 5-minute cron reads in time slices (`AI_DAILY_RUN_SLICE_SECONDS`,
+default 240) under a lease, so a tick still exits and the next tick continues. The next day resumes where it stopped.
+"Run now" on the screen follows the same rules and the same budget. `AI_DAILY_RUNS=0` turns the schedule off.
+
+**Operator steps.**
+1. On OpenAI's dashboard, enable data sharing on the project whose key is `OPENAI_API_KEY` in Doppler `prd_lite_llm`
+   (the proxy does not expose the project, so this cannot be checked from the platform).
+2. Read the project's daily complimentary amounts per model group on the same dashboard.
+3. AI Models → Model Jobs: for **Structured-note terms** and **Fund prospectus terms**, choose Model 1 and Model 2 and
+   enter those amounts as Tokens per day (a little under the allowance leaves headroom for the input estimate).
+4. Watch the Daily document reading section the next day: each job's run, documents read, tokens and cost per model,
+   and which budget stopped it.

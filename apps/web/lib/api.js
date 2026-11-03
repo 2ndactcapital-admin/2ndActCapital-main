@@ -762,6 +762,13 @@ export const getAiEnsemblePicker = (taskKey) =>
 export const activateAiEnsemble = (body) =>
   fetchAPI("/api/v1/admin/ai/ensembles", { method: "POST", body });
 
+// aibudget1 — the ensemble jobs, their daily document-reading runs, and "run
+// now". Super Admin only, enforced by FastAPI. No org_id: platform-wide.
+export const getAiJobs = () => fetchAPI("/api/v1/admin/ai/jobs");
+export const getAiDailyRuns = () => fetchAPI("/api/v1/admin/ai/daily-runs");
+export const runAiDailyJobNow = (taskKey) =>
+  fetchAPI(`/api/v1/admin/ai/daily-runs/${encodeURIComponent(taskKey)}/run`, { method: "POST" });
+
 // --- Chancery Phase 6 (document review / confirm) ---
 export const getDocumentReview = (documentId) =>
   fetchAPI(`/api/v1/documents/${documentId}/review`);

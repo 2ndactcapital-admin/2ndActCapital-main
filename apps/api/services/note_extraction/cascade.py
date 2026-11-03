@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from dataclasses import asdict
 
+from services import ai_budget
 from services.note_extraction import checks, derive
 from services.note_extraction import compare as cmp
 from services.note_extraction import edgartools_reader, jev, participants, readers, rules, trim
@@ -149,6 +150,15 @@ async def run_note(doc: FilingDocument, specs: list[FieldSpec], slots: EnsembleS
         raise
 
 
+def _pair_items(slots: EnsembleSlots, specs, text: str, doc) -> list[tuple[str, int, int]]:
+    """(deployment, prompt chars, max_tokens) for Model 1 and Model 2 — the same
+    messages readers.read builds, so the pair reserves what each call costs."""
+    messages, _ = readers.build_messages(specs, text, filer=doc.filer_name, form_type=doc.form_type)
+    chars = sum(len(m["content"]) for m in messages)
+    return [(slots.model_1.deployment, chars, slots.model_1.max_tokens),
+            (slots.model_2.deployment, chars, slots.model_2.max_tokens)]
+
+
 async def _read_pair(out: NoteOutcome, doc, coros, *, run_id, origin, ens_id, extra=None):
     """Run reader calls concurrently. A call that completed is recorded even if
     its sibling hit the spending cap; then the cap is re-raised."""
@@ -216,12 +226,15 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
 
     # (d) two readers — two separate calls, two different deployments, concurrently
     tags = [f"note:{doc.reference_filing_id}"] + ([f"run:{run_id}"] if run_id else [])
-    c1, c2 = await _read_pair(out, doc, [
-        readers.read(slots.model_1, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
-                     catalog=catalog, spend=spend, tags=tags),
-        readers.read(slots.model_2, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
-                     catalog=catalog, spend=spend, tags=tags),
-    ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"trimmed_tokens_est": tr.trimmed_tokens_est})
+    # aibudget1: both readers' calls are reserved against their daily budgets
+    # at once — never a one-model reading (a no-op outside a budget scope).
+    async with ai_budget.pair(_pair_items(slots, rspecs, tr.text, doc)):
+        c1, c2 = await _read_pair(out, doc, [
+            readers.read(slots.model_1, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+                         catalog=catalog, spend=spend, tags=tags),
+            readers.read(slots.model_2, rspecs, tr.text, filer=doc.filer_name, form_type=doc.form_type,
+                         catalog=catalog, spend=spend, tags=tags),
+        ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"trimmed_tokens_est": tr.trimmed_tokens_est})
     if not c1.usable and not c2.usable:
         out.status, out.status_reason = "failed", f"both readers failed: {c1.error} | {c2.error}"
         out.cost_usd = sum(c.cost_usd or 0 for c in (c1, c2))
@@ -243,12 +256,13 @@ async def _run_note(out: NoteOutcome, doc: FilingDocument, specs: list[FieldSpec
         out.fuller_text_retry = True
         fuller = trim.fuller_text(doc.text)
         sub = subset(specs, both_null)
-        r1, r2 = await _read_pair(out, doc, [
-            readers.read(slots.model_1, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
-                         catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
-            readers.read(slots.model_2, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
-                         catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
-        ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"retry": "fuller_text"})
+        async with ai_budget.pair(_pair_items(slots, sub, fuller, doc)):
+            r1, r2 = await _read_pair(out, doc, [
+                readers.read(slots.model_1, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
+                             catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
+                readers.read(slots.model_2, sub, fuller, filer=doc.filer_name, form_type=doc.form_type,
+                             catalog=catalog, spend=spend, tags=tags + ["retry:fuller_text"]),
+            ], run_id=run_id, origin=origin, ens_id=ens_id, extra={"retry": "fuller_text"})
         for rc, target in ((r1, m1), (r2, m2)):
             if rc.usable:
                 for k in both_null:

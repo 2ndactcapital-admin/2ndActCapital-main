@@ -166,7 +166,7 @@ export const GROUPS = [
   {
     id: "ai_models", label: "AI Models", section: "platform", order: 30, landing: "/admin/ai-models",
     icon: "admin",
-    description: "The platform model catalog and model research.",
+    description: "The platform model catalog, model research, and the models and daily budgets of each job.",
   },
   {
     id: "structured_notes", label: "Structured Notes", section: "platform", order: 40,
@@ -293,6 +293,8 @@ export const MENU_ITEMS = [
   // modelresearch.structural — STRICT: fails closed on a lost envelope. Its
   // gate is manage_org_settings, so an org admin sees the AI Models group too.
   tab("platform", "ai_models", 2, "/admin/model-research", "Model Research", GATE_MANAGE_ORG_SETTINGS_STRICT, true),
+  // AIBUDGET1 — models + daily budgets per ensemble job, and the daily document-reading runs.
+  tab("platform", "ai_models", 3, "/admin/ai-jobs", "Model Jobs", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 1, "/admin/edgar-pipeline", "Download", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 2, "/admin/pricing/note-terms-queue", "Review queue", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 3, "/admin/note-extraction/gold", "Gold answers", GATE_SUPER_ADMIN, true),

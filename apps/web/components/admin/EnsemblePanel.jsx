@@ -15,10 +15,17 @@
  *
  * A selection is never edited. Activating creates a new ensemble version with
  * each model's exact version recorded, and retires the previous one.
+ *
+ * AIBUDGET1: right after each model select, that model's daily budget
+ * (EnsembleBudget.BudgetControl): kinds, units, today's usage across every
+ * job, the day boundary and the sentence saying what the budget means all come
+ * from the envelope. A budget change is a new ensemble version too.
  */
 
 import { useState, useTransition } from "react";
 import { activateEnsembleAction, loadEnsembleAction } from "@/lib/noteTermsQueueActions";
+import { budgetError, budgetKinds, budgetPayload, defaultBudget } from "@/lib/aiBudget.mjs";
+import { BudgetCell, BudgetControl, DayBoundaryNote } from "@/components/admin/EnsembleBudget";
 
 const CARD = { borderColor: "var(--2a-border)", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
 const NOTICE = { backgroundColor: "var(--2a-gold-light)", color: "var(--2a-navy)" };
@@ -48,6 +55,8 @@ function initialChoice(data) {
   return {
     model_1: "",
     model_2: "",
+    model_1_budget: { kind: "", value: "" },
+    model_2_budget: { kind: "", value: "" },
     system_one_model: data?.ok ? data.picker?.preselected?.system_one_model || "" : "",
   };
 }
@@ -74,16 +83,26 @@ export default function EnsemblePanel({ taskKey, initial }) {
 
   const { model_1: m1, model_2: m2, system_one_model: s1 } = choice;
   const selectedSystemOne = systemOnes.find((o) => o.key === s1);
+  const kinds = budgetKinds(picker);
   let hint = null;
   if (m1 && m2 && m1 === m2) hint = "Model 1 and Model 2 must be different models.";
   else if (selectedSystemOne && !selectedSystemOne.selectable)
     hint = `${selectedSystemOne.display_name} is unavailable: ${selectedSystemOne.unavailable_reason}`;
+  else if (m1 && budgetError(kinds, choice.model_1_budget.kind, choice.model_1_budget.value))
+    hint = `Model 1 budget: ${budgetError(kinds, choice.model_1_budget.kind, choice.model_1_budget.value)}`;
+  else if (m2 && budgetError(kinds, choice.model_2_budget.kind, choice.model_2_budget.value))
+    hint = `Model 2 budget: ${budgetError(kinds, choice.model_2_budget.kind, choice.model_2_budget.value)}`;
   const ready = Boolean(m1 && m2 && s1) && !hint && !picker?.blocker;
+
+  function pickModel(field, value) {
+    const option = llms.find((o) => o.model_id === value);
+    setChoice({ ...choice, [field]: value, [`${field}_budget`]: defaultBudget(option) });
+  }
 
   function save() {
     setMessage(null);
     startTransition(async () => {
-      const res = await activateEnsembleAction(taskKey, m1, m2, s1, notes);
+      const res = await activateEnsembleAction(taskKey, m1, m2, s1, notes, budgetPayload(choice));
       if (!res.ok) {
         setMessage({ kind: "error", text: res.error });
         return;
@@ -130,8 +149,14 @@ export default function EnsemblePanel({ taskKey, initial }) {
         </div>
         {active ? (
           <div className="mt-2 grid gap-1">
-            <div>Model 1: {modelCell(active.model_1, active.model_1_version)}</div>
-            <div>Model 2: {modelCell(active.model_2, active.model_2_version)}</div>
+            <div>
+              Model 1: {modelCell(active.model_1, active.model_1_version)} ·{" "}
+              <BudgetCell envelope={picker} row={active} slot="model_1" />
+            </div>
+            <div>
+              Model 2: {modelCell(active.model_2, active.model_2_version)} ·{" "}
+              <BudgetCell envelope={picker} row={active} slot="model_2" />
+            </div>
             <div>System One: {modelCell(active.system_one_model, active.system_one_model_version)}</div>
             <div className="text-text-muted">
               Active since {new Date(active.activated_at).toLocaleString()}
@@ -139,8 +164,8 @@ export default function EnsemblePanel({ taskKey, initial }) {
           </div>
         ) : (
           <p className="mt-2 text-text-muted">
-            No ensemble has been selected yet. Extraction does not read this
-            selection yet; it still uses its built-in model settings.
+            No ensemble has been selected yet. A job that reads this
+            selection does not run until one is.
           </p>
         )}
       </div>
@@ -158,21 +183,31 @@ export default function EnsemblePanel({ taskKey, initial }) {
               ["model_1", "Model 1"],
               ["model_2", "Model 2"],
             ].map(([field, label]) => (
-              <label key={field} className="block text-sm">
-                <span className="font-medium text-text-primary">{label}</span>
-                <select
-                  value={choice[field]}
-                  onChange={(e) => setChoice({ ...choice, [field]: e.target.value })}
-                  className={SELECT}
-                >
-                  <option value="">Select a model</option>
-                  {llms.map((o) => (
-                    <option key={o.model_id} value={o.model_id} disabled={!o.selectable}>
-                      {llmLabel(o)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div key={field}>
+                <label className="block text-sm">
+                  <span className="font-medium text-text-primary">{label}</span>
+                  <select
+                    value={choice[field]}
+                    onChange={(e) => pickModel(field, e.target.value)}
+                    className={SELECT}
+                  >
+                    <option value="">Select a model</option>
+                    {llms.map((o) => (
+                      <option key={o.model_id} value={o.model_id} disabled={!o.selectable}>
+                        {llmLabel(o)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <BudgetControl
+                  envelope={picker}
+                  slot={field}
+                  slotLabel={label}
+                  model={choice[field]}
+                  budget={choice[`${field}_budget`]}
+                  onChange={(b) => setChoice({ ...choice, [`${field}_budget`]: b })}
+                />
+              </div>
             ))}
             <label className="block text-sm">
               <span className="font-medium text-text-primary">System One model</span>
@@ -208,9 +243,11 @@ export default function EnsemblePanel({ taskKey, initial }) {
             />
           </label>
 
+          <DayBoundaryNote envelope={picker} />
           <p className="mt-4 text-sm text-text-primary">
             Activating creates a new ensemble version with each model&apos;s exact
-            version recorded. The previous version is retired, not changed.
+            version and daily budget recorded. The previous version is retired, not
+            changed — a budget change is a new version too.
           </p>
           {hint && <p className="mt-2 text-sm text-text-muted">{hint}</p>}
           <button
@@ -243,7 +280,9 @@ export default function EnsemblePanel({ taskKey, initial }) {
               <tr>
                 <th className="py-1 pr-3 font-medium">Created</th>
                 <th className="py-1 pr-3 font-medium">Model 1</th>
+                <th className="py-1 pr-3 font-medium">Model 1 budget</th>
                 <th className="py-1 pr-3 font-medium">Model 2</th>
+                <th className="py-1 pr-3 font-medium">Model 2 budget</th>
                 <th className="py-1 pr-3 font-medium">System One</th>
                 <th className="py-1 pr-3 font-medium">Status</th>
                 <th className="py-1 font-medium">Notes</th>
@@ -254,7 +293,13 @@ export default function EnsemblePanel({ taskKey, initial }) {
                 <tr key={row.id} className="border-t border-border align-top">
                   <td className="py-2 pr-3">{new Date(row.created_at).toLocaleString()}</td>
                   <td className="py-2 pr-3">{modelCell(row.model_1, row.model_1_version)}</td>
+                  <td className="py-2 pr-3">
+                    <BudgetCell envelope={picker} row={row} slot="model_1" />
+                  </td>
                   <td className="py-2 pr-3">{modelCell(row.model_2, row.model_2_version)}</td>
+                  <td className="py-2 pr-3">
+                    <BudgetCell envelope={picker} row={row} slot="model_2" />
+                  </td>
                   <td className="py-2 pr-3">
                     {modelCell(row.system_one_model, row.system_one_model_version)}
                   </td>
