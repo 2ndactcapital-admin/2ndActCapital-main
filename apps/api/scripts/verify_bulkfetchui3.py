@@ -1154,7 +1154,20 @@ def y_regression_runner() -> None:
     seed_list = ["verify_authz1.py", "verify_usermgmt1.py", "verify_navregroup.py", "verify_bugfix1.py",
                  "verify_dealroom1.py", "verify_dealroom2.py", "verify_bulkfetch.py", "verify_bulkfetchui.py",
                  "verify_bulkfetchui2.py", "verify_bulkfetchui3.py", "verify_edgarpipelinea.py"]
-    check(listed == seed_list, "regression_set.txt is seeded with the 11 scripts", f"{listed}")
+    # VHK2: the list is extended by every later sprint (26+ today) — never freeze its length. The seeding is
+    # checked at bulkfetchui3's OWN merge; today the rule is: the seeds are all still listed, every listed name
+    # is a real verify script, and none is listed twice.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
+    at_end = VS.git_show(end_ref, "scripts/regression_set.txt") or ""
+    seeded = [x for x in (ln.split("#")[0].strip() for ln in at_end.splitlines()) if x]
+    check(seeded == seed_list, "regression_set.txt was seeded with the 11 scripts (at bulkfetchui3's own end point)",
+          f"{how}: {seeded}")
+    missing_seed = [s for s in seed_list if s not in listed]
+    absent_file = [s for s in listed if not (REPO / "apps" / "api" / "scripts" / s).is_file()]
+    dup = sorted({s for s in listed if listed.count(s) > 1})
+    check(not missing_seed and not absent_file and not dup and all(re.fullmatch(r"verify_\w+\.py", s) for s in listed),
+          "regression_set.txt today: every seed still listed; every name is an existing verify_*.py; no duplicates",
+          f"{len(listed)} listed; missing seeds {missing_seed}; no such file {absent_file}; duplicates {dup}")
     src = RUNNER_SH.read_text(encoding="utf-8")
     check("doppler run -p hollisworks -c prd -- " in src and "apps/api/venv/bin/python -u" in src
           and "VERIFY_NESTED=1" in src and "${REGRESSION_TIMEOUT:-1200}" in src

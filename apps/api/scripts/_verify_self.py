@@ -94,6 +94,7 @@ SPRINT_MERGES = {
     "rep8": "24962f1",
     "marketdata1": "ab9d823",
     "rep9": "afcae0b",
+    "rep10": "c6f7077",
 }
 
 #: Sprints that never had a merge commit — committed on main's first-parent line directly. Their end point is the

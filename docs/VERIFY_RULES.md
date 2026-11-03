@@ -67,3 +67,34 @@ Proof that later sprints no longer break the set: verify_vhk1 makes a
 throwaway commit in a temporary `git worktree`. The commit adds a fake route
 and edits verify_rep5.py. Every script's `--self-checks-only` must still
 report 0 FAIL from there. The record is in `docs/VHK1_SELF_CHECKS.md`.
+
+## Never freeze a count or list of live rows, pages, fields, scripts or callers that a later sprint may extend — assert the rule for each current one (VHK2, 2026-11-03)
+
+The full regression run of 2026-11-02 (25 scripts, 11 with failures) found
+checks that compared against the CURRENT database, page tree or file lists,
+frozen at the sprint that wrote them: verify_authz1's "34 effective
+permissions" (59 after later sprints granted org_admin more), verify_navregroup's
+page table and "intended additions" list, verify_bulkfetchui3's "the 11
+scripts", verify_edgarpipelinea's "only Edgar*.jsx pass serverSide", verify_rep1's
+critical-field list (rep8 added option fields), a ">= 5 issuer groups" real
+sample. Each feature still worked; the snapshot did not.
+
+6. **Never freeze a count or list of live rows, pages, fields, scripts or
+   callers that a later sprint may extend — assert the rule for each current
+   one.** "Every user's effective permissions == the recompute from their
+   role grants", "every page under app/admin/** has a nav row and a traced
+   gate", "every critical field rep1 seeded is still critical", "the scripts
+   this sprint added are still listed". A list of the sprint's OWN fixture
+   items, or of its own routes at its own merge (rule 1), is not live state
+   and may stay literal. A real-data sample smaller than the rule wants is a
+   `[FIND]` (rule 2), never a FAIL and never a lowered bar.
+7. **A timing check states its load rule.** Measure, and when the machine is
+   busy (`/proc/loadavg` 1-min load above the CPU count) wait and retry,
+   reporting the load with every attempt. Never raise the limit.
+8. **A teardown over an append-only table** passes that table's own
+   immutability GUC to `_verify_cleanup.cleanup(gucs=...)` — the way the
+   sprint that made it append-only tears down its own rows — scoped by the
+   script's fixture ids.
+
+`apps/api/scripts/verify_vhk2.py` scans the regression set for these
+patterns; each remaining hit is a listed invariant in `docs/VHK2_FINDINGS.md`.

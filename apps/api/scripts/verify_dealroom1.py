@@ -40,6 +40,7 @@ _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: set before main is importe
 
 import asyncio
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -96,6 +97,7 @@ from _db_connect import admin_dsn, connect, hydrate, resolve_dsn  # noqa: E402
 hydrate()  # BEFORE main is imported (Settings is lru_cached)
 
 import httpx  # noqa: E402
+from reportlab.pdfgen import canvas as _rl_canvas  # noqa: E402  (VHK2: real fixture PDFs)
 
 import _authz1_common as C  # noqa: E402
 
@@ -105,6 +107,10 @@ OPERATOR_DSN_VAR = "DATABASE_URL_PRECUTOVER_POSTGRES_BACKUP"
 ORG_A = UUID("99000000-0000-0000-0000-0000000d0101")
 ORG_B = UUID("99000000-0000-0000-0000-0000000d0102")
 FIXTURE_ORGS = [ORG_A, ORG_B]
+#: VHK2 — dealroom3 made deal_room_activity / deal_room_watermarks append-only; its trigger's ONLY delete path is
+#: this GUC on the operator DSN for an is_test org (verify_dealroom3.TEARDOWN_GUCS). The signature GUC stays on the
+#: separate test-chain purge, as before.
+ACTIVITY_TEARDOWN_GUCS = ("dealroom.activity_teardown",)
 
 
 def _id(n: int) -> UUID:
@@ -265,12 +271,19 @@ async def teardown(_conn=None) -> list[str]:
                 "OR submitted_by = ANY($2::uuid[]) OR reviewed_by = ANY($2::uuid[]))", orgs, users)
             if real_refs:
                 raise RuntimeError(f"{real_refs} real deal(s) reference a fixture user — refusing to delete it")
+            # VHK2: dealroom3's append-only activity / watermark logs admit a DELETE only for an is_test org's rows,
+            # on a non-app_service session that sets dealroom.activity_teardown = 'fixture' (verify_dealroom3's own
+            # path). Fixture orgs are 99000000-… ids, which rep6fix2's trigger marks is_test; refuse otherwise.
+            not_test = await op.fetchval("SELECT count(*) FROM organizations WHERE id = ANY($1::uuid[]) AND NOT is_test",
+                                         orgs)
+            if not_test:
+                raise RuntimeError(f"{not_test} fixture org(s) are not is_test — refusing to clean up")
             plan = {
                 "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
                 "public.member_todos": ("user_id = ANY($1::uuid[]) OR org_id = ANY($2::uuid[])", [users, orgs]),
             }
             res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
-                                   label="verify_dealroom1")
+                                   gucs=ACTIVITY_TEARDOWN_GUCS, label="verify_dealroom1")
         log += res["log"]
     finally:
         await op.close()
@@ -419,6 +432,7 @@ async def seed(conn) -> None:
 # ═══ The real app, token stubbed by bearer string ══════════════════════════
 CLAIMS_BY_TOKEN: dict[str, dict] = {}
 R2_UPLOADS: list = []
+R2_STORE: dict = {}      # VHK2: (bucket, key) → bytes, so the watermarked rendition can read the upload
 
 
 def token_for(uid: UUID) -> str:
@@ -449,6 +463,20 @@ async def api(uid, method, path, body=None, files=None, timeout=90.0):
     return res.status_code, parsed
 
 
+async def api_raw(uid, path):
+    """VHK2: a GET whose body is bytes (the watermarked rendition) → (status, content, lower-cased headers)."""
+    import main
+
+    kw = {"headers": {"Authorization": f"Bearer {token_for(uid)}", "User-Agent": "verify_dealroom1"}}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, raise_app_exceptions=False),
+                                 base_url="http://verify", timeout=90.0) as client:
+        try:
+            res = await asyncio.wait_for(client.get(path, **kw), 90.0)
+        except asyncio.TimeoutError:
+            return 599, b"", {}
+    return res.status_code, res.content, {k.lower(): v for k, v in res.headers.items()}
+
+
 def install_stubs():
     import main
     from services import storage
@@ -469,12 +497,29 @@ def install_stubs():
 
     def fake_upload(key, data, content_type=None, bucket=None):
         R2_UPLOADS.append((key, len(data), bucket))
+        R2_STORE[(bucket, key)] = bytes(data)
         return key
+
+    def fake_download(key, bucket=None):
+        return R2_STORE[(bucket, key)]
 
     storage.get_s3_client = no_r2
     storage.delete_object = no_r2
     storage.upload_bytes = fake_upload
+    storage.download_bytes = fake_download
     storage.get_signed_url = lambda key, expires=3600, bucket=None: f"https://r2.mock/{bucket}/{key}?exp={expires}"
+
+
+def fixture_pdf(label: str) -> bytes:
+    """VHK2: a real one-page PDF. dealroom3 watermarks investor downloads (new rooms default watermark ON), and the
+    rendition route parses the bytes — the old b"%PDF-1.4 fixture" stub was never a readable PDF."""
+    buf = io.BytesIO()
+    c = _rl_canvas.Canvas(buf, pagesize=(612, 792))
+    c.setFont("Helvetica", 14)
+    c.drawString(72, 700, f"DR1 fixture {label}")
+    c.showPage()
+    c.save()
+    return buf.getvalue()
 
 
 def D1() -> str:
@@ -644,10 +689,12 @@ async def y_setup(conn):
         conn, "SELECT key, id FROM deal_folders WHERE deal_id = $1 AND system_to IS NULL", UUID(D1()))}
     S["folders"] = folders
     S["docs"] = {}
+    S["pdf"] = {}
     for key, fname in (("01_overview", "dr1-public.pdf"), ("02_offering_memorandum", "dr1-agreements.pdf"),
                        ("05_legal_structure", "dr1-approval.pdf"), ("08_subscription", "dr1-named.pdf")):
         code, body = await api(U_PUB, "POST", f"/api/v1/deal-room/deals/{D1()}/folders/{folders[key]}/documents",
-                               files={"file": (fname, b"%PDF-1.4 fixture", "application/pdf")})
+                               files={"file": (fname, S["pdf"].setdefault(fname, fixture_pdf(fname)),
+                                                       "application/pdf")})
         check(code == 201 and "r2_key" not in body, f"publisher uploads {fname} into {key} (R2 mocked)", f"HTTP {code}")
         S["docs"][fname] = body.get("id")
     check(len(R2_UPLOADS) >= 4 and all(k.startswith(f"deals/{D1()}/") for k, _, _ in R2_UPLOADS),
@@ -893,17 +940,45 @@ async def y_folders(conn):
         closed = all_names - EXPECT[who]
         text = json.dumps(env, ensure_ascii=False)
         check(not any(n in text for n in closed), f"{who}: no closed folder leaks a file name anywhere in the response")
-        dl, bodies = {}, set()
+        # VHK2 — the rule, not dealroom1's original delivery: a download is ALLOWED only when it actually serves the
+        # file the way the room's CURRENT settings say (read at the check, never assumed): a manager, or a room with
+        # watermark off, gets a short-lived signed URL to the original; with watermark on (dealroom3's default for new
+        # rooms) an investor gets NO URL, only the API's rendition route, and that route must stream a watermarked
+        # PDF (200, %PDF-, X-Watermark-Id, bytes ≠ the original). Anything else allowed is -1 (a FAIL); every refusal
+        # is the same 404. dl[name] = 200 only for a served file.
+        st = await platform(conn, "SELECT watermark, downloads FROM deal_room_settings WHERE deal_id = $1 "
+                                  "AND valid_to IS NULL", UUID(D1()), fetch="fetchrow")
+        manager = who in ("publisher", "staff")
+        mode = ("signed_url" if manager or st["watermark"] == "off" else "watermarked") \
+            if st["downloads"] == "allowed" else ("signed_url" if manager else "none")
+        dl, bodies, how = {}, set(), {}
         for name, doc_id in S["docs"].items():
             c, b = await api(uid, "GET", f"/api/v1/deal-room/deals/{D1()}/documents/{doc_id}/download")
             dl[name] = c
             if c != 200:
                 bodies.add(json.dumps(b, sort_keys=True))
-            elif not str(b.get("url", "")).startswith("https://r2.mock/"):
+                continue
+            if mode == "signed_url":
+                ok = str(b.get("url", "")).startswith("https://r2.mock/") and b.get("watermarked") is False
+                how[name] = "signed URL" if ok else f"not a signed URL: {b}"
+            elif mode == "watermarked":
+                href = str(b.get("href", ""))
+                ok = "url" not in b and b.get("watermarked") is True and href.endswith(f"/documents/{doc_id}/file")
+                if ok:
+                    fc, data, hdr = await api_raw(uid, href.replace("/api/", "/api/v1/", 1))
+                    ok = (fc == 200 and data.startswith(b"%PDF-") and bool(hdr.get("x-watermark-id"))
+                          and data != S["pdf"][name])
+                    how[name] = f"watermarked stream {fc} {len(data)}B wid={hdr.get('x-watermark-id')}"
+                else:
+                    how[name] = f"not the rendition route: {b}"
+            else:
+                ok = False
+                how[name] = f"view-only room answered 200: {b}"
+            if not ok:
                 dl[name] = -1
         check({n for n, c in dl.items() if c == 200} == EXPECT[who] and all(c in (200, 404) for c in dl.values())
-              and len(bodies) <= 1, f"{who}: signed-URL downloads allowed exactly there; every refusal the same 404",
-              f"{dl}")
+              and len(bodies) <= 1, f"{who}: downloads served exactly there (as the room's settings say — "
+              f"{mode}); every refusal the same 404", f"settings={dict(st)} {dl} {how}")
     code, _ = await room(U_OTHERORG)
     c2, _ = await api(U_OTHERORG, "GET", f"/api/v1/deal-room/deals/{D1()}/documents/{S['docs']['dr1-public.pdf']}/download")
     check(code == 404 and c2 == 404, "another org's member: the deal and even its public document are 404",

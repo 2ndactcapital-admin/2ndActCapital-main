@@ -109,6 +109,19 @@ BASE = "/api/v1/admin/edgar/bulk"
 REAL_GROUP = "JPMorgan"
 REAL_YEAR = 2025
 PREVIEW_LIMIT_SECONDS = 2.0
+# VHK2 load rule for the timing (never a raised limit): re-measure while the 1-minute load average per CPU is above
+# this, waiting PREVIEW_LOAD_WAIT_SECONDS between rounds, at most PREVIEW_LOAD_ROUNDS rounds.
+PREVIEW_LOAD_PER_CPU = 0.75
+PREVIEW_LOAD_WAIT_SECONDS = 30
+PREVIEW_LOAD_ROUNDS = 5
+
+
+def load_per_cpu() -> float:
+    """The 1-minute load average per CPU, from /proc/loadavg (os.getloadavg); 0.0 where unavailable."""
+    try:
+        return os.getloadavg()[0] / max(1, os.cpu_count() or 1)
+    except OSError:
+        return 0.0
 
 _n_pass = 0
 _n_fail = 0
@@ -650,8 +663,10 @@ async def y_schema(conn) -> None:
     new_st = {"queued", "stopped", "cancelled"}
     check(old_st <= st and new_st <= st, "status CHECK keeps every old value and adds queued/stopped/cancelled",
           f"{sorted(st)}")
-    check({"fetch", "extract", "bulk_fetch", "refresh_index"} <= kinds and tg == {"laptop", "render"},
-          "run_kind adds bulk_fetch/refresh_index; target is laptop|render", f"{sorted(kinds)} / {sorted(tg)}")
+    # VHK2: a later sprint may add a run target the way this one added run kinds — the rule is that the CHECK admits
+    # laptop and render (as run_kind is checked), never that it admits only today's two.
+    check({"fetch", "extract", "bulk_fetch", "refresh_index"} <= kinds and {"laptop", "render"} <= tg,
+          "run_kind adds bulk_fetch/refresh_index; target admits laptop and render", f"{sorted(kinds)} / {sorted(tg)}")
     declared = all(f"'{v}'::text" in mig for v in new_st | {"bulk_fetch", "refresh_index"})
     check(declared, "the new CHECK values are declared in the migration file")
     accepted = []
@@ -789,12 +804,28 @@ async def y_preview(conn, url, eb, fx) -> None:
     real = {"banks": [REAL_GROUP], "from": f"{REAL_YEAR}-01-01", "to": f"{REAL_YEAR}-12-31", "kinds": ["final"],
             "peek": True}
     await api(U_SUPER, "POST", f"{BASE}/preview", real)          # warm the app pool
+    # VHK2: the 2 s limit is fixed; the MEASUREMENT follows a load rule. The 2026-11-02 run measured 4.1 s while
+    # the regression suite itself was loading the laptop. Each round is best of 3; while the 1-minute load average
+    # per CPU is above PREVIEW_LOAD_PER_CPU, wait and measure again (up to PREVIEW_LOAD_ROUNDS rounds). The load at
+    # every round is printed; the check uses the best timing of the last round, never a raised limit.
     timings = []                                                  # (secs, code, payload) per timed call
-    for _ in range(3):
-        t0 = time.perf_counter()
-        c, body_t = await api(U_SUPER, "POST", f"{BASE}/preview", real)
-        timings.append((time.perf_counter() - t0, c, body_t))
-    secs, code3, p3 = min(timings, key=lambda t: t[0])           # best of 3
+    loads = []
+    for rnd in range(PREVIEW_LOAD_ROUNDS):
+        round_t = []
+        for _ in range(3):
+            t0 = time.perf_counter()
+            c, body_t = await api(U_SUPER, "POST", f"{BASE}/preview", real)
+            round_t.append((time.perf_counter() - t0, c, body_t))
+        timings = round_t
+        load = load_per_cpu()
+        loads.append(load)
+        best = min(t for t, _, _ in round_t)
+        print(f"    round {rnd + 1}: best {best * 1000:.0f} ms; 1-min load per CPU {load:.2f} "
+              f"(limit {PREVIEW_LOAD_PER_CPU:g})")
+        if best < PREVIEW_LIMIT_SECONDS or load <= PREVIEW_LOAD_PER_CPU:
+            break
+        await asyncio.sleep(PREVIEW_LOAD_WAIT_SECONDS)
+    secs, code3, p3 = min(timings, key=lambda t: t[0])           # best of the last 3
     src = await eb.load_source(conn, "structured_notes")
     real_ciks = [r["filer_cik"] for r in await rls_fetch(
         conn, "SELECT filer_cik FROM portfolio.structured_note_issuers WHERE issuer_group = $1 "
@@ -816,7 +847,8 @@ async def y_preview(conn, url, eb, fx) -> None:
     VS.when_empty([n_sql] if n_sql > 0 else [], f"real selected {REAL_GROUP} {REAL_YEAR} filings exist for the live "
                   "preview", lambda n: n > 0, check=check, find=find)
     check(secs < PREVIEW_LIMIT_SECONDS, f"live preview returns under {PREVIEW_LIMIT_SECONDS:g} s",
-          f"best of 3 {secs:.3f} s")
+          f"best of 3 {secs:.3f} s; 1-min load per CPU by round {[round(x, 2) for x in loads]} "
+          f"(retried while > {PREVIEW_LOAD_PER_CPU:g}, up to {PREVIEW_LOAD_ROUNDS} rounds)")
 
 
 async def y_queue_laptop(conn, url, q) -> None:

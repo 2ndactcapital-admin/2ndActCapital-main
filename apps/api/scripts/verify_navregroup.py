@@ -24,6 +24,18 @@ WHAT IS PROVEN WHERE
     false, asserted). The leak is reproduced first with the pre-fix org-wide
     query (document_linkage.search_documents_org_wide, the old code path).
 
+VHK2 (2026-11-03) — checks that froze LIVE state now assert a rule:
+  * "every page has a 1a row" is navregroup's claim at its OWN merge (git only, also in --self-checks-only); today
+    every page is a nav tab / landing / redirect / sub-page of a nav tab, or states a reason in NON_NAV_REASONS, and
+    has a traced server gate.
+  * "additions are exactly the listed intended ones" runs on the harness AS NAVREGROUP LEFT IT (harness_at); today
+    every href added since the baseline must be admitted by its traced server gate (additions_ok).
+  * A page's server gate is traced by navregroup_traced_gates.mjs: navregroup's hand row, else the
+    AUTHZ1_ROUTES.json record of every API its page.js calls. The hand table alone said "refused" for every page a
+    later sprint added — Super Admin included.
+  * The six personas' permission lists were read on 2026-10-20; y_live_roles applies the same rule to every REAL
+    role in the default org, read at run time.
+
 FIXTURES — tagged, torn down at the START and at the END:
   * an org, users (auth0_sub = the literal sub the mocked token carries; teardown
     also finds them by sub and email pattern), two fixture roles in that org
@@ -53,6 +65,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
@@ -116,8 +129,28 @@ def self_urls_unchanged(check, find):
           "added on GET /vdr-proposals", f"{BASELINE_REF} → {how}; {drift}")
 
 
+def self_pages_have_1a_rows(check, find):
+    # VHK2: this check used to read TODAY's page tree against navregroup's 1a table, so every page a later sprint
+    # added (REP1 → REP10, MARKETDATA1) failed it. Two rules replace it: navregroup's own claim at its own merge
+    # (every page that existed then has a 1a row), and today's rule over every current page (today_pages below).
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    end_text = VS.own_text(SPRINT_KEY, "docs/NAVREGROUP_DISCOVERY.md") or ""
+    _, listing, _ = VS.git("ls-tree", "-r", "--name-only", end, "apps/web/app/admin", "apps/web/app/portfolio")
+    routes = []
+    for rel in sorted(x for x in listing.splitlines() if re.search(r"/page\.jsx?$", x)):
+        src = VS.git_show(end, rel) or ""
+        route = "/" + rel[len("apps/web/app/"):].rsplit("/", 1)[0]
+        if "GroupLanding" not in src:   # navregroup's own landing routes are documented in Task 2, not 1a
+            routes.append(route)
+    missing = [r for r in routes if f"| `{r}` |" not in end_text]
+    check(len(routes) > 0 and not missing,
+          "every page under app/admin/** and app/portfolio/** at navregroup's own end has a 1a row",
+          f"{how}; {len(routes)} routes; missing {missing}")
+
+
 def self_checks(check, find):
     self_urls_unchanged(check, find)
+    self_pages_have_1a_rows(check, find)
 
 
 if __name__ == "__main__" and VS.requested():
@@ -473,16 +506,8 @@ def y_task1() -> None:
     text = DISCOVERY_DOC.read_text(encoding="utf-8") if DISCOVERY_DOC.exists() else ""
     heads = re.findall(r"^## (1[a-d])\.", text, re.M)
     check(heads == ["1a", "1b", "1c", "1d"], "docs/NAVREGROUP_DISCOVERY.md reports 1a–1d in order", f"{heads}")
-    routes = []
-    for base in ("admin", "portfolio"):
-        for page in sorted((WEB_DIR / "app" / base).rglob("page.js*")):
-            route = "/" + str(page.parent.relative_to(WEB_DIR / "app")).replace(os.sep, "/")
-            landing = "GroupLanding" in page.read_text(encoding="utf-8")
-            if not landing:      # this sprint's own landing routes are documented in Task 2, not 1a
-                routes.append(route)
-    missing = [r for r in routes if f"| `{r}` |" not in text]
-    check(len(routes) > 0 and not missing, "every page under app/admin/** and app/portfolio/** has a 1a row",
-          f"{len(routes)} routes; missing {missing}")
+    self_pages_have_1a_rows(check, find)
+    today_pages()
     rows = [ln for ln in text.splitlines() if ln.startswith("| `/")]
     no_gate = [ln for ln in rows if re.search(r"\bNONE\b", ln) and "[FIND]" not in ln]
     check(not no_gate, "every 1a row whose API has NO gate is marked [FIND]", f"{no_gate[:2]}")
@@ -545,8 +570,46 @@ def load_harness() -> dict:
     return HARNESS_DATA
 
 
+HARNESS_FILES = ("apps/api/scripts/menuvisibility_harness.mjs", "apps/api/scripts/navregroup_personas.mjs",
+                 "apps/api/scripts/navregroup_server_gates.mjs", "apps/web/lib/menuVisibility.mjs",
+                 "docs/NAVREGROUP_BASELINE.json")
+
+
+def harness_at(ref: str) -> dict:
+    """VHK2: the harness exactly as a commit left it — its five files written from git into a temp tree and run with
+    node. navregroup's 'additions are exactly the listed intended ones' is a claim about navregroup's OWN work, so it
+    is checked at navregroup's own merge; today's tree is held to the rules in y_server_gates instead."""
+    with tempfile.TemporaryDirectory(prefix="navregroup-at-") as tmp:
+        for rel in HARNESS_FILES:
+            src = VS.git_show(ref, rel)
+            if src is None:
+                return {"error": f"{rel} absent at {ref}"}
+            dest = pathlib.Path(tmp) / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(src, encoding="utf-8")
+        code, out, err = run_cmd(["node", str(pathlib.Path(tmp) / HARNESS_FILES[0])], tmp, timeout=120)
+    try:
+        return json.loads(out)
+    except ValueError:
+        return {"error": (err or out)[-300:]}
+
+
 def y_persona_snapshot() -> None:
-    section("[Y] Persona snapshot — after == baseline + only the listed intended additions; nothing removed")
+    section("[Y] Persona snapshot — at navregroup's own merge: baseline + exactly the intended additions; today: "
+            "only the stated removals, no side door, every addition admitted by its traced gate")
+    end, how = VS.sprint_end_ref(SPRINT_KEY)
+    at_end = (harness_at(end).get("navregroup") or {})
+    end_personas = at_end.get("personas") or []
+    check(len(end_personas) == 6, f"the harness as navregroup left it runs ({how})", f"{len(end_personas)}")
+    for p in end_personas:
+        check(p.get("none_removed") is True, f"{p['name']} at navregroup's end: no href removed",
+              f"removed {p.get('removed')}")
+        check(p.get("additions_exact") is True and len(p.get("intended") or []) > 0,
+              f"{p['name']} at navregroup's end: the additions are exactly the listed intended ones",
+              f"added {p.get('added')}; intended {p.get('intended')}")
+        check(p.get("additions_refused") == [] and p.get("new_refusals") == [],
+              f"{p['name']} at navregroup's end: no addition and no new href refused by its server",
+              f"{p.get('additions_refused')} {p.get('new_refusals')}")
     nav = (HARNESS_DATA or {}).get("navregroup")
     if not check(isinstance(nav, dict), "the harness ran and returned its navregroup block",
                  HARNESS_DATA.get("error", "")):
@@ -557,11 +620,13 @@ def y_persona_snapshot() -> None:
     check(len(personas) == 6, "six personas compared", f"{len(personas)}")
     for p in personas:
         check(p["removals_exact"] is True,
-              f"{p['name']}: no href removed except AUTHZ1's default-allow removal",
-              f"removed {p['removed']}; AUTHZ1 expected {p['authz1_removals']}")
-        check(p["additions_exact"] is True and len(p["intended"]) > 0,
-              f"{p['name']}: the additions are exactly the listed intended ones",
-              f"added {p['added']}; intended {p['intended']}")
+              f"{p['name']}: no href removed except the stated removals (AUTHZ1 default-allow, BUGFIX1 coming-soon)",
+              f"removed {p['removed']}; stated {p['authz1_removals']}")
+        # VHK2: was "the additions are exactly the listed intended ones" over TODAY's tree — every later sprint's
+        # new tab failed it. The rule: every href added since the baseline is admitted by its traced server gate.
+        check(p.get("additions_ok") is True,
+              f"{p['name']}: every href added since the baseline has a traced server gate that admits it",
+              f"added {p['added']}; refused {p['additions_refused']}; untraced {p['unknown_server_gate']}")
         check(p["after_equals_sidebar_tabs"] is True,
               f"{p['name']}: everything reachable is rendered by the sidebar model (no side door)")
 
@@ -595,6 +660,87 @@ def y_server_gates() -> None:
           "workflow gates are the profile-axis keys (as tabled)")
     check(lv is not None and 'rbac.require_permission(pool, user_id, org_id, "manage_deals")' in lv.group(0),
           "GET /vdr-proposals gates on rbac manage_deals (as tabled)")
+
+
+NAV_TODAY_MJS = HERE.parent / "navregroup_today.mjs"
+DEFAULT_ORG = UUID("00000000-0000-0000-0000-000000000001")
+
+# VHK2: a page under app/admin/** or app/portfolio/** that is not a nav tab, a group landing, a redirect or a
+# sub-page of a nav tab must state why it has no nav row. A new page without a nav row and without a reason here
+# fails today_pages — the rule, not a frozen list of other sprints' pages.
+NON_NAV_REASONS = {
+    "/portfolio/households": "REP7 household X-ray index — no nav row; reachable by URL only ([FIND]: no link to it "
+                             "from any nav tab)",
+    "/portfolio/households/[id]": "REP7 household detail (X-ray / authority / lot method / consolidate tabs), "
+                                  "linked from /portfolio/households",
+    "/portfolio/proposals/[id]": "REP5 proposal detail, linked from Accounts (components/proposals/*)",
+}
+
+
+def run_today(extra: dict | None = None) -> dict:
+    args = ["node", str(NAV_TODAY_MJS)]
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(extra or {}, fh)
+        path = fh.name
+    try:
+        code, out, err = run_cmd(args + [path], REPO, timeout=120)
+    finally:
+        os.unlink(path)
+    try:
+        return json.loads(out)
+    except ValueError:
+        return {"error": (err or out)[-300:]}
+
+
+def today_pages() -> None:
+    """VHK2: every CURRENT page has a nav row (or is a landing / redirect / sub-page of a nav tab, or states a
+    non-nav reason) and every page that serves data has a traced server gate."""
+    d = run_today()
+    pages = d.get("pages") or []
+    if not check(len(pages) > 0, "today's page tree under app/admin/** and app/portfolio/** is classified",
+                 d.get("error", "")):
+        return
+    unexplained = [p["href"] for p in pages if p["kind"] == "other" and p["href"] not in NON_NAV_REASONS]
+    check(not unexplained, "every current page is a nav tab, a group landing, a redirect, a sub-page of a nav tab, "
+          "or states a non-nav reason", f"{len(pages)} pages; unexplained {unexplained}")
+    hrefs = {p["href"]: p for p in pages}
+    stale = [h for h in NON_NAV_REASONS if h not in hrefs or hrefs[h]["kind"] != "other"]
+    check(not stale, "every stated non-nav reason names a page that exists today without a nav row", f"{stale}")
+    untraced = [p["href"] for p in pages if p["kind"] in ("nav", "sub", "other") and not p["traced"]]
+    check(not untraced, "every nav / sub / non-nav page has a traced server gate (hand row or its page.js API's "
+          "AUTHZ1_ROUTES.json record)", f"{untraced}")
+    for h, why in NON_NAV_REASONS.items():
+        if "[FIND]" in why and h in hrefs:
+            find(f"{h}: {why.split(' — ')[0]}", why)
+
+
+async def y_live_roles(conn) -> None:
+    """VHK2: the six personas carry permission lists read on 2026-10-20; later sprints granted real roles more
+    (org_admin 2 → 27). The same rule over every REAL role in the default org, read now: each visible href has a
+    traced gate that admits the role, except the mismatches navregroup recorded as pre-existing [FIND]s."""
+    section("[Y] Every real role's visible hrefs are admitted by their traced server gates (read now, not frozen)")
+    from services.authz import STAFF_ROLE_NAMES
+    rows = await rls_fetch(conn, """SELECT r.name, array_agg(DISTINCT p.name ORDER BY p.name) AS perms
+        FROM roles r JOIN role_permissions rp ON rp.role_id = r.id JOIN permissions p ON p.id = rp.permission_id
+        WHERE r.org_id = $1 GROUP BY r.name ORDER BY r.name""", DEFAULT_ORG)
+    extra = {}
+    for r in rows:
+        name = r["name"]
+        account_role = "super_admin" if name == "super_admin" else ("org_admin" if name == "org_admin" else "member")
+        extra[f"live:{name}"] = {"account_role": account_role, "role": name, "roles": [name], "status": "active",
+                                 "permissions": list(r["perms"]), "is_staff": name in STAFF_ROLE_NAMES}
+    nav = (HARNESS_DATA or {}).get("navregroup") or {}
+    pre_existing = set().union(*[set(p.get("refused_before") or []) for p in nav.get("personas") or []])
+    d = run_today(extra)
+    live = [p for p in d.get("personas") or [] if not p["fixture"]]
+    VS.when_empty(live, "every real role: each visible href has a traced gate that admits it (beyond navregroup's "
+                  "pre-existing [FIND]s)",
+                  lambda p: not p["untraced"] and set(p["refused"]) <= pre_existing, check=check, find=find,
+                  detail=lambda bad: str([(p["name"], p["untraced"], sorted(set(p["refused"]) - pre_existing))
+                                          for p in bad]))
+    carried = sorted({h for p in live for h in p["refused"]})
+    if carried:
+        find("real roles: navregroup's pre-existing menu/server mismatches still shown", ", ".join(carried))
 
 
 def y_groups() -> None:
@@ -883,6 +1029,7 @@ async def main_async() -> int:
         await run("harness", load_harness)
         await run("persona snapshot", y_persona_snapshot)
         await run("server gates", y_server_gates)
+        await run("live roles", y_live_roles, conn)
         await run("groups", y_groups)
         await run("urls unchanged", y_urls_unchanged)
         await run("seed", seed, conn)

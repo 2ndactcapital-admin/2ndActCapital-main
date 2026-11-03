@@ -526,10 +526,14 @@ async def y_after(conn):
 # ── Route matrix ──────────────────────────────────────────────────────────
 PERSONA_USERS = {"pending": U_PENDING, "member": U_MEMBER, "staff": U_STAFF, "org_admin": U_ORGADMIN,
                  "super_admin": U_SUPER, "other_org": U_OTHER}
-PERSONA_PERMS = {
-    "member": set(C.MEMBER_PERMS), "other_org": set(C.MEMBER_PERMS),
-    "staff": set(C.INVESTMENT_STAFF_PERMS), "org_admin": {"manage_org_settings", "review_agent_proposals"},
-}
+# VHK2: each persona's permissions are READ FROM THE DB (its services.authz Principal) when the matrix runs, never
+# a set frozen at AUTHZ1. The org_admin persona is granted through rbac.grant_org_admin → ensure_org_admin_role, whose
+# grant later sprints extend on purpose (rep1 → rep10 each add their view_/manage_/approve_ defaults to
+# rbac.ORG_ADMIN_DEFAULT_PERMISSIONS); the frozen {"manage_org_settings", "review_agent_proposals"} turned 32
+# correctly-gated, record-matching 2xx (view_replication, view_tax, … — all held by design) into "unexpected 2xx" on
+# 2026-11-02. The rule now: a route is 'allow' for a persona iff the persona's DB grant holds one of its record's
+# any_of — and, separately, each persona's DB grant IS what its seeding documents (below, y_matrix).
+PERSONA_PERMS: dict[str, set] = {}
 
 
 def fill(path: str) -> str:
@@ -558,6 +562,27 @@ def expectation(persona: str, rule: dict, method: str) -> str:
 async def y_matrix(conn):
     section("[Y] Route matrix — every route × seven personas against AUTHZ1_ROUTES.json")
     from services.authz import ACCESS_PENDING_DETAIL
+
+    from services import rbac
+    from services.authz import load_principal
+
+    # VHK2: the personas' permissions from the DB, each compared with what its seeding documents — the org_admin
+    # persona with ensure_org_admin_role's grant AS THE CODE STATES IT TODAY (manage_org_settings + every
+    # rbac.ORG_ADMIN_DEFAULT_PERMISSIONS entry), member / staff with the fixture roles seeded from C.BASELINE_ROLES.
+    documented = {"member": set(C.MEMBER_PERMS), "other_org": set(C.MEMBER_PERMS),
+                  "staff": set(C.INVESTMENT_STAFF_PERMS),
+                  "org_admin": {rbac.ORG_ADMIN_PERMISSION, *(n for n, _r, _a in rbac.ORG_ADMIN_DEFAULT_PERMISSIONS)}}
+    PERSONA_PERMS.clear()
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for persona, uid in PERSONA_USERS.items():
+            if persona in documented:
+                p = await load_principal(conn, uid)
+                PERSONA_PERMS[persona] = set(p.permissions) if p else set()
+    for persona, want in documented.items():
+        got = PERSONA_PERMS.get(persona, set())
+        check(got == want, f"route matrix — {persona} persona's DB permissions == what its seeding documents",
+              f"{len(got)} held; missing {sorted(want - got)}; extra {sorted(got - want)}")
 
     data = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
     sem = asyncio.Semaphore(6)
@@ -818,7 +843,8 @@ async def y_provisioning(conn, roles):
 
 
 async def y_real_users(conn):
-    section("[Y] Real users — effective permissions == the Task 3 report; Joe keeps super admin")
+    section("[Y] Real users — effective permissions == the recompute from their CURRENT role grants; Joe keeps super "
+            "admin")
     from services.authz import load_principal
 
     report = json.loads(REAL_USERS_JSON.read_text(encoding="utf-8"))
@@ -830,18 +856,22 @@ async def y_real_users(conn):
         for email, r in now.items():
             p = await load_principal(conn, r["user_id"])
             principals[email] = p
-    users = report["users"]
-    for email, r in users.items():
-        cur = now.get(email)
+    # VHK2: the rule, for EVERY current real user (not the AUTHZ1 Task 3 snapshot, whose counts later sprints
+    # legitimately grew — 34 → 59 for the org admins when rep1 → rep10 extended the org_admin role): the services.authz
+    # Principal == the independent SQL recompute from the user's current role grants (_authz1_common.granted:
+    # user_roles ⋈ role_permissions, super admin → the catalog, not admitted → nothing).
+    for email, cur in now.items():
         p = principals.get(email)
-        if email == "google-oauth2|114785352792351858712@placeholder.local" and cur and cur["status"] == "retired":
-            check(p is not None and not p.admitted and p.permissions == frozenset(),
-                  f"{email}: retired → no effective permissions")
-            continue
-        check(cur is not None and cur["effective"] == r["effective_after"]
-              and p is not None and sorted(p.permissions) == r["effective_after"],
-              f"{email}: effective permissions (report recompute AND services.authz Principal) == Task 3 report",
-              f"{len(r['effective_after'])} expected; now {len(cur['effective']) if cur else None}")
+        check(p is not None and sorted(p.permissions) == cur["effective"],
+              f"{email}: effective permissions — services.authz Principal == the recompute from current role grants",
+              f"{len(cur['effective'])} by recompute; {len(p.permissions) if p else None} in the Principal; "
+              f"diff {sorted(set(cur['effective']) ^ set(p.permissions if p else ()))[:6]}")
+        if cur["status"] != "active":
+            check(p is not None and not p.admitted and p.permissions == frozenset() and cur["effective"] == [],
+                  f"{email}: {cur['status']} → no effective permissions (Principal and recompute)")
+    # The Task 3 report stays the record of AUTHZ1's own transition (what default-allow had been granting) — a
+    # historical document, not live state: only its 'lost' accounting is asserted, never its counts.
+    for email, r in report["users"].items():
         lost = r["lost"]
         check(not lost or r["lost_only_via_default_allow"], f"{email}: anything lost existed only through default-allow",
               f"lost {len(lost)}")
@@ -911,10 +941,41 @@ async def y_test_mode(conn):
 
     check("AUTHZ_TEST_MODE=1 is set" in inspect.getsource(main._startup),
           "the API logs a warning at startup when the flag is set")
-    changed = [p for p in HERE.glob("verify_*.py") if 'environ["AUTHZ_TEST_MODE"] = "1"' in p.read_text(encoding="utf-8")]
+    # VHK2: the rule is "before importing the app", not "every file carries the line" — verify_vhk1.py (VHK1's
+    # git / file / subprocess checks) never imports the app, so it has no flag to set and was the 209th of 209.
+    # Every script that loads the app (directly, or through a local helper module that does) sets the flag first.
+    bad = app_importers_without_flag()
     total = list(HERE.glob("verify_*.py"))
-    check(len(changed) == len(total) > 0, "every verify script sets the flag before importing the app",
-          f"{len(changed)}/{len(total)}")
+    check(len(total) > 0 and not bad, "every verify script that loads the app sets the flag before importing it",
+          f"{len(total)} scripts; {bad[:6]}")
+
+
+_FLAG_LINE = 'environ["AUTHZ_TEST_MODE"] = "1"'
+_APP_LOAD = re.compile(r"^[ \t]*(?:import main\b|from main import|.*import_module\(\s*[\"']main[\"']\s*\)"
+                       r"|.*\bTestClient\(|.*\bASGITransport\()", re.M)
+_LOCAL_IMPORT = re.compile(r"^[ \t]*(?:import|from)[ \t]+(_\w+)\b", re.M)
+
+
+def app_importers_without_flag() -> list[str]:
+    """VHK2: every verify_*.py that loads the app — `import main` / `from main import`, an import_module('main'), a
+    TestClient / ASGITransport, or a local `_helper` module that does any of those — sets AUTHZ_TEST_MODE=1 BEFORE the
+    first such line. Returns '<script>: why' for each that does not (empty = rule holds)."""
+    helper_loads = {}
+    for h in HERE.glob("_*.py"):
+        helper_loads[h.stem] = _APP_LOAD.search(h.read_text(encoding="utf-8")) is not None
+    out = []
+    for p in sorted(HERE.glob("verify_*.py")):
+        t = p.read_text(encoding="utf-8")
+        hits = [m.start() for m in _APP_LOAD.finditer(t)]
+        hits += [m.start() for m in _LOCAL_IMPORT.finditer(t) if helper_loads.get(m.group(1))]
+        if not hits:
+            continue
+        flag = t.find(_FLAG_LINE)
+        if flag < 0:
+            out.append(f"{p.name}: loads the app (offset {min(hits)}) with no AUTHZ_TEST_MODE line")
+        elif flag > min(hits):
+            out.append(f"{p.name}: sets the flag at offset {flag}, after it loads the app at {min(hits)}")
+    return out
 
 
 async def y_front_end(conn):
@@ -979,7 +1040,9 @@ def regression():
         d = json.loads(out)
         regs = d["regressions"]
         ok = all(r["unchanged"] or r.get("authz1_expected") for r in regs)
-        personas_ok = all(p["removals_exact"] and p["additions_exact"] and not p["new_refusals"]
+        # VHK2: additions_exact ("== navregroup's hand list") holds only at navregroup's own merge; today every
+        # addition must be admitted by its traced server gate (additions_ok) — verify_navregroup checks both.
+        personas_ok = all(p["removals_exact"] and p["additions_ok"] and not p["new_refusals"]
                           for p in d["navregroup"]["personas"])
         check(code == 0 and ok and personas_ok,
               "menu-visibility harness: every persona unchanged except AUTHZ1's exact default-allow removal",
