@@ -32,6 +32,18 @@ async function forward(request, { params }) {
     if (body) headers["Content-Type"] = "application/json";
   }
   const res = await fetch(url, { method: request.method, headers, body: body || undefined, cache: "no-store" });
+  // REP10 — the backtest PDF (hypothetical, with its disclosure) passes through as a file
+  const type = res.headers.get("content-type") || "";
+  if (res.ok && type.startsWith("application/pdf")) {
+    return new NextResponse(await res.arrayBuffer(), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": res.headers.get("content-disposition") || "attachment",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data?.detail;

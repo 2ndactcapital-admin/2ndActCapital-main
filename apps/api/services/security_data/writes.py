@@ -76,6 +76,20 @@ async def upsert_prices(pool, gsid: str, points: list[tuple[date, Decimal]], *, 
     return await run(conn)
 
 
+async def upsert_factor_scores(conn, gsid: str, factor: str, points: list[tuple[date, Decimal]], *, provider_key: str,
+                               org_id, upload_id=None, licence: dict | None = None) -> int:
+    """rep10 — an org's approved factor-score file, on ``conn`` under the org's own RLS context (valid axis)."""
+    n = 0
+    for day, v in points:
+        got = await _restate(conn, table="portfolio.security_factor_scores",
+                             key_cols={"global_security_id": gsid, "factor": factor, "provider_key": provider_key,
+                                       "org_id": org_id},
+                             date_col="score_date", val_col="score", day=day, value=Decimal(v),
+                             extra={"upload_id": upload_id, "licence": json.dumps(licence or {})})
+        n += got != "unchanged"
+    return n
+
+
 async def insert_corporate_action(conn, *, gsid: str, action_type: str, ex_date: date, record_date, pay_date,
                                   terms: dict, provider_key: str, org_id, upload_id, licence: dict) -> str:
     """One recorded fact (Portfolio F's table). Corporate actions are events, not a series: a second

@@ -32,7 +32,7 @@ from services.security_data import writes as W
 from services.security_data.types import MEMBER_DISPLAY, RETENTION, SecurityDataError, SecurityDataNotFound
 
 T_UP = "portfolio.data_uploads"
-UPLOAD_TYPES = ("eod_price", "corporate_action", "index_level")
+UPLOAD_TYPES = ("eod_price", "corporate_action", "index_level", "factor_score")   # rep10: factor_score
 APPROVE_PERMISSION = "manage_org_settings"
 TODO_SOURCE = "security_data_upload"
 ID_FIELDS = {
@@ -61,9 +61,14 @@ FIELDS = {
     "index_level": {"ticker": ("Index", ("index", "index key", "series", "series code", "ticker", "symbol")),
                     "date": ("Date", ("date", "as of", "observation date", "level date")),
                     "value": ("Level", ("level", "value", "close", "rate", "yield"))},
+    # rep10 — one factor score per security, factor and date, as the file states it (no score is computed here)
+    "factor_score": {**ID_FIELDS,
+                     "date": ("Date", ("date", "as of", "as of date", "score date")),
+                     "factor": ("Factor", ("factor", "factor name", "style")),
+                     "score": ("Score", ("score", "factor score", "value", "z score", "zscore"))},
 }
 REQUIRED = {"eod_price": ("date", "price"), "corporate_action": ("action_type", "ex_date"),
-            "index_level": ("date", "value")}
+            "index_level": ("date", "value"), "factor_score": ("date", "factor", "score")}
 ACTION_TYPES = {"dividend": "cash_dividend", "cash dividend": "cash_dividend", "cash_dividend": "cash_dividend",
                 "stock dividend": "stock_dividend", "stock_dividend": "stock_dividend", "split": "split",
                 "stock split": "split", "reverse split": "reverse_split", "reverse_split": "reverse_split"}
@@ -79,6 +84,7 @@ REJECT_REASONS = {
     "split_ratio": "A split needs a ratio from and to, both greater than zero",
     "dividend_amount": "A dividend needs an amount per share greater than zero",
     "bad_index_key": "Index key missing or has characters other than letters, digits and . _ ^ : -",
+    "bad_factor": "Factor missing or not a lower-case key (letters, digits, underscore; e.g. value, momentum)",
     "duplicate": "Same item and date listed twice in the file",
     "formula_no_value": "Formula with no saved value",
     "error_cell": "Spreadsheet error value",
@@ -202,6 +208,21 @@ def validate_row(r: dict, data_type: str, today: date) -> None:
             else:
                 r["index_key"] = key
         return
+    if data_type == "factor_score":
+        dt = _date(r.get("date"))
+        v = _num(r.get("score"))
+        factor = str(r.get("factor") or "").strip().lower().replace(" ", "_")
+        if dt is None:
+            r["reject"] = ("bad_date", str(r.get("date")))
+        elif dt > today:
+            r["reject"] = ("future_date", dt.isoformat())
+        elif v is None:
+            r["reject"] = ("bad_number", str(r.get("score")))
+        elif not re.fullmatch(r"[a-z][a-z0-9_]{0,39}", factor):
+            r["reject"] = ("bad_factor", str(r.get("factor")))
+        else:
+            r["d"], r["v"], r["action"] = dt, v, factor     # 'action' keys the duplicate check (security, date, factor)
+        return
     act = ACTION_TYPES.get((str(r.get("action_type") or "")).strip().lower())
     ex = _date(r.get("ex_date"))
     if act is None:
@@ -282,6 +303,8 @@ def _stage_row(r: dict, data_type: str) -> dict:
                 "currency": (r.get("currency") or None)}
     if data_type == "index_level":
         return {**base, "index_key": r["index_key"], "value": format(r["v"], "f")}
+    if data_type == "factor_score":
+        return {**base, "global_security_id": r["security_id"], "factor": r["action"], "score": format(r["v"], "f")}
     return {**base, "global_security_id": r["security_id"], "action_type": r["action"],
             "record_date": r["record_date"].isoformat() if r["record_date"] else None,
             "pay_date": r["pay_date"].isoformat() if r["pay_date"] else None, "terms": r["terms"]}
@@ -372,6 +395,14 @@ async def _write_staged(conn, org_id, data_type: str, staged: list[dict], upload
         for key, pts in by.items():
             n += await W.upsert_index_levels(None, key, pts, provider_key="csv_upload", org_id=str(org_id),
                                              upload_id=uid, licence=lic, conn=conn)
+    elif data_type == "factor_score":
+        byf: dict[tuple, list] = {}
+        for s in staged:
+            byf.setdefault((s["global_security_id"], s["factor"]), []).append((date.fromisoformat(s["date"]),
+                                                                                 Decimal(s["score"])))
+        for (gsid, factor), pts in byf.items():
+            n += await W.upsert_factor_scores(conn, gsid, factor, pts, provider_key="csv_upload", org_id=str(org_id),
+                                              upload_id=uid, licence=lic)
     else:
         for s in staged:
             await W.insert_corporate_action(

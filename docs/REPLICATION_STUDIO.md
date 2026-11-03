@@ -1719,3 +1719,110 @@ second person). The code enforces only its mechanics.
 - **Every broker / desk / trader instruction:** "Print order execution sheet".
 
 All controls come from the envelope's flags and the server's `actions` list, and fail closed.
+
+## rep10 — tilts, completion and consolidation, charitable gifting, the backtest (PHASE 2 COMPLETE)
+
+Sprint 10 of 15 closes phase 2 (options sleeve, security data, blocks, and now "the index plus my
+views", holdings-aware completion, gifting and the backtest). Schema: `docs/rep10_part1.sql`
+(applied). Verify: `apps/api/scripts/verify_rep10.py` (written, not yet run).
+
+### Where it plugs in
+
+`rebalance_proposals.target_for`: model look-through → the account's exclusions → **the approved
+tilt set** → **completion** → the engine (cash floor, lot method, gain budget, wash-sale control).
+Everything downstream of the target applies on top of a tilt. An account with neither gets exactly
+rep5's target. A proposal's target lines carry `model_weight`, `tilt`, `completion` and
+`final_weight` when one applies.
+
+### Tilt math (`services/tilts.py`)
+
+- **Security** +d: weight + d; a security not in the model is added at d (stated); an underweight
+  larger than the position is refused.
+- **Sector** +d: spread over the sector's securities pro rata (largest remainder at 1e-10).
+  Sectors come from the model's source holdings file (`replica_model_specs.snapshot_id`); a model
+  with none → "needs sectors".
+- **Factor** +d: weight d moves from the securities scoring below the median score to those above
+  it, pro rata within each half; scores only through the layer (`factor_score`, subject
+  `<security>:<factor>`, CSV upload or a vendor); below `replication.tilts.factor_coverage` (95%)
+  of security weight scored → refused "needs factor scores (x% covered)".
+- **Renormalisation:** the net of every delta is taken pro rata from the untilted securities; the
+  total and the cash target are unchanged; with no untilted security left, cash absorbs it.
+- **Limits** (org settings): `replication.tilts.max_security` 5%, `max_sector` 10% (also a factor
+  tilt), `max_active_weight` 25%; `te_budget` (unset = none) applies only when TE is estimable.
+- **Always shown:** active share = ½ Σ|final − model| (cash included), the largest single-name and
+  sector deviations.
+- **Tracking error (ex-ante, HYPOTHETICAL):** √(aᵀΣa × 252), a = final − model, Σ the sample
+  covariance of daily simple returns on the dates every covered security shares, window
+  `te_window_days` (365). Made only when securities with ≥ `te_min_observations` (60) returns hold
+  ≥ `te_min_coverage` (95%) of Σ max(model, final) weight; otherwise "not estimated — needs prices
+  (x% of weight covered)". Recomputed on every preview; nothing written.
+- Tilt sets are versioned per account, maker-checker (`approve_replication`, never the maker):
+  draft → awaiting approval → approved | rejected; an approved set is archived when superseded or
+  retired.
+
+### Completion rule (`services/completion.py`)
+
+Per managed account (`completion_settings`, valid axis): count_elsewhere, which authorities count
+(read_only + advise by default; managed opt-in — two managed completions would net each other),
+a stricter stale threshold. A = the account's value; E_k = the household's exposure to k in the
+counted accounts (the X-ray's per-account look-through); H = A + their value.
+D_k = T_k × H − E_k, never negative (the excess is "over target elsewhere — not traded");
+w_k = D_k ÷ A; cash takes the rest (scaled down pro rata when the counted accounts hold more cash
+than the model asks). The household's dollars in each security then equal T_k × H within the
+stated rounding. Counted held-away data older than the threshold must be confirmed by an adviser
+(rep7's `stale_confirmations`, purpose `general`); until then completion is NOT applied at all.
+Read-only and held-away accounts are never traded.
+
+### Consolidation
+
+From the household X-ray: each looked-through fund whose overlap (Σ min weights) with a followed
+replica or another held fund is ≥ `replication.consolidation.overlap_threshold` (25%). Managed +
+following a replica → a rep5 proposal (the fund is outside the target, so the engine sells it under
+the lot method and gain budget); managed + no model → a join proposal; advise → a one-off advice
+proposal (its instructions print as the letter); read_only → listed, never traded. Transition tax
+and break-even are rep7's estimates.
+
+### Charitable gifting (`services/gifts.py`, `gift_letter.py`)
+
+- Candidates: long-term lots at a gain with a known cost and date, in managed or advise accounts,
+  ordered by gain per dollar ((price − cost) ÷ price). Excluded with reasons: short-term (deduction
+  limited to basis), loss lots ("sell it, take the loss, and give cash instead"), read-only,
+  unpriced / unknown cost / unknown date, average-cost holdings.
+- Comparison (all estimates with rates and as-of): CG tax avoided = gain × LT combined rate (federal
+  LT + NIIT + state + city); deduction this year = min(FMV, limit × AGI) × the federal ordinary rate,
+  only if the member itemizes (entered on the proposal with source and as-of; else "no deduction
+  value — does not itemize"); the excess carries forward up to five years (not valued). Sell and give
+  cash: the same CG tax paid, the cash limit. Tax saved in kind = CG avoided + (in-kind deduction −
+  cash deduction). Limits: public charity / DAF 30% stock, 60% cash; private foundation 20% / 30%.
+- Delivery is MANUAL: approve (second person, `approve_tax`) → transfer letter PDF (on demand, never
+  stored; donee, EIN, receiving broker, DTC participant, masked accounts, lots) → sent → received
+  (the date the donee's account received the shares = the gift date) → acknowledged. Reminders:
+  Form 8283 above $500; a year-end to-do when a current-year gift is not received by
+  `replication.gifts.year_end_receive_by` (12-15).
+- Rebuy: none | same security (fresh basis; no wash-sale issue on a gain — stated) |
+  replica-consistent (the account's normal proposal). Each is a rep5 proposal a person approves.
+
+### The backtest and the hypothetical-performance gate (`services/backtest.py`)
+
+Coverage first: trading days are the fund's price dates in the window; a security is covered with a
+price on day 0 and on ≥ `replication.backtest.min_day_coverage` (95%) of days; the run is made only
+when covered securities hold ≥ `min_weight_coverage` (95%) of every model version's weight —
+otherwise stored `not_estimated` with the coverage and the missing list, no partial figures. History
+comes through the layer from the ranked source with the most points (never combined). The engine
+replays the model weights in effect at each rebalance (monthly | quarterly | annually | none),
+fractional shares, price return, no trading costs; harvesting sells a lot whose loss meets rep6's
+thresholds and buys it back after 31 days. Output: cumulative series for both, realised TE,
+maximum drawdown, harvested losses (and their tax value with a profile), the fund's expense ratio
+vs the strategy fee (shown, not deducted). Every result is `hypothetical = true` (a CHECK). Its
+screen and PDF carry the approved policy's disclosure; with none approved: "no
+hypothetical-performance policy approved — staff use only". A member envelope
+(`GET /replication/member/backtests`) is empty unless the approved policy's audience is
+staff_and_members, and then shows only the member's own households' backtests.
+
+### Open for counsel and the CPA (shown on the screens, not decided by the code)
+
+- The hypothetical-performance policy (SEC Marketing Rule) and who may see a backtest.
+- AGI limits and the five-year carryover (estimates); whether the member itemizes; Form 8283;
+  the donee's acceptance of in-kind securities; state deductibility.
+- Factor-score data licences.
+- Not built: reserving an open gift's lots against a rep5 sale.

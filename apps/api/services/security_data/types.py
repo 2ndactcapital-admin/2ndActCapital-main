@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-DATA_TYPES = ("eod_price", "corporate_action", "fund_holdings", "index_level", "option_quote", "fx")
+DATA_TYPES = ("eod_price", "corporate_action", "fund_holdings", "index_level", "option_quote", "fx", "factor_score")
 PURPOSES = ("internal", "member_display")
 PROVIDER_KINDS = ("custodian", "regulator_filing", "issuer_file", "public_api", "csv_upload", "adviser_entry", "vendor")
 PROVIDER_STATUSES = ("active", "not_connected", "retired")
@@ -17,7 +17,9 @@ QUALITY_KINDS = ("stale", "gap", "outlier", "disagreement", "budget_exhausted")
 
 DATA_TYPE_LABELS = {"eod_price": "End-of-day price", "corporate_action": "Corporate actions (dividends, splits)",
                     "fund_holdings": "Fund holdings", "index_level": "Index level / rate",
-                    "option_quote": "Option quote", "fx": "FX rate"}
+                    "option_quote": "Option quote", "fx": "FX rate",
+                    # rep10 — subject "<global security id>:<factor>"; CSV upload and the vendor slot only
+                    "factor_score": "Factor score"}
 PURPOSE_LABELS = {"internal": "Internal use (adviser analysis)", "member_display": "Shown to a member"}
 KIND_LABELS = {"custodian": "Custodian valuation", "regulator_filing": "Regulatory filing",
                "issuer_file": "Issuer file", "public_api": "Public data API", "csv_upload": "File upload",

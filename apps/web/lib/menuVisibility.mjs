@@ -234,6 +234,9 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 12, "/portfolio/tax", "Tax", GATE_VIEW_TAX, false),
   // REP9 — block trading: build, approve, print the order execution sheet, fills, allocation, settlement.
   tab("main", "portfolio", 14, "/portfolio/blocks", "Blocks", GATE_VIEW_BLOCKS, false),
+  // REP10 — tilts + completion per account, and the hypothetical backtest (view_replication)
+  tab("main", "portfolio", 15, "/portfolio/replication/tilts", "Tilts", GATE_VIEW_REPLICATION, false),
+  tab("main", "portfolio", 16, "/portfolio/replication/backtest", "Backtest", GATE_VIEW_REPLICATION, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
@@ -265,6 +268,8 @@ export const MENU_ITEMS = [
   // REP9 — the firm's allocation policy (versions, second-person approval) and its executing accounts
   tab("org_admin", "settings", 5, "/admin/allocation-policy", "Allocation policy", GATE_VIEW_BLOCKS, true),
   tab("org_admin", "settings", 6, "/admin/executing-accounts", "Executing accounts", GATE_VIEW_BLOCKS, true),
+  // REP10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure)
+  tab("org_admin", "settings", 7, "/admin/hypothetical-policy", "Hypothetical-performance policy", GATE_VIEW_REPLICATION, true),
   // The Workflows API gates on PROFILE-axis keys (author_workflows,
   // view_workflow_runs, configure_workflow_triggers) that /users/me does not
   // publish. Workflows keeps its existing gate; Runs and Triggers — newly
