@@ -316,6 +316,44 @@
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY agreement_versions_pkey: (id)
 
+-- ===== ai_daily_runs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   task_key                                 text NOT NULL
+--   budget_day                               date NOT NULL
+--   trigger                                  text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'running'::text
+--   ensemble_config_id                       uuid
+--   model_1                                  text
+--   model_2                                  text
+--   stopped_model                            text
+--   stopped_budget_kind                      text
+--   stopped_budget_value                     numeric
+--   stopped_used                             numeric
+--   stop_detail                              text
+--   documents_done                           integer NOT NULL DEFAULT 0
+--   documents_failed                         integer NOT NULL DEFAULT 0
+--   failed_items                             jsonb NOT NULL DEFAULT '[]'::jsonb
+--   usage                                    jsonb NOT NULL DEFAULT '{}'::jsonb
+--   started_by                               uuid
+--   started_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   finished_at                              timestamp with time zone
+--   heartbeat_at                             timestamp with time zone
+--   lease_until                              timestamp with time zone
+--   PRIMARY KEY ai_daily_runs_pkey: (id)
+
+-- ===== ai_daily_usage =====
+--   budget_day                               date NOT NULL
+--   deployment                               text NOT NULL
+--   input_tokens                             bigint NOT NULL DEFAULT 0
+--   output_tokens                            bigint NOT NULL DEFAULT 0
+--   cost_usd                                 numeric NOT NULL DEFAULT 0
+--   reserved_tokens                          bigint NOT NULL DEFAULT 0
+--   reserved_usd                             numeric NOT NULL DEFAULT 0
+--   calls                                    integer NOT NULL DEFAULT 0
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY ai_daily_usage_pkey: (budget_day, deployment)
+
 -- ===== ai_decision_log =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -350,6 +388,10 @@
 --   activated_at                             timestamp with time zone
 --   retired_at                               timestamp with time zone
 --   notes                                    text
+--   model_1_budget_kind                      text NOT NULL DEFAULT 'unlimited'::text
+--   model_1_budget_value                     numeric
+--   model_2_budget_kind                      text NOT NULL DEFAULT 'unlimited'::text
+--   model_2_budget_value                     numeric
 --   PRIMARY KEY ai_ensemble_configs_pkey: (id)
 
 -- ===== ai_system_one_models =====
