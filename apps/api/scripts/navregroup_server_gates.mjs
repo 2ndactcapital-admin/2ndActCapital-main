@@ -66,6 +66,12 @@ export const SERVER_GATES = {
   "/admin/edgar-pipeline": "super_admin",
   "/admin/note-extraction/gold": "super_admin",
   "/admin/note-extraction/results": "super_admin",
+  // AIBUDGET1 (row added by VHK2 FIX 1) — page.js names no /api/ path itself: it
+  // calls server actions (lib/aiJobsActions.js, lib/noteTermsQueueActions.js →
+  // lib/api.js), so navregroup_traced_gates.mjs cannot derive it. Traced by hand:
+  //   GET /api/v1/admin/ai/jobs, GET /api/v1/admin/ai/daily-runs,
+  //   GET /api/v1/admin/ai/ensembles?task_key=… — each `super` in AUTHZ1_ROUTES.json.
+  "/admin/ai-jobs": "super_admin",
 };
 
 const isSuper = (me) => me?.account_role === "super_admin";

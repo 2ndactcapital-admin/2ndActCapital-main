@@ -100,12 +100,13 @@ INSTITUTIONS_KEY = (("GET",), "/api/v1/admin/edgar/bulk/institutions")
 
 
 def own_base_ref() -> tuple[str, str]:
-    """bulkfetchui3 compared with the moving ``main`` — main AT ITS MERGE is the merge's first parent (its own base);
+    """bulkfetchui3 compared with the moving ``main`` — main as its branch took it is the merge base of its merge's
+    two parents (VHK2 FIX 1: the merge's first parent may carry sprints merged meanwhile; here the two coincide);
     while the sprint is still on its branch that is main itself."""
     end, how = VS.sprint_end_ref(SPRINT_KEY)
     if end == "HEAD":
         return "main", how
-    return VS.git("rev-parse", "--short", f"{end}^1")[1].strip(), how
+    return VS.sprint_base_ref(SPRINT_KEY), how
 
 
 def self_standard(check, find):
