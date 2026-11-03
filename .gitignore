@@ -57,3 +57,4 @@ apps/api/venv/
 # Sprint run logs stay on disk, never in git (rep5: *.log / *.out had been committed by a merge)
 sprint_prompts/logs/
 apps/api/litellm_diagnose.py
+Claude outputs/

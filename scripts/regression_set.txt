@@ -29,3 +29,5 @@ verify_rep10.py
 verify_vhk1.py
 verify_aibudget1.py
 verify_vhk2.py
+verify_previewperf.py
+verify_previewperffix1.py

@@ -345,6 +345,50 @@ async def resolve_identity(conn, request: Request) -> tuple[str | None, str]:
     return str(inserted["id"]), ("created_super_admin" if staff else "created_pending")
 
 
+_PRINCIPAL_BY_SUB_SQL = None
+
+
+def _principal_by_sub_sql() -> str:
+    """resolve_identity steps 1 and 2 (user_identities, then users.auth0_sub —
+    both UNIQUE on auth0_sub) + PRINCIPAL_COLUMNS for the user found."""
+    global _PRINCIPAL_BY_SUB_SQL
+    if _PRINCIPAL_BY_SUB_SQL is None:
+        from services.authz import PRINCIPAL_COLUMNS
+
+        _PRINCIPAL_BY_SUB_SQL = f"""
+            WITH hit AS (
+                SELECT user_id AS id, 'identity'::text AS via, 1 AS pri
+                  FROM user_identities WHERE auth0_sub = $1
+                UNION ALL
+                SELECT id, 'sub'::text, 2 FROM users WHERE auth0_sub = $1
+                ORDER BY pri LIMIT 1)
+            SELECT hit.via, {PRINCIPAL_COLUMNS}
+              FROM hit JOIN users u ON u.id = hit.id"""
+    return _PRINCIPAL_BY_SUB_SQL
+
+
+async def _fast_principal(conn, request: Request):
+    """The Principal for a linked identity or a primary sub, or None to fall
+    back to resolve_identity. Same order and same touch as resolve_identity:
+    a linked identity wins over a primary sub; the user found is stamped."""
+    from services.authz import STATUS_RETIRED, principal_from_row
+    from services import rbac
+
+    claims = _claims(request)
+    sub = claims.get("sub")
+    if not sub:
+        return None
+    get_org_id(request)  # resolve_identity's first step; raises the same way
+    row = await conn.fetchrow(_principal_by_sub_sql(), sub, rbac.SUPER_ADMIN_ROLE)
+    if row is None:
+        return None
+    if (row["via"] == "sub" and row["email"] == placeholder_email(sub)
+            and row["status"] != STATUS_RETIRED and sub not in _userinfo_attempted):
+        return None  # step 2's one-time /userinfo repair / merge: the full path
+    await touch_last_login(conn, row["id"])
+    return principal_from_row(row, claims=claims, resolved_via=row["via"])
+
+
 async def resolve_request_principal(request: Request):
     """Resolve (and provision) the caller, load the Principal, cache it.
 
@@ -360,6 +404,19 @@ async def resolve_request_principal(request: Request):
         return cached
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # PREVIEWPERF FIX 1: the two everyday paths (a linked identity, the
+        # primary sub) resolve AND load in one statement + the throttled touch
+        # (7 statements before). Anything else — no match, a placeholder email
+        # still owed its one /userinfo attempt, a test-mode UUID stub, a new
+        # login — takes the full resolve_identity path below, unchanged.
+        try:
+            principal = await _fast_principal(conn, request)
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERROR in fast principal (sub={_claims(request).get('sub')!r}): {exc}")
+            return None
+        if principal is not None:
+            request.state.principal = principal
+            return principal
         try:
             user_id, via = await resolve_identity(conn, request)
         except Exception as exc:  # noqa: BLE001
