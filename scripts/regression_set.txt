@@ -27,3 +27,4 @@ verify_marketdata1.py
 verify_rep9.py
 verify_rep10.py
 verify_vhk1.py
+verify_vhk2.py

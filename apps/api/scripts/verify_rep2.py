@@ -816,9 +816,17 @@ async def y_capabilities(conn):
     rows = {r["custodian_code"]: r for r in out.get("rows", [])} if code == 200 else {}
     alt = {c["capability_key"]: c for c in rows.get("altruist", {}).get("cells", [])}
     man = {c["capability_key"]: c for c in rows.get("manual", {}).get("cells", [])}
-    check(code == 200 and len(alt) == 13 and all(c["value"] == "unknown" and c["available"] is False
-                                                  for c in alt.values()),
-          "staff read: Altruist has all 13 capabilities 'unknown' and NOT available", f"{code}")
+    # VHK2: the real Altruist row is live state — a Super Admin may record evidence for a capability on the
+    # custodian-capabilities page. The rule for every current cell: Altruist has a cell for every capability key
+    # (the server's own vocabulary, never a frozen 13), and every 'unknown' cell is NOT available. A recorded
+    # (non-'unknown') Altruist value is a [FIND], not a FAIL.
+    unk_bad = sorted(k for k, c in alt.items() if c["value"] == "unknown" and c["available"] is not False)
+    check(code == 200 and set(alt) == set(CC.CAPABILITY_KEYS) and not unk_bad,
+          "staff read: Altruist has a cell for every capability key; every 'unknown' one is NOT available",
+          f"{code}; {len(alt)} cells vs {len(CC.CAPABILITY_KEYS)} keys; unknown-but-available {unk_bad}")
+    recorded = {k: c["value"] for k, c in alt.items() if c["value"] != "unknown"}
+    if recorded:
+        find("Altruist capabilities recorded since rep2 (no longer all 'unknown')", f"{recorded}")
     check(man.get("equity_trading_api", {}).get("value") == "no" and man.get("model_api", {}).get("value") == "no",
           "manual: trade APIs 'no'")
     check(all((c.get("evidence") or "").strip() and c.get("as_of") and c.get("evidence_kind") in

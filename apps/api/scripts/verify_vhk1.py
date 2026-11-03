@@ -305,7 +305,14 @@ def y_scope() -> None:
     code, out, _ = run_cmd(["git", "status", "--porcelain"], REPO, 60)
     dirty = [ln[3:] for ln in out.splitlines() if ln.strip()]
     outside = [f for f in dirty if not any(p.match(f.strip('"')) for p in ALLOWED)]
-    check(code == 0 and not outside, "no uncommitted change outside the VHK1 scope either", f"{outside[:8]}")
+    # VHK2: the working tree's uncommitted state belongs to vhk1 only while vhk1 is still on its branch. Once
+    # merged, whatever the operator (or a parallel sprint) has uncommitted is not vhk1's change — a [FIND], not a
+    # FAIL (2026-11-02: an operator's 'Claude outputs/' folder failed this).
+    end, _how = VS.sprint_end_ref(SPRINT_KEY)
+    if end == "HEAD":
+        check(code == 0 and not outside, "no uncommitted change outside the VHK1 scope either", f"{outside[:8]}")
+    elif outside:
+        find("uncommitted changes in the working tree (not vhk1's — it is merged)", f"{outside[:8]}")
 
 
 def y_doc(names: list[str]) -> None:

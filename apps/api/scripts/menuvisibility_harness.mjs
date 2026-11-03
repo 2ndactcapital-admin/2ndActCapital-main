@@ -31,7 +31,10 @@ import {
   visibleTabs,
 } from "../../web/lib/menuVisibility.mjs";
 import { PERSONAS } from "./navregroup_personas.mjs";
-import { SERVER_GATES, serverAllows } from "./navregroup_server_gates.mjs";
+// VHK2 — a page navregroup's hand table does not list is traced from its page.js
+// API calls and docs/AUTHZ1_ROUTES.json (navregroup_traced_gates.mjs). The hand
+// table alone answered "refused" for every page a later sprint added.
+import { isTraced, serverAdmits } from "./navregroup_traced_gates.mjs";
 
 // ── Fixtures — shaped exactly like a /api/v1/users/me response ──────────────
 
@@ -266,8 +269,8 @@ const personaResults = Object.entries(PERSONAS).map(([name, me]) => {
   const removed = baseline ? minus(baseline, after) : null;
   const added = baseline ? minus(after, baseline) : null;
   const intended = sorted(INTENDED_ADDITIONS[name]);
-  const refusedAfter = after.filter((h) => !serverAllows(me, h));
-  const refusedBefore = (baseline ?? []).filter((h) => !serverAllows(me, h));
+  const refusedAfter = after.filter((h) => !serverAdmits(me, h));
+  const refusedBefore = (baseline ?? []).filter((h) => !serverAdmits(me, h));
   return {
     name,
     baseline_count: baseline?.length ?? 0,
@@ -283,13 +286,18 @@ const personaResults = Object.entries(PERSONAS).map(([name, me]) => {
     // Every reachable href must be in the sidebar model too (nothing reachable
     // only through a side door the definition does not render).
     after_equals_sidebar_tabs: JSON.stringify(sorted(sidebarHrefs)) === JSON.stringify(after),
-    unknown_server_gate: after.filter((h) => !(h in SERVER_GATES)),
+    unknown_server_gate: after.filter((h) => !isTraced(h)),
     refused_after: refusedAfter,
     refused_before: refusedBefore,
     // No NEW refusal: a href the server refuses is only tolerated when the same
     // persona already had it before the sprint (a pre-existing [FIND]).
     new_refusals: minus(refusedAfter, refusedBefore),
-    additions_refused: (added ?? []).filter((h) => !serverAllows(me, h)),
+    additions_refused: (added ?? []).filter((h) => !serverAdmits(me, h)),
+    // VHK2 — the rule that survives later sprints: every href added since the
+    // baseline has a traced server gate that admits this persona. (additions_exact
+    // compares with navregroup's hand list, which only holds at navregroup's own
+    // merge — verify_navregroup checks it there.)
+    additions_ok: !!added && added.every((h) => isTraced(h) && serverAdmits(me, h)),
   };
 });
 

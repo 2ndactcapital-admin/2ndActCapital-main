@@ -170,7 +170,21 @@ async def verify_schema() -> int:
         ranks = await conn.fetch("SELECT data_type, provider_key, rank FROM portfolio.data_source_rank WHERE owner_scope = "
                                  "'platform' AND valid_to IS NULL AND system_to IS NULL ORDER BY data_type, rank")
         need(len(ranks) >= 11, "platform rank seeded", f"{[(r['data_type'], r['provider_key'], r['rank']) for r in ranks]}")
-        need(not any(r["provider_key"] == "vendor_slot" for r in ranks), "the vendor slot is in no platform rank")
+        # VHK2: rep10 (docs/rep10_part1.sql:108) deliberately ranks the not-connected vendor slot SECOND for its new
+        # factor_score type (csv_upload 1, vendor_slot 2 — skipped by the walk until a contract exists). marketdata1's
+        # rule is about its OWN six data types: there the vendor slot is in no platform rank. For any later type it may
+        # be ranked, but never first, and only while its provider row stays not_connected (so the walk skips it).
+        md1_types = ("eod_price", "corporate_action", "fund_holdings", "index_level", "option_quote", "fx")
+        need(not any(r["provider_key"] == "vendor_slot" and r["data_type"] in md1_types for r in ranks),
+             "the vendor slot is in no platform rank for marketdata1's six data types")
+        first = {}
+        for r in ranks:
+            first.setdefault(r["data_type"], r["provider_key"])
+        vs_ranked = sorted({r["data_type"] for r in ranks if r["provider_key"] == "vendor_slot"})
+        need(not vs_ranked or (all(first[t] != "vendor_slot" for t in vs_ranked)
+                               and bool(vs) and vs["status"] == "not_connected"),
+             "wherever a later sprint ranks the vendor slot, it is never first and it is still not connected",
+             f"ranked for {vs_ranked}; first per type {first}")
         need(not any(r["data_type"] == "fund_holdings" and r["provider_key"] == "csv_upload" for r in ranks),
              "fund holdings are not ranked from file uploads (platform-only holdings store)")
         n_org = sum([int(await conn.fetchval(f"SELECT count(*) FROM {t} WHERE org_id IS NOT NULL"))

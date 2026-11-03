@@ -53,12 +53,28 @@ function sectionsOf(html) {
   return out;
 }
 
+// VHK2: this used to assert the rendered sidebar EQUALS the hand list above, so every later sprint that added a
+// group or a tab for a persona (REP2's Custodian capabilities, REP9's settings tabs, MARKETDATA1, REP10 …) had to
+// edit this file. Two rules replace it: the real SidebarNav renders exactly what the ONE definition says
+// (visibleSections — render fidelity), and it still renders every entry navregroup gave each persona above (the
+// hand list is independent of the module, so a definition change that DROPS a persona's entry still fails here).
+const modelOf = (me) => {
+  const out = { main: [], org_admin: [], platform: [] };
+  for (const s of menu.visibleSections(me)) out[s.id] = s.entries.map((e) => e.href);
+  return out;
+};
+
 for (const [name, me] of Object.entries(PERSONAS)) {
   test(`sidebar renders the expected entries for ${name}`, () => {
     const html = renderToStaticMarkup(h(SidebarNav, { me, pathname: "/dashboard", expanded: true }));
-    assert.deepEqual(sectionsOf(html), EXPECTED[name]);
+    const rendered = sectionsOf(html);
+    assert.deepEqual(rendered, modelOf(me), "the sidebar renders exactly the definition's visible sections");
+    for (const section of ["main", "org_admin", "platform"]) {
+      const lost = EXPECTED[name][section].filter((href) => !rendered[section].includes(href));
+      assert.deepEqual(lost, [], `${name} still sees every ${section} entry navregroup gave it`);
+    }
     for (const [section, header] of [["org_admin", "Admin — Organization"], ["platform", "Admin — Platform"]]) {
-      assert.equal(html.includes(header), EXPECTED[name][section].length > 0,
+      assert.equal(html.includes(header), rendered[section].length > 0,
         `${header} shown iff a group in that section is visible`);
     }
   });

@@ -595,14 +595,20 @@ async def task1_findings(conn) -> None:
     callers = [f for f in (WEB_DIR / "components").rglob("*.jsx")
                if "serverSide=" in f.read_text() and f.name != "DataGrid.jsx"]
     caller_names = sorted(c.name for c in callers)
-    # Later EDGAR screens (EdgarCohorts.jsx, edgarcohorts e011167; the bulk
-    # download tab, ...) are deliberate server-side callers too: any Edgar*
-    # caller is accepted, the monitor must be one, and a non-Edgar caller fails.
+    # VHK2: later sprints may opt in too (dealroom3's AccessGrid.jsx does) — never freeze today's caller list.
+    # Which callers THIS sprint wired is checked at its own end point; today the rule is: the mode is still
+    # opt-in (absent → client-side), and the EDGAR monitor still passes it.
+    end_ref, how = VS.sprint_end_ref(SPRINT_KEY)
+    _c, out, _e = VS.git("grep", "-l", "serverSide=", end_ref, "--", "apps/web/components")
+    at_end = sorted(pathlib.Path(ln.split(":", 1)[1]).name for ln in out.splitlines()
+                    if ln.strip() and not ln.endswith("DataGrid.jsx"))
+    check(bool(at_end) and "EdgarPipelineMonitor.jsx" in at_end and all(n.startswith("Edgar") for n in at_end),
+          "1d. at edgarpipelinea's own end point only the EDGAR screens (Edgar*.jsx) passed serverSide",
+          f"{how}: {at_end}")
     check("serverSide," in dg and "manualPagination: true" in dg and "manualSorting: true" in dg
-          and "EdgarPipelineMonitor.jsx" in caller_names
-          and all(n.startswith("Edgar") for n in caller_names),
-          "1d. DataGrid gained an opt-in serverSide mode; only the EDGAR screens (Edgar*.jsx) pass it",
-          f"callers={caller_names}")
+          and "serverSide || null" in dg and "EdgarPipelineMonitor.jsx" in caller_names,
+          "1d. DataGrid's serverSide mode is still opt-in (absent → client-side) and the EDGAR monitor passes it",
+          f"callers today={caller_names}")
     find("1d. DataGrid", "it was client-side only (TanStack sort/filter/paginate over rowData). Extended "
          "with `serverSide` (manual sorting/paging, text filters hidden, footer counts totalRows); "
          "undefined by default, so existing callers are unchanged")
@@ -980,9 +986,22 @@ async def fetch_section(conn, bucket: str) -> None:
     if VS.when_empty(sample, "never-fetched real 'selected' 424B2s exist to sample for the fetch tests",
                      lambda a: not a.startswith(ACC_PREFIX), check=check, find=find) is None:
         return
-    check(len(groups) >= 5 and n_real >= 8,
-          f"a fixed sample of {n_real} real 424B2s (up to 2 per group, >= 8) across >= 5 issuer groups, plus "
-          "the one deliberately bad accession", f"n_real={n_real} groups={sorted(groups)}")
+    # VHK2: the real never-fetched 2026Q3 pool depletes as the real pipeline fetches it (4 of the 5 groups had
+    # rows on 2026-11-02) — never freeze the group / row count. The rule on what exists: at most 2 per group, every
+    # group one of SAMPLE_GROUPS, and enough real filings (>= the cap C) for the cap test below. A group with no
+    # eligible row left is a [FIND]; fewer than C real filings is a [FIND] and the fetch tests are skipped.
+    per_group = {g: sum(1 for r in sample_rows if r["issuer_group"] == g) for g in groups}
+    check(all(n <= 2 for n in per_group.values()) and groups <= set(SAMPLE_GROUPS),
+          f"the sample of {n_real} real 424B2s takes up to 2 per issuer group, only from the sample groups, plus "
+          "the one deliberately bad accession", f"n_real={n_real} per_group={per_group}")
+    absent_groups = sorted(set(SAMPLE_GROUPS) - groups)
+    if absent_groups:
+        find("sample issuer groups with no never-fetched real 2026Q3 424B2 left",
+             f"{absent_groups} — the real pool depleted (the rule above holds on the {len(groups)} that remain)")
+    if n_real < C:
+        find("fewer real sample filings than the fetch cap", f"n_real={n_real} < C={C}: the fetch tests need >= C "
+             "real filings; none run (teardown restores the sampled rows)")
+        return
 
     # The bad accession is a fixture row; selection decides it like any other.
     await p.select_stage(conn, accessions=[F_BAD])
@@ -1314,16 +1333,20 @@ async def existing_documents(conn) -> None:
                (SELECT count(*) FROM portfolio.reference_filings WHERE content_encoding = 'identity'
                   AND (extracted_text IS NULL OR r2_key LIKE '%.gz')) AS rewritten,
                (SELECT count(*) FROM portfolio.reference_filings WHERE filer_name = 'VERIFY FIXTURE') AS fixture""")
-    check(r["identity_rows"] == 200 and r["linked"] == 200,
-          "all 200 pre-existing documents (201 minus the deleted fixture) are linked to a manifest row marked fetched",
-          f"{dict(r)}")
+    # VHK2: never freeze the live count (200 on 2026-11-02). The rule for every current pre-existing (identity
+    # encoded) document: it is linked to a manifest row marked fetched. None at all is a [FIND].
+    VS.when_empty([r] if r["identity_rows"] else [], "every pre-existing ('identity' encoded) document is linked to a "
+                  "manifest row marked fetched", lambda x: x["linked"] == x["identity_rows"], check=check, find=find,
+                  detail=lambda bad: f"{dict(r)}")
     check(r["rewritten"] == 0, "none was re-downloaded: still 'identity' encoded, raw HTML key, text in the database")
     check(r["fixture"] == 0, "the VERIFY FIXTURE row is gone")
-    st = await rls_val(conn, """SELECT count(*) FROM portfolio.edgar_index_filings
-                                WHERE status_reason LIKE 'pre-existing reference_filings document%'
-                                  AND selection_policy_version IS NULL AND pipeline_status = 'fetched'""")
-    check(st == 200, "their manifest rows say why they are fetched and carry no policy version (none decided them)",
-          f"rows={st}")
+    st = await rls_row(conn, """SELECT count(*) AS n, count(*) FILTER (WHERE NOT (selection_policy_version IS NULL
+                                       AND pipeline_status = 'fetched')) AS bad
+                                FROM portfolio.edgar_index_filings
+                                WHERE status_reason LIKE 'pre-existing reference_filings document%'""")
+    check(st["n"] >= r["linked"] and st["bad"] == 0,
+          "their manifest rows say why they are fetched and carry no policy version (none decided them) — every one",
+          f"rows={st['n']} breaking the rule={st['bad']} linked documents={r['linked']}")
 
 
 async def api_section(conn) -> None:

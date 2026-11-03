@@ -139,12 +139,21 @@ async def verify_schema() -> int:
              f"{[r['name'] for r in holders]}")
         n_fields = await conn.fetchval("SELECT count(*) FROM portfolio.replica_terms_field_registry "
                                        "WHERE valid_to IS NULL AND system_to IS NULL")
-        crit = {r["field_key"] for r in await conn.fetch(
-            "SELECT field_key FROM portfolio.replica_terms_field_registry WHERE is_critical")}
-        need(n_fields >= 19 and crit == {"expense_ratio_gross_pct", "expense_ratio_net_pct", "index_name",
-                                         "weighting_method", "rebalance_frequency"},
-             "field registry seeded; critical = expense ratios, index name, weighting, rebalance",
-             f"{n_fields} fields, critical {sorted(crit)}")
+        # VHK2: later sprints add class-scoped critical fields (rep8: buffer / income ETF option terms, each with
+        # instrument_classes set). rep1's rule is about the fields that apply to EVERY class (instrument_classes
+        # NULL): exactly its five are critical. A class-scoped critical field must name its class(es).
+        crit_rows = await conn.fetch(
+            "SELECT field_key, instrument_classes FROM portfolio.replica_terms_field_registry "
+            "WHERE is_critical AND valid_to IS NULL AND system_to IS NULL")
+        crit = {r["field_key"] for r in crit_rows if r["instrument_classes"] is None}
+        unscoped_bad = sorted(r["field_key"] for r in crit_rows
+                              if r["instrument_classes"] is not None and not list(r["instrument_classes"]))
+        need(n_fields >= 19 and not unscoped_bad
+             and crit == {"expense_ratio_gross_pct", "expense_ratio_net_pct", "index_name",
+                          "weighting_method", "rebalance_frequency"},
+             "field registry seeded; all-class critical = expense ratios, index name, weighting, rebalance "
+             "(class-scoped critical fields name their classes)",
+             f"{n_fields} fields, all-class critical {sorted(crit)}, class-scoped with empty classes {unscoped_bad}")
         srcs = {r["key"]: r["active"] for r in await conn.fetch(
             "SELECT key, active FROM portfolio.replica_holdings_sources WHERE valid_to IS NULL AND system_to IS NULL")}
         need(srcs.get("ssga_spdr") is True and srcs.get("sec_nport") is True
