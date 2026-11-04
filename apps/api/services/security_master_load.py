@@ -116,6 +116,10 @@ class BatchResult:
         self.attributes_written += o.attributes_written
         self.review_items += o.review_items
         self.seen |= o.seen
+        # SECMASTER1 FIX 1: the per-record outcomes were dropped here, so sync_13f (which merges per batch and
+        # then reads total.by_record) saw every OpenFIGI-mapped CUSIP as 'no match' — while the matcher HAD
+        # created / matched its security.
+        self.by_record.update(o.by_record)
         return self
 
     @property

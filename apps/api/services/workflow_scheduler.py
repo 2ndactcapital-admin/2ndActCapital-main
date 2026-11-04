@@ -502,13 +502,23 @@ async def run_scheduler_tick(
             # The claim is committed and deliberately NOT rolled back — see the
             # module docstring. The engine has already held-and-alerted any
             # failure that got as far as creating a run.
-            log(f"[scheduler] ERROR  {tag} — occurrence "
-                f"{decision.occurrence_utc.isoformat()} claimed but the run "
-                f"failed to start: {type(exc).__name__}: {exc}")
+            held_run_id = getattr(exc, "held_run_id", None)
+            if held_run_id is not None:
+                log(f"[scheduler] HELD   {tag} — occurrence "
+                    f"{decision.occurrence_utc.isoformat()} started run "
+                    f"{held_run_id}, which failed and is held: "
+                    f"{type(exc).__name__}: {exc}")
+            else:
+                log(f"[scheduler] ERROR  {tag} — occurrence "
+                    f"{decision.occurrence_utc.isoformat()} claimed but the run "
+                    f"failed to start: {type(exc).__name__}: {exc}")
             result.errors.append({
                 "trigger_id": trigger["id"],
                 "error": f"{type(exc).__name__}: {exc}",
                 "occurrence_utc": decision.occurrence_utc,
+                # additive (SECMASTER1 FIX 1): the run the engine HELD, when it
+                # got that far — None means no run row exists
+                "run_id": held_run_id,
             })
             continue
 

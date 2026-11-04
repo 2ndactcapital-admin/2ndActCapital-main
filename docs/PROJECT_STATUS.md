@@ -390,6 +390,8 @@ caught a truncation guard that blocked delisting on small universes (fixed: abso
 5. Drop marketdata1's "create a Render cron for security_data_nightly.py" step.
 6. Run `verify_secmaster1.py` (in `scripts/regression_set.txt`).
 
+**UPDATE (2026-11-04, secmaster1 fix 1):** the operator run's 7 FAILs (146 PASS) had 3 causes. CODE: `BatchResult.merge` dropped `by_record`, so every OpenFIGI-mapped 13(f) CUSIP was recorded "not mapped — no match" while its security HAD been created. CODE: the engine's permission check looked up the starter under the RUN's org RLS, so a Super Admin from another home org resolved to None and was refused before the action's org guard; it now reads that row under `platform_scope`. VERIFY: a failed run is HELD and lands in `TickResult.errors`, never `fired`. The errors entry now also carries the held `run_id` (additive), and the "blocks the next fire" check now asserts the blocking run IS this section's held run. VERIFY: the client-org case now runs as the Super Admin (org-guard refusal) plus a member without the permission (permission refusal). VERIFY: the nightly-step output check picked `outs[0]` from an unordered query and now picks by step_key. Proof: one-off `scripts/_oneoff_secmaster1_fix1.py` 59/0, zero fixture rows left, real rows' checksums unchanged; `--self-checks-only` 8/0. The full `verify_secmaster1.py` has not been re-run yet; the operator should re-run it.
+
 ---
 
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000. PERMS1 — one source of permissions; org admin baseline; deal + household creation; HollisMuse re-run fixes; verify WRITTEN, not yet run (2026-11-04)

@@ -473,8 +473,12 @@ FD_EQ = "\n".join([FD_HEAD_EQ,
 FD_ETF = "\n".join([FD_HEAD_ETF, 'ZZSMF,ZZSM Index Fund ETF,USD,"Tracks a fixture.",Equities,Large Blend,ZZSM Funds,NMS,XNAS,,False'])
 
 
+FIGI_CALLS: list = []   # (request jobs, stub answer) per OpenFIGI request — printed in the [Y] 13(f) detail
+
+
 def figi_responder(url, payload):
     out = []
+    FIGI_CALLS.append((payload, out))
     for job in payload:
         v = job["idValue"]
         hit = {"ZZSMA": ("BBGZZSM0000A", "ZZSMA", "Common Stock", "ZZSM ALPHA INC"),
@@ -793,7 +797,10 @@ async def y_13f(conn):
     del_fp = await fingerprint(conn, "SELECT s.id, s.name, s.valid_to, i.id_value, i.valid_to FROM portfolio.securities_global s "
                                      "JOIN portfolio.securities_global_identifiers i ON i.global_security_id = s.id WHERE s.id = $1",
                                S["del"])
+    FIGI_CALLS.clear()
     r1 = await SS.sync_13f(ctx(pool, fixture_transport()), map_requests=5)
+    figi_seen = [(j.get("idType"), j.get("idValue"), (a.get("data") or [{}])[0].get("figi") if "data" in a
+                  else a.get("warning")) for jobs, ans in FIGI_CALLS for j, a in zip(jobs, ans)]
     rows = {r["cusip"]: dict(r) for r in await platform(conn, "SELECT cusip, map_status, map_note, global_security_id, "
                                                               "status, is_option FROM portfolio.sec_13f_list WHERE quarter = $1 "
                                                               "AND valid_to IS NULL AND system_to IS NULL", QUARTER)}
@@ -805,7 +812,8 @@ async def y_13f(conn):
     n = await gsid_of(conn, "cusip", C_NEW)
     check(bool(n and rows[C_NEW]["map_status"] == "mapped" and rows[C_NEW]["global_security_id"] == n
                and await gsid_of(conn, "ticker", "ZZSMN") == n and await gsid_of(conn, "figi", "BBGZZSM0000N") == n),
-          "a new CUSIP mapped through OpenFIGI → a new security with ticker + FIGI + CUSIP", f"{rows[C_NEW]}")
+          "a new CUSIP mapped through OpenFIGI → a new security with ticker + FIGI + CUSIP",
+          f"{rows[C_NEW]} jobs→answers (positional)={figi_seen} sync={ {k: v for k, v in r1.items() if k not in ('load', 'review_item_ids')} }")
     check(bool(rows[C_MISS]["map_status"] == "not_mapped" and (rows[C_MISS]["map_note"] or "").startswith(
         "not mapped — OpenFIGI found no identifier")), "an unmapped CUSIP stays with 'not mapped — <why>'",
           f"{rows[C_MISS]['map_note']}")
@@ -874,7 +882,10 @@ async def y_jobs(conn):
                 [(x or {}).get("handler_data", {}).get("security_data_run_id") for x in outs
                  if (x or {}).get("handler_data", {}).get("security_data_run_id")])
         if key == "security_master_nightly" and fired:
-            hd = outs[0].get("handler_data") if outs else {}
+            # by step_key, not row order: the steps query has no ORDER BY, and the openfigi step's output (no
+            # nasdaq_trader / sec_tickers counts) came back first in the fix-1 proof run (SECMASTER1 FIX 1)
+            by_key = {st["step_key"]: o for st, o in zip(steps, outs)}
+            hd = (by_key.get("universe") or {}).get("handler_data") or {}
             check(bool(hd and "review_items_created" in hd and "nasdaq_trader" in hd and "sec_tickers" in hd),
                   "the nightly step's output records counts and the review items it created",
                   f"{ {k: hd.get(k) for k in ('status', 'review_items_created')} if hd else None}")
@@ -889,18 +900,25 @@ async def y_jobs(conn):
                               now + timedelta(days=8))
     finally:
         J.TRANSPORT_FACTORY = lambda: fixture_transport()
-    held = res.fired[0]["run_id"] if res.fired else None
+    # a run that fails is HELD and its error re-raised, so the tick reports it under `errors` (with the held run's
+    # id), never under `fired` — the first run of this check read `fired` and got None (SECMASTER1 FIX 1)
+    held = next((e.get("run_id") for e in res.errors
+                 if str(e.get("trigger_id")) == str(seeded["security_master_attributes"]["trigger_id"])), None)
     row = await run_row(conn, held) if held else None
-    check(bool(row and row["status"] == "held" and "forced failure" in (row["error_detail"] or "")),
-          "a failing step HOLDS the run with the error", f"{row and dict(row)}")
+    check(bool(not res.fired and held and row and row["status"] == "held" and row["org_id"] == ORG_P
+               and "forced failure" in (row["error_detail"] or "")),
+          "a failing step HOLDS the run with the error (the tick reports the held run's id)",
+          f"{res.summary()} {res.errors and str(res.errors[0].get('error'))[:160]} {row and dict(row)}")
     todos = await platform(conn, "SELECT user_id FROM member_todos WHERE source = 'workflow_run_held' AND related_id = $1 "
                                  "AND status = 'open'", held) if held else []
     check(bool({t["user_id"] for t in todos} == {U_SUPER}), "the held-run alert goes to the Super Admin (and no client org admin)",
           f"{[str(t['user_id']) for t in todos]}")
     occ2, res2 = await fire(conn, pool, seeded["security_master_attributes"]["trigger_id"], spec.cron, spec.timezone,
                             occ + timedelta(minutes=1))
-    check(bool(not res2.fired and any("overlap" in str(s.get("reason")) for s in res2.skipped)),
-          "a held run blocks the next fire", f"{res2.summary()}")
+    blockers = [s.get("blocking_run_id") for s in res2.skipped if "overlap" in str(s.get("reason"))]
+    check(bool(held and not res2.fired and blockers and all(str(b) == str(held) for b in blockers)),
+          "a held run blocks the next fire — and the blocking run is THIS section's held run, not a leftover",
+          f"{res2.summary()} blocking={[str(b) for b in blockers]} held={held}")
     c, o = await api(U_ADMIN, "POST", f"{_M}/runs/{held}/close", {"note": "verify"})
     check(c == 403, "an org admin cannot close a platform run (403)", f"{c}")
     c, o = await api(U_SUPER, "POST", f"{_M}/runs/{held}/close", {"note": "verify: closed after the forced failure"})
@@ -917,20 +935,39 @@ async def y_jobs(conn):
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
         borrowed = await J.ensure_platform_jobs(conn, org_id=ORG_A, created_by=U_SUPER, active=False,
                                                 jobs={"security_master_attributes": J.JOBS["security_master_attributes"]})
-    tokens = set_rls_context(str(ORG_A), False)
-    try:
-        await J.run_now(pool, job_key="security_master_attributes", actor_id=U_SUPER, org_id=ORG_A)
-        st = "completed"
-    except Exception as exc:  # noqa: BLE001
-        st = f"{type(exc).__name__}: {exc}"
-    finally:
-        reset_rls_context(tokens)
-    a_run = await platform(conn, "SELECT id, status, error_detail FROM workflow_runs WHERE org_id = $1 ORDER BY started_at "
-                                 "DESC LIMIT 1", ORG_A, fetch="fetchrow")
-    check(bool(a_run and a_run["status"] == "held" and "platform org" in (a_run["error_detail"] or "")),
-          "the same action in a client org's run is refused (held: 'runs only in the platform org')",
-          f"{st[:120]} {a_run and dict(a_run)}")
+    async def client_run(actor):
+        before = {r["id"] for r in await platform(conn, "SELECT id FROM workflow_runs WHERE org_id = $1", ORG_A)}
+        tokens = set_rls_context(str(ORG_A), False)
+        try:
+            await J.run_now(pool, job_key="security_master_attributes", actor_id=actor, org_id=ORG_A)
+            st = "completed"
+        except Exception as exc:  # noqa: BLE001
+            st = f"{type(exc).__name__}: {exc}"
+        finally:
+            reset_rls_context(tokens)
+        new = [dict(r) for r in await platform(conn, "SELECT id, status, error_detail, started_by FROM workflow_runs "
+                                                     "WHERE org_id = $1", ORG_A) if r["id"] not in before]
+        return st, (new[0] if len(new) == 1 else None), new
+
+    # (1) a starter who HOLDS the permission (the Super Admin, acting in the client org) → only the org guard refuses
+    st, a_run, new = await client_run(U_SUPER)
+    check(bool(a_run and a_run["status"] == "held" and a_run["started_by"] == U_SUPER
+               and "runs only in the platform org" in (a_run["error_detail"] or "")
+               and "requires permission" not in (a_run["error_detail"] or "")),
+          "the same action in a client org's run, started by a Super Admin, is refused by the org guard (held: "
+          "'runs only in the platform org')", f"{st[:160]} {new}")
     S["client_run"] = a_run["id"] if a_run else None
+    # (2) a starter WITHOUT the permission (the client org admin) → refused by the permission check
+    st2, b_run, new2 = await client_run(U_ADMIN)
+    check(bool(b_run and b_run["status"] == "held" and b_run["started_by"] == U_ADMIN
+               and f"requires permission {J.REQUIRED_PERMISSION!r}" in (b_run["error_detail"] or "")
+               and "does not hold it" in (b_run["error_detail"] or "")),
+          "…and started by a member without run_platform_jobs, it is refused by the permission check",
+          f"{st2[:160]} {new2}")
+    # nothing the guarded action writes exists for either client run (the guard fires before any write)
+    wrote = await platform(conn, "SELECT count(*) FROM portfolio.security_data_runs WHERE summary->>'workflow_run_id' = "
+                                 "ANY($1::text[])", [str(x["id"]) for x in new + new2], fetch="fetchval")
+    check(bool(new and new2 and int(wrote or 0) == 0), "neither refused client run wrote a job-history row", f"{wrote}")
     _ = borrowed
     tokens = set_rls_context(str(ORG_P), False)
     try:
