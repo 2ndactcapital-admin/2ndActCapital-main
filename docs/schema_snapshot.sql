@@ -2808,6 +2808,60 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY member_todos_pkey: (id)
 
+-- ===== note_check_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   enabled                                  boolean NOT NULL DEFAULT true
+--   fee_alert_threshold_pct                  numeric
+--   watch_archetypes                         ARRAY NOT NULL DEFAULT '{}'::text[]
+--   watch_issuers                            ARRAY NOT NULL DEFAULT '{}'::text[]
+--   watch_underlyings                        ARRAY NOT NULL DEFAULT '{}'::text[]
+--   created_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY note_check_settings_pkey: (id)
+
+-- ===== note_checks =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   note_terms_id                            uuid NOT NULL
+--   replicability_id                         uuid NOT NULL
+--   input_key                                text NOT NULL
+--   trigger                                  text NOT NULL
+--   issued_on                                date NOT NULL
+--   issued_basis                             text NOT NULL
+--   verdict                                  text NOT NULL
+--   mapping                                  text
+--   verdict_snapshot                         jsonb NOT NULL
+--   underlying_state                         text NOT NULL
+--   replica_outcome                          text NOT NULL
+--   not_built_reasons                        jsonb NOT NULL DEFAULT '[]'::jsonb
+--   replica_id                               uuid
+--   replica_notes                            jsonb NOT NULL DEFAULT '[]'::jsonb
+--   comparison_id                            uuid
+--   pricing_status                           text NOT NULL
+--   embedded_fee_pct                         numeric
+--   missing                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   alert_reasons                            jsonb NOT NULL DEFAULT '[]'::jsonb
+--   alert_task_id                            uuid
+--   status                                   text NOT NULL DEFAULT 'new'::text
+--   reviewed_by                              uuid
+--   reviewed_at                              timestamp with time zone
+--   review_note                              text
+--   checked_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY note_checks_pkey: (id)
+
 -- ===== note_replica_comparisons =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -2823,12 +2877,13 @@
 --   differences                              jsonb NOT NULL DEFAULT '[]'::jsonb
 --   method                                   text NOT NULL
 --   as_of                                    timestamp with time zone
---   computed_by                              uuid NOT NULL
+--   computed_by                              uuid
 --   created_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   computed_source                          text NOT NULL DEFAULT 'person'::text
 --   PRIMARY KEY note_replica_comparisons_pkey: (id)
 
 -- ===== note_replica_legs =====
