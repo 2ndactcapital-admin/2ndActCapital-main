@@ -189,7 +189,7 @@ def self_static(check, find):
         return p.read_text(encoding="utf-8") if p.exists() else ""
 
     rules = read("docs/VERIFY_RULES.md")
-    check("time the server, not the operator's network" in rules,
+    check("time the server, not the operator's network" in rules.lower(),
           "Task 6/9: VERIFY_RULES.md states 'time the server, not the operator's network'")
     bfu = read("apps/api/scripts/verify_bulkfetchui.py")
     check('server-side elapsed_ms under' in bfu and "INFO end to end (not asserted)" in bfu
