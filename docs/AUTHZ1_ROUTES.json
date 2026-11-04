@@ -1,5 +1,5 @@
 {
- "app_route_count": 782,
+ "app_route_count": 783,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -34,7 +34,7 @@
    ],
    "module": "routers.assistant",
    "name": "get_or_create_conversation",
-   "note": "",
+   "note": "OWN ROWS: the caller's conversation",
    "path": "/api/v1/assistant/conversation",
    "public": false,
    "write": false
@@ -106,7 +106,7 @@
    ],
    "module": "routers.assistant",
    "name": "list_activities",
-   "note": "",
+   "note": "OWN ROWS: WHERE user_id = caller",
    "path": "/api/v1/assistant/activities",
    "public": false,
    "write": false
@@ -124,7 +124,7 @@
    ],
    "module": "routers.dashboard",
    "name": "get_brief",
-   "note": "",
+   "note": "OWN ROWS: blocks by the caller's own permissions; new_deals published-only",
    "path": "/api/v1/dashboard/brief",
    "public": false,
    "write": false
@@ -142,7 +142,7 @@
    ],
    "module": "routers.dashboard",
    "name": "get_brief_narration",
-   "note": "",
+   "note": "OWN ROWS: the caller's own brief",
    "path": "/api/v1/dashboard/brief/narration",
    "public": false,
    "write": false
@@ -178,7 +178,7 @@
    ],
    "module": "routers.dashboard",
    "name": "list_todos",
-   "note": "",
+   "note": "OWN ROWS: WHERE user_id = caller",
    "path": "/api/v1/dashboard/todos",
    "public": false,
    "write": false
@@ -202,11 +202,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -242,11 +242,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -282,11 +282,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -300,11 +300,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -384,11 +384,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -600,11 +600,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -684,11 +684,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -724,11 +724,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -852,11 +852,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -870,11 +870,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -888,11 +888,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -906,11 +906,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -946,11 +946,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -1110,11 +1110,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -1228,7 +1228,7 @@
    ],
    "module": "routers.investment_profile",
    "name": "list_questions",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: the question set (answers are entity-gated)",
    "path": "/api/v1/investment-profile/questions",
    "public": false,
    "write": false
@@ -1498,7 +1498,7 @@
    ],
    "module": "routers.marketplace",
    "name": "list_config",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: display labels / vocabularies (Rule 1)",
    "path": "/api/v1/config",
    "public": false,
    "write": false
@@ -1516,17 +1516,17 @@
    ],
    "module": "routers.marketplace",
    "name": "get_taxonomy",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: asset taxonomy labels",
    "path": "/api/v1/taxonomy",
    "public": false,
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -1540,11 +1540,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -1580,11 +1580,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -1598,11 +1598,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -1682,11 +1682,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "\u2014",
    "before_effect": "new route",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -1964,11 +1964,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -2060,7 +2060,7 @@
    ],
    "module": "routers.deal_room",
    "name": "deal_room_me",
-   "note": "",
+   "note": "OWN ROWS: the caller's publisher / investing entities",
    "path": "/api/v1/deal-room/me",
    "public": false,
    "write": false
@@ -2530,7 +2530,7 @@
    ],
    "module": "routers.deal_room",
    "name": "list_templates",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: platform NDA templates (+ the caller's own publisher templates)",
    "path": "/api/v1/deal-room/templates",
    "public": false,
    "write": false
@@ -2692,7 +2692,7 @@
    ],
    "module": "routers.deal_room",
    "name": "my_access",
-   "note": "",
+   "note": "OWN ROWS: WHERE user_id = caller",
    "path": "/api/v1/deal-room/my-access",
    "public": false,
    "write": false
@@ -3262,15 +3262,11 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; staff",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "any_of": [
-     "view_portfolio"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -3350,15 +3346,11 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; staff",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "any_of": [
-     "view_portfolio"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -3372,15 +3364,11 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; staff",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "any_of": [
-     "view_portfolio"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -3534,7 +3522,7 @@
    ],
    "module": "routers.portfolio",
    "name": "get_my_investments",
-   "note": "",
+   "note": "OWN ROWS: WHERE user_id = caller",
    "path": "/api/v1/portfolio/my-investments",
    "public": false,
    "write": false
@@ -3552,17 +3540,17 @@
    ],
    "module": "routers.portfolio",
    "name": "get_portfolio_summary",
-   "note": "",
+   "note": "OWN ROWS: WHERE user_id = caller",
    "path": "/api/v1/portfolio/summary",
    "public": false,
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -3576,7 +3564,7 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "staff; entity access",
    "before": "staff",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
@@ -3612,11 +3600,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -3652,11 +3640,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4358,11 +4346,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4376,11 +4364,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4526,11 +4514,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4566,11 +4554,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4684,7 +4672,7 @@
    ],
    "module": "routers.spv",
    "name": "list_transaction_types",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: transaction type vocabulary",
    "path": "/api/v1/transaction-types",
    "public": false,
    "write": false
@@ -4712,11 +4700,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4862,11 +4850,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "member scope (own family / published deals; staff unscoped)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -4902,11 +4890,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4920,11 +4908,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -4938,11 +4926,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -5064,11 +5052,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -5082,11 +5070,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -5100,11 +5088,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -5172,11 +5160,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -5203,7 +5191,7 @@
    "module": "routers.ownership_tree",
    "name": "staff_ownership_graph",
    "note": "",
-   "path": "/api/v1/entities/{entity_id}/ownership-graph",
+   "path": "/api/v1/entities/{entity_id}/ownership-tree",
    "public": false,
    "write": false
   },
@@ -5220,7 +5208,7 @@
    ],
    "module": "routers.ownership_tree",
    "name": "member_ownership_graph",
-   "note": "",
+   "note": "OWN ROWS: the member's own tree (member_tree)",
    "path": "/api/v1/me/ownership-graph",
    "public": false,
    "write": false
@@ -5238,7 +5226,7 @@
    ],
    "module": "routers.reference",
    "name": "get_reference_list",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: reference lists (countries, currencies ...)",
    "path": "/api/v1/reference/{list_key}",
    "public": false,
    "write": false
@@ -5256,7 +5244,7 @@
    ],
    "module": "routers.reference",
    "name": "get_fx_rate",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: FX reference rates",
    "path": "/api/v1/fx-rates",
    "public": false,
    "write": false
@@ -5274,7 +5262,7 @@
    ],
    "module": "routers.notifications",
    "name": "list_notifications",
-   "note": "",
+   "note": "OWN ROWS: the caller's notifications",
    "path": "/api/v1/notifications",
    "public": false,
    "write": false
@@ -5292,7 +5280,7 @@
    ],
    "module": "routers.notifications",
    "name": "notifications_count",
-   "note": "",
+   "note": "OWN ROWS: the caller's unread count",
    "path": "/api/v1/notifications/count",
    "public": false,
    "write": false
@@ -5382,7 +5370,7 @@
    ],
    "module": "routers.notifications",
    "name": "get_preferences",
-   "note": "",
+   "note": "OWN ROWS: WHERE user_id = caller",
    "path": "/api/v1/notifications/preferences",
    "public": false,
    "write": false
@@ -6256,15 +6244,11 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; staff",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "any_of": [
-     "view_portfolio"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -6278,15 +6262,11 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; staff",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "any_of": [
-     "view_portfolio"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -6300,15 +6280,11 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; staff",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "any_of": [
-     "view_portfolio"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -6841,7 +6817,7 @@
    ],
    "module": "routers.users",
    "name": "get_me",
-   "note": "",
+   "note": "OWN ROWS: the caller's own row",
    "path": "/api/v1/users/me",
    "public": false,
    "write": false
@@ -6884,11 +6860,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "entity access",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "scoped"
    },
    "find": false,
    "methods": [
@@ -6902,11 +6878,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -7030,11 +7006,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -7048,11 +7024,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -7066,11 +7042,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -7084,11 +7060,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "staff"
    },
    "find": false,
    "methods": [
@@ -7354,11 +7330,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff or authz manage_org_settings",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
@@ -7528,7 +7504,7 @@
    ],
    "module": "routers.org_settings",
    "name": "read_theme",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: the org's own theme",
    "path": "/api/v1/theme",
    "public": false,
    "write": false
@@ -7624,11 +7600,11 @@
    "write": true
   },
   {
-   "after": "none beyond auth",
+   "after": "staff or authz manage_org_settings",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
@@ -8975,6 +8951,24 @@
   },
   {
    "after": "super_admin; workflow profile-axis",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.workflows",
+   "name": "delete_workflow",
+   "note": "",
+   "path": "/api/v1/admin/workflows/{definition_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin; workflow profile-axis",
    "before": "super_admin; workflow profile-axis",
    "before_effect": "enforced",
    "expect": {
@@ -9836,11 +9830,11 @@
    "write": false
   },
   {
-   "after": "none beyond auth",
+   "after": "staff or authz manage_org_settings",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "active"
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
@@ -9972,7 +9966,7 @@
    ],
    "module": "routers.market_data",
    "name": "market_catalog",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: market indicator catalog",
    "path": "/api/v1/market/catalog",
    "public": false,
    "write": false
@@ -9990,7 +9984,7 @@
    ],
    "module": "routers.market_data",
    "name": "market_series",
-   "note": "",
+   "note": "PUBLIC-TO-ORG: market indicator series",
    "path": "/api/v1/market/series",
    "public": false,
    "write": false
@@ -10044,7 +10038,7 @@
    ],
    "module": "routers.market_data_personal",
    "name": "get_key_dates",
-   "note": "",
+   "note": "OWN ROWS: platform dates + the caller's custom dates",
    "path": "/api/v1/market/key-dates",
    "public": false,
    "write": false
@@ -10098,7 +10092,7 @@
    ],
    "module": "routers.market_data_personal",
    "name": "get_views",
-   "note": "",
+   "note": "OWN ROWS: the caller's saved views",
    "path": "/api/v1/market/views",
    "public": false,
    "write": false
@@ -12642,7 +12636,7 @@
    ],
    "module": "routers.replication_rep10",
    "name": "member_backtests",
-   "note": "",
+   "note": "OWN ROWS: backtests of the member's own family (BT.member_view)",
    "path": "/api/v1/replication/member/backtests",
    "public": false,
    "write": false
@@ -15244,7 +15238,7 @@
    ],
    "module": "routers.human_tasks",
    "name": "my_tasks",
-   "note": "",
+   "note": "OWN ROWS: tasks the caller's own permissions make them eligible for",
    "path": "/api/v1/human-tasks/mine",
    "public": false,
    "write": false

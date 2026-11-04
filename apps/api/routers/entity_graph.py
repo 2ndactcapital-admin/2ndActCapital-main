@@ -112,6 +112,7 @@ def _rel_row_to_dict(row) -> dict:
 
 @router.get("/entities/{entity_id}/tree")
 async def get_entity_tree(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     org_id = get_org_id(request)
     try:
@@ -123,6 +124,7 @@ async def get_entity_tree(entity_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/lookthrough")
 async def get_entity_lookthrough(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     org_id = get_org_id(request)
     try:
@@ -134,6 +136,7 @@ async def get_entity_lookthrough(entity_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/relationships")
 async def get_entity_relationships(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     org_id = get_org_id(request)
     children = await get_children(pool, org_id, str(entity_id))
@@ -443,6 +446,7 @@ async def remove_group_member(group_id: UUID, entity_id: UUID, request: Request)
 
 @router.get("/entity-groups")
 async def list_entity_groups(request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -472,6 +476,7 @@ async def list_entity_groups(request: Request):
 
 @router.get("/entity-groups/{group_id}")
 async def get_entity_group(group_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -568,6 +573,7 @@ async def get_entity_ownership(
     request: Request,
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD"),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -894,6 +900,7 @@ async def delete_ownership(rel_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/ownership/history")
 async def get_ownership_history(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 

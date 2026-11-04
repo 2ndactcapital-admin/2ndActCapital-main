@@ -50,7 +50,14 @@ from schemas.entities import (
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.ownership_read import ownership_edges
-from services.authz import require_any_permission, require_permission
+from services.authz import (
+    member_entity_scope,
+    require_any_permission,
+    require_entity_access,
+    require_permission,
+    require_staff,
+    scope_ids,
+)
 
 router = APIRouter(tags=["entities"])
 
@@ -202,10 +209,19 @@ async def list_entities(
     offset: int = Query(0, ge=0),
 ):
     org_id = get_org_id(request)
+    pool = await get_pool()
+    # BUGFIX2 — authz: member-scoped. Staff see the org; a member sees ONLY the
+    # entities linked to their own user (member visibility engine), filtered in
+    # SQL. This list fed Investment Profile's "Investment Entity" dropdown, which
+    # listed all 34 tenant entities to a member (ROUTE-01).
+    scope = await member_entity_scope(request, pool)
     conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
     if not include_inactive:
         conditions.append("is_active = true")
     params: list = [org_id]
+    if scope is not None:
+        params.append(scope_ids(scope))
+        conditions.append(f"id = ANY(${len(params)}::uuid[])")
 
     if type is not None:
         params.append(type.value)
@@ -244,7 +260,6 @@ async def list_entities(
         f"LIMIT ${limit_pos} OFFSET ${offset_pos}"
     )
 
-    pool = await get_pool()
     rows = await pool.fetch(query, *params)
     return [EntityOut(**dict(r)) for r in rows]
 
@@ -345,9 +360,14 @@ async def search_entities(
 ):
     org_id = get_org_id(request)
     pool = await get_pool()
+    # BUGFIX2 — authz: member-scoped (own family only, in SQL; staff unscoped).
+    scope = await member_entity_scope(request, pool)
 
     conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
     params: list = [org_id]
+    if scope is not None:
+        params.append(scope_ids(scope))
+        conditions.append(f"id = ANY(${len(params)}::uuid[])")
 
     if not include_inactive:
         conditions.append("is_active = true")
@@ -596,6 +616,9 @@ async def _fetch_attributes(conn, org_id, entity_id):
 async def get_entity(request: Request, entity_id: UUID):
     org_id = get_org_id(request)
     pool = await get_pool()
+    # BUGFIX2 — staff any entity; a member only their own family's (404 otherwise,
+    # existence not disclosed).
+    await require_entity_access(request, pool, entity_id)
 
     async with pool.acquire() as conn:
         row = await _fetch_active_entity(conn, org_id, entity_id)
@@ -615,6 +638,12 @@ async def get_entity(request: Request, entity_id: UUID):
 
 @router.get("/entities/{entity_id}/full", response_model=EntityFull)
 async def get_entity_full(request: Request, entity_id: UUID):
+    # BUGFIX2 (Critical) — the full CRM record is STAFF-ONLY. A member pasted
+    # /crm/<another family> and read legal details, ownership, every tab and —
+    # because this payload carried compliance_record unconditionally — KYC /
+    # OFAC / AML / accreditation / PEP. The compliance record now also needs
+    # view_compliance, the same permission GET /entities/{id}/compliance needs.
+    principal = require_staff(request)
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -707,7 +736,8 @@ async def get_entity_full(request: Request, entity_id: UUID):
         employment=[EmploymentResponse(**dict(e)) for e in employment],
         social_profiles=[SocialProfileResponse(**dict(s)) for s in social],
         compliance_record=(
-            ComplianceRecordResponse(**dict(compliance)) if compliance else None
+            ComplianceRecordResponse(**dict(compliance))
+            if compliance and principal.has("view_compliance") else None
         ),
     )
 
@@ -931,6 +961,7 @@ async def create_note(
 
 @router.get("/entities/{entity_id}/notes", response_model=list[NoteOut])
 async def list_notes(request: Request, entity_id: UUID):
+    require_staff(request)  # BUGFIX2 — CRM notes are staff-only
     org_id = get_org_id(request)
     pool = await get_pool()
     rows = await pool.fetch(
@@ -1467,6 +1498,7 @@ async def update_compliance(
 # ---------------------------------------------------------------------------
 @router.get("/entities/{entity_id}/ownership-graph", response_model=OwnershipGraph)
 async def ownership_graph(request: Request, entity_id: UUID):
+    require_staff(request)  # BUGFIX2 — the CRM overview's graph is staff-only
     org_id = get_org_id(request)
     pool = await get_pool()
     max_depth = 5

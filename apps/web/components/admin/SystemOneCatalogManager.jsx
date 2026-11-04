@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import DataGrid from "@/components/ui/DataGrid";
+import { catalogView } from "@/lib/catalogLoadState.mjs";
 
 const CARD = { borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
 const CONTROL =
@@ -52,6 +53,9 @@ export default function SystemOneCatalogManager() {
   const [selectedKey, setSelectedKey] = useState(null);
   const [mode, setMode] = useState("read");
   const [loadError, setLoadError] = useState(null);
+  // AI-08: no "0 System One models" while loading or after a failed load.
+  const [loadStatus, setLoadStatus] = useState("loading");
+  const [loaded, setLoaded] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -61,21 +65,29 @@ export default function SystemOneCatalogManager() {
   const manualAvailability = vocabularies?.manual_availability || [];
 
   const reload = useCallback(async () => {
+    setLoadStatus("loading");
     try {
       const res = await fetch("/api/admin/system-one-catalog", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      if (!res.ok || !Array.isArray(data.rows)) {
         setLoadError(typeof data.error === "string" ? data.error : "Could not load the System One catalog.");
+        setLoadStatus("error");
         return;
       }
-      setRows(data.rows || []);
+      setRows(data.rows);
       setPermissions(data.permissions || null);
       setVocabularies(data.vocabularies || null);
       setLoadError(null);
+      setLoaded(true);
+      setLoadStatus("ready");
     } catch (e) {
       setLoadError(e.message);
+      setLoadStatus("error");
     }
   }, []);
+
+  const view = catalogView({ status: loadStatus, loaded, rows, error: loadError,
+    noun: "System One model", nounPlural: "System One models" });
 
   useEffect(() => {
     reload();
@@ -156,7 +168,7 @@ export default function SystemOneCatalogManager() {
         <div className="rounded-lg border bg-white p-4" style={CARD}>
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-xs text-[var(--2a-text-muted)]">
-              {rows.length} System One model{rows.length === 1 ? "" : "s"}
+              {view.showCount ? view.countText : view.loading ? "Loading the System One catalog…" : null}
             </p>
             {canWrite ? (
               <button
@@ -176,7 +188,8 @@ export default function SystemOneCatalogManager() {
               </span>
             )}
           </div>
-          {loadError && <p className="mb-2 text-xs" style={ERROR}>{loadError}</p>}
+          {view.error && <p className="mb-2 text-xs" style={ERROR}>{view.error}</p>}
+          {view.showGrid ? (
           <DataGrid
             gridId="system-one-catalog"
             columnDefs={columnDefs}
@@ -191,6 +204,7 @@ export default function SystemOneCatalogManager() {
             }}
             emptyMessage="No System One models yet."
           />
+          ) : null}
         </div>
 
         <div className="rounded-lg border bg-white" style={CARD}>

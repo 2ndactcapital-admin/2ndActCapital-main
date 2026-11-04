@@ -619,6 +619,17 @@ async def submit(request: Request, model_id: str, version_id: str):
     return {"version": M.version_out(v)}
 
 
+def resolution_links_for(principal, links: list[dict]) -> list[dict]:
+    """BUGFIX2 (REP-05): keep only the resolution screens this caller can open
+    (Super Admin first, then the exact permission the screen's API reads)."""
+    out = []
+    for link in links or []:
+        need = link.get("needs")
+        if principal.is_super_admin or (need and need != "super_admin" and need in principal.permissions):
+            out.append({"key": link["key"], "href": link["href"], "label": link["label"]})
+    return out
+
+
 async def _decide(request: Request, model_id: str, version_id: str, body: Decision | None, outcome: str):
     principal = require_permission(request, APPROVE)
     org_id = get_org_id(request)
@@ -626,6 +637,12 @@ async def _decide(request: Request, model_id: str, version_id: str, body: Decisi
     try:
         v = await M.decide(pool, org_id=org_id, actor_id=principal.user_id, model_id=model_id, version_id=version_id,
                            outcome=outcome, note=body.note if body else None)
+    except M.ModelConflict as exc:
+        if getattr(exc, "detail", None):
+            detail = dict(exc.detail)
+            detail["links"] = resolution_links_for(principal, detail.get("links"))
+            raise HTTPException(status_code=409, detail=detail) from exc
+        _raise(exc)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     return {"version": M.version_out(v)}

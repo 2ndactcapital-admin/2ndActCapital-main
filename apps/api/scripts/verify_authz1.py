@@ -1020,10 +1020,15 @@ async def y_isolation():
         await c.close()
     code, _ = await api(claims_for(U_OTHER), "GET", f"/api/v1/entities/{E_A}")
     code2, _ = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_B}")
-    code3, ok = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_A}")
-    check(code == 404 and code2 == 404 and code3 == 200,
-          "through the API: each org's user gets 404 for the other org's entity, 200 for their own",
-          f"{code}/{code2}/{code3}")
+    # BUGFIX2: a MEMBER reads only entities linked to their own user (member visibility engine);
+    # U_MEMBER has no link to E_A, so its 200 here was the Critical HollisMuse found (any member read
+    # any family's CRM record). Org isolation is proven by the staff user of org A (200) against
+    # org B's user (404); the member's own-org 404 is the new member rule.
+    code3, ok = await api(claims_for(U_STAFF), "GET", f"/api/v1/entities/{E_A}")
+    code4, _ = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_A}")
+    check(code == 404 and code2 == 404 and code3 == 200 and code4 == 404,
+          "through the API: each org's user gets 404 for the other org's entity; org A staff 200, an unlinked "
+          "org A member 404 (BUGFIX2)", f"{code}/{code2}/{code3}/{code4}")
 
 
 def regression():

@@ -24,7 +24,9 @@ MANAGE = "manage_hypothetical_policy"
 VIEW = "view_replication"
 TASK_KIND = "hypothetical_policy_approval"
 SUBJECT = "hypothetical_policy"
-NO_POLICY = "no hypothetical-performance policy approved — staff use only"
+# BUGFIX2 (BT-02): a standalone sentence wherever it is shown ("Hypothetical performance. No …"), so it is
+# capitalised here, at its one source, rather than patched per screen.
+NO_POLICY = "No hypothetical-performance policy approved — staff use only"
 AUDIENCE_LABELS = {"staff_only": "Staff only", "staff_and_members": "Staff, and members with the disclosure"}
 STATUS_LABELS = {"draft": "Awaiting a second person's approval", "approved": "Approved", "rejected": "Rejected"}
 OPEN_ITEMS = (

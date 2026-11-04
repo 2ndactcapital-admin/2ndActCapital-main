@@ -633,6 +633,9 @@ export const createWorkflow = (body) =>
   fetchAPI("/api/v1/admin/workflows", { method: "POST", body });
 export const saveWorkflowVersion = (id, body) =>
   fetchAPI(`/api/v1/admin/workflows/${id}/versions`, { method: "POST", body });
+// BUGFIX2 — delete a never-run workflow (409 with the reason once it has run).
+export const deleteWorkflow = (id) =>
+  fetchAPI(`/api/v1/admin/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 // --- Workflow Manager — read-only consoles ---
 // Run History, Scheduler/Routine Viewer, Version History. Org Admin sees their

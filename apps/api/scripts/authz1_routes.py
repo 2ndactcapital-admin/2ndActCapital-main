@@ -78,6 +78,42 @@ SELF_SCOPED = {
     "routers.altruist_webhook": "public, HMAC-signed",
     "routers.human_tasks": "own open human tasks (eligible by the caller's own permissions; decided on the subject's gated route)",
 }
+# BUGFIX2 Task 1a — every READ that still carries no gate beyond an admitted
+# account, with its class. Anything not listed here and not gated is a [FIND]
+# (verify_bugfix2 asserts the set is exactly these routes).
+OPEN_READS = {
+    # PUBLIC-TO-ORG: reference data any signed-in user of the org may read.
+    "/api/v1/config": "PUBLIC-TO-ORG: display labels / vocabularies (Rule 1)",
+    "/api/v1/taxonomy": "PUBLIC-TO-ORG: asset taxonomy labels",
+    "/api/v1/transaction-types": "PUBLIC-TO-ORG: transaction type vocabulary",
+    "/api/v1/reference/{list_key}": "PUBLIC-TO-ORG: reference lists (countries, currencies ...)",
+    "/api/v1/fx-rates": "PUBLIC-TO-ORG: FX reference rates",
+    "/api/v1/theme": "PUBLIC-TO-ORG: the org's own theme",
+    "/api/v1/investment-profile/questions": "PUBLIC-TO-ORG: the question set (answers are entity-gated)",
+    "/api/v1/market/catalog": "PUBLIC-TO-ORG: market indicator catalog",
+    "/api/v1/market/series": "PUBLIC-TO-ORG: market indicator series",
+    "/api/v1/deal-room/templates": "PUBLIC-TO-ORG: platform NDA templates (+ the caller's own publisher templates)",
+    # OWN ROWS: filtered by the caller's own user id in SQL.
+    "/api/v1/assistant/conversation": "OWN ROWS: the caller's conversation",
+    "/api/v1/assistant/activities": "OWN ROWS: WHERE user_id = caller",
+    "/api/v1/dashboard/brief": "OWN ROWS: blocks by the caller's own permissions; new_deals published-only",
+    "/api/v1/dashboard/brief/narration": "OWN ROWS: the caller's own brief",
+    "/api/v1/dashboard/todos": "OWN ROWS: WHERE user_id = caller",
+    "/api/v1/deal-room/me": "OWN ROWS: the caller's publisher / investing entities",
+    "/api/v1/deal-room/my-access": "OWN ROWS: WHERE user_id = caller",
+    "/api/v1/portfolio/my-investments": "OWN ROWS: WHERE user_id = caller",
+    "/api/v1/portfolio/summary": "OWN ROWS: WHERE user_id = caller",
+    "/api/v1/me/ownership-graph": "OWN ROWS: the member's own tree (member_tree)",
+    "/api/v1/notifications": "OWN ROWS: the caller's notifications",
+    "/api/v1/notifications/count": "OWN ROWS: the caller's unread count",
+    "/api/v1/notifications/preferences": "OWN ROWS: WHERE user_id = caller",
+    "/api/v1/users/me": "OWN ROWS: the caller's own row",
+    "/api/v1/market/key-dates": "OWN ROWS: platform dates + the caller's custom dates",
+    "/api/v1/market/views": "OWN ROWS: the caller's saved views",
+    "/api/v1/replication/member/backtests": "OWN ROWS: backtests of the member's own family (BT.member_view)",
+    "/api/v1/human-tasks/mine": "OWN ROWS: tasks the caller's own permissions make them eligible for",
+}
+
 # Per-route note where the module's SELF_SCOPED reason does not fit.
 SELF_SCOPED_ROUTES = {
     ("PUT", "/api/v1/users/me/contact-email"): "own row only (USERMGMT1 contact email; reachable while pending, never used for linking)",
@@ -167,7 +203,7 @@ def gates(module, src: str) -> dict:
     g = {"perms": set(), "any_of": [], "super": False, "staff": False, "token": False,
          "rbac": False, "phantom": False, "entity": False, "document": False,
          "workflow": False, "org_settings": False, "self_read_org": False, "deal_room": False,
-         "staff_or": []}
+         "staff_or": [], "member_scope": False}
     if src is None:
         return g
     for m in re.finditer(r"(?<![\w.])require_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src):
@@ -203,6 +239,11 @@ def gates(module, src: str) -> dict:
         g["staff_or"].append(m.group(2) or _const(module, m.group(3)) or m.group(3))
     if "require_entity_access(" in src or "_require_subscribe(" in src:
         g["entity"] = True
+    # BUGFIX2 — a member-scoped read: staff unscoped, a member only their own
+    # family's rows (services.authz.member_entity_scope) or published deals —
+    # each such handler states it with the marker comment.
+    if "member_entity_scope(" in src or re.search(r"#\s*BUGFIX2 — authz: member-scoped", src):
+        g["member_scope"] = True
     if "_require_document_visible(" in src:
         g["document"] = True
     if re.search(r"_require_workflow_permission|_require_review_permission|_require_trigger_read", src):
@@ -241,6 +282,8 @@ def describe(g, after: bool = False) -> str:
         parts.append("document visibility")
     if g["self_read_org"]:
         parts.append("own org (read)")
+    if g["member_scope"] and not g["entity"]:
+        parts.append("member scope (own family / published deals; staff unscoped)")
     if g["deal_room"]:
         parts.append("deal room scope (publisher users, delegates, manage_deals, org admin, super admin)")
     return "; ".join(parts) or "none beyond auth"
@@ -284,6 +327,10 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
         return {"rule": "perm", "any_of": sorted({p for a in g["any_of"] for p in a})}
     if g["org_settings"] and not g["perms"]:
         return {"rule": "org_admin"}
+    if g["staff"] and g["perms"] and not g["any_of"] and not g["org_settings"]:
+        # BUGFIX2: staff AND a permission (billing groups / custody import reads: require_staff on top of
+        # view_portfolio, a member grant) — the staff persona holds both; everyone else is refused.
+        return {"rule": "staff"}
     if distinct == 1 and not g["any_of"] and not g["org_settings"]:
         return {"rule": "perm", "any_of": sorted(g["perms"]), "scoped": g["entity"] or g["document"]}
     if distinct > 1 or (g["perms"] and (g["any_of"] or g["org_settings"])):
@@ -294,7 +341,7 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
         return {"rule": "mixed"}
     if g["staff"]:
         return {"rule": "staff"}
-    if g["entity"] or g["document"]:
+    if g["entity"] or g["document"] or g["member_scope"]:
         return {"rule": "scoped"}
     return {"rule": "active"}
 
@@ -333,6 +380,8 @@ def build():
                 note = FEATURE_GATES.get(r["module"]) or SELF_SCOPED.get(r["module"]) or ""
         elif not public and describe(ga, after=True) == "none beyond auth" and write:
             note = SELF_SCOPED_ROUTES.get((",".join(r["methods"]), r["path"])) or SELF_SCOPED.get(r["module"], "")
+        elif not public and describe(ga, after=True) == "none beyond auth" and not write:
+            note = OPEN_READS.get(r["path"], "[FIND] BUGFIX2: unclassified open read")
         rows.append({
             **r, "write": write, "public": public,
             "before": "public" if public else ("—" if before_src is None else describe(gb)),
@@ -374,15 +423,14 @@ def render(routes, rows) -> str:
             f"{'W' if r['write'] else 'R'} | {r['before']} | {r['before_effect']} | {r['after']} | "
             f"{mark}{r['note']} |"
         )
-    out += ["", "## Read-side [FIND]s left for a product decision", "",
-            "- CRM reads (`/entities`, `/entities/search`, `/entities/{id}`, `/full`, notes, ownership) "
-            "are visible to every admitted user in the org. Writes are now gated; who may READ the CRM "
-            "is a product call (members currently see the CRM link in the nav).",
-            "- Ledger reads (accounts, entries, trial balance, capital accounts) are readable by any "
-            "admitted user in the org; writes now need manage_ledger.",
-            "- Document link reads (`/documents/{id}/links`, `/records/.../documents`, "
-            "`/document-link-proposals`) and entity-document list/download have no per-user "
-            "visibility filter yet (document review now does).",
+    out += ["", "## Read-side gates (BUGFIX2)", "",
+            "- BUGFIX2 classified every read AUTHZ1 left at \"none beyond auth\" (73): STAFF-ONLY "
+            "(CRM full record / notes / graph, entity graph + groups, ledger, SPVs, document links + "
+            "proposals, precedence) → `require_staff`; settings catalogs → staff or manage_org_settings; "
+            "MEMBER-SCOPED (entity list / search / detail / documents, targets, allocation lens, deals, "
+            "Document Search, semantic search) → own family via `member_entity_scope` / "
+            "`require_entity_access` (404 for another family) or published deals only; PUBLIC-TO-ORG and "
+            "OWN ROWS keep the account gate, each with its reason in Notes.",
             "- `resolve_tab_visibility` (UDF tabs) defaults a tab with no grant row to visible — a "
             "display default, not a capability grant; recorded, not changed.",
             ""]

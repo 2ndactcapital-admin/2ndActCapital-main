@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRequestAuthClient } from "@/lib/authServer";
+import { errorFromDetail } from "@/lib/apiError.mjs";
 
 // REP1 — the browser's only way to the Replication Studio API (Rule 5: client
 // components never call FastAPI). Forwards /api/replication/<path> to
@@ -47,7 +48,8 @@ async function forward(request, { params }) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data?.detail;
-    const error = typeof detail === "string" ? detail : detail?.message || "Request failed";
+    // BUGFIX2 (BT-01): a 422 validation list or a non-JSON 500 used to collapse to a bare "Request failed".
+    const error = errorFromDetail(detail, res.status);
     return NextResponse.json({ error, detail }, { status: res.status });
   }
   return NextResponse.json(data, { status: res.status });

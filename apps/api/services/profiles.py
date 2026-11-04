@@ -56,14 +56,26 @@ async def get_effective_permissions(pool, user_id) -> set[str]:
 
     Reads ``users.profile_id`` for the user, then combines its base grants
     with the additive grants from any assigned permission sets.
+
+    BUGFIX2 — a MEMBER user (``services.authz.is_member_principal``: not Super
+    Admin, not staff, not org admin) gets only the MEMBER-SAFE keys of what they
+    hold (the org's ``member`` role grants): a staff-only profile / set already
+    assigned to a member (e.g. "CSA / Ops" with ``staff``) grants nothing staff-
+    only. Fail closed: a user the Principal cannot load is treated as a member.
     """
+    from services.authz import is_member_principal, load_principal, member_safe_keys
+
     async with pool.acquire() as conn:
         profile_id = await conn.fetchval(
             "SELECT profile_id FROM users WHERE id = $1", user_id
         )
+        principal = await load_principal(conn, user_id)
+        member = is_member_principal(principal)
+        safe = await member_safe_keys(conn, principal.org_id) if (member and principal) else frozenset()
     profile_perms = await get_profile_permissions(pool, profile_id)
     set_perms = await get_permission_set_permissions(pool, user_id)
-    return profile_perms | set_perms
+    held = profile_perms | set_perms
+    return (held & set(safe)) if member else held
 
 
 async def user_has_permission(pool, user_id, permission_key: str) -> bool:

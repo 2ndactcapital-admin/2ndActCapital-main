@@ -37,6 +37,8 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
+import logging
+
 import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -51,6 +53,8 @@ from services import tilts as TL
 from services.authz import require_active, require_permission
 from services.custody.trading import _decimal
 from services.database import get_pool
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["replication-rep10"])
 
@@ -400,8 +404,24 @@ async def backtest_run(request: Request, body: BacktestRun):
                            loss_pct=body.loss_pct, loss_min=body.loss_min, notional=body.notional,
                            household_id=body.household_id)
     except Exception as exc:  # noqa: BLE001
-        _raise(exc)
+        try:
+            _raise(exc)
+        except HTTPException:
+            raise
+        except Exception as unexpected:  # noqa: BLE001
+            # BUGFIX2 (BT-01): anything _raise does not map (a tax-profile or replica-terms conflict, a
+            # LookupError subclass it misses, an engine fault) used to escape as a bare 500 the browser showed
+            # as "Request failed". Log it in full; answer with what failed, never the traceback.
+            raise HTTPException(status_code=500, detail=backtest_failure_detail(unexpected)) from unexpected
     return {"backtest": out, "label": C.HYPOTHETICAL, "disclosure": out["disclosure"]}
+
+
+def backtest_failure_detail(exc: Exception) -> str:
+    """BUGFIX2 (BT-01): the 500 detail for a backtest that failed for an unmapped reason — the exception type and
+    its first line, so the screen says why. Logged with the traceback for the operator."""
+    _log.exception("backtest run failed")
+    first = (str(exc).split("\n")[0] or "").strip()[:300]
+    return f"The backtest could not be computed ({type(exc).__name__}{': ' + first if first else ''})."
 
 
 @router.get("/replication/backtests/{backtest_id}")

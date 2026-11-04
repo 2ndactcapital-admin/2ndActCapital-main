@@ -32,6 +32,8 @@ async def semantic_search(request: Request, q: str = "", limit: int = 20):
     if not query:
         return {"query": "", "count": 0, "results": []}
 
+    # BUGFIX2 — authz: member-scoped (visible_entity_ids: a member's own family;
+    # org-general documents staff-only). Kept open to members on purpose.
     org_id = get_org_id(request)
     staff = is_staff(request)
     pool = await get_pool()

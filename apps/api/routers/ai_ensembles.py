@@ -39,6 +39,7 @@ from services.ai_ensembles import (
     task_info,
 )
 from services.database import get_pool
+from services.authz import require_staff_or_permission
 from services.rbac import is_super_admin, load_principal
 from services.system_one import (
     MANUAL_AVAILABILITY,
@@ -218,6 +219,7 @@ async def run_ai_daily_job_now(request: Request, task_key: str):
 
 @router.get("/admin/system-one-catalog")
 async def read_system_one_catalog(request: Request):
+    require_staff_or_permission(request, "manage_org_settings")  # BUGFIX2 — staff or org admin (settings screens)
     pool = await get_pool()
     async with pool.acquire() as conn:
         principal = await _principal(conn, request)

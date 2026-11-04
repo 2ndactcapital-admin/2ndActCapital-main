@@ -287,16 +287,35 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
 
 
 async def ensure_permission(conn, name: str, resource: str, action: str) -> str:
-    """Idempotently ensure a row exists in the ``permissions`` catalog."""
-    return await conn.fetchval(
+    """Idempotently ensure a row exists in the ``permissions`` catalog.
+
+    BUGFIX2 (NAV-02): READ FIRST, write only when the row is genuinely missing.
+    ``permissions`` is a global catalog whose INSERT/UPDATE RLS policies require
+    ``app.is_super_admin = 'true'``. The previous single statement,
+    ``INSERT ... ON CONFLICT (name) DO UPDATE``, is an UPDATE of the existing
+    row under RLS even when the row already exists — so for an org admin (not
+    super admin) it raised a row-level-security violation on EVERY call, and
+    ``GET /admin/roles`` (which calls ``ensure_org_admin_role`` on each view of
+    People & Access) answered 500. A catalog row that already exists needs no
+    write at all; a genuinely missing one still needs super-admin scope, as
+    before (the INSERT is ``DO NOTHING`` so a concurrent creator is not an
+    error).
+    """
+    existing = await conn.fetchval("SELECT id FROM permissions WHERE name = $1", name)
+    if existing is not None:
+        return existing
+    created = await conn.fetchval(
         """
         INSERT INTO permissions (name, resource, action)
         VALUES ($1, $2, $3)
-        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+        ON CONFLICT (name) DO NOTHING
         RETURNING id
         """,
         name, resource, action,
     )
+    if created is not None:
+        return created
+    return await conn.fetchval("SELECT id FROM permissions WHERE name = $1", name)
 
 
 async def ensure_role(conn, org_id, name: str, description: str) -> str:
@@ -304,7 +323,15 @@ async def ensure_role(conn, org_id, name: str, description: str) -> str:
 
     ``roles`` is per-org (``(org_id, name)`` UNIQUE) — there is no global role
     catalog, so this must be called per-org, not once globally.
+
+    BUGFIX2: read first (as ``ensure_permission``) so an existing role costs no
+    write — the old ``ON CONFLICT DO UPDATE`` rewrote the row on every call.
     """
+    existing = await conn.fetchval(
+        "SELECT id FROM roles WHERE org_id = $1 AND name = $2", org_id, name
+    )
+    if existing is not None:
+        return existing
     return await conn.fetchval(
         """
         INSERT INTO roles (org_id, name, description)

@@ -112,3 +112,21 @@ sample. Each feature still worked; the snapshot did not.
 
 `apps/api/scripts/verify_vhk2.py` scans the regression set for these
 patterns; each remaining hit is a listed invariant in `docs/VHK2_FINDINGS.md`.
+
+## Time the server, not the operator's network (BUGFIX2, 2026-11-03)
+
+A latency check asserts the time the SERVER spent, never the end-to-end time
+measured from the machine running the verify. verify_bulkfetchui's "live
+preview returns under 2 s" timed the laptop's round trips to the database:
+2.07–2.2 s end to end from a laptop while the server's own work took
+151–598 ms, and production runs next to the database. The fix is NOT a raised
+limit:
+
+1. The endpoint reports its own `elapsed_ms` (measured inside the handler).
+2. The check asserts that server-side number under the SAME limit, best of 3.
+3. The end-to-end time is printed as `INFO` (not asserted) with the number of
+   database round trips the endpoint makes, so a reader can see what the
+   operator's network added.
+
+Never raise a limit to absorb the operator's network, and never assert a
+wall-clock number that includes it.

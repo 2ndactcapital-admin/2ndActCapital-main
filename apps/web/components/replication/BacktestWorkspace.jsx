@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { backtestControls, disclosureOf, labelOf, money, pct, vocab } from "@/lib/rep10.mjs";
+import { errorFromDetail } from "@/lib/apiError.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -79,9 +80,20 @@ export default function BacktestWorkspace({ initialEnvelope }) {
   const [msg, setMsg] = useState(null);
   async function onRun(f) {
     setMsg(null);
-    const res = await fetch("/api/replication/backtests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
+    if (!String(f.model_id || "").trim() || !String(f.fund_security_id || "").trim()) {
+      setMsg("Enter the replica model id and the fund security id to run a backtest.");
+      return;
+    }
+    let res;
+    try {
+      res = await fetch("/api/replication/backtests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
+    } catch (e) {
+      setMsg(`The backtest request did not reach the server: ${e?.message || e}`);
+      return;
+    }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { setMsg(data.error || "Request failed"); return; }
+    // BT-01: the server's reason (detail), never a bare "Request failed".
+    if (!res.ok) { setMsg(`Backtest not run: ${data.error || errorFromDetail(data.detail, res.status)}`); return; }
     const r2 = await fetch("/api/replication/backtests");
     if (r2.ok) setEnv(await r2.json());
   }

@@ -176,3 +176,22 @@ export function messagesByRow(messages) {
   }
   return out;
 }
+
+/**
+ * BUGFIX2 (REP-05): the server's 409 body for approving a version with
+ * unresolved rows → what the screen lists. Returns null for any other error
+ * (so nothing is shown that the server did not say). Rows, steps and links are
+ * the server's own — the links are already filtered to screens this caller can
+ * open; a link without an internal href is dropped.
+ */
+export function unresolvedResolution(detail) {
+  if (!detail || typeof detail !== "object" || detail.code !== "unresolved_positions") return null;
+  const rows = (Array.isArray(detail.unresolved) ? detail.unresolved : []).map((r) => ({
+    row_num: r?.row_num ?? null, identifier: r?.identifier || "", note: r?.note || "",
+  }));
+  const steps = (Array.isArray(detail.steps) ? detail.steps : []).filter((s) => typeof s === "string" && s);
+  const links = (Array.isArray(detail.links) ? detail.links : [])
+    .filter((l) => l && typeof l.href === "string" && l.href.startsWith("/") && !l.href.startsWith("//") && l.label)
+    .map((l) => ({ key: l.key || l.href, href: l.href, label: l.label }));
+  return { rows, steps, links };
+}

@@ -16,7 +16,7 @@ from services.audit import write_audit_log
 from services import deal_lifecycle as dlc
 from services.database import get_pool
 from services.permissions import get_user_id
-from services.authz import require_staff
+from services.authz import require_entity_access, require_staff
 from services.taxonomy import get_taxonomy_index
 from services.users import ensure_user
 
@@ -213,6 +213,7 @@ async def get_portfolio_summary(request: Request):
 
 @router.get("/portfolio/targets", response_model=list[TargetAllocationResponse])
 async def get_entity_targets(request: Request, entity_id: UUID = Query(...)):
+    await require_entity_access(request, await get_pool(), entity_id)  # BUGFIX2 — own family only (404)
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -323,6 +324,8 @@ async def get_entity_allocations(
     Targets: from member_target_allocations for entity_id (with roll-down),
              or empty if entity_id not provided.
     """
+    if entity_id is not None:  # BUGFIX2 — targets of the member's own family only (404)
+        await require_entity_access(request, await get_pool(), entity_id)
     org_id = get_org_id(request)
     user_id_jwt = get_user_id(request)
     pool = await get_pool()

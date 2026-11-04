@@ -12,5 +12,7 @@ export async function GET(request, { params }) {
     as_of: searchParams.get("as_of") || undefined,
     max_depth: searchParams.get("max_depth") || undefined,
   };
-  return forwardToApi(`/api/v1/entities/${id}/ownership-graph`, { searchParams: sp });
+  // BUGFIX2 (WF-03): the staff tree has its own API path; /ownership-graph is the
+  // CRM overview's flat {nodes, edges} read and shadowed the tree for years.
+  return forwardToApi(`/api/v1/entities/${id}/ownership-tree`, { searchParams: sp });
 }

@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { createWorkflowAction } from "@/lib/workflowActions";
+import { createWorkflowAction, deleteWorkflowAction } from "@/lib/workflowActions";
+import { canDeleteWorkflow, deleteRefusal } from "@/lib/workflowLibrary.mjs";
 
 const CARD = {
   borderColor: "#ece8dd",
@@ -39,6 +40,20 @@ export default function WorkflowLibraryManager({ initialWorkflows = [] }) {
 
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [confirmingId, setConfirmingId] = useState(null);
+
+  function removeWorkflow(w) {
+    setError(null);
+    startTransition(async () => {
+      const res = await deleteWorkflowAction(w.id);
+      setConfirmingId(null);
+      if (res.ok) {
+        setWorkflows(res.workflows || workflows.filter((x) => x.id !== w.id));
+      } else {
+        setError(res.error || "Could not delete the workflow.");
+      }
+    });
+  }
 
   function submitWorkflow() {
     if (!desc.trim()) {
@@ -145,6 +160,40 @@ export default function WorkflowLibraryManager({ initialWorkflows = [] }) {
                     >
                       Open editor
                     </Link>
+                    {canDeleteWorkflow(w) ? (
+                      confirmingId === w.id ? (
+                        <span className="flex items-center gap-2 text-sm">
+                          <span className="text-text-muted">Delete this workflow and all its versions?</span>
+                          <button
+                            type="button"
+                            disabled={pending}
+                            onClick={() => removeWorkflow(w)}
+                            className="font-medium text-[#9B2335] hover:underline disabled:opacity-60"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingId(null)}
+                            className="text-text-muted hover:underline"
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingId(w.id)}
+                          className="text-sm text-[#9B2335] hover:underline"
+                        >
+                          Delete
+                        </button>
+                      )
+                    ) : deleteRefusal(w) ? (
+                      <span className="text-xs text-text-muted" title={deleteRefusal(w)}>
+                        {deleteRefusal(w)}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </li>

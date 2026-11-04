@@ -15,7 +15,8 @@
 
 import { useState } from "react";
 import {
-  bandText, labelOf, modelControls, pctInput, pctText, positionLabel, sortPositions, sumPct, versionControls, vocab,
+  bandText, labelOf, modelControls, pctInput, pctText, positionLabel, sortPositions, sumPct, unresolvedResolution,
+  versionControls, vocab,
 } from "@/lib/models.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -164,10 +165,15 @@ export function VersionPanel({ envelope, model, versionEnv, title, onChange }) {
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState(null);
   const [problems, setProblems] = useState([]);
+  const [resolution, setResolution] = useState(null);
   async function act(path, body) {
-    setMsg(null); setProblems([]);
+    setMsg(null); setProblems([]); setResolution(null);
     try { await call(`${model.id}/versions/${ver.id}/${path}`, body); onChange?.(); } catch (e) {
-      setMsg(e.message); setProblems(e.detail?.messages || []);
+      const how = unresolvedResolution(e.detail);
+      // REP-05: the unresolved-rows refusal is shown as rows + steps + links, not one long sentence.
+      setMsg(how ? "This version cannot be approved: some rows are not in the security master." : e.message);
+      setProblems(e.detail?.messages || []);
+      setResolution(how);
     }
   }
   async function saveRow(row, fields) {
@@ -237,6 +243,31 @@ export function VersionPanel({ envelope, model, versionEnv, title, onChange }) {
       </div>
       {msg ? <p className="text-sm text-[#9B2335]">{msg}</p> : null}
       {problems.length ? <ul className="text-sm text-[#9B2335]">{problems.map((p, i) => <li key={i}>{p.row ? `Row ${p.row}: ` : ""}{p.text}</li>)}</ul> : null}
+      {resolution ? <UnresolvedHelp resolution={resolution} /> : null}
+    </div>
+  );
+}
+
+/** REP-05: which rows are unresolved and how to resolve them — all from the server's 409 body. */
+export function UnresolvedHelp({ resolution }) {
+  if (!resolution) return null;
+  return (
+    <div className="space-y-2 rounded-[6px] border border-[#ece8dd] bg-[#FAF9F6] p-3 text-sm">
+      <p className="font-medium text-navy">Unresolved rows</p>
+      <ul>{resolution.rows.map((r) => (
+        <li key={r.row_num ?? r.identifier}>Row {r.row_num} — {r.identifier}{r.note ? `: ${r.note}` : ""}</li>
+      ))}</ul>
+      {resolution.steps.length ? (
+        <>
+          <p className="font-medium text-navy">How to resolve</p>
+          <ol className="list-decimal pl-5">{resolution.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+        </>
+      ) : null}
+      {resolution.links.length ? (
+        <p className="flex flex-wrap gap-4">{resolution.links.map((l) => (
+          <a key={l.key} href={l.href} className="text-navy underline">{l.label}</a>
+        ))}</p>
+      ) : null}
     </div>
   );
 }

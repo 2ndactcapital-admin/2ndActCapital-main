@@ -12,6 +12,10 @@ from urllib.parse import quote
 
 STUB_TITLE_PREFIX = "Complete profile: "
 
+# services.workflow_todos.TODO_SOURCE_USER_TASK — repeated (not imported) so this
+# module stays import-light for the brief; verify_* pins the two equal.
+HUMAN_TASK_TODO_SOURCE = "workflow_user_task"
+
 
 def todo_href(row) -> str | None:
     d = dict(row)
@@ -28,6 +32,16 @@ def todo_href(row) -> str | None:
         name = title[len(STUB_TITLE_PREFIX):] if title.startswith(STUB_TITLE_PREFIX) else title
         return f"/crm?q={quote(name)}" if name else "/crm"
     if rtype in ("workflow_run", "workflow_run_step"):
+        # BUGFIX2 (REP-09): a governed human task (services.human_tasks.open_task)
+        # writes the task's OWN subject page — the envelope's ``action_path`` —
+        # into ``action_key``. This branch used to return the run console
+        # unconditionally, ahead of that, so a checker's "Open" went to
+        # /admin/workflows/runs, which needs view_workflow_runs the checker does
+        # not hold. The subject page is where the decision is made and re-checked;
+        # the run console is only the fallback for a plain workflow step.
+        if source == HUMAN_TASK_TODO_SOURCE and isinstance(action, str) and action.startswith("/") \
+                and not action.startswith("//"):
+            return action
         return "/admin/workflows/runs"
     if rtype == "workflow_trigger":
         return "/admin/workflows/triggers"

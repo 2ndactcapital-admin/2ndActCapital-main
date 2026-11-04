@@ -37,7 +37,7 @@ const VOCAB = {
   cadences: [{ key: "quarterly", label: "Quarterly" }],
   audiences: [{ key: "staff_only", label: "Staff only" }, { key: "staff_and_members", label: "Staff, and members with the disclosure" }],
   policy_statuses: [{ key: "draft", label: "Awaiting a second person's approval" }, { key: "approved", label: "Approved" }],
-  no_policy_label: "no hypothetical-performance policy approved — staff use only",
+  no_policy_label: "No hypothetical-performance policy approved — staff use only",
   open_items: ["The hypothetical-performance policy itself (SEC Marketing Rule) is for the firm and its counsel."],
   editable: ["name", "reason", "lines"], completion_editable: ["count_elsewhere"], policy_editable: ["policy_text"],
 };
@@ -100,7 +100,7 @@ test("backtest: always HYPOTHETICAL with the disclosure; staff-only line without
     result: { statistics: { replica_return: "-0.18", fund_return: "-0.19", tracking_error: "0.004", max_drawdown_replica: "-0.25", max_drawdown_fund: "-0.26" },
       harvest: { losses_total: "1000.00", count: 2, tax_value: null, tax_value_note: "not estimated — no tax profile" }, method_notes: [] } };
   const html = render(h(BacktestResultView, { envelope: { vocabularies: VOCAB }, backtest: bt }));
-  assert.ok(html.includes("HYPOTHETICAL") && html.includes("no hypothetical-performance policy approved — staff use only"));
+  assert.ok(html.includes("HYPOTHETICAL") && html.includes("No hypothetical-performance policy approved — staff use only"));
   const withPolicy = render(h(BacktestResultView, { envelope: { vocabularies: VOCAB }, backtest: { ...bt, disclosure: "Hypothetical results have inherent limitations." } }));
   assert.ok(withPolicy.includes("Hypothetical results have inherent limitations."));
   const ne = render(h(BacktestResultView, { envelope: { vocabularies: VOCAB }, backtest: { ...bt, status: "not_estimated", result: null,
@@ -126,7 +126,7 @@ test("gifts: no approve / letter / receive control without the flags; estimates 
 
 test("hypothetical policy: request / approve only with can_manage_policy and the listed action", () => {
   const env = (perms, actions, rowActions) => ({ rows: [{ id: "p1", version_no: 1, status: "draft", audience: "staff_and_members", policy_text: "Ours.", disclosure_text: "D.", actions: rowActions }],
-    gate: { disclosure: "no hypothetical-performance policy approved — staff use only" }, permissions: perms, vocabularies: VOCAB, actions });
+    gate: { disclosure: "No hypothetical-performance policy approved — staff use only" }, permissions: perms, vocabularies: VOCAB, actions });
   const off = render(h(PolicyView, { envelope: env({ can_write: true }, ["request"], ["approve"]) }));
   assert.ok(!off.includes("Submit for approval") && !off.includes("Approve") && off.includes("staff use only"));
   const on = render(h(PolicyView, { envelope: env({ can_manage_policy: true }, ["request"], ["approve", "reject"]) }));
@@ -137,7 +137,7 @@ test("lib: deltaFromPoints and disclosureOf never invent", () => {
   assert.equal(R.deltaFromPoints("2"), "0.02");
   assert.equal(R.deltaFromPoints("-1.5"), "-0.015");
   assert.equal(R.deltaFromPoints("abc"), null);
-  assert.equal(R.disclosureOf(null), "no hypothetical-performance policy approved — staff use only");
+  assert.equal(R.disclosureOf(null), "No hypothetical-performance policy approved — staff use only");
   assert.equal(R.teText(null), "not estimated — needs prices");
   assert.deepEqual(R.giftControls(null, { actions: ["approve"] }), { submit: false, cancel: false, letter: false, markSent: false,
     markReceived: false, acknowledge: false, rebuy: false, approve: false, reject: false });

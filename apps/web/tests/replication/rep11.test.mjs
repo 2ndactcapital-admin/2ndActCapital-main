@@ -100,7 +100,7 @@ test("pricing: not priced names the gap; priced is an estimate with as-of; withh
   const pr = { status: "priced", note_price_pct: "98.75", replica_cost_pct: "97.5", embedded_fee_pct: "1.25", as_of: "2026-11-02T15:00:00+00:00", inputs: [] };
   const html = render(h(ReplicaView, { envelope: replicaEnv({}, [], pr) }));
   assert.ok(html.includes("Embedded fee 1.2500 per 100") && html.includes("as of 2026-11-02") && html.includes("estimate"));
-  const wh = { withheld: true, text: "no hypothetical-performance policy approved — staff use only" };
+  const wh = { withheld: true, text: "No hypothetical-performance policy approved — staff use only" };
   const w = render(h(ReplicaView, { envelope: replicaEnv({}, [], wh) }));
   assert.ok(w.includes("Estimate withheld") && !w.includes("Embedded fee"));
   assert.equal(L.estimateText(null), "not priced — enter a quote");
@@ -113,7 +113,7 @@ test("X-ray: a held note shows its verdict and the replicable alternative; a mem
     replicable_alternative: { label: "replicable alternative", link: "/portfolio/replication/notes/replicas/r1", mapping_label: "Underlying + options" } };
   const staff = render(h(HeldNotes, { envelope: { xray: { notes: [{ ...n, estimate: { status: "priced", text: "Embedded fee estimate 1.25 per 100 of principal" } }] } } }));
   assert.ok(staff.includes("replicable alternative") && staff.includes("Statically replicable") && staff.includes("Embedded fee estimate 1.25"));
-  const member = render(h(HeldNotes, { envelope: { xray: { notes: [{ ...n, estimate: { withheld: true, text: "no hypothetical-performance policy approved — staff use only" } }] } } }));
+  const member = render(h(HeldNotes, { envelope: { xray: { notes: [{ ...n, estimate: { withheld: true, text: "No hypothetical-performance policy approved — staff use only" } }] } } }));
   assert.ok(member.includes("Statically replicable") && member.includes("Estimate withheld") && !member.includes("1.25"));
   assert.ok(render(h(HeldNotes, { envelope: { xray: { notes: [] } } })).includes("No structured note"));
 });

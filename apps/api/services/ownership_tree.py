@@ -120,6 +120,18 @@ async def build_tree(
     else:
         time_filter = "AND er.valid_to IS NULL AND er.system_to IS NULL"
 
+    # BUGFIX2 (WF-03) — ownership is written to TWO tables (see
+    # services/ownership_read): entity_relationships AND entity_ownership. This
+    # tree read only the first, so Hargrove Capital LLC's owners (seeded in
+    # entity_ownership) never appeared. Read both; the entity_relationships row
+    # wins for a (parent, child) pair present in both (the editable one), same
+    # rule as ownership_read.ownership_edges.
+    eo_match, eo_next = ("parent_id", "child_id") if direction == "owns" else ("child_id", "parent_id")
+    if as_of:
+        eo_time = ("AND eo.valid_from::date <= $4::date "
+                   "AND (eo.valid_to IS NULL OR eo.valid_to::date > $4::date) AND eo.system_to IS NULL")
+    else:
+        eo_time = "AND eo.valid_to IS NULL AND eo.system_to IS NULL"
     query = f"""
         SELECT
             er.id              AS relationship_id,
@@ -127,7 +139,8 @@ async def build_tree(
             er.relationship_type,
             er.ownership_pct,
             e.display_name,
-            e.entity_type
+            e.entity_type,
+            0                  AS src_rank
         FROM entity_relationships er
         JOIN entities e
           ON e.id = er.{next_col}
@@ -136,6 +149,19 @@ async def build_tree(
           AND er.{match_col} = $2
           AND er.relationship_type = ANY($3::text[])
           {time_filter}
+        UNION ALL
+        SELECT
+            eo.id, eo.{eo_next}, 'ownership', eo.ownership_pct,
+            e.display_name, e.entity_type, 1
+        FROM entity_ownership eo
+        JOIN entities e
+          ON e.id = eo.{eo_next}
+         AND e.org_id = $1
+        WHERE eo.org_id = $1
+          AND eo.{eo_match} = $2
+          AND 'ownership' = ANY($3::text[])
+          {eo_time}
+        ORDER BY src_rank
     """
 
     async with pool.acquire() as conn:
@@ -165,10 +191,15 @@ async def build_tree(
                 args.append(as_of)
             rows = await conn.fetch(query, *args)
 
+            seen_pairs: set = set()
             for row in rows:
                 child_id = str(row["entity_id"])
                 if child_id in path:
                     continue  # cycle guard
+                pair = (child_id, row["relationship_type"])
+                if pair in seen_pairs:
+                    continue  # entity_relationships (src_rank 0) already won this pair
+                seen_pairs.add(pair)
                 is_ownership = row["relationship_type"] == EDGE_OWNERSHIP
                 child = {
                     "id": child_id,

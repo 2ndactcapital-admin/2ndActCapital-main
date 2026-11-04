@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from routers.entities import get_org_id
 from services.database import get_pool
+from services.authz import require_staff_or_permission
 from services.org_settings import (
     SettingsPermissionError,
     SettingsValidationError,
@@ -246,6 +247,7 @@ async def get_calibration_floor(
     re-derived in the browser that could drift from the real calibration gate.
     Open read, same convention as ``GET /modeling/ta/defaults``.
     """
+    require_staff_or_permission(request, "manage_org_settings")  # BUGFIX2 — staff or org admin (settings screens)
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:

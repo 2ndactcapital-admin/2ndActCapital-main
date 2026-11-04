@@ -67,7 +67,7 @@ from services.transaction_types import get_types as get_txn_types
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.permissions import get_user_id
-from services.authz import is_staff, require_entity_access, require_permission
+from services.authz import is_staff, require_entity_access, require_permission, require_staff
 from services.spv_classes import (
     ClassLabelError,
     deal_class_state,
@@ -255,6 +255,7 @@ async def list_spvs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     staff = is_staff(request)
 
@@ -289,6 +290,7 @@ async def list_spvs(
 # ---------------------------------------------------------------------------
 @router.get("/spvs/{spv_id}", response_model=SPVResponse)
 async def get_spv(request: Request, spv_id: UUID):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     staff = is_staff(request)
     pool = await get_pool()
@@ -666,6 +668,7 @@ async def get_captable(request: Request, spv_id: UUID):
 # ---------------------------------------------------------------------------
 @router.get("/spvs/{spv_id}/documents", response_model=list[SPVDocumentResponse])
 async def list_spv_documents(request: Request, spv_id: UUID):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     staff = is_staff(request)
     pool = await get_pool()
@@ -741,6 +744,7 @@ async def download_spv_document(
     doc_id: UUID,
     expires: int = Query(3600, ge=60, le=86400),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     bucket = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
@@ -991,6 +995,7 @@ async def create_transaction(request: Request, spv_id: UUID, body: TransactionCr
 # ---------------------------------------------------------------------------
 @router.get("/spvs/{spv_id}/transactions", response_model=list[TransactionResponse])
 async def list_transactions(request: Request, spv_id: UUID):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     staff = is_staff(request)
     pool = await get_pool()
@@ -1297,6 +1302,13 @@ async def get_deal_classes(request: Request, deal_id: UUID):
     async with pool.acquire() as conn:
         if await _deal_row(conn, org_id, deal_id) is None:
             raise HTTPException(status_code=404, detail="Deal not found")
+        if not staff:
+            # BUGFIX2 — authz: member-scoped. A member reads a deal's classes
+            # only for a deal they may see (published + offering open), the one
+            # rule in routers.marketplace — a draft deal's classes were readable.
+            from routers.marketplace import _fetch_deal, _require_deal_visible
+
+            await _require_deal_visible(conn, request, await _fetch_deal(conn, org_id, deal_id), deal_id)
 
         state = await deal_class_state(conn, org_id, deal_id)
 

@@ -328,12 +328,21 @@ function Legend() {
   );
 }
 
+// BUGFIX2 (WF-03): an entity that owns nothing (Hargrove Capital LLC) drew only
+// its root under the default "owns" direction while its detail page listed its
+// owners. Until the user picks a direction, an empty "owns" tree flips to
+// "owned_by" once so the owners and their edges show.
+export function shouldFlipToOwners(direction, userChose, tree) {
+  return direction === "owns" && !userChose && !!tree && (!tree.children || tree.children.length === 0);
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownership Tree", emptyMessage }) {
   // Server-side controls (drive a refetch).
   const [direction, setDirection] = useState("owns");
+  const userChoseDirection = useRef(false);
   const [edgeTypes, setEdgeTypes] = useState(new Set(["ownership", "beneficiary"]));
   const [asOf, setAsOf] = useState("");
 
@@ -379,6 +388,11 @@ export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownershi
         return;
       }
       const data = await res.json();
+      if (shouldFlipToOwners(direction, userChoseDirection.current, data.tree)) {
+        userChoseDirection.current = true;
+        setDirection("owned_by");
+        return;
+      }
       setTree(data.tree || null);
       setFocalId(data.focal_entity_id || null);
       // Collapse beyond the first two levels by default on a larger tree.
@@ -581,10 +595,10 @@ export default function OwnershipGraph({ apiBase, onNodeClick, title = "Ownershi
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
           {/* Direction / reverse toggle */}
           <div style={{ display: "flex", gap: 6 }}>
-            <Chip active={direction === "owns"} onClick={() => setDirection("owns")}>
+            <Chip active={direction === "owns"} onClick={() => { userChoseDirection.current = true; setDirection("owns"); }}>
               Owns ▾
             </Chip>
-            <Chip active={direction === "owned_by"} onClick={() => setDirection("owned_by")}>
+            <Chip active={direction === "owned_by"} onClick={() => { userChoseDirection.current = true; setDirection("owned_by"); }}>
               Owned by ▴
             </Chip>
           </div>

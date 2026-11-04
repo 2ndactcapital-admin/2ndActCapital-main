@@ -32,6 +32,7 @@ from services.extraction import call_claude_text
 from services.workflow_steps_deriver import derive_steps, derive_and_store_steps, find_script_tasks
 
 # Keep the generator's extension convention identical to the deriver's.
+from services.bpmn_layout import ensure_bpmn_di
 from services.workflow_steps_deriver import EXT_NS
 
 _TASK_TYPE = "workflow_generation"
@@ -329,6 +330,13 @@ async def generate_workflow(pool, *, org_id, description: str, created_by, name:
         raise WorkflowGenerationError(
             "generation failed validation after one retry: " + "; ".join(errors)
         )
+
+    # BUGFIX2 (WF-01): HARD RULE 7 keeps the model from emitting the diagram
+    # (layout) section, but the editor cannot draw a process without one —
+    # every generated workflow opened as "no diagram to display". Lay it out
+    # here, deterministically, so the stored version is drawable. Layout only:
+    # the process model (and so the derived steps) is unchanged.
+    xml = ensure_bpmn_di(xml)
 
     # Persist only now that the BPMN is fully validated.
     async with pool.acquire() as conn:

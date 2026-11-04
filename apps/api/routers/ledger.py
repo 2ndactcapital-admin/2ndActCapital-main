@@ -37,7 +37,7 @@ from services.database import get_pool
 from services.ledger import coa as coa_svc
 from services.ledger import posting as posting_svc
 from services.permissions import get_user_id
-from services.authz import require_permission
+from services.authz import require_permission, require_staff
 
 router = APIRouter(tags=["ledger"])
 
@@ -89,6 +89,7 @@ async def list_accounts(
     request: Request,
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD for time travel"),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     return await coa_svc.list_accounts(pool, org_id, as_of=as_of)
@@ -228,6 +229,7 @@ async def list_entries(
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     conditions = ["vehicle_id = $1::uuid"]
     params: list = [str(vehicle_id)]
@@ -258,6 +260,7 @@ async def trial_balance(
     basis: str = Query("GAAP"),
     as_of: Optional[date] = Query(None),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     conditions = ["vehicle_id = $1::uuid"]
     params: list = [str(vehicle_id)]
@@ -283,6 +286,7 @@ async def capital_accounts(
     basis: str = Query("GAAP"),
     as_of: Optional[date] = Query(None),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     conditions = ["vehicle_id = $1::uuid"]
     params: list = [str(vehicle_id)]
@@ -312,6 +316,7 @@ async def list_templates(
 
     Used by the frontend to show the journal preview before posting.
     """
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:

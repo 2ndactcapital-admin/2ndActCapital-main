@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import DataGrid from "@/components/ui/DataGrid";
+import { catalogView } from "@/lib/catalogLoadState.mjs";
 
 const CARD = { borderColor: "#ece8dd", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
 const CONTROL =
@@ -47,6 +48,9 @@ export default function ModelCatalogManager() {
   const [selectedId, setSelectedId] = useState(null);
   const [mode, setMode] = useState("read");
   const [loadError, setLoadError] = useState(null);
+  // AI-08: never "0 models" before the first load completes or after it fails.
+  const [loadStatus, setLoadStatus] = useState("loading");
+  const [loaded, setLoaded] = useState(false);
 
   const [form, setForm] = useState({ model_id: "", display_name: "", provider: "anthropic" });
   const [saveError, setSaveError] = useState(null);
@@ -56,22 +60,31 @@ export default function ModelCatalogManager() {
   const canWrite = !!permissions?.can_write;
 
   const reload = useCallback(async () => {
+    setLoadStatus("loading");
     try {
       const res = await fetch("/api/admin/model-catalog", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      if (!res.ok || !Array.isArray(data.models)) {
         setLoadError(
-          typeof data.error === "string" ? data.error : "Could not load the model catalog.",
+          typeof data.error === "string"
+            ? data.error
+            : `Could not load the model catalog (${res.ok ? "no model list in the response" : res.status}).`,
         );
+        setLoadStatus("error");
         return;
       }
-      setRows(data.models || []);
+      setRows(data.models);
       if (data.permissions) setPermissions(data.permissions);
       setLoadError(null);
+      setLoaded(true);
+      setLoadStatus("ready");
     } catch (e) {
       setLoadError(e.message);
+      setLoadStatus("error");
     }
   }, []);
+
+  const view = catalogView({ status: loadStatus, loaded, rows, error: loadError });
 
   useEffect(() => {
     reload();
@@ -176,8 +189,11 @@ export default function ModelCatalogManager() {
       <div className="rounded-lg border bg-white p-4" style={CARD}>
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-xs text-[var(--2a-text-muted)]">
-            {rows.length} model{rows.length === 1 ? "" : "s"} on the curated
-            platform list
+            {view.showCount
+              ? `${view.countText} on the curated platform list`
+              : view.loading
+                ? "Loading the platform catalog…"
+                : null}
           </p>
           {canWrite ? (
             <button
@@ -198,12 +214,13 @@ export default function ModelCatalogManager() {
           )}
         </div>
 
-        {loadError && (
+        {view.error && (
           <p className="mb-2 text-xs" style={{ color: "#9B2335" }}>
-            {loadError}
+            {view.error}
           </p>
         )}
 
+        {view.showGrid ? (
         <DataGrid
           gridId="model-catalog"
           columnDefs={columnDefs}
@@ -219,6 +236,7 @@ export default function ModelCatalogManager() {
           quickFilterPlaceholder="Search models…"
           emptyMessage="No models on the platform catalog yet."
         />
+        ) : null}
       </div>
 
       <div className="rounded-lg border bg-white" style={CARD}>

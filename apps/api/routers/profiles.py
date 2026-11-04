@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from routers.entities import get_org_id
 from services.audit import write_audit_log
 from services.database import get_pool
+from services.authz import is_member_principal, load_principal as load_authz_principal, staff_only_keys
 from services.rbac import can_manage_org_settings, load_principal
 from services.users import ensure_user
 
@@ -453,6 +454,9 @@ async def assign_permission_set(request: Request, set_id: UUID, body: UserAssign
         )
         if not user_ok:
             raise HTTPException(status_code=404, detail="User not found in org")
+        keys = [r["permission_key"] for r in await conn.fetch(
+            "SELECT permission_key FROM permission_set_permissions WHERE permission_set_id = $1", set_id)]
+        await _refuse_staff_only_for_member(conn, org_id, body.user_id, keys, "permission set")
         await conn.execute(
             """
             INSERT INTO user_permission_sets (user_id, permission_set_id, granted_by)
@@ -483,6 +487,22 @@ async def remove_permission_set(request: Request, set_id: UUID, user_id: UUID):
     return {"ok": True}
 
 
+async def _refuse_staff_only_for_member(conn, org_id, user_id, keys, what: str) -> None:
+    """BUGFIX2 — a staff-only profile / permission set (any key the org's
+    ``member`` role does not grant) cannot be assigned to a MEMBER user (not
+    Super Admin, staff or org admin). 409 naming the keys, nothing written."""
+    target = await load_authz_principal(conn, user_id)
+    if not is_member_principal(target):
+        return
+    bad = await staff_only_keys(conn, org_id, keys)
+    if bad:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"This {what} is staff-only ({', '.join(bad)}) and cannot be assigned to a member. "
+                    "Give the person a staff role first, or choose a member profile."),
+        )
+
+
 # --------------------------------------------------------------------------
 # User → profile assignment (Task 3; also reachable from user-management screen)
 # --------------------------------------------------------------------------
@@ -505,6 +525,9 @@ async def set_user_profile(request: Request, user_id: UUID, body: ProfileAssign)
             )
             if not profile_ok:
                 raise HTTPException(status_code=404, detail="Profile not found in org")
+            keys = [r["permission_key"] for r in await conn.fetch(
+                "SELECT permission_key FROM profile_permissions WHERE profile_id = $1", body.profile_id)]
+            await _refuse_staff_only_for_member(conn, org_id, user_id, keys, "profile")
         await conn.execute(
             "UPDATE users SET profile_id = $1, updated_at = now() WHERE id = $2",
             body.profile_id, user_id,

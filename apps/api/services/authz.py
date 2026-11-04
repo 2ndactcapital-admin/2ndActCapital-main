@@ -285,6 +285,74 @@ async def require_entity_access(request: Request, pool, entity_id) -> Principal:
     from services.document_embedding import visible_entity_ids
 
     allowed = await visible_entity_ids(pool, p.org_id, p.user_id, False)
-    if str(entity_id) not in allowed:
+    if entity_id is None or str(entity_id) not in allowed:
         raise HTTPException(status_code=404, detail="Entity not found")
     return p
+
+
+# ── BUGFIX2 — member data isolation ─────────────────────────────────────────
+# A MEMBER's family = the entities the member visibility engine grants them
+# (``document_embedding.visible_entity_ids`` with is_staff=False: the member's
+# own delegate grants → resolve_entity_set subtree, then the restricted-access
+# filter). It is the same engine the member portfolio path
+# (routers.portfolio_positions) already uses — never "all entities of the org".
+# Staff / Super Admin are unscoped (RLS keeps them in-org).
+
+async def member_entity_scope(request: Request, pool) -> set | None:
+    """None for staff / Super Admin (unscoped); otherwise the member's own
+    entity-id set (possibly EMPTY — an empty set means "nothing", never "all").
+    Callers filter IN SQL with ``= ANY($n::uuid[])``."""
+    p = require_active(request)
+    if p.is_super_admin or p.is_staff:
+        return None
+    from services.document_embedding import visible_entity_ids
+
+    return await visible_entity_ids(pool, p.org_id, p.user_id, False)
+
+
+def scope_ids(scope: set) -> list[UUID]:
+    """A member scope as a uuid list for ``= ANY($n::uuid[])``."""
+    return [UUID(str(x)) for x in scope]
+
+
+# ── BUGFIX2 — staff-only profiles / permission sets ─────────────────────────
+# The profile / permission-set axis (services.profiles) is read by the workflow
+# engine and routers.workflows. A MEMBER held the "CSA / Ops" profile (keys
+# `staff`, manage_documents, view_members, view_workflow_runs) — a staff grant
+# on a member account. Rule:
+#   * a key is MEMBER-SAFE iff the org's `member` role grants it (DB, read
+#     fresh; no member role → nothing is member-safe — fail closed);
+#   * a profile / set is STAFF-ONLY iff it carries any key that is not
+#     member-safe;
+#   * a "member user" is an admitted user who is not Super Admin, not staff and
+#     holds neither org-administration permission (manage_org_settings,
+#     manage_members). Assigning a staff-only profile /
+#     set to one is refused, and a member who already holds one is granted only
+#     its member-safe keys (services.profiles.get_effective_permissions).
+MEMBER_ROLE_NAME = "member"
+
+MEMBER_SAFE_KEYS_SQL = """
+    SELECT DISTINCT p.name FROM roles r
+    JOIN role_permissions rp ON rp.role_id = r.id
+    JOIN permissions p ON p.id = rp.permission_id
+    WHERE r.org_id = $1 AND r.name = $2"""
+
+
+def is_member_principal(p: Principal | None) -> bool:
+    """True for an admitted user with no staff / super / org-admin standing.
+    No Principal or not admitted → True (treated as a member: fail closed)."""
+    if p is None or not p.admitted:
+        return True
+    return not (p.is_super_admin or p.is_staff or rbac.ORG_ADMIN_PERMISSION in p.permissions
+                or "manage_members" in p.permissions)
+
+
+async def member_safe_keys(conn, org_id) -> frozenset:
+    rows = await conn.fetch(MEMBER_SAFE_KEYS_SQL, UUID(str(org_id)), MEMBER_ROLE_NAME)
+    return frozenset(r["name"] for r in rows)
+
+
+async def staff_only_keys(conn, org_id, keys) -> list[str]:
+    """The keys of ``keys`` a member may not hold (sorted). Empty → member-safe."""
+    safe = await member_safe_keys(conn, org_id)
+    return sorted({k for k in keys if k} - safe)
