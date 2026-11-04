@@ -115,7 +115,7 @@ def _permissions(principal) -> dict:
 
 def _staff(principal) -> bool:
     """Who sees hypothetical figures without a member policy: Super Admin, a staff role, an org admin."""
-    return bool(principal.is_super_admin or principal.is_staff or ORG_ADMIN in principal.permissions)
+    return bool(principal.is_super_admin or principal.is_internal or ORG_ADMIN in principal.permissions)  # STAFFROLES1 — visibility (see), not a bypass
 
 
 def _envelope(principal, body: dict) -> dict:

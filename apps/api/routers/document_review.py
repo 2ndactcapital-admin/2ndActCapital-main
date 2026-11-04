@@ -65,7 +65,7 @@ async def _require_document_visible(request: Request, pool, org_id, document_id)
         )
     if row is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    staff = principal.is_super_admin or principal.is_staff
+    staff = principal.is_super_admin or principal.is_internal  # STAFFROLES1 — visibility (see), not a bypass
     allowed = await visible_entity_ids(pool, org_id, principal.user_id, staff)
     if not document_visible(row["entity_id"], allowed, staff):
         raise HTTPException(status_code=404, detail="Document not found")

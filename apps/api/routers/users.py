@@ -47,6 +47,9 @@ class MeResponse(BaseModel):
     # account has none. The front end renders the pending page from `status`.
     status: str | None = None
     is_staff: bool = False
+    # STAFFROLES1 — may SEE staff screens (every internal firm role). Not a
+    # bypass: `is_staff` above stays the only "skips permission checks" flag.
+    is_internal: bool = False
     is_super_admin: bool = False
     # USERMGMT1 — the pending page asks for an address only when the account
     # has no real one. `contact_email` is what the person typed: UNVERIFIED,
@@ -95,6 +98,7 @@ async def get_me(request: Request):
         ),
         status=principal.status,
         is_staff=principal.is_staff,
+        is_internal=principal.is_internal,
         is_super_admin=principal.is_super_admin,
         email_is_placeholder=user_admin.is_placeholder_email(profile["email"] if profile else None),
         contact_email=profile["contact_email"] if profile else None,

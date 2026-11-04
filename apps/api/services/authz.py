@@ -48,6 +48,33 @@ TEST_MODE: bool = os.environ.get("AUTHZ_TEST_MODE") == "1"
 
 STAFF_ROLE_NAMES = frozenset({"investment_staff", "admin", "super_admin", "owner"})
 
+# STAFFROLES1 — TWO separate ideas that used to share the word "staff":
+#
+#   * WHO SKIPS PERMISSION CHECKS — ``STAFF_ROLE_NAMES`` / ``Principal.is_staff``
+#     (unchanged). ``require_staff``, ``require_staff_or_permission`` and every
+#     ``is_staff`` short-circuit on a write or an approval read this. It is
+#     NEVER widened by this sprint.
+#   * WHO MAY SEE STAFF DATA — ``INTERNAL_ROLE_NAMES`` / ``Principal.is_internal``:
+#     every internal role of the firm. ``require_internal`` /
+#     ``require_internal_permission`` gate the staff-data READS (CRM, SPV
+#     manager, ledger, document links, billing reads) and the member scope
+#     (``member_entity_scope`` / ``require_entity_access`` on a read) reads it.
+#     Seeing is not acting: an internal role that is not staff still needs the
+#     named permission for every write and every approval.
+#
+# Client roles (``member``, ``next_gen``) are NOT internal, nor is any role not
+# named here — an unknown role (a fixture role, a new role nobody classified)
+# is treated as NOT internal (fail closed). A new internal role must be added
+# here by name.
+INTERNAL_ROLE_NAMES = STAFF_ROLE_NAMES | frozenset({
+    "org_admin", "support_staff", "advisor", "compliance", "fund_finance",
+    "investment_committee", "ir_member_relations", "member_manager",
+})
+CLIENT_ROLE_NAMES = frozenset({"member", "next_gen"})
+assert STAFF_ROLE_NAMES <= INTERNAL_ROLE_NAMES and not (INTERNAL_ROLE_NAMES & CLIENT_ROLE_NAMES)
+
+INTERNAL_ACCESS_DETAIL = "Staff access required"   # the same words a member saw before (firm staff only)
+
 STATUS_ACTIVE = "active"
 STATUS_PENDING = "pending"
 STATUS_RETIRED = "retired"
@@ -84,6 +111,8 @@ class Principal:
     roles: tuple[str, ...] = ()
     permissions: frozenset[str] = field(default_factory=frozenset)
     resolved_via: str = "sub"
+    # STAFFROLES1 — may SEE staff data (every internal firm role; never a bypass).
+    is_internal: bool = False
 
     @property
     def admitted(self) -> bool:
@@ -175,6 +204,7 @@ def principal_from_row(row, *, claims: dict | None = None, resolved_via: str = "
         roles=tuple(roles),
         permissions=frozenset(perms),
         resolved_via=resolved_via,
+        is_internal=bool(admitted and (is_super or INTERNAL_ROLE_NAMES.intersection(roles))),
     )
 
 
@@ -255,6 +285,32 @@ def require_staff_or_permission(request: Request, permission: str) -> Principal:
     raise HTTPException(status_code=403, detail=f"Staff access or permission required: {permission}")
 
 
+def require_internal(request: Request) -> Principal:
+    """STAFFROLES1 — a staff-DATA read: Super Admin, or any internal firm role
+    (``INTERNAL_ROLE_NAMES``). A client role, an unknown role, or no role → 403.
+    Grants nothing beyond the read it gates."""
+    p = require_active(request)
+    if p.is_super_admin or p.is_internal:
+        return p
+    raise HTTPException(status_code=403, detail=INTERNAL_ACCESS_DETAIL)
+
+
+def require_internal_permission(request: Request, *permissions: str) -> Principal:
+    """STAFFROLES1 — a staff-data read that ALSO needs a permission for a
+    non-bypass role: Super Admin first; staff (``is_staff``, the unchanged
+    bypass) as before; any other internal role only with one of
+    ``permissions``. A client role is refused even when it holds the permission
+    (``view_spv`` / ``view_portfolio`` are member grants)."""
+    p = require_active(request)
+    if p.is_super_admin or p.is_staff:
+        return p
+    if not p.is_internal:
+        raise HTTPException(status_code=403, detail=INTERNAL_ACCESS_DETAIL)
+    if any(perm in p.permissions for perm in permissions):
+        return p
+    raise HTTPException(status_code=403, detail="Permission required: " + " or ".join(permissions))
+
+
 def require_super_admin(request: Request) -> Principal:
     p = require_active(request)
     if p.is_super_admin:
@@ -268,19 +324,37 @@ def is_staff(request: Request) -> bool:
     return bool(p and p.admitted and (p.is_super_admin or p.is_staff))
 
 
+def is_internal(request: Request) -> bool:
+    """STAFFROLES1 — may SEE staff data (internal firm role / Super Admin). No
+    Principal → False. Never use it to skip a permission check: that is
+    :func:`is_staff`."""
+    p = principal_of(request)
+    return bool(p and p.admitted and (p.is_super_admin or p.is_internal))
+
+
+def _sees_unscoped(request: Request, p: Principal) -> bool:
+    """STAFFROLES1 — unscoped (all of the org's families, RLS keeps it in-org):
+    Super Admin and staff always; any other internal role on a READ only — a
+    write keeps the member path, so seeing never widens what a role may change."""
+    if p.is_super_admin or p.is_staff:
+        return True
+    return p.is_internal and request.method in ("GET", "HEAD")
+
+
 def has_permission(request: Request, permission: str) -> bool:
     p = principal_of(request)
     return bool(p and p.has(permission))
 
 
 async def require_entity_access(request: Request, pool, entity_id) -> Principal:
-    """Staff / Super Admin: any entity in the org (RLS keeps it in-org).
-    Anyone else: only entities the member visibility engine grants them
+    """Staff / Super Admin: any entity in the org (RLS keeps it in-org); any
+    other internal role (STAFFROLES1): any entity on a READ, its own family on a
+    write. Anyone else: only entities the member visibility engine grants them
     (``document_embedding.visible_entity_ids`` — delegate grants + restricted
     access filter). 404 rather than 403 so ids in other members' scope are
     not disclosed."""
     p = require_active(request)
-    if p.is_super_admin or p.is_staff:
+    if _sees_unscoped(request, p):
         return p
     from services.document_embedding import visible_entity_ids
 
@@ -301,9 +375,10 @@ async def require_entity_access(request: Request, pool, entity_id) -> Principal:
 async def member_entity_scope(request: Request, pool) -> set | None:
     """None for staff / Super Admin (unscoped); otherwise the member's own
     entity-id set (possibly EMPTY — an empty set means "nothing", never "all").
-    Callers filter IN SQL with ``= ANY($n::uuid[])``."""
+    Callers filter IN SQL with ``= ANY($n::uuid[])``. STAFFROLES1: any internal
+    role reads unscoped too (``_sees_unscoped``)."""
     p = require_active(request)
-    if p.is_super_admin or p.is_staff:
+    if _sees_unscoped(request, p):
         return None
     from services.document_embedding import visible_entity_ids
 
@@ -324,8 +399,9 @@ def scope_ids(scope: set) -> list[UUID]:
 #     fresh; no member role → nothing is member-safe — fail closed);
 #   * a profile / set is STAFF-ONLY iff it carries any key that is not
 #     member-safe;
-#   * a "member user" is an admitted user who is not Super Admin, not staff and
-#     holds neither org-administration permission (manage_org_settings,
+#   * a "member user" is an admitted user who is not Super Admin, not staff, not
+#     an internal firm role (STAFFROLES1 — support staff's "CSA / Ops" profile is
+#     theirs) and holds neither org-administration permission (manage_org_settings,
 #     manage_members). Assigning a staff-only profile /
 #     set to one is refused, and a member who already holds one is granted only
 #     its member-safe keys (services.profiles.get_effective_permissions).
@@ -343,7 +419,7 @@ def is_member_principal(p: Principal | None) -> bool:
     No Principal or not admitted → True (treated as a member: fail closed)."""
     if p is None or not p.admitted:
         return True
-    return not (p.is_super_admin or p.is_staff or rbac.ORG_ADMIN_PERMISSION in p.permissions
+    return not (p.is_super_admin or p.is_staff or p.is_internal or rbac.ORG_ADMIN_PERMISSION in p.permissions
                 or "manage_members" in p.permissions)
 
 

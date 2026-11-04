@@ -50,7 +50,7 @@ from services.billing_groups import (
     remove_member,
     update_billing_group,
 )
-from services.authz import require_staff
+from services.authz import require_internal_permission
 from services.database import get_pool
 from services.permissions import get_user_id
 from services.rbac import has_permission, is_super_admin, load_principal, require_permission
@@ -187,7 +187,7 @@ async def list_groups(
     household_id: str | None = Query(None),
 ) -> dict[str, Any]:
     """The groups grid. READ — ``view_portfolio``."""
-    require_staff(request)  # BUGFIX2 — firm billing data: staff only (view_portfolio is a member grant)
+    require_internal_permission(request, "view_portfolio")  # STAFFROLES1 — internal role + view_portfolio (view_portfolio alone is a member grant)
     org_id, user_id, pool = await _gate(request, READ_PERMISSION)
     async with pool.acquire() as conn:
         try:
@@ -211,7 +211,7 @@ async def list_groups(
 @router.get("/{group_id}/members")
 async def get_members(request: Request, group_id: str) -> dict[str, Any]:
     """One group's active members. READ — ``view_portfolio``."""
-    require_staff(request)  # BUGFIX2 — firm billing data: staff only (view_portfolio is a member grant)
+    require_internal_permission(request, "view_portfolio")  # STAFFROLES1 — internal role + view_portfolio (view_portfolio alone is a member grant)
     org_id, user_id, pool = await _gate(request, READ_PERMISSION)
     async with pool.acquire() as conn:
         try:
@@ -233,7 +233,7 @@ async def get_members(request: Request, group_id: str) -> dict[str, Any]:
 @router.get("/accounts/{account_id}/memberships")
 async def get_account_memberships(request: Request, account_id: str) -> dict[str, Any]:
     """Every active group one account is in. READ — ``view_portfolio``."""
-    require_staff(request)  # BUGFIX2 — firm billing data: staff only (view_portfolio is a member grant)
+    require_internal_permission(request, "view_portfolio")  # STAFFROLES1 — internal role + view_portfolio (view_portfolio alone is a member grant)
     org_id, user_id, pool = await _gate(request, READ_PERMISSION)
     async with pool.acquire() as conn:
         rows = await list_account_memberships(conn, org_id, account_id)

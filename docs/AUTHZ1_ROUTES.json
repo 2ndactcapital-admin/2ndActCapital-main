@@ -300,11 +300,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -384,11 +384,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -600,11 +600,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -852,11 +852,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -888,11 +888,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -946,11 +946,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -3262,11 +3262,14 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio; staff",
+   "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -3346,11 +3349,14 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio; staff",
+   "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -3364,11 +3370,14 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio; staff",
+   "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -3640,11 +3649,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -4346,11 +4355,14 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -4364,11 +4376,14 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -4514,11 +4529,14 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -4554,11 +4572,14 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -4700,11 +4721,14 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -4890,11 +4914,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -4908,11 +4932,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -4926,11 +4950,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -5052,11 +5076,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -5070,11 +5094,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -5088,11 +5112,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -5160,11 +5184,11 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -5178,11 +5202,11 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal",
    "before": "staff",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "rule": "internal"
    },
    "find": false,
    "methods": [
@@ -6244,11 +6268,14 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio; staff",
+   "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -6262,11 +6289,14 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio; staff",
+   "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -6280,11 +6310,14 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio; staff",
+   "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "view_portfolio"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -6878,11 +6911,15 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv|manage_ledger)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_ledger",
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -7006,11 +7043,15 @@
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv|manage_ledger)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_ledger",
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -7024,11 +7065,15 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv|manage_ledger)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_ledger",
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -7042,11 +7087,15 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv|manage_ledger)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_ledger",
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [
@@ -7060,11 +7109,15 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(view_spv|manage_ledger)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_ledger",
+     "view_spv"
+    ],
+    "rule": "internal_perm"
    },
    "find": false,
    "methods": [

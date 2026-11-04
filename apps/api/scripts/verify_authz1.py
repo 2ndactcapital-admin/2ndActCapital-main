@@ -558,6 +558,14 @@ def expectation(persona: str, rule: dict, method: str) -> str:
         return "allow" if PERSONA_PERMS[persona] & set(rule["any_of"]) else "deny"
     if kind == "staff":
         return "allow" if persona == "staff" else "deny"
+    # STAFFROLES1 — staff-DATA reads: every internal firm role (staff + the org_admin persona, whose org_admin role is
+    # internal); internal_perm: staff (bypass) or an internal persona holding one of any_of. Client roles never.
+    if kind == "internal":
+        return "allow" if persona in ("staff", "org_admin") else "deny"
+    if kind == "internal_perm":
+        if persona == "staff":
+            return "allow"
+        return "allow" if persona == "org_admin" and PERSONA_PERMS[persona] & set(rule["any_of"]) else "deny"
     if kind == "org_admin":
         return "allow" if persona == "org_admin" else "deny"
     return "allow"   # active / scoped / self

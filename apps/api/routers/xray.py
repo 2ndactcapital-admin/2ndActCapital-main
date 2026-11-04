@@ -102,7 +102,7 @@ def _env(principal, **body) -> dict:
 
 async def _visible_households(pool, principal, org_id) -> set[str] | None:
     """None = every household of the org (Super Admin, staff, or an org admin — manage_org_settings)."""
-    if principal.is_super_admin or principal.is_staff or ORG_ADMIN in principal.permissions:
+    if principal.is_super_admin or principal.is_internal or ORG_ADMIN in principal.permissions:
         return None
     from services.document_embedding import visible_entity_ids
 
@@ -175,7 +175,7 @@ async def _note_visibility(pool, principal, org_id, x: dict) -> None:
     from services import hypothetical_policy as HP
     from services import note_replication as NR
 
-    staff = bool(principal.is_super_admin or principal.is_staff or ORG_ADMIN in principal.permissions)
+    staff = bool(principal.is_super_admin or principal.is_internal or ORG_ADMIN in principal.permissions)
     async with pool.acquire() as conn:
         gate = HP.gate(await HP.current(conn, org_id))
     x["notes"] = NR.member_filter(x.get("notes") or [], staff=staff, gate=gate)

@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from routers.entities import get_org_id
 from services.allocation_lens import aggregate_allocation
 from services.database import get_pool
-from services.authz import is_staff, require_entity_access
+from services.authz import is_internal, require_entity_access
 from services.users import ensure_user
 
 router = APIRouter(tags=["allocation-lens"])
@@ -42,7 +42,7 @@ async def get_allocation_lens(
         await ensure_user(conn, request)
 
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
 
     # Build and validate the selector.
     if selector_type == "entity":
