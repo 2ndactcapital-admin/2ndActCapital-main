@@ -3,7 +3,7 @@
 Two routes over ONE builder, both applying the restricted-access wrapper on top
 of their underlying visibility engine:
 
-  GET /entities/{entity_id}/ownership-graph  — STAFF focal tree
+  GET /entities/{entity_id}/ownership-tree   — STAFF focal tree (BUGFIX2: was shadowed at /ownership-graph)
       data via the staff visibility engine (assignment + team + hierarchy)
       + ``filter_restricted``.
 
@@ -57,7 +57,12 @@ async def _current_user_id(request: Request) -> str:
         return await ensure_user(conn, request)
 
 
-@router.get("/entities/{entity_id}/ownership-graph")
+# BUGFIX2 (WF-03): this used to be "/entities/{entity_id}/ownership-graph" — the
+# SAME path as routers.entities.ownership_graph, which main includes first, so
+# this handler was unreachable and the staff tree page received the flat
+# {root_id, nodes, edges} shape it cannot draw (root node only). Its own path now;
+# the web proxy app/api/entities/[id]/ownership-graph forwards here.
+@router.get("/entities/{entity_id}/ownership-tree")
 async def staff_ownership_graph(
     entity_id: UUID,
     request: Request,

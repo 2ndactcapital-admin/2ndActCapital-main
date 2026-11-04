@@ -112,6 +112,7 @@ def _rel_row_to_dict(row) -> dict:
 
 @router.get("/entities/{entity_id}/tree")
 async def get_entity_tree(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     org_id = get_org_id(request)
     try:
@@ -123,6 +124,7 @@ async def get_entity_tree(entity_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/lookthrough")
 async def get_entity_lookthrough(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     org_id = get_org_id(request)
     try:
@@ -134,6 +136,7 @@ async def get_entity_lookthrough(entity_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/relationships")
 async def get_entity_relationships(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     org_id = get_org_id(request)
     children = await get_children(pool, org_id, str(entity_id))
@@ -379,7 +382,7 @@ async def create_entity_group(body: GroupCreate, request: Request):
             """
             INSERT INTO entity_groups (org_id, name, description, created_by)
             VALUES ($1, $2, $3, $4)
-            RETURNING id, org_id, name, description, created_by, created_at, updated_at
+            RETURNING id, org_id, name, description, created_by, created_at
             """,
             UUID(org_id),
             body.name,
@@ -406,18 +409,17 @@ async def add_group_member(group_id: UUID, body: GroupMemberAdd, request: Reques
         if not group:
             raise HTTPException(status_code=404, detail="Group not found")
 
-        user_id = await ensure_user(conn, request)
+        await ensure_user(conn, request)
 
         await conn.execute(
             """
-            INSERT INTO entity_group_members (org_id, group_id, entity_id, added_by)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO entity_group_members (org_id, group_id, entity_id)
+            VALUES ($1, $2, $3)
             ON CONFLICT (group_id, entity_id) DO NOTHING
             """,
             UUID(org_id),
             group_id,
             body.entity_id,
-            UUID(user_id),
         )
 
     return {"group_id": str(group_id), "entity_id": str(body.entity_id)}
@@ -443,6 +445,7 @@ async def remove_group_member(group_id: UUID, entity_id: UUID, request: Request)
 
 @router.get("/entity-groups")
 async def list_entity_groups(request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -472,13 +475,16 @@ async def list_entity_groups(request: Request):
 
 @router.get("/entity-groups/{group_id}")
 async def get_entity_group(group_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 
     async with pool.acquire() as conn:
         group = await conn.fetchrow(
             """
-            SELECT id, name, description, created_by, created_at, updated_at
+            -- BUGFIX2 fix 1: entity_groups has no updated_at (schema snapshot); selecting it
+            -- made every GET /entity-groups/{id} a 500, even for a missing id.
+            SELECT id, name, description, created_by, created_at
             FROM entity_groups
             WHERE id = $1 AND org_id = $2
             """,
@@ -490,11 +496,12 @@ async def get_entity_group(group_id: UUID, request: Request):
 
         members = await conn.fetch(
             """
-            SELECT m.entity_id, e.display_name, e.entity_type, m.added_at
+            -- entity_group_members has created_at, not added_at; the response key stays added_at
+            SELECT m.entity_id, e.display_name, e.entity_type, m.created_at AS added_at
             FROM entity_group_members m
-            JOIN entities e ON e.id = m.entity_id
+            JOIN entities e ON e.id = m.entity_id AND e.org_id = m.org_id
             WHERE m.group_id = $1 AND m.org_id = $2
-            ORDER BY m.added_at ASC
+            ORDER BY m.created_at ASC
             """,
             group_id,
             UUID(org_id),
@@ -568,6 +575,7 @@ async def get_entity_ownership(
     request: Request,
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD"),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -894,6 +902,7 @@ async def delete_ownership(rel_id: UUID, request: Request):
 
 @router.get("/entities/{entity_id}/ownership/history")
 async def get_ownership_history(entity_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
 

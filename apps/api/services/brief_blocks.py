@@ -107,18 +107,25 @@ def _todo_item(row) -> dict:
 
 
 async def _new_deals_handler(pool, user_id: str, org_id: str) -> dict | None:
+    # BUGFIX2 (DEAL-02) — a MEMBER block: published deals only (the one
+    # MEMBER_VISIBLE_STATUSES) and the same DRAFT 506(b) offering rule GET /deals
+    # applies (deal_room_offering_open). It listed submitted / under_review deals
+    # to every member.
+    from services.deal_lifecycle import MEMBER_VISIBLE_STATUSES
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT id, name, deal_status, target_raise, close_date, published_at
             FROM deals
             WHERE org_id = $1
-              AND deal_status IN ('submitted', 'under_review', 'active')
+              AND deal_status::text = ANY($2::text[])
+              AND deal_room_offering_open(id, $3::uuid)
               AND valid_to IS NULL AND system_to IS NULL
             ORDER BY published_at DESC NULLS LAST, created_at DESC
             LIMIT 5
             """,
-            org_id,
+            org_id, list(MEMBER_VISIBLE_STATUSES), user_id,
         )
     if not rows:
         return None

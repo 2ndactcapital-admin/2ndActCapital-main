@@ -135,7 +135,56 @@ class ModelNotFound(LookupError):
 
 
 class ModelConflict(RuntimeError):
-    """The target is not in a state that takes this action (409)."""
+    """The target is not in a state that takes this action (409).
+
+    ``detail`` (optional) is a structured body the router publishes as the
+    409's ``detail`` in place of the bare message — used by the unresolved-rows
+    refusal so the screen can list the rows and say how to resolve them."""
+
+    def __init__(self, message: str, detail: dict | None = None):
+        super().__init__(message)
+        self.detail = detail
+
+
+#: BUGFIX2 (REP-05) — where an unresolved row is resolved. Paths of screens that
+#: exist in the web app; the router keeps only the ones the caller can open.
+#: ``needs`` is the permission the screen's API reads ("super_admin" = Super Admin only).
+UNRESOLVED_RESOLUTION_LINKS = (
+    {"key": "securities", "href": "/portfolio/securities", "label": "Look up the security master (Securities & Assets)",
+     "needs": "view_portfolio"},
+    {"key": "security_data", "href": "/admin/security-data", "label": "Add the security to the platform master (Security data)",
+     "needs": "super_admin"},
+)
+
+
+def _row_identifier(r: dict) -> str:
+    for col, label in (("raw_cusip", "CUSIP"), ("raw_isin", "ISIN"), ("raw_sedol", "SEDOL"), ("raw_ticker", "ticker")):
+        if r.get(col):
+            return f"{label} {r[col]}"
+    return "no identifier"
+
+
+def unresolved_refusal(unresolved: list[dict], *, model_id=None, version_id=None) -> ModelConflict:
+    """BUGFIX2 (REP-05): the 409 for approving a version with unresolved rows,
+    saying WHICH rows and HOW to resolve them — the old message only counted
+    them. ``unresolved`` is ``positions_of`` rows in that state."""
+    rows = [{"row_num": r.get("row_num"), "identifier": _row_identifier(r),
+             "note": r.get("resolution_note") or "not in the security master"} for r in unresolved]
+    listed = "; ".join(f"row {x['row_num']} ({x['identifier']})" for x in rows[:20])
+    more = f" and {len(rows) - 20} more" if len(rows) > 20 else ""
+    steps = [
+        "Reject this version back to draft (a note is required).",
+        "On the draft, edit each listed row: correct its CUSIP, ISIN or ticker to one the security master carries, "
+        "mark it as cash, or remove it.",
+        "If the instrument is missing from the platform security master, a Super Admin adds it there first.",
+        "Submit the draft again; a different approver then approves it.",
+    ]
+    message = (f"{len(rows)} position(s) are unresolved — {listed}{more} — and a version with unresolved rows cannot "
+               f"be approved. To resolve: {' '.join(steps)}")
+    detail = {"message": message, "code": "unresolved_positions", "unresolved": rows, "steps": steps,
+              "links": [dict(l) for l in UNRESOLVED_RESOLUTION_LINKS],
+              "model_id": str(model_id) if model_id else None, "version_id": str(version_id) if version_id else None}
+    return ModelConflict(message, detail)
 
 
 class ModelPermissionError(PermissionError):
@@ -954,10 +1003,9 @@ async def _apply_outcome(pool, org_id, task: dict, outcome: str, actor_id, note)
         if outcome == "approve":
             if uuid.UUID(str(actor_id)) in (row["maker_ids"] or []):
                 raise MakerCheckerViolation(MAKER_CHECKER_RULE)
-            unresolved = await conn.fetchval(f"SELECT count(*) FROM {T_POS} WHERE version_id = $1 AND resolution_state "
-                                             "= 'unresolved' AND valid_to IS NULL AND system_to IS NULL", row["id"])
+            unresolved = [r for r in await positions_of(conn, row["id"]) if r["resolution_state"] == "unresolved"]
             if unresolved:
-                raise ModelConflict(f"{unresolved} position(s) are unresolved — this version cannot be approved")
+                raise unresolved_refusal(unresolved, model_id=model["id"], version_id=row["id"])
             prior = await live_approved(conn, model["id"], lock=True)
             if prior is not None:
                 await _archive(conn, T_VER, prior["id"])
@@ -1044,10 +1092,7 @@ async def decide(pool, *, org_id, actor_id, model_id, version_id, outcome: str, 
         if outcome == "approve":
             unresolved = [r for r in await positions_of(conn, v["id"]) if r["resolution_state"] == "unresolved"]
             if unresolved:
-                rows = ", ".join(str(r["row_num"]) for r in unresolved[:20])
-                raise ModelConflict(f"{len(unresolved)} position(s) are unresolved (rows {rows}) — a version with "
-                                    "unresolved rows cannot be approved; reject it back to draft and resolve or "
-                                    "remove them")
+                raise unresolved_refusal(unresolved, model_id=model_id, version_id=v["id"])
     try:
         done = await HT.complete_task(pool, org_id=org_id, task_id=v["approval_task_id"], actor_id=actor["id"],
                                       outcome=outcome, note=note)

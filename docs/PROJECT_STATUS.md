@@ -331,6 +331,67 @@ This file starts with the email item below.
 
 ---
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000000. BUGFIX2 — member data isolation first, then the HollisMuse round-3 findings; verify WRITTEN, not yet run (2026-11-03)
+
+**The Critical (three HollisMuse CRITICALs, one root cause).** A MEMBER pasted a staff URL and read another
+family's full CRM record (Hargrove Family Trust: legal details, ownership, every tab, an Edit button) and its
+Compliance tab (KYC / OFAC / AML / accreditation / PEP); Investment Profile's "Investment Entity" dropdown
+listed all 34 tenant entities; the member menu showed CRM, SPV Manager and Billing & Custody. Cause: 73
+non-public READ routes carried no gate beyond an admitted account (AUTHZ1 recorded the CRM / ledger /
+document-link reads as "left for a product decision"), and `GET /entities/{id}/full` returned the
+compliance record with no permission check (the "Compliance Override" set was NOT the cause — it grants
+only `view_dashboard` and the Principal never read permission sets).
+
+**Task 1a — the 73 routes, classified** (full table: `docs/AUTHZ1_ROUTES.md`; every open read carries its
+class in Notes; `verify_bugfix2` asserts the table):
+
+| Class | # | Gate after | Routes |
+|---|---|---|---|
+| STAFF-ONLY | 24 | `require_staff` | `/entities/{id}/full`, `/notes`, `/ownership-graph`, `/tree`, `/lookthrough`, `/relationships`, `/ownership`, `/ownership/history`; `/entity-groups` (2); `/ledger/*` (5); `/spvs` list / detail / documents / download / transactions (5); `/documents/{id}/links`, `/records/…/documents`, `/document-link-proposals`; `/portfolio/precedence` |
+| STAFF-OR-ORG-ADMIN | 3 | staff or `manage_org_settings` | `/admin/model-catalog`, `/admin/system-one-catalog`, `/modeling/ta/calibration-floor` (settings screens) |
+| MEMBER-SCOPED | 18 | own family (404 otherwise) / published deals | `/entities`, `/entities/search`, `/entities/{id}`, entity documents list + download (+ the duplicate handler), `/portfolio/targets`, `/portfolio/allocations`, `/allocation-lens`; `/deals`, `/deals/{id}`, `/taxonomy-placement`, `/lifecycle`, `/ai-summary`, `/deals/{id}/classes`, `/deals/stage-summary`; `/document-search`, `/semantic-search` (already scoped by `visible_entity_ids`) |
+| OWN ROWS | 18 | account only (WHERE user_id = caller) | assistant (2), dashboard brief / narration / todos, deal-room me / my-access, portfolio my-investments / summary, `/me/ownership-graph`, notifications (3), `/users/me`, market key-dates / views, replication member backtests, human-tasks mine |
+| PUBLIC-TO-ORG | 10 | account only | config, taxonomy, transaction-types, reference, fx-rates, theme, investment-profile questions, market catalog / series, deal-room templates |
+
+**Task 1b.** A member's family = `delegate_grants` → `resolve_entity_set` subtree → `filter_restricted`
+(`document_embedding.visible_entity_ids`, is_staff=False) — the engine the clean member portfolio path
+already used. New `services.authz.member_entity_scope` (None for staff, the member's id set otherwise —
+an EMPTY set means nothing, never "all") + the existing `require_entity_access` (404). The three real
+member test accounts hold ZERO delegate grants, so today their family is empty.
+
+**Task 1c.** jpl991722 and jpl991723 are identical in the DB; the API refuses both. "Loaded" was the Next
+page chrome + title, rendered for any signed-in user. Fixed by area layouts (below).
+
+**Fixes.** Route gates as tabled. `MEMBER_VISIBLE_STATUSES` = ('active',) (was also `under_review` —
+"Verify12 Test Deal"); a member's `?status=` narrows instead of replacing the member filter (it listed
+drafts); dashboard NEW DEALS and the assistant's show-new-deals use the one set + the 506(b) offering rule.
+Menu: CRM / SPV Manager / Billing Groups / Custody Import → `GATE_STAFF_STRICT`; area layouts
+(`app/crm`, `app/spvs`, `app/admin`, `app/portfolio/replication`) refuse server-side via `AreaGuard` /
+`canOpenArea` (TILT-02: Tilts rendered an empty state). Staff-only profiles / permission sets (any key the
+org's `member` role does not grant) are refused for a member user (409) and a member already holding one
+gets only the member-safe keys on the profile axis (`services.profiles.get_effective_permissions`).
+Task 5: NAV-02 (`rbac.ensure_permission` upserted the global catalog under RLS — reads first now);
+REP-01 / DEAL-01 = staff / super admin only BY DESIGN (PROJECT_STATUS "Unchanged rule", rbac
+ORG_ADMIN_DEFAULT_PERMISSIONS, live grants); REP-05 resolution message + links; REP-09 task Open → the
+task's own page; BT-01 failure reason; BT-02 wording; AI-08 catalog loading state; WF-01 BPMN diagram
+layout added when the generator omits it; WF-03 the staff tree was SHADOWED by `entities.ownership_graph`
+(same path, included first) and read only `entity_relationships` — own path `/ownership-tree`, both
+ownership tables, owners shown by default when the entity owns nothing; workflow DELETE for a definition
+with no runs and no triggers (`author_workflows`; maker-checker not required for a never-run draft).
+Task 6: verify_bulkfetchui times the server (`elapsed_ms`). Task 7: the MUSE model / workflow rows removed
+by `scripts/bugfix2_remove_muse_rows.py --apply` (18 rows; every other row's checksum unchanged).
+
+**Operator (data, not changed by this sprint):** jpl991723 → org admin; jpl991722 → a staff role;
+jpl991721 → remove the "Compliance Override" set AND the "CSA / Ops" profile (the real staff-only grant);
+verify_bugfix2 prints every other member holding a staff-only profile / set.
+
+**[FIND]s.** Org admins (not staff) no longer read the CRM / ledger / SPV APIs (staff-only). Billing groups /
+custody import READ APIs gated on `view_portfolio` alone (a member grant) — they now also `require_staff`
+(6 routes, outside the 73; fail closed). Old `/admin/document-search` bookmarks are refused to a
+member by the /admin layout instead of redirecting.
+
+**UPDATE 2026-11-03 (bugfix2 fix 1 — the run's 5 FAILs):** A VERIFY — authz1's U_MEMBER is a delegate of E_A (seed, since AUTHZ1), so its 200 was correct; the unlinked case now targets a new unlinked org-A entity E_A2 → 404 (Principal: member, is_staff False, 10 member perms; path get_entity → require_entity_access → visible_entity_ids). B CODE+VERIFY — the 4 ledger GETs gate as a route dependency (member 403 before query validation; staff still 422 without vehicle_id), verify sends a fixture SPV vehicle_id and requires staff 200. C CODE — GET /entity-groups/{id} selected nonexistent `entity_groups.updated_at` / `entity_group_members.added_at` (500 for every id; POST create + add-member had the same drift — fixed); download of a record with no storage_key → 404 not R2-with-None; verify seeds the file key + a group member and stubs the by-name `get_signed_url` import. D VERIFY — fixture versions lacked `is_current = true` (DEFAULT false). E VERIFY — one real user's `last_login_at` moved mid-run (a real sign-in; no other column); users checksum excludes `last_login_at` only and a new per-row column diff fails on any other change. One-off proof: 22/0 + A section green (verify_bugfix2.py not re-run in full).
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000000. NOTE REPLICATION — rep11 (sprint 11 of 15, PHASE 3 BEGINS: structured notes): replicability verdicts from the 424B2 terms, replicas from rep8's options machinery (+ a Treasury leg), the at-expiry overlay, the embedded-fee estimate only when quoted, the X-ray marker under rep10's policy; schema APPLIED; verify WRITTEN, not yet run (2026-11-03)
 
 **What landed**

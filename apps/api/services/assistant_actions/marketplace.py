@@ -6,6 +6,9 @@ from services.action_registry import AssistantAction, REGISTRY
 ORG_ID = "00000000-0000-0000-0000-000000000001"
 
 
+from services.deal_lifecycle import MEMBER_VISIBLE_STATUSES  # noqa: E402
+
+
 async def _show_new_deals(pool, user_id: str, org_id: str, **_):
     """Return recent active deals for the member."""
     async with pool.acquire() as conn:
@@ -14,13 +17,17 @@ async def _show_new_deals(pool, user_id: str, org_id: str, **_):
             SELECT id, name, deal_status, asset_super_class, asset_class, created_at
             FROM deals
             WHERE org_id = $1
-              AND deal_status = ANY($2)
-              AND valid_to IS NULL
+              AND deal_status::text = ANY($2::text[])
+              AND deal_room_offering_open(id, $3::uuid)
+              AND valid_to IS NULL AND system_to IS NULL
             ORDER BY created_at DESC
             LIMIT 5
             """,
             org_id,
-            list(("active", "under_review")),
+            # BUGFIX2 (DEAL-02) — the ONE member-visible set, not a local copy
+            # that still said ("active", "under_review").
+            list(MEMBER_VISIBLE_STATUSES),
+            user_id,
         )
     deals = [
         {

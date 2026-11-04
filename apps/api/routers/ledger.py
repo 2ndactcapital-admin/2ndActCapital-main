@@ -28,7 +28,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 
 from routers.entities import get_org_id
@@ -37,9 +37,21 @@ from services.database import get_pool
 from services.ledger import coa as coa_svc
 from services.ledger import posting as posting_svc
 from services.permissions import get_user_id
-from services.authz import require_permission
+from services.authz import require_permission, require_staff
 
 router = APIRouter(tags=["ledger"])
+
+
+def _staff_read_gate(request: Request) -> None:
+    """BUGFIX2 fix 1: the staff gate as a route dependency. FastAPI resolves a
+    route's dependencies before it validates the route's own query parameters,
+    so a member gets 403 on a staff-only read instead of a 422 that describes
+    the route's parameters (e.g. "missing query vehicle_id"). The in-body
+    require_staff call stays as the record of the gate."""
+    require_staff(request)
+
+
+_STAFF_READ = [Depends(_staff_read_gate)]
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -89,6 +101,7 @@ async def list_accounts(
     request: Request,
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD for time travel"),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     return await coa_svc.list_accounts(pool, org_id, as_of=as_of)
@@ -221,13 +234,14 @@ async def reverse_entry(request: Request, entry_id: UUID, body: ReverseRequest):
     return reversal
 
 
-@router.get("/ledger/entries")
+@router.get("/ledger/entries", dependencies=_STAFF_READ)
 async def list_entries(
     request: Request,
     vehicle_id: UUID = Query(...),
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     conditions = ["vehicle_id = $1::uuid"]
     params: list = [str(vehicle_id)]
@@ -251,13 +265,14 @@ async def list_entries(
 
 # ── Module 3 — Reporting ──────────────────────────────────────────────────────
 
-@router.get("/ledger/trial-balance")
+@router.get("/ledger/trial-balance", dependencies=_STAFF_READ)
 async def trial_balance(
     request: Request,
     vehicle_id: UUID = Query(...),
     basis: str = Query("GAAP"),
     as_of: Optional[date] = Query(None),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     conditions = ["vehicle_id = $1::uuid"]
     params: list = [str(vehicle_id)]
@@ -276,13 +291,14 @@ async def trial_balance(
     return [dict(r) for r in rows]
 
 
-@router.get("/ledger/capital-accounts")
+@router.get("/ledger/capital-accounts", dependencies=_STAFF_READ)
 async def capital_accounts(
     request: Request,
     vehicle_id: UUID = Query(...),
     basis: str = Query("GAAP"),
     as_of: Optional[date] = Query(None),
 ):
+    require_staff(request)  # BUGFIX2 — staff-only read
     pool = await get_pool()
     conditions = ["vehicle_id = $1::uuid"]
     params: list = [str(vehicle_id)]
@@ -303,7 +319,7 @@ async def capital_accounts(
 
 # ── Template metadata (UI preview support) ────────────────────────────────────
 
-@router.get("/ledger/templates")
+@router.get("/ledger/templates", dependencies=_STAFF_READ)
 async def list_templates(
     request: Request,
     vehicle_id: UUID = Query(...),
@@ -312,6 +328,7 @@ async def list_templates(
 
     Used by the frontend to show the journal preview before posting.
     """
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:

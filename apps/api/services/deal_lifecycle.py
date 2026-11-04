@@ -46,7 +46,11 @@ STATUS_TRANSITIONS = {
 ARCHIVED = "archived"
 # The statuses an ordinary member may see (GET /deals, /deals/{id}). ONE copy:
 # routers/marketplace re-exports it; Document Search filters deal attachments by it.
-MEMBER_VISIBLE_STATUSES = ("active", "under_review")
+# BUGFIX2 (DEAL-02): PUBLISHED only. "under_review" let a member see a deal still
+# in diligence ("Verify12 Test Deal" in the deals table and the dashboard's NEW
+# DEALS). No deal carries published_at, so the lifecycle status IS the published
+# signal: active (open) is the only member-visible state.
+MEMBER_VISIBLE_STATUSES = ("active",)
 SUBMITTED = "submitted"
 
 

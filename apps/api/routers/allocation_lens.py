@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from routers.entities import get_org_id
 from services.allocation_lens import aggregate_allocation
 from services.database import get_pool
-from services.authz import is_staff
+from services.authz import is_staff, require_entity_access
 from services.users import ensure_user
 
 router = APIRouter(tags=["allocation-lens"])
@@ -90,6 +90,11 @@ async def get_allocation_lens(
                 "Must be one of: entity, subtree, group, all"
             ),
         )
+
+    if not staff and selector_type in ("entity", "subtree"):
+        # BUGFIX2 — authz: member-scoped. A member could pass ANY entity_id of the
+        # org and read another family's allocation. Own family only (404).
+        await require_entity_access(request, pool, entity_id)
 
     try:
         result = await aggregate_allocation(pool, selector, org_id, as_of)

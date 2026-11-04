@@ -8,6 +8,7 @@
 
 import {
   createWorkflow,
+  deleteWorkflow,
   getWorkflows,
   saveWorkflowVersion,
 } from "@/lib/api";
@@ -43,6 +44,19 @@ export async function saveWorkflowVersionAction(definitionId, bpmnXml, changeSum
       change_summary: changeSummary || null,
     });
     return { ok: true, version };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+// BUGFIX2 — delete a workflow that has never run. The API is the gate
+// (author_workflows; 409 naming the reason once it has run); the list is
+// re-read so every row's can_delete comes from the server again.
+export async function deleteWorkflowAction(definitionId) {
+  try {
+    await deleteWorkflow(definitionId);
+    const workflows = await getWorkflows();
+    return { ok: true, workflows };
   } catch (error) {
     return { ok: false, error: error.message };
   }

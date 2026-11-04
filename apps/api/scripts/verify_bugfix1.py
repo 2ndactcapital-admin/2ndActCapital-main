@@ -75,8 +75,13 @@ def self_gates(check, find):
     new = sorted(R.new)
     check(all(ge[k] != "none" for k in new if k[0] != ("GET",)) and len(new) == 4,
           "the four new routes each carry a gate", f"{R.where()}; {[(k, ge[k]) for k in new]}")
-    drifted = VS.still_gated(R)
-    check(bool(new) and not drifted, "bugfix1's four routes all still exist today with the same gate",
+    # BUGFIX2 narrowed GET /deals/{id}/lifecycle from "none beyond auth" to its member scope (published deals
+    # only) on purpose. The rule is "still gated at least as tightly": a later sprint may NARROW an open route;
+    # it may never remove one or open a gated one.
+    drifted = [d for d in VS.still_gated(R)
+               if not (d[0] in R.today and R.end[d[0]].get("after") == "none beyond auth"
+                       and R.today[d[0]].get("after") != "none beyond auth")]
+    check(bool(new) and not drifted, "bugfix1's four routes all still exist today, gated at least as tightly",
           f"{drifted[:5]}")
 
 

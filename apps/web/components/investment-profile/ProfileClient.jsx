@@ -127,7 +127,9 @@ export default function ProfileClient({
   if (!entities || entities.length === 0) {
     return (
       <p className="text-sm text-text-muted">
-        No entities found. Create an entity in the CRM first.
+        {/* BUGFIX2 — the list is the caller's own family only (GET /entities is
+            member-scoped); a member with none linked yet sees this, not a CRM hint. */}
+        No investment entities are linked to your account yet.
       </p>
     );
   }

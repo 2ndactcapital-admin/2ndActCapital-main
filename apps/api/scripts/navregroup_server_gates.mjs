@@ -19,7 +19,8 @@
  */
 export const SERVER_GATES = {
   "/dashboard": "session",
-  "/crm": "session",
+  // BUGFIX2 — staff only (API require_staff + app/crm/layout.js).
+  "/crm": "staff",
   "/marketplace": "session",
   // DEALROOM1 — GET /deal-room/my-access is self-scoped (require_active); the
   // grid's gate is a scope whose manage_deals branch is the one a menu can see.
@@ -34,7 +35,7 @@ export const SERVER_GATES = {
   "/portfolio/ownership-tree": "session",
   "/portfolio-reporting": "missing",
   "/market": "session",
-  "/spvs": "session",
+  "/spvs": "staff",
   "/insurance": "missing",
   "/community": "missing",
   "/notifications": "session",
@@ -53,8 +54,11 @@ export const SERVER_GATES = {
   "/admin/workflows": "profile:author_workflows",
   "/admin/workflows/runs": "profile:view_workflow_runs",
   "/admin/workflows/triggers": "profile:view_workflow_runs|configure_workflow_triggers",
-  "/admin/billing-groups": "rbac:view_portfolio",
-  "/admin/custody-import": "rbac:view_portfolio",
+  // BUGFIX2 — firm screens: the menu lists them for staff only (view_portfolio
+  // is a member grant); the API keeps view_portfolio and the /admin layout
+  // refuses a caller with no admin item. Traced as staff (the narrower rule).
+  "/admin/billing-groups": "staff",
+  "/admin/custody-import": "staff",
   "/admin/vdr-proposals": "rbac:manage_deals",
   "/admin/model-research": "rbac:manage_org_settings",
   "/admin/model-catalog": "super_admin",
@@ -82,6 +86,7 @@ export function serverAllows(me, href) {
   if (!gate || gate === "missing") return false;
   if (gate === "session") return true;
   if (gate === "super_admin") return isSuper(me);
+  if (gate === "staff") return isSuper(me) || me?.is_staff === true;
   const [kind, arg] = gate.split(":");
   const perms = me?.permissions ?? [];
   if (kind === "rbac" || kind === "token") return isSuper(me) || perms.includes(arg);

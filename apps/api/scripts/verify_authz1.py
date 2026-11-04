@@ -93,6 +93,8 @@ NAMES = {U_MEMBER: "member", U_STAFF: "staff", U_ORGADMIN: "orgadmin", U_SUPER: 
          U_NOROLE: "norole", U_PENDING: "pending", U_DUP: "dup", U_OTHER: "other"}
 E_A = UUID("99000000-0000-0000-0000-0000000a2131")
 E_B = UUID("99000000-0000-0000-0000-0000000a2132")
+# BUGFIX2 fix 1: an org-A entity NO fixture user is linked to (U_MEMBER is delegate of E_A — see the seed)
+E_A2 = UUID("99000000-0000-0000-0000-0000000a2133")
 DEAL_A = UUID("99000000-0000-0000-0000-0000000a2141")
 SPV_A = UUID("99000000-0000-0000-0000-0000000a2142")
 MARK_A = "AUTHZ1VERIFY-A-MARKER"
@@ -297,6 +299,8 @@ async def seed(conn) -> dict:
                            E_A, ORG_A, MARK_A, E_B, ORG_B, MARK_B)
         await conn.execute("INSERT INTO delegate_grants (org_id, principal_entity_id, delegate_user_id, scope) "
                            "VALUES ($1, $2, $3, 'view_only')", ORG_A, E_A, U_MEMBER)
+        await conn.execute("INSERT INTO entities (id, org_id, entity_type, display_name) VALUES "
+                           "($1, $2, 'individual', 'AUTHZ1VERIFY-A2-UNLINKED')", E_A2, ORG_A)
         await conn.execute("INSERT INTO deals (id, org_id, name) VALUES ($1, $2, $3)", DEAL_A, ORG_A,
                            "AUTHZ1 verify deal")
         await conn.execute("INSERT INTO spvs (id, org_id, deal_id, name) VALUES ($1, $2, $3, $4)",
@@ -1016,14 +1020,28 @@ async def y_isolation():
         check(ia > 0 and ib == 0, "user_identities: org A's links are invisible from org B", f"{ia} / {ib}")
         ua = await scoped(c, ORG_B, "SELECT count(*) FROM users WHERE id = $1", U_MEMBER, fetch="fetchval")
         check(ua == 0, "users: org B cannot read an org A user")
+        dg = await scoped(c, ORG_A, "SELECT array_agg(principal_entity_id) FROM delegate_grants "
+                                    "WHERE delegate_user_id = $1", U_MEMBER, fetch="fetchval") or []
+        check(E_A in dg and E_A2 not in dg,
+              "fixture: U_MEMBER is a delegate of E_A, not of E_A2 (E_A2 is genuinely unlinked)", f"{dg}")
     finally:
         await c.close()
     code, _ = await api(claims_for(U_OTHER), "GET", f"/api/v1/entities/{E_A}")
     code2, _ = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_B}")
-    code3, ok = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_A}")
-    check(code == 404 and code2 == 404 and code3 == 200,
-          "through the API: each org's user gets 404 for the other org's entity, 200 for their own",
-          f"{code}/{code2}/{code3}")
+    # BUGFIX2: a MEMBER reads only entities linked to their own user (member visibility engine).
+    # BUGFIX2 fix 1: U_MEMBER IS linked to E_A (the seed's delegate grant, since AUTHZ1), so its 200 on E_A is
+    # correct; the unlinked case is E_A2 — an org-A entity no fixture user is linked to. A member's 200 there was
+    # the Critical HollisMuse found (any member read any family's CRM record). Org isolation is proven by the
+    # staff user of org A (200) against org B's user (404); the member's own-org 404 is the new member rule.
+    code3, ok = await api(claims_for(U_STAFF), "GET", f"/api/v1/entities/{E_A}")
+    code4, _ = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_A2}")
+    code5, _ = await api(claims_for(U_MEMBER), "GET", f"/api/v1/entities/{E_A}")
+    code6, _ = await api(claims_for(U_STAFF), "GET", f"/api/v1/entities/{E_A2}")
+    check(code5 == 200 and code6 == 200, "the LINKED org-A member reads its own family's entity (200); staff reads "
+          "the unlinked one (200)", f"{code5}/{code6}")
+    check(code == 404 and code2 == 404 and code3 == 200 and code4 == 404,
+          "through the API: each org's user gets 404 for the other org's entity; org A staff 200, an unlinked "
+          "org A member 404 (BUGFIX2)", f"{code}/{code2}/{code3}/{code4}")
 
 
 def regression():

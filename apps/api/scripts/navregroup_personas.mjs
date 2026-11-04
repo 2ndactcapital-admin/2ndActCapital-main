@@ -22,6 +22,9 @@ export const PERSONAS = {
     ],
   },
   staff_member: {
+    // BUGFIX2: the real /users/me publishes the DB staff flag (services.authz
+    // Principal.is_staff: an investment_staff role is staff).
+    is_staff: true,
     account_role: "member",
     role: "investment_staff",
     roles: ["investment_staff"],
@@ -44,6 +47,7 @@ export const PERSONAS = {
     permissions: ["manage_org_settings", "review_agent_proposals"],
   },
   super_admin: {
+    is_staff: true,
     account_role: "super_admin",
     role: "admin",
     roles: ["admin"],

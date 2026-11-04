@@ -25,13 +25,16 @@ const menu = await import("../../lib/menuVisibility.mjs");
 // menu until built); Documents' first tab is /documents (moved out of /admin).
 const MAIN = ["/dashboard", "/crm", "/marketplace", "/portfolio", "/market", "/spvs",
   "/documents", "/notifications"];
+// BUGFIX2: CRM and SPV Manager are staff only; a non-staff persona keeps the rest.
+const MAIN_NON_STAFF = MAIN.filter((h) => h !== "/crm" && h !== "/spvs");
 const EXPECTED = {
-  plain_member: { main: MAIN, org_admin: ["/admin/billing-groups"], platform: [] },
+  // BUGFIX2: Billing & Custody's firm screens are staff only — a plain member has no admin entry.
+  plain_member: { main: MAIN_NON_STAFF, org_admin: [], platform: [] },
   staff_member: { main: MAIN, org_admin: ["/admin/billing-groups", "/admin/vdr-proposals"], platform: [] },
-  org_admin_manage_members: { main: MAIN, org_admin: ["/admin", "/admin/users"], platform: [] },
+  org_admin_manage_members: { main: MAIN_NON_STAFF, org_admin: ["/admin", "/admin/users"], platform: [] },
   org_admin_manage_org_settings: {
     // REP2 (Joe, 2026-10-23): org admins read Custodian capabilities (Billing & Custody).
-    main: MAIN, org_admin: ["/admin/profiles", "/admin/settings", "/admin/workflows", "/admin/custodian-capabilities"],
+    main: MAIN_NON_STAFF, org_admin: ["/admin/profiles", "/admin/settings", "/admin/workflows", "/admin/custodian-capabilities"],
     platform: ["/admin/model-research"],
   },
   super_admin: {
@@ -41,7 +44,7 @@ const EXPECTED = {
     platform: ["/admin/platform", "/admin/restricted-access", "/admin/model-catalog", "/admin/edgar-pipeline"],
   },
   // AUTHZ1: no default-allow — a role-less account sees only ungated items.
-  no_roles: { main: MAIN, org_admin: [], platform: [] },
+  no_roles: { main: MAIN_NON_STAFF, org_admin: [], platform: [] },
 };
 
 const hrefsIn = (html) => [...html.matchAll(/<a [^>]*?href="([^"]+)"/g)].map((m) => m[1]);

@@ -45,6 +45,7 @@ from pydantic import BaseModel
 
 from routers.entities import DEFAULT_ORG_ID, get_org_id
 from services.database import get_pool
+from services.authz import require_staff_or_permission
 from services.litellm_credentials import (
     PROVIDER_PLATFORM_DEPLOYMENT,
     CredentialProvisionError,
@@ -549,6 +550,7 @@ async def delete_ai_credential(request: Request, org_id: str, provider: str):
 async def read_model_catalog(request: Request):
     """The curated platform list. Read by any authenticated user (an org
     member's picker screen needs it too) — only writes are super_admin only."""
+    require_staff_or_permission(request, "manage_org_settings")  # BUGFIX2 — staff or org admin (settings screens)
     pool = await get_pool()
     async with pool.acquire() as conn:
         principal = await _principal(conn, request)

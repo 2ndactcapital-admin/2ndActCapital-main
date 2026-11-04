@@ -108,7 +108,7 @@ export function estimate(value, note) {
 /** The disclosure every backtest surface carries — the server's text, or the staff-only line. Never empty. */
 export function disclosureOf(envelope, backtest = null) {
   const d = backtest?.disclosure || envelope?.disclosure || envelope?.policy?.disclosure || envelope?.gate?.disclosure;
-  return typeof d === "string" && d.trim() ? d : "no hypothetical-performance policy approved — staff use only";
+  return typeof d === "string" && d.trim() ? d : "No hypothetical-performance policy approved — staff use only";
 }
 
 /** Delta input → a decimal-string fraction (percentage points in, 0.01 per point out). */

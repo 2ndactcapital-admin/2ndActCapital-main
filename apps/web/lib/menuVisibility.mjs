@@ -93,6 +93,19 @@ export const GATE_VIEW_TAX = { perm: "view_tax", strict: true };
 // 2026-10-23). STRICT on both branches: `is_staff === true` or the permission
 // explicitly in a real `permissions` array — a missing flag hides the tab.
 export const GATE_STAFF_OR_ORG_SETTINGS_STRICT = { staff: true, perm: "manage_org_settings", strict: true };
+// BUGFIX2 — STAFF ONLY (Super Admin or a STAFF_ROLE_NAMES role: /users/me
+// `is_staff === true`), fail closed. Mirrors services.authz.require_staff, the
+// gate the CRM / SPV / billing APIs now carry. A member saw CRM, SPV Manager
+// and Billing & Custody: CRM and SPV Manager had NO gate, and Billing &
+// Custody's tabs gated on view_portfolio, which the member role holds.
+export const GATE_STAFF_STRICT = { staff: true, strict: true };
+// BUGFIX2 — the /admin AREA: open iff the caller can see at least one item of
+// the two admin sections of this very definition (so a member_manager with
+// manage_members keeps /admin/users, an org admin keeps Settings). The /admin
+// layout uses it so a member pasting any /admin URL is refused before the page
+// renders (HollisMuse NAV-03/06/07: a member loaded the chrome of
+// /admin/hypothetical-policy and the price-sources page).
+export const GATE_ADMIN_AREA = { adminArea: true };
 
 /** Navigation sections, top to bottom. `header` is null for the main section. */
 export const SECTIONS = [
@@ -203,7 +216,7 @@ const tab = (section, group, tab_order, href, label, gate, adminIndex) => ({
 
 export const MENU_ITEMS = [
   main(10, "/dashboard", "Dashboard", "dashboard"),
-  main(20, "/crm", "CRM", "crm"),
+  main(20, "/crm", "CRM", "crm", GATE_STAFF_STRICT),
   tab("main", "marketplace", 1, "/marketplace", "Deals", null, false),
   // DEALROOM1 — an investor's own deal-room access (self-scoped API).
   tab("main", "marketplace", 2, "/marketplace/my-access", "My deal access", null, false),
@@ -242,7 +255,7 @@ export const MENU_ITEMS = [
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
-  main(60, "/spvs", "SPV Manager", "spv-manager"),
+  main(60, "/spvs", "SPV Manager", "spv-manager", GATE_STAFF_STRICT),
   { ...main(70, "/insurance", "Insurance", "insurance"), comingSoon: true },
   { ...main(80, "/community", "Community", "community"), comingSoon: true },
   // navregroup Task 3 — both searches now filter by the caller's own
@@ -279,8 +292,9 @@ export const MENU_ITEMS = [
   tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_SUPER_ADMIN, true),
   tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_SUPER_ADMIN, true),
-  tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_VIEW_PORTFOLIO, true),
-  tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_VIEW_PORTFOLIO, true),
+  // BUGFIX2 — firm-level screens: staff only (view_portfolio is a MEMBER grant).
+  tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_STAFF_STRICT, true),
+  tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_STAFF_STRICT, true),
   // REP2 — the platform capabilities matrix: staff and org admins read it, Super Admin edits it.
   tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities",
     GATE_STAFF_OR_ORG_SETTINGS_STRICT, true),
@@ -370,8 +384,22 @@ export function isStaffStrict(me) {
   return isSuperAdmin(me) || me.is_staff === true;
 }
 
+/**
+ * BUGFIX2 — a MEMBER: admitted, not Super Admin, not staff, not an org admin
+ * (manage_org_settings). Mirrors services.authz.is_member_principal. A lost or
+ * malformed envelope counts as a member (fail closed).
+ */
+export function isMemberOnly(me) {
+  if (!me || typeof me !== "object" || !isAdmitted(me)) return true;
+  return !(isSuperAdmin(me) || me.is_staff === true || canPermStrict(me, "manage_org_settings")
+    || canPermStrict(me, "manage_members"));
+}
+
 export function canAccess(me, gate) {
   if (!gate) return true;
+  if (gate.adminArea) {
+    return LISTED.some((i) => i.section !== "main" && !(i.gate && i.gate.adminArea) && canAccess(me, i.gate));
+  }
   if (gate.staff) return isStaffStrict(me) || (gate.perm ? canPermStrict(me, gate.perm) : false);
   if (gate.strict) return canPermStrict(me, gate.perm);
   if (gate.perm && !canPerm(me, gate.perm)) return false;
@@ -504,4 +532,33 @@ export function visibleAdminGroups(me) {
       .map((g) => ({ ...g, tabs: visibleTabs(me, g.id).filter((t) => t.adminIndex) }))
       .filter((g) => g.tabs.length > 0),
   );
+}
+
+
+// ── BUGFIX2: direct-URL refusal for whole areas ────────────────────────────
+/**
+ * The gate of every page under an area prefix, applied by that area's server
+ * layout (app/crm/layout.js, app/spvs/layout.js, app/admin/layout.js,
+ * app/portfolio/replication/layout.js) BEFORE the page renders, so a member who
+ * pastes a staff URL gets the refusal panel and no page chrome or data — the
+ * menu hiding a link was never the gate. Each mirrors the API gate:
+ *   /crm, /spvs              require_staff
+ *   /admin                   at least one admin-section item visible (each
+ *                            admin page keeps its own gate)
+ *   /portfolio/replication   view_replication (Tilts / Backtest / Notes —
+ *                            TILT-02: Tilts rendered an empty state to a member
+ *                            because it only called its API once an account id
+ *                            was typed in)
+ */
+export const AREA_GATES = {
+  "/crm": GATE_STAFF_STRICT,
+  "/spvs": GATE_STAFF_STRICT,
+  "/admin": GATE_ADMIN_AREA,
+  "/portfolio/replication": GATE_VIEW_REPLICATION,
+};
+
+/** True when `me` may open the area `prefix` (a key of AREA_GATES). Unknown → false. */
+export function canOpenArea(me, prefix) {
+  if (!(prefix in AREA_GATES)) return false;
+  return canAccess(me, AREA_GATES[prefix]);
 }

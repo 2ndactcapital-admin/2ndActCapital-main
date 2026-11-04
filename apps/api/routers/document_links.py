@@ -29,7 +29,7 @@ from schemas.entities import EntityType
 from services.database import get_pool
 from services.users import ensure_user
 from services import document_linkage as dl
-from services.authz import is_staff, require_permission
+from services.authz import is_staff, require_entity_access, require_permission, require_staff
 
 router = APIRouter(tags=["document-links"])
 
@@ -107,6 +107,7 @@ async def link_record(document_id: UUID, body: RecordLinkCreate, request: Reques
 
 @router.get("/documents/{document_id}/links")
 async def get_document_links(document_id: UUID, request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -128,6 +129,7 @@ async def get_entity_documents(entity_id: UUID, request: Request):
     (``/records/{record_type}/{record_id}/documents`` with record_type='entity').
     Kept for API back-compat and because the underlying service function is the one
     the panel/verify exercise directly."""
+    await require_entity_access(request, await get_pool(), entity_id)  # BUGFIX2 — own family only (404)
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -146,6 +148,7 @@ async def get_record_documents(record_type: str, record_id: UUID, request: Reque
     entity-link query; every other type (spv / deal / transaction / …) uses the
     generic ``document_record_links`` query. A record with no linked documents
     returns an empty list (clean empty state), not an error."""
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -171,6 +174,8 @@ async def search_documents(request: Request, q: str = "", limit: int = 50):
     scopes them (staff vs member visibility from the JWT, then restricted
     access). It used to filter by org only — any member could list every
     document in the org."""
+    # BUGFIX2 — authz: member-scoped (visible_entity_ids: a member's own family;
+    # org-general documents staff-only). Kept open to members on purpose.
     org_id = get_org_id(request)
     staff = is_staff(request)
     limit = max(1, min(int(limit or 50), 200))
@@ -198,6 +203,7 @@ async def auto_link_k1(document_id: UUID, request: Request):
 # ── Task 4 — proposal review ─────────────────────────────────────────────────
 @router.get("/document-link-proposals")
 async def list_proposals(request: Request):
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:

@@ -41,12 +41,15 @@ from uuid import UUID
 
 _UTC = _tz.utc
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator, model_validator
 
 from routers.entities import get_org_id
 from services.action_registry import REGISTRY
 from services.database import get_pool
+from services.audit import write_audit_log
+from services.bpmn_layout import BpmnLayoutError, ensure_bpmn_di
 from services.profiles import user_has_permission
 from services.rbac import is_super_admin, load_principal
 from services.users import ensure_user
@@ -86,6 +89,14 @@ class WorkflowSummary(BaseModel):
     current_version_number: int | None = None
     step_count: int = 0
     approval_step_count: int = 0
+    # BUGFIX2 — the delete control's envelope, decided by the server per row.
+    # ``can_delete`` is True ONLY when the caller holds the delete gate
+    # (author_workflows — the list itself requires it) AND the workflow has
+    # never run (no run, no trigger). Default False: a missing field fails closed.
+    run_count: int = 0
+    trigger_count: int = 0
+    can_delete: bool = False
+    delete_refusal: str | None = None
 
 
 class WorkflowCreate(BaseModel):
@@ -577,10 +588,34 @@ async def list_workflows(request: Request):
             """,
             org_id,
         )
+        run_rows = await conn.fetch(
+            """
+            SELECT v.workflow_definition_id AS def_id, count(r.id) AS runs
+            FROM workflow_versions v
+            JOIN workflow_runs r ON r.workflow_version_id = v.id
+            WHERE v.org_id = $1
+            GROUP BY v.workflow_definition_id
+            """,
+            org_id,
+        )
+        trigger_rows = await conn.fetch(
+            "SELECT workflow_definition_id AS def_id, count(*) AS triggers FROM workflow_triggers "
+            "WHERE org_id = $1 GROUP BY workflow_definition_id",
+            org_id,
+        )
     counts = {str(r["def_id"]): r for r in summaries}
+    runs = {str(r["def_id"]): int(r["runs"]) for r in run_rows}
+    triggers = {str(r["def_id"]): int(r["triggers"]) for r in trigger_rows}
     result = []
     for d in defs:
         c = counts.get(str(d["id"]))
+        n_runs = runs.get(str(d["id"]), 0)
+        n_triggers = triggers.get(str(d["id"]), 0)
+        refusal = None
+        if n_runs:
+            refusal = f"Has {n_runs} run(s) — a workflow that has run cannot be deleted."
+        elif n_triggers:
+            refusal = f"{n_triggers} trigger(s) point at it — delete those first."
         result.append(
             WorkflowSummary(
                 id=d["id"],
@@ -589,6 +624,11 @@ async def list_workflows(request: Request):
                 current_version_number=d["current_version_number"],
                 step_count=int(c["step_count"]) if c else 0,
                 approval_step_count=int(c["approval_step_count"]) if c else 0,
+                run_count=n_runs,
+                trigger_count=n_triggers,
+                # The caller passed the author_workflows gate above — the same gate as delete.
+                can_delete=refusal is None,
+                delete_refusal=refusal,
             )
         )
     return result
@@ -681,12 +721,27 @@ async def get_workflow(request: Request, definition_id: UUID):
         current_version=CurrentVersion(
             id=version["id"],
             version_number=version["version_number"],
-            bpmn_xml=version["bpmn_xml"],
+            bpmn_xml=_drawable_bpmn(version["bpmn_xml"]),
         ),
         steps=[WorkflowStep(**dict(r)) for r in step_rows],
         profiles=[ProfileOption(id=r["id"], name=r["name"]) for r in profile_rows],
         actions=_action_options(),
     )
+
+
+def _drawable_bpmn(xml: str | None) -> str | None:
+    """BUGFIX2 (WF-01): a version stored before the generator laid out its
+    diagram has no DI, which the editor cannot draw ("no diagram to display").
+    Serve it with a generated layout; the stored row is not rewritten (versions
+    are immutable — the author's next save stores the laid-out document as a new
+    version). A document that already has a diagram is returned unchanged; one
+    that cannot be parsed is returned as stored so the editor reports it."""
+    if not xml:
+        return xml
+    try:
+        return ensure_bpmn_di(xml)
+    except BpmnLayoutError:
+        return xml
 
 
 @router.post(
@@ -726,6 +781,111 @@ async def save_workflow_version(request: Request, definition_id: UUID, body: Ver
         version_number=result["version_number"],
         bpmn_xml=xml,
     )
+
+
+WORKFLOW_DELETE_RULE = (
+    "A workflow may be deleted only while it has never run: no run of any of its versions and no trigger "
+    "pointing at it. Deleting removes the definition, every version and every derived step. A never-run draft "
+    "governs nothing, so no second person is required; a workflow that has run keeps its versions as the record "
+    "of what its runs executed and cannot be deleted."
+)
+
+
+async def delete_workflow_blockers(conn, org_id, definition_id) -> dict:
+    """What stops ``definition_id`` from being deleted: run and trigger counts (org-scoped)."""
+    runs = await conn.fetchval(
+        """
+        SELECT count(*) FROM workflow_runs r
+        JOIN workflow_versions v ON v.id = r.workflow_version_id
+        WHERE v.workflow_definition_id = $1 AND v.org_id = $2
+        """,
+        definition_id, org_id,
+    )
+    triggers = await conn.fetchval(
+        "SELECT count(*) FROM workflow_triggers WHERE workflow_definition_id = $1 AND org_id = $2",
+        definition_id, org_id,
+    )
+    return {"runs": int(runs or 0), "triggers": int(triggers or 0)}
+
+
+@router.delete("/admin/workflows/{definition_id}")
+async def delete_workflow(request: Request, definition_id: UUID):
+    """Delete a workflow definition that has NEVER RUN (BUGFIX2).
+
+    THE RULE: a definition with any run (``workflow_runs`` on any of its
+    versions) or any trigger (``workflow_triggers``) is refused with 409 and
+    the reason; otherwise the definition, all its versions and their derived
+    steps are removed, in FK order (workflow_steps → workflow_versions →
+    workflow_definitions — every FK between them is ON DELETE NO ACTION), in one
+    transaction. A run started concurrently is caught by the FK and answered as
+    the same 409.
+
+    GATE: ``author_workflows`` — the same permission that gates every edit of a
+    workflow (``save_workflow_version``). Super Admin first, as everywhere.
+
+    MAKER-CHECKER IS NOT REQUIRED: a never-run draft has governed nothing — no
+    run, no step decision, no trigger — so deleting it is the author discarding
+    their own draft, not a governed change. Once a workflow has run, its versions
+    are the record of what those runs executed and are never deleted; there is no
+    maker-checker path to delete one either. The deletion is written to the
+    audit log.
+    """
+    actor_id, org_id, _ = await _require_workflow_permission(request, PERM_AUTHOR)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            definition = await conn.fetchrow(
+                "SELECT id, name FROM workflow_definitions WHERE id = $1 AND org_id = $2 FOR UPDATE",
+                definition_id, org_id,
+            )
+            if definition is None:
+                raise HTTPException(status_code=404, detail="Workflow not found")
+            version_ids = [r["id"] for r in await conn.fetch(
+                "SELECT id FROM workflow_versions WHERE workflow_definition_id = $1 AND org_id = $2 FOR UPDATE",
+                definition_id, org_id,
+            )]
+            blockers = await delete_workflow_blockers(conn, org_id, definition_id)
+            if blockers["runs"] or blockers["triggers"]:
+                parts = []
+                if blockers["runs"]:
+                    parts.append(f"it has {blockers['runs']} run(s)")
+                if blockers["triggers"]:
+                    parts.append(f"{blockers['triggers']} trigger(s) point at it — delete those first")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"“{definition['name']}” cannot be deleted: {'; '.join(parts)}. {WORKFLOW_DELETE_RULE}",
+                )
+            try:
+                steps = await conn.fetchval(
+                    "WITH d AS (DELETE FROM workflow_steps WHERE workflow_version_id = ANY($1::uuid[]) "
+                    "AND org_id = $2 RETURNING 1) SELECT count(*) FROM d",
+                    version_ids, org_id,
+                )
+                versions = await conn.fetchval(
+                    "WITH d AS (DELETE FROM workflow_versions WHERE workflow_definition_id = $1 AND org_id = $2 "
+                    "RETURNING 1) SELECT count(*) FROM d",
+                    definition_id, org_id,
+                )
+                gone = await conn.fetchval(
+                    "DELETE FROM workflow_definitions WHERE id = $1 AND org_id = $2 RETURNING id",
+                    definition_id, org_id,
+                )
+            except asyncpg.ForeignKeyViolationError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"“{definition['name']}” cannot be deleted: it started running while being deleted. "
+                           f"{WORKFLOW_DELETE_RULE}",
+                ) from exc
+            if gone is None:
+                # Zero rows is not proof the row is missing (RLS) — never claim a cause we cannot know.
+                raise HTTPException(status_code=409, detail="The workflow could not be deleted; nothing was changed.")
+    await write_audit_log(
+        org_id=org_id, action="workflow.deleted", table_name="workflow_definitions", record_id=definition_id,
+        old={"name": definition["name"], "versions": int(versions or 0), "steps": int(steps or 0)},
+        actor=actor_id,
+    )
+    return {"deleted": True, "id": str(definition_id), "versions_deleted": int(versions or 0),
+            "steps_deleted": int(steps or 0)}
 
 
 # --------------------------------------------------------------------------

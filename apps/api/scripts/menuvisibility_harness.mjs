@@ -275,6 +275,17 @@ for (const [name] of Object.entries(PERSONAS)) {
   AUTHZ1_REMOVALS[name] = [...(AUTHZ1_REMOVALS[name] ?? []), ...had];
 }
 
+// BUGFIX2 — member data isolation: CRM, SPV Manager and the two Billing &
+// Custody firm screens are staff only (services.authz.require_staff on their
+// APIs). Every NON-staff persona that had them at the baseline loses exactly
+// these, and nothing else.
+const BUGFIX2_STAFF_ONLY = ["/crm", "/spvs", "/admin/billing-groups", "/admin/custody-import"];
+for (const [name, me] of Object.entries(PERSONAS)) {
+  if (me.account_role === "super_admin" || me.is_staff === true) continue;
+  const had = (BASELINE.personas[name]?.reachable ?? []).filter((h) => BUGFIX2_STAFF_ONLY.includes(h));
+  AUTHZ1_REMOVALS[name] = [...(AUTHZ1_REMOVALS[name] ?? []), ...had];
+}
+
 const sorted = (xs) => [...new Set(xs)].sort();
 const minus = (a, b) => a.filter((x) => !b.includes(x));
 

@@ -454,6 +454,7 @@ async def get_deal_stage_summary(request: Request):
     the dashboard snapshot uses. `stage` is the config key (what the Stage
     filter and column key on); `status` the lifecycle state."""
     org_id = get_org_id(request)
+    # BUGFIX2 — authz: member-scoped (a member's counts cover published statuses only).
     staff = is_staff(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -479,12 +480,15 @@ async def list_deals(
     conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
     params: list = [org_id]
 
+    # BUGFIX2 — authz: member-scoped (published deals only). A member's ?status=
+    # used to REPLACE the member filter (?status=draft listed drafts); it now
+    # narrows within it, so a member never sees a non-published status.
+    if not staff:
+        params.append(list(MEMBER_VISIBLE_STATUSES))
+        conditions.append(f"deal_status::text = ANY(${len(params)})")
     if status:
         params.append(status)
-        conditions.append(f"deal_status = ${len(params)}")
-    elif not staff:
-        params.append(list(MEMBER_VISIBLE_STATUSES))
-        conditions.append(f"deal_status = ANY(${len(params)})")
+        conditions.append(f"deal_status::text = ${len(params)}")
     if not staff:
         # DEALROOM3 — the DRAFT 506(b) offering rule (SQL deal_room_offering_open,
         # the one definition the deal room and Document Search also use).
@@ -595,8 +599,24 @@ async def _fetch_deal(conn, org_id, deal_id: UUID):
     )
 
 
+async def _require_deal_visible(conn, request: Request, row, deal_id) -> None:
+    """BUGFIX2 — the ONE member rule for a single deal: staff see any deal in the
+    org; a member only a published (MEMBER_VISIBLE_STATUSES) deal whose offering
+    is open to them (DEALROOM3 deal_room_offering_open). Anything else → 404,
+    existence not disclosed. Same rule get_deal / get_deal_lifecycle apply inline."""
+    if row is None:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    if is_staff(request):
+        return
+    if str(row["deal_status"]) not in MEMBER_VISIBLE_STATUSES:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    if not await deal_room.offering_open(conn, deal_id, get_user_id(request)):
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+
 @router.get("/deals/{deal_id}", response_model=DealDetail)
 async def get_deal(request: Request, deal_id: UUID):
+    # BUGFIX2 — authz: member-scoped (published + offering open, else 404).
     org_id = get_org_id(request)
     user_id = get_user_id(request)
     staff = is_staff(request)
@@ -705,8 +725,7 @@ async def get_deal_taxonomy_placement(request: Request, deal_id: UUID):
 
     async with pool.acquire() as conn:
         row = await _fetch_deal(conn, org_id, deal_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Deal not found")
+        await _require_deal_visible(conn, request, row, deal_id)  # BUGFIX2 — authz: member-scoped
         keys = [row["asset_super_class"], row["asset_class"], row["asset_sub_category"]]
         label_map = await _resolve_taxonomy_labels(conn, keys)
 
@@ -844,6 +863,7 @@ async def unarchive_deal(request: Request, deal_id: UUID):
 
 @router.get("/deals/{deal_id}/lifecycle")
 async def get_deal_lifecycle(request: Request, deal_id: UUID):
+    # BUGFIX2 — authz: member-scoped (published only, else 404).
     """BUGFIX1 — what the deal page needs to drive its lifecycle controls: the
     ordered stages (labels from config), the configured submit requirements and
     which of them this deal still lacks. Read gate = the deal's own (404 to a
@@ -1762,8 +1782,7 @@ async def get_ai_summary(request: Request, deal_id: UUID):
 
     async with pool.acquire() as conn:
         deal = await _fetch_deal(conn, org_id, deal_id)
-        if deal is None:
-            raise HTTPException(status_code=404, detail="Deal not found")
+        await _require_deal_visible(conn, request, deal, deal_id)  # BUGFIX2 — authz: member-scoped
         row = await conn.fetchrow(
             f"SELECT {AI_SUMMARY_SELECT} FROM deal_ai_summaries WHERE deal_id = $1 AND is_current = true",
             deal_id,

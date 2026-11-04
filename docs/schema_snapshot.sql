@@ -2808,6 +2808,95 @@
 --   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
 --   PRIMARY KEY member_todos_pkey: (id)
 
+-- ===== note_replica_comparisons =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_id                               uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   status                                   text NOT NULL
+--   note_price_pct                           numeric
+--   note_price_quote_id                      uuid
+--   replica_cost_pct                         numeric
+--   embedded_fee_pct                         numeric
+--   inputs                                   jsonb NOT NULL DEFAULT '[]'::jsonb
+--   missing                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   differences                              jsonb NOT NULL DEFAULT '[]'::jsonb
+--   method                                   text NOT NULL
+--   as_of                                    timestamp with time zone
+--   computed_by                              uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY note_replica_comparisons_pkey: (id)
+
+-- ===== note_replica_legs =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   replica_id                               uuid NOT NULL
+--   leg_no                                   integer NOT NULL
+--   kind                                     text NOT NULL
+--   purpose                                  text NOT NULL
+--   option_type                              text
+--   direction                                text NOT NULL
+--   ratio                                    numeric NOT NULL
+--   strike_pct                               numeric
+--   strike_level                             numeric
+--   expiry                                   date
+--   contract_id                              uuid
+--   face_pct                                 numeric
+--   maturity                                 date
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY note_replica_legs_pkey: (id)
+
+-- ===== note_replicas =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   note_terms_id                            uuid NOT NULL
+--   replicability_id                         uuid NOT NULL
+--   verdict                                  text NOT NULL
+--   mapping                                  text NOT NULL
+--   spec                                     jsonb NOT NULL
+--   underlying_global_security_id            uuid NOT NULL
+--   outcome_start                            date NOT NULL
+--   outcome_end                              date NOT NULL
+--   start_level                              numeric
+--   start_level_quote_id                     uuid
+--   treasury_face_pct                        numeric
+--   treasury_maturity                        date
+--   treasury_global_security_id              uuid
+--   broad_based_index                        boolean NOT NULL
+--   exercise_style                           text NOT NULL
+--   settlement                               text NOT NULL
+--   is_flex                                  boolean NOT NULL
+--   multiplier                               numeric NOT NULL
+--   digital_spread_pct                       numeric
+--   computed                                 jsonb NOT NULL DEFAULT '{}'::jsonb
+--   approximation                            jsonb
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   maker_ids                                ARRAY NOT NULL DEFAULT '{}'::uuid[]
+--   checker_id                               uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   status_reason                            text
+--   created_by                               uuid
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   updated_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY note_replicas_pkey: (id)
+
 -- ===== notification_delivery_log =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -4863,6 +4952,29 @@
 --   valid_to                                 timestamp with time zone
 --   metadata                                 jsonb NOT NULL DEFAULT '{}'::jsonb
 --   PRIMARY KEY note_gold_values_pkey: (id)
+
+-- ===== portfolio.note_replicability =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   note_terms_id                            uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   terms_fingerprint                        text NOT NULL
+--   rule_version                             text NOT NULL
+--   verdict                                  text NOT NULL
+--   mapping                                  text
+--   reasons                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   spec                                     jsonb
+--   is_preliminary                           boolean NOT NULL
+--   needs_review                             boolean NOT NULL
+--   review_reasons                           jsonb NOT NULL DEFAULT '[]'::jsonb
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   computed_at                              timestamp with time zone NOT NULL DEFAULT now()
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY note_replicability_pkey: (id)
 
 -- ===== portfolio.note_term_readings =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

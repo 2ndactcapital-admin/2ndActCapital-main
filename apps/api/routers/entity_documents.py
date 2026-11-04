@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from services.database import get_pool
 from services.storage import delete_object, get_signed_url, upload_bytes
 from services.users import ensure_user
-from services.authz import require_permission
+from services.authz import require_entity_access, require_permission
 
 router = APIRouter(tags=["entity-documents"])
 
@@ -220,6 +220,7 @@ async def list_documents(
     category: str | None = Query(None),
     tag: str | None = Query(None),
 ):
+    await require_entity_access(request, await get_pool(), entity_id)  # BUGFIX2 — own family only (404)
     org_id = _get_org_id(request)
     pool = await get_pool()
 
@@ -318,6 +319,7 @@ async def download_document(
     doc_id: _uuid.UUID,
     expires: int = Query(3600, ge=60, le=86400),
 ):
+    await require_entity_access(request, await get_pool(), entity_id)  # BUGFIX2 — own family only (404)
     org_id = _get_org_id(request)
     pool = await get_pool()
 
@@ -329,6 +331,11 @@ async def download_document(
         )
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
+    # BUGFIX2 fix 1: a record with no stored file (storage_key NULL) used to reach
+    # the R2 presigner with Key=None and surface as a 500. There is nothing to
+    # download — say so.
+    if not row["storage_key"]:
+        raise HTTPException(status_code=404, detail="Document has no stored file")
 
     url = await run_in_threadpool(
         get_signed_url, row["storage_key"], expires, DEFAULT_BUCKET

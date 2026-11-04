@@ -21,6 +21,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 
 from routers.entities import get_org_id
 from services.database import get_pool
+from services.authz import require_staff
 from services.permissions import get_user_id
 from services.portfolio_altruist import ALTRUIST_ENV_VARS, probe
 from services.portfolio_assets import READ_PERMISSION, WRITE_PERMISSION
@@ -134,6 +135,7 @@ async def read_precedence(request: Request):
     ``is_default`` is reported rather than inferred by the client: an org that
     saved an order identical to the platform default has still configured it.
     """
+    require_staff(request)  # BUGFIX2 — staff-only read
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
