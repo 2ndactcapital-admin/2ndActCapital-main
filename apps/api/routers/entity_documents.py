@@ -331,6 +331,11 @@ async def download_document(
         )
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
+    # BUGFIX2 fix 1: a record with no stored file (storage_key NULL) used to reach
+    # the R2 presigner with Key=None and surface as a 500. There is nothing to
+    # download — say so.
+    if not row["storage_key"]:
+        raise HTTPException(status_code=404, detail="Document has no stored file")
 
     url = await run_in_threadpool(
         get_signed_url, row["storage_key"], expires, DEFAULT_BUCKET

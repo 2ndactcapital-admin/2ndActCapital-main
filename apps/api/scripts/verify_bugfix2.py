@@ -259,6 +259,10 @@ DOC_F2, DOC_M1 = _id(2140), _id(2141)
 P_STAFFONLY, P_SAFE, PS_STAFFONLY = _id(2150), _id(2151), _id(2152)
 WF_NORUN, WFV_NORUN, WF_RUN, WFV_RUN, WFR_RUN = _id(2160), _id(2161), _id(2162), _id(2163), _id(2164)
 G_F2 = _id(2170)
+V_SPV = _id(2180)   # fix 1: a fixture vehicle for the ledger reads (journal_entries.vehicle_id)
+DOC_F2_KEY = f"{TAG}/doc-f2.pdf"   # fix 1: DOC_F2 has a stored file; DOC_M1 has none (storage_key NULL)
+LEDGER_VEHICLE_ROUTES = ("/api/v1/ledger/entries", "/api/v1/ledger/trial-balance",
+                         "/api/v1/ledger/capital-accounts", "/api/v1/ledger/templates")
 
 COUNTED = ("public.users", "public.organizations", "public.entities", "public.deals", "public.entity_ownership",
            "public.delegate_grants", "public.staff_assignments", "public.compliance_records", "public.entity_notes",
@@ -266,12 +270,17 @@ COUNTED = ("public.users", "public.organizations", "public.entities", "public.de
            "public.profiles", "public.profile_permissions", "public.permission_sets",
            "public.permission_set_permissions", "public.user_permission_sets", "public.workflow_definitions",
            "public.workflow_versions", "public.workflow_runs", "public.member_todos", "public.audit_log",
-           "public.entity_groups")
+           "public.entity_groups", "public.entity_group_members", "public.spvs")
 # Real rows that must not change (Task 8): fingerprinted before seeding and after teardown.
 REAL_FINGERPRINTED = ("public.users", "public.entities", "public.deals", "public.profiles", "public.permission_sets",
                       "public.user_permission_sets", "public.profile_permissions",
                       "public.permission_set_permissions", "public.roles", "public.user_roles",
                       "public.role_permissions", "public.delegate_grants")
+# fix 1 (FAIL E): columns real sign-in activity writes during a run — services.users.touch_last_login stamps
+# users.last_login_at on every real sign-in (a real user signed in mid-run: only that column moved). Every other
+# column of every real users row is still checksummed (role, status, org_id, profile_id, email, is_active …),
+# and the count still proves no row was added or removed.
+ACTIVITY_COLUMNS = {"public.users": ("last_login_at",)}
 
 _n_pass = 0
 _n_fail = 0
@@ -346,15 +355,45 @@ async def pk_of(conn, table: str) -> list[str]:
     return [r["attname"] for r in rows]
 
 
+def _row_expr(table: str) -> str:
+    """The row as jsonb minus the ACTIVITY_COLUMNS of its table (named, never a wildcard)."""
+    expr = "to_jsonb(t)"
+    for c in ACTIVITY_COLUMNS.get(table, ()):
+        expr += f" - '{c}'"
+    return expr
+
+
 async def fingerprint(conn, table: str) -> tuple[int, str]:
-    """Count + md5 of every row, keyed by the table's real primary key from the catalog."""
+    """Count + md5 of every row (minus the table's named ACTIVITY_COLUMNS), keyed by the table's real primary key
+    from the catalog."""
     pk = await pk_of(conn, table)
     if not pk:
         raise RuntimeError(f"{table} has no primary key in the catalog")
     key = " || ',' || ".join(f'"{c}"::text' for c in pk)
-    row = await platform(conn, f"SELECT count(*) AS n, md5(COALESCE(string_agg(t::text, '|' ORDER BY {key}), '')) "
-                               f"AS h FROM {table} t", fetch="fetchrow")
+    row = await platform(conn, f"SELECT count(*) AS n, md5(COALESCE(string_agg(({_row_expr(table)})::text, '|' "
+                               f"ORDER BY {key}), '')) AS h FROM {table} t", fetch="fetchrow")
     return int(row["n"]), row["h"]
+
+
+async def column_hashes(conn, table: str) -> dict:
+    """{primary key text: {column: md5(value)}} over EVERY column — diagnostics only: on a fingerprint mismatch the
+    changed ids and column NAMES are printed (never a value; no personal data)."""
+    pk = await pk_of(conn, table)
+    key = " || ',' || ".join(f'"{c}"::text' for c in pk)
+    rows = await platform(conn, f"SELECT {key} AS k, (SELECT jsonb_object_agg(e.key, md5(e.value::text)) "
+                                f"FROM jsonb_each(to_jsonb(t)) e) AS h FROM {table} t")
+    return {r["k"]: json.loads(r["h"]) if isinstance(r["h"], str) else r["h"] for r in rows}
+
+
+def changed_columns(before: dict, after: dict) -> list[str]:
+    out = [f"{k}: row removed" for k in before if k not in after]
+    out += [f"{k}: row added" for k in after if k not in before]
+    for k in before:
+        if k in after:
+            cols = sorted(c for c in set(before[k]) | set(after[k]) if before[k].get(c) != after[k].get(c))
+            if cols:
+                out.append(f"{k}: {','.join(cols)}")
+    return out
 
 
 async def operator_conn():
@@ -421,7 +460,8 @@ async def y_constraints(conn):
     tables = ("public.entities", "public.entity_ownership", "public.delegate_grants", "public.deals",
               "public.compliance_records", "public.entity_documents", "public.profiles",
               "public.permission_sets", "public.user_permission_sets", "public.workflow_definitions",
-              "public.workflow_versions", "public.workflow_runs", "public.entity_groups")
+              "public.workflow_versions", "public.workflow_runs", "public.entity_groups",
+              "public.entity_group_members", "public.spvs")
     rows = await platform(conn, "SELECT conrelid::regclass::text AS t, contype, conname, pg_get_constraintdef(oid) "
                                 "AS def FROM pg_constraint WHERE conrelid = ANY($1::regclass[]) "
                                 "AND contype IN ('u', 'c', 'f') ORDER BY 1, 2, 3", list(tables))
@@ -503,9 +543,14 @@ async def seed(conn) -> None:
                            ORG_A, E_F2)
         await conn.execute("INSERT INTO entity_notes (org_id, entity_id, note_text) VALUES ($1, $2, $3)",
                            ORG_A, E_F2, f"{F2_NAME} private note")
-        await conn.execute("INSERT INTO entity_documents (id, org_id, entity_id, title) VALUES ($1, $2, $3, $4), "
-                           "($5, $2, $6, 'BF2 member doc')", DOC_F2, ORG_A, E_F2, f"{F2_NAME} doc", DOC_M1, E_M1)
+        # fix 1: DOC_F2 carries a stored file (storage_key) so the download route has something to sign; DOC_M1
+        # has none (storage_key NULL) — the "no stored file" 404 case
+        await conn.execute("INSERT INTO entity_documents (id, org_id, entity_id, title, storage_key) VALUES "
+                           "($1, $2, $3, $4, $7), ($5, $2, $6, 'BF2 member doc', NULL)", DOC_F2, ORG_A, E_F2,
+                           f"{F2_NAME} doc", DOC_M1, E_M1, DOC_F2_KEY)
         await conn.execute("INSERT INTO entity_groups (id, org_id, name) VALUES ($1, $2, 'BF2 group')", G_F2, ORG_A)
+        await conn.execute("INSERT INTO entity_group_members (org_id, group_id, entity_id) VALUES ($1, $2, $3)",
+                           ORG_A, G_F2, E_F2)
 
         for did, st, nm in ((D_DRAFT, "draft", "draft"), (D_REVIEW, "under_review", "review"),
                             (D_SUBMITTED, "submitted", "submitted"), (D_ACTIVE, "active", "active")):
@@ -515,6 +560,8 @@ async def seed(conn) -> None:
                 did, ORG_A, f"BF2 Deal {nm}", f"{TAG}-{nm}", st)
         await conn.execute("INSERT INTO deals (id, org_id, name, slug, deal_status) VALUES ($1, $2, 'BF2 Org B Deal', "
                            "$3, 'active')", D_B, ORG_B, f"{TAG}-b")
+        await conn.execute("INSERT INTO spvs (id, org_id, deal_id, name) VALUES ($1, $2, $3, 'BF2 vehicle')",
+                           V_SPV, ORG_A, D_ACTIVE)
 
         # profiles / permission sets: one STAFF-ONLY (keys outside the member role), one member-safe
         for pid, name, keys in ((P_STAFFONLY, "BF2 Staff profile", ("staff", "view_workflow_runs", "manage_documents")),
@@ -541,8 +588,10 @@ async def seed(conn) -> None:
         for wid, vid, name in ((WF_NORUN, WFV_NORUN, "BF2 never run"), (WF_RUN, WFV_RUN, "BF2 has a run")):
             await conn.execute("INSERT INTO workflow_definitions (id, org_id, name) VALUES ($1, $2, $3)", wid, ORG_A,
                                name)
+            # fix 1 (FAIL D): is_current = true, as services.workflow_nl_generator stores a generated version
+            # (the column DEFAULTs to false; GET /admin/workflows/{id} reads the current version only)
             await conn.execute("INSERT INTO workflow_versions (id, workflow_definition_id, org_id, version_number, "
-                               "bpmn_xml) VALUES ($1, $2, $3, 1, $4)", vid, wid, ORG_A, bpmn)
+                               "bpmn_xml, is_current) VALUES ($1, $2, $3, 1, $4, true)", vid, wid, ORG_A, bpmn)
         await conn.execute("INSERT INTO workflow_runs (id, workflow_version_id, org_id) VALUES ($1, $2, $3)",
                            WFR_RUN, WFV_RUN, ORG_A)
 
@@ -625,6 +674,9 @@ def install_stubs():
         raise AssertionError("verify: real R2 must never be called")
 
     storage.get_signed_url = fake_url
+    import routers.entity_documents as entity_documents_router   # fix 1: it imports get_signed_url by name
+
+    entity_documents_router.get_signed_url = fake_url
     storage.get_s3_client = no_r2
     storage.upload_bytes = no_r2
     storage.delete_object = no_r2
@@ -704,8 +756,54 @@ def _fill(path: str) -> tuple[str, str]:
         "/api/v1/document-search": "?q=BF2",
         "/api/v1/semantic-search": "?q=BF2",
         "/api/v1/entities/search": "?q=BF2",
+        **{r: f"?vehicle_id={V_SPV}" for r in LEDGER_VEHICLE_ROUTES},   # fix 1 (FAIL B): a valid fixture vehicle
     }.get(path, "")
     return p + q
+
+
+# fix 1: routes whose fixture rows are now seeded — staff must get exactly 200 on them (a 404 / 422 is not admitted)
+MUST_BE_200 = set(LEDGER_VEHICLE_ROUTES) | {"/api/v1/entities/{entity_id}/documents/{doc_id}/download",
+                                            "/api/v1/entity-groups/{group_id}"}
+
+
+async def y_fix1(conn):
+    section("[Y] fix 1 — ledger gate before validation; download / entity-group 500s; fixtures seeded")
+    for r in LEDGER_VEHICLE_ROUTES:
+        cm, bm = await api(U_MEMBER, "GET", r)                     # NO vehicle_id
+        check(cm == 403 and "vehicle_id" not in dumps(bm), f"member GET {r} without vehicle_id → 403 (the gate runs "
+              "before parameter validation; nothing about the route's parameters is disclosed)",
+              f"HTTP {cm}; {dumps(bm)[:120]}")
+        cm, bm = await api(U_MEMBER, "GET", f"{r}?vehicle_id={V_SPV}")
+        cs, bs = await api(U_STAFF, "GET", f"{r}?vehicle_id={V_SPV}")
+        check(cm == 403 and cs == 200, f"{r}?vehicle_id=<fixture vehicle>: member 403, staff 200",
+              f"{cm}/{cs}; {dumps(bs)[:120]}")
+        cs, bs = await api(U_STAFF, "GET", r)
+        check(cs == 422, f"staff GET {r} without vehicle_id → 422 (validation still applies once admitted)", f"{cs}")
+    dl = f"/api/v1/entities/{E_F2}/documents/{DOC_F2}/download"
+    cs, bs = await api(U_STAFF, "GET", dl)
+    check(cs == 200 and (bs or {}).get("url") == "https://r2.invalid/bugfix2-verify",
+          "staff download of a stored document → 200 with the (stubbed) signed URL", f"HTTP {cs}; {dumps(bs)}")
+    cs, bs = await api(U_STAFF, "GET", f"/api/v1/entities/{E_M1}/documents/{DOC_M1}/download")
+    check(cs == 404 and "no stored file" in dumps(bs), "download of a record with no stored file → 404, never 500",
+          f"HTTP {cs}; {dumps(bs)}")
+    cs, bs = await api(U_STAFF, "GET", f"/api/v1/entities/{E_F2}/documents/{MISSING}/download")
+    check(cs == 404, "download of a missing document → 404", f"HTTP {cs}")
+    cm, bm = await api(U_MEMBER, "GET", dl)
+    check(cm == 404 and not leaks_family2(bm), "member download of another family's document → 404, no data",
+          f"HTTP {cm}")
+    cs, bs = await api(U_STAFF, "GET", f"/api/v1/entity-groups/{G_F2}")
+    mem = [m.get("entity_id") for m in (bs or {}).get("members") or []]
+    check(cs == 200 and (bs or {}).get("id") == str(G_F2) and mem == [str(E_F2)]
+          and all(m.get("added_at") for m in bs["members"]),
+          "staff GET /entity-groups/{id} → 200 with its seeded member (was 500: updated_at / added_at columns)",
+          f"HTTP {cs}; {dumps(bs)[:160]}")
+    db = [str(x["entity_id"]) for x in await scoped(conn, ORG_A, "SELECT entity_id FROM entity_group_members "
+                                                    "WHERE group_id = $1", G_F2)]
+    check(mem == db, "…members equal the same rows read directly in SQL", f"{mem} vs {db}")
+    cs, _ = await api(U_STAFF, "GET", f"/api/v1/entity-groups/{MISSING}")
+    check(cs == 404, "staff GET /entity-groups/<missing> → 404 (was 500)", f"HTTP {cs}")
+    cm, bm = await api(U_MEMBER, "GET", f"/api/v1/entity-groups/{G_F2}")
+    check(cm == 403 and not leaks_family2(bm), "member GET /entity-groups/{id} → 403, no data", f"HTTP {cm}")
 
 
 async def y_reclassified(conn):
@@ -728,7 +826,7 @@ async def y_reclassified(conn):
         else:  # member-scoped: another family's id → 404; a list → 200 without family 2
             if leaks_family2(bm) or cm in (401, 500) or (cm == 403 and "Staff access" in dumps(bm)):
                 bad_m.append(f"{r['path']} → {cm} {dumps(bm)[:80]}")
-        if cs in (401, 403) or cs >= 500:
+        if cs in (401, 403) or cs >= 500 or (r["path"] in MUST_BE_200 and cs != 200):
             bad_s.append(f"{r['path']} → {cs} {dumps(bs)[:80]}")
         if r["path"] in STAFF_OR_ORGADMIN:
             co, bo = await api(U_ORGADMIN, "GET", path)
@@ -1125,10 +1223,12 @@ async def main_async() -> int:
     if "--cleanup-only" in sys.argv:
         return await cleanup_only(conn)
     pre = real = None
+    real_cols = {}
     try:
         await run("pre-teardown", teardown, conn)
         pre = await counts(conn)
         real = {t: await fingerprint(conn, t) for t in REAL_FINGERPRINTED}
+        real_cols = {t: await column_hashes(conn, t) for t in ACTIVITY_COLUMNS}
         await run("role", y_role_is_real, conn)
         await run("constraints", y_constraints, conn)
         await run("seed", seed, conn)
@@ -1137,6 +1237,7 @@ async def main_async() -> int:
         self_task1(check, find)
         await run("critical", y_critical, conn)
         await run("reclassified", y_reclassified, conn)
+        await run("fix 1", y_fix1, conn)
         await run("member scope", y_member_scope, conn)
         await run("billing", y_billing, conn)
         await run("menu", y_menu, conn)
@@ -1170,8 +1271,17 @@ async def main_async() -> int:
             if real is not None:
                 for t in REAL_FINGERPRINTED:
                     now = await fingerprint(conn, t)
-                    check(now == real[t], f"real {t} unchanged (count + checksum by primary key)",
+                    excl = ACTIVITY_COLUMNS.get(t, ())
+                    check(now == real[t], f"real {t} unchanged (count + checksum by primary key"
+                          + (f"; excluding activity column(s) {', '.join(excl)}" if excl else "") + ")",
                           f"{real[t][0]} → {now[0]} rows")
+                for t, before_cols in real_cols.items():
+                    diff = changed_columns(before_cols, await column_hashes(conn, t))
+                    print(f"[INFO] real {t} rows changed during the run (id: column names; no values): "
+                          f"{diff or 'none'}")
+                    off = [d for d in diff if not set(d.split(': ', 1)[1].split(',')) <= set(ACTIVITY_COLUMNS[t])]
+                    check(not off, f"real {t}: nothing but {', '.join(ACTIVITY_COLUMNS[t])} changed on any row "
+                          "(no row added / removed; no role / status / org / profile change)", f"{off}")
         except Exception as exc:  # noqa: BLE001
             check(False, "teardown raised", f"{type(exc).__name__}: {exc}")
         finally:
