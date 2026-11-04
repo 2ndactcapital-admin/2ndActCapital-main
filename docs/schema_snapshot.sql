@@ -5104,6 +5104,25 @@
 --   notes                                    text
 --   PRIMARY KEY note_terms_stp_policy_pkey: (id)
 
+-- ===== portfolio.openfigi_mappings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   id_type                                  text NOT NULL
+--   id_value                                 text NOT NULL
+--   exch_code                                text NOT NULL DEFAULT ''::text
+--   ok                                       boolean NOT NULL
+--   hits                                     integer NOT NULL DEFAULT 0
+--   result                                   jsonb
+--   warning                                  text
+--   mapped_at                                timestamp with time zone NOT NULL DEFAULT now()
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY openfigi_mappings_pkey: (id)
+
 -- ===== portfolio.option_contracts =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   global_security_id                       uuid NOT NULL
@@ -5629,6 +5648,27 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY replica_viability_reports_pkey: (id)
 
+-- ===== portfolio.sec_13f_list =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   quarter                                  text NOT NULL
+--   cusip                                    text NOT NULL
+--   has_listed_options                       boolean NOT NULL DEFAULT false
+--   issuer                                   text NOT NULL
+--   description                              text NOT NULL DEFAULT ''::text
+--   status                                   text NOT NULL
+--   is_option                                boolean NOT NULL DEFAULT false
+--   map_status                               text NOT NULL DEFAULT 'pending'::text
+--   map_note                                 text
+--   global_security_id                       uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY sec_13f_list_pkey: (id)
+
 -- ===== portfolio.securities_global =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   name                                     text NOT NULL
@@ -5790,6 +5830,81 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY security_factor_scores_pkey: (id)
+
+-- ===== portfolio.security_master_checkpoints =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   load_id                                  uuid NOT NULL
+--   source                                   text NOT NULL
+--   batch_no                                 integer NOT NULL
+--   counts                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   done_at                                  timestamp with time zone NOT NULL DEFAULT now()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_master_checkpoints_pkey: (id)
+
+-- ===== portfolio.security_master_review =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   kind                                     text NOT NULL
+--   subject_key                              text NOT NULL
+--   field                                    text NOT NULL DEFAULT ''::text
+--   incoming_value                           text NOT NULL DEFAULT ''::text
+--   existing_value                           text
+--   provider_key                             text NOT NULL
+--   global_security_id                       uuid
+--   detail                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   status                                   text NOT NULL DEFAULT 'open'::text
+--   decided_by                               uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_master_review_pkey: (id)
+
+-- ===== portfolio.security_master_source_files =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   provider_key                             text NOT NULL
+--   file_key                                 text NOT NULL
+--   as_of                                    timestamp with time zone NOT NULL
+--   sha256                                   text NOT NULL
+--   row_count                                integer NOT NULL
+--   status                                   text NOT NULL
+--   summary                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_master_source_files_pkey: (id)
+
+-- ===== portfolio.security_reference_attributes =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   global_security_id                       uuid NOT NULL
+--   field                                    text NOT NULL
+--   value                                    text NOT NULL
+--   provider_key                             text NOT NULL
+--   as_of                                    date NOT NULL
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_reference_attributes_pkey: (id)
 
 -- ===== portfolio.structured_note_issuers =====
 --   filer_cik                                text NOT NULL
