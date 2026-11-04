@@ -604,11 +604,77 @@ async def y_fixtures(conn):
                 check(p is not None and p.is_super_admin and want <= got, "super persona: Super Admin, catalog held",
                       f"{len(got)}")
                 continue
-            check(got == set(want), f"{name} persona's DB permissions == its seeded grant",
-                  f"missing {sorted(set(want) - got)}; extra {sorted(got - set(want))}")
+            # PERMS1 FIX 1: since perms1 the Principal = role ∪ profile ∪ permission sets (catalog keys only), so
+            # the expectation is the union the fixture ACTUALLY holds, read straight from the grant tables (not from
+            # the Principal's own statement). Every seeded role key must be present; no key may appear that was not
+            # granted on some path (the original "no extra" guarantee, unchanged in strength).
+            elsewhere = await granted_off_role(conn, uid)
+            union = set(want) | elsewhere
+            check(set(want) <= got and got <= union,
+                  f"{name} persona's DB permissions == its seeded grant (role) ∪ its profile / permission-set keys",
+                  f"missing {sorted(set(want) - got)}; extra (granted nowhere) {sorted(got - union)}; "
+                  f"via profile / set {sorted(elsewhere - set(want))}")
+        sup = await load_principal(conn, U_SUPPORT)
+        sup_union = set(USERS[U_SUPPORT][4]) | await granted_off_role(conn, U_SUPPORT)
+        check(sup is not None and set(sup.permissions) == sup_union and "manage_documents" in sup.permissions
+              and "manage_documents" not in USERS[U_SUPPORT][4] and "staff" not in sup.permissions,
+              "support (internal): Principal == role ∪ 'CSA / Ops' profile exactly — manage_documents arrives ONLY "
+              "via the profile; the non-catalog key 'staff' grants nothing",
+              f"{sorted(set(sup.permissions if sup else ()) ^ sup_union)}")
         p = await load_principal(conn, U_ORGADMIN)
         appr = sorted(x for x in (p.permissions if p else ()) if x.startswith("approve_"))
         check(p is not None and not appr, "the org admin fixture holds NO approve_* permission", f"{appr}")
+    await y_member_staff_profile(conn)
+
+
+async def granted_off_role(conn, uid) -> set:
+    """The user's profile + permission-set keys that are real catalog permissions — read from the grant tables
+    directly (the caller's transaction sets app.is_super_admin)."""
+    rows = await conn.fetch(
+        "SELECT pp.permission_key AS k FROM users u JOIN profile_permissions pp ON pp.profile_id = u.profile_id "
+        "WHERE u.id = $1 UNION SELECT psp.permission_key FROM user_permission_sets ups "
+        "JOIN permission_set_permissions psp ON psp.permission_set_id = ups.permission_set_id WHERE ups.user_id = $1",
+        uid)
+    catalog = {r["name"] for r in await conn.fetch("SELECT name FROM permissions")}
+    return {r["k"] for r in rows} & catalog
+
+
+class _Rollback(Exception):
+    pass
+
+
+async def y_member_staff_profile(conn):
+    """PERMS1 FIX 1 — the opposite direction: a key granted ONLY on a staff-only profile still does not reach a
+    member. The member fixture is given the 'SR1 CSA / Ops' profile inside a transaction that is rolled back, so
+    no other check sees it and nothing persists."""
+    from services.authz import load_principal
+
+    member_role = set(USERS[U_MEMBER][4])
+    seen: dict = {}
+    try:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+            safe = {r["name"] for r in await conn.fetch(
+                "SELECT p.name FROM roles r JOIN role_permissions rp ON rp.role_id = r.id JOIN permissions p "
+                "ON p.id = rp.permission_id WHERE r.org_id = $1 AND r.name = 'member'", ORG_A)}
+            await conn.execute("UPDATE users SET profile_id = $1 WHERE id = $2", P_STAFFONLY, U_MEMBER)
+            seen["linked"] = await conn.fetchval("SELECT profile_id FROM users WHERE id = $1", U_MEMBER)
+            seen["profile_keys"] = await granted_off_role(conn, U_MEMBER)
+            pm = await load_principal(conn, U_MEMBER)
+            seen["perms"] = set(pm.permissions) if pm else None
+            seen["safe"] = safe
+            raise _Rollback
+    except _Rollback:
+        pass
+    after = await platform(conn, "SELECT profile_id FROM users WHERE id = $1", U_MEMBER, fetch="fetchval")
+    staff_only = (seen.get("profile_keys") or set()) - seen.get("safe", set()) - member_role
+    perms = seen.get("perms")
+    check(seen.get("linked") == P_STAFFONLY and "manage_documents" in staff_only and perms is not None
+          and not (perms & staff_only) and perms <= member_role | seen.get("safe", set()),
+          "a key granted ONLY on a staff-only profile (manage_documents on 'SR1 CSA / Ops') does not reach a member "
+          "holding that profile",
+          f"staff-only {sorted(staff_only)}; leaked {sorted((perms or set()) & staff_only)}")
+    check(after is None, "the member's profile link was rolled back (nothing persisted)", f"{after}")
 
 
 # ═══ The real app, token stubbed by bearer string ═════════════════════════════════════════════════════════

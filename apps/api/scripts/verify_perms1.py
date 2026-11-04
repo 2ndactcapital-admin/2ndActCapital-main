@@ -381,7 +381,15 @@ def email_of(uid: UUID) -> str:
 
 
 def dumps(x) -> str:
+    """For DISPLAY in a check's detail only — truncated at 400 characters."""
     return json.dumps(x, ensure_ascii=False, default=str)[:400]
+
+
+def body_text(x) -> str:
+    """The FULL serialised body, for every containment assertion. PERMS1 FIX 1: asserting on dumps() (cut at 400)
+    made "the household detail shows the mask" fail on a correct 4.4 KB body (its accounts sit past char 400) and
+    made every "X not in" check vacuous past char 400."""
+    return json.dumps(x, ensure_ascii=False, default=str)
 
 
 # ═══ DB helpers (the verify's own connection; RLS context set explicitly on every read) ═══════════════════
@@ -457,7 +465,11 @@ async def operator_conn():
 
 async def teardown(_conn=None) -> list[str]:
     """Fixture rows only — fixture orgs and fixture users, by id (every org_id table: profiles, permission sets,
-    households, accounts, deals, workflows, model uploads, audit rows, todos). Never a TRUNCATE."""
+    households, accounts, deals, workflows, model uploads, audit rows, todos). Never a TRUNCATE.
+    PERMS1 FIX 1: "Add account" writes REP7B account_authority_settings (and may write household_authority), whose
+    authority_change_guard refuses DELETE unless public.execution_teardown_allowed() — the LOCAL GUC
+    execution.teardown = 'fixture' on a non-app_service connection, exactly as verify_rep7b's teardown sets it.
+    The trigger is untouched; only this run's fixture-org rows are deleted."""
     users = list(USERS)
     op = await operator_conn()
     try:
@@ -467,7 +479,7 @@ async def teardown(_conn=None) -> list[str]:
             "public.user_permission_sets": ("user_id = ANY($1::uuid[])", [users]),
         }
         res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=users, user_sub_like=f"%{TAG}%", plan=plan,
-                               gucs=("models.teardown",), label="verify_perms1")
+                               gucs=("execution.teardown", "models.teardown"), label="verify_perms1")
         return res["log"]
     finally:
         await op.close()
@@ -752,7 +764,7 @@ async def y_reproduce_and_baseline(conn):
     check(bool('"/admin/workflows/runs", "Runs", GATE_SUPER_ADMIN' in menu_before),
           "before: the Runs tab was super-admin only in the menu (so the org admin's approval link was refused)")
     c1, b1 = await api(U_OA, "GET", "/api/v1/portfolio/positions")
-    check(bool(c1 == 403 and "view_portfolio" in dumps(b1)),
+    check(bool(c1 == 403 and "view_portfolio" in body_text(b1)),
           "REPRODUCED: org admin (role at the pre-PERMS1 grants) refused on Positions — 403 naming view_portfolio",
           f"{c1} {dumps(b1)}")
     c2, b2 = await api(U_OA, "GET", "/api/v1/admin/workflow-runs")
@@ -783,7 +795,7 @@ async def y_reproduce_and_baseline(conn):
         check(bool(c == 200), f"AFTER: org admin admitted to {path}", f"{c} {dumps(b)}")
     for path, perm in APPROVALS:
         c, b = await api(U_OA, "POST", path, {})
-        check(bool(c != 403 or perm not in dumps(b)), f"org admin keeps its existing {perm} grant (no change)",
+        check(bool(c != 403 or perm not in body_text(b)), f"org admin keeps its existing {perm} grant (no change)",
               f"{c} {dumps(b)}")
     # the reverse disagreement: a ROLE-only workflow key (support staff, no profile) — refused by the old gate
     old = await _before_profile_perms(conn, U_SUPPORT)
@@ -874,7 +886,7 @@ async def y_support_and_bypass(conn):
         check(bool(c == 200), f"support admitted on its read {path}", f"{c} {dumps(b)}")
     for path, perm in APPROVALS:
         c, b = await api(U_SUPPORT, "POST", path, {})
-        check(bool(c == 403 and perm in dumps(b)), f"support refused {perm} (403 naming it)", f"{c} {dumps(b)}")
+        check(bool(c == 403 and perm in body_text(b)), f"support refused {perm} (403 naming it)", f"{c} {dumps(b)}")
     check(bool(st is not None and st.is_staff is True and set(st.permissions) == set(C.INVESTMENT_STAFF_PERMS)),
           "investment_staff fixture: is_staff true; its permissions are exactly its role grants (as before)",
           f"{sorted(set(st.permissions) ^ set(C.INVESTMENT_STAFF_PERMS)) if st else None}")
@@ -918,7 +930,7 @@ async def y_deals(conn):
     check(bool(c == 201 and deal_id and str(b.get("deal_status")) == "draft"),
           "org admin creates a deal — it starts as a draft", f"{c} {dumps(b)}")
     c2, b2 = await api(U_SUPPORT, "POST", "/api/v1/deals", {"name": "PM1 support deal"})
-    check(bool(c2 == 403 and "manage_deals" in dumps(b2)), "support staff (internal, no manage_deals) refused naming "
+    check(bool(c2 == 403 and "manage_deals" in body_text(b2)), "support staff (internal, no manage_deals) refused naming "
           "manage_deals", f"{c2} {dumps(b2)}")
     if deal_id:
         c3, _ = await api(U_MEMBER, "GET", f"/api/v1/deals/{deal_id}")
@@ -943,7 +955,7 @@ async def y_households(conn):
     c, b = await api(U_MEMBER, "POST", "/api/v1/admin/households", {"name": "PM1 member hh", "member_entity_ids": []})
     check(bool(c == 403), "member refused household creation", f"{c} {dumps(b)}")
     c, b = await api(U_SUPPORT, "POST", "/api/v1/admin/households", {"name": "PM1 support hh"})
-    check(bool(c == 403 and "manage_members" in dumps(b)), "support staff (internal, no manage_members) refused naming "
+    check(bool(c == 403 and "manage_members" in body_text(b)), "support staff (internal, no manage_members) refused naming "
           "manage_members", f"{c} {dumps(b)}")
     c, env = await api(U_SUPPORT, "GET", "/api/v1/admin/households")
     check(bool(c == 403), "support staff gets no management envelope (403)", f"{c}")
@@ -973,7 +985,7 @@ async def y_households(conn):
     check(bool(c == 403), "support staff refused Add account", f"{c}")
     c, b = await api(U_OA, "POST", f"/api/v1/admin/households/{hid}/accounts", body)
     check(bool(c == 201 and isinstance(b, dict) and b.get("account_number_masked") == "*******6789"
-               and ACCOUNT_NUMBER not in dumps(b) and "00426789" not in dumps(b) and b.get("pending_change") is None),
+               and ACCOUNT_NUMBER not in body_text(b) and "00426789" not in body_text(b) and b.get("pending_change") is None),
           "org admin adds an account at the default authority / custody; the response carries the mask only",
           f"{c} {dumps(b)}")
     acct_id = b.get("id") if isinstance(b, dict) else None
@@ -992,8 +1004,16 @@ async def y_households(conn):
         check(bool(allcols and "0042" not in allcols and "PM1-0042" not in allcols),
               "the full account number is stored nowhere on the row")
         c, d = await api(U_OA, "GET", f"/api/v1/admin/households/{hid}")
-        check(bool(c == 200 and "0042" not in dumps(d) and "*******6789" in dumps(d)),
-              "the household detail shows the mask, never the full number", f"{c}")
+        full = body_text(d)
+        shown = [a for a in ((d.get("accounts") if isinstance(d, dict) else None) or []) if a.get("id") == acct_id]
+        stored_mask = row["account_number_masked"] if row else None
+        print(f"    [INFO] detail: {len(full)} chars; this account's fields: "
+              f"{json.dumps(shown, default=str) if shown else 'ABSENT'}")
+        check(bool(c == 200 and stored_mask and len(shown) == 1 and shown[0].get("account_number_masked") == stored_mask
+                   and stored_mask in full and "0042" not in full and ACCOUNT_NUMBER not in full
+                   and "00426789" not in full),
+              "the household detail shows the stored mask, never the full number (whole body searched)",
+              f"{c} stored={stored_mask!r} shown={json.dumps(shown, default=str)}")
         c, b2 = await api(U_OA, "POST", f"/api/v1/admin/households/{hid}/accounts", body)
         check(bool(c == 409), "the same account again is refused (409) — the import's unique key", f"{c} {dumps(b2)}")
     body2 = {"custodian_code": "PM1OUT", "account_number": "PM1-7777-1234", "primary_entity_id": str(E_F2),
@@ -1021,7 +1041,7 @@ async def y_workflow_delete(conn):
     check(bool(run and run.get("can_delete") is False), "the workflow with a run: can_delete false", f"{dumps(run)}")
     check(bool(draft and draft.get("can_delete") is True), "the never-run draft: can_delete true", f"{dumps(draft)}")
     c, b = await api(U_OA, "DELETE", f"/api/v1/admin/workflows/{W_SYS}")
-    check(bool(c == 409 and W_SYS_NAME in dumps(b)), "API refuses deleting the system workflow (409 naming it)",
+    check(bool(c == 409 and W_SYS_NAME in body_text(b)), "API refuses deleting the system workflow (409 naming it)",
           f"{c} {dumps(b)}")
     c, b = await api(U_OA, "DELETE", f"/api/v1/admin/workflows/{W_RUN}")
     check(bool(c == 409), "API refuses deleting a workflow with runs (409)", f"{c} {dumps(b)}")
