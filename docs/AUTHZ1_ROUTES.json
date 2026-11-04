@@ -1,5 +1,5 @@
 {
- "app_route_count": 783,
+ "app_route_count": 792,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12779,6 +12779,189 @@
    "name": "policy_reject",
    "note": "",
    "path": "/api/v1/replication/hypothetical-policy/{policy_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(view_replication)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "list_checks",
+   "note": "",
+   "path": "/api/v1/replication/notes/checks",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(view_replication)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "get_settings",
+   "note": "",
+   "path": "/api/v1/replication/notes/checks/settings",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "put_settings",
+   "note": "",
+   "path": "/api/v1/replication/notes/checks/settings",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "run_checks",
+   "note": "",
+   "path": "/api/v1/replication/notes/checks/run",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(view_replication)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_replication"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "get_check",
+   "note": "",
+   "path": "/api/v1/replication/notes/checks/{check_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_replication",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_replication"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "review_check",
+   "note": "",
+   "path": "/api/v1/replication/notes/checks/{check_id}/review",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "underlying_queue",
+   "note": "",
+   "path": "/api/v1/replication/notes/underlyings",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "confirm_underlyings",
+   "note": "",
+   "path": "/api/v1/replication/notes/underlyings/confirm",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.replication_note_checks",
+   "name": "reject_underlying",
+   "note": "",
+   "path": "/api/v1/replication/notes/underlyings/{relationship_id}/reject",
    "public": false,
    "write": true
   },

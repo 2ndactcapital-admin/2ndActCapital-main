@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+REP12 (2026-11-04, Replication Studio sprint 12 — the note-versus-replica check across NEW issues: every new / restated terms version checked automatically per org, a DRAFT replica only for an eligible note, the comparison when quoted, the "New issues" feed + alerts, the Super Admin's underlying queue (one-click / multi-confirm through confirm_resolution); schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 STAFFROLES1 (2026-11-04, "see staff data" (is_internal: every internal firm role) split from "skip permission checks" (is_staff, unchanged); org admin / support staff read the CRM, approvals unchanged; verify WRITTEN, not yet run): see the top entry.
 REP11 (2026-11-03, Replication Studio sprint 11 — PHASE 3 BEGINS: note replicability verdicts from the 424B2 terms (static 11 / approximate 3 / not replicable 40 over today's 54; 0 buildable — no underlying confirmed), replicas from rep8's options machinery plus a Treasury leg, the embedded-fee estimate only when quoted, the X-ray marker under the hypothetical-performance policy; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PREVIEWPERF (2026-11-03, EDGAR bulk-download live preview back under 2 s — round trips, not SQL; no index; verify WRITTEN, not yet run): see the top entry.
@@ -331,6 +332,49 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000000000000000000000000000000000000000000000000000000000. NEW-ISSUE NOTE CHECKS — rep12 (sprint 12 of 15): the automatic note-versus-replica check, the "New issues" feed and alerts, the underlying confirmation queue; schema APPLIED; verify WRITTEN, not yet run (2026-11-04)
+
+- **Hook.** The one write path of a live terms row is now `note_terms_extraction.store_extraction`
+  (split out of `extract_terms`, behaviour unchanged); its LAST step (after routing) is
+  `services.note_checks.on_terms_written`. A human correction (`/admin/pricing/note-terms/{id}/resolve`)
+  fires it too. The daily document-reading run writes readings / staging only (B2 promotion never
+  built), so `note_checks.sweep` runs each scheduler tick after rep11's verdicts as the safety net.
+- **Idempotent by terms version** (+ the underlying edges): one live check per (org, note) is a
+  partial UNIQUE index. A restatement, a correction or a confirmed underlying closes the live check
+  (valid_to) and writes a new one; status / alert changes are system-axis (archived copy, id kept).
+- **Draft only, never approved.** rep11's `buildable` decides; `note_replication.prepare_draft` is
+  rep11's builder with no person (created_by NULL, no maker). The comparison is rep11's
+  `compute_cost`, stored with `computed_source = 'automatic_check'` (computed_by NULL — rep11's
+  comparisons table changed additively). An index underlying is assumed broad-based (rep8's
+  default) unless a contract already says otherwise — recorded on the check for a person to confirm.
+- **Alerts** are system-opened human tasks (`note_check_alert`, eligible view_replication):
+  embedded-fee estimate above the org threshold (at the check, or priced later by a person — the
+  alert sweep), or a watched issuer / underlying / archetype. A non-internal recipient's to-do is
+  dismissed at once. Review / dismiss (dismiss needs a note) completes the open alert task, else is
+  applied directly; both record the user.
+- **Underlying queue** (`/portfolio/replication/notes/underlyings`, Super Admin): edges grouped by
+  one proposal vs none; one-click and multi-confirm call `confirm_resolution` once per edge as the
+  clicker (still the one writer of 'resolved'); the affected notes are re-checked. The pricing-admin
+  confirm / reject routes re-check too.
+- **[FIND] routing queues every extracted row whose filer has no active STP policy**, and rep11 reads
+  'queued' as "needs review": a newly extracted note gets a draft only under an STP grant (or after
+  its review). Today 0 STP policies are active for the real filers.
+- **[FIND]** live data at discovery: 69 ambiguous edges (each exactly one high `known_index`
+  proposal — the schema allows one), 28 unresolved (no target), 0 resolved; 31 notes have a single
+  edge, 23 have 2–5 (those can never be built by rep11's single-underlying rule). Only `org_admin`
+  holds view_replication in real orgs; the human-task fan-out would notify a client role holding it,
+  hence the withholding step.
+- Schema: `docs/rep12_part1.sql` via `_apply_rep12.py --all` (SCHEMA OK). Routes regenerated in
+  AUTHZ1_ROUTES (`--check` CURRENT): reads `internal + any(view_replication)`, writes
+  manage_replication, the queue super_admin. Router included BEFORE rep11's (its `/{note_id}` would
+  422 `/checks`). `node --test tests/` 477/0 locally; npm run build NOT run (WSL memory).
+- `verify_rep12.py` WRITTEN, not run (fakes the model step through store_extraction; hook scoped to
+  fixture orgs via `note_checks.HOOK_ONLY_ORGS`). Added to `scripts/regression_set.txt`.
+- Operator steps: assign models + budgets to the note-extraction job (AI Models → Model Jobs); grant
+  STP per filer where trusted; work the underlying queue; set the org's alert threshold / watches on
+  New issues; enter note-price, level and premium quotes. Add rep12's merge to
+  `_verify_self.SPRINT_MERGES` when merged.
 
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000. STAFFROLES1 — "may SEE staff data" (is_internal) split from "skips permission checks" (is_staff); verify WRITTEN, not yet run (2026-11-04)
 
