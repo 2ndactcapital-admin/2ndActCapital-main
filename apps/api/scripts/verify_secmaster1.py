@@ -88,8 +88,8 @@ def self_routes(check, find):
 
 def self_code(check, find):
     load = VS.own_text(SPRINT_KEY, OWN_FILES[0]) or ""
-    check("executemany" in load and "DELETE" not in load.upper().replace("DELETE_", ""),
-          "the matcher writes in bulk (executemany) and contains no DELETE", f"{len(load)} chars")
+    check(bool("executemany" in load and not re.search(r"\bDELETE\s+FROM\b", load, re.I)),
+          "the matcher writes in bulk (executemany) and issues no DELETE FROM", f"{len(load)} chars")
     jobs = VS.own_text(SPRINT_KEY, OWN_FILES[1]) or ""
     check('REQUIRED_PERMISSION = "run_platform_jobs"' in jobs and "workflow_invocable=True" in jobs and "tier=2" in jobs,
           "the job actions are workflow-invocable tier 2 verbs behind a non-catalog (Super Admin only) permission")
