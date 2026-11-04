@@ -1107,7 +1107,7 @@ async def y_feed(conn):
           f"{priced} {fees} {[r['estimate']['text'][:40] for r in tail][:3]}")
     v = o.get("vocabularies") or {}
     check(bool(v.get("verdicts")) and bool(v.get("sorts")) and v.get("estimate_label") == "estimate"
-          and (o.get("permissions") or {}).get("can_write") is True and v.get("editable"),
+          and (o.get("permissions") or {}).get("can_write") is True and bool(v.get("editable")),
           "the envelope carries labels, vocabularies and permissions (editable for the admin)")
     cv, ov = await api(U_STAFF_V, "GET", _C)
     check(cv == 200 and (ov.get("vocabularies") or {}).get("editable") == [] and ov.get("actions") == []
