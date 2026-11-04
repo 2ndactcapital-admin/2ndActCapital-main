@@ -111,6 +111,8 @@ export const GATE_INTERNAL_STRICT = { internal: true, strict: true };
 export const GATE_CRM = GATE_INTERNAL_STRICT;
 // SPV Manager: an internal role holding view_spv (view_spv alone is a member grant).
 export const GATE_SPV_MANAGER = { internal: true, perm: "view_spv", strict: true };
+// REP12 — New issues: an internal role holding view_replication (a client role holding it is refused by the API).
+export const GATE_REPLICATION_STAFF = { internal: true, perm: "view_replication", strict: true };
 // Billing Groups / Custody Import: an internal role holding view_portfolio (a member grant alone).
 export const GATE_FIRM_PORTFOLIO = { internal: true, perm: "view_portfolio", strict: true };
 // BUGFIX2 — the /admin AREA: open iff the caller can see at least one item of
@@ -266,6 +268,10 @@ export const MENU_ITEMS = [
   tab("main", "portfolio", 16, "/portfolio/replication/backtest", "Backtest", GATE_VIEW_REPLICATION, false),
   // REP11 — structured notes: verdicts, replicas and the note-versus-replica comparison (view_replication)
   tab("main", "portfolio", 17, "/portfolio/replication/notes", "Notes", GATE_VIEW_REPLICATION, false),
+  // REP12 — new issues checked against their replica (API require_internal_permission(view_replication)) and the
+  // Super Admin's underlying queue (API require_super_admin)
+  tab("main", "portfolio", 18, "/portfolio/replication/notes/new-issues", "New issues", GATE_REPLICATION_STAFF, false),
+  tab("main", "portfolio", 19, "/portfolio/replication/notes/underlyings", "Underlying queue", GATE_SUPER_ADMIN, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),

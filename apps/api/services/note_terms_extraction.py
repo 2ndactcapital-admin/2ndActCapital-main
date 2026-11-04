@@ -791,12 +791,45 @@ async def extract_terms(filing_id, pool, *, force: bool = False) -> ExtractionRe
     ][:MAX_UNDERLYINGS]
     result.underlying_texts = underlyings
 
-    # ── Persist ───────────────────────────────────────────────────────────
+    # ── Persist + route + the rep12 hook (one function, so a caller that fakes the
+    # model step writes through exactly the same path) ─────────────────────────
     security_name = (
         str(payload.get("security_name") or "").strip()
         or f"{filing['filer_name']} {filing['form_type']} {filing['accession_number']}"
     )
+    stored = await store_extraction(
+        pool, filing_id=filing_id, existing_id=str(existing["id"]) if (force and existing is not None) else None,
+        security_name=security_name, cusip=cusip, values=values, field_status=field_status,
+        confidence=confidence, char_start=char_start, char_end=char_end, underlyings=underlyings,
+        derived_status=derived_status, disagreements=disagreements,
+    )
+    result.routing_decision = stored["routing_decision"]
+    result.ok = True
+    result.note_terms_id = stored["note_terms_id"]
+    result.global_security_id = stored["global_security_id"]
+    result.terms_status = derived_status
+    result.field_status = field_status
+    return result
 
+
+async def store_extraction(
+    pool, *, filing_id: str, existing_id: str | None, security_name: str, cusip, values: dict,
+    field_status: dict, confidence: str, char_start, char_end, underlyings: list[str],
+    derived_status: str, disagreements: dict,
+) -> dict:
+    """Persist one extraction, route it, and fire the rep12 hook — the ONE place a
+    live ``securities_global_note_terms`` row is written by an extraction.
+
+    Split out of :func:`extract_terms` (rep12) unchanged in behaviour, so that a
+    verify which fakes the model step writes through exactly this path.
+    ``existing_id`` is the live row a forced re-extraction supersedes (Rule 3:
+    closed, never updated in place), else None.
+
+    LAST, after routing: ``services.note_checks.on_terms_written`` — the
+    automatic note-versus-replica check for every org (idempotent by terms
+    version). A failure there is logged, never raised: an extraction is never
+    lost to the check, and the daily sweep catches whatever the hook missed.
+    """
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
@@ -805,11 +838,11 @@ async def extract_terms(filing_id, pool, *, force: bool = False) -> ExtractionRe
                 conn, cusip=cusip, name=security_name[:500], filing_id=filing_id,
             )
 
-            if force and existing is not None:
+            if existing_id is not None:
                 # Rule 3: close the old row, never update it in place.
                 await conn.execute(
                     f"UPDATE {TERMS_TABLE} SET valid_to = now() WHERE id = $1::uuid AND valid_to IS NULL",
-                    str(existing["id"]),
+                    str(existing_id),
                 )
 
             note_terms_id = await conn.fetchval(
@@ -875,8 +908,9 @@ async def extract_terms(filing_id, pool, *, force: bool = False) -> ExtractionRe
     # in-memory `disagreements` dict is handed over as well as being on disk,
     # because the logging loop above swallows its own failures — a disagreement
     # that failed to persist must still queue the row.
+    routing_decision = None
     try:
-        result.routing_decision = await route_note_terms_row(
+        routing_decision = await route_note_terms_row(
             pool, {"id": note_terms_id, "extraction_confidence": confidence},
             hazard_disagreements=disagreements,
         )
@@ -889,12 +923,20 @@ async def extract_terms(filing_id, pool, *, force: bool = False) -> ExtractionRe
             f"terms row {note_terms_id}: {type(exc).__name__}: {exc}"
         )
 
-    result.ok = True
-    result.note_terms_id = note_terms_id
-    result.global_security_id = str(security_id)
-    result.terms_status = derived_status
-    result.field_status = field_status
-    return result
+    # ── rep12: the automatic note-versus-replica check (never loses the row) ──
+    check_result = None
+    try:
+        from services import note_checks as NC
+
+        check_result = await NC.on_terms_written(pool, note_terms_id, source="extraction")
+    except Exception as exc:  # noqa: BLE001 — the daily sweep catches what the hook missed
+        print(
+            f"[note_terms_extraction] filing {filing_id}: the note check failed for "
+            f"terms row {note_terms_id}: {type(exc).__name__}: {exc}"
+        )
+
+    return {"note_terms_id": note_terms_id, "global_security_id": str(security_id),
+            "routing_decision": routing_decision, "check": check_result}
 
 
 async def _last_ensemble_model_used(pool) -> str | None:

@@ -2011,3 +2011,41 @@ computed vs stated, payoff, pricing, submit / approve / reject / archive); the X
   them against filings.
 - **Before any real note can be built.** Its underlying edge must be confirmed, and its terms
   reviewed where flagged.
+
+## rep12 — the note-versus-replica check across new issues (2026-11-04)
+
+**The automatic check.** Every new or restated live note-terms version — written by the extraction's
+one write path (`note_terms_extraction.store_extraction`) or a human correction — is checked for every
+org that uses replication (a role holding view_replication; the org can turn it off). Per org: rep11's
+verdict; a DRAFT replica when rep11's `buildable` holds (static / approximate, terms approved —
+confidence high, routed 'stp', nothing failed or out of scale — and exactly one RESOLVED underlying);
+the comparison when the note's price and every leg are quoted, else "not priced — enter a quote"
+naming each gap. Idempotent by terms version (+ the underlying edges): nothing is re-checked unless
+something changed. A sweep each scheduler tick catches anything the hook missed.
+
+**No automatic confirmation, no automatic approval.** The check never confirms an underlying and
+never submits or approves a replica. A draft it prepares has no maker; a person completes it, submits
+it, and a second person approves it (rep11's maker-checker).
+
+**The feed.** Replication → Notes → New issues (`/portfolio/replication/notes/new-issues`): newest
+first by the 424B2 filing date (or, with no filing, the day the terms were first extracted); filters
+by verdict, archetype, issuer, underlying, issue date and status; sort by the embedded-fee estimate
+(priced only, highest first; unpriced last, each saying what it needs). Staff only (an internal role
+holding view_replication); mark reviewed or dismissed (with a note) — recorded with the user.
+
+**Alerts.** A system-opened human task to holders of view_replication (never a client role) when a
+priced estimate is above the org's threshold — at the check or when a person prices it later — or a
+watched issuer / underlying / archetype issues.
+
+**The underlying queue** (`/portfolio/replication/notes/underlyings`, Super Admin): counts per state;
+edges with ONE registry proposal confirm in one click or several at once — each its own
+`confirm_resolution` call, recorded with the clicker; edges with no proposal open the manual match
+(the pricing-admin confirm route with a named security or `create_new`). Every confirmation or
+rejection re-checks the affected notes.
+
+**Operator steps.** (1) Assign models and daily budgets to the note-extraction job (AI Models → Model
+Jobs) — nothing is extracted until then. (2) Grant STP per filer you trust, or review queued terms:
+an extracted note is "approved" only then. (3) Work the underlying queue. (4) Set the alert threshold
+and watches on New issues. (5) Enter the note's price, the underlying's start and current level and
+each option's premium (or implied vol) as quotes — the estimate appears only then.
+

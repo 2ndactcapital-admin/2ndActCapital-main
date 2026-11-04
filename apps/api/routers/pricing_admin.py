@@ -442,8 +442,19 @@ async def resolve_note_terms_field(
         # accuracy statistic — the system proposes the moment, a person decides.
         pairing_state = await _pairing_state(conn, row["cik"], row["form_type"])
 
+    # REP12 — a corrected terms version is re-checked (note-versus-replica) for every org; never fails the
+    # correction (the sweep catches a missed one).
+    check = None
+    try:
+        from services import note_checks as NC
+
+        check = await NC.on_terms_written(pool, str(note_terms_id), source="correction")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[pricing_admin] note check after a correction failed: {type(exc).__name__}: {exc}")
+
     return {
         "ok": True,
+        "note_check": {"action": check.get("action"), "orgs": len(check.get("orgs", []))} if check else None,
         "correction_id": correction_id,
         "note_terms_id": str(note_terms_id),
         "field": field_name,
@@ -588,9 +599,12 @@ async def delete_stp_policy(request: Request, policy_id: UUID):
 # a second place for the two to drift apart.
 #
 # WHAT THE CONFIRM ENDPOINT IS
-# It is the ONLY route in this application to link_state='resolved'. That is
-# enforced three deep: this function is the sole caller of
-# services.underlying_resolution.confirm_resolution; that function is the sole
+# rep12: no longer the ONLY route — the Replication Studio's underlying queue
+# (routers/replication_note_checks.py, Super Admin) also calls
+# confirm_resolution, once per edge, as the Super Admin who clicked. What stays
+# true and is enforced three deep: confirm_resolution in
+# services.underlying_resolution is the one code site that writes
+# link_state='resolved'; that function is the sole
 # setter of the app.underlying_confirm GUC; and trg_sec_global_rel_confirm_gate
 # rejects the UPDATE outright without it. The proposal pipeline is not trusted
 # to stay on its side of the line — it is prevented from crossing it.
@@ -658,7 +672,8 @@ async def confirm_underlying(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except UnderlyingResolutionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, **result}
+    rechecked = await _recheck_after_edge(pool, relationship_id)
+    return {"ok": True, **result, "rechecked_notes": rechecked}
 
 
 @router.post("/admin/pricing/underlying-queue/{relationship_id}/reject")
@@ -682,4 +697,23 @@ async def reject_underlying(request: Request, relationship_id: UUID):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except UnderlyingResolutionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, **result}
+    rechecked = await _recheck_after_edge(pool, relationship_id)
+    return {"ok": True, **result, "rechecked_notes": rechecked}
+
+
+async def _recheck_after_edge(pool, relationship_id) -> int:
+    """REP12 — after an underlying is confirmed or a proposal rejected, the note's current terms are re-checked
+    (note-versus-replica) for every org. Never fails the decision; the sweep catches a missed one."""
+    try:
+        from services import note_checks as NC
+        from services.database import get_pool as _rls_pool
+
+        rls = await _rls_pool()
+        async with rls.acquire() as conn:
+            note = await conn.fetchval(
+                "SELECT from_global_security_id FROM portfolio.securities_global_relationships WHERE id = $1::uuid",
+                str(relationship_id))
+        return len(await NC.recheck_notes(rls, [note], trigger="underlying_confirmed")) if note else 0
+    except Exception as exc:  # noqa: BLE001
+        print(f"[pricing_admin] note re-check after an underlying decision failed: {type(exc).__name__}: {exc}")
+        return 0

@@ -105,6 +105,12 @@ proceeds in time slices (AI_DAILY_RUN_SLICE_SECONDS, default 240) so this tick
 still exits, and the next tick continues it. Member statements are never read
 here. One scheduled run per job per UTC day; AI_DAILY_RUNS=0 turns it off.
 
+NOTE CHECKS (rep12). After rep11's verdicts, ``services.note_checks.sweep``:
+each note's current live terms is checked once per terms version for every org
+that uses replication (the extraction hook's safety net), then a check priced
+later above the org's threshold alerts staff. Prepares DRAFT replicas only;
+never confirms an underlying, never approves anything. Its own step.
+
 TEST ORGS (rep6 fix 2). No step here acts on a verify fixture org
 (``organizations.is_test``, services.orgs): the holdings refresh, its review
 tasks and model monitoring, the execute-by sweep and the proposals tick all
@@ -227,6 +233,18 @@ async def main() -> int:
                 print(f"[scheduler] note verdicts: {nv['computed']} computed, {nv['closed']} closed")
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] note verdicts failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # REP12 — the note-versus-replica check sweep: every note's current terms checked once per terms version per
+        # org (catches whatever the extraction hook missed), then late-priced alerts. Idempotent; never a test org.
+        try:
+            from services.note_checks import sweep as note_check_sweep
+
+            ncs = await note_check_sweep(pool)
+            if ncs["checked"] or ncs["alerts"]:
+                print(f"[scheduler] note checks: {ncs['checked']} checked, {ncs['alerts']} alerts")
+            for e in ncs["errors"]:
+                print(f"[scheduler] note checks: {e}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] note checks failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # AIBUDGET1 — the daily document-reading runs, inside each model's daily budget. Its own step, last.
         try:
             daily = await daily_tick(pool)

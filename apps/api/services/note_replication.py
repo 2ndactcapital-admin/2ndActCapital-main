@@ -1064,11 +1064,31 @@ async def build(pool, *, org_id, actor_id, note_id, broad_based_index: bool | No
                 start_level_quote_id=None, treasury_global_security_id=None) -> dict:
     """A DRAFT replica of a static / approximate note. Refused — with the reasons, NOTHING written — for a
     not-replicable note, terms that need review, or an unconfirmed underlying."""
+    async with pool.acquire() as conn:
+        actor = await HT.assert_human(conn, actor_id, org_id)
+    return await _build(pool, org_id=org_id, actor_id=actor["id"], note_id=note_id,
+                        broad_based_index=broad_based_index, is_flex=is_flex, exercise_style=exercise_style,
+                        settlement=settlement, multiplier=multiplier, start_level_quote_id=start_level_quote_id,
+                        treasury_global_security_id=treasury_global_security_id)
+
+
+async def prepare_draft(pool, *, org_id, note_id, broad_based_index: bool) -> dict:
+    """rep12 — the AUTOMATIC check's DRAFT replica: the same builder, with NO person (created_by NULL, no maker).
+    Same refusals as :func:`build` (NoteRefused with the reasons, nothing written). The draft is never submitted
+    or approved here: a person sets what is missing, submits it, and a second person approves (maker-checker)."""
+    return await _build(pool, org_id=org_id, actor_id=None, note_id=note_id, broad_based_index=broad_based_index,
+                        is_flex=True, exercise_style="european", settlement=None, multiplier="100",
+                        start_level_quote_id=None, treasury_global_security_id=None, source="automatic_check")
+
+
+async def _build(pool, *, org_id, actor_id, note_id, broad_based_index, is_flex, exercise_style, settlement,
+                 multiplier, start_level_quote_id, treasury_global_security_id, source: str = "person") -> dict:
+    """The builder. ``actor_id`` is an admitted person (asserted by :func:`build`) or None for the automatic check
+    (:func:`prepare_draft`) — then the draft has no maker and no creator."""
     if exercise_style not in OS.EXERCISE_STYLES:
         raise NoteError(f"exercise style is one of {list(OS.EXERCISE_STYLES)}")
     mult = OS._need_decimal(multiplier, "multiplier")
     async with pool.acquire() as conn:
-        actor = await HT.assert_human(conn, actor_id, org_id)
         t = await load_current_terms(conn, note_id)
     v = None
     async with pool.acquire() as conn:
@@ -1115,7 +1135,7 @@ async def build(pool, *, org_id, actor_id, note_id, broad_based_index: bool | No
             x["maturity"] = end
     level = D(q["value"]) if q else None
     if level is not None:
-        legs = await _contracts(pool, actor_id=actor["id"], underlying_id=und["id"], legs=legs, start_level=level,
+        legs = await _contracts(pool, actor_id=actor_id, underlying_id=und["id"], legs=legs, start_level=level,
                                 broad_based=broad, style=exercise_style, settlement=settle, is_flex=is_flex,
                                 multiplier=mult)
     comp = computed_terms(legs, spec)
@@ -1138,13 +1158,14 @@ async def build(pool, *, org_id, actor_id, note_id, broad_based_index: bool | No
                     str(q["id"]) if q else None, D(tsy_leg["face_pct"]) if tsy_leg else None,
                     end if tsy_leg else None, str(tsy["id"]) if tsy else None, broad, exercise_style, settle, is_flex,
                     mult, spread if v["mapping"] == "digital_call_spread" else None, _dumps(comp),
-                    _dumps(approx) if approx else None, [str(actor["id"])], str(actor["id"]))
+                    _dumps(approx) if approx else None, [str(actor_id)] if actor_id else [],
+                    str(actor_id) if actor_id else None)
             except asyncpg.UniqueViolationError:
                 raise NoteConflict("an open replica of this note already exists") from None
-            await _write_legs(conn, org_id, row["id"], legs, actor["id"])
-            await _audit(conn, org_id, actor["id"], "replica_built", row["id"],
+            await _write_legs(conn, org_id, row["id"], legs, actor_id)
+            await _audit(conn, org_id, actor_id, "replica_built", row["id"],
                          {"note": str(t["global_security_id"]), "verdict": v["verdict"], "mapping": v["mapping"],
-                          "legs": len(legs), "start_level": dstr(level)})
+                          "legs": len(legs), "start_level": dstr(level), "source": source})
     async with pool.acquire() as conn:
         return await replica_detail(conn, org_id, row["id"])
 
@@ -1372,6 +1393,34 @@ async def price(pool, *, org_id, actor_id, replica_id, start_level_quote_id=None
     return comparison_out(dict(row))
 
 
+async def price_automatic(pool, *, org_id, replica_id) -> dict:
+    """rep12 — the automatic check prices a live replica with NO person: the same :func:`compute_cost` (rep11's
+    math, every input listed) and the same insert-only comparison row, marked computed_source 'automatic_check'
+    with computed_by NULL. Never sets a level or a Treasury (that is a person's step on the draft): whatever is
+    missing is recorded as "not priced", naming each gap."""
+    async with pool.acquire() as conn:
+        r = await load_replica(conn, org_id, replica_id)
+        legs = await legs_of(conn, r["id"])
+        t = (await live_terms(conn, terms_ids=[r["note_terms_id"]]) or [None])[0]
+        res = await compute_cost(conn, org_id, r, legs)
+        diffs = differences(t or {}, r["mapping"], approx=_loads(r["approximation"]))
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                f"""INSERT INTO {T_CMP} (org_id, replica_id, global_security_id, status, note_price_pct,
+                        note_price_quote_id, replica_cost_pct, embedded_fee_pct, inputs, missing, differences, method,
+                        as_of, computed_by, computed_source)
+                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb,
+                            $12, $13, NULL, 'automatic_check') RETURNING *""",
+                str(org_id), str(r["id"]), str(r["global_security_id"]), res["status"], D(res["note_price_pct"]),
+                res["note_price_quote_id"], D(res["replica_cost_pct"]), D(res["embedded_fee_pct"]),
+                _dumps(res["inputs"]), _dumps(res["missing"]), _dumps(diffs), res["method"],
+                datetime.fromisoformat(res["as_of"]) if res["as_of"] else None)
+            await _audit(conn, org_id, None, "replica_priced", r["id"],
+                         {"comparison": str(row["id"]), "status": res["status"], "missing": res["missing"],
+                          "source": "automatic_check"})
+    return comparison_out(dict(row))
+
+
 def comparison_out(c: dict | None) -> dict | None:
     if not c:
         return None
@@ -1381,6 +1430,7 @@ def comparison_out(c: dict | None) -> dict | None:
             "replica_cost_pct": dstr(D(c["replica_cost_pct"])), "embedded_fee_pct": dstr(D(c["embedded_fee_pct"])),
             "inputs": _loads(c["inputs"]) or [], "missing": missing, "differences": _loads(c["differences"]) or [],
             "method": c["method"], "as_of": _iso(c["as_of"]), "created_at": _iso(c["created_at"]), "label": ESTIMATE,
+            "computed_source": c.get("computed_source") or "person",
             "text": (f"{NOT_PRICED} — missing: " + "; ".join(missing)) if c["status"] == "not_priced" else
             f"Embedded fee estimate {dstr(D(c['embedded_fee_pct']))} per 100 of principal, as of {_iso(c['as_of'])}"}
 
