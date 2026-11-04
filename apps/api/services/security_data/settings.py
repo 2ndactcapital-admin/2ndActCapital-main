@@ -11,7 +11,10 @@ from decimal import Decimal
 # limit is still fresh). None = never stale on age (corporate actions are
 # events, not a series).
 STALE_DAYS_DEFAULT = {"eod_price": 5, "index_level": 5, "fx": 5, "option_quote": 1, "fund_holdings": 35,
-                      "corporate_action": None, "factor_score": 35}
+                      "corporate_action": None, "factor_score": 35,
+                      # secmaster1 — reference facts (exchange, CIK, sector …) are facts, not a series: never stale
+                      # on age; a security's listing status is kept current by the nightly instead
+                      "reference": None}
 SETTINGS: dict[str, Decimal] = {
     # two sources' same-day values differing by more than this fraction of the winner are flagged
     "security_data.disagreement_pct": Decimal("0.02"),

@@ -4,6 +4,8 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { getWorkflowRuns } from "@/lib/api";
 import WorkflowRunHistory from "@/components/admin/WorkflowRunHistory";
+import { fetchAPI } from "@/lib/api";
+import { PlatformJobsPanel } from "@/components/securityData/SecurityMaster";
 
 // Workflow Manager — Run History. What actually RAN, as opposed to the Triggers
 // screen's what is scheduled to run.
@@ -34,6 +36,13 @@ export default async function WorkflowRunsPage({ searchParams }) {
     envelope = await getWorkflowRuns({ period: "all" });
   } catch (e) {
     error = e.status === 403 ? "forbidden" : e.message;
+  }
+  // SECMASTER1 — platform jobs' "Run now" (Super Admin only: anyone else gets a 403 and no panel)
+  let platformJobs = null;
+  try {
+    platformJobs = await fetchAPI("/api/v1/admin/security-data/master/jobs");
+  } catch {
+    platformJobs = null;
   }
 
   return (
@@ -70,6 +79,7 @@ export default async function WorkflowRunsPage({ searchParams }) {
           initialSelectedId={runParam || null}
         />
       )}
+      {platformJobs ? <PlatformJobsPanel initialJobs={platformJobs} /> : null}
     </AppShell>
   );
 }

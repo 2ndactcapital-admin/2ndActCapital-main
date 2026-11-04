@@ -364,6 +364,7 @@ async def run_scheduler_tick(
     now_utc: datetime | None = None,
     lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
     log=print,
+    only_trigger_ids=None,
 ) -> TickResult:
     """Run one scan-evaluate-claim-fire pass.
 
@@ -374,6 +375,11 @@ async def run_scheduler_tick(
 
     EVERY outcome is logged with its reason. A scheduler whose quiet ticks and
     whose suppressed ticks look identical cannot be operated.
+
+    ``only_trigger_ids`` (SECMASTER1, additive, default None = every trigger)
+    narrows the scan to the given triggers, so a verify can fire ITS OWN fixture
+    triggers through this real loop without firing — or claiming an occurrence
+    of — any real one. The production entrypoint never passes it.
     """
     now_utc = now_utc or datetime.now(timezone.utc)
     result = TickResult()
@@ -396,6 +402,9 @@ async def run_scheduler_tick(
             f"{type(exc).__name__}: {exc}")
 
     rows = await load_due_candidates(conn)
+    if only_trigger_ids is not None:
+        wanted = {str(t) for t in only_trigger_ids}
+        rows = [r for r in rows if str(r["id"]) in wanted]
     result.examined = len(rows)
 
     for row in rows:

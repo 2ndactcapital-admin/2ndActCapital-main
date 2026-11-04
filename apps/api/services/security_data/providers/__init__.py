@@ -13,6 +13,10 @@ def build_providers(*, transports: Mapping[str, Any] | None = None, environ: Map
     a fake transport per provider key (tests use recorded fixtures)."""
     from services.security_data.providers import (adviser_entry, csv_upload, custodian, fred, issuer_file,
                                                   platform_entry, sec_nport, vendor_stub)
+    # secmaster1 — the five reference-data sources (data type 'reference'); pulled by services.security_master_sync,
+    # read through the rank walk from portfolio.security_reference_attributes
+    from services.security_data.providers import (finance_database, nasdaq_trader, openfigi, sec_13f_list,
+                                                  sec_tickers)
 
     t = dict(transports or {})
     return {
@@ -24,4 +28,9 @@ def build_providers(*, transports: Mapping[str, Any] | None = None, environ: Map
         "adviser_entry": adviser_entry.AdviserEntryProvider(),
         "platform_entry": platform_entry.PlatformEntryProvider(),
         "vendor_slot": vendor_stub.VendorStubProvider("vendor_slot", transport=t.get("vendor_slot")),
+        "nasdaq_trader": nasdaq_trader.NasdaqTraderProvider(),
+        "sec_tickers": sec_tickers.SecTickersProvider(),
+        "openfigi": openfigi.OpenFigiProvider(),
+        "sec_13f_list": sec_13f_list.Sec13fProvider(),
+        "finance_database": finance_database.FinanceDatabaseProvider(),
     }
