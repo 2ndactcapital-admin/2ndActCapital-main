@@ -20,7 +20,7 @@ from routers.entities import get_org_id
 from services import document_embedding
 from services import document_linkage as dl
 from services.database import get_pool
-from services.authz import is_staff
+from services.authz import is_internal
 from services.users import ensure_user
 
 router = APIRouter(tags=["semantic-search"])
@@ -35,7 +35,7 @@ async def semantic_search(request: Request, q: str = "", limit: int = 20):
     # BUGFIX2 — authz: member-scoped (visible_entity_ids: a member's own family;
     # org-general documents staff-only). Kept open to members on purpose.
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)

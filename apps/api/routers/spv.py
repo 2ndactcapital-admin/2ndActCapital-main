@@ -67,7 +67,7 @@ from services.transaction_types import get_types as get_txn_types
 from services.audit import write_audit_log
 from services.database import get_pool
 from services.permissions import get_user_id
-from services.authz import is_staff, require_entity_access, require_permission, require_staff
+from services.authz import is_internal, require_entity_access, require_internal_permission, require_permission
 from services.spv_classes import (
     ClassLabelError,
     deal_class_state,
@@ -255,9 +255,9 @@ async def list_spvs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    require_staff(request)  # BUGFIX2 — staff-only read
+    require_internal_permission(request, "view_spv")  # STAFFROLES1 — internal role + view_spv (staff as before; view_spv alone is a member grant)
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
 
     conditions = ["org_id = $1"]
     params: list = [org_id]
@@ -290,9 +290,9 @@ async def list_spvs(
 # ---------------------------------------------------------------------------
 @router.get("/spvs/{spv_id}", response_model=SPVResponse)
 async def get_spv(request: Request, spv_id: UUID):
-    require_staff(request)  # BUGFIX2 — staff-only read
+    require_internal_permission(request, "view_spv")  # STAFFROLES1 — internal role + view_spv (staff as before; view_spv alone is a member grant)
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await _fetch_spv(conn, org_id, spv_id)
@@ -668,9 +668,9 @@ async def get_captable(request: Request, spv_id: UUID):
 # ---------------------------------------------------------------------------
 @router.get("/spvs/{spv_id}/documents", response_model=list[SPVDocumentResponse])
 async def list_spv_documents(request: Request, spv_id: UUID):
-    require_staff(request)  # BUGFIX2 — staff-only read
+    require_internal_permission(request, "view_spv")  # STAFFROLES1 — internal role + view_spv (staff as before; view_spv alone is a member grant)
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -744,7 +744,7 @@ async def download_spv_document(
     doc_id: UUID,
     expires: int = Query(3600, ge=60, le=86400),
 ):
-    require_staff(request)  # BUGFIX2 — staff-only read
+    require_internal_permission(request, "view_spv")  # STAFFROLES1 — internal role + view_spv (staff as before; view_spv alone is a member grant)
     org_id = get_org_id(request)
     pool = await get_pool()
     bucket = os.environ.get("R2_BUCKET_NAME", "2ndactcapital-docs")
@@ -995,9 +995,9 @@ async def create_transaction(request: Request, spv_id: UUID, body: TransactionCr
 # ---------------------------------------------------------------------------
 @router.get("/spvs/{spv_id}/transactions", response_model=list[TransactionResponse])
 async def list_transactions(request: Request, spv_id: UUID):
-    require_staff(request)  # BUGFIX2 — staff-only read
+    require_internal_permission(request, "view_spv")  # STAFFROLES1 — internal role + view_spv (staff as before; view_spv alone is a member grant)
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
 
     try:
@@ -1296,7 +1296,7 @@ async def get_deal_classes(request: Request, deal_id: UUID):
     that is what the unique index and the create guard act on.
     """
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
 
     async with pool.acquire() as conn:

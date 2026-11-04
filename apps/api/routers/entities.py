@@ -55,7 +55,7 @@ from services.authz import (
     require_any_permission,
     require_entity_access,
     require_permission,
-    require_staff,
+    require_internal,
     scope_ids,
 )
 
@@ -643,7 +643,7 @@ async def get_entity_full(request: Request, entity_id: UUID):
     # because this payload carried compliance_record unconditionally — KYC /
     # OFAC / AML / accreditation / PEP. The compliance record now also needs
     # view_compliance, the same permission GET /entities/{id}/compliance needs.
-    principal = require_staff(request)
+    principal = require_internal(request)  # STAFFROLES1 — any internal firm role; compliance still needs view_compliance
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -961,7 +961,7 @@ async def create_note(
 
 @router.get("/entities/{entity_id}/notes", response_model=list[NoteOut])
 async def list_notes(request: Request, entity_id: UUID):
-    require_staff(request)  # BUGFIX2 — CRM notes are staff-only
+    require_internal(request)  # STAFFROLES1 — staff-data read: any internal firm role (was require_staff)
     org_id = get_org_id(request)
     pool = await get_pool()
     rows = await pool.fetch(
@@ -1498,7 +1498,7 @@ async def update_compliance(
 # ---------------------------------------------------------------------------
 @router.get("/entities/{entity_id}/ownership-graph", response_model=OwnershipGraph)
 async def ownership_graph(request: Request, entity_id: UUID):
-    require_staff(request)  # BUGFIX2 — the CRM overview's graph is staff-only
+    require_internal(request)  # STAFFROLES1 — staff-data read: any internal firm role (was require_staff)
     org_id = get_org_id(request)
     pool = await get_pool()
     max_depth = 5

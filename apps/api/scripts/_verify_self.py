@@ -103,6 +103,7 @@ SPRINT_MERGES = {
     "vhk1": "bfdfe16",
     "aibudget1": "bd63420",
     "vhk2": "9dbfee0",            # merged AFTER aibudget1: its first parent bd63420 is not its base (c6f7077)
+    "bugfix2": "e1feebf",         # merge bugfix2 (+ fix 1)
 }
 
 #: Sprints that never had a merge commit — committed on main's first-parent line directly. Their end point is the

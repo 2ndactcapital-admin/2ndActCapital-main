@@ -99,6 +99,20 @@ export const GATE_STAFF_OR_ORG_SETTINGS_STRICT = { staff: true, perm: "manage_or
 // and Billing & Custody: CRM and SPV Manager had NO gate, and Billing &
 // Custody's tabs gated on view_portfolio, which the member role holds.
 export const GATE_STAFF_STRICT = { staff: true, strict: true };
+// STAFFROLES1 — WHO MAY SEE STAFF SCREENS, separate from who skips permission
+// checks (`is_staff`, unchanged). Every internal firm role (org admin, support
+// staff, adviser, compliance …: /users/me `is_internal === true`), staff and
+// Super Admin; never a client role (member, next_gen), and an unknown role is
+// not internal. `perm` (optional): a non-staff internal role also needs it —
+// mirrors services.authz.require_internal / require_internal_permission.
+// STRICT: a lost envelope or a string "true" hides the item.
+export const GATE_INTERNAL_STRICT = { internal: true, strict: true };
+// CRM: any internal role (API require_internal).
+export const GATE_CRM = GATE_INTERNAL_STRICT;
+// SPV Manager: an internal role holding view_spv (view_spv alone is a member grant).
+export const GATE_SPV_MANAGER = { internal: true, perm: "view_spv", strict: true };
+// Billing Groups / Custody Import: an internal role holding view_portfolio (a member grant alone).
+export const GATE_FIRM_PORTFOLIO = { internal: true, perm: "view_portfolio", strict: true };
 // BUGFIX2 — the /admin AREA: open iff the caller can see at least one item of
 // the two admin sections of this very definition (so a member_manager with
 // manage_members keeps /admin/users, an org admin keeps Settings). The /admin
@@ -216,7 +230,7 @@ const tab = (section, group, tab_order, href, label, gate, adminIndex) => ({
 
 export const MENU_ITEMS = [
   main(10, "/dashboard", "Dashboard", "dashboard"),
-  main(20, "/crm", "CRM", "crm", GATE_STAFF_STRICT),
+  main(20, "/crm", "CRM", "crm", GATE_CRM),
   tab("main", "marketplace", 1, "/marketplace", "Deals", null, false),
   // DEALROOM1 — an investor's own deal-room access (self-scoped API).
   tab("main", "marketplace", 2, "/marketplace/my-access", "My deal access", null, false),
@@ -255,7 +269,7 @@ export const MENU_ITEMS = [
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),
-  main(60, "/spvs", "SPV Manager", "spv-manager", GATE_STAFF_STRICT),
+  main(60, "/spvs", "SPV Manager", "spv-manager", GATE_SPV_MANAGER),
   { ...main(70, "/insurance", "Insurance", "insurance"), comingSoon: true },
   { ...main(80, "/community", "Community", "community"), comingSoon: true },
   // navregroup Task 3 — both searches now filter by the caller's own
@@ -292,9 +306,10 @@ export const MENU_ITEMS = [
   tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_MANAGE_ORG_SETTINGS, true),
   tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_SUPER_ADMIN, true),
   tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_SUPER_ADMIN, true),
-  // BUGFIX2 — firm-level screens: staff only (view_portfolio is a MEMBER grant).
-  tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_STAFF_STRICT, true),
-  tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_STAFF_STRICT, true),
+  // BUGFIX2 — firm-level screens: never a member (view_portfolio is a MEMBER grant).
+  // STAFFROLES1 — an internal role holding view_portfolio, staff as before.
+  tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_FIRM_PORTFOLIO, true),
+  tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_FIRM_PORTFOLIO, true),
   // REP2 — the platform capabilities matrix: staff and org admins read it, Super Admin edits it.
   tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities",
     GATE_STAFF_OR_ORG_SETTINGS_STRICT, true),
@@ -385,13 +400,25 @@ export function isStaffStrict(me) {
 }
 
 /**
+ * STAFFROLES1 — may SEE staff screens: Super Admin, staff, or any internal
+ * firm role (/users/me `is_internal === true`, from services.authz
+ * INTERNAL_ROLE_NAMES). STRICT, fail closed. Never a bypass: write and approve
+ * controls keep their own permission gates (isStaffStrict / canPermStrict).
+ */
+export function isInternalStrict(me) {
+  if (!me || typeof me !== "object" || !isAdmitted(me)) return false;
+  return isSuperAdmin(me) || me.is_staff === true || me.is_internal === true;
+}
+
+/**
  * BUGFIX2 — a MEMBER: admitted, not Super Admin, not staff, not an org admin
  * (manage_org_settings). Mirrors services.authz.is_member_principal. A lost or
  * malformed envelope counts as a member (fail closed).
  */
 export function isMemberOnly(me) {
   if (!me || typeof me !== "object" || !isAdmitted(me)) return true;
-  return !(isSuperAdmin(me) || me.is_staff === true || canPermStrict(me, "manage_org_settings")
+  return !(isSuperAdmin(me) || me.is_staff === true || me.is_internal === true
+    || canPermStrict(me, "manage_org_settings")
     || canPermStrict(me, "manage_members"));
 }
 
@@ -399,6 +426,10 @@ export function canAccess(me, gate) {
   if (!gate) return true;
   if (gate.adminArea) {
     return LISTED.some((i) => i.section !== "main" && !(i.gate && i.gate.adminArea) && canAccess(me, i.gate));
+  }
+  if (gate.internal) {
+    if (!isInternalStrict(me)) return false;
+    return !gate.perm || isStaffStrict(me) || canPermStrict(me, gate.perm);
   }
   if (gate.staff) return isStaffStrict(me) || (gate.perm ? canPermStrict(me, gate.perm) : false);
   if (gate.strict) return canPermStrict(me, gate.perm);
@@ -542,7 +573,8 @@ export function visibleAdminGroups(me) {
  * app/portfolio/replication/layout.js) BEFORE the page renders, so a member who
  * pastes a staff URL gets the refusal panel and no page chrome or data — the
  * menu hiding a link was never the gate. Each mirrors the API gate:
- *   /crm, /spvs              require_staff
+ *   /crm                     require_internal (STAFFROLES1: any internal role)
+ *   /spvs                    require_internal_permission(view_spv)
  *   /admin                   at least one admin-section item visible (each
  *                            admin page keeps its own gate)
  *   /portfolio/replication   view_replication (Tilts / Backtest / Notes —
@@ -551,8 +583,8 @@ export function visibleAdminGroups(me) {
  *                            was typed in)
  */
 export const AREA_GATES = {
-  "/crm": GATE_STAFF_STRICT,
-  "/spvs": GATE_STAFF_STRICT,
+  "/crm": GATE_CRM,
+  "/spvs": GATE_SPV_MANAGER,
   "/admin": GATE_ADMIN_AREA,
   "/portfolio/replication": GATE_VIEW_REPLICATION,
 };

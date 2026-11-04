@@ -21,7 +21,7 @@ from services.assistant_transcript import FALLBACK_REPLY, is_internal, user_visi
 from services.database import get_pool
 from services.extraction import call_claude_with_tools
 from services.org_settings import get_brand_name
-from services.authz import is_staff
+from services.authz import is_internal
 from services.rbac import get_user_permissions
 from services.users import ensure_user
 
@@ -417,7 +417,7 @@ async def post_message(request: Request, body: MessageBody):
     # Staff-vs-member decides the visibility engine for scoped READ actions —
     # resolved from the token exactly as routers.semantic_search does, never
     # from the request body.
-    caller_is_staff = is_staff(request)
+    caller_is_staff = is_internal(request)  # STAFFROLES1 — read visibility only (count/query actions); writes keep their own gates
 
     # Append new user message
     user_msg = {"role": "user", "content": body.message, "_display": None}

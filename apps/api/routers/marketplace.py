@@ -59,7 +59,7 @@ from services.deal_creation import insert_deal
 from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id
-from services.authz import is_staff, require_permission
+from services.authz import is_internal, require_permission
 from services.notifications import notification_bus
 from services.org_settings import get_brand_name
 from services.rbac import get_users_by_role
@@ -455,7 +455,7 @@ async def get_deal_stage_summary(request: Request):
     filter and column key on); `status` the lifecycle state."""
     org_id = get_org_id(request)
     # BUGFIX2 — authz: member-scoped (a member's counts cover published statuses only).
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await dlc.summary(
@@ -475,7 +475,7 @@ async def list_deals(
 ):
     org_id = get_org_id(request)
     user_id = get_user_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
 
     conditions = ["org_id = $1", "valid_to IS NULL", "system_to IS NULL"]
     params: list = [org_id]
@@ -606,7 +606,7 @@ async def _require_deal_visible(conn, request: Request, row, deal_id) -> None:
     existence not disclosed. Same rule get_deal / get_deal_lifecycle apply inline."""
     if row is None:
         raise HTTPException(status_code=404, detail="Deal not found")
-    if is_staff(request):
+    if is_internal(request):  # STAFFROLES1 — visibility (see), not a bypass
         return
     if str(row["deal_status"]) not in MEMBER_VISIBLE_STATUSES:
         raise HTTPException(status_code=404, detail="Deal not found")
@@ -619,7 +619,7 @@ async def get_deal(request: Request, deal_id: UUID):
     # BUGFIX2 — authz: member-scoped (published + offering open, else 404).
     org_id = get_org_id(request)
     user_id = get_user_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
 
     async with pool.acquire() as conn:
@@ -869,7 +869,7 @@ async def get_deal_lifecycle(request: Request, deal_id: UUID):
     which of them this deal still lacks. Read gate = the deal's own (404 to a
     member for a status they cannot see)."""
     org_id = get_org_id(request)
-    staff = is_staff(request)
+    staff = is_internal(request)  # STAFFROLES1 — visibility (see), not a bypass
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

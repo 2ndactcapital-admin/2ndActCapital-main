@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+STAFFROLES1 (2026-11-04, "see staff data" (is_internal: every internal firm role) split from "skip permission checks" (is_staff, unchanged); org admin / support staff read the CRM, approvals unchanged; verify WRITTEN, not yet run): see the top entry.
 REP11 (2026-11-03, Replication Studio sprint 11 — PHASE 3 BEGINS: note replicability verdicts from the 424B2 terms (static 11 / approximate 3 / not replicable 40 over today's 54; 0 buildable — no underlying confirmed), replicas from rep8's options machinery plus a Treasury leg, the embedded-fee estimate only when quoted, the X-ray marker under the hypothetical-performance policy; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PREVIEWPERF (2026-11-03, EDGAR bulk-download live preview back under 2 s — round trips, not SQL; no index; verify WRITTEN, not yet run): see the top entry.
 VHK2 (2026-11-03, verify housekeeping round 2 — no regression-set check frozen against live state; no application code; verify WRITTEN, not yet run): see the top entry.
@@ -330,6 +331,59 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000000000000000000000000000000000000000000000000000000. STAFFROLES1 — "may SEE staff data" (is_internal) split from "skips permission checks" (is_staff); verify WRITTEN, not yet run (2026-11-04)
+
+**Why.** After BUGFIX2 the 24 staff-only reads (CRM, ledger, SPV, document links, precedence) used `require_staff`,
+and "staff" meant `STAFF_ROLE_NAMES` (investment_staff / admin / super_admin / owner) — the same flag that SKIPS
+permission checks. Org admins and support staff (jpl991723 / jpl991722) were refused the CRM. Adding them to
+`STAFF_ROLE_NAMES` would have handed them every bypass (approvals included), so the two ideas are now separate.
+
+**The two concepts** (`services/authz.py`):
+
+| Concept | Name | Who | Used by |
+|---|---|---|---|
+| skips permission checks (UNCHANGED) | `STAFF_ROLE_NAMES` → `Principal.is_staff`, `require_staff`, `require_staff_or_permission` | investment_staff, admin, owner, super_admin | every WRITE that was staff-gated (relationships, ownership, groups, targets, extraction / brief), the SPV subscribe bypass, the settings catalogs |
+| may SEE staff data (new) | `INTERNAL_ROLE_NAMES` → `Principal.is_internal`, `require_internal`, `require_internal_permission`, `authz.is_internal` | the staff roles + org_admin, support_staff, advisor, compliance, fund_finance, investment_committee, ir_member_relations, member_manager | staff-data READS; member scope on a READ (`require_entity_access` / `member_entity_scope`); draft-deal / SPV / document-search / X-ray / assistant visibility; `is_member_principal` |
+
+Client roles (`member`, `next_gen`) are not internal; an unknown or unclassified role is not internal (fail
+closed) — a new internal role must be added to `INTERNAL_ROLE_NAMES` by name. `/users/me` publishes `is_internal`
+beside `is_staff`; the menu's `isInternalStrict` mirrors it (`isStaffStrict` kept for the bypass).
+
+**Routes (31, all reads; `docs/AUTHZ1_ROUTES.md`).** CRM (`/entities/{id}/full|notes|ownership-graph|tree|lookthrough|relationships|ownership|ownership/history|ownership-tree`,
+`/entity-groups` ×2), document links ×3, `/portfolio/precedence` → `require_internal` (any internal role; the
+compliance record inside `/full` still needs `view_compliance`). SPV reads ×5 → internal + `view_spv`. Ledger reads ×5 →
+internal + `view_spv` or `manage_ledger`. Billing groups / custody import reads ×6 → internal + `view_portfolio`.
+Staff and Super Admin pass all of them as before. `view_spv` / `view_portfolio` are MEMBER grants — the internal
+role is what refuses a member. The 3 settings catalogs stay staff-or-`manage_org_settings`. Entity-scoped WRITES keep
+the member path for a non-staff internal role (it may read any family, write none it is not a delegate of).
+
+**What org admin and support staff can now see** (live grants 2026-11-04): org admin — CRM, documents, and its
+own permission screens (replication, instructions, models, proposals, tax, blocks, settings); no SPV Manager /
+ledger / billing (holds no `view_spv` / `view_portfolio`). Support staff — CRM (with the compliance record:
+`view_compliance`), documents, Billing & Custody reads (`view_portfolio`); their staff-only "CSA / Ops" profile is
+no longer stripped to member-safe keys. **Still cannot**: any write that is staff-gated (`require_staff`), and any
+approval they do not hold the permission for. Support staff holds no `approve_*`; the REAL org_admin role holds every
+`approve_*` / `manage_*` by GRANT (ORG_ADMIN_DEFAULT_PERMISSIONS) — that is a permission decision, unchanged by this
+sprint. Not the bypass.
+
+**Staff visibility (Task 4): enforcement via `staff_assignments` stays OFF.** Every internal role sees all of the
+org's families on the CRM / member-scope reads, as staff did before (RLS keeps it in-org). The paths that already ran
+through `visible_entity_ids(is_staff=True)` (document / semantic search, commitments, document review, assistant
+counts, X-ray households) use the existing staff engine (assignments / teams / hierarchy; Super Admin all) — unchanged,
+now also for internal roles. [FIND] those were already assignment-scoped for staff before this sprint.
+
+**[FIND]s.** The prompt's "20 router files use require_staff" was 15 at BEFORE_REF (11 + 4 with
+`require_staff_or_permission`). `fund_finance` / `compliance` / `investment_committee` hold only
+`review_agent_proposals`: they now see the CRM but no SPV / ledger / billing (operator grant decision). The workflow
+Runs menu tab stays Super Admin only (profile-axis key not on `/users/me`). `docs/schema_snapshot.sql` lacks
+`investment_profile_answers` (the table is live).
+
+**Regression edits:** `verify_bugfix2` (the member expectation also covers the `internal` rules; its staff tree may
+read `internal`), `verify_authz1` matrix (`internal` / `internal_perm` rules), `verify_navregroup` live personas carry
+`is_internal`, `navregroup_server_gates.mjs` / `navregroup_traced_gates.mjs` (gate kinds `internal`, `internal:<perm>`),
+`_verify_self.SPRINT_MERGES['bugfix2']`. Verify: `apps/api/scripts/verify_staffroles1.py` (WRITTEN, not run; regression
+= verify_bugfix2 once, flat, VERIFY_NESTED=1, 2700 s).
 
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000. BUGFIX2 — member data isolation first, then the HollisMuse round-3 findings; verify WRITTEN, not yet run (2026-11-03)
 

@@ -30,7 +30,7 @@ from services.ownership_tree import (
     parse_edge_types,
     staff_tree,
 )
-from services.authz import require_staff
+from services.authz import require_internal
 from services.users import ensure_user
 
 router = APIRouter(tags=["ownership_graph"])
@@ -71,7 +71,7 @@ async def staff_ownership_graph(
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD"),
     max_depth: int = Query(20),
 ):
-    require_staff(request)
+    require_internal(request)  # STAFFROLES1 — staff-data read: any internal firm role (was require_staff)
     org_id = get_org_id(request)
     direction = _validate_direction(direction)
     ets = parse_edge_types(edge_types)

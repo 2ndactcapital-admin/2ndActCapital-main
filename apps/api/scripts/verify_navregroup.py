@@ -719,7 +719,7 @@ async def y_live_roles(conn) -> None:
     (org_admin 2 → 27). The same rule over every REAL role in the default org, read now: each visible href has a
     traced gate that admits the role, except the mismatches navregroup recorded as pre-existing [FIND]s."""
     section("[Y] Every real role's visible hrefs are admitted by their traced server gates (read now, not frozen)")
-    from services.authz import STAFF_ROLE_NAMES
+    from services.authz import INTERNAL_ROLE_NAMES, STAFF_ROLE_NAMES
     rows = await rls_fetch(conn, """SELECT r.name, array_agg(DISTINCT p.name ORDER BY p.name) AS perms
         FROM roles r JOIN role_permissions rp ON rp.role_id = r.id JOIN permissions p ON p.id = rp.permission_id
         WHERE r.org_id = $1 GROUP BY r.name ORDER BY r.name""", DEFAULT_ORG)
@@ -728,7 +728,8 @@ async def y_live_roles(conn) -> None:
         name = r["name"]
         account_role = "super_admin" if name == "super_admin" else ("org_admin" if name == "org_admin" else "member")
         extra[f"live:{name}"] = {"account_role": account_role, "role": name, "roles": [name], "status": "active",
-                                 "permissions": list(r["perms"]), "is_staff": name in STAFF_ROLE_NAMES}
+                                 "permissions": list(r["perms"]), "is_staff": name in STAFF_ROLE_NAMES,
+                                 "is_internal": name in INTERNAL_ROLE_NAMES}   # STAFFROLES1 (/users/me)
     nav = (HARNESS_DATA or {}).get("navregroup") or {}
     pre_existing = set().union(*[set(p.get("refused_before") or []) for p in nav.get("personas") or []])
     d = run_today(extra)

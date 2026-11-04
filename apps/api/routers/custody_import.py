@@ -42,7 +42,7 @@ from services.custody.importer import (
     get_batch,
     list_batches,
 )
-from services.authz import require_staff
+from services.authz import require_internal_permission
 from services.database import get_pool
 from services.permissions import get_user_id
 from services.rbac import has_permission, require_permission
@@ -135,7 +135,7 @@ async def custody_profiles(request: Request):
     renders its commit button from ``permissions.can_write`` alone rather than
     inferring permission from a 403 it has not made yet.
     """
-    require_staff(request)  # BUGFIX2 — firm custody imports: staff only (view_portfolio is a member grant)
+    require_internal_permission(request, "view_portfolio")  # STAFFROLES1 — internal role + view_portfolio (view_portfolio alone is a member grant)
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)
@@ -280,7 +280,7 @@ async def commit(
 
 @router.get("/custody/batches")
 async def batches(request: Request, limit: int = 50):
-    require_staff(request)  # BUGFIX2 — firm custody imports: staff only (view_portfolio is a member grant)
+    require_internal_permission(request, "view_portfolio")  # STAFFROLES1 — internal role + view_portfolio (view_portfolio alone is a member grant)
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)
@@ -294,7 +294,7 @@ async def batches(request: Request, limit: int = 50):
 @router.get("/custody/batches/{batch_id}")
 async def batch_detail(request: Request, batch_id: str):
     """One batch and its exception list — the "visible exception list" surface."""
-    require_staff(request)  # BUGFIX2 — firm custody imports: staff only (view_portfolio is a member grant)
+    require_internal_permission(request, "view_portfolio")  # STAFFROLES1 — internal role + view_portfolio (view_portfolio alone is a member grant)
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)

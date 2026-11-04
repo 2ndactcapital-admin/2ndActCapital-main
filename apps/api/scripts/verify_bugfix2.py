@@ -179,8 +179,14 @@ def self_routes(check, find):
     gone = [k for k in before if k not in end]
     check(gone == [(('GET',), "/api/v1/entities/{entity_id}/ownership-graph", "staff_ownership_graph")],
           "the only removed route record is the shadowed (never reachable) staff tree path", f"{gone}")
-    drifted = [k for k in new if k not in today or today[k]["after"] != end[k]["after"]]
-    check(not drifted, "the sprint's new routes still exist today with the same gate", f"{drifted}")
+    # STAFFROLES1 (a later sprint) re-gated the staff tree from "staff" to "internal" (any internal firm role sees
+    # staff data; a member is still refused) — that one documented narrowing-equivalent move is accepted; any other
+    # change, and any route that became open, is still drift.
+    restaged = {("staff", "internal")}
+    drifted = [k for k in new if k not in today or (today[k]["after"] != end[k]["after"]
+                                                     and (end[k]["after"], today[k]["after"]) not in restaged)]
+    check(not drifted, "the sprint's new routes still exist today with the same gate (or STAFFROLES1's staff → "
+          "internal)", f"{drifted}")
 
 
 def self_static(check, find):
@@ -820,7 +826,9 @@ async def y_reclassified(conn):
         rule = r["expect"]["rule"]
         cm, bm = await api(U_MEMBER, "GET", path)
         cs, bs = await api(U_STAFF, "GET", path)
-        if rule == "staff" or r["path"] in STAFF_OR_ORGADMIN:
+        # STAFFROLES1: the staff-only reads now carry "internal" / "internal_perm" (any internal firm role sees
+        # staff data; a member is still refused 403) — the same member expectation as "staff".
+        if rule in ("staff", "internal", "internal_perm") or r["path"] in STAFF_OR_ORGADMIN:
             if not (cm == 403 and not leaks_family2(bm)):
                 bad_m.append(f"{r['path']} → {cm} {dumps(bm)[:80]}")
         else:  # member-scoped: another family's id → 404; a list → 200 without family 2

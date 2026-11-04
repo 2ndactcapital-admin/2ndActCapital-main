@@ -178,25 +178,25 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | GET | `/api/v1/authority/households/{household_id}` | authority | R | — | new route | authz view_authority |  |
 | POST | `/api/v1/authority/households/{household_id}/changes` | authority | W | — | new route | authz manage_authority |  |
 | GET | `/api/v1/authority/vocabulary` | authority | R | — | new route | authz view_authority |  |
-| GET | `/api/v1/billing-groups` | billing_groups | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; staff |  |
+| GET | `/api/v1/billing-groups` | billing_groups | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; internal + any(view_portfolio) |  |
 | POST | `/api/v1/billing-groups` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/billing-groups/accounts/{account_id}/memberships` | billing_groups | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; staff |  |
+| GET | `/api/v1/billing-groups/accounts/{account_id}/memberships` | billing_groups | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; internal + any(view_portfolio) |  |
 | POST | `/api/v1/billing-groups/members/{member_id}/move` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | DELETE | `/api/v1/billing-groups/{group_id}` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | PATCH | `/api/v1/billing-groups/{group_id}` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/billing-groups/{group_id}/members` | billing_groups | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; staff |  |
+| GET | `/api/v1/billing-groups/{group_id}/members` | billing_groups | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; internal + any(view_portfolio) |  |
 | POST | `/api/v1/billing-groups/{group_id}/members` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | DELETE | `/api/v1/billing-groups/{group_id}/members/{account_id}` | billing_groups | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | GET | `/api/v1/config` | marketplace | R | none beyond auth | OPEN | none beyond auth | PUBLIC-TO-ORG: display labels / vocabularies (Rule 1) |
 | GET | `/api/v1/custodians/capabilities` | custodians | R | — | new route | staff or authz manage_org_settings |  |
 | PUT | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}` | custodians | W | — | new route | super_admin |  |
 | GET | `/api/v1/custodians/capabilities/{custodian_code}/{capability_key}/history` | custodians | R | — | new route | staff or authz manage_org_settings |  |
-| GET | `/api/v1/custody/batches` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; staff |  |
-| GET | `/api/v1/custody/batches/{batch_id}` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; staff |  |
+| GET | `/api/v1/custody/batches` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; internal + any(view_portfolio) |  |
+| GET | `/api/v1/custody/batches/{batch_id}` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; internal + any(view_portfolio) |  |
 | POST | `/api/v1/custody/import/commit` | custody_import | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/custody/import/dry-run` | custody_import | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/custody/import/inspect` | custody_import | W | rbac manage_billing | OPEN (get_user_id phantom id → no roles → allow) | authz manage_billing | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/custody/profiles` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; staff |  |
+| GET | `/api/v1/custody/profiles` | custody_import | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio; internal + any(view_portfolio) |  |
 | GET | `/api/v1/dashboard/brief` | dashboard | R | none beyond auth | OPEN | none beyond auth | OWN ROWS: blocks by the caller's own permissions; new_deals published-only |
 | GET | `/api/v1/dashboard/brief/narration` | dashboard | R | none beyond auth | OPEN | none beyond auth | OWN ROWS: the caller's own brief |
 | GET | `/api/v1/dashboard/todos` | dashboard | R | none beyond auth | OPEN | none beyond auth | OWN ROWS: WHERE user_id = caller |
@@ -295,7 +295,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | DELETE | `/api/v1/deals/{deal_id}/vote` | marketplace | W | — | new route | authz vote_deal |  |
 | POST | `/api/v1/deals/{deal_id}/vote` | marketplace | W | token-claim vote_deal | OPEN (token claim absent → allow) | authz vote_deal | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/document-drops/{drop_id}/analyze-vdr` | vdr | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/document-link-proposals` | document_links | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/document-link-proposals` | document_links | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/document-link-proposals/{proposal_id}/approve` | document_links | W | none beyond auth | OPEN | authz manage_documents | [FIND] document↔record linking + proposal decisions → manage_documents |
 | POST | `/api/v1/document-link-proposals/{proposal_id}/reject` | document_links | W | none beyond auth | OPEN | authz manage_documents | [FIND] document↔record linking + proposal decisions → manage_documents |
 | GET | `/api/v1/document-search` | document_links | R | none beyond auth | OPEN | member scope (own family / published deals; staff unscoped) |  |
@@ -307,7 +307,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | GET | `/api/v1/documents/{document_id}/download` | document_review | R | none beyond auth | OPEN | document visibility |  |
 | POST | `/api/v1/documents/{document_id}/entity-links` | document_links | W | none beyond auth | OPEN | authz manage_documents | [FIND] document↔record linking + proposal decisions → manage_documents |
 | DELETE | `/api/v1/documents/{document_id}/entity-links/{entity_id}` | document_links | W | none beyond auth | OPEN | authz manage_documents | [FIND] document↔record linking + proposal decisions → manage_documents |
-| GET | `/api/v1/documents/{document_id}/links` | document_links | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/documents/{document_id}/links` | document_links | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/documents/{document_id}/record-links` | document_links | W | none beyond auth | OPEN | authz manage_documents | [FIND] document↔record linking + proposal decisions → manage_documents |
 | GET | `/api/v1/documents/{document_id}/review` | document_review | R | none beyond auth | OPEN | document visibility |  |
 | POST | `/api/v1/enroll/accept` | enroll | W | none beyond auth | OPEN | none beyond auth | [FIND] the invite token is the credential (provisioning-exempt) |
@@ -332,23 +332,23 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/entities/{entity_id}/documents/{doc_id}/version` | entity_documents | W | none beyond auth | OPEN | authz manage_documents | [FIND] entity document writes → manage_documents |
 | POST | `/api/v1/entities/{entity_id}/employment` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
 | PUT | `/api/v1/entities/{entity_id}/employment/{emp_id}` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
-| GET | `/api/v1/entities/{entity_id}/full` | entities | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/entities/{entity_id}/lookthrough` | entity_graph | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/entities/{entity_id}/notes` | entities | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/entities/{entity_id}/full` | entities | R | none beyond auth | OPEN | internal |  |
+| GET | `/api/v1/entities/{entity_id}/lookthrough` | entity_graph | R | none beyond auth | OPEN | internal |  |
+| GET | `/api/v1/entities/{entity_id}/notes` | entities | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/entities/{entity_id}/notes` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
 | POST | `/api/v1/entities/{entity_id}/notes/{note_id}/apply` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
-| GET | `/api/v1/entities/{entity_id}/ownership` | entity_graph | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/entities/{entity_id}/ownership` | entity_graph | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/entities/{entity_id}/ownership` | entity_graph | W | staff | OPEN (token claim absent → allow) | staff | [FIND] staff, now from DB role membership |
-| GET | `/api/v1/entities/{entity_id}/ownership-graph` | entities | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/entities/{entity_id}/ownership-tree` | ownership_tree | R | staff | OPEN (token claim absent → allow) | staff |  |
-| GET | `/api/v1/entities/{entity_id}/ownership/history` | entity_graph | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/entities/{entity_id}/relationships` | entity_graph | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/entities/{entity_id}/ownership-graph` | entities | R | none beyond auth | OPEN | internal |  |
+| GET | `/api/v1/entities/{entity_id}/ownership-tree` | ownership_tree | R | staff | OPEN (token claim absent → allow) | internal |  |
+| GET | `/api/v1/entities/{entity_id}/ownership/history` | entity_graph | R | none beyond auth | OPEN | internal |  |
+| GET | `/api/v1/entities/{entity_id}/relationships` | entity_graph | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/entities/{entity_id}/social-profiles` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
 | POST | `/api/v1/entities/{entity_id}/tax-ids` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
-| GET | `/api/v1/entities/{entity_id}/tree` | entity_graph | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/entity-groups` | entity_graph | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/entities/{entity_id}/tree` | entity_graph | R | none beyond auth | OPEN | internal |  |
+| GET | `/api/v1/entity-groups` | entity_graph | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/entity-groups` | entity_graph | W | staff | OPEN (token claim absent → allow) | staff | [FIND] staff, now from DB role membership |
-| GET | `/api/v1/entity-groups/{group_id}` | entity_graph | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/entity-groups/{group_id}` | entity_graph | R | none beyond auth | OPEN | internal |  |
 | POST | `/api/v1/entity-groups/{group_id}/members` | entity_graph | W | staff | OPEN (token claim absent → allow) | staff | [FIND] staff, now from DB role membership |
 | DELETE | `/api/v1/entity-groups/{group_id}/members/{entity_id}` | entity_graph | W | staff | OPEN (token claim absent → allow) | staff | [FIND] staff, now from DB role membership |
 | POST | `/api/v1/entity-ownership` | entities | W | none beyond auth | OPEN | authz manage_members | [FIND] CRM writes → manage_members (compliance → manage_compliance; stub → manage_members|manage_portfolio) |
@@ -453,16 +453,16 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/investment-profile/{entity_id}/extract` | investment_profile | W | staff | OPEN (token claim absent → allow) | staff; entity access | [FIND] staff, now from DB role membership |
 | GET | `/api/v1/investment-profile/{entity_id}/extractions` | investment_profile | R | none beyond auth | OPEN | entity access |  |
 | PUT | `/api/v1/investment-profile/{entity_id}/extractions/{extraction_id}/review` | investment_profile | W | staff | OPEN (token claim absent → allow) | staff | [FIND] staff, now from DB role membership |
-| GET | `/api/v1/ledger/accounts` | ledger | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/ledger/accounts` | ledger | R | none beyond auth | OPEN | internal + any(view_spv|manage_ledger) |  |
 | POST | `/api/v1/ledger/accounts` | ledger | W | none beyond auth | OPEN | authz manage_ledger | [FIND] GL writes → manage_ledger (new permission; GL posting is never agent-reachable) |
 | PATCH | `/api/v1/ledger/accounts/{account_id}` | ledger | W | none beyond auth | OPEN | authz manage_ledger | [FIND] GL writes → manage_ledger (new permission; GL posting is never agent-reachable) |
-| GET | `/api/v1/ledger/capital-accounts` | ledger | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/ledger/entries` | ledger | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/ledger/capital-accounts` | ledger | R | none beyond auth | OPEN | internal + any(view_spv|manage_ledger) |  |
+| GET | `/api/v1/ledger/entries` | ledger | R | none beyond auth | OPEN | internal + any(view_spv|manage_ledger) |  |
 | POST | `/api/v1/ledger/entries` | ledger | W | none beyond auth | OPEN | authz manage_ledger | [FIND] GL writes → manage_ledger (new permission; GL posting is never agent-reachable) |
 | POST | `/api/v1/ledger/entries/{entry_id}/post` | ledger | W | none beyond auth | OPEN | authz manage_ledger | [FIND] GL writes → manage_ledger (new permission; GL posting is never agent-reachable) |
 | POST | `/api/v1/ledger/entries/{entry_id}/reverse` | ledger | W | none beyond auth | OPEN | authz manage_ledger | [FIND] GL writes → manage_ledger (new permission; GL posting is never agent-reachable) |
-| GET | `/api/v1/ledger/templates` | ledger | R | none beyond auth | OPEN | staff |  |
-| GET | `/api/v1/ledger/trial-balance` | ledger | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/ledger/templates` | ledger | R | none beyond auth | OPEN | internal + any(view_spv|manage_ledger) |  |
+| GET | `/api/v1/ledger/trial-balance` | ledger | R | none beyond auth | OPEN | internal + any(view_spv|manage_ledger) |  |
 | GET | `/api/v1/lot-method/accounts/{account_id}` | lot_method | R | — | new route | authz view_proposals |  |
 | POST | `/api/v1/lot-method/accounts/{account_id}/changes` | lot_method | W | — | new route | authz manage_proposals |  |
 | POST | `/api/v1/lot-method/changes/{change_id}/approve` | lot_method | W | — | new route | authz approve_proposals |  |
@@ -560,7 +560,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/portfolio/positions` | portfolio_positions | W | rbac manage_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz manage_portfolio | [FIND] same permission, now enforced from the DB Principal |
 | GET | `/api/v1/portfolio/positions/{position_id}` | portfolio_positions | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio |  |
 | PATCH | `/api/v1/portfolio/positions/{position_id}` | portfolio_positions | W | rbac manage_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz manage_portfolio | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/portfolio/precedence` | portfolio_ingest | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/portfolio/precedence` | portfolio_ingest | R | none beyond auth | OPEN | internal |  |
 | DELETE | `/api/v1/portfolio/precedence/households/{household_id}` | portfolio_ingest | W | rbac manage_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz manage_portfolio | [FIND] same permission, now enforced from the DB Principal |
 | GET | `/api/v1/portfolio/precedence/households/{household_id}` | portfolio_ingest | R | rbac view_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz view_portfolio |  |
 | PUT | `/api/v1/portfolio/precedence/households/{household_id}` | portfolio_ingest | W | rbac manage_portfolio | OPEN (get_user_id phantom id → no roles → allow) | authz manage_portfolio | [FIND] same permission, now enforced from the DB Principal |
@@ -591,7 +591,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/proposals/{proposal_id}/refresh` | account_models | W | — | new route | authz manage_proposals |  |
 | POST | `/api/v1/proposals/{proposal_id}/reject` | account_models | W | — | new route | authz approve_proposals |  |
 | POST | `/api/v1/proposals/{proposal_id}/submit` | account_models | W | — | new route | authz manage_proposals |  |
-| GET | `/api/v1/records/{record_type}/{record_id}/documents` | document_links | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/records/{record_type}/{record_id}/documents` | document_links | R | none beyond auth | OPEN | internal |  |
 | GET | `/api/v1/reference/{list_key}` | reference | R | none beyond auth | OPEN | none beyond auth | PUBLIC-TO-ORG: reference lists (countries, currencies ...) |
 | GET | `/api/v1/replication/backtests` | replication_rep10 | R | — | new route | authz view_replication |  |
 | POST | `/api/v1/replication/backtests` | replication_rep10 | W | — | new route | authz manage_replication |  |
@@ -668,16 +668,16 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/security-data/uploads` | security_data | W | — | new route | authz manage_org_settings |  |
 | POST | `/api/v1/security-data/uploads/{upload_id}/decision` | security_data | W | — | new route | authz manage_org_settings |  |
 | GET | `/api/v1/semantic-search` | semantic_search | R | none beyond auth | OPEN | member scope (own family / published deals; staff unscoped) |  |
-| GET | `/api/v1/spvs` | spv | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/spvs` | spv | R | none beyond auth | OPEN | internal + any(view_spv) |  |
 | POST | `/api/v1/spvs` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/spvs/{spv_id}` | spv | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/spvs/{spv_id}` | spv | R | none beyond auth | OPEN | internal + any(view_spv) |  |
 | PATCH | `/api/v1/spvs/{spv_id}` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | GET | `/api/v1/spvs/{spv_id}/captable` | spv | R | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals |  |
-| GET | `/api/v1/spvs/{spv_id}/documents` | spv | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/spvs/{spv_id}/documents` | spv | R | none beyond auth | OPEN | internal + any(view_spv) |  |
 | POST | `/api/v1/spvs/{spv_id}/documents` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | DELETE | `/api/v1/spvs/{spv_id}/documents/{doc_id}` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | PATCH | `/api/v1/spvs/{spv_id}/documents/{doc_id}` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
-| GET | `/api/v1/spvs/{spv_id}/documents/{doc_id}/download` | spv | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/spvs/{spv_id}/documents/{doc_id}/download` | spv | R | none beyond auth | OPEN | internal + any(view_spv) |  |
 | POST | `/api/v1/spvs/{spv_id}/documents/{doc_id}/version` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/spvs/{spv_id}/form-entity` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | GET | `/api/v1/spvs/{spv_id}/history` | spv | R | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals |  |
@@ -685,7 +685,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/spvs/{spv_id}/status` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/spvs/{spv_id}/subscriptions` | spv | W | none beyond auth | OPEN | authz indicate_interest; entity access | [FIND] subscriptions: entity access + indicate_interest for a non-staff caller |
 | PATCH | `/api/v1/spvs/{spv_id}/subscriptions/{sub_id}` | spv | W | none beyond auth | OPEN | authz indicate_interest; entity access | [FIND] subscriptions: entity access + indicate_interest for a non-staff caller |
-| GET | `/api/v1/spvs/{spv_id}/transactions` | spv | R | none beyond auth | OPEN | staff |  |
+| GET | `/api/v1/spvs/{spv_id}/transactions` | spv | R | none beyond auth | OPEN | internal + any(view_spv) |  |
 | POST | `/api/v1/spvs/{spv_id}/transactions` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | PATCH | `/api/v1/spvs/{spv_id}/transactions/{txn_id}` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/spvs/{spv_id}/transactions/{txn_id}/allocate` | spv | W | token-claim manage_deals | OPEN (token claim absent → allow) | authz manage_deals | [FIND] same permission, now enforced from the DB Principal |

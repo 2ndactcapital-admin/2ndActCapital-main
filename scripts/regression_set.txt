@@ -33,3 +33,4 @@ verify_previewperf.py
 verify_previewperffix1.py
 verify_rep11.py
 verify_bugfix2.py
+verify_staffroles1.py

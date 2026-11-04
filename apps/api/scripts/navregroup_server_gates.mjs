@@ -14,13 +14,17 @@
  *   profile:<a|b>    services.profiles.user_has_permission (profile + permission
  *                    sets ONLY, no default-allow), Super Admin first. Personas
  *                    carry `profile_permissions` (none do → Super Admin only).
+ *   internal         STAFFROLES1 services.authz.require_internal — Super Admin,
+ *                    staff, or /users/me is_internal (every internal firm role)
+ *   internal:<perm>  STAFFROLES1 require_internal_permission — Super Admin,
+ *                    staff (bypass), or an internal role holding <perm>
  *   super_admin      users.role = 'super_admin'
  *   missing          no page exists at this path (Next 404) — nobody is served
  */
 export const SERVER_GATES = {
   "/dashboard": "session",
-  // BUGFIX2 — staff only (API require_staff + app/crm/layout.js).
-  "/crm": "staff",
+  // BUGFIX2 — staff only; STAFFROLES1 — any internal firm role (API require_internal + app/crm/layout.js).
+  "/crm": "internal",
   "/marketplace": "session",
   // DEALROOM1 — GET /deal-room/my-access is self-scoped (require_active); the
   // grid's gate is a scope whose manage_deals branch is the one a menu can see.
@@ -35,7 +39,8 @@ export const SERVER_GATES = {
   "/portfolio/ownership-tree": "session",
   "/portfolio-reporting": "missing",
   "/market": "session",
-  "/spvs": "staff",
+  // STAFFROLES1 — an internal role holding view_spv (staff as before): API require_internal_permission.
+  "/spvs": "internal:view_spv",
   "/insurance": "missing",
   "/community": "missing",
   "/notifications": "session",
@@ -57,8 +62,9 @@ export const SERVER_GATES = {
   // BUGFIX2 — firm screens: the menu lists them for staff only (view_portfolio
   // is a member grant); the API keeps view_portfolio and the /admin layout
   // refuses a caller with no admin item. Traced as staff (the narrower rule).
-  "/admin/billing-groups": "staff",
-  "/admin/custody-import": "staff",
+  // STAFFROLES1 — an internal role holding view_portfolio (staff as before).
+  "/admin/billing-groups": "internal:view_portfolio",
+  "/admin/custody-import": "internal:view_portfolio",
   "/admin/vdr-proposals": "rbac:manage_deals",
   "/admin/model-research": "rbac:manage_org_settings",
   "/admin/model-catalog": "super_admin",
@@ -87,6 +93,12 @@ export function serverAllows(me, href) {
   if (gate === "session") return true;
   if (gate === "super_admin") return isSuper(me);
   if (gate === "staff") return isSuper(me) || me?.is_staff === true;
+  const internal = isSuper(me) || me?.is_staff === true || me?.is_internal === true;
+  if (gate === "internal") return internal;
+  if (gate.startsWith("internal:")) {
+    const perm = gate.slice("internal:".length);
+    return isSuper(me) || me?.is_staff === true || (internal && (me?.permissions ?? []).includes(perm));
+  }
   const [kind, arg] = gate.split(":");
   const perms = me?.permissions ?? [];
   if (kind === "rbac" || kind === "token") return isSuper(me) || perms.includes(arg);

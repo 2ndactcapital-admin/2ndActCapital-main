@@ -573,11 +573,11 @@ async def list_visible_commitments(request: Request, limit: int = Query(default=
     restricted access; the same rule Document Search and the ownership tree
     use). Gate: view_portfolio, the same permission the projection screen it
     opens requires. /portfolio/commitments used to be an id lookup only."""
-    from services.authz import is_staff
+    from services.authz import is_internal
     from services.document_embedding import visible_entity_ids
 
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
-    allowed = sorted(await visible_entity_ids(pool, org_id, user_id, is_staff(request)))
+    allowed = sorted(await visible_entity_ids(pool, org_id, user_id, is_internal(request)))  # STAFFROLES1 — visibility (see), not a bypass
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """

@@ -203,7 +203,7 @@ def gates(module, src: str) -> dict:
     g = {"perms": set(), "any_of": [], "super": False, "staff": False, "token": False,
          "rbac": False, "phantom": False, "entity": False, "document": False,
          "workflow": False, "org_settings": False, "self_read_org": False, "deal_room": False,
-         "staff_or": [], "member_scope": False}
+         "staff_or": [], "member_scope": False, "internal": False, "internal_perm": []}
     if src is None:
         return g
     for m in re.finditer(r"(?<![\w.])require_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src):
@@ -235,6 +235,12 @@ def gates(module, src: str) -> dict:
         g["super"] = bool(re.search(r"_require_super_admin|require_super_admin\(|if not is_super_admin\(", src))
     if re.search(r"(?<![\w.])require_staff\(\s*request", src):
         g["staff"] = True; g["token"] = True
+    # STAFFROLES1 — staff-DATA reads: any internal firm role (require_internal), or an internal role holding one
+    # of the named permissions with staff bypassing as before (require_internal_permission).
+    if re.search(r"(?<![\w.])require_internal\(\s*request", src):
+        g["internal"] = True
+    for m in re.finditer(r"(?<![\w.])require_internal_permission\(\s*request\s*((?:,\s*\"\w+\"\s*)+)\)", src):
+        g["internal_perm"].append(tuple(re.findall(r"\"(\w+)\"", m.group(1))))
     for m in re.finditer(r"(?<![\w.])require_staff_or_permission\(\s*request\s*,\s*(\"(\w+)\"|(\w+))", src):
         g["staff_or"].append(m.group(2) or _const(module, m.group(3)) or m.group(3))
     if "require_entity_access(" in src or "_require_subscribe(" in src:
@@ -272,6 +278,10 @@ def describe(g, after: bool = False) -> str:
         parts.append("staff")
     for perm in g["staff_or"]:
         parts.append(f"staff or authz {perm}")
+    if g["internal"]:
+        parts.append("internal")
+    for perms in g["internal_perm"]:
+        parts.append("internal + any(" + "|".join(perms) + ")")
     if g["org_settings"]:
         parts.append("manage_org_settings (org admin)")
     if g["workflow"]:
@@ -292,7 +302,8 @@ def describe(g, after: bool = False) -> str:
 def before_effect(g) -> str:
     if g["super"] or g["workflow"]:
         return "enforced"
-    if not (g["perms"] or g["any_of"] or g["staff"] or g["staff_or"] or g["org_settings"]):
+    if not (g["perms"] or g["any_of"] or g["staff"] or g["staff_or"] or g["org_settings"]
+            or g["internal"] or g["internal_perm"]):
         return "OPEN"
     if g["token"] and not g["rbac"]:
         return "OPEN (token claim absent → allow)"
@@ -318,6 +329,15 @@ def expect(route, g, pending_allowed: bool = False) -> dict:
         return {"rule": "super"}
     if g["workflow"]:
         return {"rule": "workflow"}
+    _iperms = {p for t in g["internal_perm"] for p in t}
+    if (g["internal"] or g["internal_perm"]) and not (g["any_of"] or g["org_settings"] or g["staff"]
+                                                     or g["staff_or"]) and g["perms"] <= _iperms:
+        # (a require_permission(view_portfolio) beside require_internal_permission(view_portfolio) adds nothing)
+        # STAFFROLES1 — internal: Super Admin + every INTERNAL_ROLE_NAMES role (never a client role);
+        # internal_perm: Super Admin, staff (bypass, unchanged), or an internal role holding any of any_of.
+        if g["internal_perm"]:
+            return {"rule": "internal_perm", "any_of": sorted({p for t in g["internal_perm"] for p in t})}
+        return {"rule": "internal"}
     if g["deal_room"]:
         # Several branches (publisher / delegate / staff / org admin / viewer):
         # the matrix asserts only the global rules; each branch is proven by

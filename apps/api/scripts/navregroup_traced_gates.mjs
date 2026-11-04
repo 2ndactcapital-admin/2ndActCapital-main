@@ -35,6 +35,8 @@ const GET_ROUTES = ROUTES.filter((r) => (r.methods || []).includes("GET"));
 const isSuper = (me) => me?.account_role === "super_admin";
 const perms = (me) => (Array.isArray(me?.permissions) ? me.permissions : []);
 const isStaff = (me) => isSuper(me) || me?.is_staff === true;
+// STAFFROLES1 — may SEE staff data: every internal firm role (/users/me is_internal), staff included.
+const isInternal = (me) => isStaff(me) || me?.is_internal === true;
 
 /** The page file for an href, or null. */
 export function pageFile(href) {
@@ -97,6 +99,11 @@ export function routeAdmits(me, rec) {
       return isSuper(me) || perms(me).includes("manage_org_settings");
     case "staff":
       return /entity access/.test(rec.after || "") ? null : isStaff(me);
+    case "internal":
+      return isInternal(me);
+    case "internal_perm":
+      // staff bypass as before; any other internal role needs one of any_of; a client role never
+      return isStaff(me) || (isInternal(me) && (e.any_of || []).some((p) => perms(me).includes(p)));
     case "mixed": {
       // e.g. "staff or authz manage_org_settings"; "authz a+b" = both. Anything else is a scope → untraced.
       const terms = String(rec.after || "").split(/\s+or\s+/);
