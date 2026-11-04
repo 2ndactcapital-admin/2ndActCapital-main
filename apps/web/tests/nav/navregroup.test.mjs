@@ -34,7 +34,10 @@ const EXPECTED = {
   org_admin_manage_members: { main: MAIN_NON_STAFF, org_admin: ["/admin", "/admin/users"], platform: [] },
   org_admin_manage_org_settings: {
     // REP2 (Joe, 2026-10-23): org admins read Custodian capabilities (Billing & Custody).
-    main: MAIN_NON_STAFF, org_admin: ["/admin/profiles", "/admin/settings", "/admin/workflows", "/admin/custodian-capabilities"],
+    // PERMS1: no "/admin/workflows" — the Workflows group now gates on the keys its API checks (author_workflows /
+    // view_workflow_runs / configure_workflow_triggers); a persona holding ONLY manage_org_settings was always
+    // refused by that API, so the menu entry led to "You do not have permission" (HollisMuse NAV-10).
+    main: MAIN_NON_STAFF, org_admin: ["/admin/profiles", "/admin/settings", "/admin/custodian-capabilities"],
     platform: ["/admin/model-research"],
   },
   super_admin: {

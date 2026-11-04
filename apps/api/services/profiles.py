@@ -52,37 +52,31 @@ async def get_permission_set_permissions(pool, user_id) -> set[str]:
 
 
 async def get_effective_permissions(pool, user_id) -> set[str]:
-    """Union of the user's profile grants and all permission-set grants.
+    """The user's effective permissions — THE PRINCIPAL'S (PERMS1).
 
-    Reads ``users.profile_id`` for the user, then combines its base grants
-    with the additive grants from any assigned permission sets.
-
-    BUGFIX2 — a MEMBER user (``services.authz.is_member_principal``: not Super
-    Admin, not staff, not org admin) gets only the MEMBER-SAFE keys of what they
-    hold (the org's ``member`` role grants): a staff-only profile / set already
-    assigned to a member (e.g. "CSA / Ops" with ``staff``) grants nothing staff-
-    only. Fail closed: a user the Principal cannot load is treated as a member.
+    PERMS1 made the authz Principal the one source: its single statement
+    already unions role grants, profile grants and permission-set grants
+    (catalog keys only — the legacy key "staff" grants nothing) and applies the
+    BUGFIX2 client rule (a member keeps only member-safe profile / set keys).
+    This function used to compute a second, profile-only answer that disagreed
+    with every other gate; it now returns exactly ``Principal.permissions`` so
+    /users/me, the route gates, the workflow engine and this service give one
+    answer. A Super Admin's set is the whole catalog (as on the Principal).
+    Fail closed: a user the Principal cannot load (or not admitted) → empty.
     """
-    from services.authz import is_member_principal, load_principal, member_safe_keys
+    from services.authz import load_principal
 
     async with pool.acquire() as conn:
-        profile_id = await conn.fetchval(
-            "SELECT profile_id FROM users WHERE id = $1", user_id
-        )
         principal = await load_principal(conn, user_id)
-        member = is_member_principal(principal)
-        safe = await member_safe_keys(conn, principal.org_id) if (member and principal) else frozenset()
-    profile_perms = await get_profile_permissions(pool, profile_id)
-    set_perms = await get_permission_set_permissions(pool, user_id)
-    held = profile_perms | set_perms
-    return (held & set(safe)) if member else held
+    if principal is None or not principal.admitted:
+        return set()
+    return set(principal.permissions)
 
 
 async def user_has_permission(pool, user_id, permission_key: str) -> bool:
     """True if the user's profile OR any assigned permission set grants the key.
 
-    This is the profile-layer check only; it does not consult roles or the
-    Super/Org Admin flags. Callers that need the full picture should also
-    consult ``services.rbac`` and the admin helpers as appropriate.
+    PERMS1: the full picture — the Principal's permissions (roles ∪ profile ∪
+    permission sets, client rule applied; Super Admin holds the catalog).
     """
     return permission_key in await get_effective_permissions(pool, user_id)

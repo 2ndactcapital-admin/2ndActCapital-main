@@ -17,8 +17,8 @@ already-verified Phase 1/2/3 services:
 Gate (Phase 5): GRANULAR, action-registry-based permissions — the blanket
 ``can_manage_org_settings`` gate used by Phases 3-4 is replaced by four
 SEPARATELY grantable permission keys from the SOC ``permissions`` catalog,
-enforced via ``services.profiles.user_has_permission`` (a user's Profile grants
-∪ every assigned Permission Set):
+enforced via the request's authz Principal (PERMS1: role grants ∪ the user's
+Profile grants ∪ every assigned Permission Set — one source):
 
   * ``author_workflows``            — library, editor detail, create, save-new-
         version, version history (authoring surface). Publishing is not a
@@ -50,7 +50,6 @@ from services.action_registry import REGISTRY
 from services.database import get_pool
 from services.audit import write_audit_log
 from services.bpmn_layout import BpmnLayoutError, ensure_bpmn_di
-from services.profiles import user_has_permission
 from services.rbac import is_super_admin, load_principal
 from services.users import ensure_user
 # The held-run alert pane reads member_todos on the SAME key the writer upserts
@@ -399,7 +398,8 @@ PERM_CONFIGURE_TRIGGERS = "configure_workflow_triggers"  # scheduler / triggers
 #
 # Super Admin (platform staff) always passes; everyone else — including an Org
 # Admin — must hold ``permission_key`` via their Profile or an assigned
-# Permission Set (services.profiles.user_has_permission). This replaces the
+# Permission Set — PERMS1: the request's authz Principal, which carries role,
+# profile and permission-set grants in one answer. This replaces the
 # blanket can_manage_org_settings gate so workflow authoring, run-console
 # viewing and scheduler configuration are separately grantable, not bundled.
 #
@@ -418,11 +418,21 @@ async def _require_workflow_permission(
     if principal is None:
         principal = {"id": actor_id, "org_id": org_id, "role": None}
     if not is_super_admin(principal):
-        if not await user_has_permission(pool, actor_id, permission_key):
+        # PERMS1 — the request's authz Principal (roles ∪ profile ∪ permission
+        # sets, one source) rather than a second, profile-only lookup.
+        if not _principal_has(request, permission_key):
             raise HTTPException(
                 status_code=403, detail=f"Permission required: {permission_key}"
             )
     return actor_id, org_id, principal
+
+
+def _principal_has(request: Request, permission_key: str) -> bool:
+    """PERMS1 — the cached request Principal's answer (Super Admin first)."""
+    from services.authz import principal_of
+
+    p = principal_of(request)
+    return bool(p is not None and p.has(permission_key))
 
 
 # --------------------------------------------------------------------------
@@ -502,10 +512,10 @@ async def _require_trigger_read(request: Request) -> tuple[str, str, dict, bool]
     if is_super_admin(principal):
         return actor_id, org_id, principal, True
 
-    can_write = await user_has_permission(pool, actor_id, PERM_CONFIGURE_TRIGGERS)
+    can_write = _principal_has(request, PERM_CONFIGURE_TRIGGERS)  # PERMS1 — one source
     if can_write:
         return actor_id, org_id, principal, True
-    if await user_has_permission(pool, actor_id, PERM_VIEW_RUNS):
+    if _principal_has(request, PERM_VIEW_RUNS):
         return actor_id, org_id, principal, False
     raise HTTPException(
         status_code=403,
@@ -612,7 +622,9 @@ async def list_workflows(request: Request):
         n_runs = runs.get(str(d["id"]), 0)
         n_triggers = triggers.get(str(d["id"]), 0)
         refusal = None
-        if n_runs:
+        if is_system_workflow(d["name"]):
+            refusal = SYSTEM_WORKFLOW_REFUSAL
+        elif n_runs:
             refusal = f"Has {n_runs} run(s) — a workflow that has run cannot be deleted."
         elif n_triggers:
             refusal = f"{n_triggers} trigger(s) point at it — delete those first."
@@ -791,6 +803,16 @@ WORKFLOW_DELETE_RULE = (
 )
 
 
+# PERMS1 (WF-06) — a SYSTEM workflow (created by the platform, e.g. human_tasks' "system:human_task:<permission>"
+# approval definitions) is never deletable: the library shows no Delete for it and the API refuses it, runs or not.
+SYSTEM_WORKFLOW_PREFIX = "system:"
+SYSTEM_WORKFLOW_REFUSAL = "A system workflow — the platform maintains it; it cannot be deleted."
+
+
+def is_system_workflow(name) -> bool:
+    return isinstance(name, str) and name.startswith(SYSTEM_WORKFLOW_PREFIX)
+
+
 async def delete_workflow_blockers(conn, org_id, definition_id) -> dict:
     """What stops ``definition_id`` from being deleted: run and trigger counts (org-scoped)."""
     runs = await conn.fetchval(
@@ -840,6 +862,9 @@ async def delete_workflow(request: Request, definition_id: UUID):
             )
             if definition is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
+            if is_system_workflow(definition["name"]):  # PERMS1 (WF-06)
+                raise HTTPException(status_code=409,
+                                    detail=f"“{definition['name']}” cannot be deleted: {SYSTEM_WORKFLOW_REFUSAL}")
             version_ids = [r["id"] for r in await conn.fetch(
                 "SELECT id FROM workflow_versions WHERE workflow_definition_id = $1 AND org_id = $2 FOR UPDATE",
                 definition_id, org_id,

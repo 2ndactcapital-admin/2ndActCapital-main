@@ -1,5 +1,5 @@
 {
- "app_route_count": 792,
+ "app_route_count": 795,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -1558,7 +1558,7 @@
    "write": false
   },
   {
-   "after": "authz manage_deals",
+   "after": "authz manage_deals; internal",
    "before": "token-claim manage_deals",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
@@ -6004,15 +6004,35 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.households",
+   "name": "list_households",
+   "note": "",
+   "path": "/api/v1/admin/households",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
     "any_of": [
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -6020,7 +6040,7 @@
    ],
    "module": "routers.households",
    "name": "create_household",
-   "note": "same permission, now enforced from the DB Principal",
+   "note": "",
    "path": "/api/v1/admin/households",
    "public": false,
    "write": true
@@ -6268,6 +6288,48 @@
    "write": false
   },
   {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.households",
+   "name": "get_household",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.households",
+   "name": "add_household_account",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}/accounts",
+   "public": false,
+   "write": true
+  },
+  {
    "after": "authz view_portfolio; internal + any(view_portfolio)",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
@@ -6463,7 +6525,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6485,7 +6547,7 @@
    "write": false
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6507,7 +6569,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6529,7 +6591,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6551,7 +6613,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6573,7 +6635,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6595,7 +6657,7 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6617,7 +6679,7 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6639,7 +6701,7 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6661,7 +6723,7 @@
    "write": false
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6683,7 +6745,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6705,7 +6767,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6727,7 +6789,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6749,7 +6811,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6771,7 +6833,7 @@
    "write": true
   },
   {
-   "after": "authz manage_billing",
+   "after": "authz manage_billing; internal",
    "before": "rbac manage_billing",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6793,7 +6855,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -6815,7 +6877,7 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {

@@ -2,16 +2,22 @@ import { redirect } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import NewDealForm from "@/components/marketplace/NewDealForm";
-import { getTaxonomy } from "@/lib/api";
-import { isStaff } from "@/lib/roles";
+import { getTaxonomy, getMe } from "@/lib/api";
+import { canCreateDeal } from "@/lib/perms1";
 
 export default async function NewDealPage() {
   const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/marketplace/new");
   }
-  // Staff only — members are redirected back to the marketplace.
-  if (!isStaff(session.user)) {
+  // PERMS1 (DEAL-01) — an internal role holding manage_deals (the API's own gate); anyone else is sent back.
+  let me = null;
+  try {
+    me = await getMe();
+  } catch {
+    me = null;
+  }
+  if (!canCreateDeal(me)) {
     redirect("/marketplace");
   }
 

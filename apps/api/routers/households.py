@@ -18,13 +18,17 @@ endpoints. ``org_id`` is always resolved server-side, never from a request body.
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from routers.entities import get_org_id
 from services.database import get_pool
 from services.rbac import require_permission
 from services.users import ensure_user
 from services import households as hh
+from services import authority as AUTH
+from services import authz
+from services.authz import require_internal_permission
+from services import household_admin as HA
 
 router = APIRouter(tags=["admin", "households"])
 
@@ -33,7 +37,25 @@ router = APIRouter(tags=["admin", "households"])
 # Models
 # --------------------------------------------------------------------------
 class HouseholdCreate(BaseModel):
+    """PERMS1 — "New household": a name and the CRM member entities to link (optional)."""
+    model_config = ConfigDict(extra="forbid")
     name: str
+    member_entity_ids: list[UUID] = Field(default_factory=list)
+
+
+class AccountAdd(BaseModel):
+    """PERMS1 — "Add account" on a household. ``account_number`` is typed in full and stored ONLY as its mask
+    and keyed hash (services.household_admin); it is never returned."""
+    model_config = ConfigDict(extra="forbid")
+    custodian_code: str
+    account_number: str
+    primary_entity_id: UUID
+    authority: str
+    custody: str
+    registration_type: str | None = None
+    tax_status: str | None = None
+    reason: str | None = None
+    receiving: dict | None = None
 
 
 class HouseholdRename(BaseModel):
@@ -68,16 +90,49 @@ def _money(d) -> float:
 # --------------------------------------------------------------------------
 # Household CRUD
 # --------------------------------------------------------------------------
-@router.post("/admin/households", status_code=201)
-async def create_household(request: Request, body: HouseholdCreate):
-    actor_id, org_id = await _require_manage_members(request)
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="Household name is required")
+def _require_household_admin(request: Request):
+    """PERMS1 (REP-01) — creating a household / adding an account: an INTERNAL firm role holding
+    ``manage_members`` (Super Admin first). A member is refused even if a grant ever reached them; a non-staff
+    internal role without the permission is refused naming it. Reads the request's one Principal."""
+    # Super Admin first; staff (the unchanged STAFF_ROLE_NAMES bypass) as for every internal_perm gate; any other
+    # internal role only with manage_members; a client role never.
+    return require_internal_permission(request, "manage_members")
+
+
+def _household_permissions(request: Request) -> dict:
+    p = authz.principal_of(request)
+    can = bool(p is not None and p.admitted and (p.is_super_admin or p.is_staff or (p.is_internal and "manage_members" in p.permissions)))
+    return {"can_read": can, "can_write": can, "is_super_admin": bool(p and p.is_super_admin),
+            "read_permission": "manage_members", "write_permission": "manage_members"}
+
+
+@router.get("/admin/households")
+async def list_households(request: Request):
+    """PERMS1 — Portfolio → Households management list, as a permission envelope."""
+    _require_household_admin(request)
+    org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await hh.create_household(conn, org_id, name, created_by=actor_id)
-    return {"id": str(row["id"]), "name": row["name"]}
+        rows = await HA.list_households(conn, org_id)
+    perms = _household_permissions(request)
+    return {"rows": rows, "permissions": perms,
+            "vocabularies": {**AUTH.vocabularies(),
+                             "editable": ["name", "member_entity_ids"] if perms["can_write"] else [],
+                             "inline_editable": []}}
+
+
+@router.post("/admin/households", status_code=201)
+async def create_household(request: Request, body: HouseholdCreate):
+    """PERMS1 — "New household" (name + CRM member entities), one transaction, audited."""
+    p = _require_household_admin(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await HA.create_household(conn, org_id=org_id, actor_id=p.user_id, name=body.name,
+                                             member_entity_ids=body.member_entity_ids)
+        except HA.HouseholdAdminError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.patch("/admin/households/{household_id}")
@@ -227,3 +282,47 @@ async def all_primary_networth(request: Request):
     async with pool.acquire() as conn:
         rows = await hh.primary_household_networth(conn, org_id, None)
     return [{**r, "total_holdings_value": _money(r["total_holdings_value"])} for r in rows]
+
+
+# --------------------------------------------------------------------------
+# PERMS1 — household detail + "Add account" (declared AFTER /admin/households/networth so the literal path wins)
+# --------------------------------------------------------------------------
+@router.get("/admin/households/{household_id}")
+async def get_household(request: Request, household_id: UUID):
+    _require_household_admin(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            detail = await HA.household_detail(conn, org_id, household_id)
+        except HA.HouseholdNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    perms = _household_permissions(request)
+    return {**detail, "permissions": perms,
+            "vocabularies": {**AUTH.vocabularies(),
+                             "editable": ["accounts", "members"] if perms["can_write"] else [],
+                             "inline_editable": []}}
+
+
+@router.post("/admin/households/{household_id}/accounts", status_code=201)
+async def add_household_account(request: Request, household_id: UUID, body: AccountAdd):
+    """PERMS1 — an account added by hand: custodian, the number (stored masked + keyed hash, never returned),
+    its owner (a household member) and its authority / custody (REP7B: a non-default choice is a draft change
+    awaiting a second person). The custody import keeps working on the same unique key."""
+    p = _require_household_admin(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        return await HA.add_account(pool, org_id=org_id, actor_id=p.user_id, household_id=household_id,
+                                    custodian_code=body.custodian_code, account_number=body.account_number,
+                                    primary_entity_id=body.primary_entity_id, authority=body.authority,
+                                    custody=body.custody, registration_type=body.registration_type,
+                                    tax_status=body.tax_status, reason=body.reason, receiving=body.receiving)
+    except HA.HouseholdNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HA.HouseholdAdminConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AUTH.AuthorityConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (HA.HouseholdAdminError, AUTH.AuthorityError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

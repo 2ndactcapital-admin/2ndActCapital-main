@@ -59,7 +59,7 @@ from services.deal_creation import insert_deal
 from services.extraction import call_claude_json, resolve_model
 from services.taxonomy import build_taxonomy, get_taxonomy_index, validate_taxonomy_fields
 from services.permissions import get_user_id
-from services.authz import is_internal, require_permission
+from services.authz import is_internal, require_internal, require_permission
 from services.notifications import notification_bus
 from services.org_settings import get_brand_name
 from services.rbac import get_users_by_role
@@ -561,6 +561,11 @@ async def list_deals(
 
 @router.post("/deals", response_model=DealResponse, status_code=201)
 async def create_deal(request: Request, body: DealCreate):
+    # PERMS1 (DEAL-01, Joe 2026-11-04) — org admins create deals: an INTERNAL firm role holding manage_deals
+    # (the org_admin role holds it since PERMS1). A client role is refused even if a grant reached it. The deal
+    # starts in the configured first stage (draft) and follows the SAME lifecycle / publish rules as every deal
+    # (services.deal_lifecycle.apply_status); members never see a draft (MEMBER_VISIBLE_STATUSES).
+    require_internal(request)
     require_permission(request, "manage_deals")
     org_id = get_org_id(request)
     tax_errors = await validate_taxonomy_fields(

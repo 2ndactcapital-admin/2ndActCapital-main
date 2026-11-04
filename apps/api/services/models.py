@@ -101,7 +101,10 @@ ORIGIN_LABELS = {"upload": "Upload", "manual": "Entered by hand", "library_copy"
                  "revision": "Revision of the approved version", "fund_build": "Built from the fund",
                  "fund_monitor": "The fund's holdings changed"}
 UPLOAD_OUTCOME_LABELS = {"received": "In progress", "draft_created": "Draft created", "rejected": "Rejected",
-                         "abandoned": "Abandoned", "duplicate": "Duplicate", "failed": "Failed"}
+                         "abandoned": "Abandoned", "duplicate": "Duplicate", "failed": "Failed",
+                         # PERMS1 (REP-10) — display state, never stored: the draft this upload created no longer
+                         # belongs to a live model (it was removed), so the upload is closed, not "In progress".
+                         "closed": "Closed — model removed"}
 UPLOAD_SOURCE_LABELS = {"manual": "Uploaded by hand", "provider_email": "Provider email",
                         "provider_feed": "Provider feed", "library_publish": "Library publish"}
 CADENCE_LABELS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly", "quarterly": "Quarterly",
@@ -1500,6 +1503,22 @@ async def upload_state(conn, org_id, upload_id) -> tuple[dict, dict | None]:
     return dict(up), (dict(last) if last else None)
 
 
+# PERMS1 (REP-10) — does a LIVE model still reference this upload? (a live version of a live, non-retired model
+# whose upload_id is this upload, and which was not abandoned / rejected). The duplicate guard blocks re-uploading
+# the same bytes ONLY then; otherwise the earlier upload is re-opened (the one stored copy, the append-only log and
+# the (org, sha256) unique index are all kept).
+LIVE_MODEL_REF_SQL = f"""
+    SELECT v.model_id FROM {T_VER} v JOIN {T_MODEL} m ON m.id = v.model_id AND m.system_to IS NULL
+     WHERE v.upload_id = $1 AND v.org_id = $2::uuid AND v.system_to IS NULL
+       AND v.status NOT IN ('abandoned', 'rejected') AND m.status <> 'retired'
+     LIMIT 1"""
+
+
+async def upload_live_model(conn, org_id, upload_id):
+    """The id of a live model referencing ``upload_id``, or None."""
+    return await conn.fetchval(LIVE_MODEL_REF_SQL, _uuid(upload_id, "upload"), str(org_id))
+
+
 def provider_key(name: str | None) -> str | None:
     k = (name or "").strip().lower()
     return k or None
@@ -1577,8 +1596,26 @@ async def receive_upload(pool, *, org_id, actor_id, data: bytes, filename: str, 
             refused = None
             existing = await conn.fetchrow(f"SELECT id, r2_key FROM {T_UP} WHERE org_id = $1::uuid AND sha256 = $2 "
                                            "AND outcome = 'received'", str(org_id), sha)
+            live_ref = await upload_live_model(conn, org_id, existing["id"]) if existing else None
     if refused:
         return refused
+    if existing and live_ref is None:
+        # PERMS1 (REP-10) — the same bytes, but no live model references the earlier upload (its model was
+        # removed, its draft abandoned or rejected, or it never got that far): re-uploading is ALLOWED. The earlier
+        # upload — the one stored copy — is re-opened and the wizard continues on it; no "duplicate" row is logged.
+        try:
+            wb = await run_in_threadpool(U.read_workbook, data, name)
+        except U.UploadRefused as exc:
+            msg = U.Message(exc.code, "error", exc.text).as_dict()
+            async with pool.acquire() as conn:
+                prev_up, prev_last = await upload_state(conn, org_id, existing["id"])
+            return {"upload": upload_out(prev_up, prev_last), "refused": msg}
+        async with pool.acquire() as conn:
+            await _audit_only(conn, org_id, actor_id, "models.upload_reopened", "model_upload", existing["id"],
+                              {"sha256": sha, "file_name": name, "reason": "no live model references the upload"})
+            prev_up, prev_last = await upload_state(conn, org_id, existing["id"])
+            saved = await live_mapping(conn, org_id, provider or prev_up["provider_name"])
+        return {"upload": upload_out(prev_up, prev_last), "reopened": True, **_wizard(wb, None, saved)}
     if existing:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -1700,7 +1737,10 @@ async def confirm_upload(pool, *, org_id, actor_id, upload_id, sheet=None, heade
     async with pool.acquire() as conn:
         actor = await HT.assert_human(conn, actor_id, org_id)
         up, last = await upload_state(conn, org_id, upload_id)
-        if last and last["event"] in ("draft_created", "abandoned"):
+        if last and last["event"] in ("draft_created", "abandoned") and \
+                await upload_live_model(conn, org_id, up["id"]) is not None:
+            # PERMS1 (REP-10) — refused only while a live model references it; a re-opened upload (its model
+            # removed, its draft abandoned) may create a draft again.
             raise ModelConflict(f"this upload is already {UPLOAD_OUTCOME_LABELS[last['event']].lower()}")
         try:
             wb, result, saved = await _parse_upload(conn, org_id=org_id, up=up, sheet=sheet, header_row=header_row,
@@ -1842,12 +1882,14 @@ async def upload_log(conn, org_id, *, outcome: str | None = None, provider: str 
         LEFT JOIN {T_MODEL} m ON m.id = COALESCE(e.model_id, u.model_id) AND m.system_to IS NULL
         LEFT JOIN {T_VER} v ON v.id = e.version_id AND v.system_to IS NULL
         WHERE u.org_id = $1::uuid"""
+    # PERMS1 (REP-10) — a draft_created upload whose model is no longer live shows as closed.
+    display = "(CASE WHEN e.event = 'draft_created' AND m.id IS NULL THEN 'closed' ELSE COALESCE(e.event, u.outcome) END)"
     args: list = [str(org_id), list(OUTCOME_EVENTS)]
     if outcome:
         if outcome not in UPLOAD_OUTCOME_LABELS:
             raise ModelError(f"unknown outcome {outcome!r}")
         args.append(outcome)
-        sql += f" AND COALESCE(e.event, u.outcome) = ${len(args)}"
+        sql += f" AND {display} = ${len(args)}"
     if provider:
         args.append(provider.strip().lower())
         sql += f" AND lower(u.provider_name) = ${len(args)}"
@@ -1872,7 +1914,8 @@ async def upload_log(conn, org_id, *, outcome: str | None = None, provider: str 
             "size_bytes": r["size_bytes"], "sha256": r["sha256"], "file_kind": r["file_kind"],
             "content_type": r["content_type"], "uploaded_by": str(r["uploaded_by"]) if r["uploaded_by"] else None,
             "uploader_name": r["uploader_name"], "source": r["source"], "provider_name": r["provider_name"],
-            "outcome": r["last_event"] or r["outcome"],
+            "outcome": ("closed" if r["last_event"] == "draft_created" and r["model_name"] is None
+                        else r["last_event"] or r["outcome"]),
             "duplicate_of": str(r["duplicate_of"]) if r["duplicate_of"] else None,
             "model_id": str(r["e_model_id"] or r["model_id"]) if (r["e_model_id"] or r["model_id"]) else None,
             "model_name": r["model_name"], "version_id": str(r["e_version_id"]) if r["e_version_id"] else None,

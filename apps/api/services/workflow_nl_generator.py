@@ -86,6 +86,17 @@ def _script_task_error(element_id: str) -> str:
     )
 
 
+GENERATION_REFUSAL_LEAD = "The workflow was not saved"
+
+
+def generation_refusal(errors: list[str]) -> str:
+    """PERMS1 (WF-05) — the reason shown when both attempts (the first and the one corrected with the
+    validator's errors) still fail validation."""
+    return (f"{GENERATION_REFUSAL_LEAD}: the description did not produce a valid process, even after a second "
+            "attempt corrected with the validator's findings. What was wrong: " + "; ".join(errors) + ". Describe "
+            "the steps in order, who approves each one, and what happens when one is rejected, then try again.")
+
+
 class WorkflowGenerationError(Exception):
     """Raised when generation cannot produce validated BPMN (after one retry)."""
 
@@ -327,9 +338,9 @@ async def generate_workflow(pool, *, org_id, description: str, created_by, name:
             system, retry_messages, org_id, valid_action_keys, valid_profile_ids
         )
     if errors:
-        raise WorkflowGenerationError(
-            "generation failed validation after one retry: " + "; ".join(errors)
-        )
+        # PERMS1 (WF-05) — nothing is saved; the caller is told WHY in plain words (the validator's own reasons),
+        # and what to add, instead of a bare "failed validation".
+        raise WorkflowGenerationError(generation_refusal(errors))
 
     # BUGFIX2 (WF-01): HARD RULE 7 keeps the model from emitting the diagram
     # (layout) section, but the editor cannot draw a process without one —

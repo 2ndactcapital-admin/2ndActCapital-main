@@ -86,6 +86,11 @@ async def _gate(request: Request, permission: str) -> tuple[str, str, Any]:
     Super Admin FIRST inside the one shared helper — never a second local
     re-implementation of the same check.
     """
+    # PERMS1 (WF-04) — fee / billing data is the FIRM's: an internal firm role first (view_portfolio alone is
+    # a MEMBER grant, so a member read the firm's fee schedules / P&L). STAFFROLES1's billing-read rule.
+    from services.authz import require_internal
+
+    require_internal(request)
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)

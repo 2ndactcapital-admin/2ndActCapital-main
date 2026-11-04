@@ -36,19 +36,17 @@ async def fetch_role_names(conn, user_id, org_id=None) -> list[str]:
 
 
 async def fetch_permission_names(conn, user_id, org_id=None) -> set[str]:
-    """Permission names granted to ``user_id`` through roles (of ``org_id``)."""
-    rows = await conn.fetch(
-        """
-        SELECT DISTINCT p.name
-        FROM user_roles ur
-        JOIN roles r ON r.id = ur.role_id
-        JOIN role_permissions rp ON rp.role_id = ur.role_id
-        JOIN permissions p ON p.id = rp.permission_id
-        WHERE ur.user_id = $1 AND ($2::uuid IS NULL OR r.org_id = $2::uuid)
-        """,
-        user_id, org_id,
-    )
-    return {r["name"] for r in rows}
+    """The user's effective permission names — the authz Principal's (PERMS1:
+    roles ∪ profile ∪ permission sets, one statement). ``org_id`` given and not
+    the user's own org → nothing (a grant never crosses orgs)."""
+    from services.authz import load_principal
+
+    principal = await load_principal(conn, user_id)
+    if principal is None or not principal.admitted:
+        return set()
+    if org_id is not None and str(org_id) != principal.org_id:
+        return set()
+    return set(principal.permissions)
 
 
 async def fetch_all_permission_names(conn) -> set[str]:
@@ -72,19 +70,13 @@ async def get_user_roles(pool, user_id, org_id) -> list[dict]:
 
 
 async def get_user_permissions(pool, user_id, org_id) -> set[str]:
-    """Return the set of permission names the user holds."""
+    """Return the set of permission names the user holds.
+
+    PERMS1 — the authz Principal's permissions (the ONE source: roles ∪ profile
+    ∪ permission sets). It used to read roles only, and of ANY org.
+    """
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT DISTINCT p.name
-            FROM user_roles ur
-            JOIN role_permissions rp ON rp.role_id = ur.role_id
-            JOIN permissions p ON p.id = rp.permission_id
-            WHERE ur.user_id = $1
-            """,
-            user_id,
-        )
-    return {r["name"] for r in rows}
+        return await fetch_permission_names(conn, user_id, org_id)
 
 
 async def has_permission(pool, user_id, org_id, permission_name: str) -> bool:
@@ -130,26 +122,28 @@ async def get_users_by_role(pool, org_id, role_name: str) -> list[str]:
 
 
 async def get_users_with_permission(pool, org_id, permission_name: str) -> list[str]:
-    """Return ids of users in ``org_id`` who hold ``permission_name`` via a
-    granted role — org_admin role migration (Task 4), used for alert
-    recipient fan-out (``services.workflow_todos``).
+    """Return ids of admitted users in ``org_id`` who hold ``permission_name``
+    by an explicit grant — alert recipient fan-out (``services.workflow_todos``).
 
-    Grants only — the same exact rule ``has_permission`` applies (AUTHZ1
-    removed the zero-role default-allow from both).
+    PERMS1 — the same Principal statement (roles ∪ profile ∪ permission sets,
+    client rule applied), evaluated for the org's users at once. The super-
+    admin parameter is passed as NULL so a Super Admin is NOT counted as holding
+    everything here: recipients are the users explicitly granted the key,
+    as before (fan-out never widened to every Super Admin).
     """
+    from services.authz import PRINCIPAL_COLUMNS, principal_from_row
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
-            SELECT DISTINCT u.id
-            FROM users u
-            JOIN user_roles ur ON ur.user_id = u.id
-            JOIN role_permissions rp ON rp.role_id = ur.role_id
-            JOIN permissions p ON p.id = rp.permission_id
-            WHERE u.org_id = $1 AND p.name = $2
-            """,
-            org_id, permission_name,
+            f"SELECT {PRINCIPAL_COLUMNS} FROM users u WHERE u.org_id = $1",
+            UUID(str(org_id)), None,
         )
-    return [str(r["id"]) for r in rows]
+    out = []
+    for row in rows:
+        p = principal_from_row(row)
+        if p is not None and p.admitted and permission_name in p.permissions:
+            out.append(str(row["id"]))
+    return out
 
 
 # ── Sprint 24: platform / org administration roles ────────────────────────
@@ -283,6 +277,25 @@ ORG_ADMIN_DEFAULT_PERMISSIONS = (
     ("approve_blocks", "blocks", "approve"),
     # rep10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure); maker-checker.
     ("manage_hypothetical_policy", "hypothetical_policy", "manage"),
+    # PERMS1 — the org admin's baseline READS (the ones support staff already hold by role), the workflow keys its
+    # "Org Admin" profile carried (now on the role too), and Joe's decisions of 2026-11-04: org admins create deals
+    # (DEAL-01, manage_deals) and households (REP-01, manage_members). No approve_* is added here. Kept in step with
+    # docs/perms1_part1.sql (the grant to every EXISTING org_admin role).
+    ("view_portfolio", "portfolio", "view"),
+    ("view_members", "members", "view"),
+    ("view_dashboard", "dashboard", "view"),
+    ("view_deals", "deals", "view"),
+    ("view_workflow_runs", "workflows", "view"),
+    ("author_workflows", "workflows", "author"),
+    ("configure_workflow_triggers", "workflows", "configure"),
+    ("manage_deals", "deals", "manage"),
+    ("manage_members", "members", "manage"),
+)
+
+#: PERMS1 — exactly the keys this sprint added to ORG_ADMIN_DEFAULT_PERMISSIONS (the verify reads it).
+PERMS1_ORG_ADMIN_ADDED = (
+    "view_portfolio", "view_members", "view_dashboard", "view_deals", "view_workflow_runs",
+    "author_workflows", "configure_workflow_triggers", "manage_deals", "manage_members",
 )
 
 

@@ -115,6 +115,10 @@ export const GATE_SPV_MANAGER = { internal: true, perm: "view_spv", strict: true
 export const GATE_REPLICATION_STAFF = { internal: true, perm: "view_replication", strict: true };
 // Billing Groups / Custody Import: an internal role holding view_portfolio (a member grant alone).
 export const GATE_FIRM_PORTFOLIO = { internal: true, perm: "view_portfolio", strict: true };
+// PERMS1 — workflow screens, on the keys their API checks (STRICT, fail closed).
+export const GATE_AUTHOR_WORKFLOWS = { perm: "author_workflows", strict: true };
+export const GATE_VIEW_WORKFLOW_RUNS = { perm: "view_workflow_runs", strict: true };
+export const GATE_WORKFLOW_TRIGGERS_READ = { anyOf: ["view_workflow_runs", "configure_workflow_triggers"], strict: true };
 // BUGFIX2 — the /admin AREA: open iff the caller can see at least one item of
 // the two admin sections of this very definition (so a member_manager with
 // manage_members keeps /admin/users, an org admin keeps Settings). The /admin
@@ -305,17 +309,22 @@ export const MENU_ITEMS = [
   tab("org_admin", "settings", 6, "/admin/executing-accounts", "Executing accounts", GATE_VIEW_BLOCKS, true),
   // REP10 — the firm's hypothetical-performance policy (who may see a backtest; its disclosure)
   tab("org_admin", "settings", 7, "/admin/hypothetical-policy", "Hypothetical-performance policy", GATE_VIEW_REPLICATION, true),
-  // The Workflows API gates on PROFILE-axis keys (author_workflows,
-  // view_workflow_runs, configure_workflow_triggers) that /users/me does not
-  // publish. Workflows keeps its existing gate; Runs and Triggers — newly
-  // listed — fail closed to Super Admin until /users/me carries those keys.
-  tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_MANAGE_ORG_SETTINGS, true),
-  tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_SUPER_ADMIN, true),
-  tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_SUPER_ADMIN, true),
+  // PERMS1 — /users/me now carries the workflow keys (the Principal unions role,
+  // profile and permission-set grants), so each tab gates on the SAME key its
+  // API checks: library author_workflows; Run Console view_workflow_runs;
+  // Triggers (read) view_workflow_runs OR configure_workflow_triggers.
+  tab("org_admin", "workflows", 1, "/admin/workflows", "Workflows", GATE_AUTHOR_WORKFLOWS, true),
+  tab("org_admin", "workflows", 2, "/admin/workflows/runs", "Runs", GATE_VIEW_WORKFLOW_RUNS, true),
+  tab("org_admin", "workflows", 3, "/admin/workflows/triggers", "Triggers", GATE_WORKFLOW_TRIGGERS_READ, true),
   // BUGFIX2 — firm-level screens: never a member (view_portfolio is a MEMBER grant).
   // STAFFROLES1 — an internal role holding view_portfolio, staff as before.
   tab("org_admin", "billing", 1, "/admin/billing-groups", "Billing Groups", GATE_FIRM_PORTFOLIO, true),
   tab("org_admin", "billing", 2, "/admin/custody-import", "Custody Import", GATE_FIRM_PORTFOLIO, true),
+  // PERMS1 (WF-04) — the fee screens had no menu entry at all. Their reads are
+  // an internal role + view_portfolio (API _gate: require_internal + the read
+  // permission); their writes need manage_billing and stay gated in the page.
+  tab("org_admin", "billing", 4, "/fee-schedules/chat", "Fee schedules", GATE_FIRM_PORTFOLIO, true),
+  tab("org_admin", "billing", 5, "/profitability", "Profitability", GATE_FIRM_PORTFOLIO, true),
   // REP2 — the platform capabilities matrix: staff and org admins read it, Super Admin edits it.
   tab("org_admin", "billing", 3, "/admin/custodian-capabilities", "Custodian capabilities",
     GATE_STAFF_OR_ORG_SETTINGS_STRICT, true),
@@ -433,6 +442,7 @@ export function canAccess(me, gate) {
   if (gate.adminArea) {
     return LISTED.some((i) => i.section !== "main" && !(i.gate && i.gate.adminArea) && canAccess(me, i.gate));
   }
+  if (gate.anyOf) return gate.anyOf.some((p) => canPermStrict(me, p));
   if (gate.internal) {
     if (!isInternalStrict(me)) return false;
     return !gate.perm || isStaffStrict(me) || canPermStrict(me, gate.perm);

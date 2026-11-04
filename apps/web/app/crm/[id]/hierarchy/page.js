@@ -31,7 +31,7 @@ export default async function EntityHierarchyPage({ params }) {
   const tree =
     treeResult.status === "fulfilled"
       ? treeResult.value
-      : { root_id: id, nodes: [], edges: [] };
+      : null; // PERMS1 (WF-03) — HierarchyBuilder reads a nested tree; a failed load shows its empty state
   const lookthrough =
     lookthroughResult.status === "fulfilled"
       ? lookthroughResult.value

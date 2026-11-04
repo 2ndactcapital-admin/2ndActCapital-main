@@ -5,15 +5,25 @@ import DealsTable from "@/components/marketplace/DealsTable";
 import MarketplaceFilters from "@/components/marketplace/MarketplaceFilters";
 import StageBar from "@/components/marketplace/StageBar";
 import NewDealButton from "@/components/marketplace/NewDealButton";
-import { listDeals, getTaxonomy, getConfig, getStageSummary } from "@/lib/api";
-import { isStaff } from "@/lib/roles";
+import { listDeals, getTaxonomy, getConfig, getStageSummary, getMe } from "@/lib/api";
+import { canCreateDeal } from "@/lib/perms1";
+import { isInternalStrict } from "@/lib/menuVisibility";
 
 export default async function MarketplacePage({ searchParams }) {
   const session = await getHostSession();
   if (!session) {
     redirect("/auth/login?returnTo=/marketplace");
   }
-  const staff = isStaff(session.user);
+  // PERMS1 (DEAL-01) — "New deal" from the /users/me envelope (internal + manage_deals), fail closed. The old
+  // token-claim isStaff() default-allowed when the claim was absent and refused an org admin when present.
+  let me = null;
+  try {
+    me = await getMe();
+  } catch {
+    me = null;
+  }
+  const canCreate = canCreateDeal(me);
+  const staff = isInternalStrict(me); // the firm's view (drafts, stage filters) — the API's is_internal
 
   const params = (await searchParams) || {};
   const q = typeof params.q === "string" ? params.q : "";
@@ -61,7 +71,7 @@ export default async function MarketplacePage({ searchParams }) {
             Member investment opportunities
           </p>
         </div>
-        {staff && <NewDealButton />}
+        {canCreate && <NewDealButton />}
       </div>
 
       {stageSummary.length > 0 && (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { layoutOwners, ownerLookthrough } from "@/lib/hierarchyOwners.mjs";
 
 const ENTITY_COLORS = {
   individual: "#EEF4FF",
@@ -1097,6 +1098,13 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
   const bounds = computeSVGBounds(positions);
   const visibleNodes = getVisibleNodes(treeData, collapsed);
   const visibleEdges = getVisibleEdges(treeData, collapsed);
+  // PERMS1 (WF-03) — the root's owners (API `owners`, both ownership tables), drawn ABOVE the root with their
+  // edges, in both look-through states; look-through ON adds each owner's effective share of the root.
+  const ownerLayout = layoutOwners(treeData, { nodeW: NODE_W, nodeH: NODE_H, hGap: H_GAP, vGap: V_GAP });
+  const ownerPositions = { ...positions };
+  for (const o of ownerLayout.nodes) ownerPositions[o.node.id] = { x: o.x, y: o.y };
+  const ownerTop = ownerLayout.nodes.length ? -Math.min(...ownerLayout.nodes.map((o) => o.y)) : 0;
+  const graphLookthrough = { ...ownerLookthrough(treeData), ...lookthroughMap };
 
   // Center tree initially
   const svgWidth = bounds.width;
@@ -1213,7 +1221,7 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
             onClick={() => setSelected(null)}
           >
             <g
-              transform={`translate(${pan.x + (svgContainerRef.current?.offsetWidth ?? 600) / 2}, ${pan.y + 40}) scale(${zoom})`}
+              transform={`translate(${pan.x + (svgContainerRef.current?.offsetWidth ?? 600) / 2}, ${pan.y + 40 + ownerTop * zoom}) scale(${zoom})`}
               style={{ transformOrigin: "0 0" }}
             >
               {/* Render edges first (behind nodes) */}
@@ -1230,6 +1238,29 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
                   />
                 );
               })}
+              {/* PERMS1 (WF-03) — owner edges, owner → owned, labelled with the owner's stake */}
+              {ownerLayout.edges.map(({ parent, child, pct }) => (
+                <EdgePath
+                  key={`owner-${parent.id}-${child.id}`}
+                  parent={parent}
+                  child={{ ...child, ownership_pct: pct }}
+                  parentPos={ownerPositions[parent.id]}
+                  childPos={ownerPositions[child.id]}
+                />
+              ))}
+              {ownerLayout.nodes.map(({ node, x, y }) => (
+                <TreeNode
+                  key={`owner-${node.id}`}
+                  node={{ ...node, children: [] }}
+                  position={{ x, y }}
+                  isSelected={selected === node.id}
+                  isCollapsed={false}
+                  onSelect={handleSelect}
+                  onToggle={() => {}}
+                  lookthroughMap={graphLookthrough}
+                  showLookthrough={showLookthrough}
+                />
+              ))}
               {/* Render nodes */}
               {visibleNodes.map((node) => {
                 const pos = positions[node.id];

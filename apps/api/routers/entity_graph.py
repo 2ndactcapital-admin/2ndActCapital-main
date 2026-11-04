@@ -128,7 +128,8 @@ async def get_entity_lookthrough(entity_id: UUID, request: Request):
     pool = await get_pool()
     org_id = get_org_id(request)
     try:
-        lookthrough = await get_lookthrough(pool, org_id, str(entity_id))
+        # PERMS1 (WF-03) — the hierarchy graph reads BOTH ownership tables, like the detail page.
+        lookthrough = await get_lookthrough(pool, org_id, str(entity_id), both_tables=True)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return {"root_entity_id": str(entity_id), "lookthrough": lookthrough}

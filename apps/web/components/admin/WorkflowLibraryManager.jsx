@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { createWorkflowAction, deleteWorkflowAction } from "@/lib/workflowActions";
-import { canDeleteWorkflow, deleteRefusal } from "@/lib/workflowLibrary.mjs";
+import { canDeleteWorkflow, deleteConfirmText, deleteRefusal } from "@/lib/workflowLibrary.mjs";
 
 const CARD = {
   borderColor: "#ece8dd",
@@ -163,7 +163,7 @@ export default function WorkflowLibraryManager({ initialWorkflows = [] }) {
                     {canDeleteWorkflow(w) ? (
                       confirmingId === w.id ? (
                         <span className="flex items-center gap-2 text-sm">
-                          <span className="text-text-muted">Delete this workflow and all its versions?</span>
+                          <span className="text-text-muted">{deleteConfirmText(w)}</span>
                           <button
                             type="button"
                             disabled={pending}

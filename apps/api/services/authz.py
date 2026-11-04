@@ -145,6 +145,22 @@ def _claim_list(claims: dict, keys) -> list[str]:
 # round trip costs 40-200 ms from a laptop to the pooler, and this runs on
 # every authenticated request. Not a cache: read fresh, every request.
 # Callers append "FROM users u ..." (and may prepend a CTE / extra columns).
+#
+# PERMS1 — ONE SOURCE OF PERMISSIONS. The SOC profile / permission-set axis
+# (users.profile_id → profile_permissions; user_permission_sets →
+# permission_set_permissions) used to be read only by the workflow gates
+# (services.profiles), while every other gate read the role axis through this
+# Principal — so the "Org Admin" profile's workflow keys never reached
+# /users/me, and the two axes disagreed. Now this SAME statement also returns:
+#   * granted_names    — the user's profile + permission-set keys, of the
+#                        user's OWN org only, JOINED TO THE CATALOG
+#                        (permissions.name): a key that is not a real
+#                        permission (the legacy profile key "staff") grants
+#                        nothing — it never becomes is_staff (roles only);
+#   * member_safe_names — the org's `member` role grants (BUGFIX2's
+#                        member-safe keys), so the client-role rule is applied
+#                        here, in principal_from_row, not by a second reader.
+# Still one statement per request; no new parameter.
 PRINCIPAL_COLUMNS = """
     u.id, u.org_id, u.email, u.role, u.status, u.is_active,
     ARRAY(SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
@@ -154,6 +170,20 @@ PRINCIPAL_COLUMNS = """
            JOIN role_permissions rp ON rp.role_id = ur.role_id
            JOIN permissions p ON p.id = rp.permission_id
            WHERE ur.user_id = u.id AND r.org_id = u.org_id) AS permission_names,
+    ARRAY(SELECT DISTINCT pm.name FROM (
+             SELECT pp.permission_key AS k FROM profile_permissions pp
+               JOIN profiles pr ON pr.id = pp.profile_id
+              WHERE pp.profile_id = u.profile_id AND pr.org_id = u.org_id
+             UNION
+             SELECT psp.permission_key FROM user_permission_sets ups
+               JOIN permission_sets ps ON ps.id = ups.permission_set_id
+               JOIN permission_set_permissions psp ON psp.permission_set_id = ups.permission_set_id
+              WHERE ups.user_id = u.id AND ps.org_id = u.org_id) g
+           JOIN permissions pm ON pm.name = g.k) AS granted_names,
+    ARRAY(SELECT DISTINCT p.name FROM roles r
+           JOIN role_permissions rp ON rp.role_id = r.id
+           JOIN permissions p ON p.id = rp.permission_id
+           WHERE r.org_id = u.org_id AND r.name = 'member') AS member_safe_names,
     CASE WHEN u.role = $2 THEN ARRAY(SELECT name FROM permissions) END AS catalog_names"""
 
 PRINCIPAL_BY_ID_SQL = f"SELECT {PRINCIPAL_COLUMNS} FROM users u WHERE u.id = $1"
@@ -186,6 +216,18 @@ def principal_from_row(row, *, claims: dict | None = None, resolved_via: str = "
         is_super = rbac.is_super_admin({"role": row["role"]})
         roles = list(row["role_names"] or [])
         perms = set(row["permission_names"] or [])
+        # PERMS1 — profile + permission-set keys (catalog keys only). The client
+        # rule (BUGFIX2) is decided from ROLE standing alone — a profile key can
+        # never lift a user out of it: a user with no Super / staff / internal
+        # role and neither org-administration permission BY ROLE keeps only the
+        # member-safe keys of what their profile / sets carry.
+        granted = set(row["granted_names"] or [])
+        client_like = not (is_super or STAFF_ROLE_NAMES.intersection(roles)
+                           or INTERNAL_ROLE_NAMES.intersection(roles)
+                           or rbac.ORG_ADMIN_PERMISSION in perms or "manage_members" in perms)
+        if client_like:
+            granted &= set(row["member_safe_names"] or [])
+        perms |= granted
         if TEST_MODE and claims:
             roles = sorted(set(roles) | set(_claim_list(claims, _TEST_ROLES_CLAIMS)))
             perms |= set(_claim_list(claims, _TEST_PERMISSIONS_CLAIMS))

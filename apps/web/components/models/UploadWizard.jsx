@@ -166,8 +166,12 @@ export default function UploadWizard({ envelope, targetModel = null }) {
       return;
     }
     if (data.duplicate_of) {
-      setMsg(`This exact file was uploaded before (${data.duplicate_of.file_name}, ${String(data.duplicate_of.uploaded_at || "").slice(0, 10)}) — logged as a duplicate.`);
+      setMsg(`This exact file was uploaded before (${data.duplicate_of.file_name}, ${String(data.duplicate_of.uploaded_at || "").slice(0, 10)}) and a live model still uses it — logged as a duplicate.`);
       return;
+    }
+    // PERMS1 (REP-10) — the same file, but no live model uses its earlier upload: that upload is re-opened.
+    if (data.reopened === true) {
+      setMsg(`This file was uploaded before (${String(data.upload?.uploaded_at || "").slice(0, 10)}); no live model uses it, so that upload is re-opened and continues here.`);
     }
     setStep(data);
     fromWizard(data);

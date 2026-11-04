@@ -12,3 +12,9 @@ export function canDeleteWorkflow(w) {
 export function deleteRefusal(w) {
   return typeof w?.delete_refusal === "string" && w.delete_refusal ? w.delete_refusal : null;
 }
+
+/** PERMS1 (WF-06) — the confirmation names the workflow it deletes. */
+export function deleteConfirmText(w) {
+  const name = typeof w?.name === "string" && w.name ? w.name : "this workflow";
+  return `Delete “${name}” and all its versions? This cannot be undone.`;
+}

@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+PERMS1 (2026-11-04, ONE source of permissions — the authz Principal = role ∪ profile ∪ permission-set grants in one statement, client rule applied, the key "staff" grants nothing; org_admin baseline (+9 keys, no approve_*); org admins create deals and households (Joe's decisions 1-2); WF-06 / WF-03 / REP-10 / WF-04 / WF-05; HollisMuse re-run test rows removed; verify WRITTEN, not yet run): see the top entry.
 REP12 (2026-11-04, Replication Studio sprint 12 — the note-versus-replica check across NEW issues: every new / restated terms version checked automatically per org, a DRAFT replica only for an eligible note, the comparison when quoted, the "New issues" feed + alerts, the Super Admin's underlying queue (one-click / multi-confirm through confirm_resolution); schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 STAFFROLES1 (2026-11-04, "see staff data" (is_internal: every internal firm role) split from "skip permission checks" (is_staff, unchanged); org admin / support staff read the CRM, approvals unchanged; verify WRITTEN, not yet run): see the top entry.
 REP11 (2026-11-03, Replication Studio sprint 11 — PHASE 3 BEGINS: note replicability verdicts from the 424B2 terms (static 11 / approximate 3 / not replicable 40 over today's 54; 0 buildable — no underlying confirmed), replicas from rep8's options machinery plus a Treasury leg, the embedded-fee estimate only when quoted, the X-ray marker under the hypothetical-performance policy; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
@@ -332,6 +333,91 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000. PERMS1 — one source of permissions; org admin baseline; deal + household creation; HollisMuse re-run fixes; verify WRITTEN, not yet run (2026-11-04)
+
+**One source (Task 2).** `services.authz.PRINCIPAL_COLUMNS` (still ONE statement, no new parameter) now also returns
+`granted_names` — the user's profile (`users.profile_id` → `profile_permissions`) and permission-set
+(`user_permission_sets` → `permission_set_permissions`) keys of the user's OWN org, joined to the `permissions`
+catalog — and `member_safe_names` (the org's `member` role grants). `principal_from_row` unions them onto the role
+grants; a user with no Super / staff / internal role and neither org-administration permission BY ROLE keeps only
+the member-safe keys (BUGFIX2's rule, decided from roles so a profile key can never lift a user out of it). The legacy
+profile key `"staff"` is not in the catalog and nothing checks it — it maps to NOTHING; `is_staff` / `is_internal`
+stay role-only. Every other reader now returns the Principal's answer: `services.profiles.get_effective_permissions`
+/ `user_has_permission` (workflow engine), `rbac.fetch_permission_names` / `get_user_permissions` / `has_permission`
+(every rbac gate — it used to read roles of ANY org), `rbac.get_users_with_permission` (todo fan-out, same
+statement, Super Admin not counted as holding everything), and the workflow routes (the request's cached Principal).
+`/users/me` therefore carries the workflow keys; the menu's Workflows / Runs / Triggers tabs gate on the keys their
+API checks (Runs / Triggers were super-admin only).
+
+Real accounts that gained keys from the union (live, 2026-11-04): jpl99172 / jpl991723 (org_admin + "Org Admin"
+profile) author_workflows, configure_workflow_triggers, view_workflow_runs; jpl991722 (support_staff + "CSA / Ops")
+manage_documents, view_marketplace; jpl991721 (member) nothing. No user, role assignment or profile was changed.
+
+[FIND] NAV-10 / WF-02: at the pre-sprint HEAD the workflow API already admitted the "Org Admin" profile holders (its
+gate read the profile axis); the org admin was refused by the menu (Runs / Triggers super-admin only) and by every
+ROLE-axis gate (Positions, Commitments: view_portfolio). The reverse disagreement was real too: a ROLE-only holder
+(support staff's role grants view_workflow_runs) was refused by the profile-only workflow gate.
+
+**Org admin baseline (Task 3).** `rbac.ORG_ADMIN_DEFAULT_PERMISSIONS` (+ `PERMS1_ORG_ADMIN_ADDED`) and
+docs/perms1_part1.sql (APPLIED 2026-11-04: 18 grants = 9 keys × the 2 org_admin roles) add view_portfolio,
+view_members, view_dashboard, view_deals, view_workflow_runs, author_workflows, configure_workflow_triggers,
+manage_deals, manage_members. No approve_*. Before → after: 2nd Act org_admin 27 → 36 permissions; Hollisworks
+org_admin 26 → 35 (it never had review_agent_proposals — unchanged). manage_billing (fee WRITES) is NOT granted.
+
+**Deals (decision 1, DEAL-01).** POST /deals = require_internal + manage_deals; the deal starts draft and follows the
+one lifecycle (services.deal_lifecycle); members never see a draft. The Marketplace "New deal" control and
+/marketplace/new read the /users/me envelope (internal + manage_deals); they used `lib/roles.isStaff`, which
+DEFAULT-ALLOWED when the token carried no roles claim — [FIND] `lib/roles.isStaff` is still used elsewhere.
+
+**Households (decision 2, REP-01).** Portfolio → Households shows "New household" (name + member entities picked from
+the CRM; account / SPV records refused) and, per household, "Add account" (custodian, the typed number stored ONLY
+as the mask + the org-salted HMAC the custody import computes — same live unique key, so the import keeps working —,
+owner = a household member, authority / custody: the account starts at REP7B's default; a different choice becomes
+REP7B's draft change + approval task). Gate: require_internal_permission(manage_members) (services/household_admin.py,
+routers/households.py GET/POST /admin/households, GET /admin/households/{id}, POST …/{id}/accounts). Audit rows
+`household.created` / `household.account_added`. The UI renders only on the envelope's `permissions.can_write`.
+
+**Defects (Task 4).**
+- WF-06: system workflows (`system:` prefix — human_tasks' approval definitions) have no Delete and the API refuses
+  them (409); Delete only on a never-run draft with no trigger; the confirmation names the workflow.
+- WF-03: data path — GET /entities/{id}/tree read entity_relationships only, downward only; the Hargrove owners
+  live in entity_ownership and point into the root. The tree now reads BOTH tables (ownership_edges) and returns
+  `owners` (upward, nested, with `effective_pct`); HierarchyBuilder draws them above the root with their 60 / 40
+  edges in both look-through states (the toggle is client-only). GET /lookthrough reads both tables for the graph
+  (`both_tables=True`); [FIND] `get_lookthrough`'s DEFAULT stays entity_relationships-only because
+  portfolio_rollup builds entity_holdings from it — moving the rollup to both tables is a separate, data-changing
+  decision.
+- REP-10: the duplicate guard blocks re-uploading the same bytes only while a LIVE model references the earlier
+  upload (`models.LIVE_MODEL_REF_SQL`); otherwise the earlier upload (the one stored copy) is re-opened (audit
+  `models.upload_reopened`, no "Duplicate" row) and may create a draft again. A draft_created upload whose model is
+  gone displays "Closed — model removed". [FIND] an upload whose events AND versions were hard-deleted (bugfix2's
+  clean-up) is indistinguishable from a fresh one — it stays re-openable, which is now harmless.
+- WF-04: Billing & Custody lists "Fee schedules" (/fee-schedules/chat) and "Profitability" (internal +
+  view_portfolio); /admin/fees redirects to the group landing; the app has its own not-found page. [FIND] the fee
+  READ routes were gated on view_portfolio ALONE — a member grant: a member could read the firm's fee schedules and
+  P&L. All fee-chat / fee-schedules / profitability routes now require_internal first.
+- WF-05: the generator already retried once with the validator's errors and never saved invalid BPMN; the refusal
+  now says, in plain words, what was wrong and what to add (`generation_refusal`).
+
+**Test rows (Task 5).** scripts/perms1_remove_muse_rows.py --apply (operator DSN, `models.teardown = 'fixture'`
+LOCAL, by id, count + checksum): workflow "MUSE – workflow" (1 definition, 1 version, 3 steps) and the six
+MUSE-model.csv uploads (the orphaned Nov 3 receipt + its five 07:23 UTC duplicates); every other row's checksum
+unchanged; the immutability trigger untouched; audit rows and the R2 object kept.
+
+**Joe's product decisions (2026-11-04, Task 7).** (1) DEAL-01 org admins create deals — BUILT here. (2) REP-01
+households by internal staff with manage_members from Portfolio → Households, accounts added by hand or by the
+custody import, never by members — BUILT here. (3) NAV-03 / NAV-06 / NAV-07 org admins DO see price sources and the
+hypothetical-performance policy — KEPT AS IS. (4) PRIV-06 team-based staff visibility (services/staff_visibility.py:
+staff_assignments by user or team, team_members, users.manager_id, SOC Phase 2) is built but NOT enforced —
+enforcing it is the NEXT sprint, visibility1. No visibility changed here; the new household reads go through
+`require_internal_permission`, and new member-family reads must keep using `services.authz.member_entity_scope` /
+`require_entity_access` — the one helper visibility1 will narrow.
+
+[FIND] older verifies whose route matrix expected a MEMBER to read the fee routes (view_portfolio) or the
+`org_admin_manage_org_settings` nav persona to see /admin/workflows now disagree by design (navregroup test updated).
+
+verify_perms1.py WRITTEN, not yet run (self-checks only); regression: verify_staffroles1.py ONCE, nested.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000. NEW-ISSUE NOTE CHECKS — rep12 (sprint 12 of 15): the automatic note-versus-replica check, the "New issues" feed and alerts, the underlying confirmation queue; schema APPLIED; verify WRITTEN, not yet run (2026-11-04)
 

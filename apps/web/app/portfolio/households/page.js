@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
+import HouseholdManager from "@/components/households/HouseholdManager";
 
 // REP7 — the households the caller may see (view_replication + household
 // access), each linking to its X-ray tab.
@@ -16,6 +17,14 @@ export default async function HouseholdsPage() {
   } catch (e) {
     error = e.status === 403 ? "Households are open to staff with replication access." : e.message;
   }
+  // PERMS1 (REP-01) — the management envelope (internal role + manage_members). A 403 or any failure means no
+  // management controls at all — never a default.
+  let manage = null;
+  try {
+    manage = await fetchAPI("/api/v1/admin/households");
+  } catch {
+    manage = null;
+  }
   return (
     <AppShell user={session.user}>
       <h1 className="text-3xl font-semibold text-navy">Households</h1>
@@ -27,6 +36,7 @@ export default async function HouseholdsPage() {
           ))}</ul>
         ) : <p className="text-text-muted">No household with accounts.</p>}
       </div>
+      {manage?.permissions?.can_write === true && <HouseholdManager envelope={manage} />}
     </AppShell>
   );
 }
