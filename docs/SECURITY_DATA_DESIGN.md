@@ -102,10 +102,12 @@ terms note + confirmed_on, daily call budget.
 
 ## The nightly
 
-`scripts/security_data_nightly.py`: refresh within budgets → platform series
+`services/security_data/nightly.run_nightly`: refresh within budgets → platform series
 quality → org quality for securities on open proposals (test orgs skipped) →
 to-dos for stale / disagreeing items → one summary row. Fund holdings stay on
-rep1's own daily schedule. **Not yet scheduled on Render** (operator step).
+rep1's own daily schedule. **Scheduled since SECMASTER1 as the platform job
+`system:Security data — nightly`** (workflow engine, weekdays 19:30 New York) — no
+Render cron; `scripts/security_data_nightly.py` remains for a manual run.
 
 ## Add a vendor — the 5 steps
 
@@ -129,3 +131,60 @@ rep1's own daily schedule. **Not yet scheduled on Render** (operator step).
    this while the module is not connected).
 
 No reader changes. Readers ask for the data type.
+
+## Reference data — the security master (SECMASTER1, 2026-11-04)
+
+Data type **`reference`**: per-security facts (exchange, cik, sector, industry, industry_group, country, is_etf,
+fund_category, listing_status, first_seen, last_seen) stored per (security, field, PROVIDER) in
+`portfolio.security_reference_attributes` and read through the rank walk (`security_master_load.read_reference`,
+subject `<gsid>:<field>`; never stale on age). Identifiers stay in `securities_global_identifiers`. Schema:
+`docs/secmaster1_part1.sql`; discovery: `docs/SECMASTER1_DISCOVERY.md`.
+
+### The five providers (rank for `reference`, in order)
+
+| Key | Source | Supplies | Internal | Members | Redistribution | Budget / day |
+|---|---|---|---|---|---|---|
+| nasdaq_trader | nasdaqlisted.txt + otherlisted.txt | the listed universe, exchange, ETF flag, listing status | yes | allowed | no | 50 |
+| sec_tickers | sec.gov company_tickers_exchange.json | CIK, exchange | yes | allowed | yes (US public record) | 50 |
+| openfigi | api.openfigi.com /v3/mapping | FIGI, type, ticker for a CUSIP | yes | allowed | **no** (CUSIP inputs) | 2000 |
+| sec_13f_list | SEC Official List of Section 13(f) Securities | CUSIPs (quarterly) | yes | **own holdings only** | **no** (CUSIP rights) | 20 |
+| finance_database | github.com/JerBouma/FinanceDatabase CSVs | sector, industry, group, country, fund category | yes | **not allowed** | **no** | 200 |
+
+CUSIP (and the ISIN that embeds it) is CUSIP Global Services' licensed identifier: `identifiers_for_display`
+hides both from a member except for their own holdings, by THE licence rule against the 13(f) provider row.
+Every sec.gov request goes through `services/edgar_fetch` (declared User-Agent, 10/s). OpenFIGI uses
+`OPENFIGI_API_KEY` when Doppler has it (100 jobs / request) and the keyless limit otherwise (10 jobs, 25 / min).
+
+### The matcher (`services/security_master_load.py`)
+
+CUSIP → FIGI (→ ISIN) → ticker + exchange FAMILY (exactly one holder) → new. One transaction per batch, bulk
+writes. Nothing existing is overwritten: a disagreement is one open item in `security_master_review`
+(ticker_conflict, ambiguous_match, ticker_cusip_conflict, identifier_conflict, type_mismatch, exchange_mismatch,
+ticker_moved, 13f_deleted). A ticker that moves to a new CUSIP: the old identifier is retired (valid_to), the new
+CUSIP's security holds it. ISIN = 'US' + CUSIP + check digit for a numeric-first CUSIP. Delisting: absent from 3
+DISTINCT Nasdaq Trader files → `listing_status` delisted (never deleted; a file newly missing > 20% and > 25
+securities is treated as truncated). FinanceDatabase never creates a security. A second run on the same files writes
+nothing. A review decision records the decision only; the fix is made on the security.
+
+### The jobs (workflow engine, platform org = Hollisworks; `services/security_master_jobs.py`)
+
+| Workflow | Schedule (America/New_York) | Steps |
+|---|---|---|
+| system:Security master — nightly | weekdays 18:45 | universe (Nasdaq + SEC → matcher → delisting), openfigi (new identifiers, ≤ 40 requests) |
+| system:Security master — 13F list | daily 07:30 | load a new quarter once; map pending CUSIPs (≤ 40 requests) |
+| system:Security master — attributes | Saturdays 09:00 | FinanceDatabase |
+| system:Security data — nightly | weekdays 19:30 | marketdata1's nightly |
+
+Fired by the 5-minute scheduler tick; each step bounded (200 s, 2000 new securities per source per run, the rest
+next run); a failure HOLDS the run and alerts the platform Super Admin; a held run blocks its trigger until a Super
+Admin closes it (Security master screen / `POST /admin/security-data/master/runs/{id}/close`). Every step writes a
+`security_data_runs` row (`summary.job`) and returns its counts + review items as step output. Run now: Super Admin,
+Security master screen or Runs screen. The actions require `run_platform_jobs` — not in the permissions catalog, so
+only a Super Admin passes and the assistant never lists them — and refuse to run outside the platform org.
+
+### Operator steps
+
+1. Optional: `OPENFIGI_API_KEY` in Doppler (faster).
+2. After deploy: `python3 apps/api/scripts/_apply_secmaster1.py --activate-jobs` (triggers seeded inactive).
+3. `secmaster_initial_load.py --dry-run`, then the real load (`--resume` after a crash; `--source X` for one stage).
+4. Work the review queue. 5. marketdata1's pending Render-cron step is no longer needed.

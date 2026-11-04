@@ -364,6 +364,7 @@ async def run_scheduler_tick(
     now_utc: datetime | None = None,
     lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
     log=print,
+    only_trigger_ids=None,
 ) -> TickResult:
     """Run one scan-evaluate-claim-fire pass.
 
@@ -374,6 +375,11 @@ async def run_scheduler_tick(
 
     EVERY outcome is logged with its reason. A scheduler whose quiet ticks and
     whose suppressed ticks look identical cannot be operated.
+
+    ``only_trigger_ids`` (SECMASTER1, additive, default None = every trigger)
+    narrows the scan to the given triggers, so a verify can fire ITS OWN fixture
+    triggers through this real loop without firing — or claiming an occurrence
+    of — any real one. The production entrypoint never passes it.
     """
     now_utc = now_utc or datetime.now(timezone.utc)
     result = TickResult()
@@ -396,6 +402,9 @@ async def run_scheduler_tick(
             f"{type(exc).__name__}: {exc}")
 
     rows = await load_due_candidates(conn)
+    if only_trigger_ids is not None:
+        wanted = {str(t) for t in only_trigger_ids}
+        rows = [r for r in rows if str(r["id"]) in wanted]
     result.examined = len(rows)
 
     for row in rows:
@@ -493,13 +502,23 @@ async def run_scheduler_tick(
             # The claim is committed and deliberately NOT rolled back — see the
             # module docstring. The engine has already held-and-alerted any
             # failure that got as far as creating a run.
-            log(f"[scheduler] ERROR  {tag} — occurrence "
-                f"{decision.occurrence_utc.isoformat()} claimed but the run "
-                f"failed to start: {type(exc).__name__}: {exc}")
+            held_run_id = getattr(exc, "held_run_id", None)
+            if held_run_id is not None:
+                log(f"[scheduler] HELD   {tag} — occurrence "
+                    f"{decision.occurrence_utc.isoformat()} started run "
+                    f"{held_run_id}, which failed and is held: "
+                    f"{type(exc).__name__}: {exc}")
+            else:
+                log(f"[scheduler] ERROR  {tag} — occurrence "
+                    f"{decision.occurrence_utc.isoformat()} claimed but the run "
+                    f"failed to start: {type(exc).__name__}: {exc}")
             result.errors.append({
                 "trigger_id": trigger["id"],
                 "error": f"{type(exc).__name__}: {exc}",
                 "occurrence_utc": decision.occurrence_utc,
+                # additive (SECMASTER1 FIX 1): the run the engine HELD, when it
+                # got that far — None means no run row exists
+                "run_id": held_run_id,
             })
             continue
 

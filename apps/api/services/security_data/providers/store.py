@@ -122,3 +122,21 @@ def _group(rows, key_col: str, date_col: str, val_col: str, provider_key: str, *
                                            list(r["quality_flags"] or []),
                                            {"upload_id": str(r["upload_id"])} if r["upload_id"] else {}))
     return out
+
+
+async def reference_attributes(conn, provider_key: str, subjects: list[str]) -> dict:
+    """secmaster1 — reference facts as points. A subject is ``<global security id>:<field>``; the value is the
+    provider's live text value, as_of its as-of date. One point per subject (the live row)."""
+    pairs = []
+    for s in subjects:
+        gsid, _, field = str(s).partition(":")
+        if gsid and field:
+            pairs.append((gsid, field))
+    if not pairs:
+        return {}
+    rows = await conn.fetch(
+        "SELECT a.global_security_id, a.field, a.value, a.as_of FROM portfolio.security_reference_attributes a "
+        "JOIN unnest($1::uuid[], $2::text[]) AS w(gsid, field) ON w.gsid = a.global_security_id AND w.field = a.field "
+        "WHERE a.provider_key = $3 AND a.valid_to IS NULL AND a.system_to IS NULL",
+        [p[0] for p in pairs], [p[1] for p in pairs], provider_key)
+    return {f"{r['global_security_id']}:{r['field']}": [Point(r["value"], r["as_of"], provider_key)] for r in rows}

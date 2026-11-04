@@ -1,0 +1,18 @@
+ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol
+AAA|Alternative Access First Priority CLO Bond ETF|P|AAA|Y|100|N|AAA
+AAC.U|Ares Acquisition Corporation III Units, each consisting of one Class A ordinary share and one-tenth of one redeemable warrant|N|AAC.U|N|100|N|AAC=
+AAC.W|Ares Acquisition Corporation III Redeemable warrants, each whole warrant exercisable for one Class A ordinary share at an exercise price of $11.50|N|AAC.WS|N|100|N|AAC+
+AA|Alcoa Corporation Common Stock |N|AA|N|100|N|AA
+AIIA.R|AI Infrastructure Acquisition Corp. Rights, each entitling the holder to receive one-fifth (1/5) of one Class A Ordinary Share|N|AIIAr|N|100|N|AIIA^
+ASB$E|Associated Banc-Corp Depositary Shares, each representing a 1/40th interest in a share of 5.875% Non-Cumulative Perpetual Preferred Stock, Series E|N|ASBpE|N|100|N|ASB-E
+ASB$F|Associated Banc-Corp Depositary Shares, each representing a 1/40th interest in a share of Associated Banc-Corp 5.625% Non-Cumulative Perpetual Preferred Stock, Series F|N|ASBpF|N|100|N|ASB-F
+ASBA|Associated Banc-Corp 6.625% Fixed-Rate Reset Subordinated Notes due 2033|N|ASBA|N|100|N|ASBA
+ATEST.A|Tick Pilot Test Group 1 Common Stock|A|ATEST.A|N|100|Y|ATEST.A
+ATEST.B|Tick pilot Test 2 Common Stock|A|ATEST.B|N|100|Y|ATEST.B
+A|Agilent Technologies, Inc. Common Stock|N|A|N|100|N|A
+BF.A|Brown Forman Inc Class A Common Stock|N|BF.A|N|100|N|BF.A
+BF.B|Brown Forman Inc Class B Common Stock|N|BF.B|N|100|N|BF.B
+BFAP|FT Vest Bitcoin Strategy Floor15 ETF April|P|BFAP|Y|100|N|BFAP
+ZZZTX|TXSE Test Stk 5 Common Stock|F|ZZZTX|N|40|Y|ZZZTX
+ZZZTT|ETF|F|ZZZTT|Y|100|Y|ZZZTT
+File Creation Time: 1104202612:11||||||

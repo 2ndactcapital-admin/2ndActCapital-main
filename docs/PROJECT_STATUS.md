@@ -334,6 +334,66 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000. SECMASTER1 — the security master from free public sources: five reference-data providers, the matcher, the 13(f) list, a one-time load, and four platform jobs on the workflow engine; schema APPLIED, jobs SEEDED (triggers inactive until deploy); verify WRITTEN, not yet run (2026-11-04)
+
+**Why.** The platform master held 67 securities (54 notes, 13 indices; 51 CUSIPs, 13 tickers) — HollisMuse could not
+find AAPL / MSFT / GOOG (BUGFIX2 REP-05). Every price, model, replica, held-away and X-ray feature resolves through it.
+
+**Discovery (Task 1, `docs/SECMASTER1_DISCOVERY.md`).** Formats of all five sources from small samples (two servers
+ignored Range and returned a whole file — recorded); FinanceDatabase is JerBouma's (not "JetBrains") and is one CSV
+PER EXCHANGE, not per asset class; OpenFIGI keyless = 10 jobs × 25 req/min, `OPENFIGI_API_KEY` absent; the 13(f) file
+name is read from the page (some quarters are `…-txt.txt`). No workflow platform scope exists → the jobs are `system:`
+workflows in the **Hollisworks org** (its only user is a Super Admin): 2nd Act org admins never see them, Super Admin
+does, a held run alerts the Super Admin. Canonical ticker form `BRK.B` / `ASB.PRE` / `.WS` `.U` `.R`, applied by
+`normalize_identifier_value('ticker')` (no stored ticker had a separator). Search got trigram indexes and an
+uncorrelated identifier sub-select.
+
+**Built.** `docs/secmaster1_part1.sql` (APPLIED + verified by `scripts/_apply_secmaster1.py --verify`: SCHEMA OK):
+data type `reference`; `security_reference_attributes` (per security / field / provider, read through the rank);
+`security_master_source_files`; `sec_13f_list`; `security_master_review`; `openfigi_mappings`;
+`security_master_checkpoints`; pg_trgm indexes; five provider rows with licence facts and the `reference` rank.
+Adapters `providers/{nasdaq_trader,sec_tickers,openfigi,sec_13f_list,finance_database}.py` (+ `reference_common.py`:
+injected transport, every sec.gov request through `edgar_fetch`, call budgets → `provider_call_log`). Matcher
+`services/security_master_load.py` (CUSIP → FIGI → ticker + exchange family → new; bulk per batch; conflicts to review,
+nothing overwritten; ticker move retires the old identifier; 3 distinct absent files → delisted with a truncation
+guard; idempotent). `services/security_master_sync.py` (the pulls, shared by jobs + load). `services/security_master_jobs.py`
+(four system workflows + actions, tier 2, Super-Admin-only non-catalog permission, refuse outside the platform org,
+deadline 200 s / 2000 new per night / 40 OpenFIGI requests per step). `scripts/secmaster_initial_load.py` (operator).
+`routers/security_master.py` (6 routes, all Super Admin). Front end: Super Admin → Security master
+(`/admin/security-data/master`: status panel, jobs with Run now / close held run, review queue) and a platform-jobs
+panel with Run now on the Runs screen. `run_scheduler_tick(only_trigger_ids=…)` (additive, verify only).
+
+**Smoke (sprint, fixture rows only, cleaned by id):** create / idempotent re-run (0 writes) / ticker+exchange / CUSIP /
+FIGI / ticker move / index-ticker conflict / delisting 1→2→3 / rank-walk read / CUSIP licence rule all behaved; it
+caught a truncation guard that blocked delisting on small universes (fixed: absolute floor of 25).
+
+**Findings.**
+- [FIND] There is no un-hold path in the engine and a held run blocks its trigger forever → added
+  `POST /admin/security-data/master/runs/{id}/close` (Super Admin, platform-job runs only).
+- [FIND] A Canadian issuer's numeric CUSIP has a `CA` ISIN that cannot be told from the CUSIP; the derived `US` ISIN is
+  checked against FinanceDatabase's stated ISIN and a difference becomes an `identifier_conflict` review item.
+- [FIND] The 13 index tickers (SPX, NDX, RTY, …) carry no exchange: a listed equity using one of them is a
+  `ticker_conflict` review item, never matched.
+- [FIND] Preferreds / warrants / units / rights are not sent to OpenFIGI by ticker (Bloomberg spells them per issue);
+  they get FIGIs through their 13(f) CUSIP.
+- marketdata1's nightly is now the `system:Security data — nightly` job — **its pending Render-cron step is no longer
+  needed**. It HOLDS on any refresh error (e.g. FRED_API_KEY missing) until a Super Admin closes the run.
+
+**Operator steps.**
+1. (Optional, faster) add `OPENFIGI_API_KEY` to Doppler `prd` (and the scheduler service's sync).
+2. Merge + deploy, then `python3 apps/api/scripts/_apply_secmaster1.py --activate-jobs` (the four triggers were seeded
+   INACTIVE: until the deploy the scheduler's registry has no `security_master.*` verbs and would mark the steps
+   completed having done nothing).
+3. `doppler run -- apps/api/venv/bin/python apps/api/scripts/secmaster_initial_load.py --dry-run`, then without
+   `--dry-run` (`--resume` after any interruption). ~35 min with the OpenFIGI key, ~80 without.
+4. Work the review queue (Super Admin → Security master).
+5. Drop marketdata1's "create a Render cron for security_data_nightly.py" step.
+6. Run `verify_secmaster1.py` (in `scripts/regression_set.txt`).
+
+**UPDATE (2026-11-04, secmaster1 fix 1):** the operator run's 7 FAILs (146 PASS) had 3 causes. CODE: `BatchResult.merge` dropped `by_record`, so every OpenFIGI-mapped 13(f) CUSIP was recorded "not mapped — no match" while its security HAD been created. CODE: the engine's permission check looked up the starter under the RUN's org RLS, so a Super Admin from another home org resolved to None and was refused before the action's org guard; it now reads that row under `platform_scope`. VERIFY: a failed run is HELD and lands in `TickResult.errors`, never `fired`. The errors entry now also carries the held `run_id` (additive), and the "blocks the next fire" check now asserts the blocking run IS this section's held run. VERIFY: the client-org case now runs as the Super Admin (org-guard refusal) plus a member without the permission (permission refusal). VERIFY: the nightly-step output check picked `outs[0]` from an unordered query and now picks by step_key. Proof: one-off `scripts/_oneoff_secmaster1_fix1.py` 59/0, zero fixture rows left, real rows' checksums unchanged; `--self-checks-only` 8/0. The full `verify_secmaster1.py` has not been re-run yet; the operator should re-run it.
+
+---
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000. PERMS1 — one source of permissions; org admin baseline; deal + household creation; HollisMuse re-run fixes; verify WRITTEN, not yet run (2026-11-04)
 
 **One source (Task 2).** `services.authz.PRINCIPAL_COLUMNS` (still ONE statement, no new parameter) now also returns
@@ -909,7 +969,8 @@ manage_org_settings to read and manage_org_settings to write) and listed in AUTH
   needs rep5's whole path. The real feed query is proven to run.
 - Indicator nightly / store / read gate: byte-identical to the base (afdbc6d).
 - Operator: run the verify (it runs `node --test`, `npm run build` and the `verify_rep6.py`
-  regression). Create a Render cron for `python scripts/security_data_nightly.py` with its OWN
+  regression). [SUPERSEDED by SECMASTER1: it runs as the `system:Security data — nightly` workflow job — no Render cron.]
+  Create a Render cron for `python scripts/security_data_nightly.py` with its OWN
   Doppler sync (DATABASE_URL, FRED_API_KEY) — it is not scheduled yet. Refresh the schema snapshot.
 
 ---

@@ -394,8 +394,16 @@ async def _assert_action_permission(pool, action, actor_id, step_key: str) -> No
             f"requires permission {permission_key!r}, but this run has no "
             "started_by member to check it against"
         )
+    from services.database import platform_scope
+
+    # The starter's OWN users row, read under platform scope. Read under the RUN's org context instead, the users
+    # RLS hides a Super Admin whose home org is not the run's org (org_id = current org OR is_super_admin GUC):
+    # load_principal returned None and the Super Admin bypass silently failed into a permission refusal
+    # (SECMASTER1 FIX 1 — a Super Admin's run in a client org never reached the action's own org guard). Only
+    # the identity lookup widens; the permission decision below is unchanged.
     async with pool.acquire() as conn:
-        principal = await load_principal(conn, actor_id)
+        async with platform_scope(conn):
+            principal = await load_principal(conn, actor_id)
     if principal is not None and is_super_admin(principal):
         return
     if await user_has_permission(pool, actor_id, permission_key):
@@ -660,6 +668,11 @@ async def start_workflow_run(
                 async with hold_conn.transaction():
                     await _apply_rls(hold_conn)
                     await _hold_run(hold_conn, run_id, org_id, started_by, exc)
+            # the caller (the scheduler tick) only sees the exception — tell it WHICH run is now held
+            try:
+                exc.held_run_id = run_id
+            except Exception:  # noqa: BLE001 — an exception type without a __dict__; the hold itself stands
+                pass
             raise
 
         return {

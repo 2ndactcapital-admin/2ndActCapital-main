@@ -12,6 +12,8 @@ from services.assistant_actions import (
 # one action — not an assistant feature. It is registered here so there is
 # still exactly ONE place that lists every registered action.
 from services import spv_carry_runs
+# SECMASTER1 — the platform security-master jobs' Service Task verbs (Super Admin only; never listed to the assistant)
+from services import security_master_jobs
 
 
 def register_all() -> None:
@@ -26,3 +28,4 @@ def register_all() -> None:
     propose.register_actions()
     spv_carry_runs.register_actions()
     edgar_ops.register_actions()
+    security_master_jobs.register_actions()

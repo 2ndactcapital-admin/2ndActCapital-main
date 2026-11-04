@@ -245,6 +245,13 @@ def normalize_identifier_value(id_type: str, id_value: str) -> str:
     value = (id_value or "").strip()
     if not value:
         raise SecuritiesGlobalError("id_value is empty")
+    if id_type == "ticker":
+        # SECMASTER1 (Task 1d): ONE canonical symbol form — "BRK-B", "BRK/B" and "brk.b" are all BRK.B. Idempotent
+        # on every ticker stored before it (checked live 2026-11-04: no stored ticker, global or tenant, contains
+        # a separator), so no existing lookup changes.
+        from services.security_master_symbols import normalize_symbol
+
+        return normalize_symbol(value) or value.upper()
     if id_type in _UPPERCASED_ID_TYPES:
         return value.upper()
     return value

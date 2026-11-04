@@ -7,7 +7,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-DATA_TYPES = ("eod_price", "corporate_action", "fund_holdings", "index_level", "option_quote", "fx", "factor_score")
+DATA_TYPES = ("eod_price", "corporate_action", "fund_holdings", "index_level", "option_quote", "fx", "factor_score",
+              "reference")  # secmaster1 — security-master reference attributes (exchange, CIK, sector, …)
 PURPOSES = ("internal", "member_display")
 PROVIDER_KINDS = ("custodian", "regulator_filing", "issuer_file", "public_api", "csv_upload", "adviser_entry", "vendor")
 PROVIDER_STATUSES = ("active", "not_connected", "retired")
@@ -19,7 +20,9 @@ DATA_TYPE_LABELS = {"eod_price": "End-of-day price", "corporate_action": "Corpor
                     "fund_holdings": "Fund holdings", "index_level": "Index level / rate",
                     "option_quote": "Option quote", "fx": "FX rate",
                     # rep10 — subject "<global security id>:<factor>"; CSV upload and the vendor slot only
-                    "factor_score": "Factor score"}
+                    "factor_score": "Factor score",
+                    # secmaster1 — read per field through the platform rank (services.security_master_load)
+                    "reference": "Reference data (exchange, CIK, sector, listing)"}
 PURPOSE_LABELS = {"internal": "Internal use (adviser analysis)", "member_display": "Shown to a member"}
 KIND_LABELS = {"custodian": "Custodian valuation", "regulator_filing": "Regulatory filing",
                "issuer_file": "Issuer file", "public_api": "Public data API", "csv_upload": "File upload",

@@ -1319,11 +1319,13 @@ async def list_global_securities(
     if search:
         args.append(f"%{search.strip()}%")
         n = len(args)
+        # SECMASTER1 (1e): the identifier leg is ONE uncorrelated sub-select (an InitPlan the trigram index
+        # idx_sec_global_ident_value_trgm serves), not a correlated EXISTS probed once per security — same rows,
+        # but it stays fast at ~30k securities / ~100k identifiers. name / short_name use their trigram indexes.
         where.append(
-            f"(s.name ILIKE ${n} OR s.short_name ILIKE ${n} OR EXISTS ("
-            f"  SELECT 1 FROM {TABLE_SEC_IDENT} i "
-            f"  WHERE i.global_security_id = s.id AND i.id_value ILIKE ${n}"
-            f"    AND {_current('i')}))"
+            f"(s.name ILIKE ${n} OR s.short_name ILIKE ${n} OR s.id = ANY(ARRAY("
+            f"  SELECT i.global_security_id FROM {TABLE_SEC_IDENT} i "
+            f"  WHERE i.id_value ILIKE ${n} AND {_current('i')})))"
         )
 
     clause = " AND ".join(where)
