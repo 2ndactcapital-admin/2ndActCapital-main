@@ -1,0 +1,4376 @@
+{
+ "family": "Olivo",
+ "as_of": "2026-11-04",
+ "people": [
+  {
+   "id": "P1",
+   "name": "Dominic J. Olivo",
+   "born": 1951,
+   "generation": 1,
+   "story": "Founder of Olivo Foods (frozen Italian specialties, sold to Northline Foods in 2014). Widowed 2008; remarried 2011. Still chairs the foundation; drives the cars.",
+   "residence": "Greenwich, CT / Naples, FL",
+   "prefix": "",
+   "first": "Dominic",
+   "middle": "James",
+   "surname": "Olivo",
+   "dob": "1951-03-19",
+   "marital": "married",
+   "email": "dominic.olivo@example.com",
+   "phone": "+1 203 555 0101",
+   "status": "client"
+  },
+  {
+   "id": "P2",
+   "name": "Marguerite Meloni Olivo",
+   "born": 1968,
+   "generation": 1,
+   "story": "Dominic's second wife; former gallery director. Prenuptial agreement; provided for through the 2019 SLAT.",
+   "residence": "Greenwich, CT",
+   "prefix": "",
+   "first": "Marguerite",
+   "middle": "Meloni",
+   "surname": "Olivo",
+   "dob": "1968-09-02",
+   "marital": "married",
+   "email": "marguerite.olivo@example.com",
+   "phone": "+1 203 555 0102",
+   "status": "client",
+   "maiden": "Meloni"
+  },
+  {
+   "id": "P3",
+   "name": "Anthony D. Olivo",
+   "born": 1976,
+   "generation": 2,
+   "story": "Eldest. Ran Olivo Foods' operations through the sale; chairs the family office and sits on the Dynasty Trust distribution committee.",
+   "residence": "Darien, CT",
+   "prefix": "",
+   "first": "Anthony",
+   "middle": "Dominic",
+   "surname": "Olivo",
+   "dob": "1976-06-13",
+   "marital": "married",
+   "email": "anthony.olivo@example.com",
+   "phone": "+1 203 555 0103",
+   "status": "client"
+  },
+  {
+   "id": "P4",
+   "name": "Dr. Elena Olivo",
+   "born": 1978,
+   "generation": 2,
+   "story": "Anthony's wife; interventional cardiologist at a Stamford hospital.",
+   "residence": "Darien, CT",
+   "prefix": "Dr.",
+   "first": "Elena",
+   "middle": "",
+   "surname": "Olivo",
+   "dob": "1978-11-27",
+   "marital": "married",
+   "email": "elena.olivo@example.com",
+   "phone": "+1 203 555 0104",
+   "status": "client",
+   "maiden": "Broccoli"
+  },
+  {
+   "id": "P5",
+   "name": "Francesca Olivo-Cipolla",
+   "born": 1979,
+   "generation": 2,
+   "story": "Middle child. Contemporary-art dealer with a gallery in Miami; advises the family's art holdings.",
+   "residence": "Miami, FL",
+   "prefix": "",
+   "first": "Francesca",
+   "middle": "",
+   "surname": "Olivo-Cipolla",
+   "dob": "1979-04-08",
+   "marital": "married",
+   "email": "francesca@cipollastudio.example.com",
+   "phone": "+1 305 555 0105",
+   "status": "client"
+  },
+  {
+   "id": "P6",
+   "name": "Mateo Cipolla",
+   "born": 1977,
+   "generation": 2,
+   "story": "Francesca's husband; architect (Cipolla Studio).",
+   "residence": "Miami, FL",
+   "prefix": "",
+   "first": "Mateo",
+   "middle": "",
+   "surname": "Cipolla",
+   "dob": "1977-01-22",
+   "marital": "married",
+   "email": "mateo@cipollastudio.example.com",
+   "phone": "+1 305 555 0106",
+   "status": "client"
+  },
+  {
+   "id": "P7",
+   "name": "Michael T. Olivo",
+   "born": 1983,
+   "generation": 2,
+   "story": "Youngest of the first marriage. Venture investor in San Francisco (GP of Caldera Ventures). Divorced 2021.",
+   "residence": "San Francisco, CA / Aspen, CO",
+   "prefix": "",
+   "first": "Michael",
+   "middle": "Thomas",
+   "surname": "Olivo",
+   "dob": "1983-08-30",
+   "marital": "divorced",
+   "email": "michael@calderavc.example.com",
+   "phone": "+1 415 555 0107",
+   "status": "client"
+  },
+  {
+   "id": "P8",
+   "name": "Giulia Olivo",
+   "born": 2013,
+   "generation": 2,
+   "story": "Dominic and Marguerite's daughter. Minor; assets held in a 2503(c) trust.",
+   "residence": "Greenwich, CT",
+   "prefix": "",
+   "first": "Giulia",
+   "middle": "",
+   "surname": "Olivo",
+   "dob": "2013-05-16",
+   "marital": "single",
+   "email": "",
+   "phone": "",
+   "status": "client",
+   "minor": true
+  },
+  {
+   "id": "P9",
+   "name": "Sofia Olivo",
+   "born": 2004,
+   "generation": 3,
+   "story": "Anthony & Elena's daughter; college senior (economics).",
+   "residence": "Providence, RI",
+   "prefix": "",
+   "first": "Sofia",
+   "middle": "",
+   "surname": "Olivo",
+   "dob": "2004-02-11",
+   "marital": "single",
+   "email": "sofia.olivo@example.com",
+   "phone": "+1 203 555 0109",
+   "status": "client"
+  },
+  {
+   "id": "P10",
+   "name": "Luca Olivo",
+   "born": 2007,
+   "generation": 3,
+   "story": "Anthony & Elena's son; college freshman.",
+   "residence": "Hanover, NH",
+   "prefix": "",
+   "first": "Luca",
+   "middle": "",
+   "surname": "Olivo",
+   "dob": "2007-10-05",
+   "marital": "single",
+   "email": "luca.olivo@example.com",
+   "phone": "+1 203 555 0110",
+   "status": "client"
+  },
+  {
+   "id": "P11",
+   "name": "Isabel Cipolla",
+   "born": 2009,
+   "generation": 3,
+   "story": "Francesca & Mateo's daughter.",
+   "residence": "Miami, FL",
+   "prefix": "",
+   "first": "Isabel",
+   "middle": "",
+   "surname": "Cipolla",
+   "dob": "2009-07-24",
+   "marital": "single",
+   "email": "",
+   "phone": "",
+   "status": "client",
+   "minor": true
+  },
+  {
+   "id": "P12",
+   "name": "Nico Cipolla",
+   "born": 2013,
+   "generation": 3,
+   "story": "Francesca & Mateo's son (twin).",
+   "residence": "Miami, FL",
+   "prefix": "",
+   "first": "Nico",
+   "middle": "",
+   "surname": "Cipolla",
+   "dob": "2013-12-03",
+   "marital": "single",
+   "email": "",
+   "phone": "",
+   "status": "client",
+   "minor": true
+  },
+  {
+   "id": "P13",
+   "name": "Gabriel Cipolla",
+   "born": 2013,
+   "generation": 3,
+   "story": "Francesca & Mateo's son (twin).",
+   "residence": "Miami, FL",
+   "prefix": "",
+   "first": "Gabriel",
+   "middle": "",
+   "surname": "Cipolla",
+   "dob": "2013-12-03",
+   "marital": "single",
+   "email": "",
+   "phone": "",
+   "status": "client",
+   "minor": true
+  },
+  {
+   "id": "P14",
+   "name": "Theo Olivo",
+   "born": 2012,
+   "generation": 3,
+   "story": "Michael's son; shared custody.",
+   "residence": "San Francisco, CA",
+   "prefix": "",
+   "first": "Theo",
+   "middle": "",
+   "surname": "Olivo",
+   "dob": "2012-03-28",
+   "marital": "single",
+   "email": "",
+   "phone": "",
+   "status": "client",
+   "minor": true
+  },
+  {
+   "id": "P15",
+   "name": "Theresa Zucchini Olivo",
+   "born": 1953,
+   "generation": 1,
+   "residence": "Greenwich, CT",
+   "story": "Dominic's first wife, mother of Anthony, Francesca and Michael. Died 2008; her estate funded the Theresa Olivo Family Trust.",
+   "prefix": "",
+   "first": "Theresa",
+   "middle": "Zucchini",
+   "surname": "Olivo",
+   "dob": "1953-10-14",
+   "dod": "2008-02-09",
+   "marital": "married",
+   "email": "",
+   "phone": "",
+   "status": "deceased",
+   "maiden": "Zucchini"
+  },
+  {
+   "id": "P16",
+   "name": "Claire Porcari",
+   "born": 1985,
+   "generation": 2,
+   "residence": "Palo Alto, CA",
+   "story": "Michael's former wife (divorced 2021), Theo's mother; shared custody. Not a client \u2014 contact for Theo's trust and school matters only.",
+   "prefix": "",
+   "first": "Claire",
+   "middle": "",
+   "surname": "Porcari",
+   "dob": "1985-06-07",
+   "marital": "divorced",
+   "email": "claire.porcari@example.com",
+   "phone": "+1 650 555 0116",
+   "status": "contact"
+  }
+ ],
+ "organisations": [
+  {
+   "id": "O1",
+   "name": "Wilmington Fiduciary Co.",
+   "entity_type": "corporation",
+   "note": "Corporate trustee (Delaware) \u2014 Dynasty Trust and AO Descendants Trust"
+  },
+  {
+   "id": "O2",
+   "name": "Coastal Bank, N.A. \u2014 Trust Department",
+   "entity_type": "corporation",
+   "note": "Corporate trustee \u2014 SLAT, Theresa trust, CRUT; also operating bank and lender"
+  },
+  {
+   "id": "O3",
+   "name": "Harbor Charitable Trust",
+   "entity_type": "foundation",
+   "note": "Donor-advised fund sponsor (public charity) for the Olivo Giving Fund"
+  },
+  {
+   "id": "O4",
+   "name": "Northline Foods Inc.",
+   "entity_type": "corporation",
+   "note": "Acquirer of Olivo Foods (2014); tenant of the three industrial properties; the family's concentrated stock"
+  },
+  {
+   "id": "O5",
+   "name": "Caldera Ventures",
+   "entity_type": "lp",
+   "note": "Michael's venture firm (GP); the family is an LP in Fund II"
+  },
+  {
+   "id": "O6",
+   "name": "Cipolla Studio",
+   "entity_type": "llc",
+   "note": "Mateo's architecture practice"
+  },
+  {
+   "id": "O7",
+   "name": "Farm Credit West",
+   "entity_type": "corporation",
+   "note": "Lender \u2014 Stag's Hollow agricultural term loan"
+  },
+  {
+   "id": "O8",
+   "name": "First Western Trust",
+   "entity_type": "corporation",
+   "note": "Lender \u2014 Aspen mortgage"
+  }
+ ],
+ "entities": [
+  {
+   "id": "E1",
+   "name": "Olivo Family Office LLC",
+   "kind": "LLC",
+   "jurisdiction": "Delaware",
+   "formed": 2015,
+   "purpose": "Family office: manager of Olivo Holdings, employs 6 staff; also the GP's parent.",
+   "control": "Managing member: Anthony Olivo",
+   "notes": "",
+   "net_worth_usd": 2206458,
+   "entity_type": "family_office",
+   "sub_type": null,
+   "inception_date": "2015-02-15",
+   "state": "DE",
+   "details": {}
+  },
+  {
+   "id": "E2",
+   "name": "OH GP LLC",
+   "kind": "LLC (general partner)",
+   "jurisdiction": "Delaware",
+   "formed": 2015,
+   "purpose": "General partner of Olivo Holdings LP.",
+   "control": "Sole member: Olivo Family Office LLC",
+   "notes": "",
+   "net_worth_usd": 806458,
+   "entity_type": "gp",
+   "sub_type": null,
+   "inception_date": "2015-03-15",
+   "state": "DE",
+   "details": {}
+  },
+  {
+   "id": "E3",
+   "name": "Olivo Holdings LP",
+   "kind": "LP",
+   "jurisdiction": "Delaware",
+   "formed": 2015,
+   "purpose": "The main family investment partnership: managed liquid portfolio, private funds, direct deals, the vineyard and the art company.",
+   "control": "GP: OH GP LLC; investment committee of Dominic, Anthony, Francesca, Michael",
+   "notes": "Valuation policy: funds at latest reported NAV, directs at last round, real assets at appraisal (Stag's Hollow 2025, art 2026).",
+   "net_worth_usd": 161291600,
+   "entity_type": "lp",
+   "sub_type": null,
+   "inception_date": "2015-04-15",
+   "state": "DE",
+   "details": {
+    "fund_role": "family_partnership",
+    "valuation_policy": "funds at latest reported NAV; directs at last round; real assets at appraisal"
+   }
+  },
+  {
+   "id": "E4",
+   "name": "Dominic J. Olivo Revocable Trust",
+   "kind": "Revocable trust",
+   "jurisdiction": "Connecticut",
+   "formed": 1998,
+   "purpose": "Dominic's personal holdings; pour-over on death.",
+   "control": "Trustee: Dominic; successor: Anthony",
+   "notes": "",
+   "net_worth_usd": 184861502,
+   "entity_type": "trust",
+   "sub_type": "revocable",
+   "inception_date": "1998-05-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "revocable",
+    "revocable": true,
+    "situs": "CT",
+    "gst_exempt": false,
+    "termination": "pour-over at grantor's death"
+   }
+  },
+  {
+   "id": "E5",
+   "name": "Olivo 2014 Dynasty Trust",
+   "kind": "Irrevocable dynasty trust",
+   "jurisdiction": "Delaware",
+   "formed": 2014,
+   "purpose": "Funded with Northline Foods stock at the sale; for descendants of Dominic and Theresa. GST-exempt.",
+   "control": "Trustee: Wilmington Fiduciary Co.; distribution committee chaired by Anthony",
+   "notes": "Concentrated Northline position; a diversification plan runs through Olivo Holdings.",
+   "net_worth_usd": 185066180,
+   "entity_type": "trust",
+   "sub_type": "dynasty",
+   "inception_date": "2014-06-15",
+   "state": "DE",
+   "details": {
+    "trust_type": "dynasty",
+    "revocable": false,
+    "situs": "DE",
+    "gst_exempt": true,
+    "termination": "perpetual (Delaware)",
+    "funded": "Northline Foods stock at the 2014 sale"
+   }
+  },
+  {
+   "id": "E6",
+   "name": "Marguerite Olivo 2019 SLAT",
+   "kind": "Spousal lifetime access trust",
+   "jurisdiction": "Connecticut",
+   "formed": 2019,
+   "purpose": "For Marguerite and Giulia; holds the Naples residence and a managed portfolio.",
+   "control": "Trustee: Coastal Bank Trust Department",
+   "notes": "",
+   "net_worth_usd": 27730080,
+   "entity_type": "trust",
+   "sub_type": "slat",
+   "inception_date": "2019-07-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "slat",
+    "revocable": false,
+    "situs": "CT",
+    "gst_exempt": false,
+    "beneficiaries_note": "spouse and Giulia"
+   }
+  },
+  {
+   "id": "E7",
+   "name": "DJO 2021 GRAT",
+   "kind": "Grantor retained annuity trust",
+   "jurisdiction": "Connecticut",
+   "formed": 2021,
+   "purpose": "Two-year rolling GRAT on Northline stock; remainder to the Dynasty Trust.",
+   "control": "Trustee: Anthony Olivo",
+   "notes": "Annuity payments to Dominic through 2027.",
+   "net_worth_usd": 24420000,
+   "entity_type": "trust",
+   "sub_type": "grat",
+   "inception_date": "2021-08-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "grat",
+    "revocable": false,
+    "situs": "CT",
+    "annuity_term_years": 2,
+    "annuity_end": "2027-12-31",
+    "remainder_to": "E5"
+   }
+  },
+  {
+   "id": "E8",
+   "name": "Theresa Olivo Family Trust",
+   "kind": "Bypass (credit-shelter) trust",
+   "jurisdiction": "Connecticut",
+   "formed": 2008,
+   "purpose": "Established at Theresa's death for the three children equally; holds the commercial real estate.",
+   "control": "Trustee: Coastal Bank Trust Department",
+   "notes": "",
+   "net_worth_usd": 30009000,
+   "entity_type": "trust",
+   "sub_type": "bypass",
+   "inception_date": "2008-09-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "bypass",
+    "revocable": false,
+    "situs": "CT",
+    "gst_exempt": false,
+    "funded": "Theresa's estate, 2008",
+    "shares": "equal thirds"
+   }
+  },
+  {
+   "id": "E9",
+   "name": "Giulia Olivo 2503(c) Trust",
+   "kind": "Minor's trust",
+   "jurisdiction": "Connecticut",
+   "formed": 2014,
+   "purpose": "Annual-exclusion gifts for Giulia; vests at 21.",
+   "control": "Trustee: Marguerite Olivo",
+   "notes": "",
+   "net_worth_usd": 2099000,
+   "entity_type": "trust",
+   "sub_type": "2503c",
+   "inception_date": "2014-10-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "2503c",
+    "revocable": false,
+    "situs": "CT",
+    "vesting_age": 21
+   }
+  },
+  {
+   "id": "E10",
+   "name": "AOF Investments LLC",
+   "kind": "LLC",
+   "jurisdiction": "Connecticut",
+   "formed": 2016,
+   "purpose": "Anthony and Elena's family investment LLC.",
+   "control": "Managers: Anthony and Elena",
+   "notes": "",
+   "net_worth_usd": 27145000,
+   "entity_type": "llc",
+   "sub_type": null,
+   "inception_date": "2016-11-15",
+   "state": "CT",
+   "details": {}
+  },
+  {
+   "id": "E11",
+   "name": "AO Descendants Trust 2018",
+   "kind": "Irrevocable trust",
+   "jurisdiction": "Delaware",
+   "formed": 2018,
+   "purpose": "Anthony's trust for Sofia and Luca.",
+   "control": "Trustee: Wilmington Fiduciary Co.",
+   "notes": "",
+   "net_worth_usd": 5387900,
+   "entity_type": "trust",
+   "sub_type": "irrevocable",
+   "inception_date": "2018-12-15",
+   "state": "DE",
+   "details": {
+    "trust_type": "irrevocable",
+    "revocable": false,
+    "situs": "DE",
+    "gst_exempt": true
+   }
+  },
+  {
+   "id": "E12",
+   "name": "Cipolla Olivo Holdings LLC",
+   "kind": "LLC",
+   "jurisdiction": "Florida",
+   "formed": 2017,
+   "purpose": "Francesca and Mateo's family LLC: Miami real estate, art, LP units.",
+   "control": "Managers: Francesca and Mateo",
+   "notes": "",
+   "net_worth_usd": 36038160,
+   "entity_type": "llc",
+   "sub_type": null,
+   "inception_date": "2017-01-15",
+   "state": "FL",
+   "details": {}
+  },
+  {
+   "id": "E13",
+   "name": "Cipolla 2020 Family Trust",
+   "kind": "Irrevocable trust",
+   "jurisdiction": "Florida",
+   "formed": 2020,
+   "purpose": "For Isabel, Nico and Gabriel.",
+   "control": "Trustee: Mateo Cipolla",
+   "notes": "",
+   "net_worth_usd": 3561000,
+   "entity_type": "trust",
+   "sub_type": "irrevocable",
+   "inception_date": "2020-02-15",
+   "state": "FL",
+   "details": {
+    "trust_type": "irrevocable",
+    "revocable": false,
+    "situs": "FL",
+    "gst_exempt": false
+   }
+  },
+  {
+   "id": "E14",
+   "name": "MTO Capital LLC",
+   "kind": "LLC",
+   "jurisdiction": "Delaware",
+   "formed": 2019,
+   "purpose": "Michael's personal investment company: public tech, venture fund interest, angel positions, digital assets, the Aspen house.",
+   "control": "Manager: Michael Olivo",
+   "notes": "Michael's divorce settlement (2021) carved out the pre-2016 assets; everything here is post-separation.",
+   "net_worth_usd": 45408360,
+   "entity_type": "llc",
+   "sub_type": null,
+   "inception_date": "2019-03-15",
+   "state": "DE",
+   "details": {}
+  },
+  {
+   "id": "E15",
+   "name": "Theo Olivo 2020 Trust",
+   "kind": "Irrevocable trust",
+   "jurisdiction": "California",
+   "formed": 2020,
+   "purpose": "Michael's trust for Theo.",
+   "control": "Trustee: Anthony Olivo",
+   "notes": "",
+   "net_worth_usd": 1894850,
+   "entity_type": "trust",
+   "sub_type": "irrevocable",
+   "inception_date": "2020-04-15",
+   "state": "CA",
+   "details": {
+    "trust_type": "irrevocable",
+    "revocable": false,
+    "situs": "CA",
+    "gst_exempt": false
+   }
+  },
+  {
+   "id": "E16",
+   "name": "Olivo Family Foundation",
+   "kind": "Private foundation (501(c)(3))",
+   "jurisdiction": "Connecticut",
+   "formed": 2014,
+   "purpose": "Funded at the sale; grants about $2.3M a year to food security and culinary education.",
+   "control": "Board: Dominic (chair), Anthony, Francesca, Michael, Marguerite",
+   "notes": "5% minimum distribution; excess business holdings rule limits Northline stock.",
+   "net_worth_usd": 44950000,
+   "entity_type": "foundation",
+   "sub_type": "private_foundation",
+   "inception_date": "2014-05-15",
+   "state": "CT",
+   "details": {
+    "charity_type": "private_foundation",
+    "ein_status": "501(c)(3)",
+    "min_distribution_pct": 5
+   }
+  },
+  {
+   "id": "E17",
+   "name": "Olivo Giving Fund",
+   "kind": "Donor-advised fund",
+   "jurisdiction": "Harbor Charitable Trust (sponsor)",
+   "formed": 2016,
+   "purpose": "Family DAF; advisers are the four adult Olivos.",
+   "control": "Sponsor: Harbor Charitable Trust",
+   "notes": "",
+   "net_worth_usd": 6100000,
+   "entity_type": "foundation",
+   "sub_type": "daf",
+   "inception_date": "2016-06-15",
+   "state": null,
+   "details": {
+    "charity_type": "daf",
+    "sponsor": "O3"
+   }
+  },
+  {
+   "id": "E18",
+   "name": "Olivo 2016 CRUT",
+   "kind": "Charitable remainder unitrust",
+   "jurisdiction": "Connecticut",
+   "formed": 2016,
+   "purpose": "5% unitrust to Dominic for life; remainder to the foundation.",
+   "control": "Trustee: Coastal Bank Trust Department",
+   "notes": "",
+   "net_worth_usd": 11100000,
+   "entity_type": "trust",
+   "sub_type": "crut",
+   "inception_date": "2016-07-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "crut",
+    "revocable": false,
+    "situs": "CT",
+    "unitrust_rate_pct": 5,
+    "remainder_to": "E16"
+   }
+  },
+  {
+   "id": "E19",
+   "name": "Olivo 2012 ILIT",
+   "kind": "Irrevocable life insurance trust",
+   "jurisdiction": "Connecticut",
+   "formed": 2012,
+   "purpose": "Owns a $25M survivorship policy on Dominic and Marguerite.",
+   "control": "Trustee: Anthony Olivo",
+   "notes": "Crummey notices annually to the three adult children.",
+   "net_worth_usd": 4100000,
+   "entity_type": "trust",
+   "sub_type": "ilit",
+   "inception_date": "2012-08-15",
+   "state": "CT",
+   "details": {
+    "trust_type": "ilit",
+    "revocable": false,
+    "situs": "CT",
+    "crummey_notices": true,
+    "policy": "$25M survivorship UL, Lincoln Benefit Life"
+   }
+  },
+  {
+   "id": "E20",
+   "name": "Round Hill Road LLC",
+   "kind": "LLC (real estate)",
+   "jurisdiction": "Connecticut",
+   "formed": 2005,
+   "purpose": "The Greenwich residence (9 acres).",
+   "control": "Managed by the family office",
+   "notes": "",
+   "net_worth_usd": 14500000,
+   "entity_type": "llc",
+   "sub_type": "real estate",
+   "inception_date": "2005-09-15",
+   "state": "CT",
+   "details": {}
+  },
+  {
+   "id": "E21",
+   "name": "Port Royal Residence LLC",
+   "kind": "LLC (real estate)",
+   "jurisdiction": "Florida",
+   "formed": 2019,
+   "purpose": "The Naples winter residence.",
+   "control": "Managed by the family office",
+   "notes": "",
+   "net_worth_usd": 5700000,
+   "entity_type": "llc",
+   "sub_type": "real estate",
+   "inception_date": "2019-10-15",
+   "state": "FL",
+   "details": {}
+  },
+  {
+   "id": "E22",
+   "name": "Stag's Hollow Vineyard LLC",
+   "kind": "LLC (operating)",
+   "jurisdiction": "California",
+   "formed": 2017,
+   "purpose": "62-acre Napa vineyard and winery; ~5,000 cases a year; 14 employees.",
+   "control": "Manager: a hired GM; Francesca chairs",
+   "notes": "Operating business; K-1s to members.",
+   "net_worth_usd": 26300000,
+   "entity_type": "llc",
+   "sub_type": "operating",
+   "inception_date": "2017-11-15",
+   "state": "CA",
+   "details": {}
+  },
+  {
+   "id": "E23",
+   "name": "Olivo Commercial RE LLC",
+   "kind": "LLC (real estate)",
+   "jurisdiction": "Connecticut",
+   "formed": 2008,
+   "purpose": "Three industrial properties (Bridgeport, Edison, Allentown) leased to Northline Foods on a 15-year NNN lease.",
+   "control": "Managed by the family office",
+   "notes": "Lease expires 2029 \u2014 renewal risk.",
+   "net_worth_usd": 24000000,
+   "entity_type": "llc",
+   "sub_type": "real estate",
+   "inception_date": "2008-12-15",
+   "state": "CT",
+   "details": {}
+  },
+  {
+   "id": "E24",
+   "name": "Ajax Peak LLC",
+   "kind": "LLC (real estate)",
+   "jurisdiction": "Colorado",
+   "formed": 2020,
+   "purpose": "Michael's Aspen house.",
+   "control": "Manager: Michael",
+   "notes": "",
+   "net_worth_usd": 5400000,
+   "entity_type": "llc",
+   "sub_type": "real estate",
+   "inception_date": "2020-01-15",
+   "state": "CO",
+   "details": {}
+  },
+  {
+   "id": "E25",
+   "name": "Brickell Bay 41 LLC",
+   "kind": "LLC (real estate)",
+   "jurisdiction": "Florida",
+   "formed": 2017,
+   "purpose": "Francesca's Miami condo and the gallery space on NE 41st Street.",
+   "control": "Managers: Francesca and Mateo",
+   "notes": "",
+   "net_worth_usd": 5900000,
+   "entity_type": "llc",
+   "sub_type": "real estate",
+   "inception_date": "2017-02-15",
+   "state": "FL",
+   "details": {}
+  },
+  {
+   "id": "E26",
+   "name": "Olivo Art Holdings LLC",
+   "kind": "LLC (collectibles)",
+   "jurisdiction": "Delaware",
+   "formed": 2018,
+   "purpose": "41 postwar and contemporary works; loaned to museums; insured through AXA Art.",
+   "control": "Manager: Francesca Olivo-Cipolla",
+   "notes": "Art-secured credit line at a private bank.",
+   "net_worth_usd": 26400000,
+   "entity_type": "llc",
+   "sub_type": "collectibles",
+   "inception_date": "2018-03-15",
+   "state": "DE",
+   "details": {}
+  }
+ ],
+ "addresses": [
+  {
+   "entity_id": "P1",
+   "address_type": "primary_residence",
+   "street1": "38 Round Hill Road",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": true,
+   "season_from_month": 5,
+   "season_to_month": 11,
+   "note": "Greenwich May\u2013November"
+  },
+  {
+   "entity_id": "P1",
+   "address_type": "primary_residence",
+   "street1": "2950 Galleon Drive",
+   "city": "Naples",
+   "state": "FL",
+   "postal_code": "34102",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": true,
+   "season_from_month": 12,
+   "season_to_month": 4,
+   "note": "Naples December\u2013April (Port Royal, owned by Port Royal Residence LLC)"
+  },
+  {
+   "entity_id": "P2",
+   "address_type": "primary_residence",
+   "street1": "38 Round Hill Road",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": true,
+   "season_from_month": 5,
+   "season_to_month": 11,
+   "note": "Greenwich May\u2013November"
+  },
+  {
+   "entity_id": "P2",
+   "address_type": "primary_residence",
+   "street1": "2950 Galleon Drive",
+   "city": "Naples",
+   "state": "FL",
+   "postal_code": "34102",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": true,
+   "season_from_month": 12,
+   "season_to_month": 4,
+   "note": "Naples December\u2013April (Port Royal, owned by Port Royal Residence LLC)"
+  },
+  {
+   "entity_id": "P8",
+   "address_type": "primary_residence",
+   "street1": "38 Round Hill Road",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P3",
+   "address_type": "primary_residence",
+   "street1": "41 Pear Tree Point Road",
+   "city": "Darien",
+   "state": "CT",
+   "postal_code": "06820",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P4",
+   "address_type": "primary_residence",
+   "street1": "41 Pear Tree Point Road",
+   "city": "Darien",
+   "state": "CT",
+   "postal_code": "06820",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P4",
+   "address_type": "business",
+   "street1": "30 Shelburne Road (cardiology practice)",
+   "city": "Stamford",
+   "state": "CT",
+   "postal_code": "06902",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P9",
+   "address_type": "primary_residence",
+   "street1": "41 Pear Tree Point Road",
+   "city": "Darien",
+   "state": "CT",
+   "postal_code": "06820",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": true,
+   "season_from_month": 6,
+   "season_to_month": 8,
+   "note": "Home for the summer"
+  },
+  {
+   "entity_id": "P9",
+   "address_type": "mailing",
+   "street1": "Box 4127, 69 Brown Street",
+   "city": "Providence",
+   "state": "RI",
+   "postal_code": "02912",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": true,
+   "season_from_month": 9,
+   "season_to_month": 5,
+   "note": "College, September\u2013May"
+  },
+  {
+   "entity_id": "P10",
+   "address_type": "primary_residence",
+   "street1": "41 Pear Tree Point Road",
+   "city": "Darien",
+   "state": "CT",
+   "postal_code": "06820",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": true,
+   "season_from_month": 6,
+   "season_to_month": 8,
+   "note": "Home for the summer"
+  },
+  {
+   "entity_id": "P10",
+   "address_type": "mailing",
+   "street1": "HB 3311, 6 North Main Street",
+   "city": "Hanover",
+   "state": "NH",
+   "postal_code": "03755",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": true,
+   "season_from_month": 9,
+   "season_to_month": 5,
+   "note": "College, September\u2013May"
+  },
+  {
+   "entity_id": "P5",
+   "address_type": "primary_residence",
+   "street1": "1450 Brickell Bay Drive, Unit 4101",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33131",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P6",
+   "address_type": "primary_residence",
+   "street1": "1450 Brickell Bay Drive, Unit 4101",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33131",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P11",
+   "address_type": "primary_residence",
+   "street1": "1450 Brickell Bay Drive, Unit 4101",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33131",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P12",
+   "address_type": "primary_residence",
+   "street1": "1450 Brickell Bay Drive, Unit 4101",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33131",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P13",
+   "address_type": "primary_residence",
+   "street1": "1450 Brickell Bay Drive, Unit 4101",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33131",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P5",
+   "address_type": "business",
+   "street1": "180 NE 41st Street (gallery)",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33137",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P6",
+   "address_type": "business",
+   "street1": "Cipolla Studio, 3250 NE 1st Avenue",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33137",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P7",
+   "address_type": "primary_residence",
+   "street1": "2840 Broadway",
+   "city": "San Francisco",
+   "state": "CA",
+   "postal_code": "94115",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": true,
+   "season_from_month": 4,
+   "season_to_month": 11,
+   "note": "San Francisco April\u2013November"
+  },
+  {
+   "entity_id": "P7",
+   "address_type": "primary_residence",
+   "street1": "120 Ajax Avenue",
+   "city": "Aspen",
+   "state": "CO",
+   "postal_code": "81611",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": true,
+   "season_from_month": 12,
+   "season_to_month": 3,
+   "note": "Aspen December\u2013March (owned by Ajax Peak LLC)"
+  },
+  {
+   "entity_id": "P7",
+   "address_type": "business",
+   "street1": "Caldera Ventures, 550 Jackson Street",
+   "city": "San Francisco",
+   "state": "CA",
+   "postal_code": "94133",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "P14",
+   "address_type": "primary_residence",
+   "street1": "2840 Broadway",
+   "city": "San Francisco",
+   "state": "CA",
+   "postal_code": "94115",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Shared custody \u2014 alternate weeks with his mother in Palo Alto"
+  },
+  {
+   "entity_id": "P16",
+   "address_type": "primary_residence",
+   "street1": "1120 Hamilton Avenue",
+   "city": "Palo Alto",
+   "state": "CA",
+   "postal_code": "94301",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E1",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E1",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E2",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E2",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E3",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E3",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E4",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E5",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E5",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E6",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E7",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E8",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E9",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E10",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E11",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E11",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E12",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E13",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E14",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E14",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E15",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E16",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E17",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E18",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E19",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E20",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E21",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E22",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E23",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E24",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E25",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E26",
+   "address_type": "business",
+   "street1": "2 Greenwich Office Park, Suite 300",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": true,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Administered by the family office"
+  },
+  {
+   "entity_id": "E26",
+   "address_type": "registered",
+   "street1": "c/o registered agent, 1209 Orange Street",
+   "city": "Wilmington",
+   "state": "DE",
+   "postal_code": "19801",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": ""
+  },
+  {
+   "entity_id": "E20",
+   "address_type": "business",
+   "street1": "38 Round Hill Road",
+   "city": "Greenwich",
+   "state": "CT",
+   "postal_code": "06831",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Property address"
+  },
+  {
+   "entity_id": "E21",
+   "address_type": "business",
+   "street1": "2950 Galleon Drive",
+   "city": "Naples",
+   "state": "FL",
+   "postal_code": "34102",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Property address"
+  },
+  {
+   "entity_id": "E22",
+   "address_type": "business",
+   "street1": "4100 Silverado Trail",
+   "city": "Napa",
+   "state": "CA",
+   "postal_code": "94558",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Vineyard and winery"
+  },
+  {
+   "entity_id": "E24",
+   "address_type": "business",
+   "street1": "120 Ajax Avenue",
+   "city": "Aspen",
+   "state": "CO",
+   "postal_code": "81611",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Property address"
+  },
+  {
+   "entity_id": "E25",
+   "address_type": "business",
+   "street1": "1450 Brickell Bay Drive, Unit 4101",
+   "city": "Miami",
+   "state": "FL",
+   "postal_code": "33131",
+   "country": "US",
+   "is_primary": false,
+   "is_seasonal": false,
+   "season_from_month": null,
+   "season_to_month": null,
+   "note": "Condo; gallery space at 180 NE 41st Street"
+  }
+ ],
+ "relationships": [
+  {
+   "from_id": "P1",
+   "to_id": "P2",
+   "relationship_type": "spouse",
+   "note": "married 2011; prenuptial agreement"
+  },
+  {
+   "from_id": "P3",
+   "to_id": "P4",
+   "relationship_type": "spouse",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "P6",
+   "relationship_type": "spouse",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "P15",
+   "relationship_type": "former_spouse",
+   "note": "Theresa died 2008"
+  },
+  {
+   "from_id": "P7",
+   "to_id": "P16",
+   "relationship_type": "former_spouse",
+   "note": "divorced 2021; shared custody of Theo"
+  },
+  {
+   "from_id": "P1",
+   "to_id": "P3",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "P5",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "P7",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "P8",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P15",
+   "to_id": "P3",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P15",
+   "to_id": "P5",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P15",
+   "to_id": "P7",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P2",
+   "to_id": "P8",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "P9",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "P10",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P4",
+   "to_id": "P9",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P4",
+   "to_id": "P10",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "P11",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "P12",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "P13",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "P11",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "P12",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "P13",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "P14",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P16",
+   "to_id": "P14",
+   "relationship_type": "parent_of",
+   "note": ""
+  },
+  {
+   "from_id": "P12",
+   "to_id": "P13",
+   "relationship_type": "sibling",
+   "note": "twins"
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E1",
+   "relationship_type": "managing_member",
+   "note": ""
+  },
+  {
+   "from_id": "E1",
+   "to_id": "E2",
+   "relationship_type": "sole_member",
+   "note": ""
+  },
+  {
+   "from_id": "E2",
+   "to_id": "E3",
+   "relationship_type": "general_partner",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E3",
+   "relationship_type": "investment_committee",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E3",
+   "relationship_type": "investment_committee",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E3",
+   "relationship_type": "investment_committee",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E3",
+   "relationship_type": "investment_committee",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E4",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E4",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E4",
+   "relationship_type": "successor_trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E5",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "O1",
+   "to_id": "E5",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E5",
+   "relationship_type": "distribution_committee",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E6",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "O2",
+   "to_id": "E6",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E7",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E7",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "E5",
+   "to_id": "E7",
+   "relationship_type": "remainder_beneficiary",
+   "note": ""
+  },
+  {
+   "from_id": "P15",
+   "to_id": "E8",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "O2",
+   "to_id": "E8",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E9",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P2",
+   "to_id": "E9",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P2",
+   "to_id": "E9",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E10",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P4",
+   "to_id": "E10",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E11",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P4",
+   "to_id": "E11",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "O1",
+   "to_id": "E11",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E12",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "E12",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E13",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "E13",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "E13",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E14",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E15",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E15",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E16",
+   "relationship_type": "board_chair",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E16",
+   "relationship_type": "board_member",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E16",
+   "relationship_type": "board_member",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E16",
+   "relationship_type": "board_member",
+   "note": ""
+  },
+  {
+   "from_id": "P2",
+   "to_id": "E16",
+   "relationship_type": "board_member",
+   "note": ""
+  },
+  {
+   "from_id": "O3",
+   "to_id": "E17",
+   "relationship_type": "sponsor",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E17",
+   "relationship_type": "donor_advisor",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E17",
+   "relationship_type": "donor_advisor",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E17",
+   "relationship_type": "donor_advisor",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E17",
+   "relationship_type": "donor_advisor",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E18",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "O2",
+   "to_id": "E18",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "E16",
+   "to_id": "E18",
+   "relationship_type": "remainder_beneficiary",
+   "note": ""
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E19",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P2",
+   "to_id": "E19",
+   "relationship_type": "grantor",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E19",
+   "relationship_type": "trustee",
+   "note": ""
+  },
+  {
+   "from_id": "E1",
+   "to_id": "E20",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "E1",
+   "to_id": "E21",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E22",
+   "relationship_type": "board_chair",
+   "note": ""
+  },
+  {
+   "from_id": "E1",
+   "to_id": "E23",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E24",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E25",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "E25",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E26",
+   "relationship_type": "manager",
+   "note": ""
+  },
+  {
+   "from_id": "P7",
+   "to_id": "O5",
+   "relationship_type": "general_partner",
+   "note": ""
+  },
+  {
+   "from_id": "P6",
+   "to_id": "O6",
+   "relationship_type": "owner",
+   "note": ""
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P9",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P10",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P11",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P12",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P13",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P14",
+   "to_id": "E5",
+   "relationship_type": "beneficiary",
+   "note": "Descendants of Dominic & Theresa"
+  },
+  {
+   "from_id": "P2",
+   "to_id": "E6",
+   "relationship_type": "beneficiary",
+   "note": "Marguerite; Giulia"
+  },
+  {
+   "from_id": "P8",
+   "to_id": "E6",
+   "relationship_type": "beneficiary",
+   "note": "Marguerite; Giulia"
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E7",
+   "relationship_type": "beneficiary",
+   "note": "Annuity to Dominic; remainder to Dynasty Trust"
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E8",
+   "relationship_type": "beneficiary",
+   "note": "Equal shares"
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E8",
+   "relationship_type": "beneficiary",
+   "note": "Equal shares"
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E8",
+   "relationship_type": "beneficiary",
+   "note": "Equal shares"
+  },
+  {
+   "from_id": "P8",
+   "to_id": "E9",
+   "relationship_type": "beneficiary",
+   "note": "Giulia"
+  },
+  {
+   "from_id": "P9",
+   "to_id": "E11",
+   "relationship_type": "beneficiary",
+   "note": "Sofia & Luca"
+  },
+  {
+   "from_id": "P10",
+   "to_id": "E11",
+   "relationship_type": "beneficiary",
+   "note": "Sofia & Luca"
+  },
+  {
+   "from_id": "P11",
+   "to_id": "E13",
+   "relationship_type": "beneficiary",
+   "note": "Isabel, Nico & Gabriel"
+  },
+  {
+   "from_id": "P12",
+   "to_id": "E13",
+   "relationship_type": "beneficiary",
+   "note": "Isabel, Nico & Gabriel"
+  },
+  {
+   "from_id": "P13",
+   "to_id": "E13",
+   "relationship_type": "beneficiary",
+   "note": "Isabel, Nico & Gabriel"
+  },
+  {
+   "from_id": "P14",
+   "to_id": "E15",
+   "relationship_type": "beneficiary",
+   "note": "Theo"
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E18",
+   "relationship_type": "beneficiary",
+   "note": "5% unitrust to Dominic; remainder to the foundation"
+  },
+  {
+   "from_id": "P3",
+   "to_id": "E19",
+   "relationship_type": "beneficiary",
+   "note": "Children"
+  },
+  {
+   "from_id": "P5",
+   "to_id": "E19",
+   "relationship_type": "beneficiary",
+   "note": "Children"
+  },
+  {
+   "from_id": "P7",
+   "to_id": "E19",
+   "relationship_type": "beneficiary",
+   "note": "Children"
+  },
+  {
+   "from_id": "P8",
+   "to_id": "E19",
+   "relationship_type": "beneficiary",
+   "note": "Children"
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E7",
+   "relationship_type": "annuitant",
+   "note": "annuity payments through 2027"
+  },
+  {
+   "from_id": "P1",
+   "to_id": "E18",
+   "relationship_type": "income_beneficiary",
+   "note": "5% unitrust for life"
+  }
+ ],
+ "ownership": [
+  {
+   "owner_id": "P1",
+   "owned_id": "E1",
+   "pct": 40,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P3",
+   "owned_id": "E1",
+   "pct": 20,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P5",
+   "owned_id": "E1",
+   "pct": 20,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P7",
+   "owned_id": "E1",
+   "pct": 20,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "E1",
+   "owned_id": "E2",
+   "pct": 100,
+   "interest": "Sole member"
+  },
+  {
+   "owner_id": "E2",
+   "owned_id": "E3",
+   "pct": 0.5,
+   "interest": "GP interest"
+  },
+  {
+   "owner_id": "E4",
+   "owned_id": "E3",
+   "pct": 34.5,
+   "interest": "LP units"
+  },
+  {
+   "owner_id": "E5",
+   "owned_id": "E3",
+   "pct": 30,
+   "interest": "LP units"
+  },
+  {
+   "owner_id": "E10",
+   "owned_id": "E3",
+   "pct": 10,
+   "interest": "LP units"
+  },
+  {
+   "owner_id": "E12",
+   "owned_id": "E3",
+   "pct": 10,
+   "interest": "LP units"
+  },
+  {
+   "owner_id": "E14",
+   "owned_id": "E3",
+   "pct": 10,
+   "interest": "LP units"
+  },
+  {
+   "owner_id": "E6",
+   "owned_id": "E3",
+   "pct": 5,
+   "interest": "LP units"
+  },
+  {
+   "owner_id": "P1",
+   "owned_id": "E4",
+   "pct": 100,
+   "interest": "Grantor / trustee (revocable)"
+  },
+  {
+   "owner_id": "E4",
+   "owned_id": "E20",
+   "pct": 100,
+   "interest": "Sole member"
+  },
+  {
+   "owner_id": "E6",
+   "owned_id": "E21",
+   "pct": 100,
+   "interest": "Sole member"
+  },
+  {
+   "owner_id": "E3",
+   "owned_id": "E22",
+   "pct": 80,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "E10",
+   "owned_id": "E22",
+   "pct": 10,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "E12",
+   "owned_id": "E22",
+   "pct": 10,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "E8",
+   "owned_id": "E23",
+   "pct": 100,
+   "interest": "Sole member"
+  },
+  {
+   "owner_id": "E14",
+   "owned_id": "E24",
+   "pct": 100,
+   "interest": "Sole member"
+  },
+  {
+   "owner_id": "E12",
+   "owned_id": "E25",
+   "pct": 100,
+   "interest": "Sole member"
+  },
+  {
+   "owner_id": "E3",
+   "owned_id": "E26",
+   "pct": 60,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "E12",
+   "owned_id": "E26",
+   "pct": 25,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "E4",
+   "owned_id": "E26",
+   "pct": 15,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P3",
+   "owned_id": "E10",
+   "pct": 50,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P4",
+   "owned_id": "E10",
+   "pct": 50,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P5",
+   "owned_id": "E12",
+   "pct": 60,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P6",
+   "owned_id": "E12",
+   "pct": 40,
+   "interest": "Membership interest"
+  },
+  {
+   "owner_id": "P7",
+   "owned_id": "E14",
+   "pct": 100,
+   "interest": "Sole member"
+  }
+ ],
+ "accounts": [
+  {
+   "id": "A1",
+   "owner_id": "E4",
+   "custodian": "Goldman Sachs PWM",
+   "type": "Taxable brokerage",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****4471"
+  },
+  {
+   "id": "A2",
+   "owner_id": "E4",
+   "custodian": "Schwab",
+   "type": "Municipal bond ladder",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****8830"
+  },
+  {
+   "id": "A3",
+   "owner_id": "E4",
+   "custodian": "Coastal Bank",
+   "type": "Checking + money market",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****1102"
+  },
+  {
+   "id": "A4",
+   "owner_id": "E4",
+   "custodian": "Goldman Sachs PWM",
+   "type": "Structured notes",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****4472"
+  },
+  {
+   "id": "A5",
+   "owner_id": "P1",
+   "custodian": "Fidelity",
+   "type": "Rollover IRA",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****6619"
+  },
+  {
+   "id": "A6",
+   "owner_id": "E5",
+   "custodian": "Goldman Sachs PWM",
+   "type": "Taxable brokerage (Northline)",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****5120"
+  },
+  {
+   "id": "A7",
+   "owner_id": "E5",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2201"
+  },
+  {
+   "id": "A8",
+   "owner_id": "E7",
+   "custodian": "Goldman Sachs PWM",
+   "type": "GRAT brokerage",
+   "custody": "other_custodian",
+   "authority": "read_only",
+   "account_mask": "****5121"
+  },
+  {
+   "id": "A9",
+   "owner_id": "E3",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2202"
+  },
+  {
+   "id": "A10",
+   "owner_id": "E3",
+   "custodian": "Olivo Holdings (books)",
+   "type": "Private investments ledger",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "\u2014"
+  },
+  {
+   "id": "A11",
+   "owner_id": "E3",
+   "custodian": "Coastal Bank",
+   "type": "Operating cash",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****1140"
+  },
+  {
+   "id": "A12",
+   "owner_id": "E6",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2203"
+  },
+  {
+   "id": "A13",
+   "owner_id": "E8",
+   "custodian": "Schwab",
+   "type": "Taxable brokerage",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****8831"
+  },
+  {
+   "id": "A14",
+   "owner_id": "E9",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2204"
+  },
+  {
+   "id": "A15",
+   "owner_id": "E10",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2205"
+  },
+  {
+   "id": "A16",
+   "owner_id": "P3",
+   "custodian": "Fidelity",
+   "type": "401(k) rollover IRA",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****6620"
+  },
+  {
+   "id": "A17",
+   "owner_id": "P4",
+   "custodian": "Fidelity",
+   "type": "IRA",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****6621"
+  },
+  {
+   "id": "A18",
+   "owner_id": "P3",
+   "custodian": "CHET (Fidelity)",
+   "type": "529 \u2014 Sofia",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****7701"
+  },
+  {
+   "id": "A19",
+   "owner_id": "P3",
+   "custodian": "CHET (Fidelity)",
+   "type": "529 \u2014 Luca",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****7702"
+  },
+  {
+   "id": "A20",
+   "owner_id": "E11",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2206"
+  },
+  {
+   "id": "A21",
+   "owner_id": "E12",
+   "custodian": "Schwab",
+   "type": "Taxable brokerage",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****8832"
+  },
+  {
+   "id": "A22",
+   "owner_id": "P5",
+   "custodian": "Schwab",
+   "type": "Roth IRA",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****8833"
+  },
+  {
+   "id": "A23",
+   "owner_id": "P5",
+   "custodian": "Florida Prepaid / Vanguard 529",
+   "type": "529 \u2014 Isabel, Nico, Gabriel (3 plans)",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****7710"
+  },
+  {
+   "id": "A24",
+   "owner_id": "E13",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2207"
+  },
+  {
+   "id": "A25",
+   "owner_id": "E14",
+   "custodian": "Interactive Brokers",
+   "type": "Margin account (options overlay)",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****3390"
+  },
+  {
+   "id": "A26",
+   "owner_id": "E14",
+   "custodian": "Coinbase Prime",
+   "type": "Digital assets",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****0042"
+  },
+  {
+   "id": "A27",
+   "owner_id": "E14",
+   "custodian": "MTO Capital (books)",
+   "type": "Venture & angel ledger",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "\u2014"
+  },
+  {
+   "id": "A28",
+   "owner_id": "P7",
+   "custodian": "Schwab",
+   "type": "Roth IRA",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****8834"
+  },
+  {
+   "id": "A29",
+   "owner_id": "E15",
+   "custodian": "Altruist",
+   "type": "Managed account (2nd Act)",
+   "custody": "integrated",
+   "authority": "managed",
+   "account_mask": "****2208"
+  },
+  {
+   "id": "A30",
+   "owner_id": "E16",
+   "custodian": "Goldman Sachs PWM",
+   "type": "Foundation endowment",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****5130"
+  },
+  {
+   "id": "A31",
+   "owner_id": "E17",
+   "custodian": "Harbor Charitable Trust",
+   "type": "DAF",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "****9001"
+  },
+  {
+   "id": "A32",
+   "owner_id": "E18",
+   "custodian": "Schwab",
+   "type": "CRUT brokerage",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****8835"
+  },
+  {
+   "id": "A33",
+   "owner_id": "E19",
+   "custodian": "Lincoln Benefit Life",
+   "type": "Survivorship UL policy",
+   "custody": "outside",
+   "authority": "read_only",
+   "account_mask": "POL-****77"
+  },
+  {
+   "id": "A34",
+   "owner_id": "P2",
+   "custodian": "Schwab",
+   "type": "Taxable brokerage",
+   "custody": "other_custodian",
+   "authority": "advise",
+   "account_mask": "****8836"
+  }
+ ],
+ "holdings": [
+  {
+   "account": "A1",
+   "security": "SPDR S&P 500 ETF",
+   "ticker": "SPY",
+   "asset_class": "Public equity",
+   "sub_class": "US large cap ETF",
+   "quantity": 38000,
+   "price": 642.1,
+   "value": 24399800,
+   "cost_basis": 14800000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A1",
+   "security": "Vanguard Total International Stock ETF",
+   "ticker": "VXUS",
+   "asset_class": "Public equity",
+   "sub_class": "International ETF",
+   "quantity": 160000,
+   "price": 71.4,
+   "value": 11424000,
+   "cost_basis": 9100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A1",
+   "security": "iShares Russell 2000 ETF",
+   "ticker": "IWM",
+   "asset_class": "Public equity",
+   "sub_class": "US small cap ETF",
+   "quantity": 22000,
+   "price": 241.3,
+   "value": 5308600,
+   "cost_basis": 4600000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A1",
+   "security": "Northline Foods Inc.",
+   "ticker": "NLF",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock (concentrated)",
+   "quantity": 120000,
+   "price": 61.05,
+   "value": 7326000,
+   "cost_basis": 1440000,
+   "notes": "Residual from the 2014 sale; basis $12/sh",
+   "secmaster": "FICTIONAL company \u2014 decide: replace with a real ticker, or a private-asset record"
+  },
+  {
+   "account": "A1",
+   "security": "Apple Inc.",
+   "ticker": "AAPL",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock",
+   "quantity": 18000,
+   "price": 262.4,
+   "value": 4723200,
+   "cost_basis": 1900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A1",
+   "security": "Berkshire Hathaway Class B",
+   "ticker": "BRK.B",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock",
+   "quantity": 9000,
+   "price": 498.2,
+   "value": 4483800,
+   "cost_basis": 2100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A1",
+   "security": "Vanguard Total Bond Market ETF",
+   "ticker": "BND",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 95000,
+   "price": 74.9,
+   "value": 7115500,
+   "cost_basis": 7400000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A1",
+   "security": "Goldman Sachs Financial Square Govt MMF",
+   "ticker": "FGTXX",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": 3250000,
+   "price": 1.0,
+   "value": 3250000,
+   "cost_basis": 3250000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 4.00% due 2027",
+   "ticker": "MUNI-2027",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 2000000,
+   "price": 0.985,
+   "value": 1970000,
+   "cost_basis": 2000000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 5.00% due 2028",
+   "ticker": "MUNI-2028",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 2500000,
+   "price": 0.985,
+   "value": 2462500,
+   "cost_basis": 2500000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 4.00% due 2029",
+   "ticker": "MUNI-2029",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 2500000,
+   "price": 0.985,
+   "value": 2462500,
+   "cost_basis": 2500000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 5.00% due 2030",
+   "ticker": "MUNI-2030",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 3000000,
+   "price": 1.01,
+   "value": 3030000,
+   "cost_basis": 3000000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 4.00% due 2031",
+   "ticker": "MUNI-2031",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 3000000,
+   "price": 1.01,
+   "value": 3030000,
+   "cost_basis": 3000000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 5.00% due 2033",
+   "ticker": "MUNI-2033",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 2500000,
+   "price": 1.01,
+   "value": 2525000,
+   "cost_basis": 2500000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A2",
+   "security": "Connecticut / NY GO & essential-service munis 4.00% due 2036",
+   "ticker": "MUNI-2036",
+   "asset_class": "Fixed income",
+   "sub_class": "Tax-exempt municipal bond",
+   "quantity": 2500000,
+   "price": 1.01,
+   "value": 2525000,
+   "cost_basis": 2500000,
+   "notes": "",
+   "secmaster": "municipal bond \u2014 no free CUSIP source; enter as a manual fixed-income asset"
+  },
+  {
+   "account": "A3",
+   "security": "Coastal Bank checking",
+   "ticker": "CASH",
+   "asset_class": "Cash",
+   "sub_class": "Operating cash",
+   "quantity": null,
+   "price": null,
+   "value": 1150000,
+   "cost_basis": 1150000,
+   "notes": "",
+   "secmaster": "cash \u2014 cash position"
+  },
+  {
+   "account": "A3",
+   "security": "Coastal Bank money market",
+   "ticker": "CASH-MM",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": null,
+   "price": null,
+   "value": 3050000,
+   "cost_basis": 3050000,
+   "notes": "",
+   "secmaster": "cash \u2014 cash position"
+  },
+  {
+   "account": "A4",
+   "security": "JPM autocallable contingent-coupon note on S&P 500 (CUSIP 48133X***) due 2028",
+   "ticker": "NOTE-JPM-SPX",
+   "asset_class": "Structured note",
+   "sub_class": "Autocallable, 70% barrier, 9.25% coupon",
+   "quantity": null,
+   "price": null,
+   "value": 5000000,
+   "cost_basis": 5000000,
+   "notes": "Issued Mar 2026; worst-of? no \u2014 single index",
+   "secmaster": "structured note \u2014 map to one of the 54 real notes already in the master"
+  },
+  {
+   "account": "A4",
+   "security": "Goldman buffered note on Nasdaq-100 (15% buffer, 1.3x to 24% cap) due 2027",
+   "ticker": "NOTE-GS-NDX",
+   "asset_class": "Structured note",
+   "sub_class": "Buffered growth note",
+   "quantity": null,
+   "price": null,
+   "value": 3120000,
+   "cost_basis": 3000000,
+   "notes": "",
+   "secmaster": "structured note \u2014 map to one of the 54 real notes already in the master"
+  },
+  {
+   "account": "A5",
+   "security": "Fidelity 500 Index Fund",
+   "ticker": "FXAIX",
+   "asset_class": "Public equity",
+   "sub_class": "US large cap fund",
+   "quantity": 28000,
+   "price": 228.1,
+   "value": 6386800,
+   "cost_basis": 3100000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A5",
+   "security": "Fidelity U.S. Bond Index Fund",
+   "ticker": "FXNAX",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond fund",
+   "quantity": 250000,
+   "price": 10.52,
+   "value": 2630000,
+   "cost_basis": 2700000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A5",
+   "security": "Fidelity Government Cash Reserves",
+   "ticker": "FDRXX",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": 450000,
+   "price": 1.0,
+   "value": 450000,
+   "cost_basis": 450000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A6",
+   "security": "Northline Foods Inc.",
+   "ticker": "NLF",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock (concentrated)",
+   "quantity": 1800000,
+   "price": 61.05,
+   "value": 109890000,
+   "cost_basis": 21600000,
+   "notes": "Received at the 2014 sale; basis $12/sh. Collateral for the $20M SBL.",
+   "secmaster": "FICTIONAL company \u2014 decide: replace with a real ticker, or a private-asset record"
+  },
+  {
+   "account": "A6",
+   "security": "Goldman Sachs Financial Square Govt MMF",
+   "ticker": "FGTXX",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": 1800000,
+   "price": 1.0,
+   "value": 1800000,
+   "cost_basis": 1800000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A7",
+   "security": "Vanguard S&P 500 ETF",
+   "ticker": "VOO",
+   "asset_class": "Public equity",
+   "sub_class": "US large cap ETF",
+   "quantity": 24000,
+   "price": 590.2,
+   "value": 14164800,
+   "cost_basis": 12400000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A7",
+   "security": "Vanguard FTSE Developed Markets ETF",
+   "ticker": "VEA",
+   "asset_class": "Public equity",
+   "sub_class": "Developed ex-US ETF",
+   "quantity": 150000,
+   "price": 58.9,
+   "value": 8835000,
+   "cost_basis": 7900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A7",
+   "security": "Vanguard FTSE Emerging Markets ETF",
+   "ticker": "VWO",
+   "asset_class": "Public equity",
+   "sub_class": "Emerging markets ETF",
+   "quantity": 70000,
+   "price": 52.1,
+   "value": 3647000,
+   "cost_basis": 3400000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A7",
+   "security": "iShares Core U.S. Aggregate Bond ETF",
+   "ticker": "AGG",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 95000,
+   "price": 101.3,
+   "value": 9623500,
+   "cost_basis": 9700000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A7",
+   "security": "iShares 0-3 Month Treasury Bond ETF",
+   "ticker": "SGOV",
+   "asset_class": "Cash",
+   "sub_class": "T-bill ETF",
+   "quantity": 48000,
+   "price": 100.6,
+   "value": 4828800,
+   "cost_basis": 4800000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A7",
+   "security": "Invesco QQQ Trust",
+   "ticker": "QQQ",
+   "asset_class": "Public equity",
+   "sub_class": "Nasdaq-100 ETF",
+   "quantity": 6500,
+   "price": 598.4,
+   "value": 3889600,
+   "cost_basis": 3100000,
+   "notes": "Candidate for a Replication Studio direct-index replica",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A8",
+   "security": "Northline Foods Inc.",
+   "ticker": "NLF",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock (concentrated)",
+   "quantity": 400000,
+   "price": 61.05,
+   "value": 24420000,
+   "cost_basis": 4800000,
+   "notes": "",
+   "secmaster": "FICTIONAL company \u2014 decide: replace with a real ticker, or a private-asset record"
+  },
+  {
+   "account": "A9",
+   "security": "Olivo Core Equity (direct-indexed S&P 500 replica)",
+   "ticker": "SMA-CORE",
+   "asset_class": "Public equity",
+   "sub_class": "Direct-index SMA (503 positions)",
+   "quantity": null,
+   "price": null,
+   "value": 24600000,
+   "cost_basis": 19200000,
+   "notes": "Replication Studio replica of SPY; tax-loss harvesting on",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A9",
+   "security": "iShares MSCI EAFE ETF",
+   "ticker": "EFA",
+   "asset_class": "Public equity",
+   "sub_class": "Developed ex-US ETF",
+   "quantity": 110000,
+   "price": 88.7,
+   "value": 9757000,
+   "cost_basis": 8100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A9",
+   "security": "iShares Core U.S. Aggregate Bond ETF",
+   "ticker": "AGG",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 70000,
+   "price": 101.3,
+   "value": 7091000,
+   "cost_basis": 7000000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A9",
+   "security": "Vanguard Short-Term Inflation-Protected Securities ETF",
+   "ticker": "VTIP",
+   "asset_class": "Fixed income",
+   "sub_class": "TIPS ETF",
+   "quantity": 80000,
+   "price": 50.1,
+   "value": 4008000,
+   "cost_basis": 3900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A9",
+   "security": "iShares 0-3 Month Treasury Bond ETF",
+   "ticker": "SGOV",
+   "asset_class": "Cash",
+   "sub_class": "T-bill ETF",
+   "quantity": 60000,
+   "price": 100.6,
+   "value": 6036000,
+   "cost_basis": 6000000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A9",
+   "security": "Innovator U.S. Equity Power Buffer ETF (Jan)",
+   "ticker": "PJAN",
+   "asset_class": "Public equity",
+   "sub_class": "Defined-outcome ETF",
+   "quantity": 60000,
+   "price": 42.8,
+   "value": 2568000,
+   "cost_basis": 2400000,
+   "notes": "Options-sleeve candidate (rep8)",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A10",
+   "security": "Harbor Point Partners IV, L.P.",
+   "ticker": "PE-HPP4",
+   "asset_class": "Private equity",
+   "sub_class": "Buyout fund (2019 vintage)",
+   "quantity": null,
+   "price": null,
+   "value": 22300000,
+   "cost_basis": 18000000,
+   "notes": "$30M commitment, $8M unfunded; Q2 2026 NAV",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A10",
+   "security": "Thornfield Credit Opportunities II",
+   "ticker": "PC-TCO2",
+   "asset_class": "Private credit",
+   "sub_class": "Opportunistic credit fund",
+   "quantity": null,
+   "price": null,
+   "value": 15100000,
+   "cost_basis": 15000000,
+   "notes": "$15M commitment, fully drawn; 11.2% net IRR",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A10",
+   "security": "Stillwater Macro Fund Ltd.",
+   "ticker": "HF-STILL",
+   "asset_class": "Hedge fund",
+   "sub_class": "Global macro (quarterly liquidity)",
+   "quantity": null,
+   "price": null,
+   "value": 12400000,
+   "cost_basis": 10000000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A10",
+   "security": "Brightwater Aquaculture, Inc. \u2014 Series C Preferred",
+   "ticker": "PRIV-BWA",
+   "asset_class": "Private company",
+   "sub_class": "Direct investment (land-based salmon)",
+   "quantity": 420000,
+   "price": 15.48,
+   "value": 6501600,
+   "cost_basis": 6500000,
+   "notes": "Last round Nov 2025; board observer seat (Anthony)",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A10",
+   "security": "New England Harbor FC \u2014 2.5% LLC interest",
+   "ticker": "PRIV-NEHFC",
+   "asset_class": "Private company",
+   "sub_class": "Sports franchise minority stake",
+   "quantity": null,
+   "price": null,
+   "value": 4000000,
+   "cost_basis": 2500000,
+   "notes": "USL Championship club; capital call rights",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A10",
+   "security": "2nd Act Marketplace SPV: Meridian Logistics Class A",
+   "ticker": "SPV-MERIDIAN",
+   "asset_class": "Private company",
+   "sub_class": "Co-investment SPV (2nd Act Capital)",
+   "quantity": null,
+   "price": null,
+   "value": 3050000,
+   "cost_basis": 3000000,
+   "notes": "Invested through the Hollisworks marketplace, 2026",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A11",
+   "security": "Coastal Bank operating account",
+   "ticker": "CASH",
+   "asset_class": "Cash",
+   "sub_class": "Operating cash",
+   "quantity": null,
+   "price": null,
+   "value": 7000000,
+   "cost_basis": 7000000,
+   "notes": "",
+   "secmaster": "cash \u2014 cash position"
+  },
+  {
+   "account": "A12",
+   "security": "Vanguard Total Stock Market ETF",
+   "ticker": "VTI",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 21000,
+   "price": 318.5,
+   "value": 6688500,
+   "cost_basis": 5400000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A12",
+   "security": "Vanguard Total International Stock ETF",
+   "ticker": "VXUS",
+   "asset_class": "Public equity",
+   "sub_class": "International ETF",
+   "quantity": 45000,
+   "price": 71.4,
+   "value": 3213000,
+   "cost_basis": 2900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A12",
+   "security": "Vanguard Tax-Exempt Bond ETF",
+   "ticker": "VTEB",
+   "asset_class": "Fixed income",
+   "sub_class": "Municipal bond ETF",
+   "quantity": 80000,
+   "price": 50.8,
+   "value": 4064000,
+   "cost_basis": 4000000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A13",
+   "security": "Schwab U.S. Dividend Equity ETF",
+   "ticker": "SCHD",
+   "asset_class": "Public equity",
+   "sub_class": "Dividend ETF",
+   "quantity": 110000,
+   "price": 29.4,
+   "value": 3234000,
+   "cost_basis": 2600000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A13",
+   "security": "Schwab U.S. TIPS ETF",
+   "ticker": "SCHP",
+   "asset_class": "Fixed income",
+   "sub_class": "TIPS ETF",
+   "quantity": 50000,
+   "price": 27.1,
+   "value": 1355000,
+   "cost_basis": 1350000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A13",
+   "security": "Schwab Treasury Obligations MMF",
+   "ticker": "SNOXX",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": 1420000,
+   "price": 1.0,
+   "value": 1420000,
+   "cost_basis": 1420000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A14",
+   "security": "Vanguard Total Stock Market ETF",
+   "ticker": "VTI",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 5000,
+   "price": 318.5,
+   "value": 1592500,
+   "cost_basis": 1100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A14",
+   "security": "iShares Core U.S. Aggregate Bond ETF",
+   "ticker": "AGG",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 5000,
+   "price": 101.3,
+   "value": 506500,
+   "cost_basis": 500000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A15",
+   "security": "Vanguard S&P 500 ETF",
+   "ticker": "VOO",
+   "asset_class": "Public equity",
+   "sub_class": "US large cap ETF",
+   "quantity": 7200,
+   "price": 590.2,
+   "value": 4249440,
+   "cost_basis": 3100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A15",
+   "security": "Vanguard FTSE All-World ex-US ETF",
+   "ticker": "VEU",
+   "asset_class": "Public equity",
+   "sub_class": "International ETF",
+   "quantity": 28000,
+   "price": 68.3,
+   "value": 1912400,
+   "cost_basis": 1600000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A15",
+   "security": "Vanguard Intermediate-Term Tax-Exempt Fund",
+   "ticker": "VWIUX",
+   "asset_class": "Fixed income",
+   "sub_class": "Municipal bond fund",
+   "quantity": 160000,
+   "price": 13.9,
+   "value": 2224000,
+   "cost_basis": 2200000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A16",
+   "security": "Fidelity Total Market Index Fund",
+   "ticker": "FSKAX",
+   "asset_class": "Public equity",
+   "sub_class": "US total market fund",
+   "quantity": 19000,
+   "price": 166.2,
+   "value": 3157800,
+   "cost_basis": 1900000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A17",
+   "security": "Fidelity Freedom 2045 Fund",
+   "ticker": "FFFGX",
+   "asset_class": "Multi-asset",
+   "sub_class": "Target-date fund",
+   "quantity": 85000,
+   "price": 14.1,
+   "value": 1198500,
+   "cost_basis": 900000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A18",
+   "security": "CHET Age-Based Portfolio (college)",
+   "ticker": "529-SOFIA",
+   "asset_class": "Multi-asset",
+   "sub_class": "529 plan",
+   "quantity": null,
+   "price": null,
+   "value": 310000,
+   "cost_basis": 200000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A19",
+   "security": "CHET Age-Based Portfolio (2025)",
+   "ticker": "529-LUCA",
+   "asset_class": "Multi-asset",
+   "sub_class": "529 plan",
+   "quantity": null,
+   "price": null,
+   "value": 290000,
+   "cost_basis": 200000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A20",
+   "security": "Vanguard Total Stock Market ETF",
+   "ticker": "VTI",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 12000,
+   "price": 318.5,
+   "value": 3822000,
+   "cost_basis": 2900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A20",
+   "security": "Vanguard Total International Stock ETF",
+   "ticker": "VXUS",
+   "asset_class": "Public equity",
+   "sub_class": "International ETF",
+   "quantity": 12000,
+   "price": 71.4,
+   "value": 856800,
+   "cost_basis": 700000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A20",
+   "security": "iShares Core U.S. Aggregate Bond ETF",
+   "ticker": "AGG",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 7000,
+   "price": 101.3,
+   "value": 709100,
+   "cost_basis": 700000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A21",
+   "security": "Schwab U.S. Broad Market ETF",
+   "ticker": "SCHB",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 90000,
+   "price": 24.1,
+   "value": 2169000,
+   "cost_basis": 1500000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A21",
+   "security": "Schwab International Equity ETF",
+   "ticker": "SCHF",
+   "asset_class": "Public equity",
+   "sub_class": "International ETF",
+   "quantity": 40000,
+   "price": 43.2,
+   "value": 1728000,
+   "cost_basis": 1300000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A21",
+   "security": "Schwab Municipal Bond ETF",
+   "ticker": "SCMB",
+   "asset_class": "Fixed income",
+   "sub_class": "Municipal bond ETF",
+   "quantity": 35000,
+   "price": 25.2,
+   "value": 882000,
+   "cost_basis": 880000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A22",
+   "security": "Schwab S&P 500 Index Fund",
+   "ticker": "SWPPX",
+   "asset_class": "Public equity",
+   "sub_class": "US large cap fund",
+   "quantity": 9500,
+   "price": 94.6,
+   "value": 898700,
+   "cost_basis": 600000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A23",
+   "security": "Florida Prepaid + Vanguard 529 (3 plans)",
+   "ticker": "529-CIPOLLA",
+   "asset_class": "Multi-asset",
+   "sub_class": "529 plans",
+   "quantity": null,
+   "price": null,
+   "value": 540000,
+   "cost_basis": 400000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A24",
+   "security": "Vanguard Total Stock Market ETF",
+   "ticker": "VTI",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 8000,
+   "price": 318.5,
+   "value": 2548000,
+   "cost_basis": 1900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A24",
+   "security": "iShares Core U.S. Aggregate Bond ETF",
+   "ticker": "AGG",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 10000,
+   "price": 101.3,
+   "value": 1013000,
+   "cost_basis": 1000000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A25",
+   "security": "NVIDIA Corp.",
+   "ticker": "NVDA",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock",
+   "quantity": 14000,
+   "price": 196.3,
+   "value": 2748200,
+   "cost_basis": 900000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A25",
+   "security": "Microsoft Corp.",
+   "ticker": "MSFT",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock",
+   "quantity": 5500,
+   "price": 512.4,
+   "value": 2818200,
+   "cost_basis": 1400000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A25",
+   "security": "Alphabet Inc. Class A",
+   "ticker": "GOOGL",
+   "asset_class": "Public equity",
+   "sub_class": "Single stock",
+   "quantity": 8,
+   "price": 251.6,
+   "value": 2012800,
+   "cost_basis": 600000,
+   "notes": "qty 8,000",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A25",
+   "security": "Invesco QQQ Trust",
+   "ticker": "QQQ",
+   "asset_class": "Public equity",
+   "sub_class": "Nasdaq-100 ETF",
+   "quantity": 5000,
+   "price": 598.4,
+   "value": 2992000,
+   "cost_basis": 2100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A25",
+   "security": "Written SPY calls (covered-call overlay), Dec 2026 660",
+   "ticker": "OPT-SPY-C660",
+   "asset_class": "Options",
+   "sub_class": "Short call overlay",
+   "quantity": -50,
+   "price": null,
+   "value": -187500,
+   "cost_basis": -240000,
+   "notes": "50 contracts; premium received $240k",
+   "secmaster": "listed option \u2014 create the contract in the options sleeve (rep8)"
+  },
+  {
+   "account": "A25",
+   "security": "Cash / sweep",
+   "ticker": "CASH",
+   "asset_class": "Cash",
+   "sub_class": "Brokerage cash",
+   "quantity": null,
+   "price": null,
+   "value": 1050000,
+   "cost_basis": 1050000,
+   "notes": "",
+   "secmaster": "cash \u2014 cash position"
+  },
+  {
+   "account": "A26",
+   "security": "Bitcoin",
+   "ticker": "BTC",
+   "asset_class": "Digital assets",
+   "sub_class": "Cryptocurrency",
+   "quantity": 18.5,
+   "price": 97400,
+   "value": 1801900,
+   "cost_basis": 620000,
+   "notes": "",
+   "secmaster": "digital asset \u2014 manual asset"
+  },
+  {
+   "account": "A26",
+   "security": "Ether",
+   "ticker": "ETH",
+   "asset_class": "Digital assets",
+   "sub_class": "Cryptocurrency",
+   "quantity": 120,
+   "price": 3280,
+   "value": 393600,
+   "cost_basis": 210000,
+   "notes": "",
+   "secmaster": "digital asset \u2014 manual asset"
+  },
+  {
+   "account": "A27",
+   "security": "Caldera Ventures Fund II, L.P. \u2014 LP interest",
+   "ticker": "VC-CALDERA2",
+   "asset_class": "Venture capital",
+   "sub_class": "Venture fund (Michael is a GP)",
+   "quantity": null,
+   "price": null,
+   "value": 9000000,
+   "cost_basis": 6000000,
+   "notes": "$10M commitment, $6M called; plus GP carry (unvalued)",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A27",
+   "security": "Luma Robotics \u2014 seed SAFE",
+   "ticker": "ANGEL-LUMA",
+   "asset_class": "Private company",
+   "sub_class": "Angel investment",
+   "quantity": null,
+   "price": null,
+   "value": 750000,
+   "cost_basis": 250000,
+   "notes": "Marked at the Series A price",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A27",
+   "security": "Halcyon Bio \u2014 seed preferred",
+   "ticker": "ANGEL-HALCYON",
+   "asset_class": "Private company",
+   "sub_class": "Angel investment",
+   "quantity": null,
+   "price": null,
+   "value": 500000,
+   "cost_basis": 500000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A27",
+   "security": "Pressbox Media \u2014 convertible note",
+   "ticker": "ANGEL-PRESSBOX",
+   "asset_class": "Private company",
+   "sub_class": "Angel investment",
+   "quantity": null,
+   "price": null,
+   "value": 0,
+   "cost_basis": 150000,
+   "notes": "Written off 2025",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A28",
+   "security": "Schwab Total Stock Market Index Fund",
+   "ticker": "SWTSX",
+   "asset_class": "Public equity",
+   "sub_class": "US total market fund",
+   "quantity": 6000,
+   "price": 101.3,
+   "value": 607800,
+   "cost_basis": 350000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A29",
+   "security": "Vanguard Total Stock Market ETF",
+   "ticker": "VTI",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 4200,
+   "price": 318.5,
+   "value": 1337700,
+   "cost_basis": 1000000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A29",
+   "security": "iShares Core U.S. Aggregate Bond ETF",
+   "ticker": "AGG",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 5500,
+   "price": 101.3,
+   "value": 557150,
+   "cost_basis": 550000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A30",
+   "security": "Vanguard Total World Stock ETF",
+   "ticker": "VT",
+   "asset_class": "Public equity",
+   "sub_class": "Global equity ETF",
+   "quantity": 220000,
+   "price": 136.2,
+   "value": 29964000,
+   "cost_basis": 22000000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A30",
+   "security": "Vanguard Total Bond Market ETF",
+   "ticker": "BND",
+   "asset_class": "Fixed income",
+   "sub_class": "Core bond ETF",
+   "quantity": 140000,
+   "price": 74.9,
+   "value": 10486000,
+   "cost_basis": 10800000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A30",
+   "security": "Harbor Point Partners IV, L.P. (foundation sleeve)",
+   "ticker": "PE-HPP4",
+   "asset_class": "Private equity",
+   "sub_class": "Buyout fund",
+   "quantity": null,
+   "price": null,
+   "value": 3200000,
+   "cost_basis": 2500000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A30",
+   "security": "Goldman Sachs Financial Square Govt MMF",
+   "ticker": "FGTXX",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": 1300000,
+   "price": 1.0,
+   "value": 1300000,
+   "cost_basis": 1300000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  },
+  {
+   "account": "A31",
+   "security": "Harbor Charitable balanced pool (60/40)",
+   "ticker": "DAF-POOL",
+   "asset_class": "Multi-asset",
+   "sub_class": "DAF investment pool",
+   "quantity": null,
+   "price": null,
+   "value": 6100000,
+   "cost_basis": 5000000,
+   "notes": "",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A32",
+   "security": "Schwab U.S. Dividend Equity ETF",
+   "ticker": "SCHD",
+   "asset_class": "Public equity",
+   "sub_class": "Dividend ETF",
+   "quantity": 200000,
+   "price": 29.4,
+   "value": 5880000,
+   "cost_basis": 4800000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A32",
+   "security": "Schwab Intermediate-Term U.S. Treasury ETF",
+   "ticker": "SCHR",
+   "asset_class": "Fixed income",
+   "sub_class": "Treasury ETF",
+   "quantity": 200000,
+   "price": 26.1,
+   "value": 5220000,
+   "cost_basis": 5200000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A33",
+   "security": "Survivorship UL policy, $25,000,000 face (Dominic & Marguerite)",
+   "ticker": "POL-SUL",
+   "asset_class": "Life insurance",
+   "sub_class": "Survivorship universal life \u2014 cash value",
+   "quantity": null,
+   "price": null,
+   "value": 4100000,
+   "cost_basis": 3600000,
+   "notes": "Premium $185k/yr via Crummey gifts",
+   "secmaster": "private / manual asset (fund interest, direct deal, 529, policy, SMA)"
+  },
+  {
+   "account": "A34",
+   "security": "Schwab U.S. Broad Market ETF",
+   "ticker": "SCHB",
+   "asset_class": "Public equity",
+   "sub_class": "US total market ETF",
+   "quantity": 70000,
+   "price": 24.1,
+   "value": 1687000,
+   "cost_basis": 1100000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A34",
+   "security": "Schwab Municipal Bond ETF",
+   "ticker": "SCMB",
+   "asset_class": "Fixed income",
+   "sub_class": "Municipal bond ETF",
+   "quantity": 45000,
+   "price": 25.2,
+   "value": 1134000,
+   "cost_basis": 1130000,
+   "notes": "",
+   "secmaster": "listed \u2014 expected in the security master after secmaster1's load"
+  },
+  {
+   "account": "A34",
+   "security": "Schwab Treasury Obligations MMF",
+   "ticker": "SNOXX",
+   "asset_class": "Cash",
+   "sub_class": "Money market",
+   "quantity": 270000,
+   "price": 1.0,
+   "value": 270000,
+   "cost_basis": 270000,
+   "notes": "",
+   "secmaster": "mutual fund / money market \u2014 NOT in secmaster1's sources (needs SEC mutual-fund tickers)"
+  }
+ ],
+ "direct_assets": [
+  {
+   "owner_id": "E20",
+   "asset": "Round Hill Road, Greenwich \u2014 residence, 9 acres",
+   "asset_class": "Real estate",
+   "sub_class": "Primary residence",
+   "value_usd": 14500000,
+   "cost_basis_usd": 6200000,
+   "notes": "Appraised 2025"
+  },
+  {
+   "owner_id": "E21",
+   "asset": "Port Royal, Naples FL \u2014 winter residence",
+   "asset_class": "Real estate",
+   "sub_class": "Secondary residence",
+   "value_usd": 9200000,
+   "cost_basis_usd": 7100000,
+   "notes": "Purchased 2019"
+  },
+  {
+   "owner_id": "E22",
+   "asset": "Stag's Hollow \u2014 62 acres, Napa (vines, winery, tasting room)",
+   "asset_class": "Real estate",
+   "sub_class": "Agricultural / operating property",
+   "value_usd": 28000000,
+   "cost_basis_usd": 19500000,
+   "notes": "Appraised 2025"
+  },
+  {
+   "owner_id": "E22",
+   "asset": "Winery equipment and vehicles",
+   "asset_class": "Operating business",
+   "sub_class": "Plant & equipment",
+   "value_usd": 2500000,
+   "cost_basis_usd": 3100000,
+   "notes": "Net book"
+  },
+  {
+   "owner_id": "E22",
+   "asset": "Wine library (back vintages, ~9,000 bottles)",
+   "asset_class": "Collectibles",
+   "sub_class": "Wine",
+   "value_usd": 1800000,
+   "cost_basis_usd": 900000,
+   "notes": "Insured at $2.1M"
+  },
+  {
+   "owner_id": "E23",
+   "asset": "Bridgeport CT cold-storage facility",
+   "asset_class": "Real estate",
+   "sub_class": "Industrial (NNN to Northline)",
+   "value_usd": 15000000,
+   "cost_basis_usd": 9000000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E23",
+   "asset": "Edison NJ distribution center",
+   "asset_class": "Real estate",
+   "sub_class": "Industrial (NNN to Northline)",
+   "value_usd": 14000000,
+   "cost_basis_usd": 8500000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E23",
+   "asset": "Allentown PA plant",
+   "asset_class": "Real estate",
+   "sub_class": "Industrial (NNN to Northline)",
+   "value_usd": 9000000,
+   "cost_basis_usd": 6000000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E24",
+   "asset": "Ajax Peak, Aspen \u2014 ski house",
+   "asset_class": "Real estate",
+   "sub_class": "Secondary residence",
+   "value_usd": 7800000,
+   "cost_basis_usd": 6900000,
+   "notes": "Purchased 2020"
+  },
+  {
+   "owner_id": "E25",
+   "asset": "Brickell Bay 41 \u2014 condo",
+   "asset_class": "Real estate",
+   "sub_class": "Primary residence",
+   "value_usd": 4600000,
+   "cost_basis_usd": 3400000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E25",
+   "asset": "NE 41st Street \u2014 gallery space",
+   "asset_class": "Real estate",
+   "sub_class": "Commercial (gallery)",
+   "value_usd": 3200000,
+   "cost_basis_usd": 2700000,
+   "notes": "Leased to Francesca's gallery at market"
+  },
+  {
+   "owner_id": "E26",
+   "asset": "Postwar abstraction \u2014 9 works (Mitchell, Frankenthaler, Twombly school)",
+   "asset_class": "Collectibles",
+   "sub_class": "Fine art",
+   "value_usd": 12800000,
+   "cost_basis_usd": 5100000,
+   "notes": "Three on museum loan"
+  },
+  {
+   "owner_id": "E26",
+   "asset": "Contemporary \u2014 23 works (Ruscha, Kusama, Doig, Marshall, others)",
+   "asset_class": "Collectibles",
+   "sub_class": "Fine art",
+   "value_usd": 15400000,
+   "cost_basis_usd": 9800000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E26",
+   "asset": "Photography and works on paper \u2014 9 works",
+   "asset_class": "Collectibles",
+   "sub_class": "Fine art",
+   "value_usd": 3200000,
+   "cost_basis_usd": 2200000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E4",
+   "asset": "1963 Ferrari 250 GT Lusso",
+   "asset_class": "Collectibles",
+   "sub_class": "Classic car",
+   "value_usd": 2900000,
+   "cost_basis_usd": 1100000,
+   "notes": "Pebble Beach 2019"
+  },
+  {
+   "owner_id": "E4",
+   "asset": "1957 Mercedes-Benz 300SL Roadster",
+   "asset_class": "Collectibles",
+   "sub_class": "Classic car",
+   "value_usd": 1800000,
+   "cost_basis_usd": 950000,
+   "notes": ""
+  },
+  {
+   "owner_id": "E4",
+   "asset": "1967 Shelby GT500, 1972 Lancia Stratos, 1989 Porsche 959 and five others",
+   "asset_class": "Collectibles",
+   "sub_class": "Classic cars (8)",
+   "value_usd": 7700000,
+   "cost_basis_usd": 4900000,
+   "notes": "Stored in Greenwich; Hagerty"
+  },
+  {
+   "owner_id": "P2",
+   "asset": "Jewelry (Cartier, Graff; the Meloni sapphire)",
+   "asset_class": "Collectibles",
+   "sub_class": "Jewelry",
+   "value_usd": 2300000,
+   "cost_basis_usd": 1900000,
+   "notes": "Scheduled on the homeowners policy"
+  },
+  {
+   "owner_id": "E1",
+   "asset": "Family office working capital",
+   "asset_class": "Cash",
+   "sub_class": "Operating cash",
+   "value_usd": 1400000,
+   "cost_basis_usd": 1400000,
+   "notes": ""
+  }
+ ],
+ "liabilities": [
+  {
+   "owner_id": "E5",
+   "liability": "Goldman Sachs \u2014 securities-backed line of credit",
+   "kind": "Secured credit line",
+   "amount_usd": 20000000,
+   "terms": "SOFR + 1.10%",
+   "notes": "Collateral: Northline shares in A6; used for Holdings LP capital calls and the Naples purchase."
+  },
+  {
+   "owner_id": "E21",
+   "liability": "Coastal Bank \u2014 mortgage (Naples)",
+   "kind": "Mortgage",
+   "amount_usd": 3500000,
+   "terms": "5.35% fixed, 2049",
+   "notes": ""
+  },
+  {
+   "owner_id": "E22",
+   "liability": "Farm Credit West \u2014 agricultural term loan",
+   "kind": "Term loan",
+   "amount_usd": 6000000,
+   "terms": "6.10%, 2032",
+   "notes": "Secured by the vineyard"
+  },
+  {
+   "owner_id": "E23",
+   "liability": "Coastal Bank \u2014 commercial mortgage (3 properties)",
+   "kind": "Mortgage",
+   "amount_usd": 14000000,
+   "terms": "4.80% fixed, 2033",
+   "notes": "Cross-collateralised"
+  },
+  {
+   "owner_id": "E24",
+   "liability": "First Western \u2014 mortgage (Aspen)",
+   "kind": "Mortgage",
+   "amount_usd": 2400000,
+   "terms": "6.25% fixed, 2050",
+   "notes": ""
+  },
+  {
+   "owner_id": "E25",
+   "liability": "Coastal Bank \u2014 mortgage (Miami condo)",
+   "kind": "Mortgage",
+   "amount_usd": 1900000,
+   "terms": "5.90% fixed, 2047",
+   "notes": ""
+  },
+  {
+   "owner_id": "E26",
+   "liability": "Private bank \u2014 art-secured credit line",
+   "kind": "Secured credit line",
+   "amount_usd": 5000000,
+   "terms": "SOFR + 1.75%",
+   "notes": "Secured by 11 works; drawn for the 2025 Marshall acquisition"
+  },
+  {
+   "owner_id": "E3",
+   "liability": "Harbor Point Partners IV \u2014 unfunded commitment",
+   "kind": "Off-balance-sheet commitment",
+   "amount_usd": 8000000,
+   "terms": "",
+   "notes": "Callable through 2027"
+  },
+  {
+   "owner_id": "E14",
+   "liability": "Caldera Ventures Fund II \u2014 unfunded commitment",
+   "kind": "Off-balance-sheet commitment",
+   "amount_usd": 4000000,
+   "terms": "",
+   "notes": "Callable through 2028"
+  }
+ ],
+ "totals": {
+  "family_net_worth_usd": 601788090,
+  "charitable_usd": 62150000
+ }
+}

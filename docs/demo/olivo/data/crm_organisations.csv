@@ -1,0 +1,9 @@
+entity_type,id,name,note
+corporation,O1,Wilmington Fiduciary Co.,Corporate trustee (Delaware) — Dynasty Trust and AO Descendants Trust
+corporation,O2,"Coastal Bank, N.A. — Trust Department","Corporate trustee — SLAT, Theresa trust, CRUT; also operating bank and lender"
+foundation,O3,Harbor Charitable Trust,Donor-advised fund sponsor (public charity) for the Olivo Giving Fund
+corporation,O4,Northline Foods Inc.,Acquirer of Olivo Foods (2014); tenant of the three industrial properties; the family's concentrated stock
+lp,O5,Caldera Ventures,Michael's venture firm (GP); the family is an LP in Fund II
+llc,O6,Cipolla Studio,Mateo's architecture practice
+corporation,O7,Farm Credit West,Lender — Stag's Hollow agricultural term loan
+corporation,O8,First Western Trust,Lender — Aspen mortgage

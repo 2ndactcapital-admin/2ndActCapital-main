@@ -1,0 +1,96 @@
+account_id,security,ticker,asset_class,sub_class,quantity,price,value_usd,cost_basis_usd,notes
+A1,SPDR S&P 500 ETF,SPY,Public equity,US large cap ETF,38000,642.1,24399800,14800000,
+A1,Vanguard Total International Stock ETF,VXUS,Public equity,International ETF,160000,71.4,11424000,9100000,
+A1,iShares Russell 2000 ETF,IWM,Public equity,US small cap ETF,22000,241.3,5308600,4600000,
+A1,Northline Foods Inc.,NLF,Public equity,Single stock (concentrated),120000,61.05,7326000,1440000,Residual from the 2014 sale; basis $12/sh
+A1,Apple Inc.,AAPL,Public equity,Single stock,18000,262.4,4723200,1900000,
+A1,Berkshire Hathaway Class B,BRK.B,Public equity,Single stock,9000,498.2,4483800,2100000,
+A1,Vanguard Total Bond Market ETF,BND,Fixed income,Core bond ETF,95000,74.9,7115500,7400000,
+A1,Goldman Sachs Financial Square Govt MMF,FGTXX,Cash,Money market,3250000,1.0,3250000,3250000,
+A2,Connecticut / NY GO & essential-service munis 4.00% due 2027,MUNI-2027,Fixed income,Tax-exempt municipal bond,2000000,0.985,1970000,2000000,
+A2,Connecticut / NY GO & essential-service munis 5.00% due 2028,MUNI-2028,Fixed income,Tax-exempt municipal bond,2500000,0.985,2462500,2500000,
+A2,Connecticut / NY GO & essential-service munis 4.00% due 2029,MUNI-2029,Fixed income,Tax-exempt municipal bond,2500000,0.985,2462500,2500000,
+A2,Connecticut / NY GO & essential-service munis 5.00% due 2030,MUNI-2030,Fixed income,Tax-exempt municipal bond,3000000,1.01,3030000,3000000,
+A2,Connecticut / NY GO & essential-service munis 4.00% due 2031,MUNI-2031,Fixed income,Tax-exempt municipal bond,3000000,1.01,3030000,3000000,
+A2,Connecticut / NY GO & essential-service munis 5.00% due 2033,MUNI-2033,Fixed income,Tax-exempt municipal bond,2500000,1.01,2525000,2500000,
+A2,Connecticut / NY GO & essential-service munis 4.00% due 2036,MUNI-2036,Fixed income,Tax-exempt municipal bond,2500000,1.01,2525000,2500000,
+A3,Coastal Bank checking,CASH,Cash,Operating cash,,,1150000,1150000,
+A3,Coastal Bank money market,CASH-MM,Cash,Money market,,,3050000,3050000,
+A4,JPM autocallable contingent-coupon note on S&P 500 (CUSIP 48133X***) due 2028,NOTE-JPM-SPX,Structured note,"Autocallable, 70% barrier, 9.25% coupon",,,5000000,5000000,Issued Mar 2026; worst-of? no — single index
+A4,"Goldman buffered note on Nasdaq-100 (15% buffer, 1.3x to 24% cap) due 2027",NOTE-GS-NDX,Structured note,Buffered growth note,,,3120000,3000000,
+A5,Fidelity 500 Index Fund,FXAIX,Public equity,US large cap fund,28000,228.1,6386800,3100000,
+A5,Fidelity U.S. Bond Index Fund,FXNAX,Fixed income,Core bond fund,250000,10.52,2630000,2700000,
+A5,Fidelity Government Cash Reserves,FDRXX,Cash,Money market,450000,1.0,450000,450000,
+A6,Northline Foods Inc.,NLF,Public equity,Single stock (concentrated),1800000,61.05,109890000,21600000,Received at the 2014 sale; basis $12/sh. Collateral for the $20M SBL.
+A6,Goldman Sachs Financial Square Govt MMF,FGTXX,Cash,Money market,1800000,1.0,1800000,1800000,
+A7,Vanguard S&P 500 ETF,VOO,Public equity,US large cap ETF,24000,590.2,14164800,12400000,
+A7,Vanguard FTSE Developed Markets ETF,VEA,Public equity,Developed ex-US ETF,150000,58.9,8835000,7900000,
+A7,Vanguard FTSE Emerging Markets ETF,VWO,Public equity,Emerging markets ETF,70000,52.1,3647000,3400000,
+A7,iShares Core U.S. Aggregate Bond ETF,AGG,Fixed income,Core bond ETF,95000,101.3,9623500,9700000,
+A7,iShares 0-3 Month Treasury Bond ETF,SGOV,Cash,T-bill ETF,48000,100.6,4828800,4800000,
+A7,Invesco QQQ Trust,QQQ,Public equity,Nasdaq-100 ETF,6500,598.4,3889600,3100000,Candidate for a Replication Studio direct-index replica
+A8,Northline Foods Inc.,NLF,Public equity,Single stock (concentrated),400000,61.05,24420000,4800000,
+A9,Olivo Core Equity (direct-indexed S&P 500 replica),SMA-CORE,Public equity,Direct-index SMA (503 positions),,,24600000,19200000,Replication Studio replica of SPY; tax-loss harvesting on
+A9,iShares MSCI EAFE ETF,EFA,Public equity,Developed ex-US ETF,110000,88.7,9757000,8100000,
+A9,iShares Core U.S. Aggregate Bond ETF,AGG,Fixed income,Core bond ETF,70000,101.3,7091000,7000000,
+A9,Vanguard Short-Term Inflation-Protected Securities ETF,VTIP,Fixed income,TIPS ETF,80000,50.1,4008000,3900000,
+A9,iShares 0-3 Month Treasury Bond ETF,SGOV,Cash,T-bill ETF,60000,100.6,6036000,6000000,
+A9,Innovator U.S. Equity Power Buffer ETF (Jan),PJAN,Public equity,Defined-outcome ETF,60000,42.8,2568000,2400000,Options-sleeve candidate (rep8)
+A10,"Harbor Point Partners IV, L.P.",PE-HPP4,Private equity,Buyout fund (2019 vintage),,,22300000,18000000,"$30M commitment, $8M unfunded; Q2 2026 NAV"
+A10,Thornfield Credit Opportunities II,PC-TCO2,Private credit,Opportunistic credit fund,,,15100000,15000000,"$15M commitment, fully drawn; 11.2% net IRR"
+A10,Stillwater Macro Fund Ltd.,HF-STILL,Hedge fund,Global macro (quarterly liquidity),,,12400000,10000000,
+A10,"Brightwater Aquaculture, Inc. — Series C Preferred",PRIV-BWA,Private company,Direct investment (land-based salmon),420000,15.48,6501600,6500000,Last round Nov 2025; board observer seat (Anthony)
+A10,New England Harbor FC — 2.5% LLC interest,PRIV-NEHFC,Private company,Sports franchise minority stake,,,4000000,2500000,USL Championship club; capital call rights
+A10,2nd Act Marketplace SPV: Meridian Logistics Class A,SPV-MERIDIAN,Private company,Co-investment SPV (2nd Act Capital),,,3050000,3000000,"Invested through the Hollisworks marketplace, 2026"
+A11,Coastal Bank operating account,CASH,Cash,Operating cash,,,7000000,7000000,
+A12,Vanguard Total Stock Market ETF,VTI,Public equity,US total market ETF,21000,318.5,6688500,5400000,
+A12,Vanguard Total International Stock ETF,VXUS,Public equity,International ETF,45000,71.4,3213000,2900000,
+A12,Vanguard Tax-Exempt Bond ETF,VTEB,Fixed income,Municipal bond ETF,80000,50.8,4064000,4000000,
+A13,Schwab U.S. Dividend Equity ETF,SCHD,Public equity,Dividend ETF,110000,29.4,3234000,2600000,
+A13,Schwab U.S. TIPS ETF,SCHP,Fixed income,TIPS ETF,50000,27.1,1355000,1350000,
+A13,Schwab Treasury Obligations MMF,SNOXX,Cash,Money market,1420000,1.0,1420000,1420000,
+A14,Vanguard Total Stock Market ETF,VTI,Public equity,US total market ETF,5000,318.5,1592500,1100000,
+A14,iShares Core U.S. Aggregate Bond ETF,AGG,Fixed income,Core bond ETF,5000,101.3,506500,500000,
+A15,Vanguard S&P 500 ETF,VOO,Public equity,US large cap ETF,7200,590.2,4249440,3100000,
+A15,Vanguard FTSE All-World ex-US ETF,VEU,Public equity,International ETF,28000,68.3,1912400,1600000,
+A15,Vanguard Intermediate-Term Tax-Exempt Fund,VWIUX,Fixed income,Municipal bond fund,160000,13.9,2224000,2200000,
+A16,Fidelity Total Market Index Fund,FSKAX,Public equity,US total market fund,19000,166.2,3157800,1900000,
+A17,Fidelity Freedom 2045 Fund,FFFGX,Multi-asset,Target-date fund,85000,14.1,1198500,900000,
+A18,CHET Age-Based Portfolio (college),529-SOFIA,Multi-asset,529 plan,,,310000,200000,
+A19,CHET Age-Based Portfolio (2025),529-LUCA,Multi-asset,529 plan,,,290000,200000,
+A20,Vanguard Total Stock Market ETF,VTI,Public equity,US total market ETF,12000,318.5,3822000,2900000,
+A20,Vanguard Total International Stock ETF,VXUS,Public equity,International ETF,12000,71.4,856800,700000,
+A20,iShares Core U.S. Aggregate Bond ETF,AGG,Fixed income,Core bond ETF,7000,101.3,709100,700000,
+A21,Schwab U.S. Broad Market ETF,SCHB,Public equity,US total market ETF,90000,24.1,2169000,1500000,
+A21,Schwab International Equity ETF,SCHF,Public equity,International ETF,40000,43.2,1728000,1300000,
+A21,Schwab Municipal Bond ETF,SCMB,Fixed income,Municipal bond ETF,35000,25.2,882000,880000,
+A22,Schwab S&P 500 Index Fund,SWPPX,Public equity,US large cap fund,9500,94.6,898700,600000,
+A23,Florida Prepaid + Vanguard 529 (3 plans),529-CIPOLLA,Multi-asset,529 plans,,,540000,400000,
+A24,Vanguard Total Stock Market ETF,VTI,Public equity,US total market ETF,8000,318.5,2548000,1900000,
+A24,iShares Core U.S. Aggregate Bond ETF,AGG,Fixed income,Core bond ETF,10000,101.3,1013000,1000000,
+A25,NVIDIA Corp.,NVDA,Public equity,Single stock,14000,196.3,2748200,900000,
+A25,Microsoft Corp.,MSFT,Public equity,Single stock,5500,512.4,2818200,1400000,
+A25,Alphabet Inc. Class A,GOOGL,Public equity,Single stock,8,251.6,2012800,600000,"qty 8,000"
+A25,Invesco QQQ Trust,QQQ,Public equity,Nasdaq-100 ETF,5000,598.4,2992000,2100000,
+A25,"Written SPY calls (covered-call overlay), Dec 2026 660",OPT-SPY-C660,Options,Short call overlay,-50,,-187500,-240000,50 contracts; premium received $240k
+A25,Cash / sweep,CASH,Cash,Brokerage cash,,,1050000,1050000,
+A26,Bitcoin,BTC,Digital assets,Cryptocurrency,18.5,97400,1801900,620000,
+A26,Ether,ETH,Digital assets,Cryptocurrency,120,3280,393600,210000,
+A27,"Caldera Ventures Fund II, L.P. — LP interest",VC-CALDERA2,Venture capital,Venture fund (Michael is a GP),,,9000000,6000000,"$10M commitment, $6M called; plus GP carry (unvalued)"
+A27,Luma Robotics — seed SAFE,ANGEL-LUMA,Private company,Angel investment,,,750000,250000,Marked at the Series A price
+A27,Halcyon Bio — seed preferred,ANGEL-HALCYON,Private company,Angel investment,,,500000,500000,
+A27,Pressbox Media — convertible note,ANGEL-PRESSBOX,Private company,Angel investment,,,0,150000,Written off 2025
+A28,Schwab Total Stock Market Index Fund,SWTSX,Public equity,US total market fund,6000,101.3,607800,350000,
+A29,Vanguard Total Stock Market ETF,VTI,Public equity,US total market ETF,4200,318.5,1337700,1000000,
+A29,iShares Core U.S. Aggregate Bond ETF,AGG,Fixed income,Core bond ETF,5500,101.3,557150,550000,
+A30,Vanguard Total World Stock ETF,VT,Public equity,Global equity ETF,220000,136.2,29964000,22000000,
+A30,Vanguard Total Bond Market ETF,BND,Fixed income,Core bond ETF,140000,74.9,10486000,10800000,
+A30,"Harbor Point Partners IV, L.P. (foundation sleeve)",PE-HPP4,Private equity,Buyout fund,,,3200000,2500000,
+A30,Goldman Sachs Financial Square Govt MMF,FGTXX,Cash,Money market,1300000,1.0,1300000,1300000,
+A31,Harbor Charitable balanced pool (60/40),DAF-POOL,Multi-asset,DAF investment pool,,,6100000,5000000,
+A32,Schwab U.S. Dividend Equity ETF,SCHD,Public equity,Dividend ETF,200000,29.4,5880000,4800000,
+A32,Schwab Intermediate-Term U.S. Treasury ETF,SCHR,Fixed income,Treasury ETF,200000,26.1,5220000,5200000,
+A33,"Survivorship UL policy, $25,000,000 face (Dominic & Marguerite)",POL-SUL,Life insurance,Survivorship universal life — cash value,,,4100000,3600000,Premium $185k/yr via Crummey gifts
+A34,Schwab U.S. Broad Market ETF,SCHB,Public equity,US total market ETF,70000,24.1,1687000,1100000,
+A34,Schwab Municipal Bond ETF,SCMB,Fixed income,Municipal bond ETF,45000,25.2,1134000,1130000,
+A34,Schwab Treasury Obligations MMF,SNOXX,Cash,Money market,270000,1.0,270000,270000,

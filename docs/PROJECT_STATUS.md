@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+CRMDETAIL1 (2026-11-04, the CRM holds a multigenerational family — 29 governed relationship types with a Relationships panel, typed detail fields for trusts / charities / LLCs / LPs, maiden name + date of death + minor flag, portfolio.liabilities netting into net worth (gross / liabilities / net), permanent demo data protected from every clean-up; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PERMS1 (2026-11-04, ONE source of permissions — the authz Principal = role ∪ profile ∪ permission-set grants in one statement, client rule applied, the key "staff" grants nothing; org_admin baseline (+9 keys, no approve_*); org admins create deals and households (Joe's decisions 1-2); WF-06 / WF-03 / REP-10 / WF-04 / WF-05; HollisMuse re-run test rows removed; verify WRITTEN, not yet run): see the top entry.
 REP12 (2026-11-04, Replication Studio sprint 12 — the note-versus-replica check across NEW issues: every new / restated terms version checked automatically per org, a DRAFT replica only for an eligible note, the comparison when quoted, the "New issues" feed + alerts, the Super Admin's underlying queue (one-click / multi-confirm through confirm_resolution); schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 STAFFROLES1 (2026-11-04, "see staff data" (is_internal: every internal firm role) split from "skip permission checks" (is_staff, unchanged); org admin / support staff read the CRM, approvals unchanged; verify WRITTEN, not yet run): see the top entry.
@@ -333,6 +334,156 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000. CRMDETAIL1 — a CRM that can hold a real multigenerational family: governed relationships, typed detail fields, people fields, liabilities into net worth, permanent demo data; schema APPLIED; verify WRITTEN, not yet run (2026-11-04)
+
+**Discovery (Task 1).**
+- **1a — the CRM record.** Tabs: Overview (Details form + ownership trees + generic Attributes), Addresses, Employment
+  (people), Tax IDs, Social Profiles, Notes, Documents, Linked Documents, Ownership, Compliance. Relationships were
+  added ONLY through the hierarchy page's side rail (`POST /entity-relationships`, types offered: ownership /
+  beneficiary, free text accepted, `require_staff` — an org admin was refused) and shown only as ownership trees; no
+  reverse labels. Tags: comma-separated on the Details form (create and edit). `sub_type`: a hard-coded per-type list
+  in `lib/entityTypes.js` (trust: Revocable / Irrevocable / Charitable / GRAT / SLAT / QTIP / Land Trust / Other).
+  Notes: the Notes tab (`entity_notes`) and the free `entities.notes`. Addresses: the add form ALREADY offers
+  seasonal months (is_seasonal + from / to month) and primary — no edit form. Custom fields: the generic Attributes
+  list (key / value text). For a person the form's "Date of Birth" writes `inception_date` and "Date of Death" wrote
+  `end_date` (there is a separate, almost unused `date_of_birth` column); "Country / Region" writes
+  `country_code` / `region_code` — for a legal entity that IS its state of formation.
+- **1b — readers of relationship_type.** Every ownership reader already filters `'ownership'` explicitly:
+  services/ownership_read, entity_graph (children / parents / lookthrough / detect_cycle), portfolio_rollup
+  (`_ownership_weights`), ownership_tree (edge types ownership + beneficiary), routers/entity_graph ownership
+  endpoints, assistant_actions/entity_graph. `beneficiary` is ALREADY read: `entity_graph.get_beneficiary_visible`
+  (member visibility flows down a beneficiary edge like ownership) and the ownership tree's default edge types — the
+  governed `beneficiary` keeps that meaning; income / remainder beneficiary do not confer visibility. Two non-filtering
+  spots in `POST /entity-relationships` were fixed: the ownership-sum warning now sums ownership rows only, and the
+  ownership cycle check runs for ownership only.
+- **1c — net worth.** `public.entity_holdings` (look-through buckets written by portfolio_rollup) summed by
+  `services.households._sum_holdings` — the household flexible rollup, the strict primary-household net worth, and now
+  the entity figure. Liabilities subtract there, on the same look-through basis (`services.liabilities`). The
+  hierarchy page's total and the X-ray are allocation views, not net worth.
+- **1d — entry paths.** Real asset / collectible with a valuation: `POST /portfolio/securities` (tenant asset) +
+  `POST /portfolio/positions` exist (manage_portfolio — NOT granted to org_admin), `record_valuation` has no route
+  (documents only), no entry UI. Private fund + commitment: `create_commitment` is service-only (the import path).
+  Held-away manual: the account page's held-away panel — rows must carry an identifier that resolves in the security
+  master (unresolved / no identifier rejected). Integrated custodian account with no feed: no manual path (the
+  held-away panel is for held-away accounts). Security not in the master: Super Admin `POST /portfolio/global-securities`.
+- **1f — broad-predicate deletes.** By name pattern: verify_chancery3b/5/6/9/11a, verify_ownershiptreea/b,
+  verify_navregroup (plan), verify_soc1–6, verify_portfolioux1–4, verify_udf01a–02b, verify_tamodel1–4,
+  verify_altruist_sprint5/6 (assets), verify_litellm* / verify_modelresearch / verify_ensemblesystemone (documents,
+  models), verify_fee36/41/42, verify_rlsC/EF, verify_s27, verify_sprint12, verify_smtpservice, verify_multitenant2,
+  verify_staffvisbypass, verify_edgarcohorts. By fixture org / plan predicate: `_verify_cleanup.cleanup` (every
+  regression-set verify). By id: perms1_remove_muse_rows.py, bugfix2_remove_muse_rows.py.
+
+**Relationship vocabulary (Task 2) — a code constant, `services/crm_vocab.py`, served in every envelope.** 29 types
+(key, label, reverse label, allowed from / to entity types, symmetric): spouse, former_spouse, partner, parent_of ↔
+child of, sibling, grantor, trustee, successor_trustee, co_trustee, trust_protector, distribution_committee,
+beneficiary, income_beneficiary, remainder_beneficiary, annuitant, managing_member, sole_member, manager,
+general_partner, limited_partner, investment_committee, board_chair, board_member, officer, owner, donor_advisor,
+sponsor, advisor, ownership (unchanged, any pair, entered on the Ownership tab). Why not a table: the allowed pairs
+are API rules; the schema stays free text and the API is the one gate. Both `POST /entity-relationships` (the
+hierarchy rail, gate unchanged) and the new panel refuse an unknown type or a disallowed pair with the reason (422).
+All 117 relationships of the Olivo plan pass. **Relationships panel** on every record: grouped, both directions with
+the reverse label, add (type + direction, other record, note, effective date), end (`valid_to`, kept as history,
+never deleted). Routes `GET/POST /entities/{id}/crm-relationships`, `POST /crm-relationships/{id}/end` — internal
+read, internal + manage_members write (the org admin is admitted; support staff without manage_members refused).
+
+**Detail fields (Task 3) — `entity_attributes` rows under the reserved prefix `detail.` with a typed key registry.**
+Why: already bi-temporal / org-scoped / RLS'd, sparse per type, labels and types from the registry without a
+migration per field. Trust (trust_type → also sets sub_type, revocable, situs_state, gst_exempt, vesting_age,
+termination, annuity_term_years, annuity_end, unitrust_rate_pct, crummey_notices, funded_with), foundation
+(charity_type → sub_type, sponsor = a CRM record, min_distribution_pct), llc / lp / gp / family_office (management,
+purpose, valuation_policy); every legal entity shows its state of formation = `region_code` (edited on the Details
+form, relabelled "Country / State of formation"). Valid-time restatement per key; wrong types refused (422, every
+error at once, nothing written). The generic Attributes list no longer shows `detail.` keys and refuses to write them.
+
+**People (Task 4).** `entities.maiden_name`, `entities.date_of_death` (migration). date_of_death → status `deceased`,
+is_active false, in the one write path (`services/entity_writes.py`, now shared by the Details form and the detail
+fields); the record and its relationships stay. `age` / `is_minor` (< 18 today) / `is_deceased` computed in
+`EntityOut` at today's date from date_of_birth, else inception_date; shown on the record and as a "Person" column in
+the CRM list. The archive copy now also carries date_of_birth, marital_status, maiden_name, date_of_death.
+
+**Liabilities (Task 5) — `portfolio.liabilities` (docs/crmdetail1_part1.sql, APPLIED + verified by
+`scripts/_apply_crmdetail1.py --all`: SCHEMA OK).** Valid axis with `lineage_id` (one live version per lineage),
+owner, lender (CRM record or name), kind (mortgage, securities_backed_line, margin, term_loan, asset_secured_line,
+personal_loan, other), original / current balance numeric(20,2), as_of, rate_type fixed|floating, rate text,
+maturity, collateral (account / asset / text), notes; 8 CHECKs; RLS a policy per operation (NULLIF). Write =
+internal + manage_members (the CRM's key — org_admin holds it, manage_portfolio it does not); read = staff any
+record, a member only their own family's (404 otherwise) with view_portfolio. Liabilities tab on the record (add /
+edit = new version / end, history) and a Liabilities section + net worth on the household card. **Net worth = gross −
+liabilities**, three numbers (strings, exact Decimal) on the record (`GET /entities/{id}/net-worth`, and in the
+liabilities envelope), on the household detail and in both household rollups (`net_worth`); liabilities attributed
+look-through with the asset rollup's own weights. Unfunded commitments are not liabilities.
+
+**Permanent demo data (Task 6).** A record tagged `demo-*` (entities.tags), or a household whose members are all
+demo-tagged, is protected two ways: (1) a BEFORE DELETE guard on entities, households, household_memberships,
+entity_relationships / attributes / addresses / notes, entity_ownership and portfolio.liabilities refuses any delete
+of a demo row — the only path past it is the LOCAL GUC `crm.demo_teardown = 'fixture'` for a row of an `is_test` org
+(a real org's demo rows can never be deleted; the app's own "remove from household" sets `crm.demo_edit = 'staff'`
+for membership edits; deleting a demo household in the app is a plain 409); (2) `_verify_cleanup.cleanup` refuses a
+delete set touching demo rows (rolled back, nothing deleted) unless they are the caller's own `demo_fixture_orgs`
+(is_test), and both MUSE removal scripts refuse a plan holding demo rows (`demo_refusals`). Index: docs/demo/README.md.
+
+**The Olivo entry plan, step by step (1e)** — today = before this sprint; after = after it; GAP = still missing.
+
+| Steps | Today | After CRMDETAIL1 | Note |
+|---|---|---|---|
+| P.1 | supported (secmaster1) | supported | |
+| P.2 | missing | supported | relationship types + Liabilities tab |
+| A.1–A.8 organisations | supported | supported | types, tags, notes on the record |
+| B.1 name parts, DOB, email, phone | supported | supported | DOB = "Date of Birth" (inception_date) |
+| B.1 maiden name | missing | supported | |
+| B.1 date of death (B.1.15) | end_date only, no status | supported | deceased + inactive |
+| B.1 marital status | GAP-CRM-02 | GAP-CRM-02 | column exists, no form field / vocabulary |
+| B.1 status client / contact | GAP-CRM-01 | GAP-CRM-01 | vocabulary is prospect / active / inactive / archived (+ deceased) |
+| B.2 minor shown | missing | supported | record + CRM list |
+| B.3 notes as support staff | refused | refused — GAP-CRM-06 | support_staff lacks manage_members (by its grants) |
+| C.1–C.62 addresses incl. seasonal | supported | supported | seasonal months already on the form |
+| C (Cipolla branch) as support staff | refused | refused — GAP-CRM-06 | same grant |
+| D.1–D.26 type, inception, state | supported | supported | state = Country / State of formation |
+| D trust / foundation sub-type | partial (fixed list) | supported | trust_type / charity_type set sub_type |
+| D.20–D.26 LLC sub-type (real estate …) | GAP-CRM-03 | GAP-CRM-03 | hard-coded sub-type list |
+| D detail fields | missing | supported | except fund_role, ein_status, policy — GAP-CRM-04 |
+| D.n purpose / control / notes | supported | supported | Notes tab; purpose also a detail field |
+| E.1–E.117 relationships | missing | supported | reverse labels on the other record |
+| F.1–F.29 ownership % | org admin refused | org admin refused — GAP-CRM-05 | Ownership tab writes keep require_staff (verify_staffroles1 asserts it); super admin can |
+| F.check graph / look-through | supported | supported | |
+| G.1 household, G.2 entities as members | supported | supported | |
+| H.1–H.34, H.check accounts, masks | supported | supported | |
+| I listed tickers on other_custodian / outside | supported | supported | held-away manual entry; resolves in the master |
+| I mutual funds, munis, cash, private, options, crypto | GAP-PORT-01 | GAP-PORT-01 | manual entry rejects unresolved / identifier-less rows |
+| I integrated (Altruist) accounts | GAP-PORT-02 | GAP-PORT-02 | no feed, no manual path |
+| J private investments + commitments, J.SPV | GAP-PORT-04 | GAP-PORT-04 | |
+| K.1–K.19 direct assets with valuations | GAP-PORT-03 | GAP-PORT-03 | |
+| L.1–L.7 liabilities | missing | supported | lender as a CRM record or name |
+| M.1–M.2 security-master check | supported | supported | |
+| N reconciliation | no net figure | supported (three numbers) | needs a rollup run — GAP-PORT-05; I/J/K gaps explain differences |
+| O.1–O.4 persona views | supported | supported | liabilities member-scoped too |
+
+**Named gaps (new backend work beyond this sprint; nothing built).**
+- GAP-CRM-01 — entity status vocabulary (client / contact) to the config table, with the CRM list filters.
+- GAP-CRM-02 — marital status field + vocabulary on the person form.
+- GAP-CRM-03 — sub-type vocabularies from the config table (LLC: real estate / operating / collectibles).
+- GAP-CRM-04 — registry keys fund_role (LP), ein_status (foundation), insurance policy (ILIT).
+- GAP-CRM-05 — ownership writes on the Ownership tab: decide whether internal + manage_members (as the panel) may
+  write ownership; today require_staff (org admin refused, Muse's maker).
+- GAP-CRM-06 — support staff notes / addresses: grant manage_members (or a narrower key) to support_staff, or not.
+- GAP-PORT-01 — manual positions for securities NOT in the master (mutual funds need SEC mutual-fund tickers;
+  munis need a CUSIP source; cash / private / option / digital lines need an unmapped-manual row type).
+- GAP-PORT-02 — positions on an INTEGRATED custodian account with no feed. Options: (a) a provisional manual entry on
+  the account, marked `stated`, superseded by the feed through the existing precedence rules
+  (`portfolio_precedence`); (b) a one-off file import through `POST /portfolio/import/positions` (exists, operator /
+  super admin) tagged as the integrated custodian's source; (c) leave them empty until the Altruist sync runs, and
+  hold the demo's integrated accounts as held-away. Recommendation: (b) for a demo, (a) only if a real client ever
+  waits for a feed. Decision open.
+- GAP-PORT-03 — direct assets: a "direct asset" entry on the CRM record (asset + position by owner + valuation;
+  needs a valuation route and manage_portfolio for org admins or a CRM-key path).
+- GAP-PORT-04 — private fund interests with a commitment (create_commitment route + UI).
+- GAP-PORT-05 — net worth reads entity_holdings, which only a rollup run writes (`POST /portfolio/rollup`); a
+  record's gross stays 0 until one runs after holdings are entered.
+
+**Verification.** `apps/api/scripts/verify_crmdetail1.py` WRITTEN, not run (self-checks only were run). Regression
+inside it: verify_perms1.py once, flat, after teardown, VERIFY_NESTED=1, 2700 s. `node --test tests/crmdetail1/`
+passes (8/8). `npm run build` not run here (WSL memory) — the verify runs it.
 
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000. SECMASTER1 — the security master from free public sources: five reference-data providers, the matcher, the 13(f) list, a one-time load, and four platform jobs on the workflow engine; schema APPLIED, jobs SEEDED (triggers inactive until deploy); verify WRITTEN, not yet run (2026-11-04)
 

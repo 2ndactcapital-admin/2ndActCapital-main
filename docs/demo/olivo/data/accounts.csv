@@ -1,0 +1,35 @@
+id,owner_id,custodian,type,custody,authority,account_mask
+A1,E4,Goldman Sachs PWM,Taxable brokerage,other_custodian,advise,****4471
+A2,E4,Schwab,Municipal bond ladder,other_custodian,advise,****8830
+A3,E4,Coastal Bank,Checking + money market,outside,read_only,****1102
+A4,E4,Goldman Sachs PWM,Structured notes,other_custodian,advise,****4472
+A5,P1,Fidelity,Rollover IRA,outside,read_only,****6619
+A6,E5,Goldman Sachs PWM,Taxable brokerage (Northline),other_custodian,advise,****5120
+A7,E5,Altruist,Managed account (2nd Act),integrated,managed,****2201
+A8,E7,Goldman Sachs PWM,GRAT brokerage,other_custodian,read_only,****5121
+A9,E3,Altruist,Managed account (2nd Act),integrated,managed,****2202
+A10,E3,Olivo Holdings (books),Private investments ledger,outside,read_only,—
+A11,E3,Coastal Bank,Operating cash,outside,read_only,****1140
+A12,E6,Altruist,Managed account (2nd Act),integrated,managed,****2203
+A13,E8,Schwab,Taxable brokerage,other_custodian,advise,****8831
+A14,E9,Altruist,Managed account (2nd Act),integrated,managed,****2204
+A15,E10,Altruist,Managed account (2nd Act),integrated,managed,****2205
+A16,P3,Fidelity,401(k) rollover IRA,outside,read_only,****6620
+A17,P4,Fidelity,IRA,outside,read_only,****6621
+A18,P3,CHET (Fidelity),529 — Sofia,outside,read_only,****7701
+A19,P3,CHET (Fidelity),529 — Luca,outside,read_only,****7702
+A20,E11,Altruist,Managed account (2nd Act),integrated,managed,****2206
+A21,E12,Schwab,Taxable brokerage,other_custodian,advise,****8832
+A22,P5,Schwab,Roth IRA,outside,read_only,****8833
+A23,P5,Florida Prepaid / Vanguard 529,"529 — Isabel, Nico, Gabriel (3 plans)",outside,read_only,****7710
+A24,E13,Altruist,Managed account (2nd Act),integrated,managed,****2207
+A25,E14,Interactive Brokers,Margin account (options overlay),other_custodian,advise,****3390
+A26,E14,Coinbase Prime,Digital assets,outside,read_only,****0042
+A27,E14,MTO Capital (books),Venture & angel ledger,outside,read_only,—
+A28,P7,Schwab,Roth IRA,outside,read_only,****8834
+A29,E15,Altruist,Managed account (2nd Act),integrated,managed,****2208
+A30,E16,Goldman Sachs PWM,Foundation endowment,other_custodian,advise,****5130
+A31,E17,Harbor Charitable Trust,DAF,outside,read_only,****9001
+A32,E18,Schwab,CRUT brokerage,other_custodian,advise,****8835
+A33,E19,Lincoln Benefit Life,Survivorship UL policy,outside,read_only,POL-****77
+A34,P2,Schwab,Taxable brokerage,other_custodian,advise,****8836

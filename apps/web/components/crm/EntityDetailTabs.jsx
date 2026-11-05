@@ -14,6 +14,9 @@ import NotesTab from "@/components/crm/tabs/NotesTab";
 import DocumentsTab from "@/components/crm/tabs/DocumentsTab";
 import OwnershipTab from "@/components/crm/tabs/OwnershipTab";
 import DocumentsPanel from "@/components/DocumentsPanel";
+import RelationshipsPanel from "@/components/crm/RelationshipsPanel";
+import DetailFieldsPanel from "@/components/crm/DetailFieldsPanel";
+import LiabilitiesTab from "@/components/crm/LiabilitiesTab";
 
 export default function EntityDetailTabs({ full, graph }) {
   const entity = full.entity;
@@ -22,6 +25,7 @@ export default function EntityDetailTabs({ full, graph }) {
 
   const tabs = [
     { key: "overview", label: "Overview" },
+    { key: "relationships", label: "Relationships" },
     { key: "addresses", label: "Addresses" },
     ...(isIndividual ? [{ key: "employment", label: "Employment" }] : []),
     { key: "tax_ids", label: "Tax IDs" },
@@ -30,6 +34,7 @@ export default function EntityDetailTabs({ full, graph }) {
     { key: "documents", label: "Documents" },
     { key: "linked_documents", label: "Linked Documents" },
     { key: "ownership", label: "Ownership" },
+    { key: "liabilities", label: "Liabilities" },
     { key: "compliance", label: "Compliance" },
   ];
 
@@ -81,6 +86,12 @@ export default function EntityDetailTabs({ full, graph }) {
               </div>
             </div>
           </div>
+          {!isIndividual && (
+            <div className="mt-8 max-w-3xl">
+              {/* CRMDETAIL1 — typed detail fields (renders nothing for a type with none) */}
+              <DetailFieldsPanel entityId={entity.id} />
+            </div>
+          )}
           <div className="mt-8 max-w-3xl">
             <AttributesSection entityId={entity.id} attributes={full.attributes || []} />
           </div>
@@ -93,6 +104,11 @@ export default function EntityDetailTabs({ full, graph }) {
             </a>
           </div>
         </div>
+
+        {/* Relationships (CRMDETAIL1) — mounted only when opened */}
+        {active === "relationships" && (
+          <RelationshipsPanel entityId={entity.id} entityType={entity.entity_type} />
+        )}
 
         {/* Addresses */}
         <div className={active === "addresses" ? "" : "hidden"}>
@@ -135,6 +151,9 @@ export default function EntityDetailTabs({ full, graph }) {
         <div className={active === "ownership" ? "" : "hidden"}>
           <OwnershipTab entityId={entity.id} graph={graph} />
         </div>
+
+        {/* Liabilities (CRMDETAIL1) — mounted only when opened */}
+        {active === "liabilities" && <LiabilitiesTab entityId={entity.id} />}
 
         {/* Compliance */}
         <div className={active === "compliance" ? "" : "hidden"}>

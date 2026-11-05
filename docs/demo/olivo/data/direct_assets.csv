@@ -1,0 +1,20 @@
+owner_id,asset,asset_class,sub_class,value_usd,cost_basis_usd,notes
+E20,"Round Hill Road, Greenwich — residence, 9 acres",Real estate,Primary residence,14500000,6200000,Appraised 2025
+E21,"Port Royal, Naples FL — winter residence",Real estate,Secondary residence,9200000,7100000,Purchased 2019
+E22,"Stag's Hollow — 62 acres, Napa (vines, winery, tasting room)",Real estate,Agricultural / operating property,28000000,19500000,Appraised 2025
+E22,Winery equipment and vehicles,Operating business,Plant & equipment,2500000,3100000,Net book
+E22,"Wine library (back vintages, ~9,000 bottles)",Collectibles,Wine,1800000,900000,Insured at $2.1M
+E23,Bridgeport CT cold-storage facility,Real estate,Industrial (NNN to Northline),15000000,9000000,
+E23,Edison NJ distribution center,Real estate,Industrial (NNN to Northline),14000000,8500000,
+E23,Allentown PA plant,Real estate,Industrial (NNN to Northline),9000000,6000000,
+E24,"Ajax Peak, Aspen — ski house",Real estate,Secondary residence,7800000,6900000,Purchased 2020
+E25,Brickell Bay 41 — condo,Real estate,Primary residence,4600000,3400000,
+E25,NE 41st Street — gallery space,Real estate,Commercial (gallery),3200000,2700000,Leased to Francesca's gallery at market
+E26,"Postwar abstraction — 9 works (Mitchell, Frankenthaler, Twombly school)",Collectibles,Fine art,12800000,5100000,Three on museum loan
+E26,"Contemporary — 23 works (Ruscha, Kusama, Doig, Marshall, others)",Collectibles,Fine art,15400000,9800000,
+E26,Photography and works on paper — 9 works,Collectibles,Fine art,3200000,2200000,
+E4,1963 Ferrari 250 GT Lusso,Collectibles,Classic car,2900000,1100000,Pebble Beach 2019
+E4,1957 Mercedes-Benz 300SL Roadster,Collectibles,Classic car,1800000,950000,
+E4,"1967 Shelby GT500, 1972 Lancia Stratos, 1989 Porsche 959 and five others",Collectibles,Classic cars (8),7700000,4900000,Stored in Greenwich; Hagerty
+P2,"Jewelry (Cartier, Graff; the Meloni sapphire)",Collectibles,Jewelry,2300000,1900000,Scheduled on the homeowners policy
+E1,Family office working capital,Cash,Operating cash,1400000,1400000,

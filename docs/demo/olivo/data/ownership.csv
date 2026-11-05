@@ -1,0 +1,30 @@
+owner_id,owned_id,pct,interest
+P1,E1,40,Membership interest
+P3,E1,20,Membership interest
+P5,E1,20,Membership interest
+P7,E1,20,Membership interest
+E1,E2,100,Sole member
+E2,E3,0.5,GP interest
+E4,E3,34.5,LP units
+E5,E3,30,LP units
+E10,E3,10,LP units
+E12,E3,10,LP units
+E14,E3,10,LP units
+E6,E3,5,LP units
+P1,E4,100,Grantor / trustee (revocable)
+E4,E20,100,Sole member
+E6,E21,100,Sole member
+E3,E22,80,Membership interest
+E10,E22,10,Membership interest
+E12,E22,10,Membership interest
+E8,E23,100,Sole member
+E14,E24,100,Sole member
+E12,E25,100,Sole member
+E3,E26,60,Membership interest
+E12,E26,25,Membership interest
+E4,E26,15,Membership interest
+P3,E10,50,Membership interest
+P4,E10,50,Membership interest
+P5,E12,60,Membership interest
+P6,E12,40,Membership interest
+P7,E14,100,Sole member

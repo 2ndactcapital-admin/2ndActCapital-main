@@ -1,0 +1,118 @@
+from_id,note,relationship_type,to_id
+P1,married 2011; prenuptial agreement,spouse,P2
+P3,,spouse,P4
+P5,,spouse,P6
+P1,Theresa died 2008,former_spouse,P15
+P7,divorced 2021; shared custody of Theo,former_spouse,P16
+P1,,parent_of,P3
+P1,,parent_of,P5
+P1,,parent_of,P7
+P1,,parent_of,P8
+P15,,parent_of,P3
+P15,,parent_of,P5
+P15,,parent_of,P7
+P2,,parent_of,P8
+P3,,parent_of,P9
+P3,,parent_of,P10
+P4,,parent_of,P9
+P4,,parent_of,P10
+P5,,parent_of,P11
+P5,,parent_of,P12
+P5,,parent_of,P13
+P6,,parent_of,P11
+P6,,parent_of,P12
+P6,,parent_of,P13
+P7,,parent_of,P14
+P16,,parent_of,P14
+P12,twins,sibling,P13
+P3,,managing_member,E1
+E1,,sole_member,E2
+E2,,general_partner,E3
+P1,,investment_committee,E3
+P3,,investment_committee,E3
+P5,,investment_committee,E3
+P7,,investment_committee,E3
+P1,,grantor,E4
+P1,,trustee,E4
+P3,,successor_trustee,E4
+P1,,grantor,E5
+O1,,trustee,E5
+P3,,distribution_committee,E5
+P1,,grantor,E6
+O2,,trustee,E6
+P1,,grantor,E7
+P3,,trustee,E7
+E5,,remainder_beneficiary,E7
+P15,,grantor,E8
+O2,,trustee,E8
+P1,,grantor,E9
+P2,,grantor,E9
+P2,,trustee,E9
+P3,,manager,E10
+P4,,manager,E10
+P3,,grantor,E11
+P4,,grantor,E11
+O1,,trustee,E11
+P5,,manager,E12
+P6,,manager,E12
+P5,,grantor,E13
+P6,,grantor,E13
+P6,,trustee,E13
+P7,,manager,E14
+P7,,grantor,E15
+P3,,trustee,E15
+P1,,board_chair,E16
+P3,,board_member,E16
+P5,,board_member,E16
+P7,,board_member,E16
+P2,,board_member,E16
+O3,,sponsor,E17
+P1,,donor_advisor,E17
+P3,,donor_advisor,E17
+P5,,donor_advisor,E17
+P7,,donor_advisor,E17
+P1,,grantor,E18
+O2,,trustee,E18
+E16,,remainder_beneficiary,E18
+P1,,grantor,E19
+P2,,grantor,E19
+P3,,trustee,E19
+E1,,manager,E20
+E1,,manager,E21
+P5,,board_chair,E22
+E1,,manager,E23
+P7,,manager,E24
+P5,,manager,E25
+P6,,manager,E25
+P5,,manager,E26
+P7,,general_partner,O5
+P6,,owner,O6
+P3,Descendants of Dominic & Theresa,beneficiary,E5
+P5,Descendants of Dominic & Theresa,beneficiary,E5
+P7,Descendants of Dominic & Theresa,beneficiary,E5
+P9,Descendants of Dominic & Theresa,beneficiary,E5
+P10,Descendants of Dominic & Theresa,beneficiary,E5
+P11,Descendants of Dominic & Theresa,beneficiary,E5
+P12,Descendants of Dominic & Theresa,beneficiary,E5
+P13,Descendants of Dominic & Theresa,beneficiary,E5
+P14,Descendants of Dominic & Theresa,beneficiary,E5
+P2,Marguerite; Giulia,beneficiary,E6
+P8,Marguerite; Giulia,beneficiary,E6
+P1,Annuity to Dominic; remainder to Dynasty Trust,beneficiary,E7
+P3,Equal shares,beneficiary,E8
+P5,Equal shares,beneficiary,E8
+P7,Equal shares,beneficiary,E8
+P8,Giulia,beneficiary,E9
+P9,Sofia & Luca,beneficiary,E11
+P10,Sofia & Luca,beneficiary,E11
+P11,"Isabel, Nico & Gabriel",beneficiary,E13
+P12,"Isabel, Nico & Gabriel",beneficiary,E13
+P13,"Isabel, Nico & Gabriel",beneficiary,E13
+P14,Theo,beneficiary,E15
+P1,5% unitrust to Dominic; remainder to the foundation,beneficiary,E18
+P3,Children,beneficiary,E19
+P5,Children,beneficiary,E19
+P7,Children,beneficiary,E19
+P8,Children,beneficiary,E19
+P1,annuity payments through 2027,annuitant,E7
+P1,5% unitrust for life,income_beneficiary,E18

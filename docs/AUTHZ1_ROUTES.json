@@ -1,5 +1,5 @@
 {
- "app_route_count": 801,
+ "app_route_count": 812,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -5198,6 +5198,222 @@
    "name": "get_ownership_history",
    "note": "",
    "path": "/api/v1/entities/{entity_id}/ownership/history",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "internal"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "crm_vocabularies",
+   "note": "",
+   "path": "/api/v1/crm/vocabularies",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "internal"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "list_crm_relationships",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/crm-relationships",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.crm_detail",
+   "name": "add_crm_relationship",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/crm-relationships",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.crm_detail",
+   "name": "end_crm_relationship",
+   "note": "",
+   "path": "/api/v1/crm-relationships/{rel_id}/end",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "internal"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "get_entity_details",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/details",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.crm_detail",
+   "name": "save_entity_details",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/details",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "entity access",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "scoped"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "list_liabilities",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/liabilities",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.crm_detail",
+   "name": "add_liability",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/liabilities",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.crm_detail",
+   "name": "revise_liability",
+   "note": "",
+   "path": "/api/v1/liabilities/{liability_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.crm_detail",
+   "name": "end_liability",
+   "note": "",
+   "path": "/api/v1/liabilities/{liability_id}/end",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "entity access",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "scoped"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "entity_net_worth",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/net-worth",
    "public": false,
    "write": false
   },

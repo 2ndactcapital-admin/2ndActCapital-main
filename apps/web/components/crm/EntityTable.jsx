@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import DataGrid from "@/components/ui/DataGrid";
 import EntityTypeBadge from "@/components/EntityTypeBadge";
 import { typeLabel } from "@/lib/entityTypes";
+import { personMarkers } from "@/lib/crmDetail.mjs";
 
 // Migrated onto the shared DataGrid (Grid UX mini-sprint B). All the prior
 // behaviour is preserved — the clickable name link, the entity-type badge,
@@ -25,6 +26,12 @@ const columnDefs = [
         {value}
       </a>
     ),
+  },
+  {
+    // CRMDETAIL1 — "Minor" / "Deceased" from the API's flags
+    field: "person_marker",
+    headerName: "Person",
+    cell: (value) => (value ? <span className="text-xs text-text-secondary">{value}</span> : ""),
   },
   {
     field: "entity_type_label",
@@ -54,6 +61,7 @@ export default function EntityTable({ entities }) {
         .map((entity) => ({
           ...entity,
           entity_type_label: typeLabel(entity.entity_type),
+          person_marker: personMarkers(entity).join(", "),
         }))
         // Preserve the previous default view: name, ascending.
         .sort((a, b) =>

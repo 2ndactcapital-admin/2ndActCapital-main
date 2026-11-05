@@ -5,6 +5,7 @@ import { updateEntityAction } from "@/lib/actions";
 import { PERSON_TYPES, STATUS_OPTIONS, statusLabel, subTypesFor, FREE_TEXT_SUBTYPE_TYPES } from "@/lib/entityTypes";
 import { CountryRegionSelect, ReferenceSelect } from "@/components/ReferenceSelect";
 import PersonNameFields from "@/components/crm/PersonNameFields";
+import { personMarkers } from "@/lib/crmDetail.mjs";
 
 const INPUT_CLASS =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -68,8 +69,10 @@ export default function EntityDetailsForm({ entity }) {
   const freeTextSubType = FREE_TEXT_SUBTYPE_TYPES.includes(entity.entity_type);
   const tags = entity.tags || [];
   const dateLabel = isPerson ? "Date of Birth" : "Date of Formation";
-  const endDateLabel = isPerson ? "Date of Death" : "End / Dissolution Date";
-  const countryRegionLabel = isPerson ? "Country (Citizenship) / Region" : "Country / Region";
+  const endDateLabel = "End / Dissolution Date";
+  const countryRegionLabel = isPerson ? "Country (Citizenship) / Region" : "Country / State of formation";
+  // CRMDETAIL1 — "Minor" / "Deceased" from the API's own flags (computed at today's date).
+  const markers = personMarkers(entity);
 
   if (!editing) {
     return (
@@ -87,6 +90,11 @@ export default function EntityDetailsForm({ entity }) {
         <dl className="mt-4 grid gap-4 sm:grid-cols-2">
           <ReadRow label="Status">
             <StatusBadge status={entity.status} />
+            {markers.map((m) => (
+              <span key={m} className="ml-2 rounded-full border border-border px-2 py-0.5 text-xs text-text-secondary">
+                {m}{m === "Minor" && entity.age != null ? ` · ${entity.age}` : ""}
+              </span>
+            ))}
           </ReadRow>
           {!entity.is_active && (
             <ReadRow label="Active">
@@ -100,6 +108,8 @@ export default function EntityDetailsForm({ entity }) {
               <ReadRow label="Legal Name">{entity.legal_name || "—"}</ReadRow>
               <ReadRow label="First Name">{entity.first_name || "—"}</ReadRow>
               <ReadRow label="Last Name">{entity.surname || "—"}</ReadRow>
+              {entity.maiden_name && <ReadRow label="Maiden Name">{entity.maiden_name}</ReadRow>}
+              {entity.date_of_death && <ReadRow label="Date of Death">{String(entity.date_of_death)}</ReadRow>}
             </>
           ) : (
             <>
@@ -110,7 +120,7 @@ export default function EntityDetailsForm({ entity }) {
           {entity.inception_date && (
             <ReadRow label={dateLabel}>{String(entity.inception_date)}</ReadRow>
           )}
-          {entity.end_date && (
+          {entity.end_date && !isPerson && (
             <ReadRow label={endDateLabel}>{String(entity.end_date)}</ReadRow>
           )}
           {(entity.country_code || entity.region_code) && (
@@ -179,10 +189,24 @@ export default function EntityDetailsForm({ entity }) {
           <label className={LABEL_CLASS}>{dateLabel}</label>
           <input type="date" name="inception_date" defaultValue={entity.inception_date || ""} className={INPUT_CLASS} />
         </div>
-        <div>
-          <label className={LABEL_CLASS}>{endDateLabel}</label>
-          <input type="date" name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
-        </div>
+        {isPerson ? (
+          <>
+            {/* CRMDETAIL1 — date of death sets the record deceased and inactive; it and its relationships stay */}
+            <div>
+              <label className={LABEL_CLASS}>Date of Death</label>
+              <input type="date" name="date_of_death" defaultValue={entity.date_of_death || ""} className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Maiden Name</label>
+              <input name="maiden_name" defaultValue={entity.maiden_name || ""} className={INPUT_CLASS} />
+            </div>
+          </>
+        ) : (
+          <div>
+            <label className={LABEL_CLASS}>{endDateLabel}</label>
+            <input type="date" name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
+          </div>
+        )}
 
         {/* Country / Region */}
         <div className="sm:col-span-2">

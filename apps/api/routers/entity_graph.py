@@ -39,6 +39,7 @@ from services.entity_graph import (
     get_subtree,
 )
 from services.authz import require_internal, require_staff
+from services.crm_vocab import VocabError, check_relationship
 from services.users import ensure_user
 
 router = APIRouter(tags=["entity_graph"])
@@ -105,6 +106,21 @@ def _rel_row_to_dict(row) -> dict:
     return d
 
 
+async def _check_vocab(pool, org_id, relationship_type, from_id, to_id) -> None:
+    """CRMDETAIL1 — 422 naming the reason for an unknown type or a disallowed pair; 404 for a missing record."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, entity_type::text AS t FROM entities WHERE id = ANY($1::uuid[]) AND org_id = $2 "
+            "AND valid_to IS NULL AND system_to IS NULL", [from_id, to_id], org_id)
+    types = {str(r["id"]): r["t"] for r in rows}
+    if str(from_id) not in types or str(to_id) not in types:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    try:
+        check_relationship(relationship_type, types[str(from_id)], types[str(to_id)], from_id=from_id, to_id=to_id)
+    except VocabError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Read endpoints (no staff required)
 # ---------------------------------------------------------------------------
@@ -166,6 +182,10 @@ async def create_relationship(body: RelationshipCreate, request: Request):
     if from_id == to_id:
         raise HTTPException(status_code=400, detail="An entity cannot own itself")
 
+    # CRMDETAIL1 — the governed vocabulary (services.crm_vocab) is the gate: an unknown type or a disallowed
+    # (from type, to type) pair is refused with the reason. 'ownership' accepts any pair, exactly as before.
+    await _check_vocab(pool, org_id, body.relationship_type, body.from_entity_id, body.to_entity_id)
+
     # Only 'ownership' edges carry/validate a percentage. Other types such as
     # 'beneficiary' (SOC Phase 1) are accepted with a null ownership_pct — a
     # beneficiary confers visibility, not an economic ownership share.
@@ -176,8 +196,9 @@ async def create_relationship(body: RelationshipCreate, request: Request):
     ):
         raise HTTPException(status_code=400, detail="ownership_pct must be 0-100")
 
-    # Cycle check (uses its own connection from pool)
-    has_cycle = await detect_cycle(pool, org_id, from_id, to_id)
+    # Cycle check (uses its own connection from pool) — an OWNERSHIP cycle; a role (trustee, spouse …) is not an
+    # ownership edge and cannot make one (CRMDETAIL1).
+    has_cycle = body.relationship_type == "ownership" and await detect_cycle(pool, org_id, from_id, to_id)
     if has_cycle:
         raise HTTPException(
             status_code=400,
@@ -193,6 +214,7 @@ async def create_relationship(body: RelationshipCreate, request: Request):
                 FROM entity_relationships
                 WHERE to_entity_id = $1
                   AND org_id = $2
+                  AND relationship_type = 'ownership'
                   AND valid_to IS NULL
                   AND system_to IS NULL
                 """,
@@ -262,6 +284,8 @@ async def amend_relationship(rel_id: UUID, body: RelationshipPatch, request: Req
             raise HTTPException(status_code=404, detail="Relationship not found or already deleted")
 
         new_rel_type = body.relationship_type if body.relationship_type is not None else current["relationship_type"]
+        if body.relationship_type is not None:
+            await _check_vocab(pool, org_id, new_rel_type, current["from_entity_id"], current["to_entity_id"])
         new_ownership_pct = body.ownership_pct if body.ownership_pct is not None else (
             float(current["ownership_pct"]) if current["ownership_pct"] is not None else None
         )

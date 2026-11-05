@@ -1,0 +1,27 @@
+id,name,kind,jurisdiction,formed,purpose,control,notes,net_worth_usd
+E1,Olivo Family Office LLC,LLC,Delaware,2015,"Family office: manager of Olivo Holdings, employs 6 staff; also the GP's parent.",Managing member: Anthony Olivo,,2206458
+E2,OH GP LLC,LLC (general partner),Delaware,2015,General partner of Olivo Holdings LP.,Sole member: Olivo Family Office LLC,,806458
+E3,Olivo Holdings LP,LP,Delaware,2015,"The main family investment partnership: managed liquid portfolio, private funds, direct deals, the vineyard and the art company.","GP: OH GP LLC; investment committee of Dominic, Anthony, Francesca, Michael","Valuation policy: funds at latest reported NAV, directs at last round, real assets at appraisal (Stag's Hollow 2025, art 2026).",161291600
+E4,Dominic J. Olivo Revocable Trust,Revocable trust,Connecticut,1998,Dominic's personal holdings; pour-over on death.,Trustee: Dominic; successor: Anthony,,184861502
+E5,Olivo 2014 Dynasty Trust,Irrevocable dynasty trust,Delaware,2014,Funded with Northline Foods stock at the sale; for descendants of Dominic and Theresa. GST-exempt.,Trustee: Wilmington Fiduciary Co.; distribution committee chaired by Anthony,Concentrated Northline position; a diversification plan runs through Olivo Holdings.,185066180
+E6,Marguerite Olivo 2019 SLAT,Spousal lifetime access trust,Connecticut,2019,For Marguerite and Giulia; holds the Naples residence and a managed portfolio.,Trustee: Coastal Bank Trust Department,,27730080
+E7,DJO 2021 GRAT,Grantor retained annuity trust,Connecticut,2021,Two-year rolling GRAT on Northline stock; remainder to the Dynasty Trust.,Trustee: Anthony Olivo,Annuity payments to Dominic through 2027.,24420000
+E8,Theresa Olivo Family Trust,Bypass (credit-shelter) trust,Connecticut,2008,Established at Theresa's death for the three children equally; holds the commercial real estate.,Trustee: Coastal Bank Trust Department,,30009000
+E9,Giulia Olivo 2503(c) Trust,Minor's trust,Connecticut,2014,Annual-exclusion gifts for Giulia; vests at 21.,Trustee: Marguerite Olivo,,2099000
+E10,AOF Investments LLC,LLC,Connecticut,2016,Anthony and Elena's family investment LLC.,Managers: Anthony and Elena,,27145000
+E11,AO Descendants Trust 2018,Irrevocable trust,Delaware,2018,Anthony's trust for Sofia and Luca.,Trustee: Wilmington Fiduciary Co.,,5387900
+E12,Cipolla Olivo Holdings LLC,LLC,Florida,2017,"Francesca and Mateo's family LLC: Miami real estate, art, LP units.",Managers: Francesca and Mateo,,36038160
+E13,Cipolla 2020 Family Trust,Irrevocable trust,Florida,2020,"For Isabel, Nico and Gabriel.",Trustee: Mateo Cipolla,,3561000
+E14,MTO Capital LLC,LLC,Delaware,2019,"Michael's personal investment company: public tech, venture fund interest, angel positions, digital assets, the Aspen house.",Manager: Michael Olivo,Michael's divorce settlement (2021) carved out the pre-2016 assets; everything here is post-separation.,45408360
+E15,Theo Olivo 2020 Trust,Irrevocable trust,California,2020,Michael's trust for Theo.,Trustee: Anthony Olivo,,1894850
+E16,Olivo Family Foundation,Private foundation (501(c)(3)),Connecticut,2014,Funded at the sale; grants about $2.3M a year to food security and culinary education.,"Board: Dominic (chair), Anthony, Francesca, Michael, Marguerite",5% minimum distribution; excess business holdings rule limits Northline stock.,44950000
+E17,Olivo Giving Fund,Donor-advised fund,Harbor Charitable Trust (sponsor),2016,Family DAF; advisers are the four adult Olivos.,Sponsor: Harbor Charitable Trust,,6100000
+E18,Olivo 2016 CRUT,Charitable remainder unitrust,Connecticut,2016,5% unitrust to Dominic for life; remainder to the foundation.,Trustee: Coastal Bank Trust Department,,11100000
+E19,Olivo 2012 ILIT,Irrevocable life insurance trust,Connecticut,2012,Owns a $25M survivorship policy on Dominic and Marguerite.,Trustee: Anthony Olivo,Crummey notices annually to the three adult children.,4100000
+E20,Round Hill Road LLC,LLC (real estate),Connecticut,2005,The Greenwich residence (9 acres).,Managed by the family office,,14500000
+E21,Port Royal Residence LLC,LLC (real estate),Florida,2019,The Naples winter residence.,Managed by the family office,,5700000
+E22,Stag's Hollow Vineyard LLC,LLC (operating),California,2017,"62-acre Napa vineyard and winery; ~5,000 cases a year; 14 employees.",Manager: a hired GM; Francesca chairs,Operating business; K-1s to members.,26300000
+E23,Olivo Commercial RE LLC,LLC (real estate),Connecticut,2008,"Three industrial properties (Bridgeport, Edison, Allentown) leased to Northline Foods on a 15-year NNN lease.",Managed by the family office,Lease expires 2029 — renewal risk.,24000000
+E24,Ajax Peak LLC,LLC (real estate),Colorado,2020,Michael's Aspen house.,Manager: Michael,,5400000
+E25,Brickell Bay 41 LLC,LLC (real estate),Florida,2017,Francesca's Miami condo and the gallery space on NE 41st Street.,Managers: Francesca and Mateo,,5900000
+E26,Olivo Art Holdings LLC,LLC (collectibles),Delaware,2018,41 postwar and contemporary works; loaned to museums; insured through AXA Art.,Manager: Francesca Olivo-Cipolla,Art-secured credit line at a private bank.,26400000
