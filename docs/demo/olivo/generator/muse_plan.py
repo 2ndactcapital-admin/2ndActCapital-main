@@ -34,7 +34,7 @@ def acct_number(a):
     seed = sum(ord(c) for c in a["id"]) * 7919
     return f"{(seed % 900000) + 100000}{last}"
 
-w("""# HollisMuse — the Olivo family: permanent demo data entry, v3 (2026-11-05)
+w("""# HollisMuse — the Olivo family: permanent demo data entry, v4 — RESUME pass (2026-11-05)
 
 You are **HollisMuse**, driving a real browser against the **live production**
 Hollisworks app (`https://2ndactcapital.com`, tenant **2nd Act Capital**). This
@@ -96,25 +96,47 @@ later phases depend on earlier ones.
 
 ---
 
-## v3 — one complete pass (read this)
+## v4 — RESUME pass (read this first)
 
-crmdetail1 and portentry1 are merged: relationship types, trust / entity detail fields, client / contact
-statuses, marital status, sub-type lists, insurance-policy fields, ownership by org admins, the narrow
-`edit_crm_contact` permission for support staff, manual positions of every kind, **Assets & Investments**
-(Add asset, Add private investment), liabilities, and net worth that recalculates itself. **No workarounds
-this time** — anything that does not work as written below is a finding.
+The v3 pass (Nov 4–5, interim report) stopped at I.0. **Already done — do not redo, only spot-check:** A (9
+organisations incl. Lincoln Benefit Life), B (16 people + 16 notes), C (62 addresses), D (26 legal entities +
+detail fields), E (116 of 117 relationships), F (29 ownership rows), G.1 (household "Olivo Family", 14 people),
+H (8 accounts: H.5, H.16–H.19, H.22, H.23, H.28). Rule 3 still applies: **search before creating**.
 
-**Before Muse starts (Joe does this, not Muse):** the eight integrated Altruist accounts' positions are loaded
-once through **Super Admin → Integrated import** from `docs/demo/olivo/data/import/integrated_positions.csv`,
-approved by a second super admin. That file is keyed by account mask, so it is loaded **after phase H has
-created the accounts** — Muse stops after H.check and reports; Joe loads the file; Muse continues with I.
+portentry2 fixed what blocked v3: legal entities can now be added to an **existing** household (Members panel), an
+account's owner can be any household member (person or legal entity), Add account has registration type / tax
+status / billable / discretionary, DVP custody marks its required fields, the picker finds deceased people and
+matches words, dates accept typed and pasted values, address notes exist, and the missing trust detail fields
+(remainder_to, shares, beneficiaries_note) exist.
+
+**Resume order:**
+1. **R.1 spot-check** five records you created (Dominic, Theresa, the Dynasty Trust, the ILIT, Olivo Holdings LP):
+   values as in B / D; the Ownership tab tree on Olivo Holdings LP now lists its 7 owners; look-through shows 60.0% /
+   80.0% (were MUSE-OLIVO-F-02 / F-03).
+2. **E.4** — retry Dominic → former_spouse → Theresa (the picker now includes deceased records for family types).
+3. **D-fill** — the four fields v3 could not enter: D.6 SLAT beneficiaries_note "Marguerite; Giulia"; D.7 GRAT
+   remainder_to = Olivo 2014 Dynasty Trust; D.8 Theresa trust shares "equal thirds"; D.18 CRUT remainder_to = Olivo
+   Family Foundation.
+4. **C-notes** — add the Note text from phase C to each address that has one (the address form now has a note).
+   **C.check** again: the CRM should now mark which seasonal address is current today (November → Greenwich for
+   Dominic, San Francisco for Michael).
+5. **G.2** — household **Olivo Family → Members → add the 26 legal entities** (D.1–D.26).
+6. **H** — create the remaining **26 accounts** (all except the 8 above) with the owner, registration type, tax
+   status, discretionary and billable shown in the H table; edit the 8 existing accounts to add their registration
+   type / tax status. **H.34**: custody "Another custodian — settled DVP", receiving custodian **Charles Schwab &
+   Co., Inc.**, DTC participant **0164**.
+7. **H.check**, then **STOP at I.0** for Joe's integrated import (below), then I → O exactly as written.
+
+**Joe's step at I.0:** the eight integrated Altruist accounts' positions are loaded once through **Super Admin →
+Integrated import** from `docs/demo/olivo/data/import/integrated_positions.csv` (signed in as jlarizza@culmina.io),
+approved by a second super admin (jlarizza@gmail.com). It is keyed by account mask, so it runs after H.
 
 ## 1 · Personas — who does what
 
 | Persona | Login | Role in this pass |
 |---|---|---|
 | **Org admin** | `jpl991723@gmail.com` | **Maker.** Creates every CRM record, entity, relationship, ownership %, household, account, position, asset, private investment, liability. |
-| **Super admin** | `jlarizza@culmina.io` | **Checker.** Approves maker-checker items (non-default authority, held-away manual entries). The integrated import is Joe's step (§v3). |
+| **Super admin** | `jlarizza@culmina.io` | **Checker.** Approves maker-checker items (non-default authority, held-away manual entries). The integrated import is Joe's step (§v4). |
 | **Support staff** | `jpl991722@gmail.com` | Enters the **notes** (B.3) and the **Cipolla branch addresses** (C, marked) with `edit_crm_contact`; tries once to edit an ownership % and a trust detail field — both must be refused. |
 | **Member A** | `jpl991721@gmail.com` | Read-only checks in phase O. Do **not** link this login to an Olivo person unless the developer has said to (open decision). |
 
@@ -198,13 +220,25 @@ w("**G.1** Portfolio → Households → **New household** `Olivo Family`. Member
   "**G.2** Add the 26 legal entities to the household if the screen allows entities as members; record what it allows.\n")
 
 # ── H: accounts ──
+REG = {"A1": ("trust", "taxable"), "A2": ("trust", "taxable"), "A3": ("trust", "taxable"), "A4": ("trust", "taxable"),
+       "A5": ("ira", "tax_deferred"), "A6": ("trust", "taxable"), "A7": ("trust", "taxable"), "A8": ("trust", "taxable"),
+       "A9": ("lp", "taxable"), "A10": ("lp", "taxable"), "A11": ("lp", "taxable"), "A12": ("trust", "taxable"),
+       "A13": ("trust", "taxable"), "A14": ("trust", "taxable"), "A15": ("llc", "taxable"), "A16": ("401k_rollover", "tax_deferred"),
+       "A17": ("ira", "tax_deferred"), "A18": ("529", "tax_exempt"), "A19": ("529", "tax_exempt"), "A20": ("trust", "taxable"),
+       "A21": ("llc", "taxable"), "A22": ("roth_ira", "tax_exempt"), "A23": ("529", "tax_exempt"), "A24": ("trust", "taxable"),
+       "A25": ("llc", "taxable"), "A26": ("llc", "taxable"), "A27": ("llc", "taxable"), "A28": ("roth_ira", "tax_exempt"),
+       "A29": ("trust", "taxable"), "A30": ("foundation", "tax_exempt"), "A31": ("daf", "tax_exempt"), "A32": ("trust", "tax_exempt"),
+       "A33": ("insurance", "tax_deferred"), "A34": ("individual", "taxable")}
+DONE_H = {"A5", "A16", "A17", "A18", "A19", "A22", "A23", "A28"}
+
 w("## H · Accounts\n")
-w("Household → **Add account** for each. Type the full number once; afterwards check only the mask shows. Owner = the CRM record. "
+w("Household → **Add account** for each row marked *create*; for rows marked *done* edit the existing account's fields. Type the full number once; afterwards check only the mask shows. Owner = the CRM record. "
   "Authority and custody as given — a non-default authority opens a maker-checker draft: the **super admin** approves it. Not billable.\n")
-w("| Step | Acct | Owner | Custodian | Type | Full number (type once) | Mask | Custody | Authority |\n|---|---|---|---|---|---|---|---|---|")
+w("| Step | Acct | Owner | Custodian | Type | Full number (type once) | Mask | Custody | Authority | Registration | Tax status | Discretionary | Billable | v3 |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 for i, a in enumerate(d["accounts"], 1):
-    w(f"| H.{i} | {a['id']} | {names[a['owner_id']]} | {a['custodian']} | {a['type']} | `{acct_number(a)}` | {a['account_mask']} | {a['custody']} | {a['authority']} |")
-w("\n**H.check** The account list shows 34 accounts, masks only. Any full number visible = High. **Then stop and report — Joe loads the integrated import (§v3) before phase I.**\n")
+    rg, tx = REG[a["id"]]
+    w(f"| H.{i} | {a['id']} | {names[a['owner_id']]} | {a['custodian']} | {a['type']} | `{acct_number(a)}` | {a['account_mask']} | {a['custody']} | {a['authority']} | {rg} | {tx} | {'yes' if a['authority'] == 'managed' else 'no'} | no | {'done — edit fields only' if a['id'] in DONE_H else 'create'} |")
+w("\n**H.check** The account list shows 34 accounts, masks only. Any full number visible = High. **Then stop and report — Joe loads the integrated import (§v4) before phase I.**\n")
 
 # ── I: holdings ──
 INTEGRATED = {"A7", "A9", "A12", "A14", "A15", "A20", "A24", "A29"}
@@ -225,7 +259,7 @@ def kind(h):
     if t.startswith(("529", "SMA-", "DAF-", "POL-")): return "private"
     return "listed — resolves in the master by ticker"
 w("## I · Holdings (as of 2026-11-04)\n")
-w("""**I.0 — stop here first.** Report that phase H is done and **wait until Joe confirms the integrated import is loaded** (§v3).
+w("""**I.0 — stop here first.** Report that phase H is done and **wait until Joe confirms the integrated import is loaded** (§v4).
 Then check: the eight integrated accounts (A7, A9, A12, A14, A15, A20, A24, A29) each show their positions (from the import, marked provisional /
 "stated"), with the totals in the tables below. Do **not** enter positions on those accounts by hand.
 
@@ -334,5 +368,5 @@ Use the test plan's finding format (ID `MUSE-OLIVO-<step>-<nn>`). End with:
 4. The reconciliation table (N) filled in.
 5. Your top 5 "an adviser onboarding a family like this would trip over this" observations.
 """)
-open(f"{OUT}/HOLLISMUSE_OLIVO_DATA_ENTRY_v3.md", "w").write("\n".join(L))
+open(f"{OUT}/HOLLISMUSE_OLIVO_DATA_ENTRY_v4.md", "w").write("\n".join(L))
 print(len(L), "lines")
