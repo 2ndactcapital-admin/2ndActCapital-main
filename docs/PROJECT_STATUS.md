@@ -405,6 +405,8 @@ crm_seed_org_config copies them to any other org; entity_addresses.note.
 **Data.** No demo-olivo or real row was written. The Olivo household still has its 14 people: adding the 26 legal
 entities and the remaining 26 accounts is the Muse re-run's job, now unblocked.
 
+**Regression fix (found, not caused, here).** ad97ea3 (Olivo README → the v3 entry plan) broke verify_crmdetail1's Task 6 self-check (it accepted v1 / v2 only), which verify_portentry1's chain runs — now any entry-plan version passes; crmdetail1 / portentry1 / portentry2 --self-checks-only: 23 / 37 / 21 PASS, 0 FAIL.
+
 **Verify.** apps/api/scripts/verify_portentry2.py (written, NOT run by the sprint); node tests
 apps/web/tests/portentry2 (13/13 pass; full suite 519 pass / 0 fail). Regression: verify_portentry1.py once, flat,
 VERIFY_NESTED=1, 2700 s.
