@@ -146,3 +146,14 @@ test("manual-asset report: counts per asset and a same-name flag", () => {
   assert.match(html, /2 manual assets share this name/);
   assert.equal(renderToStaticMarkup(h(ManualAssetsReport, { envelope: null })), "");
 });
+
+// BUGFIX3 FIX 1 — the household's "not counted" sentence comes only from the API's skipped report
+test("skippedSentence: renders the API's skipped report, nothing when none", async () => {
+  const { skippedSentence } = await import("../../lib/bugfix3.mjs");
+  assert.equal(skippedSentence(undefined), null);
+  assert.equal(skippedSentence({ count: 0, unclassified: 0, unvalued: 0 }), null);
+  assert.equal(skippedSentence({ count: 1, unclassified: 1, unvalued: 0 }),
+    "1 holding is not counted in net worth (1 without an asset class).");
+  assert.equal(skippedSentence({ count: 3, unclassified: 2, unvalued: 1 }),
+    "3 holdings are not counted in net worth (2 without an asset class, 1 without a value).");
+});

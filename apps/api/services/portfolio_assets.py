@@ -417,6 +417,12 @@ async def create_asset(
 
     new_id = str(uuid.uuid4())
     async with _OrgWrite(conn, org_id) as c:
+        if not default_taxonomy_key:
+            # BUGFIX3 FIX 1 — no key supplied: classify by kind from the org's own taxonomy (or stay unkeyed and be
+            # reported by the rollup). Every manual creation path left this NULL → the Olivo family's $0 net worth.
+            from services.portfolio_kind_taxonomy import key_for_kind
+
+            default_taxonomy_key = await key_for_kind(c, org_id, asset_type)
         await c.execute(
             f"""
             INSERT INTO {TABLE_ASSETS}

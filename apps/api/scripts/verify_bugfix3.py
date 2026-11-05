@@ -197,10 +197,121 @@ def self_static(check, find):
           "the Positions page no longer hard-codes 'Every holding across the firm' (the API's scope decides)")
 
 
+#: calls that would mean the route applied a member / visibility filter (matched as CALLS in the AST, never as words —
+#: the pre-fix docstring's "Org-scoped from JWT claims" made a substring check fail on a comment)
+MEMBER_FILTER_CALLS = frozenset({"visible_entity_ids", "entity_scope", "member_entity_scope",
+                                 "get_staff_visible_entity_ids", "resolve_entity_set", "filter_restricted",
+                                 "require_entity_access", "_entity_scope"})
+
+
+def route_calls(source: str, method: str, path: str) -> tuple[set[str], dict[str, set[str]]] | None:
+    """(every called name, {called name: keyword names}) inside the function decorated @router.<method>(path) in
+    ``source``; None when the route is absent. AST, so docstrings and comments cannot match."""
+    import ast
+
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        for d in node.decorator_list:
+            if (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == method
+                    and d.args and isinstance(d.args[0], ast.Constant) and d.args[0].value == path):
+                names: set[str] = set()
+                kws: dict[str, set[str]] = {}
+                for c in ast.walk(node):
+                    if isinstance(c, ast.Call):
+                        f = c.func
+                        nm = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                        if nm:
+                            names.add(nm)
+                            kws.setdefault(nm, set()).update(k.arg for k in c.keywords if k.arg)
+                return names, kws
+    return None
+
+#: FIX 1 (verify) — the member's family in INDEPENDENT SQL: ONE anchor and ONE recursive term (see visible_expected).
+VISIBLE_SQL = """
+        WITH RECURSIVE fam(id) AS (
+            SELECT principal_entity_id FROM delegate_grants WHERE delegate_user_id = $1 AND org_id = $2
+          UNION
+            SELECT e.child FROM fam JOIN (
+                SELECT r.from_entity_id AS parent, r.to_entity_id AS child FROM entity_relationships r
+                 WHERE r.org_id = $2 AND r.relationship_type = 'ownership' AND r.valid_to IS NULL
+                   AND r.system_to IS NULL
+                UNION
+                SELECT o.parent_id AS parent, o.child_id AS child FROM entity_ownership o
+                 WHERE o.org_id = $2 AND o.valid_to IS NULL AND o.system_to IS NULL) e ON e.parent = fam.id)
+        SELECT id::text FROM fam"""
+
+
+# ── BUGFIX3 FIX 1 — static proof (no DB): the verify's own reproduction is sound, and the taxonomy fix is wired. ──
+FIX1_NEEDLES = [
+    ("apps/api/services/portfolio_kind_taxonomy.py", "async def key_for_kind(c, org_id: str, asset_type: str | None)",
+     "4a: ONE resolver: asset kind → the org's taxonomy key (org_settings portfolio.kind_taxonomy, validated against "
+     "config asset_taxonomy)"),
+    ("apps/api/services/portfolio_assets.py", "default_taxonomy_key = await key_for_kind(c, org_id, asset_type)",
+     "4a: create_asset (direct asset, private investment, cash, file import) keys an unkeyed asset by kind"),
+    ("apps/api/services/portfolio_manual.py", 'tax_key = ref.get("taxonomy_key") or await key_for_kind(c, org, kind)',
+     "4a: manual_asset_for (manual assets, integrated import) keys by kind"),
+    ("apps/api/services/held_away.py", "await key_for_kind(conn, str(org_id), kind)",
+     "4a: the held-away global-security asset keys by kind"),
+    ("apps/api/services/portfolio_rollup.py", "reason=NO_TAXONOMY_REASON,",
+     "4b: the rollup's skip branch (no taxonomy key) names one reason the report counts"),
+    ("apps/api/services/portfolio_refresh.py", "def skipped_of(result) -> dict:",
+     "4b: skipped positions reported (count + ids), never a silent $0"),
+    ("apps/api/services/household_admin.py", '"skipped": PR.skipped_of(ran)}',
+     "4b: Recalculate returns what it skipped"),
+    ("apps/api/services/household_admin.py", '"skipped": (last_rollup or {}).get("skipped") or PR.skipped_of(None),',
+     "4b: the household detail carries the last rollup's skipped report"),
+    ("apps/web/components/households/HouseholdManager.jsx", "skippedSentence(detail.skipped)",
+     "4b: the household card says how many holdings are not counted"),
+    ("apps/api/scripts/backfill_taxonomy_keys.py", "changes={\"default_taxonomy_key\": p[\"key\"]}",
+     "4c: the backfill sets ONLY default_taxonomy_key, through the system-axis update_asset"),
+]
+
+
+def self_fix1(check, find):
+    print("[INFO] FIX 1 — static: verify reproduction soundness + taxonomy wiring")
+    for rel, needle, meaning in FIX1_NEEDLES:
+        check(needle in _read(rel), f"FIX 1 — {meaning}", f"{rel}: needle missing")
+    before = VS.git_show(BEFORE_REF, "apps/api/routers/portfolio_positions.py") or ""
+    got = route_calls(before, "get", "/portfolio/positions") if before else None
+    names = got[0] if got else set()
+    check(bool(got and "list_positions" in names and not (names & MEMBER_FILTER_CALLS)
+               and "entity_scope" not in got[1].get("list_positions", set())),
+          f"FIX 1 (verify 1) — BEFORE ({BEFORE_REF}) the route's CALLS: list_positions, no member filter (AST; the "
+          "docstring's 'Org-scoped' cannot match)", f"{sorted(names & MEMBER_FILTER_CALLS)}")
+    neg = route_calls('@router.get("/x")\nasync def f():\n    """Org-scoped, visible_entity_ids()."""\n'
+                      '    s = await _entity_scope(r, p)\n    return await list_positions(c, entity_scope=s)\n',
+                      "get", "/x")
+    check(bool(neg and "_entity_scope" in neg[0] and "visible_entity_ids" not in neg[0]
+               and "entity_scope" in neg[1]["list_positions"]),
+          "FIX 1 (verify 1) — the matcher sees a real filter CALL and ignores the same word in a docstring")
+    rec = VISIBLE_SQL.split("UNION", 1)[1] if "UNION" in VISIBLE_SQL else ""
+    check(bool(VISIBLE_SQL.count("JOIN (") == 1 and rec.count("FROM fam JOIN (") == 1 and "JOIN fam" not in rec
+               and "entity_relationships" in rec and "entity_ownership" in rec
+               and "relationship_type = 'ownership'" in rec),
+          "FIX 1 (verify 3) — visible_expected: one anchor, ONE recursive term over a sub-select UNIONing both "
+          "ownership edge sets", VISIBLE_SQL[:200])
+    from services.direct_holdings import DIRECT_KINDS, PRIVATE_KINDS
+    from services.org_settings import DEFAULT_SETTINGS
+    from services.portfolio_manual import KIND_SHAPE
+
+    m = DEFAULT_SETTINGS.get("portfolio.kind_taxonomy") or {}
+    want = ({k for k in DIRECT_KINDS if k != "other"} | {f"private_{k}" for k in PRIVATE_KINDS} | set(KIND_SHAPE)
+            | {"cash"})
+    check(not (want - set(m)) and "other" not in m,
+          "FIX 1 (4a) — every creation kind maps to a key (real estate, collectible, operating business, insurance "
+          "cash value, private fund … digital asset, cash); 'other' deliberately unmapped (reported, not guessed)",
+          f"missing {sorted(want - set(m))}")
+    check(all(re.fullmatch(r"taxonomy_(sc_\d+|mc_\d+_\d+|sub_\d+_\d+_\d+)", v) for v in m.values()),
+          "FIX 1 (4a) — the map holds Rule-4 taxonomy KEYS only (labels stay in config)", f"{m}")
+
+
 def self_checks(check, find):
     self_task1(check, find)
     self_routes(check, find)
     self_static(check, find)
+    self_fix1(check, find)
 
 
 def run_cmd(args, cwd, timeout=600, env=None, stdin_text=None):
@@ -263,6 +374,7 @@ E = {
     "orgb": (_id(34), ORG_B, "individual", "Org B Person"),
 }
 HH1, HH_B = _id(60), _id(61)
+TAXONOMY_SOURCE_ORG = UUID("00000000-0000-0000-0000-000000000001")   # read-only: its asset_taxonomy rows are copied
 ACC1, ACC2 = _id(70), _id(71)
 
 COUNTED = ("public.users", "public.organizations", "public.entities", "public.entity_relationships",
@@ -497,6 +609,12 @@ async def seed(conn) -> None:
         for org, nm in ((ORG_A, "a"), (ORG_B, "b")):
             await conn.execute("INSERT INTO organizations (id, name, slug, is_test) VALUES ($1, $2, $3, true)",
                                org, f"BUGFIX3 Verify Org {nm.upper()}", f"{TAG}-{nm}")
+            # FIX 1 — a real org has its asset taxonomy in config (the kind → key resolver validates against it);
+            # the fixture orgs get a COPY of the default org's active rows (read only from it), removed by org.
+            await conn.execute(
+                "INSERT INTO config (org_id, config_key, config_value, value_type, category, display_order, "
+                "is_active) SELECT $1, config_key, config_value, value_type, category, display_order, true FROM config "
+                "WHERE org_id = $2 AND category = 'asset_taxonomy' AND is_active", org, TAXONOMY_SOURCE_ORG)
         perm_ids = {r["name"]: r["id"] for r in await conn.fetch("SELECT id, name FROM permissions")}
         missing = sorted(set().union(*(v[4] for v in USERS.values())) - set(perm_ids))
         if missing:
@@ -669,17 +787,12 @@ async def seed_holdings(conn):
 async def visible_expected(conn) -> set[str]:
     """INDEPENDENT SQL: the member's family = the delegate grant's principal + every entity it reaches by ownership
     edges in either ownership table (the fixture has no restricted-access rows)."""
-    rows = await scoped(conn, ORG_A, """
-        WITH RECURSIVE fam(id) AS (
-            SELECT principal_entity_id FROM delegate_grants WHERE delegate_user_id = $1 AND org_id = $2
-          UNION
-            SELECT r.to_entity_id FROM entity_relationships r JOIN fam ON r.from_entity_id = fam.id
-             WHERE r.org_id = $2 AND r.valid_to IS NULL AND r.system_to IS NULL
-          UNION
-            SELECT o.child_id FROM entity_ownership o JOIN fam ON o.parent_id = fam.id
-             WHERE o.org_id = $2 AND o.valid_to IS NULL AND o.system_to IS NULL)
-        SELECT id::text FROM fam""", U_MEMBER, ORG_A)
+    # FIX 1 (verify) — ONE anchor and ONE recursive term. Two UNIONed recursive terms made Postgres read
+    # (anchor UNION recursive-1) as the non-recursive term → InvalidRecursionError, and the whole leak section never
+    # ran. Both ownership edge sets are UNIONed in a sub-select the single recursive term joins.
+    rows = await scoped(conn, ORG_A, VISIBLE_SQL, U_MEMBER, ORG_A)
     return {r["id"] for r in rows}
+
 
 
 async def y_leak(conn):
@@ -688,19 +801,39 @@ async def y_leak(conn):
     from services.portfolio_positions import list_positions
 
     before = VS.git_show(BEFORE_REF, "apps/api/routers/portfolio_positions.py") or ""
-    m = re.search(r'@router\.get\("/portfolio/positions"\)(.*?)@router\.get', before, re.S)
-    body = m.group(1) if m else ""
-    check(bool(body and "list_positions(" in body and "scope" not in body and "visible_entity" not in body),
-          f"BEFORE ({BEFORE_REF}): GET /portfolio/positions called list_positions with NO member / visibility filter",
-          body[:200] if not body else "")
+    got = route_calls(before, "get", "/portfolio/positions") if before else None
+    names, kws = got if got else (set(), {})
+    check(bool(got and "list_positions" in names and not (names & MEMBER_FILTER_CALLS)
+               and "entity_scope" not in kws.get("list_positions", set())),
+          f"BEFORE ({BEFORE_REF}): GET /portfolio/positions called list_positions with NO member / visibility filter "
+          "(calls matched in the AST, not words)",
+          f"calls {sorted(names)}; filter calls {sorted(names & MEMBER_FILTER_CALLS)}")
+    now = route_calls((API_DIR / "routers" / "portfolio_positions.py").read_text(encoding="utf-8"), "get",
+                      "/portfolio/positions")
+    check(bool(now and "entity_scope" in now[1].get("list_positions", set()) and (now[0] & MEMBER_FILTER_CALLS)),
+          "AFTER (this tree): the same route passes the member's entity_scope into list_positions",
+          f"{sorted(now[0] & MEMBER_FILTER_CALLS) if now else None}")
+    # FIX 1 (verify) — the pre-fix call path WITH the org context the route had: rls_context_middleware set the
+    # caller's org (a member: is_super_admin false) on the task, and the RLS pool's acquire() SET LOCALs it. A bare
+    # pool acquire with no context returned [] (default-deny), which reproduced nothing.
+    from services.database import reset_rls_context, set_rls_context
+
     pool = await get_pool()
-    async with pool.acquire() as c:
-        old = await list_positions(c, org_id=str(ORG_A), resolve_values=False, limit=1000)
+    tokens = set_rls_context(str(ORG_A), False)
+    try:
+        async with pool.acquire() as c:
+            ctx = await c.fetchval("SELECT current_setting('app.current_org_id', true)")
+            old = await list_positions(c, org_id=str(ORG_A), resolve_values=False, limit=1000)
+    finally:
+        reset_rls_context(tokens)
+    check(ctx == str(ORG_A), "the reproduction runs under the member request's org context (app.current_org_id)",
+          f"{ctx}")
     old_names = {p["asset_name"] for p in old["positions"]}
     old_owners = {p["owner_entity_id"] for p in old["positions"]}
-    check(bool(any(F2_MARK in (n or "") for n in old_names) and str(eid("f2p")) in old_owners),
+    check(bool(any(F2_MARK in (n or "") for n in old_names) and str(eid("f2p")) in old_owners
+               and str(eid("f1p")) in old_owners),
           "REPRODUCED: the pre-fix call path (list_positions(org_id) only — what the member's request ran) returns "
-          "F2's positions, the distinctive F2 asset among them", f"{sorted(old_names)}")
+          "F1's AND F2's positions, the distinctive F2 asset among them", f"{sorted(old_names)}")
     S["org_owners"] = old_owners
 
     want = await visible_expected(conn)
@@ -1045,6 +1178,148 @@ async def y_picker_money(conn):
           out[-200:])
 
 
+async def y_fix1_taxonomy(conn):
+    """FIX 1 (code, 4a-c) on org B's fixture family: every creation path keys its asset by kind and rolls up; an
+    unkeyed position is REPORTED; the backfill dry-run counts, the real run keys, a second run changes nothing."""
+    section("[Y] FIX 1 — every creation path assigns a taxonomy key; the rollup reports what it skips; the backfill")
+    import io
+    from contextlib import redirect_stdout
+
+    import backfill_taxonomy_keys as BT
+    from services import portfolio_assets as PA
+    from services.database import get_pool, reset_rls_context, set_rls_context
+    from services.org_settings import DEFAULT_SETTINGS
+    from services.portfolio_cash import ensure_cash_asset
+    from services.portfolio_manual import manual_asset_for
+
+    kmap = DEFAULT_SETTINGS["portfolio.kind_taxonomy"]
+    tax = {r["config_key"] for r in await scoped(conn, ORG_B, "SELECT config_key FROM config WHERE org_id = $1 AND "
+                                                             "category = 'asset_taxonomy' AND is_active", ORG_B)}
+    check(bool(tax and set(kmap.values()) <= tax), "the fixture org's own taxonomy holds every mapped key",
+          f"{len(tax)} keys; missing {sorted(set(kmap.values()) - tax)}")
+    owner = eid("orgb")
+    c0, r0 = await api(U_OB_ADMIN, "POST", f"/api/v1/admin/households/{HH_B}/recalculate")
+    g0 = Decimal(str(((r0.get("net_worth") or {}).get("gross")) or "0")) if c0 == 200 else None
+    # the seed's collectible (org B Painting, 5,000) was created through the direct-asset path AFTER the fix
+    check(bool(c0 == 200 and g0 == Decimal("5000.00") and (r0.get("skipped") or {}).get("count") == 0),
+          "baseline: the seed's collectible is keyed and counted (gross 5,000, nothing skipped)", f"{c0} {dumps(r0)}")
+    made: dict[str, tuple[str, Decimal]] = {}   # asset_type -> (asset_id, value)
+    v = 1000
+    for kind in ("real_estate", "collectible", "operating_business", "insurance_cash_value"):
+        v += 1000
+        c, b = await api(U_OB_ADMIN, "POST", f"/api/v1/entities/{owner}/direct-assets", {
+            "kind": kind, "name": NAME + f"FIX1 {kind}", "valuation": {"value": str(v), "date": AS_OF.isoformat(),
+                                                                      "method": "appraisal"}})
+        check(bool(c == 201 and b.get("asset_id")), f"direct asset {kind} created", f"{c} {dumps(b)}")
+        made[kind] = (b.get("asset_id"), Decimal(v))
+    for kind, extra in (("fund", {"commitment": {"amount": "100000", "date": "2024-01-02"}, "called_to_date": "1"}),
+                        ("hedge_fund", {"amount_invested": "1"}), ("direct_deal", {"amount_invested": "1"}),
+                        ("spv", {"amount_invested": "1"}), ("safe", {"amount_invested": "1"}),
+                        ("note", {"amount_invested": "1"})):
+        v += 1000
+        c, b = await api(U_OB_ADMIN, "POST", f"/api/v1/entities/{owner}/private-investments", {
+            "kind": kind, "name": NAME + f"FIX1 {kind}", "nav": {"value": str(v), "date": AS_OF.isoformat()}, **extra})
+        check(bool(c == 201 and b.get("asset_id")), f"private investment {kind} created", f"{c} {dumps(b)}")
+        made[f"private_{kind}"] = (b.get("asset_id"), Decimal(v))
+    pool = await get_pool()
+    tokens = set_rls_context(str(ORG_B), False)
+    try:
+        async with pool.acquire() as c:
+            for kind in ("mutual_fund", "money_market", "municipal_bond", "private", "listed_option",
+                         "digital_asset", "cash"):
+                v += 1000
+                if kind == "cash":
+                    aid = await ensure_cash_asset(c, org_id=str(ORG_B), currency_code="USD")
+                else:
+                    aid = await manual_asset_for(c, ORG_B, {"asset_kind": kind, "name": NAME + f"FIX1 {kind}",
+                                                            "identifiers": {}, "terms": {}})
+                await PA.create_position(c, org_id=str(ORG_B), owner_entity_id=str(owner), asset_id=str(aid),
+                                         as_of_date=AS_OF, authority="manual", source_system="manual",
+                                         ownership_basis="value", market_value=Decimal(v))
+                made[kind] = (str(aid), Decimal(v))
+    finally:
+        reset_rls_context(tokens)
+    got = {r["id"]: r for r in await scoped(conn, ORG_B, "SELECT id::text AS id, asset_type, default_taxonomy_key FROM "
+                                                         "portfolio.assets WHERE id = ANY($1::uuid[]) AND system_to "
+                                                         "IS NULL", [UUID(a) for a, _ in made.values()])}
+    wrong = {k: (got.get(a) or {}).get("default_taxonomy_key") for k, (a, _) in made.items()
+             if (got.get(a) or {}).get("default_taxonomy_key") != kmap[k]}
+    check(not wrong and len(made) == 17, f"each of the {len(made)} creation kinds got the org's key for its kind "
+          "(direct asset ×4, private investment ×6, manual asset ×6, cash)", f"wrong {wrong}")
+    # a position deliberately left with NO key: kind 'other' (no honest bucket) through the real path
+    c, b = await api(U_OB_ADMIN, "POST", f"/api/v1/entities/{owner}/direct-assets", {
+        "kind": "other", "name": NAME + "FIX1 other", "valuation": {"value": "777", "date": AS_OF.isoformat(),
+                                                                    "method": "appraisal"}})
+    other_pos = (b.get("position_ids") or [None])[0] if c == 201 else None
+    # and one created the way the pre-fix paths did (no key at all) — the backfill's target
+    raw_aid, raw_pid = await scoped(conn, ORG_B, """
+        WITH a AS (INSERT INTO portfolio.assets (org_id, name, asset_class, asset_type, ownership_basis,
+                       valuation_method) VALUES ($1, $2, 'hard_asset', 'real_estate', 'value', 'appraisal')
+                   RETURNING id),
+             p AS (INSERT INTO portfolio.positions (org_id, owner_entity_id, asset_id, as_of_date, ownership_basis,
+                       market_value, authority, source_system) SELECT $1, $3, a.id, $4, 'value', 888, 'manual',
+                       'manual' FROM a RETURNING id)
+        SELECT (SELECT id::text FROM a), (SELECT id::text FROM p)""", ORG_B, NAME + "FIX1 legacy unkeyed", owner,
+                                       AS_OF, fetch="fetchrow")
+    added = sum(val for _, val in made.values())
+    c1, r1 = await api(U_OB_ADMIN, "POST", f"/api/v1/admin/households/{HH_B}/recalculate")
+    g1 = Decimal(str(((r1.get("net_worth") or {}).get("gross")) or "0")) if c1 == 200 else None
+    check(bool(c1 == 200 and g1 is not None and g1 - g0 == added),
+          f"household gross = the sum of the keyed values (+{added}); the unkeyed two are not counted",
+          f"{g0} → {g1}")
+    sk = r1.get("skipped") or {}
+    check(bool(sk.get("count") == 2 and sk.get("unclassified") == 2
+               and set(sk.get("position_ids") or []) == {other_pos, raw_pid}),
+          "Recalculate REPORTS the two unkeyed positions (count 2, both ids, unclassified), never a silent $0",
+          f"{dumps(sk)}")
+    cd, dd = await api(U_OB_ADMIN, "GET", f"/api/v1/admin/households/{HH_B}")
+    check(bool(cd == 200 and (dd.get("skipped") or {}).get("count") == 2),
+          "the household detail carries the same skipped report", f"{cd} {dumps(dd.get('skipped'))}")
+    # the backfill: dry-run counts, writes nothing; the real run keys exactly the legacy asset; a 2nd run is a no-op
+    fp0 = await fingerprint(conn, "portfolio.assets", where="org_id = $1", args=(ORG_B,))
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        n_dry = await BT.run(conn, [str(ORG_B)], dry_run=True)
+    out = buf.getvalue()
+    fp1 = await fingerprint(conn, "portfolio.assets", where="org_id = $1", args=(ORG_B,))
+    plan = await BT.plan_org(conn, str(ORG_B))
+    check(bool(n_dry == 0 and fp1 == fp0), "backfill --dry-run writes nothing (assets count + checksum unchanged)",
+          f"{n_dry}")
+    check(bool(set(plan) == {"real_estate", "other"} and plan["real_estate"]["assets"] == [raw_aid]
+               and plan["real_estate"]["positions"] == 1 and plan["real_estate"]["key"] == kmap["real_estate"]
+               and plan["other"]["key"] is None and len(plan["other"]["assets"]) == 1
+               and "KIND real_estate: assets 1, live unkeyed positions 1 -> " + kmap["real_estate"] in out
+               and "KIND other: assets 1" in out and "SKIP" in out),
+          "the dry-run lists the right counts per kind (legacy real estate 1 → its key; 'other' 1 → left, said why)",
+          out[-400:])
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        n1 = await BT.run(conn, [str(ORG_B)], dry_run=False)
+    row = await scoped(conn, ORG_B, "SELECT (SELECT default_taxonomy_key FROM portfolio.assets WHERE id = $1::uuid AND "
+                                    "system_to IS NULL) AS k, (SELECT count(*) FROM portfolio.assets WHERE name = $2 "
+                                    "AND org_id = $3 AND system_to IS NOT NULL) AS archived, (SELECT taxonomy_key FROM "
+                                    "portfolio.positions WHERE id = $4::uuid) AS pk", raw_aid,
+                       NAME + "FIX1 legacy unkeyed", ORG_B, raw_pid, fetch="fetchrow")
+    check(bool(n1 == 1 and row["k"] == kmap["real_estate"] and row["archived"] == 1 and row["pk"] is None),
+          "the real run keys exactly the legacy asset (id kept, prior version archived on the system axis; the "
+          "position's own column untouched)", f"{n1} {dict(row)}")
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        n2 = await BT.run(conn, [str(ORG_B)], dry_run=False)
+    fp2 = await fingerprint(conn, "portfolio.assets", where="org_id = $1", args=(ORG_B,))
+    with redirect_stdout(io.StringIO()):
+        await BT.run(conn, [str(ORG_B)], dry_run=False)
+    fp3 = await fingerprint(conn, "portfolio.assets", where="org_id = $1", args=(ORG_B,))
+    check(bool(n2 == 0 and fp3 == fp2), "a second run changes nothing (idempotent)", f"{n2}")
+    c2, r2 = await api(U_OB_ADMIN, "POST", f"/api/v1/admin/households/{HH_B}/recalculate")
+    g2 = Decimal(str(((r2.get("net_worth") or {}).get("gross")) or "0")) if c2 == 200 else None
+    sk2 = r2.get("skipped") or {}
+    check(bool(c2 == 200 and g2 is not None and g2 - g1 == Decimal("888.00") and sk2.get("count") == 1
+               and sk2.get("position_ids") == [other_pos]),
+          "after the backfill, Recalculate counts the legacy holding (+888) and still reports only 'other'",
+          f"{g1} → {g2}; {dumps(sk2)}")
+
+
 async def y_isolation(conn):
     section("[Y] Org isolation both directions (rolbypassrls = false)")
     r = await conn.fetchrow("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
@@ -1144,6 +1419,7 @@ async def main_async() -> int:
             await run("household", y_household, conn)
             await run("picker / money / list", y_picker_money, conn)
             await run("isolation", y_isolation, conn)
+            await run("fix1 taxonomy", y_fix1_taxonomy, conn)
         else:
             check(False, "the holdings seed produced both families' positions — dependent sections not run", f"{S}")
         await run("addresses", y_addresses, conn)

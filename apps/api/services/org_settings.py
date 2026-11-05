@@ -253,6 +253,37 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "chancery",
         "manual",
     ],
+    # BUGFIX3 FIX 1 — asset kind (``portfolio.assets.asset_type``) → the
+    # taxonomy KEY an asset of that kind is classified under when its creator
+    # supplied none. KEYS only (Rule 4); the labels stay in ``config``
+    # (asset_taxonomy) and a key absent from the org's own taxonomy resolves to
+    # nothing (services.portfolio_kind_taxonomy), never to an invented bucket.
+    # Every manual creation path (direct asset, private investment, manual
+    # asset, integrated import, cash) used to store NULL here, and the rollup
+    # skips a position with no key — the Olivo family's $0 net worth. An org
+    # with a different taxonomy overrides this key (merged over the default).
+    # 'other' and 'unclassified' are deliberately absent: there is no honest
+    # bucket for them, so they stay unkeyed and the rollup REPORTS them.
+    "portfolio.kind_taxonomy": {
+        "real_estate": "taxonomy_mc_5_1",
+        "collectible": "taxonomy_sub_7_5_4",
+        "operating_business": "taxonomy_mc_3_1",
+        "insurance_cash_value": "taxonomy_mc_8_1",
+        "private_fund": "taxonomy_mc_3_1",
+        "private_spv": "taxonomy_sub_3_1_5",
+        "private_direct_deal": "taxonomy_sub_3_1_5",
+        "private_safe": "taxonomy_sub_3_2_1",
+        "private_note": "taxonomy_sub_3_2_1",
+        "private_hedge_fund": "taxonomy_mc_7_1",
+        "private": "taxonomy_sc_3",
+        "mutual_fund": "taxonomy_sc_1",
+        "money_market": "taxonomy_sub_8_1_1",
+        "municipal_bond": "taxonomy_sub_2_3_4",
+        "cash": "taxonomy_mc_8_1",
+        "listed_option": "taxonomy_mc_7_6",
+        "option": "taxonomy_mc_7_6",
+        "digital_asset": "taxonomy_mc_7_3",
+    },
     # ── User management (this sprint) ──────────────────────────────────────
     # How long an admin-minted invite token stays redeemable. Was the module
     # constant services.invites.INVITE_TTL_DAYS; that constant now READS this

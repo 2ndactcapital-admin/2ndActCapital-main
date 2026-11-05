@@ -154,8 +154,13 @@ async def household_detail(conn, org_id, household_id) -> dict:
     vocab = await account_vocab(conn, org_id)
     member_list = [{"id": str(m["id"]), "display_name": m["display_name"], "entity_type": m["entity_type"]}
                    for m in members]
+    from services import portfolio_refresh as PR
+
+    # BUGFIX3 FIX 1 — the family rollup that last ran over these members, and the positions it left out
+    last_rollup = await PR.last_run_for(conn, org_id, member_ids)
     return {"id": str(hh["id"]), "name": hh["name"],
-            "liabilities": liabilities, "net_worth": net_worth,
+            "liabilities": liabilities, "net_worth": net_worth, "last_rollup": last_rollup,
+            "skipped": (last_rollup or {}).get("skipped") or PR.skipped_of(None),
             "is_demo": bool(await conn.fetchval("SELECT public.crm_is_demo_household($1)", hh["id"])),
             "members": member_list,
             "member_count": len(member_list),
@@ -507,4 +512,6 @@ async def recalculate_household(pool, org_id, household_id, *, actor_id) -> dict
     return {"household_id": str(hh["id"]), "request_id": req.get("id") if req else None,
             "status": (ran or {}).get("status") or ("no members" if not member_ids else "not run"),
             "family_size": len(req.get("entity_ids") or []) if req else 0, "member_count": len(member_ids),
-            "net_worth": net_worth}
+            "net_worth": net_worth,
+            # BUGFIX3 FIX 1 — positions the rollup left out (unclassified / unvalued), reported, never a silent $0
+            "skipped": PR.skipped_of(ran)}

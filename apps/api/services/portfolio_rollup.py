@@ -138,6 +138,14 @@ class SkippedPosition:
     reason: str
 
 
+#: BUGFIX3 FIX 1 — the skip reason for an unclassified position, named once so the household / Recalculate report can
+#: count it (portfolio_refresh.skipped_of) without matching free text.
+NO_TAXONOMY_REASON = (
+    "no taxonomy_key on the position and no default_taxonomy_key on the asset — there is no bucket to put it in, "
+    "and inventing one would misreport it"
+)
+
+
 @dataclass
 class RollupResult:
     """What a rollup did. Every drop is counted; nothing fails silently."""
@@ -461,11 +469,7 @@ async def rollup_entity_holdings(
                     position_id=row["position_id"],
                     owner_entity_id=row["owner_entity_id"],
                     asset_id=row["asset_id"],
-                    reason=(
-                        "no taxonomy_key on the position and no "
-                        "default_taxonomy_key on the asset — there is no bucket "
-                        "to put it in, and inventing one would misreport it"
-                    ),
+                    reason=NO_TAXONOMY_REASON,
                 ))
                 continue
 

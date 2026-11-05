@@ -19,3 +19,18 @@ export function manualAssetNote(a) {
   if (n === 0) return "not used by any position";
   return `${n} position${n === 1 ? "" : "s"} · ${o} owner${o === 1 ? "" : "s"}`;
 }
+
+// BUGFIX3 FIX 1 — what the last rollup left out of net worth (the API's `skipped` report:
+// services/portfolio_refresh.skipped_of). A count of 0, or no report at all, renders nothing; never a
+// client-side guess at what was skipped.
+export function skippedSentence(skipped) {
+  const n = Number(skipped?.count) || 0;
+  if (n <= 0) return null;
+  const unc = Number(skipped?.unclassified) || 0;
+  const unv = Number(skipped?.unvalued) || 0;
+  const parts = [];
+  if (unc > 0) parts.push(`${unc} without an asset class`);
+  if (unv > 0) parts.push(`${unv} without a value`);
+  const what = n === 1 ? "1 holding is" : `${n} holdings are`;
+  return `${what} not counted in net worth${parts.length ? ` (${parts.join(", ")})` : ""}.`;
+}

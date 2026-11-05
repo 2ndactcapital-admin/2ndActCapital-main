@@ -22,6 +22,7 @@ import uuid
 from datetime import date
 
 from services.portfolio_assets import TABLE_ASSET_IDENT, TABLE_ASSETS, _OrgWrite, normalize_identifier_value
+from services.portfolio_kind_taxonomy import key_for_kind
 
 T_RELINK = "portfolio.asset_relinks"
 LOOKUP_TYPES = ("cusip", "isin", "sedol", "ticker")
@@ -71,12 +72,14 @@ async def manual_asset_for(conn, org_id, ref: dict) -> str:
         # PORTENTRY1 FIX 1 — the terms carry ISO strings (JSON); asyncpg binds a $n::date only from a date object.
         # A muni's maturity / an option's expiry as a str was the 500 on approve (DataError … 'toordinal').
         maturity = _as_date(terms.get("maturity") or terms.get("expiry"))
+        # BUGFIX3 FIX 1 — no key on the row: classify by kind from the org's taxonomy (services.portfolio_kind_taxonomy)
+        tax_key = ref.get("taxonomy_key") or await key_for_kind(c, org, kind)
         await c.execute(
             f"""INSERT INTO {TABLE_ASSETS} (id, org_id, global_security_id, name, asset_class, asset_type,
                     ownership_basis, valuation_method, default_taxonomy_key, currency_code, maturity_date,
                     manual_terms)
                 VALUES ($1::uuid, $2::uuid, NULL, $3, $4, $5, 'units', $6, $7, $8, $9::date, $10::jsonb)""",
-            aid, org, name, aclass, kind, vmethod, ref.get("taxonomy_key"),
+            aid, org, name, aclass, kind, vmethod, tax_key,
             ((ref.get("terms") or {}).get("currency") or "USD").upper(), maturity, json.dumps(terms))
         first = True
         for t, v in idents.items():

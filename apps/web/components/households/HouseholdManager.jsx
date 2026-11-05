@@ -15,6 +15,7 @@
 import { useState } from "react";
 import { NetWorthLines } from "@/components/crm/LiabilitiesTab";
 import { formatMoney } from "@/lib/crmDetail.mjs";
+import { skippedSentence } from "@/lib/bugfix3.mjs";
 import { accountLine, billableDefault, dvpMissing, dvpReason, ownerOptions, withCounts } from "@/lib/portentry2.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
@@ -493,7 +494,8 @@ function HouseholdCard({ row, onDetail }) {
               </ul>
               {/* CRMDETAIL1 — net worth (gross, liabilities, net) and the household's Liabilities section */}
               <div className="mt-4"><NetWorthLines netWorth={detail.net_worth} vocabularies={detail.vocabularies} />
-                <RecalculateHousehold household={detail} onDone={load} /></div>
+                <RecalculateHousehold household={detail} onDone={load} />
+                {skippedSentence(detail.skipped) && <p className={quiet}>{skippedSentence(detail.skipped)}</p>}</div>
               <ProvisionalHoldings household={detail} />
               <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-[#64748B]">Liabilities</h3>
               {(detail.liabilities || []).length === 0 ? (
