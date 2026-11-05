@@ -173,6 +173,7 @@ def _load_verify_self_at(ref: str):
         raise RuntimeError(f"no _verify_self.py at {ref}")
     spec = importlib.util.spec_from_loader(f"_vs_{ref}", loader=None)
     mod = importlib.util.module_from_spec(spec)
+    mod.__dict__["__file__"] = str(HERE / "_verify_self.py")   # REPO / HERE resolve as in the real module
     exec(compile(src, f"_verify_self@{ref}", "exec"), mod.__dict__)   # noqa: S102 — our own file at a known ref
     return mod
 
