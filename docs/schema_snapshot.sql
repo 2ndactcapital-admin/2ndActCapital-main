@@ -1612,6 +1612,8 @@
 --   citizenship_status                       text
 --   annual_income                            text
 --   liquid_net_worth                         text
+--   maiden_name                              text
+--   date_of_death                            date
 --   PRIMARY KEY entities_pkey: (id)
 
 -- ===== entity_addresses =====
@@ -4673,6 +4675,35 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY index_levels_pkey: (id)
+
+-- ===== portfolio.liabilities =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   lineage_id                               uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   owner_entity_id                          uuid NOT NULL
+--   lender_entity_id                         uuid
+--   lender_name                              text
+--   name                                     text NOT NULL
+--   kind                                     text NOT NULL
+--   original_amount                          numeric
+--   current_balance                          numeric NOT NULL
+--   currency_code                            text NOT NULL DEFAULT 'USD'::text
+--   as_of                                    date NOT NULL
+--   rate_type                                text
+--   rate_text                                text
+--   maturity                                 date
+--   collateral_account_id                    uuid
+--   collateral_asset_id                      uuid
+--   collateral_text                          text
+--   notes                                    text
+--   change_reason                            text
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY liabilities_pkey: (id)
 
 -- ===== portfolio.model_column_mappings =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
