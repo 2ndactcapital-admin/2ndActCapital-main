@@ -315,3 +315,21 @@ async def entity_net_worth(request: Request, entity_id: UUID):
         nw["last_rollup"] = await PR.last_run(conn, org_id, entity_id)
     return {"rows": nw, "permissions": _permissions(request, "internal or own family"),
             "vocabularies": _vocab(request, {"net_worth_lines": V.liability_vocab()["net_worth_lines"]}, [])}
+
+
+# ── PORTENTRY2 (MUSE-OLIVO-PERS-01) — what the caller may change on this record ─────────────────────────────────
+@router.get("/entities/{entity_id}/permissions")
+async def record_permissions(request: Request, entity_id: UUID):
+    """The CRM record page's write envelope: one flag per write surface, each from the exact rule of its route
+    (services.record_permissions). Internal read (a client never opens a CRM record); 404 for another org's id."""
+    from services import record_permissions as RP
+
+    require_internal(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        found = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1 AND org_id = $2::uuid "
+                                    "AND valid_to IS NULL AND system_to IS NULL", entity_id, str(org_id))
+    if not found:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return {"entity_id": str(entity_id), **RP.envelope(principal_of(request))}

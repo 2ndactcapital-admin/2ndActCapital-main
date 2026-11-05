@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+PORTENTRY2 (2026-11-05, what HollisMuse hit onboarding the Olivo family — legal entities join an existing household and own accounts, account type / tax / billable fields + DVP reasons, permission-true CRM controls, the ownership views agree, picker / dates / dialogs / detail keys / seasonal addresses / Households nav, staff security search; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PORTENTRY1 (2026-11-04, the Olivo entry-plan gaps closed — CRM status / marital / sub-type vocabularies from the config table, ILIT / LP / foundation registry keys, ownership % for org admins, edit_crm_contact for support staff, manual positions for any holding (org-scoped manual assets, reported relink), direct assets + private investments with commitments, the integrated-account one-time import (Super Admin, maker-checker, superseded by the feed), family-scoped net worth refresh after every write, _verify_self fast-forward fix; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 CRMDETAIL1 (2026-11-04, the CRM holds a multigenerational family — 29 governed relationship types with a Relationships panel, typed detail fields for trusts / charities / LLCs / LPs, maiden name + date of death + minor flag, portfolio.liabilities netting into net worth (gross / liabilities / net), permanent demo data protected from every clean-up; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PERMS1 (2026-11-04, ONE source of permissions — the authz Principal = role ∪ profile ∪ permission-set grants in one statement, client rule applied, the key "staff" grants nothing; org_admin baseline (+9 keys, no approve_*); org admins create deals and households (Joe's decisions 1-2); WF-06 / WF-03 / REP-10 / WF-04 / WF-05; HollisMuse re-run test rows removed; verify WRITTEN, not yet run): see the top entry.
@@ -335,6 +336,78 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000. PORTENTRY2 — fix what HollisMuse hit while onboarding the Olivo family (interim report 2026-11-05, stopped at I.0); schema APPLIED; verify WRITTEN, not yet run (2026-11-05)
+
+**The blocker.** 25 of 34 Olivo accounts (every trust / LLC / LP / foundation account, all eight integrated ones)
+could not be created: an existing household had no member editor, and the Add account Owner list is the household's
+members — all 14 of them people.
+
+**Discovery (Task 1).** 1a — household_memberships is PK (household_id, entity_id), FK entities, NO type CHECK: a
+legal entity could always be a member in the DB, and membership is many-to-many by design (an entity may sit in
+several households; billing / net-worth partitions use entities.primary_household_id, untouched). The add / remove
+routes existed but no UI called them, they were rbac-gated (not internal) and unaudited. Every reader keys on entity
+ids, never on type (net worth / liabilities, household assets, portfolio_refresh, X-ray visibility, the member
+closure). 1b — add_account required membership; Olivo's 8 accounts are UNKNOWN / UNKNOWN; service_model is free text
+from the custody import. 1c — all three ownership views read services.ownership_read (both tables); the tab's tree
+was the server-rendered prop, never refreshed after the tab's own writes; its "Owns" tree recursed; /lookthrough
+returns 0–1 fractions while owners' effective_pct is 0–100. 1d — the picker matched one contiguous substring with
+is_active = true; its value-sync effect could reset the box; a picked detail record displayed its id. 1e — native
+date inputs; ReferenceSelect was uncontrolled (defaultValue before options loaded). 1f — the Ownership tab's Add /
+Edit / Remove had NO gate (API: internal + manage_members; support staff lacks manage_members). 1g —
+/portfolio/global-securities is view_portfolio, a member grant too; held-away entry was a free ticker box.
+
+**Part 1 (APPLIED via MCP, docs/portentry2_part1.sql, additive).** public.config categories
+account_registration_types (14) and account_tax_statuses (3) for the default org and every org with CRM config rows;
+crm_seed_org_config copies them to any other org; entity_addresses.note.
+
+**Each Muse finding → status.**
+- MUSE-OLIVO-H-02 / G-02 (High, the blocker) — FIXED. Members panel on an existing household (people AND legal
+  entities; add / remove audited household.member_added / member_removed; internal + manage_members; removal refused
+  while the member owns an account of the household; a demo member is removed through crmdetail1's app path). Owner
+  = any member, plus "legal entities owned by a member" which links the entity in the same transaction.
+- MUSE-OLIVO-H-01 (High) — FIXED. Registration type and tax status (from config), billable (default OFF for a demo
+  household), discretionary, optional service model on Add account and on each account card (edit: PATCH
+  /admin/households/{id}/accounts/{id}, system-axis archive, id kept, audited).
+- MUSE-OLIVO-H-03 / H-04 — FIXED. DVP receiving custodian + DTC / participant number visibly required; a missing one
+  is refused naming it, with the reason (client and server).
+- MUSE-OLIVO-PERS-01 (High) — FIXED. GET /entities/{id}/ownership carries a permissions envelope; GET
+  /entities/{id}/permissions (services/record_permissions — each flag the exact rule of its route) drives Edit
+  details, tax ids, addresses, notes, employment, social; the server refusal of support staff's ownership-% save was
+  already in place (portentry1) and is re-proven on the identical request.
+- MUSE-OLIVO-PERS-03 — NO CHANGE NEEDED. Support staff's Workflows → Runs / Triggers (view_workflow_runs) and Billing &
+  Custody (internal + view_portfolio) items match grants it holds; the new Households row is hidden from it.
+- MUSE-OLIVO-E4-01 (High) — FIXED. Picker option "Include inactive / deceased", ON by default for the family group
+  and grantor.
+- MUSE-OLIVO-B11-03 (High) / B11-01 — FIXED. One DateInput (text; ISO / US typed or pasted; years outside 1800–2200,
+  two-digit years and impossible days refused with a message) on the person / entity / relationship / ownership /
+  notes / employment / detail-field forms. NOT changed: the Liabilities and Assets & Investments tabs' date fields.
+- MUSE-OLIVO-F-02 — FIXED. The tab's tree re-reads GET /entities/{id}/ownership-graph after every write; "Owns" shows
+  direct holdings with a labelled look-through toggle, no duplicates.
+- MUSE-OLIVO-F-03 — FIXED. Holdings' look-through fractions converted to percent (60.0% eff.).
+- MUSE-OLIVO-F-01 — FIXED. OWNED BY / OWNS rows show the interest note.
+- MUSE-OLIVO-P.1 — FIXED. GET /securities/search (ticker, name, CUSIP, ISIN, FIGI; read-only; require_internal; a
+  member refused) and a "Find a security" box on held-away entry; the master admin screen stays Super Admin.
+- MUSE-OLIVO-D19-01 — FIXED (word-token search over display / legal / first / middle / surname / maiden).
+- MUSE-OLIVO-D17-01 — FIXED (the picked record's name, never its id). MUSE-OLIVO-E-01 — FIXED (search on any change of
+  the box's text: keystrokes, paste, programmatic fill). MUSE-OLIVO-E-02 / D-02 / D19-02 — FIXED (the saved row shown at
+  once; the routes are force-dynamic; re-read without cache).
+- MUSE-OLIVO-D-01 / B114-01 — FIXED (ReferenceSelect controlled; the stored value kept as an option).
+- MUSE-OLIVO-D6 / D7 / D8 / D18-01 — FIXED (trust detail keys remainder_to (CRM record), shares, beneficiaries_note —
+  shown for every trust, labelled for GRAT / CRUT and bypass trusts).
+- MUSE-OLIVO-B112-01 — FIXED (maiden name + date of death on New person). MUSE-OLIVO-C-01 — FIXED (address note).
+  MUSE-OLIVO-C.check — FIXED ("Current · Nov–Apr" vs "Seasonal, May–Oct" by today's month).
+- MUSE-OLIVO-G-01 — FIXED (Portfolio → Households). MUSE-OLIVO-H-05 — FIXED (counts follow every detail load).
+
+**Gate change (deliberate).** POST / DELETE /admin/households/{id}/members: rbac manage_members → internal + manage_members
+(PERMS1's household admin gate); docs/AUTHZ1_ROUTES regenerated, --check CURRENT.
+
+**Data.** No demo-olivo or real row was written. The Olivo household still has its 14 people: adding the 26 legal
+entities and the remaining 26 accounts is the Muse re-run's job, now unblocked.
+
+**Verify.** apps/api/scripts/verify_portentry2.py (written, NOT run by the sprint); node tests
+apps/web/tests/portentry2 (13/13 pass; full suite 519 pass / 0 fail). Regression: verify_portentry1.py once, flat,
+VERIFY_NESTED=1, 2700 s.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000. PORTENTRY1 — close the gaps between the Olivo entry plan and the front end (GAP-CRM-01…06, GAP-PORT-01…05) + verify tooling; schema APPLIED; verify WRITTEN, not yet run (2026-11-04)
 

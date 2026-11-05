@@ -115,6 +115,8 @@ export const GATE_SPV_MANAGER = { internal: true, perm: "view_spv", strict: true
 export const GATE_REPLICATION_STAFF = { internal: true, perm: "view_replication", strict: true };
 // Billing Groups / Custody Import: an internal role holding view_portfolio (a member grant alone).
 export const GATE_FIRM_PORTFOLIO = { internal: true, perm: "view_portfolio", strict: true };
+// PORTENTRY2 — Households: an internal role holding manage_members (staff / Super Admin as for every internal gate).
+export const GATE_HOUSEHOLDS = { internal: true, perm: "manage_members", strict: true };
 // PERMS1 — workflow screens, on the keys their API checks (STRICT, fail closed).
 export const GATE_AUTHOR_WORKFLOWS = { perm: "author_workflows", strict: true };
 export const GATE_VIEW_WORKFLOW_RUNS = { perm: "view_workflow_runs", strict: true };
@@ -276,6 +278,9 @@ export const MENU_ITEMS = [
   // Super Admin's underlying queue (API require_super_admin)
   tab("main", "portfolio", 18, "/portfolio/replication/notes/new-issues", "New issues", GATE_REPLICATION_STAFF, false),
   tab("main", "portfolio", 19, "/portfolio/replication/notes/underlyings", "Underlying queue", GATE_SUPER_ADMIN, false),
+  // PORTENTRY2 (MUSE-OLIVO-G-01) — Households had no nav entry (the page lived at /portfolio/households only).
+  // Gate = the API's: GET /admin/households is require_internal_permission(manage_members).
+  tab("main", "portfolio", 20, "/portfolio/households", "Households", GATE_HOUSEHOLDS, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),

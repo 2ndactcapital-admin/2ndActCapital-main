@@ -5,7 +5,13 @@
 // history, never deleted). Write controls render only when permissions.can_write === true (no fallback).
 import { useEffect, useState } from "react";
 import EntityPicker from "@/components/EntityPicker";
+import DateInput from "@/components/ui/DateInput";
 import { canWrite, groupRows, parseOption, relationshipOptions, typeLabelFrom } from "@/lib/crmDetail.mjs";
+import { includeInactiveDefault } from "@/lib/portentry2.mjs";
+
+// PORTENTRY2 — (E4-01) the other-record picker looks up inactive / deceased records too, ON by default for the
+// family types and grantor (a former spouse who has died must be findable as the TARGET); (E-02) a saved relationship
+// appears at once — the panel re-reads its rows with no cache and the add's own response is shown meanwhile.
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
 const input = "rounded-[6px] border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A]";
@@ -79,7 +85,7 @@ function AddRelationship({ entityId, entityType, vocab, onAdded }) {
     setBusy(true);
     setError(null);
     try {
-      await call(`/api/entities/${encodeURIComponent(entityId)}/crm-relationships`, {
+      const created = await call(`/api/entities/${encodeURIComponent(entityId)}/crm-relationships`, {
         method: "POST",
         body: JSON.stringify({ relationship_type: opt.key, direction: opt.direction, other_entity_id: other.id,
           notes: notes || null, effective_date: effective || null }),
@@ -88,7 +94,7 @@ function AddRelationship({ entityId, entityType, vocab, onAdded }) {
       setOther(null);
       setNotes("");
       setEffective("");
-      onAdded();
+      await onAdded(created);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -111,13 +117,15 @@ function AddRelationship({ entityId, entityType, vocab, onAdded }) {
           );
         })}
       </select>
-      <EntityPicker value={other} onChange={setOther} excludeId={entityId}
+      <EntityPicker key={includeInactiveDefault(picked) ? "with-inactive" : "active-only"}
+        value={other} onChange={setOther} excludeId={entityId}
         entityTypes={Array.isArray(picked?.otherTypes) ? picked.otherTypes : []}
+        includeInactive={includeInactiveDefault(picked)}
         placeholder="The other record…" />
       <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Note" className={input} />
       <label className={quiet}>
         Effective date{" "}
-        <input type="date" value={effective} onChange={(e) => setEffective(e.target.value)} className={input} />
+        <DateInput value={effective} onChange={setEffective} className={input} ariaLabel="Effective date" />
       </label>
       {error && <p className="text-sm text-[#9B2335] sm:col-span-2">{error}</p>}
       <div className="sm:col-span-2">
@@ -132,9 +140,14 @@ export default function RelationshipsPanel({ entityId, entityType }) {
   const [error, setError] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
 
-  async function load() {
+  async function load(created) {
+    // show the saved row at once, then the server's own read (cache: no-store) replaces it
+    if (created && created.id) {
+      setEnv((prev) => (prev && prev.rows && !(prev.rows.current || []).some((r) => r.id === created.id)
+        ? { ...prev, rows: { ...prev.rows, current: [...(prev.rows.current || []), created] } } : prev));
+    }
     try {
-      setEnv(await call(`/api/entities/${encodeURIComponent(entityId)}/crm-relationships`));
+      setEnv(await call(`/api/entities/${encodeURIComponent(entityId)}/crm-relationships?t=${Date.now()}`));
       setError(null);
     } catch (err) {
       setError(err.message);

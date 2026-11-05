@@ -231,6 +231,14 @@ TRUST_FIELDS = (
     DetailField("unitrust_rate_pct", "Unitrust rate (%)", "decimal", min=Decimal(0), max=Decimal(100)),
     DetailField("crummey_notices", "Crummey notices", "boolean"),
     DetailField("funded_with", "Funded with", "text"),
+    # PORTENTRY2 (MUSE-OLIVO-D6 / D7 / D8 / D18-01) — a GRAT's / CRUT's remainder beneficiary (a CRM record: a
+    # person, a trust or a charity), a bypass trust's shares (text), and a trust's beneficiaries note (a SLAT's).
+    DetailField("remainder_to", "Remainder to (GRAT / CRUT)", "entity",
+                help="The CRM record that receives the remainder — a person, a trust or a charity."),
+    DetailField("shares", "Shares (bypass trust)", "text",
+                help="How the trust is divided, e.g. '1/3 each to the three children, per stirpes'."),
+    DetailField("beneficiaries_note", "Beneficiaries note", "text",
+                help="Who benefits and how, e.g. a SLAT's spouse and descendants."),
     # PORTENTRY1 (GAP-CRM-04) — the policy an ILIT holds; the insurer and the insureds are CRM records
     DetailField("policy_insurer", "Insurer", "entity", entity_types=LEGAL, group=POLICY_GROUP,
                 help="The insurance company's CRM record."),

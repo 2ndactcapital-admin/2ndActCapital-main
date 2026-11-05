@@ -10,12 +10,13 @@ function childEdges(edges, nodeId, direction) {
   );
 }
 
-function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors }) {
+function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors, maxDepth = Infinity }) {
   const node = nodeMap[nodeId];
   if (!node) return null;
 
   const nextAncestors = [...ancestors, nodeId];
-  const children = childEdges(edges, nodeId, direction).filter((e) => {
+  // PORTENTRY2 (MUSE-OLIVO-F-02) — `maxDepth` 1 = direct holdings only; look-through is the caller's labelled toggle.
+  const children = (ancestors.length >= maxDepth ? [] : childEdges(edges, nodeId, direction)).filter((e) => {
     const otherId = direction === "down" ? e.child_id : e.parent_id;
     return !nextAncestors.includes(otherId); // guard against cycles
   });
@@ -49,6 +50,7 @@ function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors }) {
                 direction={direction}
                 pct={edge.ownership_pct}
                 ancestors={nextAncestors}
+                maxDepth={maxDepth}
               />
             );
           })}
@@ -58,7 +60,7 @@ function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors }) {
   );
 }
 
-export default function OwnershipTree({ graph, rootId, direction, title }) {
+export default function OwnershipTree({ graph, rootId, direction, title, maxDepth = Infinity }) {
   const edges = graph?.edges || [];
   const nodeMap = Object.fromEntries((graph?.nodes || []).map((n) => [n.id, n]));
   const hasChildren = childEdges(edges, rootId, direction).length > 0;
@@ -75,6 +77,7 @@ export default function OwnershipTree({ graph, rootId, direction, title }) {
             direction={direction}
             pct={null}
             ancestors={[]}
+            maxDepth={maxDepth}
           />
         </ul>
       ) : (

@@ -3,7 +3,15 @@
 import { useEffect, useState, useTransition } from "react";
 import EntityPicker from "@/components/EntityPicker";
 import OwnershipTree from "@/components/crm/OwnershipTree";
+import DateInput from "@/components/ui/DateInput";
+import { canEditOwnership } from "@/lib/portentry2.mjs";
 
+// PORTENTRY2 — (PERS-01) Add / Edit / Remove render ONLY when GET /entities/{id}/ownership's own envelope says
+// permissions.can_write === true (the same rule as the three write routes; a lost envelope renders none).
+// (F-02) the tree reads the SAME payload as the Overview (GET /entities/{id}/ownership-graph — both ownership
+// tables) and is re-read after every write here; it used to be the page's server-rendered prop, never refreshed, so
+// owners added on this tab never reached it. "Owns" shows DIRECT holdings; look-through is a labelled toggle.
+// (F-01) each OWNED BY / OWNS row shows its interest note.
 function formatPct(val) {
   if (val == null) return "—";
   return `${parseFloat(val).toFixed(2)}%`;
@@ -18,7 +26,7 @@ function formatDate(val) {
   }
 }
 
-function OwnershipRow({ item, onEdit, onDelete }) {
+function OwnershipRow({ item, onEdit, onDelete, canWrite }) {
   return (
     <div className="flex items-center justify-between rounded-lg border bg-bg-card p-4" style={{ borderColor: "#ece8dd" }}>
       <div className="flex-1">
@@ -26,6 +34,7 @@ function OwnershipRow({ item, onEdit, onDelete }) {
         <p className="mt-0.5 text-xs text-text-muted capitalize">
           {item.counterparty?.entity_type?.replace(/_/g, " ")}
         </p>
+        {item.notes && <p className="mt-0.5 text-xs text-text-secondary">{item.notes}</p>}
       </div>
       <div className="flex items-center gap-6">
         <div className="text-right">
@@ -35,7 +44,7 @@ function OwnershipRow({ item, onEdit, onDelete }) {
           )}
         </div>
         {/* BUGFIX1 — rows from the other ownership table are read-only here. */}
-        {item.editable === false ? (
+        {!canWrite ? null : item.editable === false ? (
           <span className="text-xs text-text-muted">Recorded on the entity's ownership register</span>
         ) : (
         <div className="flex gap-2">
@@ -126,12 +135,8 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
           <label className="block text-xs font-semibold uppercase tracking-wide text-text-muted mb-1">
             Effective Date
           </label>
-          <input
-            type="date"
-            value={effectiveDate}
-            onChange={(e) => setEffectiveDate(e.target.value)}
-            className="w-full rounded border border-border px-3 py-1.5 text-sm"
-          />
+          <DateInput value={effectiveDate} onChange={setEffectiveDate}
+            className="w-full rounded border border-border px-3 py-1.5 text-sm" ariaLabel="Effective date" />
         </div>
       </div>
       <div>
@@ -224,12 +229,8 @@ function EditModal({ item, onSuccess, onClose }) {
               <label className="block text-xs font-semibold uppercase tracking-wide text-text-muted mb-1">
                 Effective Date
               </label>
-              <input
-                type="date"
-                value={effectiveDate}
-                onChange={(e) => setEffectiveDate(e.target.value)}
-                className="w-full rounded border border-border px-3 py-1.5 text-sm"
-              />
+              <DateInput value={effectiveDate} onChange={setEffectiveDate}
+                className="w-full rounded border border-border px-3 py-1.5 text-sm" ariaLabel="Effective date" />
             </div>
           </div>
           <div>
@@ -347,8 +348,10 @@ function HistorySection({ entityId }) {
   );
 }
 
-export default function OwnershipTab({ entityId, graph = null }) {
+export default function OwnershipTab({ entityId, graph: initialGraph = null }) {
   const [data, setData] = useState(null);
+  const [graph, setGraph] = useState(initialGraph);
+  const [lookThrough, setLookThrough] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [asOf, setAsOf] = useState("");
@@ -370,6 +373,13 @@ export default function OwnershipTab({ entityId, graph = null }) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+    // the tree: the Overview's own read, re-fetched so it always matches the lists below
+    try {
+      const g = await fetch(`/api/entities/${entityId}/ownership-edges`, { cache: "no-store" });
+      if (g.ok) setGraph(await g.json());
+    } catch {
+      // keep the last tree
     }
   }
 
@@ -395,6 +405,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
   }
 
   const isHistorical = !!asOf && asOf < new Date().toISOString().slice(0, 10);
+  const canWrite = canEditOwnership(data) && !isHistorical;
   const totalPct = data?.owned_by_total_pct ?? 0;
 
   // The interactive ownership graph, embedded so the tree is reachable in one
@@ -415,7 +426,12 @@ export default function OwnershipTab({ entityId, graph = null }) {
       {hasEdges ? (
         <div className="mt-4 space-y-6">
           <OwnershipTree graph={graph} rootId={entityId} direction="up" title="Owned by" />
-          <OwnershipTree graph={graph} rootId={entityId} direction="down" title="Owns" />
+          <OwnershipTree graph={graph} rootId={entityId} direction="down"
+            title={lookThrough ? "Owns — direct and look-through" : "Owns — direct"} maxDepth={lookThrough ? Infinity : 1} />
+          <label className="flex items-center gap-2 text-xs text-text-secondary">
+            <input type="checkbox" checked={lookThrough} onChange={(e) => setLookThrough(e.target.checked)} />
+            Show look-through holdings (what the holdings themselves own)
+          </label>
         </div>
       ) : (
         <p className="mt-3 text-sm text-text-muted">No ownership recorded for this entity.</p>
@@ -448,12 +464,8 @@ export default function OwnershipTab({ entityId, graph = null }) {
       {/* Time-travel bar */}
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium text-text-secondary">View as of</label>
-        <input
-          type="date"
-          value={asOf}
-          onChange={(e) => setAsOf(e.target.value)}
-          className="rounded border border-border px-3 py-1.5 text-sm"
-        />
+        <DateInput value={asOf} onChange={setAsOf} className="rounded border border-border px-3 py-1.5 text-sm"
+          ariaLabel="View as of" />
         <button
           type="button"
           onClick={applyAsOf}
@@ -497,7 +509,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
               </p>
             )}
           </div>
-          {!isHistorical && (
+          {canWrite && (
             <button
               type="button"
               onClick={() => { setAddingOwnedBy(true); setAddingOwns(false); }}
@@ -508,7 +520,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
           )}
         </div>
 
-        {addingOwnedBy && (
+        {canWrite && addingOwnedBy && (
           <AddForm
             entityId={entityId}
             direction="owned_by"
@@ -527,6 +539,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
               item={item}
               onEdit={(i) => { setEditItem(i); setActionError(null); }}
               onDelete={handleDelete}
+              canWrite={canWrite}
             />
           ))}
         </div>
@@ -536,7 +549,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-text-muted">Owns</h3>
-          {!isHistorical && (
+          {canWrite && (
             <button
               type="button"
               onClick={() => { setAddingOwns(true); setAddingOwnedBy(false); }}
@@ -547,7 +560,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
           )}
         </div>
 
-        {addingOwns && (
+        {canWrite && addingOwns && (
           <AddForm
             entityId={entityId}
             direction="owns"
@@ -566,6 +579,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
               item={item}
               onEdit={(i) => { setEditItem(i); setActionError(null); }}
               onDelete={handleDelete}
+              canWrite={canWrite}
             />
           ))}
         </div>
@@ -575,7 +589,7 @@ export default function OwnershipTab({ entityId, graph = null }) {
       <HistorySection entityId={entityId} />
 
       {/* Edit modal */}
-      {editItem && (
+      {canWrite && editItem && (
         <EditModal
           item={editItem}
           onSuccess={() => load(asOf || undefined)}

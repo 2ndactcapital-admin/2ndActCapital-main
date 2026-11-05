@@ -113,6 +113,14 @@ preview (each line's account and resolution, totals per account) → a SECOND Su
 written with authority `stated`, source `manual` (ranked below `altruist`), and listed as provisional; the Altruist
 sync supersedes them (precedence on shared holdings, then every provisional row of the account is closed).
 
+## Households and legal entities (portentry2, 2026-11-05)
+The "Olivo Family" household can now hold the 26 legal entities as members (Portfolio → Households → the household →
+Members: add a trust, LLC, LP or foundation from the CRM), and an account's owner may be any member — a person or a
+legal entity — or a legal entity a member owns ("adds it as a member" in the same step). That unblocks the 25 entity
+accounts (all eight integrated ones included). As of this sprint the household still lists its 14 people: the Muse
+re-run adds the 26 legal entities and their accounts through the app (no script writes demo rows). Add account also
+takes the registration type, tax status, billable (off by default here — a demo household) and discretionary flags.
+
 ## Protection rule (crmdetail1)
 Every Olivo record is tagged `demo-olivo`. A record tagged `demo-*`, or a household whose members are all
 demo-tagged, can never be deleted by a script: the database's BEFORE DELETE guard refuses it in a real org (the

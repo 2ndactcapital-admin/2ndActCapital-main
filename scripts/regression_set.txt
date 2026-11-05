@@ -39,3 +39,4 @@ verify_perms1.py
 verify_secmaster1.py
 verify_crmdetail1.py
 verify_portentry1.py
+verify_portentry2.py

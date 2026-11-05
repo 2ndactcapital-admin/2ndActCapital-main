@@ -7,6 +7,7 @@ import { freeTextSubType as isFreeTextSubType, maritalOptions, statusOptions, su
 import { useCrmVocab } from "@/components/crm/useCrmVocab";
 import { ReferenceSelect } from "@/components/ReferenceSelect";
 import PersonNameFields from "@/components/crm/PersonNameFields";
+import DateInput from "@/components/ui/DateInput";
 
 const INPUT_CLASS =
   "mt-1 w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -124,8 +125,21 @@ export default function NewEntityForm() {
 
         <div>
           <label className={LABEL_CLASS}>{dateLabel}</label>
-          <input type="date" name="inception_date" className={INPUT_CLASS} />
+          <DateInput name="inception_date" className={INPUT_CLASS} />
         </div>
+        {/* PORTENTRY2 (MUSE-OLIVO-B112-01) — maiden name and date of death on New, not only on Edit */}
+        {isPerson && (
+          <>
+            <div>
+              <label className={LABEL_CLASS}>Maiden Name</label>
+              <input name="maiden_name" className={INPUT_CLASS} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Date of Death</label>
+              <DateInput name="date_of_death" className={INPUT_CLASS} />
+            </div>
+          </>
+        )}
         <div>
           <label className={LABEL_CLASS}>Primary Email</label>
           <input type="email" name="primary_email" className={INPUT_CLASS} />

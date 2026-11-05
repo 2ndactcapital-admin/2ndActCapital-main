@@ -4,7 +4,10 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { addAddressAction } from "@/lib/crmActions";
 import { CountryRegionSelect } from "@/components/ReferenceSelect";
 import { ReferenceSelect } from "@/components/ReferenceSelect";
+import { seasonalStatus } from "@/lib/portentry2.mjs";
 
+// PORTENTRY2 — (C.check) a seasonal address says whether it is the CURRENT one today (by month) or "Seasonal, <months>";
+// (C-01) an optional note per address; (PERS-01) "Add address" renders only when the record envelope allows it.
 const INPUT = "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 const ADDRESS_TYPES = [
   { value: "primary_residence", label: "Primary Residence" },
@@ -22,12 +25,8 @@ function typeLabel(v) {
   return ADDRESS_TYPES.find((t) => t.value === v)?.label || v;
 }
 
-function seasonLabel(from, to) {
-  if (!from || !to) return null;
-  return `${MONTH_NAMES[from]}–${MONTH_NAMES[to]}`;
-}
 
-export default function AddressesTab({ entityId, initial }) {
+export default function AddressesTab({ entityId, initial, canAdd = false }) {
   const [items, setItems] = useState(initial || []);
   const [adding, setAdding] = useState(false);
   const [isSeasonal, setIsSeasonal] = useState(false);
@@ -52,7 +51,7 @@ export default function AddressesTab({ entityId, initial }) {
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Addresses</h2>
-        {!adding && (
+        {canAdd && !adding && (
           <button type="button" onClick={() => setAdding(true)} className="text-sm font-medium text-navy hover:underline">
             Add address
           </button>
@@ -70,9 +69,10 @@ export default function AddressesTab({ entityId, initial }) {
                   {typeLabel(a.address_type)}
                 </span>
                 {a.is_primary && <span className="text-xs text-text-muted">Primary</span>}
-                {a.is_seasonal && seasonLabel(a.season_from_month, a.season_to_month) && (
-                  <span className="rounded-full border border-border px-2 py-0.5 text-xs text-text-secondary">
-                    Seasonal · {seasonLabel(a.season_from_month, a.season_to_month)}
+                {seasonalStatus(a, new Date()) && (
+                  <span className={`rounded-full border px-2 py-0.5 text-xs ${seasonalStatus(a, new Date()).current
+                    ? "border-[#2D6A4F] text-[#2D6A4F]" : "border-border text-text-secondary"}`}>
+                    {seasonalStatus(a, new Date()).label}
                   </span>
                 )}
               </div>
@@ -84,12 +84,13 @@ export default function AddressesTab({ entityId, initial }) {
               {a.phone && (
                 <p className="mt-1 text-xs text-text-muted">{a.phone}</p>
               )}
+              {a.note && <p className="mt-1 text-xs text-text-secondary">{a.note}</p>}
             </li>
           ))}
         </ul>
       )}
 
-      {adding && (
+      {canAdd && adding && (
         <form ref={formRef} action={formAction} className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
           <select name="address_type" defaultValue="primary_residence" className={INPUT}>
             {ADDRESS_TYPES.map((t) => (
@@ -111,6 +112,7 @@ export default function AddressesTab({ entityId, initial }) {
           </div>
 
           <input name="phone" placeholder="Phone number" className={INPUT} />
+          <input name="note" placeholder="Note (optional)" className={INPUT} />
 
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input type="checkbox" name="is_primary" /> Primary address

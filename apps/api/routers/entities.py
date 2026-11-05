@@ -376,6 +376,14 @@ async def create_entity(request: Request, body: EntityCreate):
 SEARCH_COLS = "id, display_name, legal_name, entity_type, is_incomplete, is_active"
 
 
+def search_tokens(q: str | None) -> list[str]:
+    """PORTENTRY2 — the picker query as lower-case words (whitespace / commas split; LIKE wildcards escaped out)."""
+    import re
+
+    words = re.split(r"[\s,]+", (q or "").strip().lower())
+    return [w.replace("%", "").replace("_", "") for w in words if w.replace("%", "").replace("_", "")][:6]
+
+
 @router.get("/entities/search", response_model=EntitySearchResponse)
 async def search_entities(
     request: Request,
@@ -404,9 +412,19 @@ async def search_entities(
     if not include_incomplete:
         conditions.append("is_incomplete = false")
 
-    pattern = f"%{q.lower()}%" if q else "%"
-    params.append(pattern)
-    conditions.append(f"(LOWER(display_name) LIKE ${len(params)} OR LOWER(COALESCE(legal_name,'')) LIKE ${len(params)})")
+    # PORTENTRY2 (MUSE-OLIVO-D19-01) — WORD-TOKEN search: every word of the query must appear in one of the name
+    # fields (display, legal, first, middle, surname, maiden), in any order — "Marguerite Olivo" finds
+    # "Marguerite Meloni Olivo". A one-word query behaves exactly as the old substring match did.
+    tokens = search_tokens(q)
+    if not tokens:
+        tokens = [""]
+    for tok in tokens:
+        params.append(f"%{tok}%")
+        n = len(params)
+        conditions.append(
+            f"(LOWER(display_name) LIKE ${n} OR LOWER(COALESCE(legal_name,'')) LIKE ${n} "
+            f"OR LOWER(COALESCE(first_name,'')) LIKE ${n} OR LOWER(COALESCE(middle_name,'')) LIKE ${n} "
+            f"OR LOWER(COALESCE(surname,'')) LIKE ${n} OR LOWER(COALESCE(maiden_name,'')) LIKE ${n})")
 
     if entity_type:
         params.append(entity_type)
@@ -704,7 +722,7 @@ async def get_entity_full(request: Request, entity_id: UUID):
             SELECT id, entity_id, address_type, street1, street2, city, state,
                    postal_code, country, phone, country_code, region_code,
                    is_verified, is_primary, is_seasonal,
-                   season_from_month, season_to_month, created_at
+                   season_from_month, season_to_month, note, created_at
             FROM entity_addresses
             WHERE entity_id = $1 AND org_id = $2
               AND valid_to IS NULL AND system_to IS NULL
@@ -1119,12 +1137,12 @@ async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
                 org_id, entity_id, address_type, street1, street2, city, state,
                 postal_code, country, phone, country_code, region_code,
                 is_primary, is_verified, is_seasonal,
-                season_from_month, season_to_month
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                season_from_month, season_to_month, note
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
             RETURNING id, entity_id, address_type, street1, street2, city, state,
                       postal_code, country, phone, country_code, region_code,
                       is_verified, is_primary, is_seasonal,
-                      season_from_month, season_to_month, created_at
+                      season_from_month, season_to_month, note, created_at
             """,
             org_id,
             entity_id,
@@ -1143,6 +1161,7 @@ async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
             body.is_seasonal,
             body.season_from_month,
             body.season_to_month,
+            (body.note or "").strip() or None,
         )
     return AddressResponse(**dict(row))
 
@@ -1181,14 +1200,14 @@ async def update_address(
                     org_id, entity_id, address_type, street1, street2, city,
                     state, postal_code, country, phone, country_code, region_code,
                     is_verified, is_primary, is_seasonal,
-                    season_from_month, season_to_month,
+                    season_from_month, season_to_month, note,
                     valid_from, valid_to, system_from, system_to,
                     created_by, created_at
                 )
                 SELECT org_id, entity_id, address_type, street1, street2, city,
                        state, postal_code, country, phone, country_code, region_code,
                        is_verified, is_primary, is_seasonal,
-                       season_from_month, season_to_month,
+                       season_from_month, season_to_month, note,
                        valid_from, valid_to, system_from, now(),
                        created_by, created_at
                 FROM entity_addresses WHERE id = $1
@@ -1217,6 +1236,7 @@ async def update_address(
                 "is_seasonal",
                 "season_from_month",
                 "season_to_month",
+                "note",
             ):
                 if field in updates:
                     params.append(updates[field])
@@ -1229,7 +1249,7 @@ async def update_address(
                 RETURNING id, entity_id, address_type, street1, street2, city,
                           state, postal_code, country, phone, country_code, region_code,
                           is_verified, is_primary, is_seasonal,
-                          season_from_month, season_to_month, created_at
+                          season_from_month, season_to_month, note, created_at
                 """,
                 *params,
             )

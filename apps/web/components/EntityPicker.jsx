@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { pickerDisplay, pickerSearchParams } from "@/lib/portentry2.mjs";
 
 const INPUT =
   "w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -20,13 +21,10 @@ const TYPE_LABELS = {
   other: "Other",
 };
 
-async function apiSearch({ q, entityTypes, excludeId, page, pageSize }) {
-  const p = new URLSearchParams();
-  if (q) p.set("q", q);
-  (entityTypes || []).forEach((t) => p.append("entity_type", t));
-  if (excludeId) p.append("exclude_ids", excludeId);
-  p.set("page", String(page || 1));
-  p.set("page_size", String(pageSize || 20));
+async function apiSearch({ q, entityTypes, excludeId, page, pageSize, includeInactive }) {
+  // PORTENTRY2 — every word is sent (the API matches words in any order across the name fields); inactive /
+  // deceased records only when asked (MUSE-OLIVO-E4-01 / D19-01).
+  const p = pickerSearchParams({ q, entityTypes, excludeId, page, pageSize, includeInactive });
   const res = await fetch(`/api/entities/search?${p}`, { cache: "no-store" });
   if (!res.ok) return { items: [], total: 0, has_more: false };
   return res.json();
@@ -54,6 +52,9 @@ async function apiStub({ display_name, entity_type, force_create }) {
  *   createEntityType — string — entity_type to use when creating a stub
  *   excludeId       — uuid string to exclude from results (e.g. current entity)
  *   className       — override input class
+ *   includeInactive — PORTENTRY2: start with "Include inactive / deceased" ticked (family relationship types);
+ *                     the initial value only — a caller that changes it re-keys the picker
+ *   showInactiveToggle — PORTENTRY2: show that checkbox (default true)
  */
 export default function EntityPicker({
   value,
@@ -64,8 +65,11 @@ export default function EntityPicker({
   createEntityType = "individual",
   excludeId = null,
   className,
+  includeInactive: includeInactiveProp = false,
+  showInactiveToggle = true,
 }) {
-  const [query, setQuery] = useState(value?.display_name || "");
+  const [query, setQuery] = useState(pickerDisplay(value));
+  const [includeInactive, setIncludeInactive] = useState(Boolean(includeInactiveProp));
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -75,10 +79,22 @@ export default function EntityPicker({
   const timer = useRef(null);
   const wrapRef = useRef(null);
 
-  // Sync external value changes
+  // Sync external value changes: a chosen record shows its NAME (never its id — MUSE-OLIVO-D17-01); a value the
+  // parent cleared because the user is typing leaves the typed text alone.
   useEffect(() => {
-    setQuery(value?.display_name || "");
-  }, [value?.id]);
+    if (value) setQuery(pickerDisplay(value));
+  }, [value?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // PORTENTRY2 (MUSE-OLIVO-E-01) — search on ANY change of the box's text however it arrived (keystrokes, paste,
+  // programmatic fill), and again when the inactive toggle flips.
+  const lastSearched = useRef(null);
+  useEffect(() => {
+    const key = `${query}|${includeInactive}`;
+    if (value || !query.trim() || lastSearched.current === key) return;
+    lastSearched.current = key;
+    setOpen(true);
+    runSearch(query, 1);
+  }, [query, includeInactive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -95,7 +111,7 @@ export default function EntityPicker({
     setLoading(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      const data = await apiSearch({ q: val, entityTypes, excludeId, page: pg, pageSize: 20 });
+      const data = await apiSearch({ q: val, entityTypes, excludeId, page: pg, pageSize: 20, includeInactive });
       if (pg === 1) {
         setResults(data.items || []);
       } else {
@@ -109,15 +125,12 @@ export default function EntityPicker({
 
   function handleInput(val) {
     setQuery(val);
-    onChange(null);
+    if (value) onChange(null);
     setPage(1);
     if (!val.trim()) {
       setResults([]);
       setOpen(false);
-      return;
     }
-    setOpen(true);
-    runSearch(val, 1);
   }
 
   function loadMore() {
@@ -125,7 +138,8 @@ export default function EntityPicker({
   }
 
   function select(entity) {
-    setQuery(entity.display_name);
+    setQuery(pickerDisplay(entity));
+    lastSearched.current = `${pickerDisplay(entity)}|${includeInactive}`;
     setResults([]);
     setOpen(false);
     onChange(entity);
@@ -165,6 +179,7 @@ export default function EntityPicker({
         type="text"
         value={query}
         onChange={(e) => handleInput(e.target.value)}
+        onInput={(e) => { if (e.currentTarget.value !== query) handleInput(e.currentTarget.value); }}
         onFocus={() => {
           if (query.trim() && !value) {
             setOpen(true);
@@ -175,6 +190,13 @@ export default function EntityPicker({
         className={className || INPUT}
         autoComplete="off"
       />
+      {showInactiveToggle && (
+        <label className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
+          <input type="checkbox" checked={includeInactive}
+            onChange={(e) => { setIncludeInactive(e.target.checked); lastSearched.current = null; }} />
+          Include inactive / deceased
+        </label>
+      )}
 
       {open && (
         <div className="absolute z-50 mt-1 max-h-64 w-full overflow-auto rounded-md border border-border bg-white shadow-sm">
@@ -194,6 +216,9 @@ export default function EntityPicker({
             >
               <span className="flex items-center gap-1.5 truncate">
                 <span className="truncate">{e.display_name}</span>
+                {e.is_active === false && (
+                  <span className="shrink-0 text-[10px] text-text-muted">inactive</span>
+                )}
                 {e.is_incomplete && (
                   <span
                     className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"

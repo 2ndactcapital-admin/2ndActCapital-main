@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { canEdit } from "@/lib/portentry2.mjs";
 import { useSearchParams } from "next/navigation";
 import EntityDetailsForm from "@/components/crm/EntityDetailsForm";
 import AttributesSection from "@/components/crm/AttributesSection";
@@ -51,6 +52,18 @@ export default function EntityDetailTabs({ full, graph }) {
 
   const [active, setActive] = useState(initialTab);
 
+  // PORTENTRY2 (MUSE-OLIVO-PERS-01) — the record's write envelope (GET /entities/{id}/permissions: each flag is the
+  // exact rule of the route behind it). Until it arrives, or if it is lost, every write control stays hidden.
+  const [perms, setPerms] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/entities/${encodeURIComponent(entity.id)}/permissions`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live) setPerms(d); })
+      .catch(() => { if (live) setPerms(null); });
+    return () => { live = false; };
+  }, [entity.id]);
+
   return (
     <div>
       {/* Tab nav */}
@@ -76,7 +89,7 @@ export default function EntityDetailTabs({ full, graph }) {
         <div className={active === "overview" ? "" : "hidden"}>
           <div className="grid gap-8 lg:grid-cols-2">
             <div className="rounded-lg border border-border bg-bg-card p-6">
-              <EntityDetailsForm entity={entity} />
+              <EntityDetailsForm entity={entity} canEdit={canEdit(perms, "record")} />
             </div>
             <div className="rounded-lg border border-border bg-bg-card p-6">
               <h2 className="text-sm font-semibold text-text-secondary">Ownership</h2>
@@ -114,29 +127,29 @@ export default function EntityDetailTabs({ full, graph }) {
 
         {/* Addresses */}
         <div className={active === "addresses" ? "" : "hidden"}>
-          <AddressesTab entityId={entity.id} initial={full.addresses || []} />
+          <AddressesTab entityId={entity.id} initial={full.addresses || []} canAdd={canEdit(perms, "addresses")} />
         </div>
 
         {/* Employment (individuals only) */}
         {isIndividual && (
           <div className={active === "employment" ? "" : "hidden"}>
-            <EmploymentTab entityId={entity.id} initial={full.employment || []} />
+            <EmploymentTab entityId={entity.id} initial={full.employment || []} canAdd={canEdit(perms, "employment")} />
           </div>
         )}
 
         {/* Tax IDs */}
         <div className={active === "tax_ids" ? "" : "hidden"}>
-          <TaxIdsTab entityId={entity.id} initial={full.tax_ids || []} />
+          <TaxIdsTab entityId={entity.id} initial={full.tax_ids || []} canAdd={canEdit(perms, "tax_ids")} />
         </div>
 
         {/* Social */}
         <div className={active === "social" ? "" : "hidden"}>
-          <SocialTab entityId={entity.id} initial={full.social_profiles || []} />
+          <SocialTab entityId={entity.id} initial={full.social_profiles || []} canAdd={canEdit(perms, "social")} />
         </div>
 
         {/* Notes */}
         <div className={active === "notes" ? "" : "hidden"}>
-          <NotesTab entityId={entity.id} initial={full.notes || []} />
+          <NotesTab entityId={entity.id} initial={full.notes || []} canAdd={canEdit(perms, "notes")} />
         </div>
 
         {/* Documents (manual uploads) */}

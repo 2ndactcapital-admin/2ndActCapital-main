@@ -55,6 +55,7 @@ export async function addAddressAction(entityId, prevState, formData) {
         is_seasonal: checked(formData.get("is_seasonal")),
         season_from_month: sfmRaw ? parseInt(sfmRaw, 10) : undefined,
         season_to_month: stmRaw ? parseInt(stmRaw, 10) : undefined,
+        note: empty(formData.get("note")) || undefined,   // PORTENTRY2 (MUSE-OLIVO-C-01)
       },
     });
     return { ok: true, item };

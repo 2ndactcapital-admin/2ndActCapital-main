@@ -115,3 +115,35 @@ def check_entity_values(vocab: dict, *, entity_type: str | None, status=None, ma
             errors.append(f"this entity type has no sub-types (got '{sub_type}')")
     if errors:
         raise VocabularyError("; ".join(errors))
+
+
+# ── PORTENTRY2 (MUSE-OLIVO-H-01) — account vocabularies, the same config table and seeding path ────────────────
+CAT_ACCOUNT_REGISTRATION = "account_registration_types"
+CAT_ACCOUNT_TAX = "account_tax_statuses"
+ACCOUNT_CATEGORIES = (CAT_ACCOUNT_REGISTRATION, CAT_ACCOUNT_TAX)
+ACCOUNT_REG_PREFIX = "acct_reg_"
+ACCOUNT_TAX_PREFIX = "acct_tax_"
+
+
+def build_account_vocab(rows) -> dict:
+    """Config rows → {registration_types, tax_statuses}: [{key, label}] in display order (pure)."""
+    reg, tax = [], []
+    for r in rows:
+        key, label, cat = r["config_key"], r["config_value"], r["category"]
+        if cat == CAT_ACCOUNT_REGISTRATION and key.startswith(ACCOUNT_REG_PREFIX):
+            reg.append({"key": key[len(ACCOUNT_REG_PREFIX):], "label": label})
+        elif cat == CAT_ACCOUNT_TAX and key.startswith(ACCOUNT_TAX_PREFIX):
+            tax.append({"key": key[len(ACCOUNT_TAX_PREFIX):], "label": label})
+    return {"registration_types": reg, "tax_statuses": tax}
+
+
+async def account_vocab(conn, org_id) -> dict:
+    """The org's account registration types and tax statuses; copied from the default org on first read
+    (crm_seed_org_config — ON CONFLICT DO NOTHING, so the CRM rows an org already has are untouched)."""
+    q = ("SELECT config_key, config_value, category, display_order FROM config WHERE org_id = $1 "
+         "AND category = ANY($2::text[]) AND is_active ORDER BY category, display_order, config_key")
+    rows = await conn.fetch(q, _u(org_id), list(ACCOUNT_CATEGORIES))
+    if not rows:
+        await conn.fetchval("SELECT crm_seed_org_config($1)", _u(org_id))
+        rows = await conn.fetch(q, _u(org_id), list(ACCOUNT_CATEGORIES))
+    return build_account_vocab(rows)

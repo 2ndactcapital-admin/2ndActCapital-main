@@ -48,6 +48,9 @@ export async function createEntityAction(prevState, formData) {
     linkedin_url: emptyToNull(formData.get("linkedin_url")),
     primary_email: emptyToNull(formData.get("primary_email")),
     primary_phone: emptyToNull(formData.get("primary_phone")),
+    // PORTENTRY2 (MUSE-OLIVO-B112-01)
+    maiden_name: emptyToNull(formData.get("maiden_name")),
+    date_of_death: emptyToNull(formData.get("date_of_death")),
   };
 
   if (!body.display_name) {
