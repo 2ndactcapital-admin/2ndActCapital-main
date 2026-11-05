@@ -4261,6 +4261,26 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY asset_identifiers_pkey: (id)
 
+-- ===== portfolio.asset_relinks =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   asset_id                                 uuid NOT NULL
+--   global_security_id                       uuid NOT NULL
+--   id_type                                  text NOT NULL
+--   id_value                                 text NOT NULL
+--   asset_name                               text NOT NULL
+--   security_name                            text
+--   relinked_by                              uuid
+--   trigger                                  text NOT NULL DEFAULT 'manual'::text
+--   acknowledged_by                          uuid
+--   acknowledged_at                          timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY asset_relinks_pkey: (id)
+
 -- ===== portfolio.assets =====
 --   id                                       uuid NOT NULL DEFAULT extensions.uuid_generate_v4()
 --   org_id                                   uuid NOT NULL
@@ -4283,6 +4303,8 @@
 --   valid_to                                 timestamp with time zone
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
+--   manual_terms                             jsonb
+--   notes                                    text
 --   PRIMARY KEY assets_pkey: (id)
 
 -- ===== portfolio.commitments =====
@@ -5297,6 +5319,48 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY provider_call_log_pkey: (id)
 
+-- ===== portfolio.provisional_imports =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   file_name                                text
+--   file_sha256                              text NOT NULL
+--   as_of                                    date NOT NULL
+--   status                                   text NOT NULL DEFAULT 'draft'::text
+--   rows_read                                integer NOT NULL DEFAULT 0
+--   rows_accepted                            integer NOT NULL DEFAULT 0
+--   rows_rejected                            integer NOT NULL DEFAULT 0
+--   preview                                  jsonb NOT NULL DEFAULT '{}'::jsonb
+--   totals                                   jsonb NOT NULL DEFAULT '{}'::jsonb
+--   entered_by                               uuid NOT NULL
+--   approved_by                              uuid
+--   approval_task_id                         uuid
+--   decided_at                               timestamp with time zone
+--   decision_note                            text
+--   notes                                    text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY provisional_imports_pkey: (id)
+
+-- ===== portfolio.provisional_positions =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   import_id                                uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   position_id                              uuid NOT NULL
+--   as_of                                    date NOT NULL
+--   superseded_by_source                     text
+--   superseded_reason                        text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY provisional_positions_pkey: (id)
+
 -- ===== portfolio.reference_filing_supplements =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   reference_filing_id                      uuid NOT NULL
@@ -5678,6 +5742,27 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY replica_viability_reports_pkey: (id)
+
+-- ===== portfolio.rollup_requests =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   family_key                               text NOT NULL
+--   entity_ids                               ARRAY NOT NULL
+--   reason                                   text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'pending'::text
+--   requested_by                             uuid
+--   requested_at                             timestamp with time zone NOT NULL DEFAULT now()
+--   run_after                                timestamp with time zone NOT NULL DEFAULT now()
+--   started_at                               timestamp with time zone
+--   finished_at                              timestamp with time zone
+--   as_of_date                               date
+--   result                                   jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY rollup_requests_pkey: (id)
 
 -- ===== portfolio.sec_13f_list =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
