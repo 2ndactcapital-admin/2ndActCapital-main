@@ -6,6 +6,7 @@ import XrayView from "@/components/xray/XrayView";
 import AuthorityPanel from "@/components/authority/AuthorityPanel";
 import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 import ConsolidatePanel from "@/components/replication/ConsolidatePanel";
+import BulkPendingLink from "@/components/approvals/BulkPendingLink";
 
 // REP7 — Household → tab "X-ray": the look-through of every fund the
 // household holds (managed and held-away accounts), replicable funds and the
@@ -56,6 +57,8 @@ export default async function HouseholdPage({ params, searchParams }) {
         <a className={`pb-2 ${tab === "lot-method" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=lot-method`}>Lot method</a>
         <a className={`pb-2 ${tab === "consolidate" ? "border-b-2 border-[#C5A880] text-navy" : "text-text-muted"}`} href={`/portfolio/households/${id}?tab=consolidate`}>Consolidate</a>
       </nav>
+      {/* BULKAPPROVE1 — this household's pending items, when more than one waits for this viewer */}
+      <div className="mt-3"><BulkPendingLink householdId={id} /></div>
       <div className="mt-4">
         {tab === "consolidate" ? <ConsolidatePanel householdId={id} />
           : tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />

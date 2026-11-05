@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+BULKAPPROVE1 (2026-11-05, Approvals → Bulk approve for authority & custody changes and held-away entries — the SAME single-approval service per item, per-item results, cap 200, audit per item + per batch; verify WRITTEN, not yet run): see the top entry.
 BUGFIX3 (2026-11-05, the Olivo-pass CRITICAL: a member read every family's positions — every portfolio read now takes the one shared visible-entity rule; private investments without a commitment, household Recalculate, provisional import rows live, editable addresses, permission-true CRM controls, manual-asset counts, option picker, fixed-point money; verify WRITTEN, not yet run): see the top entry.
 PORTENTRY2 (2026-11-05, what HollisMuse hit onboarding the Olivo family — legal entities join an existing household and own accounts, account type / tax / billable fields + DVP reasons, permission-true CRM controls, the ownership views agree, picker / dates / dialogs / detail keys / seasonal addresses / Households nav, staff security search; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PORTENTRY1 (2026-11-04, the Olivo entry-plan gaps closed — CRM status / marital / sub-type vocabularies from the config table, ILIT / LP / foundation registry keys, ownership % for org admins, edit_crm_contact for support staff, manual positions for any holding (org-scoped manual assets, reported relink), direct assets + private investments with commitments, the integrated-account one-time import (Super Admin, maker-checker, superseded by the feed), family-scoped net worth refresh after every write, _verify_self fast-forward fix; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
@@ -335,6 +336,54 @@ committed and git shows no deletion. Those sprints' follow-ups are therefore
 *not* recorded here yet and have not been back-filled by this sprint. If you are
 looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
+
+---
+
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000. BULKAPPROVE1 — Approvals → Bulk approve: authority & custody changes and held-away entries, many at once, the same rules; verify WRITTEN, not yet run (2026-11-05)
+
+**Why.** Joe (2026-11-05): "account authority approval needs a 'bulk' screen — it's 5 clicks per to approve." The Olivo
+onboarding (34 accounts, many non-default authorities, ~25 held-away drafts) means dozens of second-person approvals.
+Task 1 findings (single paths, the clicks, later candidates): `docs/BULKAPPROVE1_DISCOVERY.md`.
+
+**The screen.** Portfolio → Approvals (`/portfolio/approvals`, menu gate any(view_authority | approve_authority |
+view_held_away | approve_held_away), strict). Tabs Authority & custody | Held-away entries (from the envelope). A table of
+PENDING items — household, account (masked), change (from → to, with the reason), maker, requested at; filters
+household / maker / type / age (vocabularies built by the server from the items); select one / select all on the
+FILTERED set; items the viewer cannot decide are greyed with the server's reason (you made it / you do not hold the
+permission / no longer pending — its task was withdrawn); Approve selected / Reject selected (a note required); ONE
+confirmation naming the count and listing the items; held-away rows expand to their lines and totals (fixed-point
+money). Logic in `apps/web/lib/bulkApprove.mjs`, fails closed (a lost envelope, `can_approve` not `=== true`, no
+`editable: ["decision"]` or no server cap → no control). Entry points: "N pending — review in bulk" on the household
+page, Portfolio → Accounts and the dashboard's My tasks, only when more than one item waits for THIS viewer
+(`GET /approvals/summary`).
+
+**The one-path rule.** `POST /api/v1/approvals/bulk {type, item_ids, decision, note}` (`routers/approvals.py`,
+`services/bulk_approvals.py`): the route gate any(approve_authority | approve_held_away), then the type's own approve
+key (403 naming it — a user without it is refused the whole request); then each item through **the same service
+function the single route calls** (`services.authority.decide` / `services.held_away.decide_import`), once per item,
+in its own transaction(s) — so maker ≠ checker (service, human task, engine, table CHECK), the per-call
+`rbac.has_permission`, the state / prechecks, the system-axis archive and the single path's own audit + events all
+apply unchanged. Each item is its own decision by its own approver. Per-item results approved / rejected / refused +
+reason (404 not found for another org's id, 403 maker, 409 no longer pending, 422 bad id); one failure never stops or
+undoes the others; at most 200 ids (422 over the cap); duplicates collapse. Audit: one `approvals.bulk_item` row per
+item (refusals included) and one `approvals.bulk` row per request (who, how many, ids, counts). Nothing new writes a
+setting or a position.
+
+**Later candidates (1c, listed only — none built).** Model approval, rebalance proposals, allocation / hypothetical
+policies, integrated import, account model changes, lot method, tax profiles, substitutions, tilts, gifts, note
+replicas, option packages — each would be one more `TYPES` entry pointing at its own single-approval function.
+Execution approval is custody-cliff adjacent and needs its own design review before any bulk tab.
+
+**Proof.** `apps/api/scripts/verify_bulkapprove1.py` (WRITTEN, not run — WSL memory): 6 authority drafts + 3 held-away
+entries by maker M in a fixture org; checker C bulk-approves 5 in ONE request (each approved by C, its own task closed,
+its own audit rows; the effective settings equal a twin approved through the single route); M's own items refused per
+item, nothing changed; a user without approve_authority refused the whole request while the identical body is
+admitted for C; a mixed batch (one already approved, one withdrawn) refuses those two with reasons; reject needs a
+note and changes no setting; held-away bulk approval creates the same positions row-for-row as single approval; the
+cap; a bad id beside good ones; org isolation both directions (rolbypassrls = false); demo-olivo and real rows
+unchanged (count + checksum); own routes via _verify_self; authz1_routes --check CURRENT; node --test tests/ and npm run
+build; regression verify_rep7b.py once, flat, after teardown, VERIFY_NESTED=1, 2700 s. `node --test tests/` run here:
+540 tests, 0 fail (10 new in tests/bulkapprove1). `docs/AUTHZ1_ROUTES.md` regenerated (CURRENT).
 
 ---
 

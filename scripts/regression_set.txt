@@ -41,3 +41,4 @@ verify_crmdetail1.py
 verify_portentry1.py
 verify_portentry2.py
 verify_bugfix3.py
+verify_bulkapprove1.py
