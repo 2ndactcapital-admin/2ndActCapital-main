@@ -145,6 +145,8 @@ class AccountSyncResult:
     transactions_created: int = 0
     transactions_skipped_duplicate: int = 0
     transactions_errors: list[RowError] = field(default_factory=list)
+    #: PORTENTRY1 — what superseding the account's provisional (one-time import) rows did, or None
+    provisional: dict | None = None
 
 
 @dataclass
@@ -493,9 +495,33 @@ async def sync_resolved_accounts(
             environment=environment, transport=transport,
             asset_by_key=asset_by_key, result=account_result,
         )
+        # PORTENTRY1 (GAP-PORT-02) — the feed supersedes this account's one-time provisional import (precedence on
+        # every shared holding key, then the provisional rows are closed). A failure here never fails the sync.
+        if account_result.positions_created:
+            try:
+                from services.integrated_import import supersede_for_account
+
+                account_result.provisional = await supersede_for_account(
+                    conn, org_id, hollisworks_account_id, by_source=SOURCE_SYSTEM)
+            except Exception as exc:  # noqa: BLE001
+                account_result.provisional = {"error": f"{type(exc).__name__}: {exc}"}
         result.accounts.append(account_result)
         result.accounts_synced += 1
 
+    # PORTENTRY1 (GAP-PORT-05) — each synced family's net worth, once the batch is finished (family-scoped)
+    owners = []
+    for a in result.accounts:
+        if a.positions_created:
+            owners.append(await _owner_entity_id_for_account(conn, org_id, a.hollisworks_account_id))
+    if owners:
+        try:
+            from services import portfolio_refresh as PR
+
+            req = await PR.request_rollup(conn, org_id, owners, reason="altruist sync", delay_s=0)
+            if req:
+                await PR.run_request(conn, org_id, req["id"])
+        except Exception:  # noqa: BLE001 — the nightly picks it up
+            pass
     return result
 
 

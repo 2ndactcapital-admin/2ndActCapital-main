@@ -10,6 +10,7 @@ from collections import deque
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.entities import (
     OPERATIONAL_ENTITY_TYPES,
@@ -49,6 +50,11 @@ from schemas.entities import (
 )
 from services.audit import write_audit_log
 from services.crm_vocab import DETAIL_PREFIX
+from services.crm_config import VocabularyError, check_entity_values, crm_vocab
+
+#: PORTENTRY1 — notes, addresses, phones, emails. edit_crm_contact grants NOTHING else (no legal, ownership,
+#: relationship, tax-id, detail, status or tag write — those keep manage_members).
+CONTACT_WRITE_PERMISSIONS = ("manage_members", "edit_crm_contact")
 from services.entity_writes import EntityWriteError, apply_people_rule, update_entity_row
 from services.database import get_pool
 from services.ownership_read import ownership_edges
@@ -58,6 +64,7 @@ from services.authz import (
     require_entity_access,
     require_permission,
     require_internal,
+    require_internal_permission,
     scope_ids,
 )
 
@@ -282,6 +289,15 @@ async def create_entity(request: Request, body: EntityCreate):
         if derived:
             legal_name = derived
 
+    # PORTENTRY1 (GAP-CRM-01..03) — status / marital status / sub-type from the org's config vocabularies.
+    async with pool.acquire() as conn:
+        vocab = await crm_vocab(conn, org_id)
+    try:
+        check_entity_values(vocab, entity_type=body.entity_type.value, status=body.status or "prospect",
+                            marital_status=body.marital_status, sub_type=body.sub_type)
+    except VocabularyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     # CRMDETAIL1 — a person created with a date of death is deceased and inactive.
     try:
         people = apply_people_rule(body.entity_type.value, {"date_of_death": body.date_of_death})
@@ -302,11 +318,11 @@ async def create_entity(request: Request, body: EntityCreate):
                     is_active, url, country_code, region_code,
                     sub_type, status, lead_source, relationship_manager_id,
                     tags, linkedin_url, primary_email, primary_phone,
-                    is_incomplete, created_via, maiden_name, date_of_death
+                    is_incomplete, created_via, maiden_name, date_of_death, marital_status
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                     $12, $13, $14, $15, $16, $17, $18, $19,
-                    $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
+                    $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
                 )
                 RETURNING {ENTITY_COLUMNS}
                 """,
@@ -341,6 +357,7 @@ async def create_entity(request: Request, body: EntityCreate):
                 body.created_via,
                 body.maiden_name,
                 body.date_of_death,
+                body.marital_status or None,
             )
             await write_audit_log(
                 conn,
@@ -792,6 +809,15 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 if derived:
                     updates["legal_name"] = derived
 
+            # PORTENTRY1 (GAP-CRM-01..03) — vocabulary check against the org's config (an unchanged value passes)
+            try:
+                check_entity_values(await crm_vocab(conn, org_id),
+                                    entity_type=etype.value if isinstance(etype, EntityType) else str(etype),
+                                    status=updates.get("status"), marital_status=updates.get("marital_status"),
+                                    sub_type=updates.get("sub_type"), current=dict(current))
+            except VocabularyError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
             # CRMDETAIL1 — the people rule (date_of_death → deceased + inactive), then the ONE entity write path
             # (services.entity_writes: archive the prior version with system_to = now(), update the live row, stable
             # id — Rule 3 system axis).
@@ -810,6 +836,37 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 old=dict(current),
                 new=dict(updated),
             )
+    return EntityOut(**dict(updated))
+
+
+class ContactUpdate(BaseModel):
+    """PORTENTRY1 (GAP-CRM-06) — the record's primary email / phone only (nothing legal, no status, no tags)."""
+    model_config = ConfigDict(extra="forbid")
+    primary_email: str | None = Field(default=None, max_length=320)
+    primary_phone: str | None = Field(default=None, max_length=60)
+
+
+@router.put("/entities/{entity_id}/contact", response_model=EntityOut)
+async def update_entity_contact(request: Request, entity_id: UUID, body: ContactUpdate):
+    require_internal_permission(request, "manage_members", "edit_crm_contact")
+    org_id = get_org_id(request)
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=422, detail="send primary_email and / or primary_phone")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await _fetch_active_entity(conn, org_id, entity_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Entity not found")
+            updates = {k: (v.strip() or None) if isinstance(v, str) else v for k, v in updates.items()}
+            try:
+                updated = await update_entity_row(conn, org_id, entity_id, updates, returning=ENTITY_COLUMNS)
+            except EntityWriteError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            await write_audit_log(conn, org_id=org_id, action="update_contact", table_name="entities",
+                                  record_id=entity_id, old={k: current[k] for k in updates},
+                                  new={k: updated[k] for k in updates})
     return EntityOut(**dict(updated))
 
 
@@ -879,7 +936,9 @@ async def create_note(
     body: NoteCreate,
     background_tasks: BackgroundTasks,
 ):
-    require_permission(request, "manage_members")  # AUTHZ1
+    # PORTENTRY1 (GAP-CRM-06, Joe 2026-11-04) — contact upkeep: manage_members OR the narrow edit_crm_contact
+    # (support staff), internal roles only — a client never writes it
+    require_internal_permission(request, "manage_members", "edit_crm_contact")
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1045,7 +1104,9 @@ async def add_tax_id(request: Request, entity_id: UUID, body: TaxIdCreate):
     "/entities/{entity_id}/addresses", response_model=AddressResponse, status_code=201
 )
 async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
-    require_permission(request, "manage_members")  # AUTHZ1
+    # PORTENTRY1 (GAP-CRM-06, Joe 2026-11-04) — contact upkeep: manage_members OR the narrow edit_crm_contact
+    # (support staff), internal roles only — a client never writes it
+    require_internal_permission(request, "manage_members", "edit_crm_contact")
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1093,7 +1154,9 @@ async def add_address(request: Request, entity_id: UUID, body: AddressCreate):
 async def update_address(
     request: Request, entity_id: UUID, addr_id: UUID, body: AddressUpdate
 ):
-    require_permission(request, "manage_members")  # AUTHZ1
+    # PORTENTRY1 (GAP-CRM-06, Joe 2026-11-04) — contact upkeep: manage_members OR the narrow edit_crm_contact
+    # (support staff), internal roles only — a client never writes it
+    require_internal_permission(request, "manage_members", "edit_crm_contact")
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -1508,7 +1571,8 @@ async def ownership_graph(request: Request, entity_id: UUID):
 # ---------------------------------------------------------------------------
 @router.post("/entity-ownership", response_model=OwnershipOut, status_code=201)
 async def create_ownership(request: Request, body: OwnershipCreate):
-    require_permission(request, "manage_members")  # AUTHZ1
+    # PORTENTRY1 (GAP-CRM-05) — the same ownership gate as every ownership route: internal + manage_members
+    require_internal_permission(request, "manage_members")
     org_id = get_org_id(request)
     if body.parent_id == body.child_id:
         raise HTTPException(status_code=400, detail="An entity cannot own itself")

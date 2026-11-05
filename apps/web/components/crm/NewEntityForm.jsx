@@ -2,13 +2,9 @@
 
 import { useActionState, useState } from "react";
 import { createEntityAction } from "@/lib/actions";
-import {
-  ENTITY_TYPES,
-  PERSON_TYPES,
-  STATUS_OPTIONS,
-  subTypesFor,
-  FREE_TEXT_SUBTYPE_TYPES,
-} from "@/lib/entityTypes";
+import { ENTITY_TYPES, PERSON_TYPES } from "@/lib/entityTypes";
+import { freeTextSubType as isFreeTextSubType, maritalOptions, statusOptions, subTypeOptions } from "@/lib/crmVocab.mjs";
+import { useCrmVocab } from "@/components/crm/useCrmVocab";
 import { ReferenceSelect } from "@/components/ReferenceSelect";
 import PersonNameFields from "@/components/crm/PersonNameFields";
 
@@ -21,9 +17,11 @@ export default function NewEntityForm() {
   const [state, formAction, pending] = useActionState(createEntityAction, {});
   const [entityType, setEntityType] = useState("individual");
 
+  // PORTENTRY1 — vocabularies from the API envelope (the org's config table), never a page list
+  const vocab = useCrmVocab();
   const isPerson = PERSON_TYPES.has(entityType);
-  const subTypes = subTypesFor(entityType);
-  const freeTextSubType = FREE_TEXT_SUBTYPE_TYPES.includes(entityType);
+  const subTypes = subTypeOptions(vocab, entityType, null);
+  const freeTextSubType = isFreeTextSubType(vocab, entityType);
   const dateLabel = isPerson ? "Date of Birth" : "Date of Formation";
 
   return (
@@ -52,8 +50,8 @@ export default function NewEntityForm() {
             <select name="sub_type" defaultValue="" className={INPUT_CLASS}>
               <option value="">Select…</option>
               {subTypes.map((st) => (
-                <option key={st} value={st}>
-                  {st}
+                <option key={st.value} value={st.value}>
+                  {st.label}
                 </option>
               ))}
             </select>
@@ -89,13 +87,24 @@ export default function NewEntityForm() {
         <div>
           <label className={LABEL_CLASS}>Status</label>
           <select name="status" defaultValue="prospect" className={INPUT_CLASS}>
-            {STATUS_OPTIONS.map((s) => (
+            {statusOptions(vocab, "prospect").map((s) => (
               <option key={s.value} value={s.value}>
                 {s.label}
               </option>
             ))}
           </select>
         </div>
+        {isPerson && (
+          <div>
+            <label className={LABEL_CLASS}>Marital Status</label>
+            <select name="marital_status" defaultValue="" className={INPUT_CLASS}>
+              <option value="">Not recorded</option>
+              {maritalOptions(vocab).map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label className={LABEL_CLASS}>Lead Source</label>
           <input name="lead_source" className={INPUT_CLASS} />

@@ -509,6 +509,11 @@ async def create_position_endpoint(request: Request, body: PositionCreate):
 
         detail = await get_position(conn, org_id=org_id, position_id=new_id)
 
+    # PORTENTRY1 (GAP-PORT-05) — the owner's family net worth follows the write (debounced, family-scoped)
+    from services import portfolio_refresh as _PR
+
+    await _PR.after_write(pool, org_id, [detail.get("owner_entity_id")] if isinstance(detail, dict) else [],
+                          reason="position write", actor_id=user_id)
     perms = await _permission_envelope(pool, user_id, org_id)
     detail["permissions"] = perms
     detail["vocabularies"] = _vocabularies(perms)
@@ -554,6 +559,11 @@ async def patch_position(
 
         detail = await get_position(conn, org_id=org_id, position_id=new_id)
 
+    # PORTENTRY1 (GAP-PORT-05) — the owner's family net worth follows the write (debounced, family-scoped)
+    from services import portfolio_refresh as _PR
+
+    await _PR.after_write(pool, org_id, [detail.get("owner_entity_id")] if isinstance(detail, dict) else [],
+                          reason="position write", actor_id=user_id)
     perms = await _permission_envelope(pool, user_id, org_id)
     detail["permissions"] = perms
     detail["vocabularies"] = _vocabularies(perms)

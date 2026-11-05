@@ -18,7 +18,13 @@ compares ``BEFORE_REF`` with **the sprint's own end point**:
   against the merge base, ``merge-base(<merge>^1, <merge>^2)..<merge>^2``. NEVER the merge commit itself: the
   merge's tree also carries every sprint merged into main while this one was on its branch (VHK2 FIX 1 —
   aibudget1 merged first, so "265f15c → merge vhk2" showed aibudget1's router, route record and menu as VHK2's);
+* the sprint branch's own tip commit when the branch reached main by FAST-FORWARD (no merge commit — perms1,
+  3fe2cef): found from the sprint's own commits on main's FIRST-PARENT line (the newest commit whose subject names
+  the key; its base is the parent of the oldest one) or stated in ``SPRINT_FASTFORWARD`` (PORTENTRY1 Task 8);
 * ``HEAD`` while the sprint is still on its branch.
+
+A merge subject names its sprint as ``merge <key>`` or git's own ``Merge branch '<key>-work'`` (secmaster1).
+Merges onto main use ``--no-ff`` (docs/VERIFY_RULES.md) so every sprint has a merge commit.
 
 ``BEFORE_REF`` must lie on the sprint's own line — the merge base is its ancestor and it is an ancestor of the tip
 — so ``BEFORE_REF..tip`` holds only the sprint's own commits; ``own_base_ok`` asserts it, and every
@@ -104,6 +110,16 @@ SPRINT_MERGES = {
     "aibudget1": "bd63420",
     "vhk2": "9dbfee0",            # merged AFTER aibudget1: its first parent bd63420 is not its base (c6f7077)
     "bugfix2": "e1feebf",         # merge bugfix2 (+ fix 1)
+    "secmaster1": "17ab37e",      # Merge branch 'secmaster1-work' (git's own subject — '<key>-work')
+    "crmdetail1": "be26220",      # merge crmdetail1
+}
+
+#: PORTENTRY1 Task 8 — sprints whose branch reached main by FAST-FORWARD (no merge commit): (tip, base). The tip is
+#: the sprint branch's own last commit, the base the commit its branch started from (the parent of its first own
+#: commit). ``sprint_end_ref`` re-checks the tip is on main's first-parent line and names the key, and that base is
+#: an ancestor of it. A key not listed here is found the same way from main's first-parent line (``_fast_forward``).
+SPRINT_FASTFORWARD = {
+    "perms1": ("3fe2cef", "01c0f57"),   # ff54ef0 perms1 … c38240c perms1 fix 1 … 3fe2cef sprint: perms1.fix1
 }
 
 #: Sprints that never had a merge commit — committed on main's first-parent line directly. Their end point is the
@@ -135,7 +151,7 @@ def _merge_named(sha: str, key: str) -> tuple[bool, str]:
     if code != 0 or "\x00" not in out:
         return False, f"{sha} is not a commit"
     parents, subject = out.strip().split("\x00", 1)
-    names = re.search(rf"\bmerge\b.*(?<![\w-]){re.escape(key)}(?![\w-])", subject, re.I) is not None
+    names = re.search(rf"\bmerge\b.*{_key_rx(key)}", subject, re.I) is not None
     on_main = git("merge-base", "--is-ancestor", sha, "main")[0] == 0
     ok = len(parents.split()) >= 2 and names and on_main
     return ok, subject.strip()
@@ -143,6 +159,36 @@ def _merge_named(sha: str, key: str) -> tuple[bool, str]:
 
 _END_CACHE: dict[str, tuple[str, str]] = {}
 _MERGE_OF: dict[str, str] = {}
+_BASE_OF: dict[str, str] = {}
+
+
+def _key_rx(key: str) -> str:
+    """The key as a whole word, optionally as git's branch name ``<key>-work`` (``Merge branch 'secmaster1-work'``)."""
+    return rf"(?<![\w-]){re.escape(key)}(?:-work)?(?![\w-])"
+
+
+def _sprint_commit_rx(key: str) -> str:
+    """A sprint's OWN commit subject: ``<key>: …``, ``<key> fix 1: …`` or ``sprint: <key>.…`` — never a merge."""
+    return rf"^(?:sprint:\s+)?{re.escape(key)}(?![\w-])"
+
+
+def _fast_forward(sprint_key: str) -> tuple[str, str] | None:
+    """(tip, base) of a sprint that reached main by FAST-FORWARD: its own commits sit on main's FIRST-PARENT line (a
+    merged branch's commits never do — they are behind a merge's second parent). tip = the newest first-parent
+    commit naming the key, base = the parent of the oldest one. None when no first-parent commit names it."""
+    code, out, _ = git("log", "--first-parent", "--no-merges", "--format=%h%x00%s", "main")
+    hits = []
+    for line in out.splitlines() if code == 0 else []:
+        h, _, subject = line.partition("\x00")
+        if re.search(_sprint_commit_rx(sprint_key), subject, re.I):
+            hits.append(h)
+    if not hits:
+        return None
+    tip, oldest = hits[0], hits[-1]
+    c2, base, _ = git("rev-parse", "--short", f"{oldest}^1")
+    if c2 != 0:
+        return None
+    return tip, base.strip()
 
 
 def _tip_of(sprint_key: str, merge: str, subject: str) -> tuple[str, str]:
@@ -168,7 +214,9 @@ def sprint_base_ref(sprint_key: str) -> str:
     commit's parent; merge-base(main, HEAD) while still on its branch."""
     end, _ = sprint_end_ref(sprint_key)
     merge = sprint_merge(sprint_key)
-    if merge:
+    if sprint_key in _BASE_OF:
+        code, out = 0, _BASE_OF[sprint_key]
+    elif merge:
         code, out, _ = git("merge-base", f"{merge}^1", f"{merge}^2")
     elif end == "HEAD":
         code, out, _ = git("merge-base", "main", "HEAD")
@@ -203,7 +251,19 @@ def sprint_end_ref(sprint_key: str) -> tuple[str, str]:
         return _END_CACHE[sprint_key]
     sha = SPRINT_MERGES.get(sprint_key)
     landed = SPRINT_LANDED.get(sprint_key)
-    if landed:
+    ff = SPRINT_FASTFORWARD.get(sprint_key)
+    if ff:
+        tip, base = ff
+        code, out, _ = git("log", "-1", "--format=%s", tip)
+        first_parent = git("log", "--first-parent", "--format=%h", "main")[1].split()
+        tip_s = git("rev-parse", "--short", tip)[1].strip()
+        if (code != 0 or tip_s not in first_parent or not re.search(_sprint_commit_rx(sprint_key), out.strip(), re.I)
+                or git("merge-base", "--is-ancestor", base, tip)[0] != 0):
+            raise RuntimeError(f"SPRINT_FASTFORWARD[{sprint_key!r}] = {ff} is not a fast-forwarded sprint on main")
+        _BASE_OF[sprint_key] = git("rev-parse", "--short", base)[1].strip()
+        res = (tip_s, f"{sprint_key} reached main by fast-forward (no merge commit): its own branch tip {tip_s} "
+                      f"('{out.strip()[:50]}'), base {_BASE_OF[sprint_key]}")
+    elif landed:
         code, out, _ = git("log", "-1", "--format=%s", landed)
         on_main = git("merge-base", "--is-ancestor", landed, "main")[0] == 0
         if code != 0 or not on_main or sprint_key not in out:
@@ -219,11 +279,16 @@ def sprint_end_ref(sprint_key: str) -> tuple[str, str]:
         hit = None
         for line in out.splitlines() if code == 0 else []:
             h, _, subject = line.partition("\x00")
-            if re.search(rf"^merge\b.*(?<![\w-]){re.escape(sprint_key)}(?![\w-])", subject, re.I):
+            if re.search(rf"^merge\b.*{_key_rx(sprint_key)}", subject, re.I):
                 hit = (h, subject)
                 break
+        ffw = None if hit else _fast_forward(sprint_key)
         if hit:
             res = _tip_of(sprint_key, hit[0], hit[1])
+        elif ffw:
+            _BASE_OF[sprint_key] = ffw[1]
+            res = (ffw[0], f"{sprint_key} reached main by fast-forward (no merge commit): its own branch tip "
+                           f"{ffw[0]} (newest first-parent commit naming it), base {ffw[1]}")
         else:
             head = git("rev-parse", "--short", "HEAD")[1].strip()
             res = ("HEAD", f"{sprint_key} is not merged on main yet — HEAD ({head}, the sprint's own branch)")

@@ -1,5 +1,5 @@
 {
- "app_route_count": 812,
+ "app_route_count": 829,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -340,6 +340,28 @@
    "write": true
   },
   {
+   "after": "internal + any(manage_members|edit_crm_contact)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "edit_crm_contact",
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.entities",
+   "name": "update_entity_contact",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/contact",
+   "public": false,
+   "write": true
+  },
+  {
    "after": "authz manage_members",
    "before": "none beyond auth",
    "before_effect": "OPEN",
@@ -362,15 +384,15 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members|edit_crm_contact)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
     "any_of": [
+     "edit_crm_contact",
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -446,15 +468,15 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members|edit_crm_contact)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
     "any_of": [
+     "edit_crm_contact",
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -468,15 +490,15 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members|edit_crm_contact)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
     "any_of": [
+     "edit_crm_contact",
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -618,15 +640,14 @@
    "write": false
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members)",
    "before": "none beyond auth",
    "before_effect": "OPEN",
    "expect": {
     "any_of": [
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -5130,11 +5151,14 @@
    "write": false
   },
   {
-   "after": "staff",
+   "after": "internal + any(manage_members)",
    "before": "staff",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -5142,17 +5166,20 @@
    ],
    "module": "routers.entity_graph",
    "name": "create_ownership",
-   "note": "staff, now from DB role membership",
+   "note": "",
    "path": "/api/v1/entities/{entity_id}/ownership",
    "public": false,
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal + any(manage_members)",
    "before": "staff",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -5160,17 +5187,20 @@
    ],
    "module": "routers.entity_graph",
    "name": "amend_ownership",
-   "note": "staff, now from DB role membership",
+   "note": "",
    "path": "/api/v1/entity-relationships/{rel_id}/ownership",
    "public": false,
    "write": true
   },
   {
-   "after": "staff",
+   "after": "internal + any(manage_members)",
    "before": "staff",
    "before_effect": "OPEN (token claim absent \u2192 allow)",
    "expect": {
-    "rule": "staff"
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -5178,7 +5208,7 @@
    ],
    "module": "routers.entity_graph",
    "name": "delete_ownership",
-   "note": "staff, now from DB role membership",
+   "note": "",
    "path": "/api/v1/entity-relationships/{rel_id}/ownership",
    "public": false,
    "write": true
@@ -5416,6 +5446,321 @@
    "path": "/api/v1/entities/{entity_id}/net-worth",
    "public": false,
    "write": false
+  },
+  {
+   "after": "member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "scoped"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "list_direct_assets",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/direct-assets",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "add_direct_asset",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/direct-assets",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "add_valuation",
+   "note": "",
+   "path": "/api/v1/direct-assets/{asset_id}/valuations",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "scoped"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "list_private",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/private-investments",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "add_private",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/private-investments",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "add_flow",
+   "note": "",
+   "path": "/api/v1/private-investments/{commitment_id}/flows",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members); internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "add_nav",
+   "note": "",
+   "path": "/api/v1/private-investments/{commitment_id}/nav",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal; member scope (own family / published deals; staff unscoped)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "internal"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "household_assets",
+   "note": "",
+   "path": "/api/v1/households/{household_id}/assets",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members|manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "recalculate",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/net-worth/recalculate",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "manual_assets",
+   "note": "",
+   "path": "/api/v1/portfolio/manual-assets",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "relink",
+   "note": "",
+   "path": "/api/v1/portfolio/manual-assets/relink",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "list_integrated",
+   "note": "",
+   "path": "/api/v1/admin/integrated-imports",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "upload_integrated",
+   "note": "",
+   "path": "/api/v1/admin/integrated-imports",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "get_integrated",
+   "note": "",
+   "path": "/api/v1/admin/integrated-imports/{import_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "approve_integrated",
+   "note": "",
+   "path": "/api/v1/admin/integrated-imports/{import_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "reject_integrated",
+   "note": "",
+   "path": "/api/v1/admin/integrated-imports/{import_id}/reject",
+   "public": false,
+   "write": true
   },
   {
    "after": "internal",

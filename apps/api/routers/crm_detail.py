@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from routers.entities import get_org_id
+from services import crm_config as C
 from services import crm_relationships as R
 from services import crm_vocab as V
 from services import entity_details as D
@@ -136,8 +137,13 @@ async def _member_scoped_entity(request: Request, pool, entity_id: UUID):
 @router.get("/crm/vocabularies")
 async def crm_vocabularies(request: Request):
     require_internal(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # PORTENTRY1 (GAP-CRM-01..03) — statuses, marital statuses and sub-types from the org's config table
+        org_vocab = await C.crm_vocab(conn, org_id)
     return {"rows": [], "permissions": _permissions(request), "vocabularies": _vocab(
-        request, V.all_vocab(), ["relationships", "details", "liabilities"])}
+        request, {**V.all_vocab(), **org_vocab}, ["relationships", "details", "liabilities"])}
 
 
 # ── Relationships ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -241,11 +247,21 @@ async def add_liability(request: Request, entity_id: UUID, body: LiabilityBody):
     data = body.model_dump(exclude_unset=True)
     async with pool.acquire() as conn:
         try:
-            return await L.create(conn, org_id=org_id, actor_id=p.user_id, entity_id=entity_id, data=data)
+            out = await L.create(conn, org_id=org_id, actor_id=p.user_id, entity_id=entity_id, data=data)
         except L.LiabilityNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except L.LiabilityError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _refresh(pool, org_id, [entity_id], "liability added", p.user_id)
+    return out
+
+
+async def _refresh(pool, org_id, entity_ids, reason, actor_id):
+    """PORTENTRY1 (GAP-PORT-05) — liabilities are read live, but the family's snapshot (and its as-of) is refreshed
+    on every liability write too, so the three numbers always come from one moment."""
+    from services import portfolio_refresh as PR
+
+    await PR.after_write(pool, org_id, [e for e in entity_ids if e], reason=reason, actor_id=actor_id)
 
 
 @router.patch("/liabilities/{liability_id}")
@@ -257,24 +273,28 @@ async def revise_liability(request: Request, liability_id: UUID, body: Liability
     reason = changes.pop("reason", None)
     async with pool.acquire() as conn:
         try:
-            return await L.revise(conn, org_id=org_id, actor_id=p.user_id, liability_id=liability_id,
-                                  changes=changes, reason=reason)
+            out = await L.revise(conn, org_id=org_id, actor_id=p.user_id, liability_id=liability_id,
+                                 changes=changes, reason=reason)
         except L.LiabilityNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except L.LiabilityError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await _refresh(pool, org_id, [(out or {}).get("owner_entity_id")], "liability revised", p.user_id)
+    return out
 
 
 @router.post("/liabilities/{liability_id}/end")
 async def end_liability(request: Request, liability_id: UUID, body: LiabilityEnd):
-    require_internal_permission(request, "manage_members")
+    p = require_internal_permission(request, "manage_members")
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
         try:
-            return await L.end(conn, org_id=org_id, liability_id=liability_id, reason=body.reason)
+            out = await L.end(conn, org_id=org_id, liability_id=liability_id, reason=body.reason)
         except L.LiabilityNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await _refresh(pool, org_id, [(out or {}).get("owner_entity_id")], "liability ended", p.user_id)
+    return out
 
 
 @router.get("/entities/{entity_id}/net-worth")
@@ -289,5 +309,9 @@ async def entity_net_worth(request: Request, entity_id: UUID):
         if not exists:
             raise HTTPException(status_code=404, detail="Entity not found")
         nw = await L.entity_net_worth(conn, org_id, entity_id)
+        # PORTENTRY1 (GAP-PORT-05) — the family rollup that last refreshed this record (status / when / as-of)
+        from services import portfolio_refresh as PR
+
+        nw["last_rollup"] = await PR.last_run(conn, org_id, entity_id)
     return {"rows": nw, "permissions": _permissions(request, "internal or own family"),
             "vocabularies": _vocab(request, {"net_worth_lines": V.liability_vocab()["net_worth_lines"]}, [])}

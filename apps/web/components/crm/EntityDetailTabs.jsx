@@ -17,6 +17,7 @@ import DocumentsPanel from "@/components/DocumentsPanel";
 import RelationshipsPanel from "@/components/crm/RelationshipsPanel";
 import DetailFieldsPanel from "@/components/crm/DetailFieldsPanel";
 import LiabilitiesTab from "@/components/crm/LiabilitiesTab";
+import HoldingsTab from "@/components/crm/HoldingsTab";
 
 export default function EntityDetailTabs({ full, graph }) {
   const entity = full.entity;
@@ -34,6 +35,7 @@ export default function EntityDetailTabs({ full, graph }) {
     { key: "documents", label: "Documents" },
     { key: "linked_documents", label: "Linked Documents" },
     { key: "ownership", label: "Ownership" },
+    { key: "holdings", label: "Assets & Investments" },
     { key: "liabilities", label: "Liabilities" },
     { key: "compliance", label: "Compliance" },
   ];
@@ -154,6 +156,8 @@ export default function EntityDetailTabs({ full, graph }) {
 
         {/* Liabilities (CRMDETAIL1) — mounted only when opened */}
         {active === "liabilities" && <LiabilitiesTab entityId={entity.id} />}
+        {/* PORTENTRY1 — direct assets + private investments, mounted only when opened */}
+        {active === "holdings" && <HoldingsTab entityId={entity.id} />}
 
         {/* Compliance */}
         <div className={active === "compliance" ? "" : "hidden"}>

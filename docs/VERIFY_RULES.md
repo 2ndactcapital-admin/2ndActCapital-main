@@ -130,3 +130,29 @@ limit:
 
 Never raise a limit to absorb the operator's network, and never assert a
 wall-clock number that includes it.
+
+## Merges onto main use `--no-ff`; a fast-forwarded sprint ends at its own tip (PORTENTRY1, 2026-11-04)
+
+Every sprint branch is merged onto main with `git merge --no-ff <branch>`, so
+it has a merge commit and `VS.sprint_end_ref` finds its end as that merge's
+second parent. perms1 reached main as a FAST-FORWARD (no merge commit; its
+commits sit on main's first-parent line, ending at 3fe2cef), and the lookup
+fell through to HEAD: `verify_perms1 --self-checks-only` failed with
+"perms1: base … NOT an ancestor of 01c0f57" although nothing perms1 built had
+changed. secmaster1's merge subject was git's own `Merge branch
+'secmaster1-work'`, which the `merge <key>` pattern did not match — the same
+fall-through.
+
+`_verify_self` now:
+
+1. recognises `<key>-work` in a merge subject (`Merge branch 'secmaster1-work'`);
+2. for a sprint with no merge commit, takes its end as the NEWEST commit on
+   main's first-parent line whose subject names the key (`<key>: …`,
+   `<key> fix 1: …`, `sprint: <key>.…`) and its base as the parent of the
+   OLDEST one — or the explicit `SPRINT_FASTFORWARD` entry (perms1:
+   3fe2cef / 01c0f57). A merged branch's own commits are never on the
+   first-parent line, so a merged sprint is never mistaken for a
+   fast-forwarded one.
+
+Still prefer `--no-ff`: the first-parent fallback cannot tell two sprints'
+interleaved fast-forwarded commits apart.

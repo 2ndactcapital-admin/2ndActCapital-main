@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import {
-  confirmControl, importControls, labelOf, manualRow, money, panelControls, staleText, vocab,
+  confirmControl, importControls, labelOf, manualRow, manualTermFields, money, panelControls, staleText, vocab,
 } from "@/lib/heldAway.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -165,8 +165,16 @@ export default function HeldAwayPanel({ initialEnvelope }) {
           <input className={input} type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} aria-label="As of (statement date)" />
           {c.manualImport ? (
             <div className="flex flex-wrap gap-2">
-              {["ticker", "cusip", "quantity", "market_value", "acquired_date", "cost"].map((k) => (
-                <input key={k} className={input} placeholder={labelOf(v.file_fields, k)} value={row[k] || ""} onChange={(e) => setRow({ ...row, [k]: e.target.value })} />
+              {/* PORTENTRY1 — a holding not in the security master: its type and terms (an org-scoped manual asset) */}
+              <select className={input} value={row.asset_kind || ""} onChange={(e) => setRow({ ...row, asset_kind: e.target.value })} aria-label="Holding type">
+                <option value="">Listed security (in the master)</option>
+                {(Array.isArray(v.manual_kinds) ? v.manual_kinds : []).map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+              </select>
+              {(row.asset_kind ? ["name", "quantity", "price", "market_value", "cost", "taxonomy_key", ...manualTermFields(row.asset_kind)]
+                : ["ticker", "cusip", "quantity", "market_value", "acquired_date", "cost"]).map((k) => (
+                <input key={k} className={input} placeholder={labelOf(v.file_fields, k) || k.replace(/_/g, " ")}
+                  type={k === "maturity" || k === "expiry" || k === "acquired_date" ? "date" : "text"}
+                  value={row[k] || ""} onChange={(e) => setRow({ ...row, [k]: e.target.value })} />
               ))}
               <button type="button" className={secondary} onClick={() => act(`accounts/${id}/imports/manual`, { as_of: asOf, rows: [manualRow(row)], document_id: docId || undefined })}>Save as draft</button>
             </div>

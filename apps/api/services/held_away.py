@@ -101,7 +101,24 @@ REJECT_REASONS = {
     "error_cell": "Spreadsheet error value",
     "models_disagree": "The two extraction models disagree on this row",
     "file_refused": "The file itself was refused",
+    # PORTENTRY1 (GAP-PORT-01) — an org-scoped manual asset line
+    "asset_kind_invalid": "Not a holding type manual entry accepts",
+    "name_missing": "A manual holding needs a name",
+    "manual_transaction": "Trades are recorded only against a security in the master",
+    "terms_invalid": "A holding term (coupon, maturity, strike, expiry …) is not valid",
 }
+
+# PORTENTRY1 (GAP-PORT-01) — holding types manual entry accepts besides a master-resolved security. Each resolves
+# master-first (its identifier; a listed option through an EXISTING rep8 contract on a master underlying), cash to the
+# org's own cash asset, everything else to an ORG-scoped manual asset (portfolio.assets, global_security_id NULL).
+# Nothing is ever created in the platform master from a held-away line.
+MANUAL_KINDS = {
+    "mutual_fund": "Mutual fund", "money_market": "Money market fund", "municipal_bond": "Municipal bond",
+    "cash": "Cash", "private": "Private / manual holding", "listed_option": "Listed option",
+    "digital_asset": "Digital asset",
+}
+MANUAL_TERM_FIELDS = ("coupon", "maturity", "underlying_ticker", "option_type", "strike", "expiry", "multiplier",
+                      "chain", "internal_id", "currency")
 CONFIRM_STATUS_LABELS = {"pending": "Awaiting an adviser's confirmation", "confirmed": "Confirmed",
                          "expired": "Expired", "cancelled": "Cancelled"}
 AUTHORITY = {"manual": "manual", "file": "stated", "statement": "stated", "aggregator": "aggregated",
@@ -397,8 +414,11 @@ async def resolve_identifiers(conn, rows: list[dict]) -> None:
     for t in IDENTIFIERS:
         vals = [r[t] for r in rows if r.get(t)]
         looks[t] = await SG.get_by_identifiers_bulk(conn, t, vals) if vals else {}
+    manual = [r for r in rows if not r.get("reject") and r.get("asset_kind")]
+    if manual:
+        await resolve_manual(conn, manual, looks)
     for r in rows:
-        if r.get("reject"):
+        if r.get("reject") or r.get("asset_kind"):
             continue
         hit = {}
         strong = [t for t in ("cusip", "isin") if r.get(t)]
@@ -419,6 +439,65 @@ async def resolve_identifiers(conn, rows: list[dict]) -> None:
             r["security_id"] = ids.pop()
 
 
+def manual_key(r: dict) -> str:
+    """The stable key of an org-scoped manual holding inside one import (its kind, identifiers, name and terms)."""
+    basis = json.dumps({"k": r["asset_kind"], "n": (r.get("name") or "").strip().lower(),
+                        "i": {t: r.get(t) for t in IDENTIFIERS if r.get(t)}, "t": r.get("terms") or {}},
+                       sort_keys=True)
+    return "manual:" + hashlib.sha256(basis.encode()).hexdigest()[:24]
+
+
+async def resolve_manual(conn, rows: list[dict], looks: dict) -> None:
+    """PORTENTRY1 (GAP-PORT-01) — each manual line's asset: the platform master when one of its identifiers (or, for
+    a listed option, an EXISTING rep8 contract on a master underlying) resolves; the org's cash asset for cash; else
+    an org-scoped manual asset (``asset_ref``, created at approval). Reads only — the master is never written."""
+    from services import securities_global as SG
+
+    for r in rows:
+        hit = None
+        for t in ("cusip", "isin", "sedol", "ticker"):
+            if r.get(t):
+                got = looks.get(t, {}).get(SG.normalize_identifier_value(t, r[t]))
+                if got:
+                    hit = str(got.get("matched_global_security_id") or got["id"])
+                    r["resolution"] = f"master by {t.upper()}"
+                    break
+        if hit is None and r["asset_kind"] == "listed_option":
+            hit = await _existing_option(conn, r["terms"])
+            if hit:
+                r["resolution"] = "master option contract (rep8)"
+        if hit is not None:
+            r["security_id"] = hit
+            continue
+        if r["asset_kind"] == "cash":
+            ccy = (r["terms"].get("currency") or "USD").upper()
+            r["security_id"] = f"cash:{ccy}"
+            r["resolution"] = f"the org's {ccy} cash asset"
+        else:
+            r["security_id"] = manual_key(r)
+            r["resolution"] = "org-scoped manual asset (not in the master)"
+        r["asset_ref"] = {"asset_kind": r["asset_kind"], "name": (r.get("name") or "").strip() or None,
+                          "identifiers": {t: r[t] for t in ("cusip", "isin", "sedol", "ticker") if r.get(t)},
+                          "internal_id": r["terms"].get("internal_id"), "taxonomy_key": r.get("taxonomy_key"),
+                          "terms": r.get("terms") or {}}
+
+
+async def _existing_option(conn, t: dict) -> str | None:
+    """An EXISTING master option contract for these terms on a master underlying — exactly one, else None."""
+    from services import securities_global as SG
+    from services.model_upload import to_decimal
+
+    und = (await SG.get_by_identifiers_bulk(conn, "ticker", [t["underlying_ticker"]])).get(
+        SG.normalize_identifier_value("ticker", t["underlying_ticker"]))
+    if not und:
+        return None
+    rows = await conn.fetch(
+        "SELECT global_security_id FROM portfolio.option_contracts WHERE underlying_global_security_id = $1::uuid "
+        "AND option_type = $2 AND strike = $3 AND expiry = $4 AND valid_to IS NULL AND system_to IS NULL",
+        str(und["id"]), t["option_type"].lower(), to_decimal(t["strike"]), date.fromisoformat(t["expiry"]))
+    return str(rows[0]["global_security_id"]) if len(rows) == 1 else None
+
+
 def validate_row(raw: dict, as_of: date) -> dict:
     """One input row (keys from :data:`FIELDS`) → a normalised row with kind
     position | lot | transaction, or a ``reject`` (code, text). Pure."""
@@ -429,6 +508,14 @@ def validate_row(raw: dict, as_of: date) -> dict:
         v = cell_text(raw.get(t))
         r[t] = v.strip().upper() if v else None
     r["name"] = cell_text(raw.get("name"))
+    # PORTENTRY1 — a manual holding line (asset_kind) and its terms
+    kind = (cell_text(raw.get("asset_kind")) or "").strip().lower() or None
+    r["asset_kind"] = kind
+    r["taxonomy_key"] = (cell_text(raw.get("taxonomy_key")) or "").strip() or None
+    r["terms"] = {k: cell_text(raw.get(k)).strip() for k in MANUAL_TERM_FIELDS if cell_text(raw.get(k))}
+    if kind is not None and kind not in MANUAL_KINDS:
+        r["reject"] = ("asset_kind_invalid", f"{kind!r} is not one of {', '.join(MANUAL_KINDS)}")
+        return r
     try:
         for k in ("quantity", "market_value", "cost", "price", "realized_gain_loss"):
             r[k] = to_decimal(raw.get(k))
@@ -478,7 +565,43 @@ def validate_row(raw: dict, as_of: date) -> dict:
         r["term"] = r["term"] or term_of(r["acquired_date"], as_of)
     else:
         r["kind"] = "position"
+    if kind is not None:
+        if r["kind"] == "transaction":
+            r["reject"] = ("manual_transaction", "enter the holding as a position (or a lot); a trade needs a security "
+                                                 "in the master")
+            return r
+        if kind != "cash" and not (r["name"] or "").strip():
+            r["reject"] = ("name_missing", REJECT_REASONS["name_missing"])
+            return r
+        bad = _bad_terms(kind, r["terms"])
+        if bad:
+            r["reject"] = ("terms_invalid", bad)
+            return r
+        if r["market_value"] is None and r["price"] is not None:
+            r["market_value"] = r["quantity"] * r["price"]          # quantity × price, exact Decimal
+        if kind == "cash" and r["market_value"] is None:
+            r["market_value"] = r["quantity"]                       # a cash line's quantity IS its amount
     return r
+
+
+def _bad_terms(kind: str, t: dict) -> str | None:
+    from services.model_upload import to_decimal
+
+    try:
+        for k in ("coupon", "strike", "multiplier"):
+            if t.get(k) is not None and to_decimal(t[k]) is None:
+                return f"{k} is not a number"
+        for k in ("maturity", "expiry"):
+            if t.get(k):
+                date.fromisoformat(t[k])
+    except (ValueError, TypeError) as exc:
+        return f"{exc}"
+    if kind == "listed_option":
+        if (t.get("option_type") or "").lower() not in ("call", "put"):
+            return "a listed option is a call or a put (option_type)"
+        if not (t.get("underlying_ticker") and t.get("strike") and t.get("expiry")):
+            return "a listed option needs underlying_ticker, strike and expiry"
+    return None
 
 
 def build_payload(rows: list[dict]) -> dict:
@@ -493,7 +616,8 @@ def build_payload(rows: list[dict]) -> dict:
         if r["kind"] in ("position", "lot"):
             p = positions.setdefault(sid, {"security_id": sid, "label": r.get("name") or r.get("ticker") or sid,
                                            "quantity": Decimal(0), "market_value": Decimal(0), "value_known": True,
-                                           "rows": []})
+                                           "rows": [], "asset_ref": r.get("asset_ref"),
+                                           "taxonomy_key": r.get("taxonomy_key"), "resolution": r.get("resolution")})
             p["quantity"] += r["quantity"]
             if r["market_value"] is None:
                 p["value_known"] = False
@@ -509,7 +633,10 @@ def build_payload(rows: list[dict]) -> dict:
                          "realized_gain_loss": _num(r["realized_gain_loss"]), "term": r["term"],
                          "acquired_date": _iso(r["acquired_date"]), "cost": _num(r["cost"]), "row": r["row"]})
     pos = [{"security_id": p["security_id"], "label": p["label"], "quantity": str(p["quantity"]),
-            "market_value": str(p["market_value"]) if p["value_known"] else None, "rows": p["rows"]}
+            "market_value": str(p["market_value"]) if p["value_known"] else None, "rows": p["rows"],
+            **({"asset_ref": p["asset_ref"]} if p.get("asset_ref") else {}),
+            **({"taxonomy_key": p["taxonomy_key"]} if p.get("taxonomy_key") else {}),
+            **({"resolution": p["resolution"]} if p.get("resolution") else {})}
            for p in positions.values()]
     return {"positions": pos, "lots": lots, "transactions": txns}
 
@@ -879,7 +1006,15 @@ async def decide_import(pool, *, org_id, actor_id, import_id, outcome: str, note
     return res
 
 
-async def _asset_for(conn, org_id, security_id: str) -> str:
+async def _asset_for(conn, org_id, security_id: str, asset_ref: dict | None = None) -> str:
+    if security_id.startswith("cash:"):
+        from services.portfolio_cash import ensure_cash_asset
+
+        return str(await ensure_cash_asset(conn, org_id=str(org_id), currency_code=security_id.split(":", 1)[1]))
+    if security_id.startswith("manual:"):
+        from services.portfolio_manual import manual_asset_for
+
+        return await manual_asset_for(conn, org_id, asset_ref or {})
     aid = await conn.fetchval("SELECT id FROM portfolio.assets WHERE org_id = $1::uuid AND global_security_id = $2::uuid "
                               "AND valid_to IS NULL AND system_to IS NULL ORDER BY valid_from LIMIT 1",
                               str(org_id), security_id)
@@ -1000,11 +1135,12 @@ async def _apply_import(pool, org_id, task: dict, outcome: str, actor_id, note) 
                         and sum((Decimal(x["quantity"]) for x in ls), Decimal(0)) == Decimal(p["quantity"]) else None)
                 pid = await conn.fetchval(
                     """INSERT INTO portfolio.positions (org_id, owner_entity_id, asset_id, as_of_date, quantity,
-                           cost_basis, market_value, authority, source_system, account_id)
-                       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::uuid) RETURNING id""",
-                    str(org_id), str(account["primary_entity_id"]), await _asset_for(conn, org_id, p["security_id"]),
+                           cost_basis, market_value, authority, source_system, account_id, taxonomy_key)
+                       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::uuid, $11) RETURNING id""",
+                    str(org_id), str(account["primary_entity_id"]),
+                    await _asset_for(conn, org_id, p["security_id"], p.get("asset_ref")),
                     imp["as_of"], Decimal(p["quantity"]), cost, _dec(p["market_value"]), authority, system,
-                    str(account["id"]))
+                    str(account["id"]), p.get("taxonomy_key"))
                 pos_by_sec[p["security_id"]] = str(pid)
                 await _record(conn, org_id, imp, "position", pid)
             # 3. open lots
@@ -1073,6 +1209,11 @@ async def _apply_import(pool, org_id, task: dict, outcome: str, actor_id, note) 
                           "transactions": len(payload.get("transactions", [])) - skipped,
                           "already_recorded": skipped, "declared_matched": matched, "closed_positions": len(old_pos)})
     await _publish(pool, org_id, "import_approved", imp["id"], {"account_id": str(imp["account_id"])}, actor_id)
+    # PORTENTRY1 (GAP-PORT-05) — the family's net worth follows the new positions (debounced, family-scoped)
+    from services import portfolio_refresh as PR
+
+    await PR.after_write(pool, org_id, [account["primary_entity_id"]], reason=f"held-away import {imp['id']}",
+                         actor_id=actor_id)
     return {**new, "already_recorded": skipped, "declared_matched": matched}
 
 
@@ -1582,7 +1723,7 @@ def _trade_brief(account: dict) -> dict:
             "trade_note": note}
 
 
-def vocabularies() -> dict:
+def vocabularies() -> dict:  # noqa: D401 — PORTENTRY1 adds manual_kinds below
     def pairs(d):
         return [{"key": k, "label": v} for k, v in d.items()]
 
@@ -1591,4 +1732,6 @@ def vocabularies() -> dict:
             "source_statuses": pairs(SOURCE_STATUS_LABELS), "import_statuses": pairs(IMPORT_STATUS_LABELS),
             "reject_reasons": pairs(REJECT_REASONS), "confirmation_statuses": pairs(CONFIRM_STATUS_LABELS),
             "file_fields": [{"key": k, "label": v[0]} for k, v in FIELDS.items()],
-            "providers": AD.providers()}
+            "providers": AD.providers(),
+            # PORTENTRY1 (GAP-PORT-01) — manual holding types and their term fields
+            "manual_kinds": pairs(MANUAL_KINDS), "manual_term_fields": list(MANUAL_TERM_FIELDS)}

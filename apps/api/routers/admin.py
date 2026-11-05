@@ -572,6 +572,11 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
                 "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)",
                 user_id, body.role_id,
             )
+            if role["name"] == "support_staff":
+                # PORTENTRY1 — a support_staff role always carries edit_crm_contact (services.rbac)
+                from services.rbac import ensure_support_staff_grants
+
+                await ensure_support_staff_grants(conn, org_id)
 
             if role["name"] == ORG_ADMIN_ROLE:
                 await conn.execute(

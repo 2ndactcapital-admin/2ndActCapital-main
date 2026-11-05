@@ -3,7 +3,8 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import EntityTable from "@/components/crm/EntityTable";
 import { fetchAPI } from "@/lib/api";
-import { FILTER_TABS, STATUS_FILTERS } from "@/lib/entityTypes";
+import { FILTER_TABS } from "@/lib/entityTypes";
+import { statusFilters } from "@/lib/crmVocab.mjs";
 
 export default async function CrmPage({ searchParams }) {
   const session = await getHostSession();
@@ -28,6 +29,13 @@ export default async function CrmPage({ searchParams }) {
     });
   } catch (error) {
     loadError = error.message;
+  }
+  // PORTENTRY1 (GAP-CRM-01) — the status pills come from the org's config vocabulary (client / contact included)
+  let vocab = null;
+  try {
+    vocab = (await fetchAPI("/api/v1/crm/vocabularies"))?.vocabularies || null;
+  } catch {
+    vocab = null;
   }
 
   function buildHref({ nextType = type, nextStatus = status } = {}) {
@@ -66,7 +74,7 @@ export default async function CrmPage({ searchParams }) {
 
       {/* Status filter pills */}
       <div className="mt-4 flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((pill) => {
+        {statusFilters(vocab).map((pill) => {
           const active = pill.value === status;
           return (
             <a

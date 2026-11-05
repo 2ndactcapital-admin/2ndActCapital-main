@@ -46,6 +46,23 @@ function FieldInput({ f, value, onChange }) {
         onChange={(e) => onChange(e ? e.id : "")} entityTypes={f.entity_types || []} placeholder="Search records…" />
     );
   }
+  if (f.type === "entities") {
+    // PORTENTRY1 — several CRM records (an ILIT's insureds): the chosen ones, each removable, plus a picker
+    const ids = String(value || "").split(",").filter(Boolean);
+    return (
+      <div className="space-y-1">
+        {ids.map((id) => (
+          <div key={id} className="flex items-center justify-between rounded border border-[#E2E8F0] px-2 py-1 text-sm">
+            <span>{id === ids[0] && f.display ? f.display.split(", ")[0] : id}</span>
+            <button type="button" className="text-xs text-[#9B2335]"
+              onClick={() => onChange(ids.filter((x) => x !== id).join(","))}>Remove</button>
+          </div>
+        ))}
+        <EntityPicker value={null} onChange={(e) => e && onChange([...ids.filter((x) => x !== e.id), e.id].join(","))}
+          entityTypes={f.entity_types || []} placeholder="Add a record…" />
+      </div>
+    );
+  }
   const type = f.type === "date" ? "date" : f.type === "integer" || f.type === "decimal" ? "text" : "text";
   const mode = f.type === "integer" ? "numeric" : f.type === "decimal" ? "decimal" : undefined;
   return <input type={type} inputMode={mode} value={value} onChange={(e) => onChange(e.target.value)} className={input} />;

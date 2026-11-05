@@ -166,6 +166,8 @@ class EntityCreate(BaseModel):
     # CRMDETAIL1 — people
     maiden_name: str | None = None
     date_of_death: date | None = None
+    # PORTENTRY1 (GAP-CRM-02) — the key of the org's crm_marital_statuses vocabulary
+    marital_status: str | None = None
 
 
 class EntityUpdate(BaseModel):
@@ -202,6 +204,8 @@ class EntityUpdate(BaseModel):
     # CRMDETAIL1 — people
     maiden_name: str | None = None
     date_of_death: date | None = None
+    # PORTENTRY1 (GAP-CRM-02)
+    marital_status: str | None = None
 
 
 class EntityOut(BaseModel):

@@ -148,5 +148,30 @@ export function manualRow(form) {
   for (const k of ["acquired_date", "trade_date"]) {
     if (form[k]) out[k] = form[k];
   }
+  // PORTENTRY1 (GAP-PORT-01) — an org-scoped manual holding: its type (from the envelope's manual_kinds) and terms
+  if (form.asset_kind) {
+    out.asset_kind = String(form.asset_kind);
+    for (const k of ["taxonomy_key", "internal_id", "currency", "underlying_ticker", "option_type", "chain"]) {
+      if (form[k]) out[k] = String(form[k]).trim();
+    }
+    for (const k of ["coupon", "strike", "multiplier"]) {
+      const d = decimalString(form[k]);
+      if (d !== null) out[k] = d;
+    }
+    for (const k of ["maturity", "expiry"]) {
+      if (form[k]) out[k] = form[k];
+    }
+  }
   return out;
+}
+
+/** PORTENTRY1 — the term inputs a manual holding type shows (labels are the API's field keys, humanised there). */
+export function manualTermFields(kind) {
+  if (kind === "municipal_bond") return ["cusip", "coupon", "maturity"];
+  if (kind === "listed_option") return ["underlying_ticker", "option_type", "strike", "expiry", "multiplier"];
+  if (kind === "digital_asset") return ["ticker", "chain"];
+  if (kind === "cash") return ["currency"];
+  if (kind === "mutual_fund" || kind === "money_market") return ["ticker", "cusip"];
+  if (kind === "private") return ["internal_id"];
+  return [];
 }

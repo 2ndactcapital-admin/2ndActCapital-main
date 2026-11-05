@@ -56,6 +56,8 @@ export function fieldInputValue(field) {
   const v = field?.value;
   if (v === null || v === undefined) return "";
   if (field.type === "boolean") return v ? "true" : "false";
+  // PORTENTRY1 — a list of CRM records (an ILIT's insureds) travels as comma-joined ids in the form
+  if (field.type === "entities") return Array.isArray(v) ? v.join(",") : String(v);
   return String(v);
 }
 
@@ -69,6 +71,7 @@ export function fieldPayload(fields, form) {
     if (String(raw ?? "") === before) continue;
     if (raw === "" || raw === null || raw === undefined) values[f.key] = null;
     else if (f.type === "boolean") values[f.key] = raw === true || raw === "true";
+    else if (f.type === "entities") values[f.key] = String(raw).split(",").map((x) => x.trim()).filter(Boolean);
     else values[f.key] = String(raw);
   }
   return values;
