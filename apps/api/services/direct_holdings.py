@@ -30,9 +30,16 @@ from services.portfolio_assets import TABLE_ASSETS, TABLE_POSITIONS, TABLE_VALUA
 DIRECT_KINDS = {"real_estate": "Real estate", "collectible": "Collectible", "operating_business": "Operating business",
                 "insurance_cash_value": "Insurance policy cash value", "other": "Other"}
 PRIVATE_KINDS = {"fund": "Private fund", "direct_deal": "Direct deal", "spv": "SPV", "safe": "SAFE", "note": "Note"}
-VALUATION_METHODS = {"appraisal": "Appraisal", "estimate": "Estimate", "statement": "Statement"}
-#: method → valuations.status (valuations_status_chk): an estimate is 'estimated', an appraisal / statement 'final'
-_STATUS_OF = {"appraisal": "final", "estimate": "estimated", "statement": "final"}
+#: PORTENTRY1 FIX 1 — the keys are the DATABASE's valuation vocabulary (portfolio_assets.VALUATION_METHODS, the
+#: valuations CHECK), never a parallel one: 'estimate' / 'statement' were refused by record_valuation. The labels are
+#: what the form shows (served in vocab(), never hardcoded in the front end).
+VALUATION_METHODS = {"appraisal": "Appraisal", "mark_to_model": "Estimate (mark to model)", "nav": "Statement / NAV",
+                     "market_price": "Market price", "amortized_cost": "Amortized cost"}
+assert set(VALUATION_METHODS) == set(PA.VALUATION_METHODS), "direct-holding methods drifted from the DB vocabulary"
+#: method → valuations.status (valuations_status_chk): an estimate (mark to model) is 'estimated', the rest 'final'
+_STATUS_OF = {"appraisal": "final", "mark_to_model": "estimated", "nav": "final", "market_price": "final",
+              "amortized_cost": "final"}
+NAV_METHOD = "nav"
 _SHAPE = {"real_estate": ("hard_asset", "appraisal"), "collectible": ("hard_asset", "appraisal"),
           "operating_business": ("financial", "mark_to_model"), "insurance_cash_value": ("financial", "mark_to_model"),
           "other": ("hard_asset", "appraisal")}
@@ -100,7 +107,7 @@ async def _record_value(conn, org_id, asset_id, val: dict, *, nav: bool = False)
     return await PA.record_valuation(
         conn, org_id=str(org_id), asset_id=str(asset_id), valuation_date=val["date"], value=val["value"],
         value_basis=PA.TOTAL, status="final" if nav else _STATUS_OF[val["method"]], purpose="market",
-        currency_code="USD", valuation_method="statement" if nav else val["method"],
+        currency_code="USD", valuation_method=NAV_METHOD if nav else val["method"],
         valuation_source=val.get("source"))
 
 
@@ -167,7 +174,7 @@ def _brief(r: dict) -> dict:
 
 
 async def add_valuation(pool, *, org_id, actor_id, asset_id, data: dict, nav: bool = False) -> dict:
-    val = _valuation_in({**data, "method": data.get("method") or ("statement" if nav else None)})
+    val = _valuation_in({**data, "method": data.get("method") or (NAV_METHOD if nav else None)})
     async with pool.acquire() as conn:
         async with _OrgWrite(conn, str(org_id)) as c:
             a = await c.fetchrow(f"SELECT id FROM {TABLE_ASSETS} WHERE id = $1::uuid AND org_id = $2::uuid "
@@ -244,7 +251,7 @@ async def add_private_investment(pool, *, org_id, actor_id, entity_id, data: dic
     nav = None
     if nav_in:
         nav = {"value": _dec(nav_in.get("value"), "NAV"), "date": _day(nav_in.get("date"), "NAV date"),
-               "method": "statement", "source": (nav_in.get("source") or "").strip()[:300] or None}
+               "method": NAV_METHOD, "source": (nav_in.get("source") or "").strip()[:300] or None}
     flow_day = _day(data.get("as_of"), "as-of", required=False) or (nav["date"] if nav else c_date)
     async with pool.acquire() as conn:
         await _entity(conn, org_id, entity_id)

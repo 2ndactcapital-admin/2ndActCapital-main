@@ -465,8 +465,11 @@ async def teardown(_conn=None) -> list[str]:
             "portfolio.securities_global_identifiers": ("global_security_id = $1::uuid", [FIX_SEC]),
             "portfolio.securities_global": ("id = $1::uuid", [FIX_SEC]),
         }
+        # held_away_imports / held_away_records refuse DELETE unless execution_teardown_allowed() (rep7_part1.sql):
+        # the GUC execution.teardown = 'fixture', transaction-local, on the operator role — the same documented
+        # path verify_rep7 / verify_rep7b use. The trigger is never weakened.
         res = await VC.cleanup(op, orgs=FIXTURE_ORGS, users=users, user_sub_like=f"%{TAG}%", plan=plan,
-                               label="verify_portentry1")
+                               gucs=("execution.teardown",), label="verify_portentry1")
         return res["log"]
     finally:
         await op.close()
@@ -781,18 +784,32 @@ async def y_gates(conn):
     refused["ownership"] = await api(U_SUPPORT, "POST", path, {**body, "counterparty_id": str(eid("found"))})
     refused["relationship"] = await api(U_SUPPORT, "POST", f"/api/v1/entities/{eid('pat')}/crm-relationships",
                                         {"relationship_type": "spouse", "other_entity_id": str(eid("spouse"))})
-    refused["tax id"] = await api(U_SUPPORT, "POST", f"/api/v1/entities/{eid('pat')}/tax-ids",
-                                  {"tax_id_type": "ssn", "tax_id_value": "000-00-0000"})
+    # FIX 1 — a VALID body (schemas.entities.TaxIdCreate: tax_id_type / tax_id_country / value / is_primary) so only
+    # the permission gate can refuse it; the earlier body ('tax_id_value') was refused by validation (422), not the gate
+    taxpath = f"/api/v1/entities/{eid('pat')}/tax-ids"
+    tax_body = {"tax_id_type": "ssn", "tax_id_country": "US", "value": "000-00-0000", "is_primary": True}
+    tax_before = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_tax_ids WHERE entity_id = $1", eid("pat"),
+                              fetch="fetchval")
+    refused["tax id"] = await api(U_SUPPORT, "POST", taxpath, tax_body)
     refused["detail field"] = await api(U_SUPPORT, "PUT", f"/api/v1/entities/{eid('lp')}/details",
                                         {"values": {"fund_role": "fund"}})
     refused["status"] = await api(U_SUPPORT, "PUT", f"/api/v1/entities/{eid('pat')}", {"status": "archived"})
     refused["tag"] = await api(U_SUPPORT, "PUT", f"/api/v1/entities/{eid('pat')}", {"tags": ["vip"]})
     for what, (code, b) in refused.items():
         check(code == 403, f"support staff refused: {what}", f"{code} {dumps(b)}")
+    tax_mid = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_tax_ids WHERE entity_id = $1", eid("pat"),
+                           fetch="fetchval")
+    check(bool("manage_members" in body_text(refused["tax id"][1]) and tax_mid == tax_before),
+          "the tax-id refusal is the GATE (names manage_members) and wrote no row", f"{tax_before} → {tax_mid}")
     c_x, b_x = await api(U_SUPPORT, "PUT", f"/api/v1/entities/{eid('pat')}/contact", {"status": "archived"})
     check(c_x == 422, "the contact route accepts nothing but email / phone (extra='forbid')", f"{c_x} {dumps(b_x)}")
     after = await fingerprint(conn, "public.entities", where="id = $1::uuid", args=(str(eid("pat")),))
     check(before == after, "the refused writes left the record byte-identical (status, tags …)", f"{before} → {after}")
+    c_ok, b_ok = await api(U_OA, "POST", taxpath, tax_body)
+    tax_after = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_tax_ids WHERE entity_id = $1 AND "
+                                          "tax_id_last4 = '0000' AND valid_to IS NULL", eid("pat"), fetch="fetchval")
+    check(bool(c_ok == 201 and tax_after == 1), "the IDENTICAL valid tax-id body is admitted for the org admin "
+          "(re-read) — so the support-staff 403 was the permission, not the body", f"{c_ok} {dumps(b_ok)}; {tax_after}")
     cm, bm = await api(U_MEMBER, "POST", f"/api/v1/entities/{eid('mem')}/notes", {"note_text": "x", "note_type": "meeting"})
     check(cm == 403, "a member never writes CRM notes", f"{cm} {dumps(bm)}")
     from services.authz import load_principal
@@ -905,18 +922,19 @@ async def y_direct_private(conn):
     check(c == 201, "org admin adds a direct asset", f"{c} {dumps(a)}")
     aid = (a or {}).get("asset_id")
     c2, v2 = await api(U_OA, "POST", f"/api/v1/direct-assets/{aid}/valuations",
-                       {"value": "4400000.00", "date": "2026-10-31", "method": "estimate"})
+                       {"value": "4400000.00", "date": "2026-10-31", "method": "mark_to_model"})
     vals = await scoped(conn, ORG_A, "SELECT value, valuation_method, status FROM portfolio.valuations WHERE asset_id = "
                                      "$1 AND valid_to IS NULL ORDER BY valuation_date", aid) if aid else []
     check(bool(c2 == 201 and [(r["value"], r["valuation_method"]) for r in vals]
-               == [(Decimal("4250000.00"), "appraisal"), (Decimal("4400000.00"), "estimate")]),
+               == [(Decimal("4250000.00"), "appraisal"), (Decimal("4400000.00"), "mark_to_model")]),
           "a new valuation is a NEW row; the earlier one is kept (history)", f"{c2} {dumps(v2)}; {vals}")
     cl, lst = await api(U_OA, "GET", f"/api/v1/entities/{eid('trust')}/direct-assets")
     row = next((r for r in (lst or {}).get("rows", []) if r["asset_id"] == aid), {})
     check(bool(cl == 200 and row.get("owner_value") == "4400000.00" and len(row.get("valuations") or []) == 2),
           "the record lists it at the latest value with its history", f"{cl} {dumps(row)}")
     cs, bs = await api(U_SUPPORT, "POST", f"/api/v1/entities/{eid('trust')}/direct-assets", {
-        "kind": "collectible", "name": NAME + "x", "valuation": {"value": "1", "date": "2026-01-01", "method": "estimate"}})
+        "kind": "collectible", "name": NAME + "x",
+        "valuation": {"value": "1", "date": "2026-01-01", "method": "mark_to_model"}})
     check(bool(cs == 403 and "manage_members" in body_text(bs)), "support staff cannot add an asset", f"{cs}")
     cp, p = await api(U_OA, "POST", f"/api/v1/entities/{eid('llc')}/private-investments", {
         "kind": "fund", "name": NAME + "Growth Fund IV", "taxonomy_key": "taxonomy_sc_3",
@@ -1075,6 +1093,23 @@ async def y_isolation(conn):
           f"{c1}/{c2}")
     c3, b3 = await api(U_OA, "GET", f"/api/v1/entities/{eid('orgb')}/direct-assets")
     check(c3 == 404, "org A's admin on org B's record → 404", f"{c3} {dumps(b3)}")
+    # FIX 1 — EVERY record-scoped route answers org B's record exactly as it answers a missing id (code + body)
+    da = {"kind": "collectible", "name": NAME + "iso", "valuation": {"value": "1", "date": "2026-01-01",
+                                                                     "method": "appraisal"}}
+    pi = {"kind": "fund", "name": NAME + "iso", "commitment": {"amount": "1", "date": "2026-01-01"}}
+    for method, tmpl, payload in (("GET", "/api/v1/entities/{}/direct-assets", None),
+                                  ("POST", "/api/v1/entities/{}/direct-assets", da),
+                                  ("GET", "/api/v1/entities/{}/private-investments", None),
+                                  ("POST", "/api/v1/entities/{}/private-investments", pi),
+                                  ("POST", "/api/v1/entities/{}/net-worth/recalculate", {}),
+                                  ("GET", "/api/v1/entities/{}/net-worth", None)):
+        cb, bb = await api(U_OA, method, tmpl.format(eid("orgb")), payload)
+        cmiss, bmiss = await api(U_OA, method, tmpl.format(MISSING), payload)
+        check(bool(cb == 404 and (cb, bb) == (cmiss, bmiss)), f"{method} {tmpl.format('{id}')}: org B's record → the "
+              "SAME not-found as a missing id", f"{cb} {dumps(bb)} / {cmiss} {dumps(bmiss)}")
+    iso_rows = await platform(conn, "SELECT count(*) FROM portfolio.assets WHERE org_id = ANY($1::uuid[]) AND name = $2",
+                              FIXTURE_ORGS, NAME + "iso", fetch="fetchval")
+    check(iso_rows == 0, "the refused cross-org / missing-id writes created no asset in either org", f"{iso_rows}")
     trg = await platform(conn, "SELECT count(*) FROM pg_trigger WHERE tgname = 'crm_demo_delete_guard_trg'",
                          fetch="fetchval")
     check(bool(trg >= 9), "the demo delete guard is still installed on the CRM tables", f"{trg}")

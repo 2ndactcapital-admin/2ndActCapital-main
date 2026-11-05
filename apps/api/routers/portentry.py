@@ -62,7 +62,7 @@ class _Body(BaseModel):
 class Valuation(_Body):
     value: str
     date: date
-    method: Literal["appraisal", "estimate", "statement"]
+    method: Literal["appraisal", "mark_to_model", "nav", "market_price", "amortized_cost"]   # = DH.VALUATION_METHODS
     source: str | None = Field(default=None, max_length=300)
 
 
@@ -132,6 +132,17 @@ def _env(request: Request, rows, vocab: dict, editable: list[str], *, perms=(WRI
             "vocabularies": {**vocab, "editable": list(editable) if can else [], "inline_editable": []}}
 
 
+async def _record_in_org(pool, org_id, entity_id) -> None:
+    """PORTENTRY1 FIX 1 — every record-scoped route resolves the record in the CALLER's org first and answers the SAME
+    404 as a missing id when it is not there. require_entity_access lets staff / internal callers through unscoped
+    (RLS keeps them in-org), so without this an org-A admin reading an org-B record got 200 with an empty list."""
+    async with pool.acquire() as conn:
+        try:
+            await DH._entity(conn, org_id, entity_id)
+        except DH.HoldingNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 def _raise(exc: Exception):
     if isinstance(exc, (DH.HoldingNotFound, II.ImportNotFound, HT.HumanTaskNotFound)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -151,6 +162,7 @@ async def list_direct_assets(request: Request, entity_id: UUID):
     pool = await get_pool()
     await _member_scoped_entity(request, pool, entity_id)
     org_id = get_org_id(request)
+    await _record_in_org(pool, org_id, entity_id)
     async with pool.acquire() as conn:
         rows = await DH.list_direct_assets(conn, org_id, [entity_id])
     return _env(request, rows, DH.vocab(), ["add", "revalue"])
@@ -159,6 +171,7 @@ async def list_direct_assets(request: Request, entity_id: UUID):
 @router.post("/entities/{entity_id}/direct-assets", status_code=201)
 async def add_direct_asset(request: Request, entity_id: UUID, body: DirectAssetIn):
     p = require_internal_permission(request, "manage_members")
+    await _record_in_org(await get_pool(), get_org_id(request), entity_id)
     data = body.model_dump(mode="json", exclude_none=True)
     try:
         return await DH.add_direct_asset(await get_pool(), org_id=get_org_id(request), actor_id=p.user_id,
@@ -184,6 +197,7 @@ async def list_private(request: Request, entity_id: UUID):
     pool = await get_pool()
     await _member_scoped_entity(request, pool, entity_id)
     org_id = get_org_id(request)
+    await _record_in_org(pool, org_id, entity_id)
     async with pool.acquire() as conn:
         rows = await DH.list_private_investments(conn, org_id, [entity_id])
     return _env(request, rows, DH.vocab(), ["add", "flows", "nav"])
@@ -192,6 +206,7 @@ async def list_private(request: Request, entity_id: UUID):
 @router.post("/entities/{entity_id}/private-investments", status_code=201)
 async def add_private(request: Request, entity_id: UUID, body: PrivateIn):
     p = require_internal_permission(request, "manage_members")
+    await _record_in_org(await get_pool(), get_org_id(request), entity_id)
     try:
         return await DH.add_private_investment(await get_pool(), org_id=get_org_id(request), actor_id=p.user_id,
                                                entity_id=entity_id, data=body.model_dump(mode="json",
@@ -225,7 +240,7 @@ async def add_nav(request: Request, commitment_id: UUID, body: Nav):
                                        str(c["position_id"]))
     try:
         return await DH.add_valuation(pool, org_id=org_id, actor_id=p.user_id, asset_id=asset_id,
-                                      data={**body.model_dump(mode="json"), "method": "statement"}, nav=True)
+                                      data={**body.model_dump(mode="json"), "method": DH.NAV_METHOD}, nav=True)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
 
@@ -255,11 +270,7 @@ async def recalculate(request: Request, entity_id: UUID):
     p = require_internal_permission(request, "manage_members", "manage_portfolio")
     org_id = get_org_id(request)
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        ok = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1 AND org_id = $2::uuid AND valid_to IS NULL "
-                                 "AND system_to IS NULL", entity_id, str(org_id))
-    if not ok:
-        raise HTTPException(status_code=404, detail="Entity not found")
+    await _record_in_org(pool, org_id, entity_id)
     res = await PR.recalculate(pool, org_id, entity_id, actor_id=p.user_id)
     from services import liabilities as L
 

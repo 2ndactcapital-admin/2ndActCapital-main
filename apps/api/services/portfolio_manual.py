@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import date
 
 from services.portfolio_assets import TABLE_ASSET_IDENT, TABLE_ASSETS, _OrgWrite, normalize_identifier_value
 
@@ -30,6 +31,14 @@ KIND_SHAPE = {
     "municipal_bond": ("financial", "market_price"), "private": ("financial", "mark_to_model"),
     "listed_option": ("financial", "market_price"), "digital_asset": ("financial", "market_price"),
 }
+
+
+def _as_date(v) -> date | None:
+    if v is None or v == "":
+        return None
+    if isinstance(v, date):
+        return v
+    return date.fromisoformat(str(v)[:10])
 
 
 async def manual_asset_for(conn, org_id, ref: dict) -> str:
@@ -59,7 +68,9 @@ async def manual_asset_for(conn, org_id, ref: dict) -> str:
             return got
         aclass, vmethod = KIND_SHAPE.get(kind, ("financial", "mark_to_model"))
         aid = str(uuid.uuid4())
-        maturity = terms.get("maturity") or terms.get("expiry")
+        # PORTENTRY1 FIX 1 — the terms carry ISO strings (JSON); asyncpg binds a $n::date only from a date object.
+        # A muni's maturity / an option's expiry as a str was the 500 on approve (DataError … 'toordinal').
+        maturity = _as_date(terms.get("maturity") or terms.get("expiry"))
         await c.execute(
             f"""INSERT INTO {TABLE_ASSETS} (id, org_id, global_security_id, name, asset_class, asset_type,
                     ownership_basis, valuation_method, default_taxonomy_key, currency_code, maturity_date,
