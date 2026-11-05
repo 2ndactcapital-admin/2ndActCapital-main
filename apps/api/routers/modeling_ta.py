@@ -382,7 +382,7 @@ async def _resolve_commitment_state(
 
     position = await conn.fetchrow(
         """
-        SELECT p.market_value
+        SELECT p.market_value, p.ownership_basis, p.ownership_pct, p.quantity, p.asset_id::text AS asset_id
         FROM portfolio.positions p
         JOIN portfolio.commitments c ON c.position_id = p.id AND c.org_id = p.org_id
         WHERE c.id = $1::uuid AND c.org_id = $2::uuid
@@ -395,8 +395,16 @@ async def _resolve_commitment_state(
     committed = commitment["commitment_amount"] or Decimal(0)
     called = commitment["called_to_date"] or Decimal(0)
     distributed = commitment["distributed_to_date"] or Decimal(0)
-    if position is not None and position["market_value"] is not None:
-        current_nav = Decimal(position["market_value"])
+    # PORTENTRY1 (GAP-PORT-04) — a private investment entered on the CRM record carries its NAV as a VALUATION on
+    # a percent position (market_value NULL): read it through the same position_current_value the rollup and the
+    # grid use. A stored market_value is returned first by that function, so existing commitments are unchanged.
+    resolved = None
+    if position is not None:
+        from services.portfolio_rollup import position_current_value
+
+        resolved, _ = await position_current_value(conn, org_id, dict(position), None)
+    if resolved is not None:
+        current_nav = Decimal(resolved)
     else:
         current_nav = called - distributed
         if current_nav < 0:

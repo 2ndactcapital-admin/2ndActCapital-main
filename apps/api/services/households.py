@@ -245,18 +245,22 @@ async def get_primary_household(conn, org_id, entity_id) -> dict | None:
 # Decimal 0 rather than NULL. Postgres numeric SUM is exact and asyncpg returns
 # it as Decimal, so no float ever enters the money path.
 _HOLDINGS_TOTAL_SQL = """
-    SELECT
-      COALESCE(SUM(latest.market_value), 0)        AS total_value,
-      COUNT(DISTINCT latest.entity_id)             AS entities_with_holdings
-    FROM (
-      SELECT DISTINCT ON (h.entity_id, h.taxonomy_key)
-        h.entity_id, h.taxonomy_key, h.market_value
+    -- PORTENTRY1 (GAP-PORT-05) — each entity's LATEST snapshot per source (every bucket at the latest as_of_date
+    -- <= $3), not the latest row per taxonomy key: a key that vanished in a later rollup no longer lingers from an
+    -- earlier date. Single-date data (every fixture before this sprint) sums exactly as before.
+    WITH snap AS (
+      SELECT h.entity_id, h.source, max(h.as_of_date) AS d
       FROM entity_holdings h
-      WHERE h.org_id = $1
-        AND h.entity_id = ANY($2::uuid[])
-        AND h.as_of_date <= $3
-      ORDER BY h.entity_id, h.taxonomy_key, h.as_of_date DESC
-    ) latest
+      WHERE h.org_id = $1 AND h.entity_id = ANY($2::uuid[]) AND h.as_of_date <= $3
+      GROUP BY h.entity_id, h.source
+    )
+    SELECT
+      COALESCE(SUM(h.market_value), 0)        AS total_value,
+      COUNT(DISTINCT h.entity_id)             AS entities_with_holdings,
+      max(snap.d)                             AS holdings_as_of
+    FROM snap
+    JOIN entity_holdings h
+      ON h.org_id = $1 AND h.entity_id = snap.entity_id AND h.source = snap.source AND h.as_of_date = snap.d
 """
 
 
@@ -268,7 +272,7 @@ async def _sum_holdings(conn, org_id, entity_ids: list, as_of) -> dict:
     memberships vs strict primary FK). Returns Decimal totals.
     """
     if not entity_ids:
-        return {"total_value": ZERO, "entities_with_holdings": 0}
+        return {"total_value": ZERO, "entities_with_holdings": 0, "holdings_as_of": None}
     from datetime import date as _date
     if as_of is None:
         as_of = _date.today()
@@ -281,6 +285,8 @@ async def _sum_holdings(conn, org_id, entity_ids: list, as_of) -> dict:
     return {
         "total_value": _dec(row["total_value"]),
         "entities_with_holdings": int(row["entities_with_holdings"]),
+        # PORTENTRY1 — net worth shows its as-of (the latest rollup snapshot it read; None = never rolled up)
+        "holdings_as_of": row["holdings_as_of"].isoformat() if row["holdings_as_of"] else None,
     }
 
 
@@ -320,6 +326,7 @@ async def household_rollup(conn, org_id, household_id, *, as_of=None) -> dict:
         "member_count": len(member_ids),
         "member_entity_ids": member_ids,
         "total_holdings_value": totals["total_value"],
+        "holdings_as_of": totals.get("holdings_as_of"),
         "net_worth": await _net_worth(conn, org_id, member_ids, totals["total_value"], as_of),
         "currency": "USD",
     }
@@ -361,6 +368,7 @@ async def primary_household_networth(conn, org_id, household_id=None,
             "member_count": len(member_ids),
             "member_entity_ids": member_ids,
             "total_holdings_value": totals["total_value"],
+            "holdings_as_of": totals.get("holdings_as_of"),
             "net_worth": await _net_worth(conn, org_id, member_ids, totals["total_value"], as_of),
             "currency": "USD",
         }
@@ -390,6 +398,7 @@ async def primary_household_networth(conn, org_id, household_id=None,
             "member_count": len(member_ids),
             "member_entity_ids": member_ids,
             "total_holdings_value": totals["total_value"],
+            "holdings_as_of": totals.get("holdings_as_of"),
             "net_worth": await _net_worth(conn, org_id, member_ids, totals["total_value"], as_of),
             "currency": "USD",
         })

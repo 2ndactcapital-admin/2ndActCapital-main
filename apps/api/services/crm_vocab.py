@@ -168,7 +168,7 @@ ENTITY_TYPE_LABELS = {
 # value; clearing a field closes it and inserts nothing.
 DETAIL_PREFIX = "detail."
 
-FIELD_TYPES = ("choice", "boolean", "text", "integer", "decimal", "date", "entity", "region")
+FIELD_TYPES = ("choice", "boolean", "text", "integer", "decimal", "date", "entity", "entities", "region", "masked")
 
 
 @dataclass(frozen=True)
@@ -181,8 +181,9 @@ class DetailField:
     help: str = ""
     min: Decimal | None = None
     max: Decimal | None = None
-    entity_types: frozenset | None = None    # for type 'entity': which record types may be chosen
+    entity_types: frozenset | None = None    # for type 'entity' / 'entities': which record types may be chosen
     source: str = "attribute"     # 'attribute' (entity_attributes) or 'column:<name>' (an entities column)
+    group: str = ""               # PORTENTRY1: a field group shown under one heading (the ILIT's insurance policy)
 
     @property
     def attribute_key(self) -> str:
@@ -195,7 +196,7 @@ class DetailField:
                 "min": str(self.min) if self.min is not None else None,
                 "max": str(self.max) if self.max is not None else None,
                 "entity_types": sorted(self.entity_types) if self.entity_types is not None else None,
-                "source": self.source, "editable_here": self.source == "attribute"}
+                "source": self.source, "editable_here": self.source == "attribute", "group": self.group}
 
 
 TRUST_TYPES = (("revocable", "Revocable"), ("irrevocable", "Irrevocable"), ("dynasty", "Dynasty"),
@@ -205,6 +206,13 @@ TRUST_TYPES = (("revocable", "Revocable"), ("irrevocable", "Irrevocable"), ("dyn
 CHARITY_TYPES = (("private_foundation", "Private foundation"), ("daf", "Donor-advised fund"),
                  ("public_charity", "Public charity"), ("supporting_org", "Supporting organization"))
 MANAGEMENT = (("member_managed", "Member-managed"), ("manager_managed", "Manager-managed"))
+# PORTENTRY1 (GAP-CRM-04)
+FUND_ROLES = (("family_partnership", "Family partnership"), ("fund", "Fund"), ("spv", "SPV"), ("other", "Other"))
+EIN_STATUSES = (("501c3", "501(c)(3)"), ("501c4", "501(c)(4)"), ("other", "Other"))
+POLICY_TYPES = (("survivorship_ul", "Survivorship universal life"), ("universal_life", "Universal life"),
+                ("whole_life", "Whole life"), ("term", "Term"), ("variable_ul", "Variable universal life"),
+                ("other", "Other"))
+POLICY_GROUP = "insurance_policy"
 
 STATE_OF_FORMATION = DetailField(
     "state_of_formation", "State of formation", "region", source="column:region_code",
@@ -223,6 +231,15 @@ TRUST_FIELDS = (
     DetailField("unitrust_rate_pct", "Unitrust rate (%)", "decimal", min=Decimal(0), max=Decimal(100)),
     DetailField("crummey_notices", "Crummey notices", "boolean"),
     DetailField("funded_with", "Funded with", "text"),
+    # PORTENTRY1 (GAP-CRM-04) — the policy an ILIT holds; the insurer and the insureds are CRM records
+    DetailField("policy_insurer", "Insurer", "entity", entity_types=LEGAL, group=POLICY_GROUP,
+                help="The insurance company's CRM record."),
+    DetailField("policy_type", "Policy type", "choice", POLICY_TYPES, group=POLICY_GROUP),
+    DetailField("policy_face_amount", "Face amount", "decimal", min=Decimal(0), group=POLICY_GROUP),
+    DetailField("policy_insureds", "Insureds", "entities", entity_types=PERSON, group=POLICY_GROUP,
+                help="The insured people's CRM records."),
+    DetailField("policy_number_masked", "Policy number (masked)", "masked", group=POLICY_GROUP,
+                help="Masked only, e.g. POL-****77 — never the full number."),
 )
 CHARITY_FIELDS = (
     DetailField("charity_type", "Charity type", "choice", CHARITY_TYPES, sets_sub_type=True,
@@ -230,6 +247,7 @@ CHARITY_FIELDS = (
     DetailField("sponsor", "Sponsor", "entity", entity_types=LEGAL,
                 help="The sponsoring organisation's CRM record (a donor-advised fund's sponsor)."),
     DetailField("min_distribution_pct", "Minimum distribution (%)", "decimal", min=Decimal(0), max=Decimal(100)),
+    DetailField("ein_status", "EIN / exemption status", "choice", EIN_STATUSES),     # PORTENTRY1 (GAP-CRM-04)
 )
 COMPANY_FIELDS = (
     DetailField("management", "Management", "choice", MANAGEMENT),
@@ -237,10 +255,14 @@ COMPANY_FIELDS = (
     DetailField("valuation_policy", "Valuation policy", "text"),
 )
 
+#: PORTENTRY1 (GAP-CRM-04) — an LP's role
+LP_FIELDS = COMPANY_FIELDS + (DetailField("fund_role", "Fund role", "choice", FUND_ROLES),)
+
 DETAIL_FIELDS_BY_TYPE: dict[str, tuple] = {
     "trust": TRUST_FIELDS,
     "foundation": CHARITY_FIELDS,
-    **{t: COMPANY_FIELDS for t in ("llc", "lp", "gp", "family_office")},
+    **{t: COMPANY_FIELDS for t in ("llc", "gp", "family_office")},
+    "lp": LP_FIELDS,
 }
 
 
@@ -257,7 +279,8 @@ def detail_field(entity_type: str, key: str) -> DetailField | None:
 
 
 _VALUE_TYPES = {"choice": "string", "text": "string", "boolean": "boolean", "integer": "integer",
-                "decimal": "decimal", "date": "date", "entity": "entity", "region": "string"}
+                "decimal": "decimal", "date": "date", "entity": "entity", "entities": "json", "region": "string",
+                "masked": "string"}
 
 
 def value_type_of(f: DetailField) -> str:
@@ -316,6 +339,26 @@ def coerce_detail(f: DetailField, raw) -> str | None:
             return str(uuid.UUID(str(raw)))
         except ValueError:
             raise VocabError(f"{f.label}: choose a CRM record") from None
+    if f.type == "entities":
+        import json
+        import uuid
+
+        vals = raw if isinstance(raw, list) else [raw]
+        try:
+            ids = sorted({str(uuid.UUID(str(v))) for v in vals if str(v).strip()})
+        except ValueError:
+            raise VocabError(f"{f.label}: choose CRM records") from None
+        return json.dumps(ids) if ids else None
+    if f.type == "masked":
+        import re
+
+        if not isinstance(raw, str):
+            raise VocabError(f"{f.label}: text")
+        s = raw.strip()
+        if "*" not in s or len(re.findall(r"\d", s)) > 4 or len(s) > 40:
+            raise VocabError(f"{f.label}: a MASKED number only (asterisks, at most the last 4 digits, e.g. "
+                             "POL-****77) — never the full number")
+        return s
     raise VocabError(f"{f.label} is not edited here")
 
 
@@ -334,6 +377,10 @@ def decode_detail(f: DetailField, stored: str | None):
         return stored == "true"
     if f.type == "integer":
         return int(stored)
+    if f.type == "entities":
+        import json
+
+        return json.loads(stored)
     return stored
 
 

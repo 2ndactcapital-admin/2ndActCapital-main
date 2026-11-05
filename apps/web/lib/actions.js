@@ -42,6 +42,7 @@ export async function createEntityAction(prevState, formData) {
     region_code: emptyToNull(formData.get("region_code")),
     sub_type: emptyToNull(formData.get("sub_type")),
     status: formData.get("status") || "prospect",
+    marital_status: emptyToNull(formData.get("marital_status")),
     lead_source: emptyToNull(formData.get("lead_source")),
     tags: parseTags(formData.get("tags")),
     linkedin_url: emptyToNull(formData.get("linkedin_url")),
@@ -94,6 +95,7 @@ export async function updateEntityAction(id, prevState, formData) {
     tags: parseTags(formData.get("tags")),
     // CRMDETAIL1 — people (fields present only on a person's form)
     maiden_name: formData.has("maiden_name") ? emptyToNull(formData.get("maiden_name")) : undefined,
+    marital_status: formData.has("marital_status") ? emptyToNull(formData.get("marital_status")) : undefined,
     date_of_death: formData.has("date_of_death") ? emptyToNull(formData.get("date_of_death")) : undefined,
   };
   // Strip undefined values so Pydantic only updates provided fields

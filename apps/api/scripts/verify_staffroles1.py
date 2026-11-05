@@ -931,13 +931,43 @@ async def y_bypass(conn):
         check(code not in (401, 403), f"super admin passes the {perm} gate (then the missing id decides)",
               f"HTTP {code}; {dumps(body)[:120]}")
     # writes that keep require_staff: an internal non-staff role is refused, staff passes the gate
-    for path in (f"/api/v1/entity-relationships/{MISSING}", f"/api/v1/entity-relationships/{MISSING}/ownership"):
+    for path in (f"/api/v1/entity-relationships/{MISSING}",):
         for name in ("orgadmin", "support", "advisor"):
             code, body = await api(PERSONAS[name], "DELETE", path)
             check(code == 403 and "Staff access required" in dumps(body), f"{name} DELETE {path} → 403 (a write "
                   "keeps require_staff)", f"HTTP {code}; {dumps(body)}")
         code, body = await api(U_STAFF, "DELETE", path)
         check(code not in (401, 403), f"investment staff passes the same write gate as before (DELETE {path})",
+              f"HTTP {code}; {dumps(body)[:120]}")
+    # PORTENTRY1 (GAP-CRM-05) — a DECIDED change of rule, not a weakening (Joe, 2026-11-04): ownership % is written
+    # by an internal role holding manage_members (the Relationships panel's gate). The identical request: the org
+    # admin (manage_members) is admitted, support staff / advisor (no manage_members) and the member are refused
+    # naming it / as non-staff; staff and super admin pass as before.
+    path = f"/api/v1/entity-relationships/{MISSING}/ownership"
+    # the fixture org admin holds no manage_members (a hand-written set); the REAL org_admin role does (perms1). Grant
+    # it to the FIXTURE role for this one request, then remove exactly that grant (fixture org, by id).
+    grant = ("INSERT INTO role_permissions (role_id, permission_id) SELECT r.id, p.id FROM roles r, permissions p "
+             "WHERE r.org_id = $1 AND r.name = 'org_admin' AND p.name = 'manage_members' ON CONFLICT DO NOTHING")
+    ungrant = ("DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE org_id = $1 AND name = "
+               "'org_admin') AND permission_id = (SELECT id FROM permissions WHERE name = 'manage_members')")
+    await platform(conn, grant, ORG_A, fetch="execute")
+    try:
+        code, body = await api(U_ORGADMIN, "DELETE", path)
+    finally:
+        await platform(conn, ungrant, ORG_A, fetch="execute")
+    check(code not in (401, 403), f"org admin (internal + manage_members) passes the ownership gate (DELETE {path} → "
+          "the missing id decides)", f"HTTP {code}; {dumps(body)[:160]}")
+    for name in ("support", "advisor"):
+        code, body = await api(PERSONAS[name], "DELETE", path)
+        check(code == 403 and "Permission required: manage_members" in dumps(body),
+              f"{name} (internal, no manage_members) DELETE {path} → 403 naming manage_members",
+              f"HTTP {code}; {dumps(body)}")
+    code, body = await api(U_MEMBER, "DELETE", path)
+    check(code == 403, f"member DELETE {path} → 403 (a client role never writes ownership)",
+          f"HTTP {code}; {dumps(body)}")
+    for uid, name in ((U_STAFF, "investment staff"), (U_SUPER, "super admin")):
+        code, body = await api(uid, "DELETE", path)
+        check(code not in (401, 403), f"{name} passes the ownership gate as before (DELETE {path})",
               f"HTTP {code}; {dumps(body)[:120]}")
     n0 = await platform(conn, "SELECT count(*) FROM entity_group_members WHERE group_id = $1", G_F2, fetch="fetchval")
     code, body = await api(U_SUPPORT, "DELETE", f"/api/v1/entity-groups/{G_F2}/members/{E_F2}")

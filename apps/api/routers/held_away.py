@@ -75,6 +75,19 @@ class RowIn(_Body):
     trade_date: date | None = None
     price: str | None = Field(default=None, max_length=40)
     realized_gain_loss: str | None = Field(default=None, max_length=40)
+    # PORTENTRY1 (GAP-PORT-01) — an org-scoped manual holding (services.held_away.MANUAL_KINDS) and its terms
+    asset_kind: str | None = Field(default=None, max_length=40)
+    taxonomy_key: str | None = Field(default=None, max_length=80)
+    internal_id: str | None = Field(default=None, max_length=80)
+    currency: str | None = Field(default=None, max_length=3)
+    coupon: str | None = Field(default=None, max_length=20)
+    maturity: date | None = None
+    underlying_ticker: str | None = Field(default=None, max_length=20)
+    option_type: Literal["call", "put"] | None = None
+    strike: str | None = Field(default=None, max_length=40)
+    expiry: date | None = None
+    multiplier: str | None = Field(default=None, max_length=20)
+    chain: str | None = Field(default=None, max_length=40)
 
 
 class ManualIn(_Body):

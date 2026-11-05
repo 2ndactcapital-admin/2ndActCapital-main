@@ -31,6 +31,7 @@ from routers.entities import router as entities_router, get_org_id
 from routers.modeling_ta import router as modeling_ta_router
 from routers.entity_graph import router as entity_graph_router
 from routers.crm_detail import router as crm_detail_router  # CRMDETAIL1
+from routers.portentry import router as portentry_router  # PORTENTRY1
 from routers.ownership_tree import router as ownership_tree_router
 from routers.billing_groups import router as billing_groups_router
 from routers.fee_chat import router as fee_chat_router
@@ -586,6 +587,7 @@ app.include_router(portfolio_transactions_router, prefix="/api/v1")
 app.include_router(spv_router, prefix="/api/v1")
 app.include_router(entity_graph_router, prefix="/api/v1")
 app.include_router(crm_detail_router, prefix="/api/v1")  # CRMDETAIL1
+app.include_router(portentry_router, prefix="/api/v1")  # PORTENTRY1
 app.include_router(ownership_tree_router, prefix="/api/v1")
 app.include_router(reference_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1")

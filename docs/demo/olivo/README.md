@@ -87,6 +87,41 @@ the records by the `demo-olivo` tag and the `Olivo Family` household, and
 remove them by id with the documented privileged path — the demo protection
 guard must be lifted explicitly for that run.
 
+## Integrated accounts — the one-time position import (PORTENTRY1)
+The eight integrated (Altruist) accounts — A7, A9, A12, A14, A15, A20, A24, A29 — have no feed yet. Joe's decision
+(2026-11-04): load them ONCE from a position file; the custodian feed supersedes them when it arrives.
+
+File: `data/import/integrated_positions.csv`, generated from `data/holdings.csv` by
+`generator/integrated_import.py` (27 lines, 8 accounts; totals equal holdings.csv for those accounts). NOT loaded.
+
+Format (UTF-8 CSV, header row, one line per holding):
+
+| column | meaning |
+|---|---|
+| account_mask | the account's MASK, e.g. `****2201` — matched on its last four digits to exactly one non-held-away account of the org; a full number is refused |
+| as_of_date | YYYY-MM-DD (else the file's as-of on the upload form) |
+| name | security name (required) |
+| ticker / cusip | resolved in the platform master (read only); unresolved → an ORG-scoped manual asset |
+| asset_class / sub_class | as in holdings.csv (a sub-class naming a fund makes an unresolved line a mutual-fund manual asset) |
+| taxonomy_key | the platform taxonomy key (Public equity → taxonomy_sc_1, Fixed income → taxonomy_sc_2, Cash → taxonomy_mc_8_1) |
+| quantity, price | units and price (optional for a value-only line, e.g. SMA-CORE) |
+| market_value | the line's value (required unless quantity × price) |
+| cost_basis | optional |
+
+Operator steps: Super Admin → **Integrated import** (`/admin/integrated-import`) → upload the file → check the
+preview (each line's account and resolution, totals per account) → a SECOND Super Admin approves it. Rows are
+written with authority `stated`, source `manual` (ranked below `altruist`), and listed as provisional; the Altruist
+sync supersedes them (precedence on shared holdings, then every provisional row of the account is closed).
+
+## Protection rule (crmdetail1)
+Every Olivo record is tagged `demo-olivo`. A record tagged `demo-*`, or a household whose members are all
+demo-tagged, can never be deleted by a script: the database's BEFORE DELETE guard refuses it in a real org (the
+fixture path `crm.demo_teardown = 'fixture'` works for `is_test` orgs only), `_verify_cleanup` and the MUSE removal
+scripts refuse any plan that touches it, and the app refuses to delete the demo household. "Removing it" therefore
+means retiring / editing in the app; there is no privileged path for a real org's demo rows. See
+`docs/demo/README.md`. (Restored by PORTENTRY1: commit a0755ee — the v2 entry plan — dropped this section when the
+README was re-copied; the rule itself never changed.)
+
 ## Decisions still open (2026-11-04)
 - Which tenant hosts the demo (2nd Act's book, tagged and non-billable, vs a
   separate demo firm).

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import EntityPicker from "@/components/EntityPicker";
 import { canWrite, formatMoney, liabilityPayload, netWorthLines } from "@/lib/crmDetail.mjs";
+import { asOfText } from "@/lib/portentry.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
 const input = "w-full rounded-[6px] border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A]";
@@ -160,6 +161,17 @@ export default function LiabilitiesTab({ entityId }) {
       <section className={card}>
         <h2 className="font-[Spectral,Georgia,serif] text-xl text-[#1B2B4B]">Net worth</h2>
         <div className="mt-3"><NetWorthLines netWorth={env?.net_worth} vocabularies={vocab} /></div>
+        {/* PORTENTRY1 (GAP-PORT-05) — the snapshot's as-of, and Recalculate (internal writers only) */}
+        <p className={`mt-2 ${quiet}`}>{asOfText(env?.net_worth)}
+          {writable && (
+            <button type="button" className="ml-3 text-sm text-[#1B2B4B] hover:underline" onClick={async () => {
+              try {
+                await call(`/api/portentry/entities/${encodeURIComponent(entityId)}/net-worth/recalculate`, { method: "POST", body: "{}" });
+                await load();
+              } catch (e) { setError(e.message); }
+            }}>Recalculate</button>
+          )}
+        </p>
         {vocab?.net_worth_note && <p className={`mt-2 ${quiet}`}>{vocab.net_worth_note}</p>}
       </section>
       <section className={card}>

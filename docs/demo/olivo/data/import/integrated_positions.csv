@@ -1,0 +1,28 @@
+account_mask,as_of_date,name,ticker,cusip,asset_class,sub_class,taxonomy_key,quantity,price,market_value,cost_basis
+****2201,2026-11-04,Vanguard S&P 500 ETF,VOO,,Public equity,US large cap ETF,taxonomy_sc_1,24000,590.2,14164800,12400000
+****2201,2026-11-04,Vanguard FTSE Developed Markets ETF,VEA,,Public equity,Developed ex-US ETF,taxonomy_sc_1,150000,58.9,8835000,7900000
+****2201,2026-11-04,Vanguard FTSE Emerging Markets ETF,VWO,,Public equity,Emerging markets ETF,taxonomy_sc_1,70000,52.1,3647000,3400000
+****2201,2026-11-04,iShares Core U.S. Aggregate Bond ETF,AGG,,Fixed income,Core bond ETF,taxonomy_sc_2,95000,101.3,9623500,9700000
+****2201,2026-11-04,iShares 0-3 Month Treasury Bond ETF,SGOV,,Cash,T-bill ETF,taxonomy_mc_8_1,48000,100.6,4828800,4800000
+****2201,2026-11-04,Invesco QQQ Trust,QQQ,,Public equity,Nasdaq-100 ETF,taxonomy_sc_1,6500,598.4,3889600,3100000
+****2202,2026-11-04,Olivo Core Equity (direct-indexed S&P 500 replica),SMA-CORE,,Public equity,Direct-index SMA (503 positions),taxonomy_sc_1,,,24600000,19200000
+****2202,2026-11-04,iShares MSCI EAFE ETF,EFA,,Public equity,Developed ex-US ETF,taxonomy_sc_1,110000,88.7,9757000,8100000
+****2202,2026-11-04,iShares Core U.S. Aggregate Bond ETF,AGG,,Fixed income,Core bond ETF,taxonomy_sc_2,70000,101.3,7091000,7000000
+****2202,2026-11-04,Vanguard Short-Term Inflation-Protected Securities ETF,VTIP,,Fixed income,TIPS ETF,taxonomy_sc_2,80000,50.1,4008000,3900000
+****2202,2026-11-04,iShares 0-3 Month Treasury Bond ETF,SGOV,,Cash,T-bill ETF,taxonomy_mc_8_1,60000,100.6,6036000,6000000
+****2202,2026-11-04,Innovator U.S. Equity Power Buffer ETF (Jan),PJAN,,Public equity,Defined-outcome ETF,taxonomy_sc_1,60000,42.8,2568000,2400000
+****2203,2026-11-04,Vanguard Total Stock Market ETF,VTI,,Public equity,US total market ETF,taxonomy_sc_1,21000,318.5,6688500,5400000
+****2203,2026-11-04,Vanguard Total International Stock ETF,VXUS,,Public equity,International ETF,taxonomy_sc_1,45000,71.4,3213000,2900000
+****2203,2026-11-04,Vanguard Tax-Exempt Bond ETF,VTEB,,Fixed income,Municipal bond ETF,taxonomy_sc_2,80000,50.8,4064000,4000000
+****2204,2026-11-04,Vanguard Total Stock Market ETF,VTI,,Public equity,US total market ETF,taxonomy_sc_1,5000,318.5,1592500,1100000
+****2204,2026-11-04,iShares Core U.S. Aggregate Bond ETF,AGG,,Fixed income,Core bond ETF,taxonomy_sc_2,5000,101.3,506500,500000
+****2205,2026-11-04,Vanguard S&P 500 ETF,VOO,,Public equity,US large cap ETF,taxonomy_sc_1,7200,590.2,4249440,3100000
+****2205,2026-11-04,Vanguard FTSE All-World ex-US ETF,VEU,,Public equity,International ETF,taxonomy_sc_1,28000,68.3,1912400,1600000
+****2205,2026-11-04,Vanguard Intermediate-Term Tax-Exempt Fund,VWIUX,,Fixed income,Municipal bond fund,taxonomy_sc_2,160000,13.9,2224000,2200000
+****2206,2026-11-04,Vanguard Total Stock Market ETF,VTI,,Public equity,US total market ETF,taxonomy_sc_1,12000,318.5,3822000,2900000
+****2206,2026-11-04,Vanguard Total International Stock ETF,VXUS,,Public equity,International ETF,taxonomy_sc_1,12000,71.4,856800,700000
+****2206,2026-11-04,iShares Core U.S. Aggregate Bond ETF,AGG,,Fixed income,Core bond ETF,taxonomy_sc_2,7000,101.3,709100,700000
+****2207,2026-11-04,Vanguard Total Stock Market ETF,VTI,,Public equity,US total market ETF,taxonomy_sc_1,8000,318.5,2548000,1900000
+****2207,2026-11-04,iShares Core U.S. Aggregate Bond ETF,AGG,,Fixed income,Core bond ETF,taxonomy_sc_2,10000,101.3,1013000,1000000
+****2208,2026-11-04,Vanguard Total Stock Market ETF,VTI,,Public equity,US total market ETF,taxonomy_sc_1,4200,318.5,1337700,1000000
+****2208,2026-11-04,iShares Core U.S. Aggregate Bond ETF,AGG,,Fixed income,Core bond ETF,taxonomy_sc_2,5500,101.3,557150,550000

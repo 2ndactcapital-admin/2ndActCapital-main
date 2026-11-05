@@ -2,7 +2,10 @@
 
 import { useActionState, useEffect, useState } from "react";
 import { updateEntityAction } from "@/lib/actions";
-import { PERSON_TYPES, STATUS_OPTIONS, statusLabel, subTypesFor, FREE_TEXT_SUBTYPE_TYPES } from "@/lib/entityTypes";
+import { PERSON_TYPES } from "@/lib/entityTypes";
+import { freeTextSubType as isFreeTextSubType, maritalLabel, maritalOptions, statusLabel, statusOptions,
+  subTypeOptions } from "@/lib/crmVocab.mjs";
+import { useCrmVocab } from "@/components/crm/useCrmVocab";
 import { CountryRegionSelect, ReferenceSelect } from "@/components/ReferenceSelect";
 import PersonNameFields from "@/components/crm/PersonNameFields";
 import { personMarkers } from "@/lib/crmDetail.mjs";
@@ -32,11 +35,11 @@ const PERSON_TEXT_FIELDS = [
   { key: "display_name", label: "Display Name" },
 ];
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, vocab }) {
   if (!status) return <span className="text-sm text-text-muted">—</span>;
   return (
     <span className="inline-flex items-center rounded-full bg-gold-light px-2.5 py-0.5 text-xs font-medium text-navy">
-      {statusLabel(status)}
+      {statusLabel(vocab, status)}
     </span>
   );
 }
@@ -64,9 +67,11 @@ export default function EntityDetailsForm({ entity }) {
     if (state?.ok) setEditing(false);
   }, [state]);
 
+  // PORTENTRY1 — statuses, marital statuses and sub-types from the API envelope (the org's config table)
+  const vocab = useCrmVocab();
   const isPerson = PERSON_TYPES.has(entity.entity_type);
-  const subTypes = subTypesFor(entity.entity_type);
-  const freeTextSubType = FREE_TEXT_SUBTYPE_TYPES.includes(entity.entity_type);
+  const subTypes = subTypeOptions(vocab, entity.entity_type, entity.sub_type);
+  const freeTextSubType = isFreeTextSubType(vocab, entity.entity_type);
   const tags = entity.tags || [];
   const dateLabel = isPerson ? "Date of Birth" : "Date of Formation";
   const endDateLabel = "End / Dissolution Date";
@@ -89,7 +94,7 @@ export default function EntityDetailsForm({ entity }) {
         </div>
         <dl className="mt-4 grid gap-4 sm:grid-cols-2">
           <ReadRow label="Status">
-            <StatusBadge status={entity.status} />
+            <StatusBadge status={entity.status} vocab={vocab} />
             {markers.map((m) => (
               <span key={m} className="ml-2 rounded-full border border-border px-2 py-0.5 text-xs text-text-secondary">
                 {m}{m === "Minor" && entity.age != null ? ` · ${entity.age}` : ""}
@@ -109,6 +114,7 @@ export default function EntityDetailsForm({ entity }) {
               <ReadRow label="First Name">{entity.first_name || "—"}</ReadRow>
               <ReadRow label="Last Name">{entity.surname || "—"}</ReadRow>
               {entity.maiden_name && <ReadRow label="Maiden Name">{entity.maiden_name}</ReadRow>}
+              {entity.marital_status && <ReadRow label="Marital Status">{maritalLabel(vocab, entity.marital_status)}</ReadRow>}
               {entity.date_of_death && <ReadRow label="Date of Death">{String(entity.date_of_death)}</ReadRow>}
             </>
           ) : (
@@ -200,6 +206,15 @@ export default function EntityDetailsForm({ entity }) {
               <label className={LABEL_CLASS}>Maiden Name</label>
               <input name="maiden_name" defaultValue={entity.maiden_name || ""} className={INPUT_CLASS} />
             </div>
+            <div>
+              <label className={LABEL_CLASS}>Marital Status</label>
+              <select name="marital_status" defaultValue={entity.marital_status || ""} className={INPUT_CLASS}>
+                <option value="">Not recorded</option>
+                {maritalOptions(vocab).map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
           </>
         ) : (
           <div>
@@ -241,7 +256,7 @@ export default function EntityDetailsForm({ entity }) {
         <div>
           <label className={LABEL_CLASS}>Status</label>
           <select name="status" defaultValue={entity.status || "prospect"} className={INPUT_CLASS}>
-            {STATUS_OPTIONS.map((s) => (
+            {statusOptions(vocab, entity.status || "prospect").map((s) => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
@@ -254,7 +269,7 @@ export default function EntityDetailsForm({ entity }) {
             <select name="sub_type" defaultValue={entity.sub_type || ""} className={INPUT_CLASS}>
               <option value="">Select…</option>
               {subTypes.map((st) => (
-                <option key={st} value={st}>{st}</option>
+                <option key={st.value} value={st.value}>{st.label}</option>
               ))}
             </select>
           </div>

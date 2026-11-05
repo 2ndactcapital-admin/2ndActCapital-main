@@ -56,6 +56,9 @@ async def get_details(conn, org_id, entity_id) -> dict:
     live = await _live(conn, org_id, ent["id"])
     sponsor_ids = [live[f.attribute_key]["attribute_value"] for f in V.detail_fields_for(ent["entity_type"])
                    if f.type == "entity" and f.attribute_key in live]
+    for f in V.detail_fields_for(ent["entity_type"]):          # PORTENTRY1 — a list of CRM records (insureds)
+        if f.type == "entities" and f.attribute_key in live:
+            sponsor_ids += V.decode_detail(f, live[f.attribute_key]["attribute_value"]) or []
     names = {}
     if sponsor_ids:
         names = {str(r["id"]): r["display_name"] for r in await conn.fetch(
@@ -75,6 +78,8 @@ async def get_details(conn, org_id, entity_id) -> dict:
                 display = None if value is None else ("Yes" if value else "No")
             elif f.type == "entity":
                 display = names.get(str(value)) if value else None
+            elif f.type == "entities":
+                display = ", ".join(names.get(str(x)) or str(x) for x in value) if value else None
             else:
                 display = None if value is None else str(value)
         fields.append({**f.as_json(), "value": value, "display": display})
@@ -107,6 +112,17 @@ async def save_details(conn, org_id, actor_id, entity_id, values: dict) -> dict:
         except V.VocabError as exc:
             errors.append(str(exc))
             continue
+        if f.type == "entities" and stored is not None:
+            import json as _json
+
+            ids = _json.loads(stored)
+            got = {str(r["id"]): r["t"] for r in await conn.fetch(
+                "SELECT id, entity_type::text AS t FROM entities WHERE id = ANY($1::uuid[]) AND org_id = $2::uuid "
+                "AND valid_to IS NULL AND system_to IS NULL", [_u(x) for x in ids], _u(org_id))}
+            bad = [x for x in ids if x not in got or (f.entity_types is not None and got[x] not in f.entity_types)]
+            if bad:
+                errors.append(f"{f.label}: {len(bad)} chosen record(s) are not people in this organisation's CRM")
+                continue
         if f.type == "entity" and stored is not None:
             other = await conn.fetchrow(
                 "SELECT entity_type::text AS t FROM entities WHERE id = $1 AND org_id = $2::uuid "

@@ -38,7 +38,7 @@ from services.entity_graph import (
     get_parents,
     get_subtree,
 )
-from services.authz import require_internal, require_staff
+from services.authz import require_internal, require_internal_permission, require_staff
 from services.crm_vocab import VocabError, check_relationship
 from services.users import ensure_user
 
@@ -705,7 +705,9 @@ async def create_ownership(
     body: OwnershipCreate,
     request: Request,
 ):
-    require_staff(request)
+    # PORTENTRY1 (GAP-CRM-05, Joe 2026-11-04) — ownership % is written by an internal role holding
+    # manage_members, the Relationships panel's gate (org admin admitted; support staff without the key refused)
+    require_internal_permission(request, "manage_members")
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -785,7 +787,9 @@ async def amend_ownership(
     body: OwnershipPatch,
     request: Request,
 ):
-    require_staff(request)
+    # PORTENTRY1 (GAP-CRM-05, Joe 2026-11-04) — ownership % is written by an internal role holding
+    # manage_members, the Relationships panel's gate (org admin admitted; support staff without the key refused)
+    require_internal_permission(request, "manage_members")
     org_id = get_org_id(request)
     pool = await get_pool()
 
@@ -877,7 +881,9 @@ async def amend_ownership(
 
 @router.delete("/entity-relationships/{rel_id}/ownership", status_code=204)
 async def delete_ownership(rel_id: UUID, request: Request):
-    require_staff(request)
+    # PORTENTRY1 (GAP-CRM-05, Joe 2026-11-04) — ownership % is written by an internal role holding
+    # manage_members, the Relationships panel's gate (org admin admitted; support staff without the key refused)
+    require_internal_permission(request, "manage_members")
     org_id = get_org_id(request)
     pool = await get_pool()
 

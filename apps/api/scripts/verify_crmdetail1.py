@@ -212,7 +212,9 @@ def self_static(check, find):
     demo = _read("docs/demo/README.md")
     olivo = _read("docs/demo/olivo/README.md")
     check(bool("demo-olivo" in demo and "HollisMuse" in demo and "protection rule" in demo.lower()
-               and "Protection rule (crmdetail1)" in olivo and "HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md" in olivo),
+               and "Protection rule (crmdetail1)" in olivo
+               # PORTENTRY1: a0755ee moved the Olivo README to the v2 entry plan (v1 is still in the folder)
+               and ("HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md" in olivo or "HOLLISMUSE_OLIVO_DATA_ENTRY_v2.md" in olivo)),
           "Task 6: docs/demo/README.md index + the protection rule added to the Olivo README (kept)")
     tabs = _read("apps/web/components/crm/EntityDetailTabs.jsx")
     check(bool("RelationshipsPanel" in tabs and "LiabilitiesTab" in tabs and "DetailFieldsPanel" in tabs),

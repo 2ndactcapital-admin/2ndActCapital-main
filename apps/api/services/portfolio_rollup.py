@@ -151,6 +151,11 @@ class RollupResult:
     entities_covered: int = 0
     total_value: Decimal = _ZERO
     skipped: list[SkippedPosition] = field(default_factory=list)
+    #: PORTENTRY1 — family scope (None = the whole org) and the zero snapshots written for entities that held
+    #: something on an earlier date and hold nothing valued now (so the latest-snapshot net worth reads 0, not the
+    #: stale earlier figure).
+    scope_size: int | None = None
+    buckets_zeroed: int = 0
 
     @property
     def positions_skipped(self) -> int:
@@ -167,6 +172,8 @@ class RollupResult:
             "buckets_removed": self.buckets_removed,
             "entities_covered": self.entities_covered,
             "total_value": str(self.total_value),
+            "scope_size": self.scope_size,
+            "buckets_zeroed": self.buckets_zeroed,
             "currency_code": BASE_CURRENCY,
             "source": ROLLUP_SOURCE,
             "skipped": [
@@ -221,7 +228,7 @@ def _money(value) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
-async def _current_positions(conn, org_id: str, as_of_date: date) -> list:
+async def _current_positions(conn, org_id: str, as_of_date: date, scope: list | None = None) -> list:
     """The positions that ARE the portfolio on ``as_of_date``.
 
     Three filters, each load-bearing:
@@ -259,12 +266,14 @@ async def _current_positions(conn, org_id: str, as_of_date: date) -> list:
         WHERE p.org_id = $1::uuid
           AND p.as_of_date <= $2::date
           AND p.superseded_by_source IS NULL
+          AND ($3::uuid[] IS NULL OR p.owner_entity_id = ANY($3::uuid[]))
           AND {_current('p')}
         ORDER BY p.owner_entity_id, p.asset_id, p.as_of_date DESC,
                  p.system_from DESC
         """,
         org_id,
         as_of_date,
+        scope,
     )
 
 
@@ -345,7 +354,7 @@ async def position_current_value(conn, org_id: str, row, as_of_date: date | None
     return await _position_value(conn, org_id, row, as_of_date)
 
 
-async def _ownership_weights(conn, org_id: str, owner_ids: set[str]) -> dict:
+async def _ownership_weights(conn, org_id: str, owner_ids: set[str], scope: list | None = None) -> dict:
     """``{ancestor_entity_id: {owned_entity_id: compounded_fraction}}``.
 
     Built by calling ``entity_graph.get_lookthrough`` — the REAL engine, the one
@@ -379,8 +388,10 @@ async def _ownership_weights(conn, org_id: str, owner_ids: set[str]) -> dict:
           AND er.ownership_pct IS NOT NULL
           AND er.valid_to IS NULL
           AND er.system_to IS NULL
+          AND ($2::uuid[] IS NULL OR er.from_entity_id = ANY($2::uuid[]))
         """,
         org_id,
+        scope,
     )
 
     pool = _ConnAsPool(conn)
@@ -410,6 +421,7 @@ async def rollup_entity_holdings(
     *,
     org_id: str,
     as_of_date: date,
+    scope: set[str] | None = None,
 ) -> RollupResult:
     """Rebuild ``entity_holdings`` for one org and one date. Returns what it did.
 
@@ -428,9 +440,14 @@ async def rollup_entity_holdings(
         )
 
     result = RollupResult(org_id=org_id, as_of_date=as_of_date)
+    # PORTENTRY1 (GAP-PORT-05) — ``scope``: one FAMILY (closed under ownership in both directions — see
+    # services.portfolio_refresh.family_of), so every ancestor of every in-scope owner is in scope and every bucket
+    # it computes is complete. Reads, deletes and writes touch ONLY the scope's entities; None = the whole org.
+    scope_ids = sorted({str(x) for x in scope}) if scope is not None else None
+    result.scope_size = len(scope_ids) if scope_ids is not None else None
 
     async with _OrgWrite(conn, org_id) as c:
-        positions = await _current_positions(c, org_id, as_of_date)
+        positions = await _current_positions(c, org_id, as_of_date, scope_ids)
         result.positions_considered = len(positions)
 
         # ── Value every position, dropping (and naming) the ones that cannot
@@ -469,7 +486,7 @@ async def rollup_entity_holdings(
 
         # ── Attribute each value to the direct owner AND to every ancestor,
         #    at the graph's own compounded percentage. ─────────────────────────
-        weights = await _ownership_weights(c, org_id, owner_ids)
+        weights = await _ownership_weights(c, org_id, owner_ids, scope_ids)
         buckets: dict[tuple[str, str], Decimal] = {}
 
         for owner, taxonomy_key, value in valued:
@@ -495,12 +512,31 @@ async def rollup_entity_holdings(
         # ── Remove the buckets this run did NOT produce, then upsert the ones
         #    it did. Deletion first so a bucket that moved taxonomy keys does
         #    not briefly exist under both. ──────────────────────────────────────
+        # PORTENTRY1 — an entity that held something on an EARLIER date and has nothing valued now gets a zero
+        # snapshot at this date (its latest taxonomy key), so net worth (the entity's latest snapshot) reads 0
+        # instead of the stale earlier figure. Kept by the delete below like any produced bucket.
+        produced = {r[0] for r in rows}
+        stale = await c.fetch(
+            f"""
+            SELECT DISTINCT ON (h.entity_id) h.entity_id::text AS entity_id, h.taxonomy_key
+            FROM {TABLE_HOLDINGS} h
+            WHERE h.org_id = $1::uuid AND h.source = $2 AND h.as_of_date < $3::date
+              AND ($4::uuid[] IS NULL OR h.entity_id = ANY($4::uuid[]))
+            ORDER BY h.entity_id, h.as_of_date DESC, h.market_value DESC
+            """,
+            org_id, ROLLUP_SOURCE, as_of_date, scope_ids,
+        )
+        zeros = [(z["entity_id"], z["taxonomy_key"], _ZERO) for z in stale if z["entity_id"] not in produced]
+        result.buckets_zeroed = len(zeros)
+        keep = rows + zeros
+
         deleted = await c.fetch(
             f"""
             DELETE FROM {TABLE_HOLDINGS} h
             WHERE h.org_id = $1::uuid
               AND h.as_of_date = $2::date
               AND h.source = $3
+              AND ($6::uuid[] IS NULL OR h.entity_id = ANY($6::uuid[]))
               AND NOT EXISTS (
                   SELECT 1
                   FROM unnest($4::uuid[], $5::text[]) AS keep(entity_id, taxonomy_key)
@@ -512,12 +548,13 @@ async def rollup_entity_holdings(
             org_id,
             as_of_date,
             ROLLUP_SOURCE,
-            [r[0] for r in rows],
-            [r[1] for r in rows],
+            [r[0] for r in keep],
+            [r[1] for r in keep],
+            scope_ids,
         )
         result.buckets_removed = len(deleted)
 
-        for entity_id, taxonomy_key, amount in rows:
+        for entity_id, taxonomy_key, amount in keep:
             # ON CONFLICT infers `entity_holdings_bucket_key` from its exact
             # column list — the constraint Phase C's Part 1 SQL added, and the
             # only reason a second run updates instead of raising 23505.

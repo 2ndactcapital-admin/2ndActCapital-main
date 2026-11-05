@@ -318,7 +318,10 @@ async def entity_net_worth(conn, org_id, entity_id, *, as_of: date | None = None
     from services.households import _sum_holdings
 
     as_of = as_of or date.today()
-    gross = (await _sum_holdings(conn, org_id, [str(entity_id)], as_of))["total_value"]
+    held = await _sum_holdings(conn, org_id, [str(entity_id)], as_of)
+    gross = held["total_value"]
     liab = (await lookthrough_liabilities(conn, org_id, [entity_id], as_of=as_of)).get(str(entity_id), ZERO)
     return {"entity_id": str(entity_id), "as_of": as_of.isoformat(), **net_worth_lines(gross, liab),
+            # PORTENTRY1 — the date of the holdings snapshot the gross figure was read from
+            "holdings_as_of": held.get("holdings_as_of"),
             "basis": "look-through holdings (entity_holdings) − look-through liabilities"}

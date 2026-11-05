@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+PORTENTRY1 (2026-11-04, the Olivo entry-plan gaps closed — CRM status / marital / sub-type vocabularies from the config table, ILIT / LP / foundation registry keys, ownership % for org admins, edit_crm_contact for support staff, manual positions for any holding (org-scoped manual assets, reported relink), direct assets + private investments with commitments, the integrated-account one-time import (Super Admin, maker-checker, superseded by the feed), family-scoped net worth refresh after every write, _verify_self fast-forward fix; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 CRMDETAIL1 (2026-11-04, the CRM holds a multigenerational family — 29 governed relationship types with a Relationships panel, typed detail fields for trusts / charities / LLCs / LPs, maiden name + date of death + minor flag, portfolio.liabilities netting into net worth (gross / liabilities / net), permanent demo data protected from every clean-up; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PERMS1 (2026-11-04, ONE source of permissions — the authz Principal = role ∪ profile ∪ permission-set grants in one statement, client rule applied, the key "staff" grants nothing; org_admin baseline (+9 keys, no approve_*); org admins create deals and households (Joe's decisions 1-2); WF-06 / WF-03 / REP-10 / WF-04 / WF-05; HollisMuse re-run test rows removed; verify WRITTEN, not yet run): see the top entry.
 REP12 (2026-11-04, Replication Studio sprint 12 — the note-versus-replica check across NEW issues: every new / restated terms version checked automatically per org, a DRAFT replica only for an eligible note, the comparison when quoted, the "New issues" feed + alerts, the Super Admin's underlying queue (one-click / multi-confirm through confirm_resolution); schema APPLIED; verify WRITTEN, not yet run): see the top entry.
@@ -335,6 +336,81 @@ This file starts with the email item below.
 
 ---
 
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000. PORTENTRY1 — close the gaps between the Olivo entry plan and the front end (GAP-CRM-01…06, GAP-PORT-01…05) + verify tooling; schema APPLIED; verify WRITTEN, not yet run (2026-11-04)
+
+**Discovery (Task 1).** 1a — entities.status is free text; its readers are the CRM list's exact-match filter, the
+create default and note-apply (MEMBER_VISIBLE_STATUSES is deals only) — adding client / contact breaks none; live 33
+prospect / 3 active; no safe mapping of 'active' to client or contact exists, so existing rows are UNCHANGED. Status,
+marital and sub-type lists were constants in apps/web/lib/entityTypes.js. 1b — ownership writes: POST
+/entities/{id}/ownership, PATCH + DELETE /entity-relationships/{id}/ownership (require_staff), POST /entity-ownership
+(manage_members); verify_staffroles1 y_bypass asserted the DELETE gate. 1c — held-away rows reject at
+resolve_identifiers (no_identifier / unresolved); an org manual asset = portfolio.assets with global_security_id NULL
+(zero existed); held-away assets carried no taxonomy key, so the rollup skipped them. 1d — POST
+/portfolio/import/positions (manage_portfolio) writes at once, no preview / no second person, authority aggregated,
+source reporting_tool_import, which ranks ABOVE altruist in the default precedence order (a later feed would LOSE).
+1e — called / distributed / unfunded are derived from transactions (recompute_commitment); NAV = valuations; TA read
+the position's market_value else called − distributed. 1f — the rollup was org-wide per date, only POST
+/portfolio/rollup; net worth summed the latest bucket per taxonomy key (a dropped key lingered). 1g — perms1 reached
+main by fast-forward; secmaster1's merge subject was git's "Merge branch 'secmaster1-work'" — both fell to HEAD.
+
+**Gaps.**
+- GAP-CRM-01 — CLOSED. Statuses in public.config (crm_entity_statuses: prospect, client, contact, active, inactive,
+  archived + deceased as a system value), served in GET /crm/vocabularies; Details / New entity forms and the CRM list
+  pills read the envelope; writes refused outside the vocabulary (an unchanged legacy value passes).
+- GAP-CRM-02 — CLOSED. crm_marital_statuses (single, married, divorced, widowed, separated, domestic_partnership); the
+  person form field; POST / PUT /entities carry marital_status (key stored).
+- GAP-CRM-03 — CLOSED. crm_sub_types per entity type (LLC: holding, real_estate, operating, collectibles, investment,
+  other; trust = crmdetail1's trust_type labels + the old list; foundation = charity_type labels; corporation). The
+  stored sub_type stays the LABEL (crmdetail1's trust_type writes labels; every row holds one).
+- GAP-CRM-04 — CLOSED. Registry keys fund_role (LP), ein_status (foundation), the ILIT insurance policy group (insurer
+  = CRM record, policy_type, face_amount, insureds = CRM records, policy_number_masked — a full number refused).
+- GAP-CRM-05 — CLOSED (Joe). Every ownership route = internal + manage_members (org admin admitted, support staff
+  without the key refused, member refused); verify_staffroles1's assertion updated to the decided rule. The rail's
+  generic /entity-relationships writes keep require_staff (stricter).
+- GAP-CRM-06 — CLOSED (Joe). New permission **edit_crm_contact** — notes, addresses, phones, emails (new PUT
+  /entities/{id}/contact) and nothing else; granted to every support_staff role (migration +
+  rbac.ensure_support_staff_grants on role assignment) and the 'CSA / Ops' profile; no client role (the BUGFIX2 client
+  rule strips it from a member's profile too). STAFF_ROLE_NAMES / is_staff unchanged.
+- GAP-PORT-01 — CLOSED. Held-away manual entry takes an asset_kind (mutual_fund, money_market, municipal_bond, cash,
+  private, listed_option, digital_asset) with its terms; resolution master-first (identifier; an option only through
+  an EXISTING rep8 contract), cash → the org cash asset, else an ORG-scoped manual asset created at approval; nothing
+  in the platform master. Relink when an identifier later resolves: POST /portfolio/manual-assets/relink + the nightly,
+  system-axis, REPORTED in portfolio.asset_relinks + audit_log (GET /portfolio/manual-assets). Maker-checker unchanged.
+- GAP-PORT-02 — CLOSED (Joe: one-time import). Super Admin screen **/admin/integrated-import**: upload CSV → DRAFT
+  preview (accounts by MASK, per-line resolution, totals) → a SECOND Super Admin approves (human task, DB CHECK) →
+  positions authority 'stated', source 'manual' (ranked below altruist), listed in portfolio.provisional_positions; the
+  Altruist sync supersedes them (precedence on shared keys, then every provisional row of the account is closed).
+  The existing POST /portfolio/import/positions is unchanged (its source ranks above the feed — not used for this).
+- GAP-PORT-03 — CLOSED. "Assets & Investments" tab: Add asset (real estate, collectible, operating business, insurance
+  cash value, other; owners + %, cost basis, valuation value / date / method appraisal | estimate | statement /
+  source, notes); new valuation = new row, history kept. Writes internal + manage_members; members read their own.
+- GAP-PORT-04 — CLOSED. Add private investment (fund / direct deal / SPV / SAFE / note): commitment amount / date /
+  vintage, called + distributed as opening ledger rows, unfunded computed by recompute_commitment, NAV as a
+  valuation; later calls / distributions / NAVs; the TA projection reads the NAV through position_current_value.
+- GAP-PORT-05 — CLOSED. After every position / valuation / commitment / liability write a FAMILY-scoped rollup
+  (household members closed under ownership, never org-wide) is queued in portfolio.rollup_requests (debounced: one
+  pending per family, PORTFOLIO_ROLLUP_DEBOUNCE_S, default 2 s) and run; Recalculate on the record (internal + manage_members |
+  manage_portfolio); the scheduler tick drains leftovers and runs the org-wide nightly at 07:00 UTC; net worth shows
+  holdings_as_of. Net worth now reads each entity's latest snapshot (a zero snapshot is written for an entity that no
+  longer holds anything valued).
+
+**Verify tooling (Task 8).** _verify_self: `<key>-work` merge subjects; a fast-forwarded sprint ends at the newest
+first-parent commit naming it, base = parent of the oldest (SPRINT_FASTFORWARD perms1 3fe2cef / 01c0f57).
+--self-checks-only: perms1 3→23 PASS 0 FAIL, secmaster1 0 FAIL, crmdetail1 0 FAIL; the other 34 scripts unchanged
+(previewperf, previewperffix1, vhk2 keep their own pre-existing FAILs — not this sprint's). docs/VERIFY_RULES.md:
+merges use --no-ff. [FIND] a0755ee (the v2 entry plan) had dropped crmdetail1's "Protection rule" section from the
+Olivo README — restored (the copy-over-a-newer-doc pattern); crmdetail1's self-check accepts the v2 plan name.
+
+**Operator steps.** (1) Super Admin → Integrated import → upload `docs/demo/olivo/data/import/integrated_positions.csv`
+(27 lines, the eight integrated accounts A7 A9 A12 A14 A15 A20 A24 A29, masks only, totals = holdings.csv) → check the
+preview → (2) a SECOND Super Admin approves. Format: docs/demo/olivo/README.md. Not loaded by this sprint.
+
+**Verification.** `apps/api/scripts/verify_portentry1.py` WRITTEN, not run (self-checks only were run). Regression
+inside it: verify_crmdetail1.py once, flat, after teardown, VERIFY_NESTED=1, 2700 s. `node --test tests/` passes
+(506 pass, 0 fail). `npm run build` not run here (WSL memory) — the verify runs it.
+
+UPDATE (PORTENTRY1 FIX 1, 2026-11-04): the first full run was 106 PASS / 18 FAIL from 5 roots, now fixed. (A, CODE) the held-away approve 500 was `asyncpg DataError: invalid input for query argument $9: '2027-01-15' ('str' object has no attribute 'toordinal')` in `portfolio_manual.manual_asset_for`: a municipal_bond's `maturity` / a listed_option's `expiry` (ISO strings in the terms JSON) were bound to `assets.maturity_date`; the other five types approved. Now parsed to a date. (B, CODE) the direct-asset / private-investment methods were a parallel vocabulary (`estimate` / `statement`) that `record_valuation` refuses; the keys are now the DB's five (appraisal / mark_to_model "Estimate (mark to model)" / nav "Statement / NAV" / market_price / amortized_cost), asserted equal to `portfolio_assets.VALUATION_METHODS` at import, labels served in the envelope; the CHECK is unchanged. (C, CODE) `require_entity_access` passes staff / internal callers unscoped, so the GET lists returned 200 + [] for another org's record; every portentry entity route (direct assets, private investments GET + POST, Recalculate) now resolves the record in the caller's org first (`_record_in_org`) → the same 404 "Entity not found" as a missing id. (D, VERIFY) the tax-id refusal sent `tax_id_value` (the schema field is `value`), so the 422 came from validation and not the gate; the verify now sends a valid `TaxIdCreate`, expects 403 naming manage_members with no row written, and proves the org admin is admitted (201, re-read) on the identical body. (E, VERIFY) the teardown now sets `execution.teardown = 'fixture'` on the operator connection (the verify_rep7 path, `execution_teardown_allowed()`); the trigger is unchanged. (F) was a cascade of A. The verify also gained a same-404-as-missing-id check on all six entity routes. Proof: a one-off driving the verify's own sections (gates, manual positions, direct + private, net worth, import, isolation, teardown) gave 114 PASS / 0 FAIL against the live DB, zero fixture rows after teardown (held_away_imports 0), every counted table at its pre-test count; `--self-checks-only` 37 / 0; node tests/portentry1 9 / 0; authz1_routes --check CURRENT. The full verify_portentry1.py (with the crmdetail1 regression and npm build) has NOT been re-run here (WSL memory).
+
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000. CRMDETAIL1 — a CRM that can hold a real multigenerational family: governed relationships, typed detail fields, people fields, liabilities into net worth, permanent demo data; schema APPLIED; verify WRITTEN, not yet run (2026-11-04)
 
 **Discovery (Task 1).**
@@ -461,25 +537,36 @@ delete set touching demo rows (rolled back, nothing deleted) unless they are the
 
 **Named gaps (new backend work beyond this sprint; nothing built).**
 - GAP-CRM-01 — entity status vocabulary (client / contact) to the config table, with the CRM list filters.
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-CRM-02 — marital status field + vocabulary on the person form.
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-CRM-03 — sub-type vocabularies from the config table (LLC: real estate / operating / collectibles).
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-CRM-04 — registry keys fund_role (LP), ein_status (foundation), insurance policy (ILIT).
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-CRM-05 — ownership writes on the Ownership tab: decide whether internal + manage_members (as the panel) may
   write ownership; today require_staff (org admin refused, Muse's maker).
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-CRM-06 — support staff notes / addresses: grant manage_members (or a narrower key) to support_staff, or not.
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-PORT-01 — manual positions for securities NOT in the master (mutual funds need SEC mutual-fund tickers;
   munis need a CUSIP source; cash / private / option / digital lines need an unmapped-manual row type).
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-PORT-02 — positions on an INTEGRATED custodian account with no feed. Options: (a) a provisional manual entry on
   the account, marked `stated`, superseded by the feed through the existing precedence rules
   (`portfolio_precedence`); (b) a one-off file import through `POST /portfolio/import/positions` (exists, operator /
   super admin) tagged as the integrated custodian's source; (c) leave them empty until the Altruist sync runs, and
   hold the demo's integrated accounts as held-away. Recommendation: (b) for a demo, (a) only if a real client ever
   waits for a feed. Decision open.
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-PORT-03 — direct assets: a "direct asset" entry on the CRM record (asset + position by owner + valuation;
   needs a valuation route and manage_portfolio for org admins or a CRM-key path).
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-PORT-04 — private fund interests with a commitment (create_commitment route + UI).
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 - GAP-PORT-05 — net worth reads entity_holdings, which only a rollup run writes (`POST /portfolio/rollup`); a
   record's gross stays 0 until one runs after holdings are entered.
+  UPDATE (PORTENTRY1, 2026-11-04): RESOLVED — see the PORTENTRY1 entry.
 
 **Verification.** `apps/api/scripts/verify_crmdetail1.py` WRITTEN, not run (self-checks only were run). Regression
 inside it: verify_perms1.py once, flat, after teardown, VERIFY_NESTED=1, 2700 s. `node --test tests/crmdetail1/`

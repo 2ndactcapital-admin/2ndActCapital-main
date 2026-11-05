@@ -183,6 +183,19 @@ async def main() -> int:
                       f"{ {k: len(v) for k, v in expiry.items()} }")
         except Exception as exc:  # noqa: BLE001
             print(f"[scheduler] execution expiry failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # PORTENTRY1 (GAP-PORT-05) — family rollups a process left pending, every tick; the org-wide nightly
+        # rollup in the 07:00 UTC window (idempotent — a second run in the window rewrites the same buckets).
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+
+            from services.portfolio_refresh import drain_due, nightly_rollups
+
+            now = _dt.now(_tz.utc)
+            done = (await nightly_rollups(conn)) if now.hour == 7 and now.minute < 15 else (await drain_due(conn))
+            if done:
+                print(f"[scheduler] holdings rollups: {len(done)}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[scheduler] holdings rollup failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         # REP9 — trade blocks at execute-by (cancel / carry / a to-do). Never a test org.
         try:
             bexp = await blocks_expire_tick(pool)

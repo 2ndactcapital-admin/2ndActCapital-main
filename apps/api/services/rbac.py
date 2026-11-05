@@ -384,6 +384,27 @@ async def ensure_org_admin_role(conn, org_id) -> str:
     return role_id
 
 
+#: PORTENTRY1 (GAP-CRM-06, Joe 2026-11-04) — support staff edit CRM notes / addresses / phones / emails through ONE
+#: narrow key; nothing legal, ownership, relationship, tax-id, detail, status or tag. Kept in step with
+#: docs/portentry1_part1.sql §2 (the grant to every EXISTING support_staff role and the 'CSA / Ops' profile).
+SUPPORT_STAFF_ROLE = "support_staff"
+EDIT_CRM_CONTACT = "edit_crm_contact"
+SUPPORT_STAFF_DEFAULT_PERMISSIONS = ((EDIT_CRM_CONTACT, "crm_contact", "edit"),)
+
+
+async def ensure_support_staff_grants(conn, org_id) -> str | None:
+    """Idempotently grant THIS org's support_staff role its defaults. Never creates the role (an org without one has
+    nobody to grant), never touches a client role. Returns the role id, or None when the org has no support_staff."""
+    role_id = await conn.fetchval("SELECT id FROM roles WHERE org_id = $1 AND name = $2", org_id, SUPPORT_STAFF_ROLE)
+    if role_id is None:
+        return None
+    for name, resource, action in SUPPORT_STAFF_DEFAULT_PERMISSIONS:
+        pid = await ensure_permission(conn, name, resource, action)
+        await conn.execute("INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) "
+                           "ON CONFLICT DO NOTHING", role_id, pid)
+    return role_id
+
+
 async def grant_org_admin(conn, user_id, org_id) -> None:
     """Additive: ensure ``user_id`` holds the org_admin RBAC grant IN
     ``org_id``. Never touches any other role the user may separately hold —
