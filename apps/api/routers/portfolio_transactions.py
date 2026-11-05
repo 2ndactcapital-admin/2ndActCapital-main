@@ -113,6 +113,9 @@ from services.portfolio_transactions import (
 )
 from services.rbac import has_permission, is_super_admin, load_principal, require_permission
 
+from services.portfolio_scope import entity_scope as _entity_scope  # noqa: E402 — BUGFIX3
+from services.portfolio_scope import scope_block  # noqa: E402
+
 router = APIRouter(tags=["portfolio-transactions"])
 
 
@@ -371,6 +374,7 @@ async def get_transactions(
     truncated page never looks complete.
     """
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    scope = await _entity_scope(request, pool)   # BUGFIX3 — a member: own family's ledger only
 
     async with pool.acquire() as conn:
         try:
@@ -391,6 +395,7 @@ async def get_transactions(
                 search=search,
                 limit=limit,
                 offset=offset,
+                entity_scope=scope,
             )
             # Shipped with the page so the type column renders a LABEL and the
             # type filter offers real codes without a second round-trip.
@@ -404,6 +409,7 @@ async def get_transactions(
     result["transaction_types"] = types
     result["permissions"] = perms
     result["vocabularies"] = _vocabularies(perms, types)
+    result["scope"] = scope_block(scope, "transactions")
     return result
 
 
@@ -424,7 +430,8 @@ async def get_transaction_detail(request: Request, transaction_id: _uuid.UUID):
     async with pool.acquire() as conn:
         try:
             detail = await get_transaction(
-                conn, org_id=org_id, transaction_id=str(transaction_id)
+                conn, org_id=org_id, transaction_id=str(transaction_id),
+                entity_scope=await _entity_scope(request, pool),   # BUGFIX3 — another family's = 404
             )
             types = await transaction_types(conn)
         except PortfolioError as exc:
@@ -462,6 +469,7 @@ async def get_positions_for_picker(
             conn, org_id=org_id,
             owner_entity_id=str(owner_entity_id) if owner_entity_id else None,
             search=search, limit=limit,
+            entity_scope=await _entity_scope(request, pool),   # BUGFIX3
         )
 
     perms = await _permission_envelope(pool, user_id, org_id)

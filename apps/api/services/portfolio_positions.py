@@ -148,7 +148,10 @@ INLINE_EDITABLE_FIELDS = frozenset({"taxonomy_key", "is_reconciled"})
 
 def _s(value: Any) -> str | None:
     """Decimal → exact string. See decision 4 in the module docstring."""
-    return None if value is None else str(value)
+    # BUGFIX3 (1d) — fixed-point, never str(Decimal) ("9.0E+5" rendered as "$9.0E")
+    from services.money_text import fixed
+
+    return fixed(value)
 
 
 def _d(value: date | None) -> str | None:
@@ -215,7 +218,12 @@ _LIST_COLUMNS = f"""
     a.currency_code                    AS asset_currency_code,
     a.default_taxonomy_key             AS asset_default_taxonomy_key,
     e.display_name                     AS owner_name,
-    e.entity_type::text                AS owner_entity_type
+    e.entity_type::text                AS owner_entity_type,
+    -- BUGFIX3 (MUSE-OLIVO-M, 1c) — an approved integrated-import row is a LIVE position, labelled provisional until
+    -- the custodian feed closes its portfolio.provisional_positions row (integrated_import.supersede_for_account).
+    EXISTS (SELECT 1 FROM portfolio.provisional_positions pp
+             WHERE pp.position_id = p.id AND pp.org_id = p.org_id
+               AND pp.valid_to IS NULL AND pp.system_to IS NULL) AS is_provisional
 """
 
 _LIST_FROM = f"""
@@ -246,8 +254,13 @@ def _build_filters(
     superseded: str,
     include_history: bool,
     search: str | None,
+    entity_scope: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     """Assemble the WHERE clause and its positional arguments.
+
+    BUGFIX3 — ``entity_scope`` is the caller's visible owner set (``authz.member_entity_scope``): ``None`` =
+    unscoped (staff / internal read), a list (possibly EMPTY — then nothing matches) = only positions those
+    entities own. It is applied FIRST and in SQL, so the count, the page, and every total built on them agree.
 
     Every filter is a bound parameter. ``taxonomy_prefix`` is the one that looks
     like it wants string interpolation and does not get it: the ``%`` is
@@ -259,6 +272,9 @@ def _build_filters(
     def add(clause_template: str, value: Any) -> None:
         args.append(value)
         where.append(clause_template.format(n=len(args)))
+
+    if entity_scope is not None:
+        add("p.owner_entity_id = ANY(${n}::uuid[])", [str(x) for x in entity_scope])
 
     if not include_history:
         # The default. A restated position leaves its predecessor behind; a grid
@@ -319,6 +335,7 @@ async def list_positions(
     value_as_of: date | None = None,
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    entity_scope: list[str] | None = None,
 ) -> dict[str, Any]:
     """One grid page. Returns ``{total, limit, offset, positions, taxonomy}``.
 
@@ -358,6 +375,7 @@ async def list_positions(
         superseded=superseded,
         include_history=include_history,
         search=search,
+        entity_scope=entity_scope,
     )
 
     total = await conn.fetchval(
@@ -453,6 +471,8 @@ def _row_to_json(r, labels: dict[str, str]) -> dict[str, Any]:
         "valid_from": r["valid_from"].isoformat() if r["valid_from"] else None,
         "valid_to": r["valid_to"].isoformat() if r["valid_to"] else None,
         "is_current": r["valid_to"] is None,
+        # BUGFIX3 — an approved one-time import row (live, until the custodian feed supersedes it)
+        "is_provisional": bool(r["is_provisional"]),
     }
 
 
@@ -460,7 +480,8 @@ def _row_to_json(r, labels: dict[str, str]) -> dict[str, Any]:
 
 
 async def get_position(
-    conn, *, org_id: str, position_id: str, value_as_of: date | None = None
+    conn, *, org_id: str, position_id: str, value_as_of: date | None = None,
+    entity_scope: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Everything the detail pane shows. ``None`` if not in this org.
 
@@ -484,8 +505,11 @@ async def get_position(
                p.system_to   AS system_to
         {_LIST_FROM}
         WHERE p.id = $1::uuid AND p.org_id = $2::uuid
+          -- BUGFIX3: outside the caller's visible owners = the SAME None as a missing id (a 404 that discloses nothing)
+          AND ($3::uuid[] IS NULL OR p.owner_entity_id = ANY($3::uuid[]))
         """,
         str(position_id), org_id,
+        None if entity_scope is None else [str(x) for x in entity_scope],
     )
     if row is None:
         return None
@@ -915,7 +939,8 @@ def _validate_merged_basis(merged: dict[str, Any]) -> None:
 
 
 async def list_assets(
-    conn, *, org_id: str, search: str | None = None, limit: int = 50
+    conn, *, org_id: str, search: str | None = None, limit: int = 50,
+    entity_scope: list[str] | None = None,
 ) -> list[dict]:
     """Tenant assets, for the create-position asset picker.
 
@@ -931,6 +956,11 @@ async def list_assets(
     if search and search.strip():
         args.append(f"%{search.strip()}%")
         clause = f" AND (a.name ILIKE ${len(args)} OR a.short_name ILIKE ${len(args)})"
+    if entity_scope is not None:
+        # BUGFIX3 — a member's asset list is only assets their own family holds (a current position)
+        args.append([str(x) for x in entity_scope])
+        clause += (f" AND EXISTS (SELECT 1 FROM {TABLE_POSITIONS} sp WHERE sp.asset_id = a.id AND sp.org_id = a.org_id"
+                   f" AND sp.valid_to IS NULL AND sp.system_to IS NULL AND sp.owner_entity_id = ANY(${len(args)}::uuid[]))")
     rows = await conn.fetch(
         f"""
         SELECT a.id::text AS id, a.name, a.short_name, a.asset_type,

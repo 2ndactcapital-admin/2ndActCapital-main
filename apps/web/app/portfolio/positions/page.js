@@ -29,10 +29,7 @@ export default async function PositionsPage() {
           >
             Positions
           </h1>
-          <p className="mt-1 text-sm text-[var(--2a-text-secondary)]">
-            Every holding across the firm. Select a row to see its valuation,
-            transactions and source documents.
-          </p>
+          {/* BUGFIX3 — the sentence comes from the API (scope): a member never reads "across the firm" */}
         </header>
 
         <PositionsGrid />

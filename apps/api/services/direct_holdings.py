@@ -25,11 +25,19 @@ from decimal import Decimal, InvalidOperation
 
 from services import portfolio_assets as PA
 from services import portfolio_commitments as PC
+from services.money_text import fixed
 from services.portfolio_assets import TABLE_ASSETS, TABLE_POSITIONS, TABLE_VALUATIONS, _OrgWrite
 
 DIRECT_KINDS = {"real_estate": "Real estate", "collectible": "Collectible", "operating_business": "Operating business",
                 "insurance_cash_value": "Insurance policy cash value", "other": "Other"}
-PRIVATE_KINDS = {"fund": "Private fund", "direct_deal": "Direct deal", "spv": "SPV", "safe": "SAFE", "note": "Note"}
+PRIVATE_KINDS = {"fund": "Private fund", "hedge_fund": "Hedge fund", "direct_deal": "Direct deal", "spv": "SPV",
+                 "safe": "SAFE", "note": "Convertible note"}
+#: BUGFIX3 (MUSE-OLIVO-H, Task 3) — which kinds carry a commitment. 7 of the 11 Olivo private investments have none
+#: by design, and entering 0 computed a NEGATIVE unfunded. A fund REQUIRES its commitment; an SPV MAY have one; a
+#: hedge fund, direct deal, SAFE or convertible note has none — amount invested + latest value, unfunded not computed.
+COMMITMENT_RULES = {"fund": "required", "spv": "optional", "hedge_fund": "none", "direct_deal": "none",
+                    "safe": "none", "note": "none"}
+assert set(COMMITMENT_RULES) == set(PRIVATE_KINDS), "every private kind states its commitment rule"
 #: PORTENTRY1 FIX 1 — the keys are the DATABASE's valuation vocabulary (portfolio_assets.VALUATION_METHODS, the
 #: valuations CHECK), never a parallel one: 'estimate' / 'statement' were refused by record_valuation. The labels are
 #: what the form shows (served in vocab(), never hardcoded in the front end).
@@ -197,7 +205,7 @@ async def _valuations(c, asset_id) -> list[dict]:
         f"SELECT id::text, valuation_date, value, status, valuation_method, valuation_source, system_from "
         f"FROM {TABLE_VALUATIONS} WHERE asset_id = $1::uuid AND valid_to IS NULL AND system_to IS NULL "
         f"ORDER BY valuation_date DESC, system_from DESC", str(asset_id))
-    return [{"id": r["id"], "date": r["valuation_date"].isoformat(), "value": str(r["value"]), "status": r["status"],
+    return [{"id": r["id"], "date": r["valuation_date"].isoformat(), "value": fixed(r["value"]), "status": r["status"],
              "method": r["valuation_method"], "source": r["valuation_source"]} for r in rows]
 
 
@@ -220,11 +228,11 @@ async def list_direct_assets(conn, org_id, entity_ids) -> list[dict]:
             hist = await _valuations(c, r["asset_id"])
             out.append({"position_id": r["position_id"], "asset_id": r["asset_id"], "name": r["name"],
                         "kind": r["asset_type"], "owner_entity_id": r["owner_entity_id"],
-                        "owner_name": r["owner_name"], "ownership_pct": str(r["ownership_pct"]),
-                        "cost_basis": None if r["cost_basis"] is None else str(r["cost_basis"]),
+                        "owner_name": r["owner_name"], "ownership_pct": fixed(r["ownership_pct"]),
+                        "cost_basis": fixed(r["cost_basis"]),
                         "taxonomy_key": r["default_taxonomy_key"], "notes": r["notes"],
                         "asset_value": hist[0]["value"] if hist else None,
-                        "owner_value": None if share is None else str(share.quantize(Decimal("0.01"))),
+                        "owner_value": None if share is None else fixed(share.quantize(Decimal("0.01"))),
                         "valuations": hist})
     return out
 
@@ -237,8 +245,25 @@ async def add_private_investment(pool, *, org_id, actor_id, entity_id, data: dic
     name = (data.get("name") or "").strip()
     if not name:
         raise HoldingError("name is required")
-    c_in = data.get("commitment") or {}
-    amount = _dec(c_in.get("amount"), "commitment amount")
+    rule = COMMITMENT_RULES[kind]
+    c_in = data.get("commitment") or None
+    if c_in is not None and not any(str(c_in.get(k) or "").strip() for k in ("amount", "date")):
+        c_in = None   # an empty commitment block from the form is "no commitment", never a zero commitment
+    if rule == "required" and c_in is None:
+        raise HoldingError(f"a {PRIVATE_KINDS[kind].lower()} needs its commitment amount and date")
+    if rule == "none" and c_in is not None:
+        raise HoldingError(f"a {PRIVATE_KINDS[kind].lower()} has no commitment — enter the amount invested and "
+                           "its latest value instead")
+    notes = (data.get("notes") or "").strip()[:4000] or None
+    nav_in = data.get("nav")
+    nav = None
+    if nav_in:
+        nav = {"value": _dec(nav_in.get("value"), "latest value"), "date": _day(nav_in.get("date"), "value date"),
+               "method": NAV_METHOD, "source": (nav_in.get("source") or "").strip()[:300] or None}
+    if c_in is None:
+        return await _add_private_without_commitment(pool, org_id=org_id, actor_id=actor_id, entity_id=entity_id,
+                                                     kind=kind, name=name, data=data, nav=nav, notes=notes)
+    amount = _dec(c_in.get("amount"), "commitment amount", positive_ok_zero=False)
     c_date = _day(c_in.get("date"), "commitment date")
     vintage = c_in.get("vintage_year")
     if vintage is not None and not (isinstance(vintage, int) and 1900 <= vintage <= 2200):
@@ -247,11 +272,6 @@ async def add_private_investment(pool, *, org_id, actor_id, entity_id, data: dic
     distributed = _dec(data.get("distributed_to_date"), "distributed to date", required=False) or Decimal(0)
     if called > amount:
         raise HoldingError(f"called to date ({called}) is more than the commitment ({amount})")
-    nav_in = data.get("nav")
-    nav = None
-    if nav_in:
-        nav = {"value": _dec(nav_in.get("value"), "NAV"), "date": _day(nav_in.get("date"), "NAV date"),
-               "method": NAV_METHOD, "source": (nav_in.get("source") or "").strip()[:300] or None}
     flow_day = _day(data.get("as_of"), "as-of", required=False) or (nav["date"] if nav else c_date)
     async with pool.acquire() as conn:
         await _entity(conn, org_id, entity_id)
@@ -259,6 +279,7 @@ async def add_private_investment(pool, *, org_id, actor_id, entity_id, data: dic
             aid = await PA.create_asset(conn, org_id=str(org_id), name=name, asset_type=f"private_{kind}",
                                         asset_class="financial", ownership_basis=PA.PERCENT, valuation_method="nav",
                                         default_taxonomy_key=(data.get("taxonomy_key") or None), currency_code="USD")
+            await _set_notes(conn, org_id, aid, notes)
             pid = await PA.create_position(
                 conn, org_id=str(org_id), owner_entity_id=str(entity_id), asset_id=aid, as_of_date=flow_day,
                 authority=AUTHORITY, source_system=SOURCE, ownership_basis=PA.PERCENT, ownership_pct=HUNDRED,
@@ -277,8 +298,45 @@ async def add_private_investment(pool, *, org_id, actor_id, entity_id, data: dic
     from services import portfolio_refresh as PR
 
     refresh = await PR.after_write(pool, org_id, [entity_id], reason=f"private investment {cid}", actor_id=actor_id)
-    return {"asset_id": aid, "position_id": pid, "commitment_id": cid, "unfunded": str(totals.unfunded),
-            "called_to_date": str(totals.called_to_date), "distributed_to_date": str(totals.distributed_to_date),
+    return {"asset_id": aid, "position_id": pid, "commitment_id": cid, "has_commitment": True,
+            "unfunded": fixed(totals.unfunded), "called_to_date": fixed(totals.called_to_date),
+            "distributed_to_date": fixed(totals.distributed_to_date), "notes": notes, "rollup": _brief(refresh)}
+
+
+async def _set_notes(conn, org_id, asset_id, notes: str | None) -> None:
+    """The private investment's note (assets.notes — the same column a direct asset's notes use)."""
+    if notes is None:
+        return
+    async with _OrgWrite(conn, str(org_id)) as c:
+        await c.execute(f"UPDATE {TABLE_ASSETS} SET notes = $2 WHERE id = $1::uuid AND system_to IS NULL",
+                        str(asset_id), notes)
+
+
+async def _add_private_without_commitment(pool, *, org_id, actor_id, entity_id, kind, name, data, nav, notes) -> dict:
+    """BUGFIX3 — a private investment with NO commitment row: the asset, the owner's 100% position with the amount
+    invested as its cost basis, and the latest value as a NAV valuation. No commitment → nothing for a commitment
+    recompute to read, so unfunded is NOT COMPUTED (None → "—"), never 0 − called."""
+    invested = _dec(data.get("amount_invested"), "amount invested")
+    if nav is None:
+        raise HoldingError("latest value and its date are required (enter the amount invested if nothing newer)")
+    day = _day(data.get("as_of"), "as-of", required=False) or nav["date"]
+    async with pool.acquire() as conn:
+        await _entity(conn, org_id, entity_id)
+        async with conn.transaction():
+            aid = await PA.create_asset(conn, org_id=str(org_id), name=name, asset_type=f"private_{kind}",
+                                        asset_class="financial", ownership_basis=PA.PERCENT, valuation_method="nav",
+                                        default_taxonomy_key=(data.get("taxonomy_key") or None), currency_code="USD")
+            await _set_notes(conn, org_id, aid, notes)
+            pid = await PA.create_position(
+                conn, org_id=str(org_id), owner_entity_id=str(entity_id), asset_id=aid, as_of_date=day,
+                authority=AUTHORITY, source_system=SOURCE, ownership_basis=PA.PERCENT, ownership_pct=HUNDRED,
+                cost_basis=invested, taxonomy_key=(data.get("taxonomy_key") or None))
+            await _record_value(conn, org_id, aid, nav, nav=True)
+    from services import portfolio_refresh as PR
+
+    refresh = await PR.after_write(pool, org_id, [entity_id], reason=f"private investment {pid}", actor_id=actor_id)
+    return {"asset_id": aid, "position_id": pid, "commitment_id": None, "has_commitment": False, "unfunded": None,
+            "called_to_date": None, "distributed_to_date": None, "amount_invested": fixed(invested), "notes": notes,
             "rollup": _brief(refresh)}
 
 
@@ -304,12 +362,15 @@ async def add_flow(pool, *, org_id, actor_id, commitment_id, data: dict) -> dict
     from services import portfolio_refresh as PR
 
     refresh = await PR.after_write(pool, org_id, [owner], reason=f"commitment flow {commitment_id}", actor_id=actor_id)
-    return {"commitment_id": str(commitment_id), "unfunded": str(totals.unfunded),
-            "called_to_date": str(totals.called_to_date), "distributed_to_date": str(totals.distributed_to_date),
+    return {"commitment_id": str(commitment_id), "unfunded": fixed(totals.unfunded),
+            "called_to_date": fixed(totals.called_to_date), "distributed_to_date": fixed(totals.distributed_to_date),
             "rollup": _brief(refresh)}
 
 
 async def list_private_investments(conn, org_id, entity_ids) -> list[dict]:
+    """Every private investment of ``entity_ids``: a commitment row (as before) OR — BUGFIX3 — a ``private_*`` asset
+    position with no commitment (hedge fund, direct deal, SAFE, convertible note, an SPV entered without one). A row
+    without a commitment has ``has_commitment`` False and ``unfunded`` / ``commitment_amount`` None (shown "—")."""
     from services.portfolio_rollup import position_current_value
 
     out = []
@@ -318,24 +379,32 @@ async def list_private_investments(conn, org_id, entity_ids) -> list[dict]:
             f"SELECT cm.id::text AS commitment_id, cm.commitment_amount, cm.commitment_date, cm.vintage_year, "
             f"cm.called_to_date, cm.distributed_to_date, cm.recallable_amount, cm.unfunded, p.id::text AS position_id, "
             f"p.owner_entity_id::text AS owner_entity_id, p.ownership_basis, p.ownership_pct, p.quantity, "
-            f"p.market_value, a.id::text AS asset_id, a.name, a.asset_type, e.display_name AS owner_name "
-            f"FROM portfolio.commitments cm JOIN {TABLE_POSITIONS} p ON p.id = cm.position_id AND p.valid_to IS NULL "
-            f"AND p.system_to IS NULL JOIN {TABLE_ASSETS} a ON a.id = p.asset_id AND a.valid_to IS NULL "
+            f"p.market_value, p.cost_basis, a.id::text AS asset_id, a.name, a.asset_type, a.notes, "
+            f"e.display_name AS owner_name "
+            f"FROM {TABLE_POSITIONS} p JOIN {TABLE_ASSETS} a ON a.id = p.asset_id AND a.valid_to IS NULL "
             f"AND a.system_to IS NULL JOIN entities e ON e.id = p.owner_entity_id AND e.valid_to IS NULL "
-            f"AND e.system_to IS NULL WHERE cm.org_id = $1::uuid AND p.owner_entity_id = ANY($2::uuid[]) "
-            f"AND cm.valid_to IS NULL AND cm.system_to IS NULL ORDER BY a.name",
+            f"AND e.system_to IS NULL LEFT JOIN portfolio.commitments cm ON cm.position_id = p.id "
+            f"AND cm.org_id = p.org_id AND cm.valid_to IS NULL AND cm.system_to IS NULL "
+            f"WHERE p.org_id = $1::uuid AND p.owner_entity_id = ANY($2::uuid[]) AND p.valid_to IS NULL "
+            f"AND p.system_to IS NULL AND (cm.id IS NOT NULL OR a.asset_type LIKE 'private\\_%') ORDER BY a.name",
             str(org_id), [str(e) for e in entity_ids])
         for r in rows:
             nav, _ = await position_current_value(c, str(org_id), dict(r), None)
-            out.append({"commitment_id": r["commitment_id"], "asset_id": r["asset_id"], "name": r["name"],
-                        "kind": r["asset_type"].removeprefix("private_"), "owner_entity_id": r["owner_entity_id"],
-                        "owner_name": r["owner_name"],
-                        **{k: (None if r[k] is None else str(r[k])) for k in
+            has_c = r["commitment_id"] is not None
+            kind = r["asset_type"].removeprefix("private_")
+            out.append({"commitment_id": r["commitment_id"], "position_id": r["position_id"],
+                        "asset_id": r["asset_id"], "name": r["name"], "kind": kind,
+                        "kind_label": PRIVATE_KINDS.get(kind, kind),
+                        "has_commitment": has_c, "owner_entity_id": r["owner_entity_id"],
+                        "owner_name": r["owner_name"], "notes": r["notes"],
+                        **{k: fixed(r[k]) for k in
                            ("commitment_amount", "called_to_date", "distributed_to_date", "recallable_amount",
                             "unfunded")},
+                        # the amount invested of a no-commitment investment is its position's cost basis
+                        "amount_invested": None if has_c else fixed(r["cost_basis"]),
                         "commitment_date": r["commitment_date"].isoformat() if r["commitment_date"] else None,
                         "vintage_year": r["vintage_year"],
-                        "nav": None if nav is None else str(nav.quantize(Decimal("0.01"))),
+                        "nav": None if nav is None else fixed(nav.quantize(Decimal("0.01"))),
                         "valuations": await _valuations(c, r["asset_id"])})
     return out
 
@@ -343,6 +412,8 @@ async def list_private_investments(conn, org_id, entity_ids) -> list[dict]:
 def vocab() -> dict:
     pairs = lambda d: [{"value": k, "label": v} for k, v in d.items()]  # noqa: E731
     return {"direct_asset_kinds": pairs(DIRECT_KINDS), "private_kinds": pairs(PRIVATE_KINDS),
+            # BUGFIX3 — the form shows the commitment fields only where the kind has one (from the API, Rule 1)
+            "commitment_rules": [{"value": k, "rule": v} for k, v in COMMITMENT_RULES.items()],
             "valuation_methods": pairs(VALUATION_METHODS),
             "unfunded_formula": PC.UNFUNDED_FORMULA,
             "flow_types": [{"value": "call", "label": "Capital call"}, {"value": "distribution", "label": "Distribution"}]}

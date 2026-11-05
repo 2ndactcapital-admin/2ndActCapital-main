@@ -9,6 +9,8 @@
  * write control renders only from the envelope (lib/heldAway.mjs).
  */
 
+import OptionContractPicker from "@/components/heldaway/OptionContractPicker";
+import { contractTerms } from "@/lib/bugfix3.mjs";
 import SecuritySearch from "@/components/heldaway/SecuritySearch";
 import { useState } from "react";
 import {
@@ -180,6 +182,10 @@ export default function HeldAwayPanel({ initialEnvelope }) {
                   type={k === "maturity" || k === "expiry" || k === "acquired_date" ? "date" : "text"}
                   value={row[k] || ""} onChange={(e) => setRow({ ...row, [k]: e.target.value })} />
               ))}
+              {row.asset_kind === "listed_option" ? (
+                <OptionContractPicker underlying={row.underlying_ticker}
+                  onPick={(c) => setRow({ ...row, ...contractTerms(c) })} />
+              ) : null}
               <button type="button" className={secondary} onClick={() => act(`accounts/${id}/imports/manual`, { as_of: asOf, rows: [manualRow(row)], document_id: docId || undefined })}>Save as draft</button>
             </div>
           ) : null}

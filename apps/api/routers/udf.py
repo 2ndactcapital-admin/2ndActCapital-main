@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
+from services.authz import require_internal  # BUGFIX3 — staff-only org-wide reads
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -543,6 +544,9 @@ async def undelete_definition_route(request: Request, definition_id: str):
 
 @router.get("/udf/values/{target_type}/{target_id}")
 async def get_values(request: Request, target_type: str, target_id: str):
+    # BUGFIX3 — STAFF-ONLY: org-wide record rows (positions, entities, commitments …) with no member filter; no
+    # member screen reads them. A member (view_portfolio) is refused before any row is read.
+    require_internal(request)
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
     async with pool.acquire() as conn:
         try:
@@ -977,6 +981,9 @@ async def list_records_route(
     zero available UDF columns rather than 403ing — see
     ``portfolio_udf_records`` module docstring: unlike the layout endpoint,
     there is still a real base-table row set to return."""
+    # BUGFIX3 — STAFF-ONLY: org-wide record rows (positions, entities, commitments …) with no member filter; no
+    # member screen reads them. A member (view_portfolio) is refused before any row is read.
+    require_internal(request)
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
     filters = _parse_records_filter(filter)
     sort_spec = _parse_records_sort(sort)
@@ -1023,6 +1030,9 @@ async def export_records_route(
     ``list_records_with_udf``) rather than loading the whole table in one
     unbounded query.
     """
+    # BUGFIX3 — STAFF-ONLY: org-wide record rows (positions, entities, commitments …) with no member filter; no
+    # member screen reads them. A member (view_portfolio) is refused before any row is read.
+    require_internal(request)
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
     filters = _parse_records_filter(filter)
     async with pool.acquire() as conn:

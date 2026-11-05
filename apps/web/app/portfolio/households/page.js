@@ -3,6 +3,7 @@ import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
 import HouseholdManager from "@/components/households/HouseholdManager";
+import ManualAssetsReport from "@/components/portentry/ManualAssetsReport";
 
 // REP7 — the households the caller may see (view_replication + household
 // access), each linking to its X-ray tab.
@@ -25,6 +26,13 @@ export default async function HouseholdsPage() {
   } catch {
     manage = null;
   }
+  // BUGFIX3 — the org's manual assets with their position counts (view_held_away; a 403 renders nothing)
+  let manual = null;
+  try {
+    manual = await fetchAPI("/api/v1/portfolio/manual-assets");
+  } catch {
+    manual = null;
+  }
   return (
     <AppShell user={session.user}>
       <h1 className="text-3xl font-semibold text-navy">Households</h1>
@@ -37,6 +45,7 @@ export default async function HouseholdsPage() {
         ) : <p className="text-text-muted">No household with accounts.</p>}
       </div>
       {manage?.permissions?.can_write === true && <HouseholdManager envelope={manage} />}
+      <ManualAssetsReport envelope={manual} />
     </AppShell>
   );
 }

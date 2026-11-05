@@ -120,6 +120,8 @@ from services.securities_global import (
     update_security,
 )
 
+from services.portfolio_scope import entity_scope as _entity_scope  # noqa: E402 — BUGFIX3
+
 router = APIRouter(tags=["portfolio-securities"])
 
 
@@ -513,6 +515,7 @@ async def get_securities(
     nobody: every write endpoint re-checks.
     """
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    scope = await _entity_scope(request, pool)   # BUGFIX3 — a member: instruments their own family holds
 
     async with pool.acquire() as conn:
         try:
@@ -533,6 +536,7 @@ async def get_securities(
                 value_as_of=value_as_of,
                 limit=limit,
                 offset=offset,
+                entity_scope=scope,
             )
             taxonomy = await taxonomy_labels(conn, org_id)
             # BUGFIX1 (PORT-01) — say why an empty grid is empty.
@@ -567,11 +571,13 @@ async def get_security_detail(
     readable by everyone by deployed policy.
     """
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    scope = await _entity_scope(request, pool)   # BUGFIX3 — not held by the member's family: the same 404
 
     async with pool.acquire() as conn:
         try:
             detail = await get_asset(
-                conn, org_id=org_id, asset_id=str(asset_id), value_as_of=value_as_of
+                conn, org_id=org_id, asset_id=str(asset_id), value_as_of=value_as_of,
+                entity_scope=scope,
             )
             taxonomy = await taxonomy_labels(conn, org_id)
         except PortfolioError as exc:
@@ -686,7 +692,16 @@ async def patch_security(request: Request, asset_id: _uuid.UUID, body: AssetPatc
 async def get_security_versions(request: Request, asset_id: _uuid.UUID):
     """The asset's version history — the live row plus its system-axis archives."""
     org_id, _user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    scope = await _entity_scope(request, pool)
     async with pool.acquire() as conn:
+        if scope is not None:
+            # BUGFIX3 — a member: only an instrument their family holds; otherwise the same 404 as a missing id
+            held = await conn.fetchval(
+                "SELECT 1 FROM portfolio.positions WHERE asset_id = $1::uuid AND org_id = $2::uuid "
+                "AND valid_to IS NULL AND system_to IS NULL AND owner_entity_id = ANY($3::uuid[]) LIMIT 1",
+                str(asset_id), str(org_id), scope)
+            if not held:
+                raise HTTPException(status_code=404, detail="asset not found")
         versions = await asset_version_history(
             conn, org_id=org_id, asset_id=str(asset_id)
         )

@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+BUGFIX3 (2026-11-05, the Olivo-pass CRITICAL: a member read every family's positions — every portfolio read now takes the one shared visible-entity rule; private investments without a commitment, household Recalculate, provisional import rows live, editable addresses, permission-true CRM controls, manual-asset counts, option picker, fixed-point money; verify WRITTEN, not yet run): see the top entry.
 PORTENTRY2 (2026-11-05, what HollisMuse hit onboarding the Olivo family — legal entities join an existing household and own accounts, account type / tax / billable fields + DVP reasons, permission-true CRM controls, the ownership views agree, picker / dates / dialogs / detail keys / seasonal addresses / Households nav, staff security search; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 PORTENTRY1 (2026-11-04, the Olivo entry-plan gaps closed — CRM status / marital / sub-type vocabularies from the config table, ILIT / LP / foundation registry keys, ownership % for org admins, edit_crm_contact for support staff, manual positions for any holding (org-scoped manual assets, reported relink), direct assets + private investments with commitments, the integrated-account one-time import (Super Admin, maker-checker, superseded by the feed), family-scoped net worth refresh after every write, _verify_self fast-forward fix; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
 CRMDETAIL1 (2026-11-04, the CRM holds a multigenerational family — 29 governed relationship types with a Relationships panel, typed detail fields for trusts / charities / LLCs / LPs, maiden name + date of death + minor flag, portfolio.liabilities netting into net worth (gross / liabilities / net), permanent demo data protected from every clean-up; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
@@ -336,6 +337,94 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000. BUGFIX3 — HollisMuse's Olivo pass: the CRITICAL member leak on Positions (and every portfolio read of its shape), then the Highs and Mediums; verify WRITTEN, not yet run (2026-11-05)
+
+**The leak (MUSE-OLIVO-CRIT) — FIXED.** A member (jpl991721, role `member`) opened /portfolio/positions and read "Every
+holding across the firm": 23 live positions with owners and values. `GET /portfolio/positions` called
+`list_positions(org_id=…)` after a `view_portfolio` gate — org-scoped only — and the `member` role HOLDS
+`view_portfolio`. Live data: all 23 were demo-olivo (no real family exposed). The same shape was open on the position
+detail, the asset picker, the Securities grid / detail / versions, the Transactions grid / detail / picker, the TA
+projection and obligation ledger by commitment id, and six org-wide lists (below). **Fix:** one helper,
+`services/portfolio_scope.entity_scope` → `authz.member_entity_scope` (the BUGFIX2 rule: None for Super Admin / staff /
+internal reads, else the member's `visible_entity_ids` family; EMPTY = nothing). Every scoped service takes
+`entity_scope` and applies it IN SQL (count, page and totals agree); a detail outside it is the SAME 404 as a missing
+id. The list publishes `scope` ({kind, description}); the page no longer hard-codes "across the firm" (a member reads
+"Your family's holdings"). Fail closed: if the visible set cannot be decided the read raises (refused), never unscoped.
+
+**Task 1a — portfolio read routes** (gate · member filter before · member today · class):
+
+| Route | Gate | Filter before | Member today | Class |
+|---|---|---|---|---|
+| GET /portfolio/positions | view_portfolio | none (org-wide) | own family | member-scoped — FIXED |
+| GET /portfolio/positions/{id} | view_portfolio | none | own family; else 404 = missing | member-scoped — FIXED |
+| GET /portfolio/assets | view_portfolio | none | assets the family holds | member-scoped — FIXED |
+| GET /portfolio/securities, /{id}, /{id}/versions | view_portfolio | none | held by the family; 404 | member-scoped — FIXED |
+| GET /portfolio/transactions, /{id}, /transaction-positions | view_portfolio | none | own family; 404 | member-scoped — FIXED |
+| GET /modeling/ta/projection/{id}, /obligations/{id} | view_portfolio | none | own family; 404 | member-scoped — FIXED |
+| GET /portfolio/commitments | view_portfolio | visible_entity_ids (BUGFIX1) | own family | already-correct |
+| GET /portfolio/tax-chase | view_portfolio | none (org list) | 403 | staff-only — FIXED (internal) |
+| GET /portfolio/position-account-exceptions | view_portfolio | none | 403 | staff-only — FIXED |
+| GET /portfolio/precedence/households/{id} | view_portfolio | none | 403 | staff-only — FIXED |
+| GET /udf/records/{t}, /export, /udf/values/{t}/{id} | view_portfolio | none (every org row) | 403 | staff-only — FIXED (no member UI reads them) |
+| GET /portfolio/global-securities, /{id} | view_portfolio | n/a (platform master) | allowed | public-to-org reference |
+| GET /entities/{id}/direct-assets, /private-investments | member scope | own family | own family; 404 | already-correct |
+| GET /entities/{id}/net-worth, /liabilities | entity access | own family | own family; 404 | already-correct |
+| GET /portfolio/targets, /allocations | entity access | own family | own family | already-correct |
+| GET /portfolio/my-investments, /summary | account | own rows | own rows | already-correct |
+| GET /households/{id}/assets, /admin/households* | internal (+ manage_members) | n/a | 403 | staff-only |
+| GET /held-away/*, /portfolio/manual-assets, /portfolio/option-contracts | view_held_away | n/a | 403 | staff-only |
+| GET /xray/*, /authority/*, /lot-method/*, /replication/* | view_replication / view_authority / view_proposals | n/a | 403 | staff-only |
+| GET /portfolio/precedence, /securities/search, profitability, fee screens | internal | n/a | 403 | already-correct |
+
+**1b.** BUGFIX2 classified the 73 reads with NO gate; these already had `view_portfolio`, so none was in its list, and
+verify_bugfix2 seeded no position for a second family. **1c.** The "approved" import was never approved: one
+`provisional_imports` row, status `draft`; `provisional_positions` is EMPTY. On approval the rows are current positions
+(authority `stated`); the grid listed them unlabelled and the household listed only direct / commitment kinds.
+**1d.** `str(Decimal)` at the JSON boundary (positions / securities / transactions / authority / lot_method / xray
+`_s`, direct_holdings, households `_money` = float). asyncpg decodes trailing-zero numerics as exponents, so 900000
+became "9.0E+5" and `money()` split it into "$9.0E". **1e.** Lists rendered their empty sentence while still null;
+AddressesTab kept its first-render copy.
+
+**Muse findings.**
+- MUSE-OLIVO-CRIT (Positions leak): FIXED as above.
+- MUSE-OLIVO-H1 (Add private investment requires a commitment): FIXED — `direct_holdings.COMMITMENT_RULES`: fund
+  required, SPV optional, hedge fund / direct deal / SAFE / convertible note none (amount invested + latest value, no
+  commitment row, unfunded None → "—"; a commitment for those kinds is refused). New kind `hedge_fund`; "note" labelled
+  Convertible note; a note field (assets.notes). The form shows commitment fields from the envelope's rules.
+- MUSE-OLIVO-H2 (no household Recalculate): FIXED — `POST /admin/households/{id}/recalculate` (internal +
+  manage_members | manage_portfolio), the members' family-scoped rollup now, net worth returned; audited; the card
+  renders it only for `permissions.can.recalculate`.
+- MUSE-OLIVO-H3 (addresses not editable): FIXED — Edit (PUT, system-axis archive, id kept: every field incl. seasonal
+  months and note) and End (`POST …/addresses/{id}/end`: archive + valid_to; nothing deleted) for manage_members |
+  edit_crm_contact; controls from the record envelope's `addresses` flag.
+- MUSE-OLIVO-M1 (import rows not live): FIXED in code — `is_provisional` on every position row + the API's label
+  "Provisional — until the custodian feed"; the household lists `provisional_holdings`. DATA: the Olivo import is
+  still a DRAFT awaiting a second Super Admin.
+- MUSE-OLIVO-M2 (support staff offered Add Relationship / New Entity): FIXED — envelope keys `new_entity` (POST
+  /entities, exact manage_members) and `graph` (entity_graph writes, require_staff); the CRM list, /crm/new and the
+  Ownership Hierarchy page render from them (the hierarchy page read the token's role claim via isStaff).
+- MUSE-OLIVO-M3 (Northline: one asset or three?): ANSWERED — the NLF lines are in DRAFT held-away imports (6 of 58
+  drafts); no asset exists yet. `manual_asset_for` reuses one asset for identical lines (identifier, else kind + name +
+  terms). `GET /portfolio/manual-assets` now carries position / owner counts and a same-name flag, shown on
+  Households. GAP (not built): a maker-checker MERGE of two manual assets — it must re-point positions, valuations,
+  identifiers, transactions, held-away records and relinks; not small.
+- MUSE-OLIVO-M4 (no option contract picker): FIXED — `GET /portfolio/option-contracts?underlying_ticker=`
+  (view_held_away) lists existing rep8 contracts or says why none exist; the held-away listed_option entry fills the
+  terms from a pick.
+- MUSE-OLIVO-L1 ("$9.0E…" costs): FIXED — `services/money_text.fixed` (format "f") in every serializer above;
+  households' float → fixed string; front end `lib/fixedPoint.toFixedPoint` inside every money formatter.
+- MUSE-OLIVO-L2 (private investment has no note): FIXED (H1).
+- MUSE-OLIVO-L3 (display lag): FIXED — `lib/listState.listView` (null = Loading…, never the empty sentence) in the
+  Holdings tab; AddressesTab follows its parent's re-read.
+
+**Proof.** `apps/api/scripts/verify_bugfix3.py` (WRITTEN, not run — WSL memory): reproduces the leak on the pre-fix call
+path (`list_positions(org_id)` returns F2's distinctive asset), then proves every member-reachable route returns F1
+only (independent SQL family; strict subset; F2's detail = the missing-id 404, byte for byte), the staff-only reads
+refuse the member while the identical request is admitted for the org admin, Tasks 3–6 end to end, demo + real rows
+unchanged (count + checksum), RLS isolation both ways (rolbypassrls = false), own routes, `authz1_routes.py --check`
+CURRENT, node + build, and verify_bugfix2 once (flat, VERIFY_NESTED=1, 2700 s). node --test tests/ 529 / 0 fail
+(9 new in tests/bugfix3). `docs/AUTHZ1_ROUTES.md` regenerated (CURRENT).
 
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000. PORTENTRY2 — fix what HollisMuse hit while onboarding the Olivo family (interim report 2026-11-05, stopped at I.0); schema APPLIED; verify WRITTEN, not yet run (2026-11-05)
 

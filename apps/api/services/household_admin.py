@@ -162,6 +162,10 @@ async def household_detail(conn, org_id, household_id) -> dict:
             # PORTENTRY2 (H-02) — "add a legal entity owned by a member": the org's legal entities a member owns
             # (either ownership table) that are not members yet; choosing one as an account owner links it too.
             "owner_candidates": await owner_candidates(conn, org_id, hh["id"], [m["id"] for m in members]),
+            # BUGFIX3 (MUSE-OLIVO-M, Task 4) — approved integrated-import rows of the members: LIVE positions,
+            # labelled provisional until the custodian feed closes them
+            "provisional_holdings": await provisional_holdings(conn, org_id, member_ids),
+            "provisional_label": PROVISIONAL_LABEL,
             "account_count": len(accounts),
             "accounts": [account_json(a, vocab, {m["id"]: m["display_name"] for m in member_list})
                          for a in accounts]}
@@ -442,3 +446,65 @@ async def update_account(conn, *, org_id, actor_id, household_id, account_id, ch
         row = await conn.fetchrow(f"SELECT {ACCOUNT_COLS} FROM accounts WHERE id = $1 AND system_to IS NULL",
                                   cur["id"])
     return {**account_json(row, vocab, {}), "changed": sorted(clean)}
+
+
+# ── BUGFIX3 (Task 4) — household Recalculate + provisional (one-time import) holdings ─────────────────────────────
+PROVISIONAL_LABEL = "Provisional — until the custodian feed"
+
+
+async def provisional_holdings(conn, org_id, entity_ids) -> list[dict]:
+    """Live positions written by an APPROVED integrated import (portfolio.provisional_positions, live row) for
+    ``entity_ids`` — the same rows the Positions grid shows with ``is_provisional``. Fixed-point money."""
+    from services.money_text import fixed
+
+    if not entity_ids:
+        return []
+    rows = await conn.fetch(
+        "SELECT p.id::text AS position_id, p.owner_entity_id::text AS owner_entity_id, e.display_name AS owner_name, "
+        "a.name AS asset_name, p.quantity, p.market_value, p.cost_basis, p.as_of_date, "
+        "acct.account_number_masked, pp.import_id::text AS import_id "
+        "FROM portfolio.provisional_positions pp "
+        "JOIN portfolio.positions p ON p.id = pp.position_id AND p.org_id = pp.org_id "
+        " AND p.valid_to IS NULL AND p.system_to IS NULL "
+        "JOIN portfolio.assets a ON a.id = p.asset_id AND a.org_id = p.org_id AND a.system_to IS NULL "
+        "JOIN entities e ON e.id = p.owner_entity_id AND e.valid_to IS NULL AND e.system_to IS NULL "
+        "LEFT JOIN accounts acct ON acct.id = pp.account_id AND acct.valid_to IS NULL AND acct.system_to IS NULL "
+        "WHERE pp.org_id = $1 AND pp.valid_to IS NULL AND pp.system_to IS NULL "
+        "AND p.owner_entity_id = ANY($2::uuid[]) ORDER BY e.display_name, a.name",
+        _u(org_id), [_u(x) for x in entity_ids])
+    return [{"position_id": r["position_id"], "owner_entity_id": r["owner_entity_id"], "owner_name": r["owner_name"],
+             "asset_name": r["asset_name"], "quantity": fixed(r["quantity"]), "market_value": fixed(r["market_value"]),
+             "cost_basis": fixed(r["cost_basis"]), "as_of_date": r["as_of_date"].isoformat(),
+             "account_number_masked": r["account_number_masked"], "import_id": r["import_id"],
+             "label": PROVISIONAL_LABEL} for r in rows]
+
+
+async def recalculate_household(pool, org_id, household_id, *, actor_id) -> dict:
+    """The household's Recalculate (MUSE-OLIVO-H): one family-scoped rollup over the household's members — the
+    portentry1 refresh path (portfolio_refresh.request_rollup with no debounce, then run_request; the family is the
+    members' household(s) + ownership graph, never org-wide) — then the household's net worth read back from the
+    same look-through basis the household card shows."""
+    from services import households as HH
+    from services import portfolio_refresh as PR
+
+    async with pool.acquire() as conn:
+        hh = await _household(conn, org_id, household_id)
+        member_ids = [str(r["entity_id"]) for r in await conn.fetch(
+            "SELECT entity_id FROM household_memberships WHERE household_id = $1", hh["id"])]
+    ran, req = None, {}
+    if member_ids:
+        async with pool.acquire() as conn:
+            req = await PR.request_rollup(conn, org_id, member_ids, reason=f"household recalculate {hh['id']}",
+                                          actor_id=actor_id, delay_s=0)
+            if req:
+                ran = await PR.run_request(conn, org_id, req["id"])
+    async with pool.acquire() as conn:
+        gross = (await HH._sum_holdings(conn, org_id, member_ids, None))["total_value"] if member_ids else None
+        net_worth = await HH._net_worth(conn, org_id, member_ids, gross, None) if member_ids else None
+        await _audit(conn, org_id, actor_id, "recalculate", hh["id"],
+                     {"members": len(member_ids), "request_id": req.get("id") if req else None,
+                      "status": (ran or {}).get("status")})
+    return {"household_id": str(hh["id"]), "request_id": req.get("id") if req else None,
+            "status": (ran or {}).get("status") or ("no members" if not member_ids else "not run"),
+            "family_size": len(req.get("entity_ids") or []) if req else 0, "member_count": len(member_ids),
+            "net_worth": net_worth}

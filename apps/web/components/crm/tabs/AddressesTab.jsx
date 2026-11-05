@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { addAddressAction } from "@/lib/crmActions";
+import { addAddressAction, endAddressAction, updateAddressAction } from "@/lib/crmActions";
 import { CountryRegionSelect } from "@/components/ReferenceSelect";
 import { ReferenceSelect } from "@/components/ReferenceSelect";
 import { seasonalStatus } from "@/lib/portentry2.mjs";
@@ -26,8 +26,78 @@ function typeLabel(v) {
 }
 
 
-export default function AddressesTab({ entityId, initial, canAdd = false }) {
+// BUGFIX3 (MUSE-OLIVO-H, Task 5) — a saved address's Edit form (every field incl. seasonal months and the note).
+function EditAddress({ entityId, address, onSaved, onCancel }) {
+  const [seasonal, setSeasonal] = useState(Boolean(address.is_seasonal));
+  const [state, formAction, pending] = useActionState(updateAddressAction.bind(null, entityId, address.id), {});
+  useEffect(() => {
+    if (state?.ok && state.item) onSaved(state.item);
+  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <form action={formAction} className="mt-3 grid gap-3 sm:grid-cols-2">
+      <select name="address_type" defaultValue={address.address_type} className={INPUT}>
+        {ADDRESS_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+      </select>
+      <div />
+      <input name="street1" defaultValue={address.street1 || ""} placeholder="Street 1 *" required className={INPUT} />
+      <input name="street2" defaultValue={address.street2 || ""} placeholder="Street 2" className={INPUT} />
+      <input name="city" defaultValue={address.city || ""} placeholder="City *" required className={INPUT} />
+      <input name="postal_code" defaultValue={address.postal_code || ""} placeholder="Postal code" className={INPUT} />
+      <div className="sm:col-span-2">
+        <CountryRegionSelect defaultCountryCode={address.country_code || address.country || "US"}
+          defaultRegionCode={address.region_code || ""} />
+      </div>
+      <input name="phone" defaultValue={address.phone || ""} placeholder="Phone number" className={INPUT} />
+      <input name="note" defaultValue={address.note || ""} placeholder="Note (optional)" className={INPUT} />
+      <label className="flex items-center gap-2 text-sm text-text-secondary">
+        <input type="checkbox" name="is_primary" defaultChecked={Boolean(address.is_primary)} /> Primary address
+      </label>
+      <label className="flex items-center gap-2 text-sm text-text-secondary">
+        <input type="checkbox" name="is_seasonal" defaultChecked={Boolean(address.is_seasonal)}
+          onChange={(e) => setSeasonal(e.target.checked)} /> Seasonal address
+      </label>
+      {seasonal && (
+        <>
+          <div>
+            <label className="mb-1 block text-xs text-text-muted">From month</label>
+            <ReferenceSelect listKey="month" name="season_from_month" placeholder="From…" className={INPUT}
+              defaultValue={address.season_from_month ? String(address.season_from_month) : ""} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-text-muted">To month</label>
+            <ReferenceSelect listKey="month" name="season_to_month" placeholder="To…" className={INPUT}
+              defaultValue={address.season_to_month ? String(address.season_to_month) : ""} />
+          </div>
+        </>
+      )}
+      {state?.error && <p className="text-sm text-[#9B2335] sm:col-span-2">{state.error}</p>}
+      <div className="flex gap-2 sm:col-span-2">
+        <button type="submit" disabled={pending} className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60">
+          {pending ? "Saving…" : "Save changes"}
+        </button>
+        <button type="button" onClick={onCancel} className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export default function AddressesTab({ entityId, initial, canAdd = false, canEdit = false }) {
   const [items, setItems] = useState(initial || []);
+  const [editing, setEditing] = useState(null);
+  const [endError, setEndError] = useState(null);
+  // BUGFIX3 (1e) — the list follows a re-read of its parent's data instead of keeping the first render's copy
+  useEffect(() => {
+    if (Array.isArray(initial)) setItems(initial);
+  }, [initial]);
+
+  async function endAddress(a) {
+    setEndError(null);
+    const res = await endAddressAction(entityId, a.id);
+    if (res?.ok) setItems((prev) => prev.filter((x) => x.id !== a.id));
+    else setEndError(res?.error || "Could not end the address.");
+  }
   const [adding, setAdding] = useState(false);
   const [isSeasonal, setIsSeasonal] = useState(false);
   const formRef = useRef(null);
@@ -58,6 +128,7 @@ export default function AddressesTab({ entityId, initial, canAdd = false }) {
         )}
       </div>
 
+      {endError && <p className="mt-2 text-sm text-[#9B2335]">{endError}</p>}
       {items.length === 0 ? (
         <p className="mt-3 text-sm text-text-muted">No addresses on file.</p>
       ) : (
@@ -85,6 +156,20 @@ export default function AddressesTab({ entityId, initial, canAdd = false }) {
                 <p className="mt-1 text-xs text-text-muted">{a.phone}</p>
               )}
               {a.note && <p className="mt-1 text-xs text-text-secondary">{a.note}</p>}
+              {/* BUGFIX3 — Edit / End render only when the record envelope allows "addresses" (no fallback) */}
+              {canEdit && editing !== a.id && (
+                <div className="mt-2 flex gap-4">
+                  <button type="button" className="text-xs font-medium text-navy hover:underline" onClick={() => setEditing(a.id)}>Edit</button>
+                  <button type="button" className="text-xs font-medium text-text-secondary hover:underline"
+                    onClick={() => { if (window.confirm("End this address? It is kept in the record's history.")) endAddress(a); }}>
+                    End
+                  </button>
+                </div>
+              )}
+              {canEdit && editing === a.id && (
+                <EditAddress entityId={entityId} address={a} onCancel={() => setEditing(null)}
+                  onSaved={(item) => { setItems((prev) => prev.map((x) => (x.id === a.id ? item : x))); setEditing(null); }} />
+              )}
             </li>
           ))}
         </ul>

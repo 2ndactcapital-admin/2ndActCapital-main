@@ -32,8 +32,11 @@ export default async function CrmPage({ searchParams }) {
   }
   // PORTENTRY1 (GAP-CRM-01) — the status pills come from the org's config vocabulary (client / contact included)
   let vocab = null;
+  let canNewEntity = false; // BUGFIX3 — fail closed: a lost envelope renders no "New Entity"
   try {
-    vocab = (await fetchAPI("/api/v1/crm/vocabularies"))?.vocabularies || null;
+    const env = await fetchAPI("/api/v1/crm/vocabularies");
+    vocab = env?.vocabularies || null;
+    canNewEntity = env?.permissions?.can?.new_entity === true;
   } catch {
     vocab = null;
   }
@@ -51,12 +54,14 @@ export default async function CrmPage({ searchParams }) {
     <AppShell user={session.user}>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-navy">Entities</h1>
-        <a
-          href="/crm/new"
-          className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app transition-opacity hover:opacity-90"
-        >
-          New Entity
-        </a>
+        {canNewEntity && (
+          <a
+            href="/crm/new"
+            className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app transition-opacity hover:opacity-90"
+          >
+            New Entity
+          </a>
+        )}
       </div>
 
       {/* Search */}

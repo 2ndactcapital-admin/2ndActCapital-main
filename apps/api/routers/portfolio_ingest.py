@@ -214,6 +214,7 @@ async def read_household_precedence(request: Request, household_id: _uuid.UUID):
     reported alongside, so a screen can show what it WOULD fall back to without
     a second call. That difference is the whole decision an operator is making.
     """
+    require_internal(request)  # BUGFIX3 — STAFF-ONLY: an org-wide list; a member (view_portfolio) is refused
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)
@@ -313,6 +314,7 @@ async def read_position_account_exceptions(
     than silently accepted. An empty list is the healthy state, not a missing
     feature.
     """
+    require_internal(request)  # BUGFIX3 — STAFF-ONLY: an org-wide list; a member (view_portfolio) is refused
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)
@@ -456,6 +458,7 @@ async def tax_chase(request: Request, tax_year: int = Query(...)):
     be a rounding error introduced at the last layer, after the figures survived
     the database and the service as exact Decimals.
     """
+    require_internal(request)  # BUGFIX3 — STAFF-ONLY: an org-wide list; a member (view_portfolio) is refused
     org_id = get_org_id(request)
     pool = await get_pool()
     user_id = get_user_id(request)

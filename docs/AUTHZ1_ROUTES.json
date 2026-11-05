@@ -1,5 +1,5 @@
 {
- "app_route_count": 832,
+ "app_route_count": 835,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -508,6 +508,28 @@
    "name": "update_address",
    "note": "CRM writes \u2192 manage_members (compliance \u2192 manage_compliance; stub \u2192 manage_members|manage_portfolio)",
    "path": "/api/v1/entities/{entity_id}/addresses/{addr_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members|edit_crm_contact)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "edit_crm_contact",
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.entities",
+   "name": "end_address",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/addresses/{addr_id}/end",
    "public": false,
    "write": true
   },
@@ -3710,7 +3732,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -3776,7 +3798,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -3864,7 +3886,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -5687,6 +5709,28 @@
    "write": false
   },
   {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "option_contracts_for_underlying",
+   "note": "",
+   "path": "/api/v1/portfolio/option-contracts",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "authz manage_held_away",
    "before": "\u2014",
    "before_effect": "new route",
@@ -6942,6 +6986,28 @@
    "name": "edit_household_account",
    "note": "",
    "path": "/api/v1/admin/households/{household_id}/accounts/{account_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members|manage_portfolio)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_portfolio"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.households",
+   "name": "recalculate_household",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}/recalculate",
    "public": false,
    "write": true
   },
@@ -10015,7 +10081,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -10477,7 +10543,7 @@
    "write": true
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {
@@ -10499,7 +10565,7 @@
    "write": false
   },
   {
-   "after": "authz view_portfolio",
+   "after": "authz view_portfolio; internal",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
    "expect": {

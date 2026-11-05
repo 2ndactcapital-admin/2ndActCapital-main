@@ -32,10 +32,16 @@ GATES: dict[str, tuple[str, tuple[str, ...]]] = {
     "relationships": ("internal", (MANAGE,)),  # POST /entities/{id}/crm-relationships, …/end
     "details": ("internal", (MANAGE,)),        # PUT /entities/{id}/details
     "liabilities": ("internal", (MANAGE,)),    # POST /entities/{id}/liabilities …
-    "addresses": ("internal", (MANAGE, CONTACT)),   # POST/PUT /entities/{id}/addresses
+    "addresses": ("internal", (MANAGE, CONTACT)),   # POST/PUT /entities/{id}/addresses, POST …/{addr}/end
     "contact": ("internal", (MANAGE, CONTACT)),     # PUT /entities/{id}/contact
     "notes": ("internal", (MANAGE, CONTACT)),       # POST /entities/{id}/notes
     "accounts": ("internal", (MANAGE,)),       # household accounts (routers.households)
+    # BUGFIX3 (MUSE-OLIVO-M) — the CRM list's "New Entity" (POST /entities: require_permission manage_members)
+    "new_entity": ("exact", (MANAGE,)),
+    # BUGFIX3 — the Ownership Hierarchy page's Add Relationship / remove / entity groups (routers.entity_graph:
+    # POST /entity-relationships, /entity-groups, /entity-groups/{id}/members — require_staff: Super Admin or a
+    # STAFF_ROLE_NAMES role; no permission key opens it)
+    "graph": ("staff", ()),
 }
 
 
@@ -46,6 +52,8 @@ def allowed(p: Principal | None, key: str) -> bool:
     shape, perms = GATES[key]
     if p.is_super_admin:
         return True
+    if shape == "staff":
+        return bool(p.is_staff)
     if shape == "exact":
         return any(k in p.permissions for k in perms)
     if p.is_staff:

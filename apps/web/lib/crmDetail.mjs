@@ -1,3 +1,4 @@
+import { toFixedPoint } from "./fixedPoint.mjs";
 // CRMDETAIL1 — pure helpers for the CRM record's Relationships panel, Detail fields panel, Liabilities tab and
 // net-worth lines. Every label, type and allowed pair comes from the API envelope (`vocabularies`); nothing here
 // names a relationship type, a field or a liability kind. Write controls render only on
@@ -80,7 +81,7 @@ export function fieldPayload(fields, form) {
 // Money: amounts are strings from the API (exact Decimal). Grouping only — never parseFloat for arithmetic.
 export function formatMoney(value, currency = "USD") {
   if (value === null || value === undefined || value === "") return "—";
-  const s = String(value);
+  const s = toFixedPoint(value); // BUGFIX3 — "9.0E+5" never renders as "$9.0E"
   const neg = s.startsWith("-");
   const [whole, frac = ""] = (neg ? s.slice(1) : s).split(".");
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");

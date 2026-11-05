@@ -127,7 +127,8 @@ export default function EntityDetailTabs({ full, graph }) {
 
         {/* Addresses */}
         <div className={active === "addresses" ? "" : "hidden"}>
-          <AddressesTab entityId={entity.id} initial={full.addresses || []} canAdd={canEdit(perms, "addresses")} />
+          <AddressesTab entityId={entity.id} initial={full.addresses || []} canAdd={canEdit(perms, "addresses")}
+            canEdit={canEdit(perms, "addresses")} />
         </div>
 
         {/* Employment (individuals only) */}

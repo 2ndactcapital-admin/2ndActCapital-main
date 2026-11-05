@@ -1,3 +1,4 @@
+import { toFixedPoint } from "./fixedPoint.mjs";
 // Decimal-as-string display formatting — TA Model Sprint 3.
 //
 // Every monetary/rate value on the commitment projection screen arrives as a
@@ -21,7 +22,7 @@ const DECIMAL_STRING = /^(-?)(\d+)(?:\.(\d+))?$/;
 
 function parts(value) {
   if (value == null || value === "") return null;
-  const m = DECIMAL_STRING.exec(String(value).trim());
+  const m = DECIMAL_STRING.exec(toFixedPoint(value)); // BUGFIX3 — an exponent string is expanded, exactly
   if (!m) return null;
   const [, sign, intPart, fracPart = ""] = m;
   return { sign, intPart, fracPart };

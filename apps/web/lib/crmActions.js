@@ -64,6 +64,52 @@ export async function addAddressAction(entityId, prevState, formData) {
   }
 }
 
+// BUGFIX3 (MUSE-OLIVO-H, Task 5) — edit a saved address (PUT: the prior version is archived, history kept). Every
+// field is sent, so clearing a note or turning off "seasonal" really clears it (null), never leaves the old value.
+export async function updateAddressAction(entityId, addressId, prevState, formData) {
+  const street1 = empty(formData.get("street1"));
+  const city = empty(formData.get("city"));
+  if (!street1 || !city) return { ok: false, error: "Street and city are required." };
+  const country_code = empty(formData.get("country_code"));
+  const seasonal = checked(formData.get("is_seasonal"));
+  const sfmRaw = formData.get("season_from_month");
+  const stmRaw = formData.get("season_to_month");
+  try {
+    const item = await fetchAPI(`/api/v1/entities/${entityId}/addresses/${addressId}`, {
+      method: "PUT",
+      body: {
+        address_type: formData.get("address_type") || "primary_residence",
+        street1,
+        street2: empty(formData.get("street2")),
+        city,
+        postal_code: empty(formData.get("postal_code")),
+        country: country_code || empty(formData.get("country")) || "US",
+        phone: empty(formData.get("phone")),
+        country_code: country_code,
+        region_code: empty(formData.get("region_code")),
+        is_primary: checked(formData.get("is_primary")),
+        is_seasonal: seasonal,
+        season_from_month: seasonal && sfmRaw ? parseInt(sfmRaw, 10) : null,
+        season_to_month: seasonal && stmRaw ? parseInt(stmRaw, 10) : null,
+        note: empty(formData.get("note")),
+      },
+    });
+    return { ok: true, item };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+// BUGFIX3 — end a saved address (valid_to = now; nothing deleted, the history is kept).
+export async function endAddressAction(entityId, addressId) {
+  try {
+    const item = await fetchAPI(`/api/v1/entities/${entityId}/addresses/${addressId}/end`, { method: "POST" });
+    return { ok: true, item };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 export async function addEmploymentAction(entityId, prevState, formData) {
   const employer_id = empty(formData.get("employer_id"));
   if (!employer_id) return { ok: false, error: "Select an employer entity." };

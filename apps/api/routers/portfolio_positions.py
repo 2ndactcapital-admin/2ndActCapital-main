@@ -89,9 +89,14 @@ from services.portfolio_positions import (
     taxonomy_labels,
     update_position,
 )
+from services.portfolio_scope import entity_scope as _entity_scope
+from services.portfolio_scope import scope_block
 from services.rbac import has_permission, is_super_admin, load_principal, require_permission
 
 router = APIRouter(tags=["portfolio-positions"])
+
+#: BUGFIX3 — Rule 1: the grid's badge text comes from the API.
+PROVISIONAL_LABEL = "Provisional — until the custodian feed"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -154,6 +159,8 @@ def _vocabularies(perms: dict[str, Any]) -> dict[str, Any]:
         "source_system": sorted(SOURCE_SYSTEMS),
         "ownership_basis": sorted(OWNERSHIP_BASES),
         "superseded": sorted(SUPERSEDED_FILTERS),
+        # BUGFIX3 (Task 4) — the label an approved integrated-import row carries until the custodian feed arrives
+        "provisional_label": PROVISIONAL_LABEL,
         "inline_editable": sorted(INLINE_EDITABLE_FIELDS) if perms["can_write"] else [],
         "editable": sorted(EDITABLE_FIELDS) if perms["can_write"] else [],
     }
@@ -360,6 +367,8 @@ async def get_positions(
     the difference so a truncated page never looks complete.
     """
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    # BUGFIX3 (CRITICAL) — a member reads only their own family's positions (the ONE shared rule)
+    scope = await _entity_scope(request, pool)
 
     async with pool.acquire() as conn:
         try:
@@ -382,6 +391,7 @@ async def get_positions(
                 value_as_of=value_as_of,
                 limit=limit,
                 offset=offset,
+                entity_scope=scope,
             )
             # Shipped with the page so the taxonomy cell can render a label AND
             # an inline reassignment picker without a second round-trip. Rule 1:
@@ -396,6 +406,7 @@ async def get_positions(
     perms = await _permission_envelope(pool, user_id, org_id)
     result["permissions"] = perms
     result["vocabularies"] = _vocabularies(perms)
+    result["scope"] = scope_block(scope, "positions")   # BUGFIX3 — "across the firm" only when it is
     return result
 
 
@@ -417,12 +428,13 @@ async def get_position_detail(
     exists somewhere else is itself a cross-tenant leak.
     """
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    scope = await _entity_scope(request, pool)   # BUGFIX3 — another family's id: the same 404 as a missing one
 
     async with pool.acquire() as conn:
         try:
             detail = await get_position(
                 conn, org_id=org_id, position_id=str(position_id),
-                value_as_of=value_as_of,
+                value_as_of=value_as_of, entity_scope=scope,
             )
         except PortfolioError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -446,9 +458,10 @@ async def get_assets(
 ):
     """Tenant assets, for the create-position asset picker."""
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    scope = await _entity_scope(request, pool)   # BUGFIX3 — a member's picker lists only assets their family holds
 
     async with pool.acquire() as conn:
-        assets = await list_assets(conn, org_id=org_id, search=search, limit=limit)
+        assets = await list_assets(conn, org_id=org_id, search=search, limit=limit, entity_scope=scope)
 
     # A view-only caller may legitimately READ the picker's contents — it is an
     # asset list — but should never see a create form built on top of it. The
@@ -587,6 +600,8 @@ async def list_visible_commitments(request: Request, limit: int = Query(default=
     from services.document_embedding import visible_entity_ids
 
     org_id, user_id, pool = await _tenant_gate(request, READ_PERMISSION)
+    # BUGFIX1 rule, unchanged (staff: the staff visibility engine's assignments; member: own family). BUGFIX3 leaves
+    # it as is — it already filtered, and widening a staff caller to unscoped is a product decision, not a fix.
     allowed = sorted(await visible_entity_ids(pool, org_id, user_id, is_internal(request)))  # STAFFROLES1 — visibility (see), not a bypass
     async with pool.acquire() as conn:
         rows = await conn.fetch(
