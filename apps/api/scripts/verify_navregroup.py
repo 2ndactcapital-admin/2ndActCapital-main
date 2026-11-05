@@ -76,6 +76,7 @@ sys.path.insert(0, str(HERE.parent))
 # runs just these, BEFORE the DB bootstrap — no Doppler, no database, no network, no npm.
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "navregroup"
 BASELINE_REF = "e581844"   # the commit this sprint started from (pinned: HEAD moves)
@@ -983,11 +984,10 @@ def regression_bulkfetchui2() -> None:
         (log_dir / "verify_navregroup.regression.verify_bulkfetchui2.out").write_text(text)
     except OSError:
         pass
-    totals = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", text, re.M)
-    m = totals[-1] if totals else None
+    nt = VT.nested_total(text, code)
     fails = [ln for ln in text.splitlines() if ln.startswith("[FAIL]")]
-    check(m is not None and int(m[0]) > 0 and int(m[1]) == 0, f"{script} still reports 0 FAIL",
-          (f"TOTAL: {m[0]} PASS, {m[1]} FAIL" if m else text[-300:]) + (f"; {fails[:3]}" if fails else ""))
+    check(nt.ok, f"{script} still reports 0 FAIL",
+          (nt.detail() if nt.ok else f"{nt.detail()}; {text[-300:]}") + (f"; {fails[:3]}" if fails else ""))
 
 
 def y_regression() -> None:

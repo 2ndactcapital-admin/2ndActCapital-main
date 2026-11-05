@@ -156,3 +156,18 @@ fall-through.
 
 Still prefer `--no-ff`: the first-parent fallback cannot tell two sprints'
 interleaved fast-forwarded commits apart.
+
+## Parse a nested script's own final TOTAL line, never the first match (PORTENTRY2 FIX 1, 2026-11-05)
+
+A nested script's output can contain OTHER scripts' totals in its detail lines
+(verify_portentry1's _verify_self section prints "verify_perms1.py
+--self-checks-only: 0 FAIL — TOTAL: 23 PASS, 0 FAIL"). `re.search(r"TOTAL: (\d+)
+PASS, (\d+) FAIL", out)` takes the FIRST match anywhere, so verify_portentry2
+reported a 167-check verify_portentry1 run as "23 PASS, 0 FAIL", and that gate
+would have passed with the nested script failing.
+
+Always judge a nested run with `_verify_total.nested_total(out, returncode)`:
+it reads the LAST line that STARTS with `TOTAL: ` (anchored, multiline), and it
+is a pass only when FAIL is 0, PASS is above 0 and the exit code is 0. A missing
+final line, a timeout (no exit code) or an exit code that disagrees with the
+line all fail. Never write a second, local TOTAL regex.

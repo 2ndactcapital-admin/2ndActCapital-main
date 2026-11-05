@@ -55,6 +55,7 @@ from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
+import _verify_total as VT  # noqa: E402  (stdlib only)
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 
 import asyncpg  # noqa: E402
@@ -1134,15 +1135,17 @@ def y_regression():
         print("[SKIP] nested run: regression section skipped (parent runs it)")
         return
     section("[Y] Regression: verify_notefields.py, run ONCE as a flat subprocess")
+    rc = None
     try:
         proc = subprocess.run([sys.executable, str(HERE.parent / "verify_notefields.py")], capture_output=True,
                               text=True, timeout=180, cwd=str(REPO), env=os.environ | {"VERIFY_NESTED": "1"})
         out = proc.stdout + proc.stderr
+        rc = proc.returncode
     except subprocess.TimeoutExpired as exc:
         out = f"TIMEOUT after 180s: {(exc.stdout or b'')[-300:]!r}"
-    m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
-    check(m is not None and int(m.group(1)) > 0 and int(m.group(2)) == 0,
-          "verify_notefields.py still reports 0 FAIL", m.group(0) if m else out[-300:])
+    nt = VT.nested_total(out, rc)
+    check(nt.ok,
+          "verify_notefields.py still reports 0 FAIL", nt.detail() if nt.ok else f"{nt.detail()}; {out[-300:]}")
 
 
 # ═══ Main ══════════════════════════════════════════════════════════════════

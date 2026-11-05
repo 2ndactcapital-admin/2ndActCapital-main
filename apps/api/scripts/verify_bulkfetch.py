@@ -66,6 +66,7 @@ sys.path.insert(0, str(HERE.parent))
 # these, BEFORE the Doppler bootstrap — no Doppler, no database, no network, no npm.
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "bulkfetch"
 
@@ -1349,10 +1350,12 @@ def y_regression() -> None:
     env = os.environ | {"VERIFY_NESTED": "1"}
     for name in ("verify_edgarpipelinea.py", "verify_edgarcohorts.py", "verify_notefix2.py"):
         timeout = REGRESSION_TIMEOUT.get(name, 600)
+        rc = None
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
                                   text=True, timeout=timeout, cwd=str(REPO), env=env)
             out = proc.stdout + proc.stderr
+            rc = proc.returncode
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after {timeout}s: {(exc.stdout or b'')[-300:]!r}"
         try:
@@ -1362,12 +1365,11 @@ def y_regression() -> None:
             pass
         # The LAST "TOTAL:" line is the script's own: a script that nests
         # further regressions prints their TOTAL lines first.
-        totals = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
-        m = totals[-1] if totals else None
+        nt = VT.nested_total(out, rc)
         fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-        check(m is not None and int(m[0]) > 0 and int(m[1]) == 0,
+        check(nt.ok,
               f"{name} still reports 0 FAIL",
-              (f"TOTAL: {m[0]} PASS, {m[1]} FAIL" if m else out[-300:]) + (f"; {fails[:3]}" if fails else ""))
+              (nt.detail() if nt.ok else f"{nt.detail()}; {out[-300:]}") + (f"; {fails[:3]}" if fails else ""))
 
 
 if __name__ == "__main__":

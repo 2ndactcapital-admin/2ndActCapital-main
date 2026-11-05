@@ -65,6 +65,7 @@ from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
+import _verify_total as VT  # noqa: E402  (stdlib only)
 from _db_bootstrap import bootstrap_async  # noqa: E402  (also puts apps/api on sys.path)
 
 import asyncpg  # noqa: E402
@@ -990,15 +991,17 @@ async def y_regression() -> None:
     section("[Y] Regression: verify_notefields.py, verify_goldset.py and verify_notefix1.py, "
             "run ONCE each as flat subprocesses, AFTER this script's own teardown")
     for name in ("verify_notefields.py", "verify_goldset.py", "verify_notefix1.py"):
+        rc = None
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True,
                                   text=True, timeout=600, cwd=str(REPO), env=os.environ | {"VERIFY_NESTED": "1"})
             out = proc.stdout + proc.stderr
+            rc = proc.returncode
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after 600s: {(exc.stdout or b'')[-300:]!r}"
-        m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
-        check(m is not None and int(m.group(1)) > 0 and int(m.group(2)) == 0,
-              f"{name} still reports 0 FAIL", m.group(0) if m else out[-300:])
+        nt = VT.nested_total(out, rc)
+        check(nt.ok,
+              f"{name} still reports 0 FAIL", nt.detail() if nt.ok else f"{nt.detail()}; {out[-300:]}")
 
 
 if __name__ == "__main__":

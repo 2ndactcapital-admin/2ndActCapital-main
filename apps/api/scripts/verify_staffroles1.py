@@ -48,6 +48,7 @@ sys.path.insert(0, str(HERE))
 
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "staffroles1"
 BEFORE_REF = "e1feebf"   # main after "merge bugfix2" — the pre-sprint code
@@ -1119,10 +1120,10 @@ def regression():
     section("[Y] Regression — verify_bugfix2.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s")
     env = os.environ | {"VERIFY_NESTED": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_bugfix2.py")], REPO, timeout=2700, env=env)
-    m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
+    nt = VT.nested_total(out, code)
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-    check(m is not None and m.group(2) == "0" and code == 0, "verify_bugfix2.py: 0 FAIL",
-          f"{m.group(0) if m else 'no TOTAL'}; {fails[:4]} {err[-200:] if not m else ''}")
+    check(nt.ok, "verify_bugfix2.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:4]} {err[-200:] if not nt.ok else ''}")
 
 
 async def run(name, fn, *args):

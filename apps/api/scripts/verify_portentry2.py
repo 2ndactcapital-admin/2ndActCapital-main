@@ -46,6 +46,7 @@ sys.path.insert(0, str(API_DIR))
 
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "portentry2"
 BEFORE_REF = "ad97ea3"   # portentry2-work base: "olivo demo: Muse entry plan v3"
@@ -240,6 +241,8 @@ E = {
     "child": (_id(40), ORG_A, "llc", "Stag's Hollow LLC", {}),
     "mem": (_id(41), ORG_A, "individual", "Member Self", {}),
     "orgb": (_id(42), ORG_B, "individual", "Org B Person", {}),
+    # FIX 1: owned ONLY by own2 (never a household member) — the owner-candidates negative case
+    "side": (_id(43), ORG_A, "llc", "Side Venture LLC", {}),
     **{f"own{i}": (_id(50 + i), ORG_A, "llc", f"Owner {i} LLC", {}) for i in range(1, 8)},
 }
 HH_A, HH_B = _id(60), _id(61)
@@ -507,6 +510,9 @@ async def seed(conn) -> None:
                                    "VALUES ($1, $2, $3, $4)", ORG_A, eid(f"own{i}"), eid("lp"), pct)
         # the LP is owned (look-through) by the family: own1 is owned by the trust
         await conn.execute(rel, ORG_A, eid("trust"), eid("own1"), 100, "Membership interest")
+        # FIX 1 negative case, in the OTHER ownership table: own2 (not a member) → side; nobody else owns side
+        await conn.execute("INSERT INTO entity_ownership (org_id, parent_id, child_id, ownership_pct) "
+                           "VALUES ($1, $2, $3, $4)", ORG_A, eid("own2"), eid("side"), 100)
         await conn.execute("INSERT INTO households (id, org_id, name) VALUES ($1, $2, $3)", HH_A, ORG_A,
                            NAME + "Family")
         await conn.execute("INSERT INTO households (id, org_id, name) VALUES ($1, $2, $3)", HH_B, ORG_B,
@@ -654,8 +660,44 @@ async def y_members(conn):
     check(bool(c == 200 and types == ["individual", "llc", "lp", "trust"] and d.get("member_count") == 5),
           "the household detail lists people AND legal entities", f"{c} {types}")
     cand = {x["id"] for x in d.get("owner_candidates", [])} if c == 200 else set()
-    check(cand == {str(eid("llc2")), str(eid("own1"))}, "owner candidates = the legal entities a member owns that "
-          "are not members (llc2 and own1, both owned by the trust)", f"{cand}")
+    # FIX 1: the expected set is DERIVED from the seeded ownership rows (both tables, read directly in SQL, not
+    # through services.ownership_read), never a hand-written pair: every current legal entity owned by ANY member
+    # that is not itself a member. (The hand-written {llc2, own1} missed child, owned 60% by the LP member.)
+    want = await expected_owner_candidates(conn, HH_A)
+    check(bool(want and cand == {str(i) for i in want}), "owner candidates = every legal entity a member owns that "
+          "is not a member, derived from the seeded ownership rows (both tables)",
+          f"got {sorted(cand)} want {sorted(str(i) for i in want)}")
+    check(bool({eid("llc2"), eid("own1"), eid("child")} <= want), "… the derived set is the trust's llc2 and own1 "
+          "AND the LP's child (60%)", f"{sorted(str(i) for i in want)}")
+    check(bool(str(eid("side")) not in cand and eid("side") not in want
+               and await owners_of(conn, eid("side")) == {eid("own2")} and eid("own2") not in after),
+          "negative: Side Venture LLC, owned only by own2 (not a member), is NOT a candidate", f"{sorted(cand)}")
+
+
+async def owners_of(conn, child) -> set:
+    rows = await scoped(conn, ORG_A, """
+        SELECT from_entity_id AS p FROM entity_relationships WHERE org_id = $1 AND relationship_type = 'ownership'
+          AND to_entity_id = $2 AND valid_to IS NULL AND system_to IS NULL
+        UNION SELECT parent_id FROM entity_ownership WHERE org_id = $1 AND child_id = $2
+          AND valid_to IS NULL AND system_to IS NULL""", ORG_A, child)
+    return {r["p"] for r in rows}
+
+
+async def expected_owner_candidates(conn, hh) -> set:
+    """Independent SQL: current legal entities (not individual / account / spv) with a current ownership row (either
+    table) whose parent is a member of `hh`, minus the members themselves."""
+    rows = await scoped(conn, ORG_A, """
+        WITH m AS (SELECT entity_id FROM household_memberships WHERE household_id = $2),
+        owned AS (
+          SELECT to_entity_id AS c FROM entity_relationships WHERE org_id = $1 AND relationship_type = 'ownership'
+            AND valid_to IS NULL AND system_to IS NULL AND from_entity_id IN (SELECT entity_id FROM m)
+          UNION SELECT child_id FROM entity_ownership WHERE org_id = $1 AND valid_to IS NULL AND system_to IS NULL
+            AND parent_id IN (SELECT entity_id FROM m))
+        SELECT e.id FROM entities e JOIN owned ON owned.c = e.id
+        WHERE e.org_id = $1 AND e.valid_to IS NULL AND e.system_to IS NULL
+          AND e.entity_type::text NOT IN ('individual', 'account', 'spv')
+          AND e.id NOT IN (SELECT entity_id FROM m)""", ORG_A, hh)
+    return {r["id"] for r in rows}
 
 
 ACC: dict = {}
@@ -1086,10 +1128,10 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1"}
     env.pop("PORTFOLIO_ROLLUP_DEBOUNCE_S", None)
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_portentry1.py")], REPO, timeout=2700, env=env)
-    m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
+    nt = VT.nested_total(out, code)
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-    check(bool(m is not None and m.group(2) == "0" and code == 0), "verify_portentry1.py: 0 FAIL",
-          f"{m.group(0) if m else 'no TOTAL'}; {fails[:4]} {err[-200:] if not m else ''}")
+    check(bool(nt.ok), "verify_portentry1.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:4]} {err[-200:] if not nt.ok else ''}")
 
 
 async def run(name, fn, *args):

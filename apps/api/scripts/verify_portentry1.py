@@ -52,6 +52,7 @@ sys.path.insert(0, str(API_DIR))
 
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "portentry1"
 BEFORE_REF = "e5f5da8"   # portentry1-work base: main a0755ee + "chore: refresh schema snapshot"
@@ -215,9 +216,9 @@ def self_verify_self(check, find):
           f"pre-sprint _verify_self did", f"{differ}")
     for script in ("verify_perms1.py", "verify_secmaster1.py", "verify_crmdetail1.py"):
         code, out, err = run_cmd([sys.executable, str(HERE / script), VS.SELF_CHECKS_FLAG], REPO, timeout=600)
-        m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
-        check(bool(code == 0 and m and m.group(2) == "0"), f"{script} --self-checks-only: 0 FAIL",
-              f"{m.group(0) if m else 'no TOTAL'}; {[l for l in out.splitlines() if l.startswith('[FAIL]')][:3]}")
+        nt = VT.nested_total(out, code)
+        check(bool(nt.ok), f"{script} --self-checks-only: 0 FAIL",
+              f"{nt.detail()}; {[l for l in out.splitlines() if l.startswith('[FAIL]')][:3]}")
     rules = _read("docs/VERIFY_RULES.md")
     check(bool("--no-ff" in rules and "fast-forward" in rules.lower()), "docs/VERIFY_RULES.md: merges use --no-ff")
 
@@ -1140,10 +1141,10 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1"}
     env.pop("PORTFOLIO_ROLLUP_DEBOUNCE_S", None)
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_crmdetail1.py")], REPO, timeout=2700, env=env)
-    m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
+    nt = VT.nested_total(out, code)
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-    check(bool(m is not None and m.group(2) == "0" and code == 0), "verify_crmdetail1.py: 0 FAIL",
-          f"{m.group(0) if m else 'no TOTAL'}; {fails[:4]} {err[-200:] if not m else ''}")
+    check(bool(nt.ok), "verify_crmdetail1.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:4]} {err[-200:] if not nt.ok else ''}")
 
 
 async def run(name, fn, *args):

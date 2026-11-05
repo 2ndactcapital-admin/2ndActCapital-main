@@ -68,6 +68,7 @@ sys.path.insert(0, str(HERE.parent))
 # these, BEFORE the Doppler bootstrap — no Doppler, no database, no network, no npm.
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "bulkfetchui"
 
@@ -1280,10 +1281,12 @@ def y_regression() -> None:
     # VERIFY_NESTED=1: each child skips its own regression section, so nothing nests.
     env = os.environ | {"VERIFY_NESTED": "1"}
     for name in REGRESSIONS:
+        rc = None
         try:
             proc = subprocess.run([sys.executable, str(HERE.parent / name)], capture_output=True, text=True,
                                   timeout=1200, cwd=str(REPO), env=env)
             out = proc.stdout + proc.stderr
+            rc = proc.returncode
         except subprocess.TimeoutExpired as exc:
             out = f"TIMEOUT after 1200s: {(exc.stdout or b'')[-300:]!r}"
         try:
@@ -1291,11 +1294,10 @@ def y_regression() -> None:
             (log_dir / f"verify_bulkfetchui.regression.{name.removesuffix('.py')}.out").write_text(out)
         except OSError:
             pass
-        totals = re.findall(r"^TOTAL: (\d+) PASS, (\d+) FAIL", out, re.M)
-        m = totals[-1] if totals else None
+        nt = VT.nested_total(out, rc)
         fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-        check(m is not None and int(m[0]) > 0 and int(m[1]) == 0, f"{name} still reports 0 FAIL",
-              (f"TOTAL: {m[0]} PASS, {m[1]} FAIL" if m else out[-300:]) + (f"; {fails[:3]}" if fails else ""))
+        check(nt.ok, f"{name} still reports 0 FAIL",
+              (nt.detail() if nt.ok else f"{nt.detail()}; {out[-300:]}") + (f"; {fails[:3]}" if fails else ""))
 
 
 # ═══ Main ══════════════════════════════════════════════════════════════════

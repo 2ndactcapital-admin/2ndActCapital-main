@@ -49,6 +49,7 @@ sys.path.insert(0, str(HERE))
 # (the old helpers' default-allow), so self_checks adds nothing beyond the end-point check.
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "authz1"
 BEFORE_REF = "a911ac7"
@@ -1057,10 +1058,10 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1"}
     for script in ("verify_navregroup.py", "verify_bulkfetchui2.py"):
         code, out, err = run_cmd([sys.executable, str(HERE / script)], REPO, timeout=1200, env=env)
-        m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
+        nt = VT.nested_total(out, code)
         fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-        check(m is not None and m.group(2) == "0" and code == 0, f"{script}: 0 FAIL",
-              f"{m.group(0) if m else 'no TOTAL'}; {fails[:3]} {err[-200:] if not m else ''}")
+        check(nt.ok, f"{script}: 0 FAIL",
+              f"{nt.detail()}; {fails[:3]} {err[-200:] if not nt.ok else ''}")
     code, out, err = run_cmd(["node", str(HERE / "menuvisibility_harness.mjs")], REPO, timeout=120, env=env)
     try:
         d = json.loads(out)
