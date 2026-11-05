@@ -6,7 +6,8 @@ import { TAX_ID_TYPES, taxIdConfig } from "@/lib/taxIdConfig";
 
 const INPUT = "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
 
-export default function TaxIdsTab({ entityId, initial }) {
+export default function TaxIdsTab({ entityId, initial, canAdd = false }) {
+  // PORTENTRY2 (PERS-01) — the add control only when the record envelope allows this write (fail closed)
   const [items, setItems] = useState(initial || []);
   const [adding, setAdding] = useState(false);
   const [selectedType, setSelectedType] = useState("ssn");
@@ -33,7 +34,7 @@ export default function TaxIdsTab({ entityId, initial }) {
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Tax IDs</h2>
-        {!adding && (
+        {canAdd && !adding && (
           <button type="button" onClick={() => setAdding(true)} className="text-sm font-medium text-navy hover:underline">
             Add tax ID
           </button>
@@ -61,7 +62,7 @@ export default function TaxIdsTab({ entityId, initial }) {
         </ul>
       )}
 
-      {adding && (
+      {canAdd && adding && (
         <form ref={formRef} action={formAction} className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
           <div>
             <label className="block text-xs font-medium uppercase tracking-wide text-text-muted">Type</label>

@@ -57,6 +57,7 @@ sys.path.insert(0, str(HERE))
 # these, BEFORE hydrate() — no Doppler, no database, no network, no npm.
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "bugfix1"
 BEFORE_REF = "e816797"   # bugfix1-work base (usermgmt1 merged) — the pre-sprint code
@@ -1178,10 +1179,10 @@ def regression():
     env = os.environ | {"VERIFY_NESTED": "1"}
     for script in ("verify_authz1.py", "verify_navregroup.py", "verify_bulkfetchui2.py"):
         code, out, err = run_cmd([sys.executable, str(HERE / script)], REPO, timeout=1200, env=env)
-        m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
+        nt = VT.nested_total(out, code)
         fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-        check(m is not None and m.group(2) == "0" and code == 0, f"{script}: 0 FAIL",
-              f"{m.group(0) if m else 'no TOTAL'}; {fails[:3]} {err[-200:] if not m else ''}")
+        check(nt.ok, f"{script}: 0 FAIL",
+              f"{nt.detail()}; {fails[:3]} {err[-200:] if not nt.ok else ''}")
 
 
 async def run(name, fn, *args):

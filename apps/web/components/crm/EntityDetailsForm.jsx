@@ -8,6 +8,7 @@ import { freeTextSubType as isFreeTextSubType, maritalLabel, maritalOptions, sta
 import { useCrmVocab } from "@/components/crm/useCrmVocab";
 import { CountryRegionSelect, ReferenceSelect } from "@/components/ReferenceSelect";
 import PersonNameFields from "@/components/crm/PersonNameFields";
+import DateInput from "@/components/ui/DateInput";
 import { personMarkers } from "@/lib/crmDetail.mjs";
 
 const INPUT_CLASS =
@@ -55,7 +56,8 @@ function ReadRow({ label, children }) {
   );
 }
 
-export default function EntityDetailsForm({ entity }) {
+export default function EntityDetailsForm({ entity, canEdit = false }) {
+  // PORTENTRY2 (PERS-01) — Edit (details, status, tags, active) only when PUT /entities/{id} would admit the caller
   const [editing, setEditing] = useState(false);
   const [confirmInactive, setConfirmInactive] = useState(false);
   const [state, formAction, pending] = useActionState(
@@ -79,18 +81,20 @@ export default function EntityDetailsForm({ entity }) {
   // CRMDETAIL1 — "Minor" / "Deceased" from the API's own flags (computed at today's date).
   const markers = personMarkers(entity);
 
-  if (!editing) {
+  if (!editing || !canEdit) {
     return (
       <div>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-secondary">Details</h2>
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="text-sm font-medium text-navy hover:underline"
-          >
-            Edit
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-sm font-medium text-navy hover:underline"
+            >
+              Edit
+            </button>
+          )}
         </div>
         <dl className="mt-4 grid gap-4 sm:grid-cols-2">
           <ReadRow label="Status">
@@ -193,14 +197,14 @@ export default function EntityDetailsForm({ entity }) {
         {/* Dates */}
         <div>
           <label className={LABEL_CLASS}>{dateLabel}</label>
-          <input type="date" name="inception_date" defaultValue={entity.inception_date || ""} className={INPUT_CLASS} />
+          <DateInput name="inception_date" defaultValue={entity.inception_date || ""} className={INPUT_CLASS} />
         </div>
         {isPerson ? (
           <>
             {/* CRMDETAIL1 — date of death sets the record deceased and inactive; it and its relationships stay */}
             <div>
               <label className={LABEL_CLASS}>Date of Death</label>
-              <input type="date" name="date_of_death" defaultValue={entity.date_of_death || ""} className={INPUT_CLASS} />
+              <DateInput name="date_of_death" defaultValue={entity.date_of_death || ""} className={INPUT_CLASS} />
             </div>
             <div>
               <label className={LABEL_CLASS}>Maiden Name</label>
@@ -219,7 +223,7 @@ export default function EntityDetailsForm({ entity }) {
         ) : (
           <div>
             <label className={LABEL_CLASS}>{endDateLabel}</label>
-            <input type="date" name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
+            <DateInput name="end_date" defaultValue={entity.end_date || ""} className={INPUT_CLASS} />
           </div>
         )}
 

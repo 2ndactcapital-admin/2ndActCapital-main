@@ -1,5 +1,7 @@
 "use client";
 
+import DateInput from "@/components/ui/DateInput";
+
 import { useActionState, useEffect, useRef, useState } from "react";
 import { addEmploymentAction } from "@/lib/crmActions";
 import EntityPicker from "@/components/EntityPicker";
@@ -8,7 +10,8 @@ const INPUT = "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text
 
 const COMPANY_TYPES = ["llc", "lp", "gp", "s_corp", "c_corp", "corporation", "foundation", "family_office", "other"];
 
-export default function EmploymentTab({ entityId, initial }) {
+export default function EmploymentTab({ entityId, initial, canAdd = false }) {
+  // PORTENTRY2 (PERS-01) — the add control only when the record envelope allows this write (fail closed)
   const [items, setItems] = useState(initial || []);
   const [adding, setAdding] = useState(false);
   const [selectedEmployer, setSelectedEmployer] = useState(null);
@@ -33,7 +36,7 @@ export default function EmploymentTab({ entityId, initial }) {
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Employment</h2>
-        {!adding && (
+        {canAdd && !adding && (
           <button type="button" onClick={() => setAdding(true)} className="text-sm font-medium text-navy hover:underline">
             Add employment
           </button>
@@ -65,7 +68,7 @@ export default function EmploymentTab({ entityId, initial }) {
         </ul>
       )}
 
-      {adding && (
+      {canAdd && adding && (
         <form ref={formRef} action={formAction} className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium uppercase tracking-wide text-text-muted">
@@ -85,8 +88,8 @@ export default function EmploymentTab({ entityId, initial }) {
           </div>
           <input name="title" placeholder="Title" className={INPUT} />
           <div />
-          <input type="date" name="start_date" className={INPUT} />
-          <input type="date" name="end_date" className={INPUT} />
+          <DateInput name="start_date" className={INPUT} ariaLabel="Start date" />
+          <DateInput name="end_date" className={INPUT} ariaLabel="End date" />
           <label className="flex items-center gap-2 text-sm text-text-secondary">
             <input type="checkbox" name="is_current" /> Current role
           </label>

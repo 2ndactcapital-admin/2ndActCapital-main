@@ -36,7 +36,8 @@ function platformLabel(v) {
   return PLATFORMS.find((p) => p.value === v)?.label || v;
 }
 
-export default function SocialTab({ entityId, initial }) {
+export default function SocialTab({ entityId, initial, canAdd = false }) {
+  // PORTENTRY2 (PERS-01) — the add control only when the record envelope allows this write (fail closed)
   const [items, setItems] = useState(initial || []);
   const [adding, setAdding] = useState(false);
   const formRef = useRef(null);
@@ -60,7 +61,7 @@ export default function SocialTab({ entityId, initial }) {
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Social Profiles</h2>
-        {!adding && (
+        {canAdd && !adding && (
           <button type="button" onClick={() => setAdding(true)} className="text-sm font-medium text-navy hover:underline">
             Add profile
           </button>
@@ -88,7 +89,7 @@ export default function SocialTab({ entityId, initial }) {
         </ul>
       )}
 
-      {adding && (
+      {canAdd && adding && (
         <form ref={formRef} action={formAction} className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
           <select name="platform" defaultValue="linkedin" className={INPUT}>
             {PLATFORMS.map((p) => (

@@ -1,5 +1,5 @@
 {
- "app_route_count": 829,
+ "app_route_count": 832,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -4244,6 +4244,24 @@
    "write": true
   },
   {
+   "after": "internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "internal"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portfolio_securities",
+   "name": "search_securities",
+   "note": "",
+   "path": "/api/v1/securities/search",
+   "public": false,
+   "write": false
+  },
+  {
    "after": "authz view_portfolio",
    "before": "rbac view_portfolio",
    "before_effect": "OPEN (get_user_id phantom id \u2192 no roles \u2192 allow)",
@@ -5444,6 +5462,24 @@
    "name": "entity_net_worth",
    "note": "",
    "path": "/api/v1/entities/{entity_id}/net-worth",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "internal"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.crm_detail",
+   "name": "record_permissions",
+   "note": "",
+   "path": "/api/v1/entities/{entity_id}/permissions",
    "public": false,
    "write": false
   },
@@ -6651,15 +6687,14 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
     "any_of": [
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -6667,21 +6702,20 @@
    ],
    "module": "routers.households",
    "name": "add_member",
-   "note": "same permission, now enforced from the DB Principal",
+   "note": "",
    "path": "/api/v1/admin/households/{household_id}/members",
    "public": false,
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "internal + any(manage_members)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
     "any_of": [
      "manage_members"
     ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "internal_perm"
    },
    "find": true,
    "methods": [
@@ -6689,7 +6723,7 @@
    ],
    "module": "routers.households",
    "name": "remove_member",
-   "note": "same permission, now enforced from the DB Principal",
+   "note": "",
    "path": "/api/v1/admin/households/{household_id}/members/{entity_id}",
    "public": false,
    "write": true
@@ -6887,6 +6921,27 @@
    "name": "add_household_account",
    "note": "",
    "path": "/api/v1/admin/households/{household_id}/accounts",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.households",
+   "name": "edit_household_account",
+   "note": "",
+   "path": "/api/v1/admin/households/{household_id}/accounts/{account_id}",
    "public": false,
    "write": true
   },

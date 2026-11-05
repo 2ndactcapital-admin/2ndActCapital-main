@@ -38,7 +38,7 @@ from services.entity_graph import (
     get_parents,
     get_subtree,
 )
-from services.authz import require_internal, require_internal_permission, require_staff
+from services.authz import principal_of, require_internal, require_internal_permission, require_staff
 from services.crm_vocab import VocabError, check_relationship
 from services.users import ensure_user
 
@@ -690,12 +690,22 @@ async def get_entity_ownership(
         (i["ownership_pct"] or 0.0) for i in owned_by_list
     )
 
+    # PORTENTRY2 (MUSE-OLIVO-PERS-01) — the envelope the Ownership tab renders its Add / Edit / Remove from: the SAME
+    # rule as the three write routes below (require_internal_permission manage_members), never a client default.
+    from services import record_permissions as RP
+
+    can = RP.allowed(principal_of(request), "ownership") and not as_of
     return {
         "entity_id": str(entity_id),
         "as_of": as_of,
         "owns": [_to_item(r) for r in owns_rows],
         "owned_by": owned_by_list,
         "owned_by_total_pct": round(total_pct, 6),
+        "permissions": {"can_read": True, "can_write": bool(can),
+                        "is_super_admin": bool(getattr(principal_of(request), "is_super_admin", False)),
+                        "read_permission": "internal", "write_permission": "manage_members"},
+        "vocabularies": {"editable": ["ownership_pct", "effective_date", "note"] if can else [],
+                         "inline_editable": []},
     }
 
 

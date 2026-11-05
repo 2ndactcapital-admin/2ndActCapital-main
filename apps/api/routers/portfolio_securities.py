@@ -886,3 +886,23 @@ async def add_global_price(
 
 
 __all__ = ["router"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PORTENTRY2 (MUSE-OLIVO-P.1) — read-only security search for internal staff
+# ═══════════════════════════════════════════════════════════════════════════
+@router.get("/securities/search")
+async def search_securities(request: Request, q: str = Query(default="", max_length=100),
+                            limit: int = Query(default=20, ge=1, le=50)):
+    """Search the security master by ticker, name, CUSIP, ISIN or FIGI — any internal firm role (require_internal;
+    a member is refused). READ-ONLY; the master's admin screen stays Super Admin."""
+    from services import security_search as SS
+    from services.authz import require_internal
+
+    require_internal(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await SS.search(conn, q, limit=limit)
+    return {"rows": rows, "permissions": {"can_read": True, "can_write": False, "is_super_admin": False,
+                                          "read_permission": "internal", "write_permission": None},
+            "vocabularies": {"editable": [], "inline_editable": []}}

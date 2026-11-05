@@ -29,14 +29,20 @@ async function fetchItems(listKey, parentCode) {
  */
 export function ReferenceSelect({ listKey, name, defaultValue, placeholder = "Select…", className }) {
   const [items, setItems] = useState([]);
+  // PORTENTRY2 (MUSE-OLIVO-D-01 / B114-01) — CONTROLLED. An uncontrolled select took its defaultValue on the first
+  // render, before the options had loaded, and stayed on "Select…" although a value was stored. The stored value is
+  // also kept as an option when the list does not carry it, so it is never silently dropped on the next save.
+  const [selected, setSelected] = useState(defaultValue || "");
 
   useEffect(() => {
     fetchItems(listKey, null).then(setItems);
   }, [listKey]);
 
+  const known = items.some((it) => it.code === selected);
   return (
-    <select name={name} defaultValue={defaultValue || ""} className={className || INPUT}>
+    <select name={name} value={selected} onChange={(e) => setSelected(e.target.value)} className={className || INPUT}>
       <option value="">{placeholder}</option>
+      {selected && !known && <option value={selected}>{selected}</option>}
       {items.map((it) => (
         <option key={it.code} value={it.code}>
           {it.label}

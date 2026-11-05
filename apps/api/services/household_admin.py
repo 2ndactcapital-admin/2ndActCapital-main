@@ -29,11 +29,17 @@ from datetime import date
 from uuid import UUID
 
 from services import authority as AUTH
+from services.crm_config import account_vocab
 from services.custody.base import UNKNOWN, AccountNumber
 from services.custody.registry import get_or_create_salt
 
 AUDIT_RESOURCE = "household"
 REFUSED_ENTITY_TYPES = ("account", "spv")
+PERSON_TYPES = ("individual",)
+#: PORTENTRY2 — the account columns a household shows and edits (accounts is system-axis: its id is an FK target).
+ACCOUNT_COLS = ("id, account_number_masked, custodian_code, registration_type, tax_status, primary_entity_id, "
+                "is_held_away, is_billable, is_discretionary, service_model")
+EDITABLE_ACCOUNT_FIELDS = ("registration_type", "tax_status", "is_billable", "is_discretionary", "service_model")
 
 
 class HouseholdAdminError(Exception):
@@ -128,8 +134,7 @@ async def household_detail(conn, org_id, household_id) -> dict:
         "JOIN entities e ON e.id = m.entity_id WHERE m.household_id = $1 AND e.org_id = $2 ORDER BY e.display_name",
         hh["id"], _u(org_id))
     accounts = await conn.fetch(
-        "SELECT id, account_number_masked, custodian_code, registration_type, tax_status, primary_entity_id, "
-        "is_held_away FROM accounts WHERE household_id = $1 AND org_id = $2 AND system_to IS NULL "
+        f"SELECT {ACCOUNT_COLS} FROM accounts WHERE household_id = $1 AND org_id = $2 AND system_to IS NULL "
         "AND valid_to IS NULL ORDER BY account_number_masked", hh["id"], _u(org_id))
     # CRMDETAIL1 — the household's Liabilities section and its net worth as three numbers (gross, liabilities,
     # net), from the same member set and the same look-through basis as the flexible rollup.
@@ -146,22 +151,149 @@ async def household_detail(conn, org_id, household_id) -> dict:
                    for r in liab_rows]
     gross = (await HH._sum_holdings(conn, org_id, member_ids, None))["total_value"]
     net_worth = await HH._net_worth(conn, org_id, member_ids, gross, None)
+    vocab = await account_vocab(conn, org_id)
+    member_list = [{"id": str(m["id"]), "display_name": m["display_name"], "entity_type": m["entity_type"]}
+                   for m in members]
     return {"id": str(hh["id"]), "name": hh["name"],
             "liabilities": liabilities, "net_worth": net_worth,
-            "members": [{"id": str(m["id"]), "display_name": m["display_name"], "entity_type": m["entity_type"]}
-                        for m in members],
-            "accounts": [{"id": str(a["id"]), "account_number_masked": a["account_number_masked"],
-                          "custodian_code": a["custodian_code"], "registration_type": a["registration_type"],
-                          "tax_status": a["tax_status"], "primary_entity_id": str(a["primary_entity_id"]),
-                          "is_held_away": bool(a["is_held_away"])} for a in accounts]}
+            "is_demo": bool(await conn.fetchval("SELECT public.crm_is_demo_household($1)", hh["id"])),
+            "members": member_list,
+            "member_count": len(member_list),
+            # PORTENTRY2 (H-02) — "add a legal entity owned by a member": the org's legal entities a member owns
+            # (either ownership table) that are not members yet; choosing one as an account owner links it too.
+            "owner_candidates": await owner_candidates(conn, org_id, hh["id"], [m["id"] for m in members]),
+            "account_count": len(accounts),
+            "accounts": [account_json(a, vocab, {m["id"]: m["display_name"] for m in member_list})
+                         for a in accounts]}
+
+
+def _label(options: list[dict], key):
+    return next((o["label"] for o in options if o["key"] == key), None)
+
+
+def account_json(a, vocab: dict, owner_names: dict) -> dict:
+    """One account as the household screens show it — masked number only, labels from the org's config."""
+    reg, tax = a["registration_type"], a["tax_status"]
+    return {"id": str(a["id"]), "account_number_masked": a["account_number_masked"],
+            "custodian_code": a["custodian_code"],
+            "registration_type": reg, "registration_type_label": _label(vocab["registration_types"], reg),
+            "tax_status": tax, "tax_status_label": _label(vocab["tax_statuses"], tax),
+            "primary_entity_id": str(a["primary_entity_id"]),
+            "owner_name": owner_names.get(str(a["primary_entity_id"])),
+            "is_held_away": bool(a["is_held_away"]), "is_billable": bool(a["is_billable"]),
+            "is_discretionary": bool(a["is_discretionary"]), "service_model": a["service_model"]}
+
+
+async def owner_candidates(conn, org_id, household_id, member_ids) -> list[dict]:
+    """Legal entities of the org that a member owns directly (BOTH ownership tables, services.ownership_read) and
+    that are not members yet. Operational types (account, spv) and people are never offered."""
+    from services.ownership_read import ownership_edges
+
+    members = {_u(m) for m in member_ids}
+    if not members:
+        return []
+    edges = await ownership_edges(conn, _u(org_id), list(members))
+    owned = {e["child_id"]: e["parent_id"] for e in edges if e["parent_id"] in members and e["child_id"] not in members}
+    if not owned:
+        return []
+    rows = await conn.fetch(
+        "SELECT id, display_name, entity_type::text AS entity_type FROM entities WHERE org_id = $1 "
+        "AND id = ANY($2::uuid[]) AND valid_to IS NULL AND system_to IS NULL "
+        "AND entity_type::text <> ALL($3::text[]) ORDER BY display_name",
+        _u(org_id), list(owned), list(REFUSED_ENTITY_TYPES + PERSON_TYPES))
+    names = {r["id"]: r["display_name"] for r in await conn.fetch(
+        "SELECT id, display_name FROM entities WHERE org_id = $1 AND id = ANY($2::uuid[]) AND valid_to IS NULL "
+        "AND system_to IS NULL", _u(org_id), list(members))}
+    return [{"id": str(r["id"]), "display_name": r["display_name"], "entity_type": r["entity_type"],
+             "owned_by": str(owned[r["id"]]), "owned_by_name": names.get(owned[r["id"]])} for r in rows]
+
+
+async def add_member(conn, *, org_id, actor_id, household_id, entity_id) -> dict:
+    """PORTENTRY2 (MUSE-OLIVO-H-02 / G-02) — link a person OR a legal entity to an EXISTING household, audited.
+
+    Membership is many-to-many (household_memberships PK (household_id, entity_id)): an entity may sit in several
+    households, as SOC Phase 3 designed — net worth / billing that must not double count use the strict
+    entities.primary_household_id, which this does not touch."""
+    async with conn.transaction():
+        hh = await _household(conn, org_id, household_id)
+        member = (await _member_entities(conn, org_id, [entity_id]))[0]
+        inserted = await conn.fetchval(
+            "INSERT INTO household_memberships (household_id, entity_id, added_by) VALUES ($1, $2, $3) "
+            "ON CONFLICT (household_id, entity_id) DO NOTHING RETURNING entity_id",
+            hh["id"], member["id"], _u(actor_id) if actor_id else None)
+        if inserted is None:
+            raise HouseholdAdminConflict(f"{member['display_name']} is already a member of {hh['name']}")
+        await _audit(conn, org_id, actor_id, "member_added", hh["id"],
+                     {"entity_id": str(member["id"]), "entity_type": member["entity_type"]})
+    return {"household_id": str(hh["id"]), "id": str(member["id"]), "display_name": member["display_name"],
+            "entity_type": member["entity_type"]}
+
+
+async def remove_member(conn, *, org_id, actor_id, household_id, entity_id) -> dict:
+    """Unlink a member, audited. Refused (409, naming the accounts) while it owns a live account of this household —
+    the account's owner must stay a member. A demo household's member is removed through the app path crmdetail1
+    provides (services.households.remove_entity_from_household sets the transaction-local crm.demo_edit GUC the
+    delete guard admits); nothing here bypasses the guard any other way."""
+    from services import households as HH
+
+    async with conn.transaction():
+        hh = await _household(conn, org_id, household_id)
+        eid = _u(entity_id)
+        owning = await conn.fetch(
+            "SELECT account_number_masked FROM accounts WHERE org_id = $1 AND household_id = $2 "
+            "AND primary_entity_id = $3 AND system_to IS NULL AND valid_to IS NULL ORDER BY 1",
+            _u(org_id), hh["id"], eid)
+        if owning:
+            raise HouseholdAdminConflict(
+                "this member owns " + ", ".join(r["account_number_masked"] for r in owning)
+                + " in this household — move or close those accounts before removing the member")
+        removed = await HH.remove_entity_from_household(conn, hh["id"], eid)
+        if not removed:
+            raise HouseholdNotFound("that record is not a member of this household")
+        await _audit(conn, org_id, actor_id, "member_removed", hh["id"], {"entity_id": str(eid)})
+    return {"household_id": str(hh["id"]), "id": str(eid), "removed": True}
+
+
+def dvp_missing(custody: str, receiving: dict | None) -> list[str]:
+    """MUSE-OLIVO-H-03 / H-04 — the receiving-custodian fields a DVP ("another custodian") account still needs."""
+    if custody != "other_custodian":
+        return []
+    rc = receiving or {}
+    missing = []
+    if not str(rc.get("custodian_name") or "").strip():
+        missing.append("receiving custodian")
+    if not str(rc.get("participant_number") or "").strip():
+        missing.append("DTC / participant number")
+    return missing
+
+
+def _check_vocab(vocab: dict, registration_type, tax_status) -> None:
+    errors = []
+    if registration_type not in (None, ""):
+        allowed = [o["key"] for o in vocab["registration_types"]]
+        if registration_type not in allowed:
+            errors.append(f"registration type '{registration_type}' is not one of {', '.join(allowed)}")
+    if tax_status not in (None, ""):
+        allowed = [o["key"] for o in vocab["tax_statuses"]]
+        if tax_status not in allowed:
+            errors.append(f"tax status '{tax_status}' is not one of {', '.join(allowed)}")
+    if errors:
+        raise HouseholdAdminError("; ".join(errors))
 
 
 async def add_account(pool, *, org_id, actor_id, household_id, custodian_code: str, account_number: str,
                       primary_entity_id, authority: str, custody: str, registration_type: str | None = None,
                       tax_status: str | None = None, reason: str | None = None,
-                      receiving: dict | None = None, today: date | None = None) -> dict:
+                      receiving: dict | None = None, today: date | None = None,
+                      is_billable: bool | None = None, is_discretionary: bool | None = None,
+                      service_model: str | None = None, add_owner_as_member: bool = False) -> dict:
     """Insert the account (mask + hash only) at REP7B's default; a non-default authority / custody becomes a
-    REP7B draft change awaiting a second person. Returns the account (masked) and the pending change, if any."""
+    REP7B draft change awaiting a second person. Returns the account (masked) and the pending change, if any.
+
+    PORTENTRY2: the owner is any household member — a person or a legal entity (H-02). With
+    ``add_owner_as_member`` a legal entity a member owns (``owner_candidates``) is linked as a member in the same
+    transaction. Registration type / tax status come from the org's config vocabulary (H-01); ``is_billable``
+    defaults OFF for a demo household (every member tagged demo-*), ON otherwise."""
     today = today or date.today()
     custodian_code = (custodian_code or "").strip()
     if not custodian_code:
@@ -177,26 +309,45 @@ async def add_account(pool, *, org_id, actor_id, household_id, custodian_code: s
         number = AccountNumber(account_number)
     except ValueError as exc:
         raise HouseholdAdminError("type the account number (it is stored masked, with a keyed hash)") from exc
-    if custody == "other_custodian":
-        rc = receiving or {}
-        if not (str(rc.get("custodian_name") or "").strip() and str(rc.get("participant_number") or "").strip()):
-            raise HouseholdAdminError("another custodian needs the receiving custodian's name and its DTC / "
-                                      "participant number")
+    missing = dvp_missing(custody, receiving)
+    if missing:
+        raise HouseholdAdminError("another custodian (settled DVP) needs the " + " and the ".join(missing)
+                                  + " — the receiving side of every delivery-versus-payment settlement")
     # REP7B: an account fed by the integrated custodian has custody "integrated"; anything else is held away
     # (its data does not come from the integrated feed) — authority.request_account_change enforces the same.
     is_held_away = custody != "integrated"
     account = {"is_held_away": is_held_away}
     default = AUTH.default_for(account)
+    service_model = (service_model or "").strip() or None
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             hh = await _household(conn, org_id, household_id)
+            vocab = await account_vocab(conn, org_id)
+            _check_vocab(vocab, registration_type, tax_status)
+            owner = _u(primary_entity_id)
             linked = await conn.fetchval(
                 "SELECT 1 FROM household_memberships m JOIN entities e ON e.id = m.entity_id "
                 "WHERE m.household_id = $1 AND m.entity_id = $2 AND e.org_id = $3",
-                hh["id"], _u(primary_entity_id), _u(org_id))
+                hh["id"], owner, _u(org_id))
+            linked_now = False
             if not linked:
-                raise HouseholdAdminError("the account's owner must be a member of this household — link them first")
+                members = [r["entity_id"] for r in await conn.fetch(
+                    "SELECT entity_id FROM household_memberships WHERE household_id = $1", hh["id"])]
+                candidates = {c["id"] for c in await owner_candidates(conn, org_id, hh["id"], members)}
+                if not (add_owner_as_member and str(owner) in candidates):
+                    raise HouseholdAdminError("the account's owner must be a member of this household, or a legal "
+                                              "entity a member owns (chosen with 'add as a member') — link them first")
+                await conn.execute(
+                    "INSERT INTO household_memberships (household_id, entity_id, added_by) VALUES ($1, $2, $3)",
+                    hh["id"], owner, _u(actor_id) if actor_id else None)
+                await _audit(conn, org_id, actor_id, "member_added", hh["id"],
+                             {"entity_id": str(owner), "with_account": True})
+                linked_now = True
+            if is_billable is None:
+                is_billable = not bool(await conn.fetchval("SELECT public.crm_is_demo_household($1)", hh["id"]))
+            if is_discretionary is None:
+                is_discretionary = True
             salt = await get_or_create_salt(conn, org_id)
             digest = number.hashed(salt)
             existing = await conn.fetchval(
@@ -209,20 +360,26 @@ async def add_account(pool, *, org_id, actor_id, household_id, custodian_code: s
                 """
                 INSERT INTO accounts (org_id, account_number_masked, account_number_hash, custodian_code,
                                       registration_type, tax_status, primary_entity_id, household_id,
-                                      is_held_away, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                      is_held_away, created_by, is_billable, is_discretionary, service_model)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING id, account_number_masked
                 """,
                 _u(org_id), number.masked, digest, custodian_code, (registration_type or "").strip() or UNKNOWN,
-                (tax_status or "").strip() or UNKNOWN, _u(primary_entity_id), hh["id"], is_held_away,
-                _u(actor_id) if actor_id else None)
+                (tax_status or "").strip() or UNKNOWN, owner, hh["id"], is_held_away,
+                _u(actor_id) if actor_id else None, bool(is_billable), bool(is_discretionary), service_model)
             await _audit(conn, org_id, actor_id, "account_added", hh["id"],
                          {"account_id": str(row["id"]), "account": row["account_number_masked"],
                           "custodian": custodian_code, "authority": authority, "custody": custody,
-                          "default": list(default)})
+                          "default": list(default), "owner": str(owner), "owner_linked_now": linked_now,
+                          "registration_type": registration_type, "tax_status": tax_status,
+                          "is_billable": bool(is_billable), "is_discretionary": bool(is_discretionary)})
     out = {"id": str(row["id"]), "account_number_masked": row["account_number_masked"],
            "custodian_code": custodian_code, "household_id": str(hh["id"]),
-           "authority": default[0], "custody": default[1], "pending_change": None}
+           "authority": default[0], "custody": default[1], "pending_change": None,
+           "registration_type": (registration_type or "").strip() or UNKNOWN,
+           "tax_status": (tax_status or "").strip() or UNKNOWN, "is_billable": bool(is_billable),
+           "is_discretionary": bool(is_discretionary), "service_model": service_model,
+           "primary_entity_id": str(owner), "owner_linked_now": linked_now}
     if (authority, custody) != default:
         change = await AUTH.request_account_change(
             pool, org_id=org_id, actor_id=actor_id, account_id=row["id"],
@@ -231,3 +388,57 @@ async def add_account(pool, *, org_id, actor_id, household_id, custodian_code: s
             receiving=receiving, today=today)
         out["pending_change"] = change
     return out
+
+
+async def update_account(conn, *, org_id, actor_id, household_id, account_id, changes: dict) -> dict:
+    """PORTENTRY2 (H-01) — correct an account's registration type, tax status, billable / discretionary flags or
+    service model from the household. ``accounts.id`` is an FK target, so this archives on the SYSTEM axis exactly as
+    the custody import does (services.custody.importer._write_account): the outgoing version is copied to a new row
+    stamped ``system_to = now()`` and the live row keeps its id. Audited with the before / after values."""
+    unknown = sorted(set(changes) - set(EDITABLE_ACCOUNT_FIELDS))
+    if unknown:
+        raise HouseholdAdminError(f"not editable here: {', '.join(unknown)}")
+    async with conn.transaction():
+        hh = await _household(conn, org_id, household_id)
+        cur = await conn.fetchrow(
+            f"SELECT {ACCOUNT_COLS} FROM accounts WHERE id = $1 AND org_id = $2 AND household_id = $3 "
+            "AND system_to IS NULL AND valid_to IS NULL", _u(account_id), _u(org_id), hh["id"])
+        if cur is None:
+            raise HouseholdNotFound("Account not found in this household")
+        vocab = await account_vocab(conn, org_id)
+        _check_vocab(vocab, changes.get("registration_type"), changes.get("tax_status"))
+        clean = {}
+        for k, v in changes.items():
+            if k in ("is_billable", "is_discretionary"):
+                if not isinstance(v, bool):
+                    raise HouseholdAdminError(f"{k} is true or false")
+            elif k == "service_model":
+                v = (str(v).strip() or None) if v is not None else None
+            elif v in (None, ""):
+                raise HouseholdAdminError(f"{k.replace('_', ' ')} cannot be blank")
+            if cur[k] != v:
+                clean[k] = v
+        if clean:
+            await conn.execute(
+                """
+                INSERT INTO accounts
+                    (org_id, account_number_masked, account_number_hash, custodian_code, custodian_account_id,
+                     registration_type, tax_status, primary_entity_id, household_id, advisor_of_record_id,
+                     service_model, is_billable, is_discretionary, is_held_away, opened_on, closed_on,
+                     base_currency, created_by, created_at, updated_at, valid_from, valid_to, system_from, system_to)
+                SELECT a.org_id, a.account_number_masked, a.account_number_hash, a.custodian_code,
+                       a.custodian_account_id, a.registration_type, a.tax_status, a.primary_entity_id,
+                       a.household_id, a.advisor_of_record_id, a.service_model, a.is_billable, a.is_discretionary,
+                       a.is_held_away, a.opened_on, a.closed_on, a.base_currency, a.created_by, a.created_at,
+                       a.updated_at, a.valid_from, a.valid_to, a.system_from, now()
+                FROM accounts a WHERE a.id = $1 AND a.org_id = $2 AND a.system_to IS NULL
+                """, cur["id"], _u(org_id))
+            ordered = [f for f in EDITABLE_ACCOUNT_FIELDS if f in clean]   # column names: literals of this module
+            sets = ", ".join(f"{name} = ${i + 3}" for i, name in enumerate(ordered))
+            await conn.execute(f"UPDATE accounts SET {sets}, updated_at = now() WHERE id = $1 AND org_id = $2 "
+                               "AND system_to IS NULL", cur["id"], _u(org_id), *[clean[n] for n in ordered])
+            await _audit(conn, org_id, actor_id, "account_updated", hh["id"],
+                         {"account_id": str(cur["id"]), "before": {k: cur[k] for k in clean}, "after": clean})
+        row = await conn.fetchrow(f"SELECT {ACCOUNT_COLS} FROM accounts WHERE id = $1 AND system_to IS NULL",
+                                  cur["id"])
+    return {**account_json(row, vocab, {}), "changed": sorted(clean)}

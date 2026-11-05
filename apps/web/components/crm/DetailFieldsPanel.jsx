@@ -6,6 +6,10 @@
 // Details form (Country / State of formation).
 import { useEffect, useState } from "react";
 import EntityPicker from "@/components/EntityPicker";
+import DateInput from "@/components/ui/DateInput";
+
+// PORTENTRY2 — (D17-01) a picked record shows its NAME (kept from the pick), never its id; (D-02 / D19-02) after a
+// save the rows are taken from the save's own response when it carries them, then re-read without a cache.
 import { canWrite, editableList, fieldInputValue, fieldPayload } from "@/lib/crmDetail.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
@@ -22,7 +26,7 @@ async function call(url, options = {}) {
   return data;
 }
 
-function FieldInput({ f, value, onChange }) {
+function FieldInput({ f, value, onChange, names, onPicked }) {
   if (f.type === "choice") {
     return (
       <select value={value} onChange={(e) => onChange(e.target.value)} className={input}>
@@ -42,8 +46,9 @@ function FieldInput({ f, value, onChange }) {
   }
   if (f.type === "entity") {
     return (
-      <EntityPicker value={value ? { id: value, display_name: f.display || value } : null}
-        onChange={(e) => onChange(e ? e.id : "")} entityTypes={f.entity_types || []} placeholder="Search records…" />
+      <EntityPicker value={value ? { id: value, display_name: names[value] || f.display || "" } : null}
+        onChange={(e) => { if (e) onPicked(e); onChange(e ? e.id : ""); }}
+        entityTypes={f.entity_types || []} placeholder="Search records…" />
     );
   }
   if (f.type === "entities") {
@@ -53,17 +58,18 @@ function FieldInput({ f, value, onChange }) {
       <div className="space-y-1">
         {ids.map((id) => (
           <div key={id} className="flex items-center justify-between rounded border border-[#E2E8F0] px-2 py-1 text-sm">
-            <span>{id === ids[0] && f.display ? f.display.split(", ")[0] : id}</span>
+            <span>{names[id] || (f.display ? f.display.split(", ")[ids.indexOf(id)] : null) || "Chosen record"}</span>
             <button type="button" className="text-xs text-[#9B2335]"
               onClick={() => onChange(ids.filter((x) => x !== id).join(","))}>Remove</button>
           </div>
         ))}
-        <EntityPicker value={null} onChange={(e) => e && onChange([...ids.filter((x) => x !== e.id), e.id].join(","))}
+        <EntityPicker value={null} onChange={(e) => { if (e) { onPicked(e); onChange([...ids.filter((x) => x !== e.id), e.id].join(",")); } }}
           entityTypes={f.entity_types || []} placeholder="Add a record…" />
       </div>
     );
   }
-  const type = f.type === "date" ? "date" : f.type === "integer" || f.type === "decimal" ? "text" : "text";
+  if (f.type === "date") return <DateInput value={value} onChange={onChange} className={input} ariaLabel={f.label} />;
+  const type = "text";
   const mode = f.type === "integer" ? "numeric" : f.type === "decimal" ? "decimal" : undefined;
   return <input type={type} inputMode={mode} value={value} onChange={(e) => onChange(e.target.value)} className={input} />;
 }
@@ -74,6 +80,7 @@ export default function DetailFieldsPanel({ entityId }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [names, setNames] = useState({});
 
   async function load() {
     try {
@@ -103,8 +110,10 @@ export default function DetailFieldsPanel({ entityId }) {
     setBusy(true);
     setError(null);
     try {
-      await call(`/api/entities/${encodeURIComponent(entityId)}/details`, { method: "PUT",
+      const saved = await call(`/api/entities/${encodeURIComponent(entityId)}/details`, { method: "PUT",
         body: JSON.stringify({ values }) });
+      const savedFields = saved?.fields || saved?.rows?.fields;
+      if (Array.isArray(savedFields)) setEnv((prev) => ({ ...prev, rows: { ...(prev?.rows || {}), fields: savedFields } }));
       setEditing(false);
       await load();
     } catch (err) {
@@ -141,7 +150,8 @@ export default function DetailFieldsPanel({ entityId }) {
             <div key={f.key}>
               <label className={label}>{f.label}</label>
               {editable.has(f.key) ? (
-                <FieldInput f={f} value={form[f.key] ?? ""} onChange={(v) => setForm({ ...form, [f.key]: v })} />
+                <FieldInput f={f} value={form[f.key] ?? ""} onChange={(v) => setForm((cur) => ({ ...cur, [f.key]: v }))}
+                  names={names} onPicked={(e) => setNames((n) => ({ ...n, [e.id]: e.display_name }))} />
               ) : (
                 <p className="mt-1 text-sm text-[#64748B]">{f.display ?? "—"} {f.help ? `— ${f.help}` : ""}</p>
               )}

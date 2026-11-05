@@ -9,6 +9,7 @@
  * write control renders only from the envelope (lib/heldAway.mjs).
  */
 
+import SecuritySearch from "@/components/heldaway/SecuritySearch";
 import { useState } from "react";
 import {
   confirmControl, importControls, labelOf, manualRow, manualTermFields, money, panelControls, staleText, vocab,
@@ -170,6 +171,9 @@ export default function HeldAwayPanel({ initialEnvelope }) {
                 <option value="">Listed security (in the master)</option>
                 {(Array.isArray(v.manual_kinds) ? v.manual_kinds : []).map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
               </select>
+              {/* PORTENTRY2 (P.1) — a listed security found in the master fills its ticker / CUSIP */}
+              {!row.asset_kind ? <SecuritySearch onPick={(sec) => setRow({ ...row,
+                ticker: sec.identifiers?.ticker || row.ticker || "", cusip: sec.identifiers?.cusip || row.cusip || "" })} /> : null}
               {(row.asset_kind ? ["name", "quantity", "price", "market_value", "cost", "taxonomy_key", ...manualTermFields(row.asset_kind)]
                 : ["ticker", "cusip", "quantity", "market_value", "acquired_date", "cost"]).map((k) => (
                 <input key={k} className={input} placeholder={labelOf(v.file_fields, k) || k.replace(/_/g, " ")}

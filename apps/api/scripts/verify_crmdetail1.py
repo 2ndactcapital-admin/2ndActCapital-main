@@ -46,6 +46,7 @@ sys.path.insert(0, str(API_DIR))
 
 import _verify_cleanup as VC  # noqa: E402  (stdlib only)
 import _verify_self as VS  # noqa: E402
+import _verify_total as VT  # noqa: E402  (stdlib only)
 
 SPRINT_KEY = "crmdetail1"
 BEFORE_REF = "17ab37e"   # crmdetail1-work base: main after "merge secmaster1-work"
@@ -213,8 +214,9 @@ def self_static(check, find):
     olivo = _read("docs/demo/olivo/README.md")
     check(bool("demo-olivo" in demo and "HollisMuse" in demo and "protection rule" in demo.lower()
                and "Protection rule (crmdetail1)" in olivo
-               # PORTENTRY1: a0755ee moved the Olivo README to the v2 entry plan (v1 is still in the folder)
-               and ("HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md" in olivo or "HOLLISMUSE_OLIVO_DATA_ENTRY_v2.md" in olivo)),
+               # PORTENTRY1: a0755ee moved the Olivo README to the v2 entry plan (v1 is still in the folder).
+               # PORTENTRY2: ad97ea3 moved it to v3 — any version of the entry plan is the rule (VHK2 rule 6).
+               and re.search(r"HOLLISMUSE_OLIVO_DATA_ENTRY_v\d+\.md", olivo) is not None),
           "Task 6: docs/demo/README.md index + the protection rule added to the Olivo README (kept)")
     tabs = _read("apps/web/components/crm/EntityDetailTabs.jsx")
     check(bool("RelationshipsPanel" in tabs and "LiabilitiesTab" in tabs and "DetailFieldsPanel" in tabs),
@@ -1072,10 +1074,10 @@ def regression():
     section("[Y] Regression — verify_perms1.py ONCE, flat, AFTER teardown, VERIFY_NESTED=1, 2700 s")
     env = os.environ | {"VERIFY_NESTED": "1"}
     code, out, err = run_cmd([sys.executable, str(HERE / "verify_perms1.py")], REPO, timeout=2700, env=env)
-    m = re.search(r"TOTAL: (\d+) PASS, (\d+) FAIL", out)
+    nt = VT.nested_total(out, code)
     fails = [ln for ln in out.splitlines() if ln.startswith("[FAIL]")]
-    check(bool(m is not None and m.group(2) == "0" and code == 0), "verify_perms1.py: 0 FAIL",
-          f"{m.group(0) if m else 'no TOTAL'}; {fails[:4]} {err[-200:] if not m else ''}")
+    check(bool(nt.ok), "verify_perms1.py: 0 FAIL",
+          f"{nt.detail()}; {fails[:4]} {err[-200:] if not nt.ok else ''}")
 
 
 async def run(name, fn, *args):

@@ -1,5 +1,7 @@
 "use client";
 
+import DateInput from "@/components/ui/DateInput";
+
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   loadNotesAction,
@@ -132,7 +134,8 @@ function NoteCard({ entityId, note, onApplied }) {
   );
 }
 
-export default function NotesTab({ entityId, initial = [] }) {
+export default function NotesTab({ entityId, initial = [], canAdd = false }) {
+  // PORTENTRY2 (PERS-01) — Add Note only when the record envelope allows notes (fail closed)
   const [notes, setNotes] = useState(initial);
   const [loading, setLoading] = useState(initial.length === 0);
   const [showForm, setShowForm] = useState(false);
@@ -191,7 +194,7 @@ export default function NotesTab({ entityId, initial = [] }) {
     <section>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Notes</h2>
-        {!showForm && (
+        {canAdd && !showForm && (
           <button
             type="button"
             onClick={() => setShowForm(true)}
@@ -202,7 +205,7 @@ export default function NotesTab({ entityId, initial = [] }) {
         )}
       </div>
 
-      {showForm && (
+      {canAdd && showForm && (
         <div className="mt-4 rounded-lg border border-border bg-bg-card p-4">
           <div className="flex flex-wrap gap-3">
             <select
@@ -216,12 +219,8 @@ export default function NotesTab({ entityId, initial = [] }) {
                 </option>
               ))}
             </select>
-            <input
-              type="date"
-              value={meetingDate}
-              onChange={(e) => setMeetingDate(e.target.value)}
-              className="rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy"
-            />
+            <DateInput value={meetingDate} onChange={setMeetingDate} ariaLabel="Meeting date"
+              className="rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy" />
           </div>
           <textarea
             value={noteText}

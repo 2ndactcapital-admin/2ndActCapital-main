@@ -57,6 +57,21 @@ class AccountAdd(BaseModel):
     tax_status: str | None = None
     reason: str | None = None
     receiving: dict | None = None
+    # PORTENTRY2 (H-01 / H-02)
+    is_billable: bool | None = None
+    is_discretionary: bool | None = None
+    service_model: str | None = None
+    add_owner_as_member: bool = False
+
+
+class AccountEdit(BaseModel):
+    """PORTENTRY2 (H-01) — the account fields a household corrects (system-axis archive, id kept)."""
+    model_config = ConfigDict(extra="forbid")
+    registration_type: str | None = None
+    tax_status: str | None = None
+    is_billable: bool | None = None
+    is_discretionary: bool | None = None
+    service_model: str | None = None
 
 
 class HouseholdRename(BaseModel):
@@ -64,6 +79,7 @@ class HouseholdRename(BaseModel):
 
 
 class MemberAdd(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     entity_id: UUID
 
 
@@ -169,32 +185,41 @@ async def delete_household(request: Request, household_id: UUID):
 # --------------------------------------------------------------------------
 @router.post("/admin/households/{household_id}/members", status_code=201)
 async def add_member(request: Request, household_id: UUID, body: MemberAdd):
-    actor_id, org_id = await _require_manage_members(request)
+    """PORTENTRY2 (MUSE-OLIVO-H-02 / G-02) — add a person OR a legal entity to an existing household: an internal
+    role holding manage_members (Super Admin first), audited (household.member_added). An account / SPV record is
+    refused with the reason; a record already linked is a 409."""
+    p = _require_household_admin(request)
+    org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
         try:
-            await hh.add_entity_to_household(
-                conn, org_id, household_id, body.entity_id, added_by=actor_id
-            )
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Household or entity not found")
-    return {"ok": True}
+            return await HA.add_member(conn, org_id=org_id, actor_id=p.user_id, household_id=household_id,
+                                       entity_id=body.entity_id)
+        except HA.HouseholdNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except HA.HouseholdAdminConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except HA.HouseholdAdminError as exc:
+            # an id outside the caller's org reads exactly like a missing one
+            code = 404 if "no CRM entity" in str(exc) else 422
+            raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @router.delete("/admin/households/{household_id}/members/{entity_id}")
 async def remove_member(request: Request, household_id: UUID, entity_id: UUID):
-    _, org_id = await _require_manage_members(request)
+    """PORTENTRY2 — remove a member, audited (household.member_removed); refused while it owns an account of the
+    household. A demo household's member goes through crmdetail1's app path (the delete guard's local GUC)."""
+    p = _require_household_admin(request)
+    org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Confirm the household is in the caller's org before touching the junction.
-        in_org = await conn.fetchval(
-            "SELECT 1 FROM households WHERE id = $1 AND org_id = $2",
-            household_id, org_id,
-        )
-        if not in_org:
-            raise HTTPException(status_code=404, detail="Household not found")
-        await hh.remove_entity_from_household(conn, household_id, entity_id)
-    return {"ok": True}
+        try:
+            return await HA.remove_member(conn, org_id=org_id, actor_id=p.user_id, household_id=household_id,
+                                          entity_id=entity_id)
+        except HA.HouseholdNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except HA.HouseholdAdminConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # --------------------------------------------------------------------------
@@ -304,7 +329,9 @@ async def get_household(request: Request, household_id: UUID):
     perms = _household_permissions(request)
     return {**detail, "permissions": perms,
             "vocabularies": {**AUTH.vocabularies(), **liability_vocab(),   # CRMDETAIL1 — net-worth line labels
-                             "editable": ["accounts", "members"] if perms["can_write"] else [],
+                             **(await _account_vocab(org_id)),
+                             "editable": (["accounts", "members", "account_fields"] if perms["can_write"]
+                                          else []),
                              "inline_editable": []}}
 
 
@@ -321,7 +348,9 @@ async def add_household_account(request: Request, household_id: UUID, body: Acco
                                     custodian_code=body.custodian_code, account_number=body.account_number,
                                     primary_entity_id=body.primary_entity_id, authority=body.authority,
                                     custody=body.custody, registration_type=body.registration_type,
-                                    tax_status=body.tax_status, reason=body.reason, receiving=body.receiving)
+                                    tax_status=body.tax_status, reason=body.reason, receiving=body.receiving,
+                                    is_billable=body.is_billable, is_discretionary=body.is_discretionary,
+                                    service_model=body.service_model, add_owner_as_member=body.add_owner_as_member)
     except HA.HouseholdNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except HA.HouseholdAdminConflict as exc:
@@ -330,3 +359,28 @@ async def add_household_account(request: Request, household_id: UUID, body: Acco
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (HA.HouseholdAdminError, AUTH.AuthorityError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _account_vocab(org_id) -> dict:
+    from services.crm_config import account_vocab
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await account_vocab(conn, org_id)
+
+
+@router.patch("/admin/households/{household_id}/accounts/{account_id}")
+async def edit_household_account(request: Request, household_id: UUID, account_id: UUID, body: AccountEdit):
+    """PORTENTRY2 (H-01) — correct an account's registration type, tax status, billable / discretionary flags or
+    service model (only the fields sent). Same gate as Add account; system-axis archive; audited."""
+    p = _require_household_admin(request)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await HA.update_account(conn, org_id=org_id, actor_id=p.user_id, household_id=household_id,
+                                           account_id=account_id, changes=body.model_dump(exclude_unset=True))
+        except HA.HouseholdNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except HA.HouseholdAdminError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc

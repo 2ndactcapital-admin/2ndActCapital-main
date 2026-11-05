@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { layoutOwners, ownerLookthrough } from "@/lib/hierarchyOwners.mjs";
+import { lookthroughPercentMap } from "@/lib/portentry2.mjs";
 
 const ENTITY_COLORS = {
   individual: "#EEF4FF",
@@ -994,15 +995,10 @@ export default function HierarchyBuilder({ entityId, tree, lookthrough, staff })
   const panStart = useRef({ x: 0, y: 0 });
   const svgContainerRef = useRef(null);
 
-  // Build lookthrough map: entity_id -> effective_pct
-  const lookthroughMap = useCallback(() => {
-    if (!lookthroughData) return {};
-    const map = {};
-    for (const item of lookthroughData) {
-      if (item.entity_id) map[item.entity_id] = item.effective_pct ?? item.ownership_pct;
-    }
-    return map;
-  }, [lookthroughData])();
+  // Build lookthrough map: entity_id -> effective share in PERCENT (0–100).
+  // PORTENTRY2 (MUSE-OLIVO-F-03) — /lookthrough returns each holding's share as a 0–1 FRACTION; the owners'
+  // effective_pct (ownerLookthrough) is already 0–100. Both now feed ONE map in ONE unit ("60.0% eff.", not "0.6%").
+  const lookthroughMap = useCallback(() => lookthroughPercentMap(lookthroughData), [lookthroughData])();
 
   const handleRefresh = useCallback(async () => {
     if (!entityId) return;

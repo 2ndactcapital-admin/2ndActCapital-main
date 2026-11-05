@@ -415,6 +415,7 @@ class AddressCreate(BaseModel):
     is_seasonal: bool = False
     season_from_month: int | None = None
     season_to_month: int | None = None
+    note: str | None = None   # PORTENTRY2 (MUSE-OLIVO-C-01)
 
     @field_validator("season_from_month", "season_to_month", mode="before")
     @classmethod
@@ -443,6 +444,7 @@ class AddressUpdate(BaseModel):
     is_seasonal: bool | None = None
     season_from_month: int | None = None
     season_to_month: int | None = None
+    note: str | None = None   # PORTENTRY2 (MUSE-OLIVO-C-01)
 
     @field_validator("season_from_month", "season_to_month", mode="before")
     @classmethod
@@ -475,6 +477,7 @@ class AddressResponse(BaseModel):
     is_seasonal: bool = False
     season_from_month: int | None = None
     season_to_month: int | None = None
+    note: str | None = None   # PORTENTRY2 (MUSE-OLIVO-C-01)
     created_at: datetime | None = None
 
 
