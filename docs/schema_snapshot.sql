@@ -1641,6 +1641,7 @@
 --   is_seasonal                              boolean NOT NULL DEFAULT false
 --   season_from_month                        integer
 --   season_to_month                          integer
+--   note                                     text
 --   PRIMARY KEY entity_addresses_pkey: (id)
 
 -- ===== entity_attributes =====
