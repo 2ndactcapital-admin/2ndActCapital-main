@@ -29,11 +29,7 @@ export default async function TransactionsPage() {
           >
             Transactions
           </h1>
-          <p className="mt-1 text-sm text-[var(--2a-text-secondary)]">
-            Every ledger entry across the firm. Select a row to see its figures,
-            its position and its source documents. Entries are corrected, never
-            overwritten.
-          </p>
+          {/* BUGFIX3 — the sentence comes from the API (scope): a member never reads "across the firm" */}
         </header>
 
         <TransactionsGrid />

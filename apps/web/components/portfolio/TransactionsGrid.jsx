@@ -509,6 +509,12 @@ export default function TransactionsGrid() {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* BUGFIX3 — whose data this is, from the API's own scope (never "across the firm" for a member) */}
+      {meta?.scope?.description && (
+        <p className="-mt-2 text-sm text-[var(--2a-text-secondary)]" data-testid="scope-description">
+          {meta.scope.description}
+        </p>
+      )}
       {/* ── Server-side filter bar ─────────────────────────────────────── */}
       <div className="rounded-lg border bg-white px-4 py-3" style={CARD}>
         <div className="flex flex-wrap items-end gap-3">

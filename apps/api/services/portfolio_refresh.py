@@ -170,16 +170,42 @@ async def recalculate(pool, org_id, entity_id, *, actor_id=None) -> dict:
     return {**req, "ran": ran}
 
 
-async def last_run(conn, org_id, entity_id) -> dict | None:
+def skipped_of(result) -> dict:
+    """BUGFIX3 FIX 1 — what a rollup left OUT, as a report (never a silent $0): count, the ids, how many were
+    unclassified (no taxonomy key) vs unvalued, and the rows (capped). ``result`` is a RollupResult.as_dict() /
+    the stored ``rollup_requests.result``; anything else reports nothing skipped."""
+    from services.portfolio_rollup import NO_TAXONOMY_REASON
+
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = None
+    rows = list((result or {}).get("skipped") or []) if isinstance(result, dict) else []
+    unclassified = sum(1 for r in rows if r.get("reason") == NO_TAXONOMY_REASON)
+    return {"count": len(rows), "unclassified": unclassified, "unvalued": len(rows) - unclassified,
+            "position_ids": [r.get("position_id") for r in rows], "positions": rows[:100]}
+
+
+async def last_run_for(conn, org_id, entity_ids) -> dict | None:
+    """The latest family rollup touching any of ``entity_ids`` — status / when / as-of, and what it skipped."""
+    ids = [str(e) for e in entity_ids or []]
+    if not ids:
+        return None
     async with _OrgWrite(conn, str(org_id)) as c:
         r = await c.fetchrow(
-            f"SELECT id::text, status, finished_at, as_of_date, reason FROM {T_REQ} WHERE org_id = $1::uuid "
-            f"AND $2::uuid = ANY(entity_ids) AND system_to IS NULL ORDER BY requested_at DESC LIMIT 1",
-            str(org_id), str(entity_id))
+            f"SELECT id::text, status, finished_at, as_of_date, reason, result FROM {T_REQ} WHERE org_id = $1::uuid "
+            f"AND entity_ids && $2::uuid[] AND system_to IS NULL ORDER BY requested_at DESC LIMIT 1",
+            str(org_id), ids)
     if r is None:
         return None
     return {"id": r["id"], "status": r["status"], "finished_at": r["finished_at"].isoformat() if r["finished_at"]
-            else None, "as_of_date": r["as_of_date"].isoformat() if r["as_of_date"] else None, "reason": r["reason"]}
+            else None, "as_of_date": r["as_of_date"].isoformat() if r["as_of_date"] else None, "reason": r["reason"],
+            "skipped": skipped_of(r["result"])}
+
+
+async def last_run(conn, org_id, entity_id) -> dict | None:
+    return await last_run_for(conn, org_id, [entity_id])
 
 
 async def drain_due(conn) -> list[dict]:
@@ -237,4 +263,4 @@ def utcnow() -> datetime:
 
 
 __all__ = ["after_write", "family_of", "recalculate", "request_rollup", "run_request", "drain_due",
-           "nightly_rollups", "last_run", "debounce_seconds", "timedelta"]
+           "nightly_rollups", "last_run", "last_run_for", "skipped_of", "debounce_seconds", "timedelta"]

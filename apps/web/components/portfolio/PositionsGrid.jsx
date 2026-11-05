@@ -321,6 +321,7 @@ export default function PositionsGrid() {
     [load],
   );
 
+  const provisionalLabel = meta?.vocabularies?.provisional_label || null; // BUGFIX3 (Rule 1)
   const columnDefs = useMemo(
     () => [
       {
@@ -412,9 +413,15 @@ export default function PositionsGrid() {
         enableColumnFilter: true,
         filterPlaceholder: "Filter…",
         align: "center",
-        cell: (v) => (
+        cell: (v, row) => (
           <span className="text-[10px] uppercase tracking-wide text-[var(--2a-text-muted)]">
             {v}
+            {/* BUGFIX3 — an approved one-time import row: live, labelled until the custodian feed (label from API) */}
+            {row?.is_provisional === true && provisionalLabel && (
+              <span className="ml-1 block normal-case tracking-normal text-[var(--2a-gold)]">
+                {provisionalLabel}
+              </span>
+            )}
           </span>
         ),
       },
@@ -450,7 +457,7 @@ export default function PositionsGrid() {
         ),
       },
     ],
-    [taxonomy, inlineEditable, handleInlineEdit, pendingId],
+    [taxonomy, inlineEditable, handleInlineEdit, pendingId, provisionalLabel],
   );
 
   function setFilter(name, value) {
@@ -461,6 +468,13 @@ export default function PositionsGrid() {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* BUGFIX3 — whose data this is, from the API's own scope (never "across the firm" for a member; nothing
+          while loading) */}
+      {meta?.scope?.description && (
+        <p className="-mt-2 text-sm text-[var(--2a-text-secondary)]" data-testid="scope-description">
+          {meta.scope.description}
+        </p>
+      )}
       {/* ── Server-side filter bar ─────────────────────────────────────── */}
       <div
         className="rounded-lg border bg-white px-4 py-3"

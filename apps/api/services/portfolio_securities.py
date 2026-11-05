@@ -244,7 +244,10 @@ def _s(value: Any) -> str | None:
     """Decimal → exact string. A float at the JSON boundary is a rounding error
     introduced at the last possible layer, after the figures survived the
     database, the service and the resolver as exact Decimals."""
-    return None if value is None else str(value)
+    # BUGFIX3 (1d) — fixed-point, never str(Decimal) ("9.0E+5" rendered as "$9.0E")
+    from services.money_text import fixed
+
+    return fixed(value)
 
 
 def _d(value: date | None) -> str | None:
@@ -482,6 +485,13 @@ def _row_to_json(r, labels: dict[str, str]) -> dict[str, Any]:
     }
 
 
+#: BUGFIX3 — "an asset the caller's visible owners hold": one predicate for the list, the detail and the versions.
+HELD_BY_SCOPE = (
+    f"EXISTS (SELECT 1 FROM {TABLE_POSITIONS} sp WHERE sp.asset_id = a.id AND sp.org_id = a.org_id "
+    f"AND sp.valid_to IS NULL AND sp.system_to IS NULL AND sp.owner_entity_id = ANY(${{n}}::uuid[]))"
+)
+
+
 def _build_filters(
     *,
     org_id: str,
@@ -495,6 +505,7 @@ def _build_filters(
     linked: str,
     include_inactive: bool,
     include_history: bool,
+    entity_scope: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     """Assemble the WHERE clause and its positional arguments.
 
@@ -508,6 +519,10 @@ def _build_filters(
     def add(clause_template: str, value: Any) -> None:
         args.append(value)
         where.append(clause_template.format(n=len(args)))
+
+    if entity_scope is not None:
+        # BUGFIX3 — a member sees only instruments their own family holds (a current position); EMPTY → nothing
+        add(HELD_BY_SCOPE, [str(x) for x in entity_scope])
 
     if not include_history:
         # The default. An edit archives the outgoing version on the system axis;
@@ -567,6 +582,7 @@ async def list_assets(
     value_as_of: date | None = None,
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    entity_scope: list[str] | None = None,
 ) -> dict[str, Any]:
     """One grid page. Returns ``{total, limit, offset, returned, assets}``.
 
@@ -603,6 +619,7 @@ async def list_assets(
         linked=linked,
         include_inactive=include_inactive,
         include_history=include_history,
+        entity_scope=entity_scope,
     )
 
     total = await conn.fetchval(f"SELECT count(*) {_LIST_FROM} WHERE {where}", *args)
@@ -649,7 +666,8 @@ async def list_assets(
 
 
 async def get_asset(
-    conn, *, org_id: str, asset_id: str, value_as_of: date | None = None
+    conn, *, org_id: str, asset_id: str, value_as_of: date | None = None,
+    entity_scope: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Everything the detail pane shows. ``None`` if not in this org.
 
@@ -669,8 +687,11 @@ async def get_asset(
     org_id = _require_org(org_id)
     row = await conn.fetchrow(
         f"SELECT {_LIST_COLUMNS} {_LIST_FROM} "
-        f"WHERE a.id = $1::uuid AND a.org_id = $2::uuid",
+        f"WHERE a.id = $1::uuid AND a.org_id = $2::uuid"
+        # BUGFIX3: an instrument the caller's family does not hold = the SAME None as a missing id
+        + ("" if entity_scope is None else " AND " + HELD_BY_SCOPE.format(n=3)),
         str(asset_id), org_id,
+        *(() if entity_scope is None else ([str(x) for x in entity_scope],)),
     )
     if row is None:
         return None
@@ -706,7 +727,7 @@ async def get_asset(
             conn, org_id=org_id, asset_id=str(asset_id)
         ),
         "positions": await positions_on_asset(
-            conn, org_id=org_id, asset_id=str(asset_id)
+            conn, org_id=org_id, asset_id=str(asset_id), entity_scope=entity_scope,
         ),
         "own_identifiers": await own_identifiers(
             conn, org_id=org_id, asset_id=str(asset_id)
@@ -775,7 +796,8 @@ async def valuation_history(conn, *, org_id: str, asset_id: str) -> list[dict]:
     ]
 
 
-async def positions_on_asset(conn, *, org_id: str, asset_id: str) -> list[dict]:
+async def positions_on_asset(conn, *, org_id: str, asset_id: str,
+                             entity_scope: list[str] | None = None) -> list[dict]:
     """Who holds this asset, and how much. Current rows only.
 
     The pane's answer to "is this row safe to deactivate" — an asset carrying
@@ -794,10 +816,13 @@ async def positions_on_asset(conn, *, org_id: str, asset_id: str) -> list[dict]:
         JOIN {TABLE_ENTITIES} e
           ON e.id = p.owner_entity_id AND e.org_id = p.org_id AND {_current('e')}
         WHERE p.org_id = $1::uuid AND p.asset_id = $2::uuid AND {_current('p')}
+          -- BUGFIX3: a member sees only their own family's holders of a shared instrument
+          AND ($3::uuid[] IS NULL OR p.owner_entity_id = ANY($3::uuid[]))
         ORDER BY p.as_of_date DESC, e.display_name
         LIMIT 50
         """,
         str(org_id), str(asset_id),
+        None if entity_scope is None else [str(x) for x in entity_scope],
     )
     return [
         {

@@ -348,6 +348,7 @@ async def put_ta_defaults(request: Request, body: DefaultsWriteBody):
 async def _resolve_commitment_state(
     conn, *, org_id: str, commitment_id: _uuid.UUID,
     strategy_key: str | None, periods_per_year: int | None,
+    entity_scope: list[str] | None = None,
 ) -> dict:
     try:
         commitment = await get_commitment(conn, org_id=org_id, commitment_id=str(commitment_id))
@@ -355,6 +356,13 @@ async def _resolve_commitment_state(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if commitment is None:
         raise HTTPException(status_code=404, detail="commitment not found")
+    if entity_scope is not None:
+        # BUGFIX3 — a member projects only their own family's commitment; another family's = the SAME 404
+        owner = await conn.fetchval(
+            "SELECT owner_entity_id::text FROM portfolio.positions WHERE id = $1::uuid AND org_id = $2::uuid",
+            str(commitment["position_id"]), str(org_id))
+        if owner is None or owner not in set(entity_scope):
+            raise HTTPException(status_code=404, detail="commitment not found")
 
     settings = await get_all_settings(conn, org_id)  # fetched ONCE
 
@@ -463,10 +471,14 @@ async def get_projection(
     pool = await get_pool()
     await require_permission(pool, user_id, org_id, READ_PERMISSION)
 
+    from services.portfolio_scope import entity_scope as _entity_scope   # BUGFIX3
+
+    scope = await _entity_scope(request, pool)
     async with pool.acquire() as conn:
         state = await _resolve_commitment_state(
             conn, org_id=org_id, commitment_id=commitment_id,
             strategy_key=strategy_key, periods_per_year=periods_per_year,
+            entity_scope=scope,
         )
     can_calibrate = await has_permission(pool, user_id, org_id, WRITE_PERMISSION)
 
@@ -529,10 +541,14 @@ async def get_obligation_ledger(
     pool = await get_pool()
     await require_permission(pool, user_id, org_id, READ_PERMISSION)
 
+    from services.portfolio_scope import entity_scope as _entity_scope   # BUGFIX3
+
+    scope = await _entity_scope(request, pool)
     async with pool.acquire() as conn:
         state = await _resolve_commitment_state(
             conn, org_id=org_id, commitment_id=commitment_id,
             strategy_key=strategy_key, periods_per_year=periods_per_year,
+            entity_scope=scope,
         )
 
     params = state["params"]

@@ -100,7 +100,11 @@ class PrivateIn(_Body):
     kind: str
     name: str = Field(max_length=300)
     taxonomy_key: str | None = Field(default=None, max_length=80)
-    commitment: Commitment
+    #: BUGFIX3 — required for a fund, optional for an SPV, refused for the kinds that have none (DH.COMMITMENT_RULES)
+    commitment: Commitment | None = None
+    #: BUGFIX3 — a no-commitment investment's amount invested (its cost basis) and a note
+    amount_invested: str | None = None
+    notes: str | None = Field(default=None, max_length=4000)
     called_to_date: str | None = None
     distributed_to_date: str | None = None
     nav: Nav | None = None
@@ -293,6 +297,44 @@ async def manual_assets(request: Request):
                                                                                                     p.is_super_admin),
                                           "read_permission": "view_held_away", "write_permission": "manage_held_away"},
             "vocabularies": {"editable": ["relink"] if can else [], "inline_editable": []}}
+
+
+@router.get("/portfolio/option-contracts")
+async def option_contracts_for_underlying(request: Request, underlying_ticker: str):
+    """BUGFIX3 (MUSE-OLIVO-M) — the listed_option entry's picker: the EXISTING rep8 master option contracts on an
+    underlying (an option resolves only through one — portentry1). An empty list is answered with the reason, never
+    a silent empty picker. Same gate as the held-away entry it serves (view_held_away). Platform rows (no org)."""
+    require_permission(request, "view_held_away")
+    from services import securities_global as SG
+
+    t = (underlying_ticker or "").strip().upper()[:20]
+    if not t:
+        raise HTTPException(status_code=422, detail="underlying_ticker is required")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        und = (await SG.get_by_identifiers_bulk(conn, "ticker", [t])).get(SG.normalize_identifier_value("ticker", t))
+        rows = []
+        if und:
+            rows = await conn.fetch(
+                "SELECT global_security_id::text AS global_security_id, option_type, strike, expiry, multiplier, "
+                "occ_symbol, exercise_style FROM portfolio.option_contracts WHERE underlying_global_security_id = "
+                "$1::uuid AND valid_to IS NULL AND system_to IS NULL ORDER BY expiry, option_type, strike LIMIT 500",
+                str(und.get("matched_global_security_id") or und["id"]))
+    from services.money_text import fixed
+
+    out = [{"global_security_id": r["global_security_id"], "option_type": r["option_type"],
+            "strike": fixed(r["strike"]), "expiry": r["expiry"].isoformat(), "multiplier": fixed(r["multiplier"]),
+            "occ_symbol": r["occ_symbol"], "exercise_style": r["exercise_style"]} for r in rows]
+    if not und:
+        reason = f"{t} is not in the security master, so no option contract on it exists."
+    elif not out:
+        reason = f"No option contract on {t} exists yet. A contract is defined in Replication → Options."
+    else:
+        reason = None
+    return {"rows": out, "underlying_ticker": t, "empty_reason": reason,
+            "permissions": {"can_read": True, "can_write": False, "is_super_admin": False,
+                            "read_permission": "view_held_away", "write_permission": None},
+            "vocabularies": {"editable": [], "inline_editable": []}}
 
 
 @router.post("/portfolio/manual-assets/relink")

@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
-import { isStaff } from "@/lib/roles";
+import { canEdit } from "@/lib/portentry2.mjs";
 import AppShell from "@/components/AppShell";
 import EntityTypeBadge from "@/components/EntityTypeBadge";
 import HierarchyBuilder from "@/components/crm/HierarchyBuilder";
@@ -14,13 +14,16 @@ export default async function EntityHierarchyPage({ params }) {
     redirect(`/auth/login?returnTo=/crm/${id}/hierarchy`);
   }
 
-  const staff = isStaff(session.user);
-
-  const [fullResult, treeResult, lookthroughResult] = await Promise.allSettled([
+  const [fullResult, treeResult, lookthroughResult, permsResult] = await Promise.allSettled([
     fetchAPI(`/api/v1/entities/${id}/full`),
     fetchAPI(`/api/v1/entities/${id}/tree`),
     fetchAPI(`/api/v1/entities/${id}/lookthrough`),
+    fetchAPI(`/api/v1/entities/${id}/permissions`),
   ]);
+  // BUGFIX3 (MUSE-OLIVO-M) — Add Relationship / edit / entity-group controls follow the record envelope's
+  // "graph" flag (the exact rule of the entity_graph write routes: require_staff), never the token's role claim (isStaff):
+  // support staff (edit_crm_contact, no manage_members) was offered Add Relationship the API then refused.
+  const staff = permsResult.status === "fulfilled" && canEdit(permsResult.value, "graph");
 
   if (fullResult.status === "rejected") {
     if (fullResult.reason?.status === 404) notFound();

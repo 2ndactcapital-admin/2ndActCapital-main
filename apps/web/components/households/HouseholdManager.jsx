@@ -15,6 +15,7 @@
 import { useState } from "react";
 import { NetWorthLines } from "@/components/crm/LiabilitiesTab";
 import { formatMoney } from "@/lib/crmDetail.mjs";
+import { skippedSentence } from "@/lib/bugfix3.mjs";
 import { accountLine, billableDefault, dvpMissing, dvpReason, ownerOptions, withCounts } from "@/lib/portentry2.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
@@ -404,6 +405,55 @@ function AddAccount({ household, vocabularies, onAdded }) {
   );
 }
 
+// BUGFIX3 (MUSE-OLIVO-H) — Recalculate on the household: renders only when the envelope's own
+// permissions.can.recalculate is true (the exact rule of the route; no fallback). The API runs the members'
+// family-scoped rollup, then the card re-reads its detail so net worth shows the new figure.
+function RecalculateHousehold({ household, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+  if (household?.permissions?.can?.recalculate !== true) return null;
+  async function run() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await call(`/api/admin/households/${encodeURIComponent(household.id)}/recalculate`, { method: "POST" });
+      setNote(`Recalculated (${r.status}).`);
+      await onDone();
+    } catch (err) {
+      setNote(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <span className="ml-3 inline-flex items-center gap-2">
+      <button type="button" className="text-sm text-[#1B2B4B] hover:underline disabled:opacity-50" disabled={busy}
+        onClick={run}>{busy ? "Recalculating…" : "Recalculate"}</button>
+      {note && <span className={quiet}>{note}</span>}
+    </span>
+  );
+}
+
+// BUGFIX3 (Task 4) — approved one-time import rows: LIVE positions, labelled provisional (label from the API).
+function ProvisionalHoldings({ household }) {
+  const rows = Array.isArray(household?.provisional_holdings) ? household.provisional_holdings : [];
+  if (rows.length === 0) return null;
+  return (
+    <>
+      <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-[#64748B]">Imported holdings</h3>
+      <ul className="mt-1 space-y-1 text-sm text-[#334155]">
+        {rows.map((r) => (
+          <li key={r.position_id}>
+            {r.asset_name} · {r.owner_name}{r.account_number_masked ? ` · ${r.account_number_masked}` : ""}
+            {" · "}{formatMoney(r.market_value)}
+            <span className="ml-2 text-xs text-[#C5A880]">{r.label || household.provisional_label}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 function HouseholdCard({ row, onDetail }) {
   const [detail, setDetail] = useState(null);
   const [open, setOpen] = useState(false);
@@ -443,7 +493,10 @@ function HouseholdCard({ row, onDetail }) {
                 ))}
               </ul>
               {/* CRMDETAIL1 — net worth (gross, liabilities, net) and the household's Liabilities section */}
-              <div className="mt-4"><NetWorthLines netWorth={detail.net_worth} vocabularies={detail.vocabularies} /></div>
+              <div className="mt-4"><NetWorthLines netWorth={detail.net_worth} vocabularies={detail.vocabularies} />
+                <RecalculateHousehold household={detail} onDone={load} />
+                {skippedSentence(detail.skipped) && <p className={quiet}>{skippedSentence(detail.skipped)}</p>}</div>
+              <ProvisionalHoldings household={detail} />
               <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-[#64748B]">Liabilities</h3>
               {(detail.liabilities || []).length === 0 ? (
                 <p className={quiet}>None recorded. Liabilities are entered on each member's CRM record.</p>

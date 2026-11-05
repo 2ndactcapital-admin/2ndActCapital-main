@@ -137,7 +137,10 @@ def money(v: Decimal) -> Decimal:
 
 
 def _s(v):
-    return None if v is None else str(v)
+    # BUGFIX3 (1d) — fixed-point, never str(Decimal) ("9.0E+5" rendered as "$9.0E")
+    from services.money_text import fixed
+
+    return fixed(v)
 
 
 def _iso(v):

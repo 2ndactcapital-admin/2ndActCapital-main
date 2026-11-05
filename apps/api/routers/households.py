@@ -99,9 +99,12 @@ async def _require_manage_members(request: Request) -> tuple[str, str]:
     return actor_id, org_id
 
 
-def _money(d) -> float:
-    # Decimal → float only at the JSON boundary (money is Decimal in the service).
-    return float(d)
+def _money(d) -> str | None:
+    # BUGFIX3 (1d) — Decimal → exact FIXED-POINT text at the JSON boundary (was float(): a rounding at the last
+    # layer, against the Decimal-as-string rule every other portfolio read follows).
+    from services.money_text import fixed
+
+    return fixed(d)
 
 
 # --------------------------------------------------------------------------
@@ -116,11 +119,18 @@ def _require_household_admin(request: Request):
     return require_internal_permission(request, "manage_members")
 
 
+RECALC_PERMISSIONS = ("manage_members", "manage_portfolio")   # BUGFIX3 — the household Recalculate's gate
+
+
 def _household_permissions(request: Request) -> dict:
     p = authz.principal_of(request)
     can = bool(p is not None and p.admitted and (p.is_super_admin or p.is_staff or (p.is_internal and "manage_members" in p.permissions)))
+    # BUGFIX3 — the exact rule of POST /admin/households/{id}/recalculate (require_internal_permission)
+    recalc = bool(p is not None and p.admitted and (p.is_super_admin or p.is_staff or (
+        p.is_internal and any(k in p.permissions for k in RECALC_PERMISSIONS))))
     return {"can_read": can, "can_write": can, "is_super_admin": bool(p and p.is_super_admin),
-            "read_permission": "manage_members", "write_permission": "manage_members"}
+            "read_permission": "manage_members", "write_permission": "manage_members",
+            "can": {"recalculate": recalc}}
 
 
 @router.get("/admin/households")
@@ -384,3 +394,20 @@ async def edit_household_account(request: Request, household_id: UUID, account_i
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except HA.HouseholdAdminError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------------------
+# BUGFIX3 (MUSE-OLIVO-H, Task 4) — Recalculate on the household
+# --------------------------------------------------------------------------
+@router.post("/admin/households/{household_id}/recalculate")
+async def recalculate_household(request: Request, household_id: UUID):
+    """Run the family-scoped rollup for the household's members now and return its net worth. Gate: an internal firm
+    role holding manage_members OR manage_portfolio (Super Admin first; staff bypass as every internal_perm gate);
+    a member is refused. Another org's household is the same 404 as a missing id."""
+    p = require_internal_permission(request, "manage_members", "manage_portfolio")  # = RECALC_PERMISSIONS
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        return await HA.recalculate_household(pool, org_id, household_id, actor_id=p.user_id)
+    except HA.HouseholdNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -142,7 +142,11 @@ async def crm_vocabularies(request: Request):
     async with pool.acquire() as conn:
         # PORTENTRY1 (GAP-CRM-01..03) — statuses, marital statuses and sub-types from the org's config table
         org_vocab = await C.crm_vocab(conn, org_id)
-    return {"rows": [], "permissions": _permissions(request), "vocabularies": _vocab(
+    from services import record_permissions as RP
+
+    # BUGFIX3 — the CRM list's create controls from the exact rule of each create route (no client default)
+    perms = {**_permissions(request), "can": {"new_entity": RP.allowed(principal_of(request), "new_entity")}}
+    return {"rows": [], "permissions": perms, "vocabularies": _vocab(
         request, {**V.all_vocab(), **org_vocab}, ["relationships", "details", "liabilities"])}
 
 

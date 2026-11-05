@@ -22,6 +22,7 @@ import uuid
 from datetime import date
 
 from services.portfolio_assets import TABLE_ASSET_IDENT, TABLE_ASSETS, _OrgWrite, normalize_identifier_value
+from services.portfolio_kind_taxonomy import key_for_kind
 
 T_RELINK = "portfolio.asset_relinks"
 LOOKUP_TYPES = ("cusip", "isin", "sedol", "ticker")
@@ -71,12 +72,14 @@ async def manual_asset_for(conn, org_id, ref: dict) -> str:
         # PORTENTRY1 FIX 1 — the terms carry ISO strings (JSON); asyncpg binds a $n::date only from a date object.
         # A muni's maturity / an option's expiry as a str was the 500 on approve (DataError … 'toordinal').
         maturity = _as_date(terms.get("maturity") or terms.get("expiry"))
+        # BUGFIX3 FIX 1 — no key on the row: classify by kind from the org's taxonomy (services.portfolio_kind_taxonomy)
+        tax_key = ref.get("taxonomy_key") or await key_for_kind(c, org, kind)
         await c.execute(
             f"""INSERT INTO {TABLE_ASSETS} (id, org_id, global_security_id, name, asset_class, asset_type,
                     ownership_basis, valuation_method, default_taxonomy_key, currency_code, maturity_date,
                     manual_terms)
                 VALUES ($1::uuid, $2::uuid, NULL, $3, $4, $5, 'units', $6, $7, $8, $9::date, $10::jsonb)""",
-            aid, org, name, aclass, kind, vmethod, ref.get("taxonomy_key"),
+            aid, org, name, aclass, kind, vmethod, tax_key,
             ((ref.get("terms") or {}).get("currency") or "USD").upper(), maturity, json.dumps(terms))
         first = True
         for t, v in idents.items():
@@ -145,15 +148,30 @@ async def relink_manual_assets(conn, org_id, *, trigger: str = "manual", actor_i
 async def list_manual_assets(conn, org_id) -> dict:
     org = str(org_id)
     async with _OrgWrite(conn, org) as c:
+        # BUGFIX3 (MUSE-OLIVO-M, Northline) — how many current positions (and distinct owners) use each manual
+        # asset, so an org admin can SEE whether three held-away lines share one asset or made three.
         assets = await c.fetch(
             f"SELECT a.id::text AS id, a.name, a.asset_type, a.default_taxonomy_key, a.manual_terms, "
-            f"a.global_security_id::text AS global_security_id FROM {TABLE_ASSETS} a WHERE a.org_id = $1::uuid "
+            f"a.global_security_id::text AS global_security_id, "
+            f"(SELECT count(*) FROM portfolio.positions p WHERE p.asset_id = a.id AND p.org_id = a.org_id "
+            f" AND p.valid_to IS NULL AND p.system_to IS NULL) AS position_count, "
+            f"(SELECT count(DISTINCT p.owner_entity_id) FROM portfolio.positions p WHERE p.asset_id = a.id "
+            f" AND p.org_id = a.org_id AND p.valid_to IS NULL AND p.system_to IS NULL) AS owner_count "
+            f"FROM {TABLE_ASSETS} a WHERE a.org_id = $1::uuid "
             f"AND (a.global_security_id IS NULL OR EXISTS (SELECT 1 FROM {T_RELINK} r WHERE r.asset_id = a.id)) "
             f"AND a.asset_type <> 'cash' AND a.valid_to IS NULL AND a.system_to IS NULL ORDER BY a.name", org)
         relinks = await c.fetch(
             f"SELECT id::text, asset_id::text, global_security_id::text, id_type, id_value, asset_name, security_name, "
             f"trigger, created_at FROM {T_RELINK} WHERE org_id = $1::uuid AND valid_to IS NULL AND system_to IS NULL "
             f"ORDER BY created_at DESC", org)
+    name_counts: dict[str, int] = {}
+    for a in assets:
+        k = (a["name"] or "").strip().lower()
+        name_counts[k] = name_counts.get(k, 0) + 1
     return {"assets": [{**dict(a), "manual_terms": json.loads(a["manual_terms"]) if isinstance(a["manual_terms"], str)
-                        else a["manual_terms"], "relinked": a["global_security_id"] is not None} for a in assets],
+                        else a["manual_terms"], "relinked": a["global_security_id"] is not None,
+                        "position_count": int(a["position_count"]), "owner_count": int(a["owner_count"]),
+                        # BUGFIX3 — another manual asset of this org carries the same name (a possible duplicate;
+                        # reported, never merged automatically)
+                        "same_name_count": name_counts[(a["name"] or "").strip().lower()]} for a in assets],
             "relinks": [{**dict(r), "created_at": r["created_at"].isoformat()} for r in relinks]}

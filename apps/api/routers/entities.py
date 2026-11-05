@@ -1256,6 +1256,51 @@ async def update_address(
     return AddressResponse(**dict(row))
 
 
+@router.post("/entities/{entity_id}/addresses/{addr_id}/end")
+async def end_address(request: Request, entity_id: UUID, addr_id: UUID):
+    """BUGFIX3 (MUSE-OLIVO-H, Task 5) — END a saved address (moved out, sold the house). Nothing is deleted: the
+    current version is archived on the system axis (as PUT does) and the live row gets ``valid_to = now()`` — it
+    leaves every current-address read and stays in history. Same gate as add / edit: manage_members OR
+    edit_crm_contact, internal roles only. Another org's id, or an already-ended one, is the same 404."""
+    require_internal_permission(request, "manage_members", "edit_crm_contact")
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            current = await conn.fetchrow(
+                "SELECT id FROM entity_addresses WHERE id = $1 AND entity_id = $2 AND org_id = $3 "
+                "AND valid_to IS NULL AND system_to IS NULL FOR UPDATE", addr_id, entity_id, org_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Address not found")
+            await conn.execute(
+                """
+                INSERT INTO entity_addresses (
+                    org_id, entity_id, address_type, street1, street2, city,
+                    state, postal_code, country, phone, country_code, region_code,
+                    is_verified, is_primary, is_seasonal,
+                    season_from_month, season_to_month, note,
+                    valid_from, valid_to, system_from, system_to,
+                    created_by, created_at
+                )
+                SELECT org_id, entity_id, address_type, street1, street2, city,
+                       state, postal_code, country, phone, country_code, region_code,
+                       is_verified, is_primary, is_seasonal,
+                       season_from_month, season_to_month, note,
+                       valid_from, valid_to, system_from, now(),
+                       created_by, created_at
+                FROM entity_addresses WHERE id = $1
+                """,
+                addr_id,
+            )
+            row = await conn.fetchrow(
+                "UPDATE entity_addresses SET valid_to = now(), system_from = now() WHERE id = $1 "
+                "RETURNING id, entity_id, valid_to", addr_id)
+    if row is None:   # an RLS-blocked UPDATE matches zero rows too — never claim a cause we cannot know
+        raise HTTPException(status_code=404, detail="Address not found")
+    return {"id": str(row["id"]), "entity_id": str(row["entity_id"]), "ended": True,
+            "valid_to": row["valid_to"].isoformat()}
+
+
 # ---------------------------------------------------------------------------
 # Employment
 # ---------------------------------------------------------------------------

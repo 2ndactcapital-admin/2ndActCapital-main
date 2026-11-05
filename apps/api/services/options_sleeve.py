@@ -1598,10 +1598,13 @@ async def book_fills(pool, *, org_id, actor_id, instruction_id) -> dict:
                     "SELECT id FROM portfolio.assets WHERE org_id = $1::uuid AND global_security_id = $2::uuid "
                     "AND valid_to IS NULL AND system_to IS NULL LIMIT 1", str(org_id), str(ins["global_security_id"]))
                 if asset is None:
+                    from services.portfolio_kind_taxonomy import key_for_kind  # BUGFIX3 FIX 1
+
                     asset = await conn.fetchval(
-                        "INSERT INTO portfolio.assets (org_id, global_security_id, name, asset_type) "
-                        "VALUES ($1::uuid, $2::uuid, $3, 'option') RETURNING id",
-                        str(org_id), str(ins["global_security_id"]), c["name"])
+                        "INSERT INTO portfolio.assets (org_id, global_security_id, name, asset_type, "
+                        "default_taxonomy_key) VALUES ($1::uuid, $2::uuid, $3, 'option', $4) RETURNING id",
+                        str(org_id), str(ins["global_security_id"]), c["name"],
+                        await key_for_kind(conn, str(org_id), "option"))
                 cur = await conn.fetchrow(
                     "SELECT * FROM portfolio.positions WHERE org_id = $1::uuid AND account_id = $2::uuid AND asset_id = "
                     "$3::uuid AND valid_to IS NULL AND system_to IS NULL ORDER BY as_of_date DESC LIMIT 1",

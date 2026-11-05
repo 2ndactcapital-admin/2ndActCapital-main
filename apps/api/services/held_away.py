@@ -1022,10 +1022,14 @@ async def _asset_for(conn, org_id, security_id: str, asset_ref: dict | None = No
         return str(aid)
     g = await conn.fetchrow("SELECT name, security_type FROM portfolio.securities_global WHERE id = $1::uuid "
                             "AND system_to IS NULL ORDER BY valid_to NULLS FIRST LIMIT 1", security_id)
+    kind = ((g["security_type"] if g else None) or "equity").lower()
+    # BUGFIX3 FIX 1 — classify by kind from the org's taxonomy (None when the kind has no mapping / the org lacks it)
+    from services.portfolio_kind_taxonomy import key_for_kind
+
     return str(await conn.fetchval(
-        "INSERT INTO portfolio.assets (org_id, global_security_id, name, asset_type) VALUES ($1::uuid, $2::uuid, $3, $4) "
-        "RETURNING id", str(org_id), security_id, g["name"] if g else security_id,
-        ((g["security_type"] if g else None) or "equity").lower()))
+        "INSERT INTO portfolio.assets (org_id, global_security_id, name, asset_type, default_taxonomy_key) "
+        "VALUES ($1::uuid, $2::uuid, $3, $4, $5) RETURNING id", str(org_id), security_id,
+        g["name"] if g else security_id, kind, await key_for_kind(conn, str(org_id), kind)))
 
 
 async def _decide_row(conn, imp: dict, status: str, checker, now, note) -> dict:

@@ -161,7 +161,10 @@ def _s(value: Any) -> str | None:
     """Decimal → exact string. A float at the JSON boundary is a rounding error
     introduced at the last possible layer, after the figure survived the
     database and the service as an exact Decimal."""
-    return None if value is None else str(value)
+    # BUGFIX3 (1d) — fixed-point, never str(Decimal) ("9.0E+5" rendered as "$9.0E")
+    from services.money_text import fixed
+
+    return fixed(value)
 
 
 def _d(value: date | None) -> str | None:
@@ -298,6 +301,7 @@ def _build_filters(
     authority: str | None,
     include_history: bool,
     search: str | None,
+    entity_scope: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
     """Assemble the WHERE clause and its positional arguments.
 
@@ -310,6 +314,10 @@ def _build_filters(
     def add(clause_template: str, value: Any) -> None:
         args.append(value)
         where.append(clause_template.format(n=len(args)))
+
+    if entity_scope is not None:
+        # BUGFIX3 — only ledger entries on positions the caller's visible entities own (EMPTY list → nothing)
+        add("p.owner_entity_id = ANY(${n}::uuid[])", [str(x) for x in entity_scope])
 
     if not include_history:
         # The default. A corrected transaction leaves its predecessor behind,
@@ -371,6 +379,7 @@ async def list_transactions(
     search: str | None = None,
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    entity_scope: list[str] | None = None,
 ) -> dict[str, Any]:
     """One grid page. Returns ``{total, limit, offset, returned, transactions}``.
 
@@ -399,6 +408,7 @@ async def list_transactions(
         authority=authority,
         include_history=include_history,
         search=search,
+        entity_scope=entity_scope,
     )
 
     total = await conn.fetchval(f"SELECT count(*) {_LIST_FROM} WHERE {where}", *args)
@@ -487,7 +497,7 @@ def _row_to_json(r) -> dict[str, Any]:
 
 
 async def get_transaction(
-    conn, *, org_id: str, transaction_id: str
+    conn, *, org_id: str, transaction_id: str, entity_scope: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Everything the detail pane shows. ``None`` if not in this org.
 
@@ -510,8 +520,11 @@ async def get_transaction(
         SELECT {_LIST_COLUMNS}
         {_LIST_FROM}
         WHERE t.id = $1::uuid AND t.org_id = $2::uuid
+          -- BUGFIX3: another family's entry = the SAME None as a missing id
+          AND ($3::uuid[] IS NULL OR p.owner_entity_id = ANY($3::uuid[]))
         """,
         str(transaction_id), org_id,
+        None if entity_scope is None else [str(x) for x in entity_scope],
     )
     if row is None:
         return None
@@ -946,6 +959,7 @@ async def _carry_document_links(
 async def list_positions_for_picker(
     conn, *, org_id: str, owner_entity_id: str | None = None,
     search: str | None = None, limit: int = 50,
+    entity_scope: list[str] | None = None,
 ) -> list[dict]:
     """Current positions, thin, for the "record a transaction against…" picker.
 
@@ -970,6 +984,9 @@ async def list_positions_for_picker(
         clause += (
             f" AND (a.name ILIKE ${len(args)} OR e.display_name ILIKE ${len(args)})"
         )
+    if entity_scope is not None:
+        args.append([str(x) for x in entity_scope])  # BUGFIX3 — the caller's visible owners only
+        clause += f" AND p.owner_entity_id = ANY(${len(args)}::uuid[])"
     rows = await conn.fetch(
         f"""
         SELECT p.id::text              AS id,
