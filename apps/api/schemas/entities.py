@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PERSON_ENTITY_TYPES: frozenset[str] = frozenset({"individual"})
@@ -163,6 +163,9 @@ class EntityCreate(BaseModel):
     # Sprint 17
     is_incomplete: bool = False
     created_via: str | None = None
+    # CRMDETAIL1 — people
+    maiden_name: str | None = None
+    date_of_death: date | None = None
 
 
 class EntityUpdate(BaseModel):
@@ -196,6 +199,9 @@ class EntityUpdate(BaseModel):
     primary_phone: str | None = None
     profile_mode: str | None = None
     is_incomplete: bool | None = None
+    # CRMDETAIL1 — people
+    maiden_name: str | None = None
+    date_of_death: date | None = None
 
 
 class EntityOut(BaseModel):
@@ -238,6 +244,27 @@ class EntityOut(BaseModel):
     system_to: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # CRMDETAIL1 — people fields and the flags computed from them at TODAY's date (never stored). A person's date
+    # of birth is date_of_birth, else inception_date (the CRM form labels inception_date "Date of Birth" for a
+    # person — 1a).
+    date_of_birth: date | None = None
+    marital_status: str | None = None
+    maiden_name: str | None = None
+    date_of_death: date | None = None
+    age: int | None = None
+    is_minor: bool = False
+    is_deceased: bool = False
+
+    @model_validator(mode="after")
+    def _person_flags(self):
+        from datetime import date as _date
+
+        from services.crm_vocab import person_flags
+
+        etype = self.entity_type.value if isinstance(self.entity_type, Enum) else str(self.entity_type)
+        flags = person_flags(etype, self.date_of_birth or self.inception_date, self.date_of_death, _date.today())
+        self.age, self.is_minor, self.is_deceased = flags["age"], flags["is_minor"], flags["is_deceased"]
+        return self
 
 
 # Spec alias.

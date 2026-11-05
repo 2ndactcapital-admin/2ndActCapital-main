@@ -27,6 +27,13 @@ from uuid import UUID
 
 from _db_bootstrap import bootstrap_async  # noqa: E402  (puts apps/api + venv on sys.path)
 from _db_connect import connect, resolve_dsn  # noqa: E402
+import _verify_cleanup as VC  # noqa: E402  (CRMDETAIL1 — the permanent-demo-data guard)
+
+
+async def demo_refusals(conn, plan) -> list[str]:
+    """CRMDETAIL1 — refuse if ANY planned row belongs to permanent demo data (a record tagged demo-*, or a household
+    whose members all are). A removal script never deletes demo rows; asserted before anything is deleted."""
+    return await VC.demo_rows_by_ids(conn, {t: list(ids) for t, ids in plan.items()})
 
 DEFAULT_ORG = UUID("00000000-0000-0000-0000-000000000001")
 MUSE_WORKFLOW = UUID("c76c0067-dc07-415b-93fb-ad55e81357b5")
@@ -87,6 +94,7 @@ async def guards(conn, plan) -> list[str]:
                                      "NOT (id = ANY($2::uuid[]))", ORPHAN_UPLOAD, DUPLICATE_UPLOADS)
     if ev or ver or other_dups:
         bad.append(f"the uploads carry {ev} event(s) / {ver} version(s) / {other_dups} other duplicate(s) — refused")
+    bad += await demo_refusals(conn, plan)   # CRMDETAIL1 — zero demo rows touched
     return bad
 
 

@@ -9,6 +9,8 @@
 // custody becomes a REP7B change awaiting a second person.
 
 import { useState } from "react";
+import { NetWorthLines } from "@/components/crm/LiabilitiesTab";
+import { formatMoney } from "@/lib/crmDetail.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
 const input = "w-full rounded-[6px] border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A]";
@@ -248,6 +250,22 @@ function HouseholdCard({ row }) {
                   <li key={a.id}>{a.account_number_masked} · {a.custodian_code}{a.is_held_away ? " · held away" : ""}</li>
                 ))}
               </ul>
+              {/* CRMDETAIL1 — net worth (gross, liabilities, net) and the household's Liabilities section */}
+              <div className="mt-4"><NetWorthLines netWorth={detail.net_worth} vocabularies={detail.vocabularies} /></div>
+              <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-[#64748B]">Liabilities</h3>
+              {(detail.liabilities || []).length === 0 ? (
+                <p className={quiet}>None recorded. Liabilities are entered on each member's CRM record.</p>
+              ) : (
+                <ul className="mt-1 space-y-1 text-sm text-[#334155]">
+                  {detail.liabilities.map((l) => (
+                    <li key={l.id}>
+                      <a href={`/crm/${l.owner_entity_id}?tab=liabilities`} className="hover:underline">{l.name}</a>
+                      {" · "}{l.kind_label}{l.owner_name ? ` · ${l.owner_name}` : ""}{" · "}
+                      {formatMoney(l.current_balance, l.currency_code)}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {canWrite && <AddAccount household={detail} vocabularies={detail.vocabularies} onAdded={load} />}
             </>
           )}

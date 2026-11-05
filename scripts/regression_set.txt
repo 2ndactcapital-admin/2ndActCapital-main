@@ -37,3 +37,4 @@ verify_staffroles1.py
 verify_rep12.py
 verify_perms1.py
 verify_secmaster1.py
+verify_crmdetail1.py

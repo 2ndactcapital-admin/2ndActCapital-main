@@ -92,6 +92,9 @@ export async function updateEntityAction(id, prevState, formData) {
     primary_email: emptyToNull(formData.get("primary_email")),
     primary_phone: emptyToNull(formData.get("primary_phone")),
     tags: parseTags(formData.get("tags")),
+    // CRMDETAIL1 — people (fields present only on a person's form)
+    maiden_name: formData.has("maiden_name") ? emptyToNull(formData.get("maiden_name")) : undefined,
+    date_of_death: formData.has("date_of_death") ? emptyToNull(formData.get("date_of_death")) : undefined,
   };
   // Strip undefined values so Pydantic only updates provided fields
   Object.keys(body).forEach((k) => body[k] === undefined && delete body[k]);

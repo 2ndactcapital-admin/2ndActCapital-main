@@ -29,6 +29,7 @@ from services import authority as AUTH
 from services import authz
 from services.authz import require_internal_permission
 from services import household_admin as HA
+from services.crm_vocab import liability_vocab
 
 router = APIRouter(tags=["admin", "households"])
 
@@ -116,7 +117,7 @@ async def list_households(request: Request):
         rows = await HA.list_households(conn, org_id)
     perms = _household_permissions(request)
     return {"rows": rows, "permissions": perms,
-            "vocabularies": {**AUTH.vocabularies(),
+            "vocabularies": {**AUTH.vocabularies(), **liability_vocab(),   # CRMDETAIL1 — net-worth line labels
                              "editable": ["name", "member_entity_ids"] if perms["can_write"] else [],
                              "inline_editable": []}}
 
@@ -154,7 +155,10 @@ async def delete_household(request: Request, household_id: UUID):
     _, org_id = await _require_manage_members(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        deleted = await hh.delete_household(conn, org_id, household_id)
+        try:
+            deleted = await hh.delete_household(conn, org_id, household_id)
+        except hh.DemoHouseholdProtected as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Household not found")
     return {"ok": True}
@@ -299,7 +303,7 @@ async def get_household(request: Request, household_id: UUID):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     perms = _household_permissions(request)
     return {**detail, "permissions": perms,
-            "vocabularies": {**AUTH.vocabularies(),
+            "vocabularies": {**AUTH.vocabularies(), **liability_vocab(),   # CRMDETAIL1 — net-worth line labels
                              "editable": ["accounts", "members"] if perms["can_write"] else [],
                              "inline_editable": []}}
 

@@ -46,6 +46,15 @@ true)``) — the only path past the immutability triggers.
    none applicable it raises — there is no fallback to a recursive walk.
 5. DELETE — each table exactly once: ``DELETE FROM t WHERE (p1) OR (p2) ...``.
 
+6. PERMANENT DEMO DATA (CRMDETAIL1) — before anything is deleted, the delete set is checked for rows of a record
+   tagged ``demo-*`` (``public.entities.tags``): the entities themselves, every row of a table holding an FK to
+   ``public.entities`` that points at one, and a household whose members are all demo-tagged. Any such row raises
+   RuntimeError (nothing is deleted — the transaction rolls back) unless it lives in one of the caller's
+   ``demo_fixture_orgs`` that is ``is_test`` — a verify's OWN demo-tagged fixture, which it then removes through
+   the database guard's documented path (``crm.demo_teardown = 'fixture'``, set LOCAL here). A real org's demo row
+   can never be deleted by this helper; the BEFORE DELETE guard (docs/crmdetail1_part1.sql) refuses it too.
+   ``demo_rows_by_ids`` is the same check for the by-id removal scripts.
+
 ``leftover_count`` is the matching read-only count, for ``--cleanup-only``.
 Self-contained: asyncpg + stdlib only.
 """
@@ -182,8 +191,65 @@ def _order(tables: list[str], cycle_order) -> list[str]:
     return out
 
 
+_DEMO_TAG = "EXISTS (SELECT 1 FROM unnest({a}.tags) dt WHERE dt LIKE 'demo-%')"
+
+
+async def _demo_check(q, preds: dict, allowed_orgs: list) -> tuple[list[str], int]:
+    """(refusals, allowed demo rows) over a delete set ``preds`` (table -> [(sql, args)]). See point 6."""
+    await _load_fks(q)
+    refused: list[str] = []
+    allowed_n = 0
+    allowed: list = []
+    if allowed_orgs:      # only the caller's fixture orgs that really are is_test
+        allowed = [r["id"] for r in await q.fetch(
+            "SELECT id FROM public.organizations WHERE id = ANY($1::uuid[]) AND is_test", list(allowed_orgs))]
+    checks: list[tuple[str, str, str]] = []           # (table, demo predicate over alias t, org expr of the demo row)
+    checks.append(("public.entities", _DEMO_TAG.format(a="t"), "t.org_id"))
+    checks.append(("public.households",
+                   "EXISTS (SELECT 1 FROM public.household_memberships hm WHERE hm.household_id = t.id) AND NOT EXISTS "
+                   "(SELECT 1 FROM public.household_memberships hm JOIN public.entities he ON he.id = hm.entity_id "
+                   "WHERE hm.household_id = t.id AND NOT " + _DEMO_TAG.format(a="he") + ")", "t.org_id"))
+    for fk in _FK_CACHE.get("public.entities", ()):
+        if len(fk["child_cols"]) != 1 or fk["child"] == "public.entities":
+            continue
+        col = qident(fk["child_cols"][0])
+        checks.append((fk["child"],
+                       f"EXISTS (SELECT 1 FROM public.entities de WHERE de.id = t.{col} AND "
+                       + _DEMO_TAG.format(a="de") + ")",
+                       f"(SELECT de.org_id FROM public.entities de WHERE de.id = t.{col} LIMIT 1)"))
+    for table, demo_sql, org_expr in checks:
+        if table not in preds:
+            continue
+        where, args = _combine(preds[table])
+        n_all = int(await q.fetchval(
+            f"SELECT count(*) FROM {qtable(table)} t WHERE ({where}) AND {demo_sql}", *args))
+        if not n_all:
+            continue
+        n_ok = int(await q.fetchval(
+            f"SELECT count(*) FROM {qtable(table)} t WHERE ({where}) AND {demo_sql} AND "
+            f"COALESCE({org_expr} = ANY(${len(args) + 1}::uuid[]), false)", *args, allowed))
+        allowed_n += n_ok
+        if n_all - n_ok:
+            refused.append(f"{table}: {n_all - n_ok} row(s) of permanent demo data (a record tagged demo-*)")
+    return refused, allowed_n
+
+
+async def demo_rows_by_ids(op, plan_ids: dict) -> list[str]:
+    """CRMDETAIL1 — for the by-id removal scripts: every planned row ({"schema.table": [ids]}) that belongs to
+    permanent demo data, as refusal strings (empty = none). No allowance: a removal script never deletes demo rows."""
+    q = _Counter(op)
+    preds = {}
+    for table, ids in plan_ids.items():
+        t = await _resolve(q, table)
+        if t is None or not ids:
+            continue
+        preds[t] = [("id = ANY($1::uuid[])", [list(ids)])]
+    refused, _ = await _demo_check(q, preds, [])
+    return refused
+
+
 async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(), cycle_order=(),
-                  label="") -> dict:
+                  label="", demo_fixture_orgs=()) -> dict:
     """Delete this script's fixture rows (see the module docstring). ``op`` is an asyncpg connection on the
     operator DSN. Returns {"log": ["table: n", ...], "seconds", "tables", "queries"}."""
     t0 = time.monotonic()
@@ -275,6 +341,14 @@ async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(),
                     queue.append(child)
                     queued.add(child)
 
+        # (6) permanent demo data: refuse (roll back, delete nothing) unless it is the caller's own is_test fixture
+        refused, demo_ok = await _demo_check(q, preds, list(demo_fixture_orgs))
+        if refused:
+            raise RuntimeError(f"cleanup{(' ' + label) if label else ''}: refusing to delete permanent demo data — "
+                               + "; ".join(refused))
+        if demo_ok:
+            await q.execute("SELECT set_config('crm.demo_teardown', 'fixture', true)")
+
         for t in _order(sorted(preds), tuple(cycle_order)):
             where, args = _combine(preds[t])
             status = await q.execute(f"DELETE FROM {qtable(t)} WHERE {where}", *args)
@@ -285,7 +359,7 @@ async def cleanup(op, *, orgs, users=(), user_sub_like=None, plan=None, gucs=(),
     seconds = time.monotonic() - t0
     print(f"[INFO] cleanup{(' ' + label) if label else ''}: {len(preds)} table(s), {rows_total} row(s), "
           f"{q.n} queries in {seconds:.1f} s", flush=True)
-    return {"log": log, "seconds": seconds, "tables": len(preds), "queries": q.n}
+    return {"log": log, "seconds": seconds, "tables": len(preds), "queries": q.n, "demo_fixture_rows": demo_ok}
 
 
 async def leftover_count(op, *, orgs, users=(), user_sub_like=None, extra=()) -> int:

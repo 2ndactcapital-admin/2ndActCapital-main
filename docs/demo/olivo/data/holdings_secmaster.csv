@@ -1,0 +1,96 @@
+account,asset_class,cost_basis,notes,price,quantity,secmaster,security,sub_class,ticker,value
+A1,Public equity,14800000,,642.1,38000,listed — expected in the security master after secmaster1's load,SPDR S&P 500 ETF,US large cap ETF,SPY,24399800
+A1,Public equity,9100000,,71.4,160000,listed — expected in the security master after secmaster1's load,Vanguard Total International Stock ETF,International ETF,VXUS,11424000
+A1,Public equity,4600000,,241.3,22000,listed — expected in the security master after secmaster1's load,iShares Russell 2000 ETF,US small cap ETF,IWM,5308600
+A1,Public equity,1440000,Residual from the 2014 sale; basis $12/sh,61.05,120000,"FICTIONAL company — decide: replace with a real ticker, or a private-asset record",Northline Foods Inc.,Single stock (concentrated),NLF,7326000
+A1,Public equity,1900000,,262.4,18000,listed — expected in the security master after secmaster1's load,Apple Inc.,Single stock,AAPL,4723200
+A1,Public equity,2100000,,498.2,9000,listed — expected in the security master after secmaster1's load,Berkshire Hathaway Class B,Single stock,BRK.B,4483800
+A1,Fixed income,7400000,,74.9,95000,listed — expected in the security master after secmaster1's load,Vanguard Total Bond Market ETF,Core bond ETF,BND,7115500
+A1,Cash,3250000,,1.0,3250000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Goldman Sachs Financial Square Govt MMF,Money market,FGTXX,3250000
+A2,Fixed income,2000000,,0.985,2000000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 4.00% due 2027,Tax-exempt municipal bond,MUNI-2027,1970000
+A2,Fixed income,2500000,,0.985,2500000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 5.00% due 2028,Tax-exempt municipal bond,MUNI-2028,2462500
+A2,Fixed income,2500000,,0.985,2500000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 4.00% due 2029,Tax-exempt municipal bond,MUNI-2029,2462500
+A2,Fixed income,3000000,,1.01,3000000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 5.00% due 2030,Tax-exempt municipal bond,MUNI-2030,3030000
+A2,Fixed income,3000000,,1.01,3000000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 4.00% due 2031,Tax-exempt municipal bond,MUNI-2031,3030000
+A2,Fixed income,2500000,,1.01,2500000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 5.00% due 2033,Tax-exempt municipal bond,MUNI-2033,2525000
+A2,Fixed income,2500000,,1.01,2500000,municipal bond — no free CUSIP source; enter as a manual fixed-income asset,Connecticut / NY GO & essential-service munis 4.00% due 2036,Tax-exempt municipal bond,MUNI-2036,2525000
+A3,Cash,1150000,,,,cash — cash position,Coastal Bank checking,Operating cash,CASH,1150000
+A3,Cash,3050000,,,,cash — cash position,Coastal Bank money market,Money market,CASH-MM,3050000
+A4,Structured note,5000000,Issued Mar 2026; worst-of? no — single index,,,structured note — map to one of the 54 real notes already in the master,JPM autocallable contingent-coupon note on S&P 500 (CUSIP 48133X***) due 2028,"Autocallable, 70% barrier, 9.25% coupon",NOTE-JPM-SPX,5000000
+A4,Structured note,3000000,,,,structured note — map to one of the 54 real notes already in the master,"Goldman buffered note on Nasdaq-100 (15% buffer, 1.3x to 24% cap) due 2027",Buffered growth note,NOTE-GS-NDX,3120000
+A5,Public equity,3100000,,228.1,28000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Fidelity 500 Index Fund,US large cap fund,FXAIX,6386800
+A5,Fixed income,2700000,,10.52,250000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Fidelity U.S. Bond Index Fund,Core bond fund,FXNAX,2630000
+A5,Cash,450000,,1.0,450000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Fidelity Government Cash Reserves,Money market,FDRXX,450000
+A6,Public equity,21600000,Received at the 2014 sale; basis $12/sh. Collateral for the $20M SBL.,61.05,1800000,"FICTIONAL company — decide: replace with a real ticker, or a private-asset record",Northline Foods Inc.,Single stock (concentrated),NLF,109890000
+A6,Cash,1800000,,1.0,1800000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Goldman Sachs Financial Square Govt MMF,Money market,FGTXX,1800000
+A7,Public equity,12400000,,590.2,24000,listed — expected in the security master after secmaster1's load,Vanguard S&P 500 ETF,US large cap ETF,VOO,14164800
+A7,Public equity,7900000,,58.9,150000,listed — expected in the security master after secmaster1's load,Vanguard FTSE Developed Markets ETF,Developed ex-US ETF,VEA,8835000
+A7,Public equity,3400000,,52.1,70000,listed — expected in the security master after secmaster1's load,Vanguard FTSE Emerging Markets ETF,Emerging markets ETF,VWO,3647000
+A7,Fixed income,9700000,,101.3,95000,listed — expected in the security master after secmaster1's load,iShares Core U.S. Aggregate Bond ETF,Core bond ETF,AGG,9623500
+A7,Cash,4800000,,100.6,48000,listed — expected in the security master after secmaster1's load,iShares 0-3 Month Treasury Bond ETF,T-bill ETF,SGOV,4828800
+A7,Public equity,3100000,Candidate for a Replication Studio direct-index replica,598.4,6500,listed — expected in the security master after secmaster1's load,Invesco QQQ Trust,Nasdaq-100 ETF,QQQ,3889600
+A8,Public equity,4800000,,61.05,400000,"FICTIONAL company — decide: replace with a real ticker, or a private-asset record",Northline Foods Inc.,Single stock (concentrated),NLF,24420000
+A9,Public equity,19200000,Replication Studio replica of SPY; tax-loss harvesting on,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Olivo Core Equity (direct-indexed S&P 500 replica),Direct-index SMA (503 positions),SMA-CORE,24600000
+A9,Public equity,8100000,,88.7,110000,listed — expected in the security master after secmaster1's load,iShares MSCI EAFE ETF,Developed ex-US ETF,EFA,9757000
+A9,Fixed income,7000000,,101.3,70000,listed — expected in the security master after secmaster1's load,iShares Core U.S. Aggregate Bond ETF,Core bond ETF,AGG,7091000
+A9,Fixed income,3900000,,50.1,80000,listed — expected in the security master after secmaster1's load,Vanguard Short-Term Inflation-Protected Securities ETF,TIPS ETF,VTIP,4008000
+A9,Cash,6000000,,100.6,60000,listed — expected in the security master after secmaster1's load,iShares 0-3 Month Treasury Bond ETF,T-bill ETF,SGOV,6036000
+A9,Public equity,2400000,Options-sleeve candidate (rep8),42.8,60000,listed — expected in the security master after secmaster1's load,Innovator U.S. Equity Power Buffer ETF (Jan),Defined-outcome ETF,PJAN,2568000
+A10,Private equity,18000000,"$30M commitment, $8M unfunded; Q2 2026 NAV",,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)","Harbor Point Partners IV, L.P.",Buyout fund (2019 vintage),PE-HPP4,22300000
+A10,Private credit,15000000,"$15M commitment, fully drawn; 11.2% net IRR",,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Thornfield Credit Opportunities II,Opportunistic credit fund,PC-TCO2,15100000
+A10,Hedge fund,10000000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Stillwater Macro Fund Ltd.,Global macro (quarterly liquidity),HF-STILL,12400000
+A10,Private company,6500000,Last round Nov 2025; board observer seat (Anthony),15.48,420000,"private / manual asset (fund interest, direct deal, 529, policy, SMA)","Brightwater Aquaculture, Inc. — Series C Preferred",Direct investment (land-based salmon),PRIV-BWA,6501600
+A10,Private company,2500000,USL Championship club; capital call rights,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",New England Harbor FC — 2.5% LLC interest,Sports franchise minority stake,PRIV-NEHFC,4000000
+A10,Private company,3000000,"Invested through the Hollisworks marketplace, 2026",,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",2nd Act Marketplace SPV: Meridian Logistics Class A,Co-investment SPV (2nd Act Capital),SPV-MERIDIAN,3050000
+A11,Cash,7000000,,,,cash — cash position,Coastal Bank operating account,Operating cash,CASH,7000000
+A12,Public equity,5400000,,318.5,21000,listed — expected in the security master after secmaster1's load,Vanguard Total Stock Market ETF,US total market ETF,VTI,6688500
+A12,Public equity,2900000,,71.4,45000,listed — expected in the security master after secmaster1's load,Vanguard Total International Stock ETF,International ETF,VXUS,3213000
+A12,Fixed income,4000000,,50.8,80000,listed — expected in the security master after secmaster1's load,Vanguard Tax-Exempt Bond ETF,Municipal bond ETF,VTEB,4064000
+A13,Public equity,2600000,,29.4,110000,listed — expected in the security master after secmaster1's load,Schwab U.S. Dividend Equity ETF,Dividend ETF,SCHD,3234000
+A13,Fixed income,1350000,,27.1,50000,listed — expected in the security master after secmaster1's load,Schwab U.S. TIPS ETF,TIPS ETF,SCHP,1355000
+A13,Cash,1420000,,1.0,1420000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Schwab Treasury Obligations MMF,Money market,SNOXX,1420000
+A14,Public equity,1100000,,318.5,5000,listed — expected in the security master after secmaster1's load,Vanguard Total Stock Market ETF,US total market ETF,VTI,1592500
+A14,Fixed income,500000,,101.3,5000,listed — expected in the security master after secmaster1's load,iShares Core U.S. Aggregate Bond ETF,Core bond ETF,AGG,506500
+A15,Public equity,3100000,,590.2,7200,listed — expected in the security master after secmaster1's load,Vanguard S&P 500 ETF,US large cap ETF,VOO,4249440
+A15,Public equity,1600000,,68.3,28000,listed — expected in the security master after secmaster1's load,Vanguard FTSE All-World ex-US ETF,International ETF,VEU,1912400
+A15,Fixed income,2200000,,13.9,160000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Vanguard Intermediate-Term Tax-Exempt Fund,Municipal bond fund,VWIUX,2224000
+A16,Public equity,1900000,,166.2,19000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Fidelity Total Market Index Fund,US total market fund,FSKAX,3157800
+A17,Multi-asset,900000,,14.1,85000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Fidelity Freedom 2045 Fund,Target-date fund,FFFGX,1198500
+A18,Multi-asset,200000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",CHET Age-Based Portfolio (college),529 plan,529-SOFIA,310000
+A19,Multi-asset,200000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",CHET Age-Based Portfolio (2025),529 plan,529-LUCA,290000
+A20,Public equity,2900000,,318.5,12000,listed — expected in the security master after secmaster1's load,Vanguard Total Stock Market ETF,US total market ETF,VTI,3822000
+A20,Public equity,700000,,71.4,12000,listed — expected in the security master after secmaster1's load,Vanguard Total International Stock ETF,International ETF,VXUS,856800
+A20,Fixed income,700000,,101.3,7000,listed — expected in the security master after secmaster1's load,iShares Core U.S. Aggregate Bond ETF,Core bond ETF,AGG,709100
+A21,Public equity,1500000,,24.1,90000,listed — expected in the security master after secmaster1's load,Schwab U.S. Broad Market ETF,US total market ETF,SCHB,2169000
+A21,Public equity,1300000,,43.2,40000,listed — expected in the security master after secmaster1's load,Schwab International Equity ETF,International ETF,SCHF,1728000
+A21,Fixed income,880000,,25.2,35000,listed — expected in the security master after secmaster1's load,Schwab Municipal Bond ETF,Municipal bond ETF,SCMB,882000
+A22,Public equity,600000,,94.6,9500,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Schwab S&P 500 Index Fund,US large cap fund,SWPPX,898700
+A23,Multi-asset,400000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Florida Prepaid + Vanguard 529 (3 plans),529 plans,529-CIPOLLA,540000
+A24,Public equity,1900000,,318.5,8000,listed — expected in the security master after secmaster1's load,Vanguard Total Stock Market ETF,US total market ETF,VTI,2548000
+A24,Fixed income,1000000,,101.3,10000,listed — expected in the security master after secmaster1's load,iShares Core U.S. Aggregate Bond ETF,Core bond ETF,AGG,1013000
+A25,Public equity,900000,,196.3,14000,listed — expected in the security master after secmaster1's load,NVIDIA Corp.,Single stock,NVDA,2748200
+A25,Public equity,1400000,,512.4,5500,listed — expected in the security master after secmaster1's load,Microsoft Corp.,Single stock,MSFT,2818200
+A25,Public equity,600000,"qty 8,000",251.6,8,listed — expected in the security master after secmaster1's load,Alphabet Inc. Class A,Single stock,GOOGL,2012800
+A25,Public equity,2100000,,598.4,5000,listed — expected in the security master after secmaster1's load,Invesco QQQ Trust,Nasdaq-100 ETF,QQQ,2992000
+A25,Options,-240000,50 contracts; premium received $240k,,-50,listed option — create the contract in the options sleeve (rep8),"Written SPY calls (covered-call overlay), Dec 2026 660",Short call overlay,OPT-SPY-C660,-187500
+A25,Cash,1050000,,,,cash — cash position,Cash / sweep,Brokerage cash,CASH,1050000
+A26,Digital assets,620000,,97400,18.5,digital asset — manual asset,Bitcoin,Cryptocurrency,BTC,1801900
+A26,Digital assets,210000,,3280,120,digital asset — manual asset,Ether,Cryptocurrency,ETH,393600
+A27,Venture capital,6000000,"$10M commitment, $6M called; plus GP carry (unvalued)",,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)","Caldera Ventures Fund II, L.P. — LP interest",Venture fund (Michael is a GP),VC-CALDERA2,9000000
+A27,Private company,250000,Marked at the Series A price,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Luma Robotics — seed SAFE,Angel investment,ANGEL-LUMA,750000
+A27,Private company,500000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Halcyon Bio — seed preferred,Angel investment,ANGEL-HALCYON,500000
+A27,Private company,150000,Written off 2025,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Pressbox Media — convertible note,Angel investment,ANGEL-PRESSBOX,0
+A28,Public equity,350000,,101.3,6000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Schwab Total Stock Market Index Fund,US total market fund,SWTSX,607800
+A29,Public equity,1000000,,318.5,4200,listed — expected in the security master after secmaster1's load,Vanguard Total Stock Market ETF,US total market ETF,VTI,1337700
+A29,Fixed income,550000,,101.3,5500,listed — expected in the security master after secmaster1's load,iShares Core U.S. Aggregate Bond ETF,Core bond ETF,AGG,557150
+A30,Public equity,22000000,,136.2,220000,listed — expected in the security master after secmaster1's load,Vanguard Total World Stock ETF,Global equity ETF,VT,29964000
+A30,Fixed income,10800000,,74.9,140000,listed — expected in the security master after secmaster1's load,Vanguard Total Bond Market ETF,Core bond ETF,BND,10486000
+A30,Private equity,2500000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)","Harbor Point Partners IV, L.P. (foundation sleeve)",Buyout fund,PE-HPP4,3200000
+A30,Cash,1300000,,1.0,1300000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Goldman Sachs Financial Square Govt MMF,Money market,FGTXX,1300000
+A31,Multi-asset,5000000,,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)",Harbor Charitable balanced pool (60/40),DAF investment pool,DAF-POOL,6100000
+A32,Public equity,4800000,,29.4,200000,listed — expected in the security master after secmaster1's load,Schwab U.S. Dividend Equity ETF,Dividend ETF,SCHD,5880000
+A32,Fixed income,5200000,,26.1,200000,listed — expected in the security master after secmaster1's load,Schwab Intermediate-Term U.S. Treasury ETF,Treasury ETF,SCHR,5220000
+A33,Life insurance,3600000,Premium $185k/yr via Crummey gifts,,,"private / manual asset (fund interest, direct deal, 529, policy, SMA)","Survivorship UL policy, $25,000,000 face (Dominic & Marguerite)",Survivorship universal life — cash value,POL-SUL,4100000
+A34,Public equity,1100000,,24.1,70000,listed — expected in the security master after secmaster1's load,Schwab U.S. Broad Market ETF,US total market ETF,SCHB,1687000
+A34,Fixed income,1130000,,25.2,45000,listed — expected in the security master after secmaster1's load,Schwab Municipal Bond ETF,Municipal bond ETF,SCMB,1134000
+A34,Cash,270000,,1.0,270000,mutual fund / money market — NOT in secmaster1's sources (needs SEC mutual-fund tickers),Schwab Treasury Obligations MMF,Money market,SNOXX,270000

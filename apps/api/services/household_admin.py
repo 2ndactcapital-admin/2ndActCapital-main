@@ -131,7 +131,23 @@ async def household_detail(conn, org_id, household_id) -> dict:
         "SELECT id, account_number_masked, custodian_code, registration_type, tax_status, primary_entity_id, "
         "is_held_away FROM accounts WHERE household_id = $1 AND org_id = $2 AND system_to IS NULL "
         "AND valid_to IS NULL ORDER BY account_number_masked", hh["id"], _u(org_id))
+    # CRMDETAIL1 — the household's Liabilities section and its net worth as three numbers (gross, liabilities,
+    # net), from the same member set and the same look-through basis as the flexible rollup.
+    from services import households as HH
+    from services import liabilities as L
+
+    member_ids = [str(m["id"]) for m in members]
+    liab_rows = await conn.fetch(
+        f"SELECT {L.COLS} FROM {L.TABLE} WHERE org_id = $1 AND owner_entity_id = ANY($2::uuid[]) "
+        "AND valid_to IS NULL AND system_to IS NULL ORDER BY name", _u(org_id), [m["id"] for m in members])
+    names = await L._names(conn, org_id, liab_rows)
+    owner_names = {str(m["id"]): m["display_name"] for m in members}
+    liabilities = [{**L.to_json(r, names), "owner_name": owner_names.get(str(r["owner_entity_id"]))}
+                   for r in liab_rows]
+    gross = (await HH._sum_holdings(conn, org_id, member_ids, None))["total_value"]
+    net_worth = await HH._net_worth(conn, org_id, member_ids, gross, None)
     return {"id": str(hh["id"]), "name": hh["name"],
+            "liabilities": liabilities, "net_worth": net_worth,
             "members": [{"id": str(m["id"]), "display_name": m["display_name"], "entity_type": m["entity_type"]}
                         for m in members],
             "accounts": [{"id": str(a["id"]), "account_number_masked": a["account_number_masked"],

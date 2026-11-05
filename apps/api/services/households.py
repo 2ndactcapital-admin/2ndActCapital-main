@@ -34,6 +34,10 @@ from uuid import UUID
 ZERO = Decimal("0")
 
 
+class DemoHouseholdProtected(ValueError):
+    """CRMDETAIL1 — the household is permanent demo data (409)."""
+
+
 def _dec(v) -> Decimal:
     """Coerce a numeric column (or None) to Decimal without going via float.
 
@@ -86,6 +90,11 @@ async def delete_household(conn, org_id, household_id) -> bool:
     """
     hid = _as_uuid(household_id)
     oid = _as_uuid(org_id)
+    # CRMDETAIL1 — a demo household (every member tagged demo-*) is permanent demo data; the database's delete
+    # guard refuses it too, this says so plainly first.
+    if await conn.fetchval("SELECT public.crm_is_demo_household($1)", hid):
+        raise DemoHouseholdProtected("this household is permanent demo data (every member is tagged demo-*) "
+                                     "and is never deleted")
     # Detach strict primary references first (single-column update per entity).
     await conn.execute(
         "UPDATE entities SET primary_household_id = NULL "
@@ -140,6 +149,10 @@ async def remove_entity_from_household(conn, household_id, entity_id) -> bool:
     the entity's primary_household_id — the strict pointer is managed
     separately (see set/clear_primary_household).
     """
+    # CRMDETAIL1 — staff may correct a demo household's membership in the app: the delete guard on
+    # household_memberships admits exactly this LOCAL GUC (no script sets it). The caller's pool connection is
+    # already inside a transaction, so the setting ends with it.
+    await conn.execute("SELECT set_config('crm.demo_edit', 'staff', true)")
     removed = await conn.fetchval(
         """
         DELETE FROM household_memberships
@@ -271,6 +284,15 @@ async def _sum_holdings(conn, org_id, entity_ids: list, as_of) -> dict:
     }
 
 
+async def _net_worth(conn, org_id, member_ids: list, gross, as_of) -> dict:
+    """CRMDETAIL1 — the three numbers (gross, liabilities, net) for a member set: the same members, the same
+    look-through basis as the holdings total (services.liabilities). Strings — exact Decimal."""
+    from services import liabilities as L
+
+    by_entity = await L.lookthrough_liabilities(conn, org_id, member_ids, as_of=as_of)
+    return L.net_worth_lines(gross, sum(by_entity.values(), ZERO))
+
+
 # ==========================================================================
 # TASK 2 — FLEXIBLE rollup across ALL many-to-many members
 # ==========================================================================
@@ -298,6 +320,7 @@ async def household_rollup(conn, org_id, household_id, *, as_of=None) -> dict:
         "member_count": len(member_ids),
         "member_entity_ids": member_ids,
         "total_holdings_value": totals["total_value"],
+        "net_worth": await _net_worth(conn, org_id, member_ids, totals["total_value"], as_of),
         "currency": "USD",
     }
 
@@ -338,6 +361,7 @@ async def primary_household_networth(conn, org_id, household_id=None,
             "member_count": len(member_ids),
             "member_entity_ids": member_ids,
             "total_holdings_value": totals["total_value"],
+            "net_worth": await _net_worth(conn, org_id, member_ids, totals["total_value"], as_of),
             "currency": "USD",
         }
 
@@ -366,6 +390,7 @@ async def primary_household_networth(conn, org_id, household_id=None,
             "member_count": len(member_ids),
             "member_entity_ids": member_ids,
             "total_holdings_value": totals["total_value"],
+            "net_worth": await _net_worth(conn, org_id, member_ids, totals["total_value"], as_of),
             "currency": "USD",
         })
     return out

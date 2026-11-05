@@ -48,6 +48,8 @@ from schemas.entities import (
     derive_legal_name,
 )
 from services.audit import write_audit_log
+from services.crm_vocab import DETAIL_PREFIX
+from services.entity_writes import EntityWriteError, apply_people_rule, update_entity_row
 from services.database import get_pool
 from services.ownership_read import ownership_edges
 from services.authz import (
@@ -84,6 +86,7 @@ ENTITY_COLUMNS = (
     "sub_type, status, lead_source, relationship_manager_id, tags, linkedin_url, "
     "primary_email, primary_phone, profile_mode, "
     "is_incomplete, created_via, "
+    "date_of_birth, marital_status, maiden_name, date_of_death, "   # CRMDETAIL1 — people
     "valid_from, valid_to, system_from, system_to, created_at, updated_at"
 )
 
@@ -279,6 +282,14 @@ async def create_entity(request: Request, body: EntityCreate):
         if derived:
             legal_name = derived
 
+    # CRMDETAIL1 — a person created with a date of death is deceased and inactive.
+    try:
+        people = apply_people_rule(body.entity_type.value, {"date_of_death": body.date_of_death})
+    except EntityWriteError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if body.date_of_death is not None:
+        body = body.model_copy(update={"status": people["status"], "is_active": people["is_active"]})
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(
@@ -291,11 +302,11 @@ async def create_entity(request: Request, body: EntityCreate):
                     is_active, url, country_code, region_code,
                     sub_type, status, lead_source, relationship_manager_id,
                     tags, linkedin_url, primary_email, primary_phone,
-                    is_incomplete, created_via
+                    is_incomplete, created_via, maiden_name, date_of_death
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                     $12, $13, $14, $15, $16, $17, $18, $19,
-                    $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+                    $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
                 )
                 RETURNING {ENTITY_COLUMNS}
                 """,
@@ -328,6 +339,8 @@ async def create_entity(request: Request, body: EntityCreate):
                 body.primary_phone,
                 body.is_incomplete,
                 body.created_via,
+                body.maiden_name,
+                body.date_of_death,
             )
             await write_audit_log(
                 conn,
@@ -605,6 +618,7 @@ async def _fetch_attributes(conn, org_id, entity_id):
         FROM entity_attributes
         WHERE entity_id = $1 AND org_id = $2
           AND valid_to IS NULL AND system_to IS NULL
+          AND attribute_key NOT LIKE 'detail.%'   -- CRMDETAIL1: typed detail fields have their own panel
         ORDER BY attribute_key
         """,
         entity_id,
@@ -778,86 +792,14 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
                 if derived:
                     updates["legal_name"] = derived
 
-            # Bi-temporal, FK-safe: archive the prior version as a new row with
-            # system_to = now(), then update the live row (stable id) in place.
-            await conn.execute(
-                """
-                INSERT INTO entities (
-                    org_id, entity_type, display_name,
-                    name_prefix, first_name, middle_name, surname, name_suffix,
-                    legal_name, legal_name_overridden, tax_id,
-                    inception_date, end_date, country_of_formation, notes,
-                    is_active, url, country_code, region_code,
-                    sub_type, status, lead_source, relationship_manager_id,
-                    tags, linkedin_url, primary_email, primary_phone, profile_mode,
-                    is_incomplete, created_via,
-                    valid_from, valid_to, system_from, system_to,
-                    created_by, created_at, updated_at
-                )
-                SELECT org_id, entity_type, display_name,
-                       name_prefix, first_name, middle_name, surname, name_suffix,
-                       legal_name, legal_name_overridden, tax_id,
-                       inception_date, end_date, country_of_formation, notes,
-                       is_active, url, country_code, region_code,
-                       sub_type, status, lead_source, relationship_manager_id,
-                       tags, linkedin_url, primary_email, primary_phone, profile_mode,
-                       is_incomplete, created_via,
-                       valid_from, valid_to, system_from, now(),
-                       created_by, created_at, updated_at
-                FROM entities
-                WHERE id = $1 AND org_id = $2
-                  AND valid_to IS NULL AND system_to IS NULL
-                """,
-                entity_id,
-                org_id,
-            )
-
-            editable = (
-                "entity_type",
-                "display_name",
-                "name_prefix",
-                "first_name",
-                "middle_name",
-                "surname",
-                "name_suffix",
-                "legal_name",
-                "legal_name_overridden",
-                "tax_id",
-                "inception_date",
-                "end_date",
-                "country_of_formation",
-                "notes",
-                "is_active",
-                "url",
-                "country_code",
-                "region_code",
-                "sub_type",
-                "status",
-                "lead_source",
-                "relationship_manager_id",
-                "tags",
-                "linkedin_url",
-                "primary_email",
-                "primary_phone",
-                "profile_mode",
-                "is_incomplete",
-            )
-            set_clauses = ["system_from = now()", "updated_at = now()"]
-            params: list = [entity_id, org_id]
-            for field in editable:
-                if field in updates:
-                    params.append(updates[field])
-                    set_clauses.append(f"{field} = ${len(params)}")
-
-            updated = await conn.fetchrow(
-                f"""
-                UPDATE entities SET {', '.join(set_clauses)}
-                WHERE id = $1 AND org_id = $2
-                  AND valid_to IS NULL AND system_to IS NULL
-                RETURNING {ENTITY_COLUMNS}
-                """,
-                *params,
-            )
+            # CRMDETAIL1 — the people rule (date_of_death → deceased + inactive), then the ONE entity write path
+            # (services.entity_writes: archive the prior version with system_to = now(), update the live row, stable
+            # id — Rule 3 system axis).
+            try:
+                updates = apply_people_rule(etype.value if isinstance(etype, EntityType) else str(etype), updates)
+                updated = await update_entity_row(conn, org_id, entity_id, updates, returning=ENTITY_COLUMNS)
+            except EntityWriteError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
             await write_audit_log(
                 conn,
@@ -879,6 +821,10 @@ async def update_entity(request: Request, entity_id: UUID, body: EntityUpdate):
 )
 async def add_attribute(request: Request, entity_id: UUID, body: AttributeCreate):
     require_permission(request, "manage_members")  # AUTHZ1
+    if (body.attribute_key or "").startswith(DETAIL_PREFIX):
+        # CRMDETAIL1 — the 'detail.' keys are the typed detail fields; only PUT /entities/{id}/details writes them.
+        raise HTTPException(status_code=422, detail="keys starting 'detail.' are typed detail fields — edit them "
+                                                    "in the record's Detail fields panel")
     org_id = get_org_id(request)
     pool = await get_pool()
     async with pool.acquire() as conn:

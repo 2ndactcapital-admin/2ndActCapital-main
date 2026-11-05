@@ -1,0 +1,63 @@
+address_type,city,country,entity_id,is_primary,is_seasonal,note,postal_code,season_from_month,season_to_month,state,street1
+primary_residence,Greenwich,US,P1,True,True,Greenwich May–November,06831,5,11,CT,38 Round Hill Road
+primary_residence,Naples,US,P1,False,True,"Naples December–April (Port Royal, owned by Port Royal Residence LLC)",34102,12,4,FL,2950 Galleon Drive
+primary_residence,Greenwich,US,P2,True,True,Greenwich May–November,06831,5,11,CT,38 Round Hill Road
+primary_residence,Naples,US,P2,False,True,"Naples December–April (Port Royal, owned by Port Royal Residence LLC)",34102,12,4,FL,2950 Galleon Drive
+primary_residence,Greenwich,US,P8,True,False,,06831,,,CT,38 Round Hill Road
+primary_residence,Darien,US,P3,True,False,,06820,,,CT,41 Pear Tree Point Road
+primary_residence,Darien,US,P4,True,False,,06820,,,CT,41 Pear Tree Point Road
+business,Stamford,US,P4,False,False,,06902,,,CT,30 Shelburne Road (cardiology practice)
+primary_residence,Darien,US,P9,True,True,Home for the summer,06820,6,8,CT,41 Pear Tree Point Road
+mailing,Providence,US,P9,False,True,"College, September–May",02912,9,5,RI,"Box 4127, 69 Brown Street"
+primary_residence,Darien,US,P10,True,True,Home for the summer,06820,6,8,CT,41 Pear Tree Point Road
+mailing,Hanover,US,P10,False,True,"College, September–May",03755,9,5,NH,"HB 3311, 6 North Main Street"
+primary_residence,Miami,US,P5,True,False,,33131,,,FL,"1450 Brickell Bay Drive, Unit 4101"
+primary_residence,Miami,US,P6,True,False,,33131,,,FL,"1450 Brickell Bay Drive, Unit 4101"
+primary_residence,Miami,US,P11,True,False,,33131,,,FL,"1450 Brickell Bay Drive, Unit 4101"
+primary_residence,Miami,US,P12,True,False,,33131,,,FL,"1450 Brickell Bay Drive, Unit 4101"
+primary_residence,Miami,US,P13,True,False,,33131,,,FL,"1450 Brickell Bay Drive, Unit 4101"
+business,Miami,US,P5,False,False,,33137,,,FL,180 NE 41st Street (gallery)
+business,Miami,US,P6,False,False,,33137,,,FL,"Cipolla Studio, 3250 NE 1st Avenue"
+primary_residence,San Francisco,US,P7,True,True,San Francisco April–November,94115,4,11,CA,2840 Broadway
+primary_residence,Aspen,US,P7,False,True,Aspen December–March (owned by Ajax Peak LLC),81611,12,3,CO,120 Ajax Avenue
+business,San Francisco,US,P7,False,False,,94133,,,CA,"Caldera Ventures, 550 Jackson Street"
+primary_residence,San Francisco,US,P14,True,False,Shared custody — alternate weeks with his mother in Palo Alto,94115,,,CA,2840 Broadway
+primary_residence,Palo Alto,US,P16,True,False,,94301,,,CA,1120 Hamilton Avenue
+business,Greenwich,US,E1,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E1,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E2,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E2,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E3,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E3,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E4,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E5,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E5,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E6,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E7,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E8,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E9,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E10,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E11,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E11,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E12,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E13,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E14,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E14,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E15,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E16,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E17,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E18,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E19,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E20,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E21,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E22,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E23,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E24,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E25,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+business,Greenwich,US,E26,True,False,Administered by the family office,06831,,,CT,"2 Greenwich Office Park, Suite 300"
+registered,Wilmington,US,E26,False,False,,19801,,,DE,"c/o registered agent, 1209 Orange Street"
+business,Greenwich,US,E20,False,False,Property address,06831,,,CT,38 Round Hill Road
+business,Naples,US,E21,False,False,Property address,34102,,,FL,2950 Galleon Drive
+business,Napa,US,E22,False,False,Vineyard and winery,94558,,,CA,4100 Silverado Trail
+business,Aspen,US,E24,False,False,Property address,81611,,,CO,120 Ajax Avenue
+business,Miami,US,E25,False,False,Condo; gallery space at 180 NE 41st Street,33131,,,FL,"1450 Brickell Bay Drive, Unit 4101"

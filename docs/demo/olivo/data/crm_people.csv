@@ -1,0 +1,17 @@
+born,dob,dod,email,first,generation,id,maiden,marital,middle,minor,name,phone,prefix,residence,status,story,surname
+1951,1951-03-19,,dominic.olivo@example.com,Dominic,1,P1,,married,James,,Dominic J. Olivo,+1 203 555 0101,,"Greenwich, CT / Naples, FL",client,"Founder of Olivo Foods (frozen Italian specialties, sold to Northline Foods in 2014). Widowed 2008; remarried 2011. Still chairs the foundation; drives the cars.",Olivo
+1968,1968-09-02,,marguerite.olivo@example.com,Marguerite,1,P2,Meloni,married,Meloni,,Marguerite Meloni Olivo,+1 203 555 0102,,"Greenwich, CT",client,Dominic's second wife; former gallery director. Prenuptial agreement; provided for through the 2019 SLAT.,Olivo
+1976,1976-06-13,,anthony.olivo@example.com,Anthony,2,P3,,married,Dominic,,Anthony D. Olivo,+1 203 555 0103,,"Darien, CT",client,Eldest. Ran Olivo Foods' operations through the sale; chairs the family office and sits on the Dynasty Trust distribution committee.,Olivo
+1978,1978-11-27,,elena.olivo@example.com,Elena,2,P4,Broccoli,married,,,Dr. Elena Olivo,+1 203 555 0104,Dr.,"Darien, CT",client,Anthony's wife; interventional cardiologist at a Stamford hospital.,Olivo
+1979,1979-04-08,,francesca@cipollastudio.example.com,Francesca,2,P5,,married,,,Francesca Olivo-Cipolla,+1 305 555 0105,,"Miami, FL",client,Middle child. Contemporary-art dealer with a gallery in Miami; advises the family's art holdings.,Olivo-Cipolla
+1977,1977-01-22,,mateo@cipollastudio.example.com,Mateo,2,P6,,married,,,Mateo Cipolla,+1 305 555 0106,,"Miami, FL",client,Francesca's husband; architect (Cipolla Studio).,Cipolla
+1983,1983-08-30,,michael@calderavc.example.com,Michael,2,P7,,divorced,Thomas,,Michael T. Olivo,+1 415 555 0107,,"San Francisco, CA / Aspen, CO",client,Youngest of the first marriage. Venture investor in San Francisco (GP of Caldera Ventures). Divorced 2021.,Olivo
+2013,2013-05-16,,,Giulia,2,P8,,single,,True,Giulia Olivo,,,"Greenwich, CT",client,Dominic and Marguerite's daughter. Minor; assets held in a 2503(c) trust.,Olivo
+2004,2004-02-11,,sofia.olivo@example.com,Sofia,3,P9,,single,,,Sofia Olivo,+1 203 555 0109,,"Providence, RI",client,Anthony & Elena's daughter; college senior (economics).,Olivo
+2007,2007-10-05,,luca.olivo@example.com,Luca,3,P10,,single,,,Luca Olivo,+1 203 555 0110,,"Hanover, NH",client,Anthony & Elena's son; college freshman.,Olivo
+2009,2009-07-24,,,Isabel,3,P11,,single,,True,Isabel Cipolla,,,"Miami, FL",client,Francesca & Mateo's daughter.,Cipolla
+2013,2013-12-03,,,Nico,3,P12,,single,,True,Nico Cipolla,,,"Miami, FL",client,Francesca & Mateo's son (twin).,Cipolla
+2013,2013-12-03,,,Gabriel,3,P13,,single,,True,Gabriel Cipolla,,,"Miami, FL",client,Francesca & Mateo's son (twin).,Cipolla
+2012,2012-03-28,,,Theo,3,P14,,single,,True,Theo Olivo,,,"San Francisco, CA",client,Michael's son; shared custody.,Olivo
+1953,1953-10-14,2008-02-09,,Theresa,1,P15,Zucchini,married,Zucchini,,Theresa Zucchini Olivo,,,"Greenwich, CT",deceased,"Dominic's first wife, mother of Anthony, Francesca and Michael. Died 2008; her estate funded the Theresa Olivo Family Trust.",Olivo
+1985,1985-06-07,,claire.porcari@example.com,Claire,2,P16,,divorced,,,Claire Porcari,+1 650 555 0116,,"Palo Alto, CA",contact,"Michael's former wife (divorced 2021), Theo's mother; shared custody. Not a client — contact for Theo's trust and school matters only.",Porcari

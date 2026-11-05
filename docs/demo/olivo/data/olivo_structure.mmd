@@ -1,0 +1,136 @@
+flowchart TB
+  subgraph G1[Generation 1]
+    P1([Dominic 1951])
+    P2([Marguerite 1968])
+  end
+  subgraph G2[Generation 2]
+    P3([Anthony 1976])
+    P4([Elena 1978])
+    P5([Francesca 1979])
+    P6([Mateo 1977])
+    P7([Michael 1983])
+    P8([Giulia 2013])
+  end
+  subgraph G3[Generation 3]
+    P9([Sofia 2004])
+    P10([Luca 2007])
+    P11([Isabel 2009])
+    P12([Nico 2013])
+    P13([Gabriel 2013])
+    P14([Theo 2012])
+  end
+  E1[Family Office LLC<br/>$2.2M]
+  E2[OH GP LLC<br/>$0.8M]
+  E3[[Olivo Holdings LP<br/>$161.3M]]
+  E4{{Dominic Revocable Trust<br/>$184.9M}}
+  E5{{2014 Dynasty Trust<br/>$185.1M}}
+  E6{{Marguerite 2019 SLAT<br/>$27.7M}}
+  E7{{DJO 2021 GRAT<br/>$24.4M}}
+  E8{{Theresa Family Trust<br/>$30.0M}}
+  E9{{Giulia 2503(c) Trust<br/>$2.1M}}
+  E10[AOF Investments LLC<br/>$27.1M]
+  E11{{AO Descendants Trust<br/>$5.4M}}
+  E12[Cipolla Olivo Holdings<br/>$36.0M]
+  E13{{Cipolla 2020 Family Trust<br/>$3.6M}}
+  E14[MTO Capital LLC<br/>$45.4M]
+  E15{{Theo 2020 Trust<br/>$1.9M}}
+  E16(Family Foundation<br/>$45.0M)
+  E17(Giving Fund (DAF)<br/>$6.1M)
+  E18(2016 CRUT<br/>$11.1M)
+  E19{{2012 ILIT<br/>$4.1M}}
+  E20[Round Hill Road LLC<br/>$14.5M]
+  E21[Port Royal Residence LLC<br/>$5.7M]
+  E22[Stag's Hollow Vineyard<br/>$26.3M]
+  E23[Commercial RE LLC<br/>$24.0M]
+  E24[Ajax Peak LLC<br/>$5.4M]
+  E25[Brickell Bay 41 LLC<br/>$5.9M]
+  E26[Art Holdings LLC<br/>$26.4M]
+  P1 -->|40%| E1
+  P3 -->|20%| E1
+  P5 -->|20%| E1
+  P7 -->|20%| E1
+  E1 -->|100%| E2
+  E2 -->|0.5%| E3
+  E4 -->|34.5%| E3
+  E5 -->|30%| E3
+  E10 -->|10%| E3
+  E12 -->|10%| E3
+  E14 -->|10%| E3
+  E6 -->|5%| E3
+  P1 -->|100%| E4
+  E4 -->|100%| E20
+  E6 -->|100%| E21
+  E3 -->|80%| E22
+  E10 -->|10%| E22
+  E12 -->|10%| E22
+  E8 -->|100%| E23
+  E14 -->|100%| E24
+  E12 -->|100%| E25
+  E3 -->|60%| E26
+  E12 -->|25%| E26
+  E4 -->|15%| E26
+  P3 -->|50%| E10
+  P4 -->|50%| E10
+  P5 -->|60%| E12
+  P6 -->|40%| E12
+  P7 -->|100%| E14
+  E5 -.->|benefits| P3
+  E5 -.->|benefits| P5
+  E5 -.->|benefits| P7
+  E5 -.->|benefits| P9
+  E5 -.->|benefits| P10
+  E5 -.->|benefits| P11
+  E5 -.->|benefits| P12
+  E5 -.->|benefits| P13
+  E5 -.->|benefits| P14
+  E6 -.->|benefits| P2
+  E6 -.->|benefits| P8
+  E7 -.->|benefits| P1
+  E7 -.->|benefits| E5
+  E8 -.->|benefits| P3
+  E8 -.->|benefits| P5
+  E8 -.->|benefits| P7
+  E9 -.->|benefits| P8
+  E11 -.->|benefits| P9
+  E11 -.->|benefits| P10
+  E13 -.->|benefits| P11
+  E13 -.->|benefits| P12
+  E13 -.->|benefits| P13
+  E15 -.->|benefits| P14
+  E18 -.->|benefits| P1
+  E18 -.->|benefits| E16
+  E19 -.->|benefits| P3
+  E19 -.->|benefits| P5
+  E19 -.->|benefits| P7
+  E19 -.->|benefits| P8
+  class E1 llc
+  class E2 llc
+  class E3 lp
+  class E4 trust
+  class E5 trust
+  class E6 trust
+  class E7 trust
+  class E8 trust
+  class E9 trust
+  class E10 llc
+  class E11 trust
+  class E12 llc
+  class E13 trust
+  class E14 llc
+  class E15 trust
+  class E16 charity
+  class E17 charity
+  class E18 charity
+  class E19 trust
+  class E20 re
+  class E21 re
+  class E22 re
+  class E23 re
+  class E24 re
+  class E25 re
+  class E26 re
+  classDef llc fill:#e9eef4,stroke:#4a5d73,color:#1f2a37
+  classDef lp fill:#dfe7f0,stroke:#2f4a66,color:#1f2a37,stroke-width:2px
+  classDef trust fill:#f3ecdf,stroke:#8a6d2f,color:#3a2e14
+  classDef re fill:#e6efe6,stroke:#4b7a4b,color:#1f3320
+  classDef charity fill:#f1e4ea,stroke:#8a3c5e,color:#3a1a28

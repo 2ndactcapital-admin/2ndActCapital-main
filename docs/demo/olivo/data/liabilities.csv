@@ -1,0 +1,10 @@
+owner_id,liability,kind,amount_usd,terms,notes
+E5,Goldman Sachs — securities-backed line of credit,Secured credit line,20000000,SOFR + 1.10%,Collateral: Northline shares in A6; used for Holdings LP capital calls and the Naples purchase.
+E21,Coastal Bank — mortgage (Naples),Mortgage,3500000,"5.35% fixed, 2049",
+E22,Farm Credit West — agricultural term loan,Term loan,6000000,"6.10%, 2032",Secured by the vineyard
+E23,Coastal Bank — commercial mortgage (3 properties),Mortgage,14000000,"4.80% fixed, 2033",Cross-collateralised
+E24,First Western — mortgage (Aspen),Mortgage,2400000,"6.25% fixed, 2050",
+E25,Coastal Bank — mortgage (Miami condo),Mortgage,1900000,"5.90% fixed, 2047",
+E26,Private bank — art-secured credit line,Secured credit line,5000000,SOFR + 1.75%,Secured by 11 works; drawn for the 2025 Marshall acquisition
+E3,Harbor Point Partners IV — unfunded commitment,Off-balance-sheet commitment,8000000,,Callable through 2027
+E14,Caldera Ventures Fund II — unfunded commitment,Off-balance-sheet commitment,4000000,,Callable through 2028
