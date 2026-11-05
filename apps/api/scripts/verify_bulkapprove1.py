@@ -192,10 +192,61 @@ def self_static(check, find):
           "client-side default list", "")
 
 
+def _allowed(defn: str) -> list[str]:
+    return re.findall(r"'([^']+)'::text", defn or "")
+
+
+#: the maker column each maker-checker table compares approved_by against (held-away records who ENTERED it)
+MAKER_CHECKER_COLS = {"public.household_authority": "maker_id", "public.account_authority_settings": "maker_id",
+                      "public.held_away_imports": "entered_by"}
+
+
+def lit_in(cons: dict, table: str, col: str, want: set) -> tuple[bool, list]:
+    """The literals ``want`` are catalog-legal for ``table.col``. An EMPTY definition list FAILS (fix 1: it used
+    to pass — `not defs or …` — which is how five vocabulary checks passed on zero constraints read)."""
+    defs = [d for (t, _n), (c, d) in cons.items() if t == table and c == "c" and col in d]
+    allowed = set().union(*(_allowed(d) for d in defs)) if defs else set()
+    return bool(defs and want and want <= allowed), defs
+
+
+def maker_checker_checks(cons: dict, table: str, maker: str) -> list[str]:
+    """CHECKs on ``table`` that refuse approved_by = the maker column (normalised definition, not a name match)."""
+    out = []
+    for (t, n), (c, d) in cons.items():
+        flat = re.sub(r"[()\s]", "", d or "")
+        if t == table and c == "c" and (f"approved_by<>{maker}" in flat or f"{maker}<>approved_by" in flat):
+            out.append(n)
+    return out
+
+
+def self_catalog_rules(check, find):
+    """fix 1: the catalog helpers on synthetic definitions — an empty set never passes; bytes kinds never match."""
+    ok, _ = lit_in({}, "public.household_authority", "status", {"draft"})
+    check(ok is False, "lit(): NO definition found → FAIL (empty never passes)", f"{ok}")
+    good = {("public.household_authority", "s"): ("c", "CHECK ((status = ANY (ARRAY['draft'::text, 'approved'::text])))")}
+    check(lit_in(good, "public.household_authority", "status", {"draft"})[0] is True, "lit(): a legal literal passes", "")
+    check(lit_in(good, "public.household_authority", "status", {"bogus"})[0] is False, "lit(): an illegal literal "
+          "fails", "")
+    as_bytes = {k: (b"c", d) for k, (_c, d) in good.items()}
+    check(lit_in(as_bytes, "public.household_authority", "status", {"draft"})[0] is False, "lit(): an undecoded "
+          "bytes kind (the original defect) is not read as a CHECK — and now fails rather than passes", "")
+    mc = {("public.household_authority", "x_maker_checker_chk"):
+          ("c", "CHECK (((approved_by IS NULL) OR (approved_by <> maker_id)))"),
+          ("public.held_away_imports", "y_maker_checker_chk"):
+          ("c", "CHECK (((approved_by IS NULL) OR (approved_by <> entered_by)))")}
+    check(maker_checker_checks(mc, "public.household_authority", "maker_id") == ["x_maker_checker_chk"],
+          "maker ≠ checker found by definition (maker_id)", "")
+    check(maker_checker_checks(mc, "public.held_away_imports", "entered_by") == ["y_maker_checker_chk"],
+          "maker ≠ checker found by definition (entered_by)", "")
+    check(maker_checker_checks(mc, "public.account_authority_settings", "maker_id") == [],
+          "maker ≠ checker: a table without the CHECK yields nothing (so the per-table check FAILS)", "")
+
+
 def self_checks(check, find):
     self_task1(check, find)
     self_routes(check, find)
     self_static(check, find)
+    self_catalog_rules(check, find)
 
 
 def run_cmd(args, cwd, timeout=600, env=None):
@@ -444,10 +495,6 @@ async def cleanup_only(conn) -> int:
 ACCOUNT_VALUES: dict[str, str] = {}
 
 
-def _allowed(defn: str) -> list[str]:
-    return re.findall(r"'([^']+)'::text", defn or "")
-
-
 async def y_role_is_real(conn):
     section("[Y] The verify's DB role is the app role, not a bypass")
     r = await conn.fetchrow("SELECT current_user AS u, rolbypassrls FROM pg_roles WHERE rolname = current_user")
@@ -461,17 +508,23 @@ async def y_catalog(conn):
     for t in ("public.accounts", "public.households", "public.entities", "public.household_authority",
               "public.account_authority_settings", "public.held_away_imports", "public.held_away_sources",
               "public.audit_log", "public.users", "public.organizations"):
-        for r in await platform(conn, "SELECT conname, contype, pg_get_constraintdef(oid) AS d FROM pg_constraint "
-                                      "WHERE conrelid = $1::regclass AND contype IN ('p', 'c', 'u', 'f')", t):
+        # contype is Postgres "char", which asyncpg decodes as BYTES (b'c'); cast to text so it compares to "c"
+        # (fix 1: the bytes value never equalled "c", so every kind counted 0 although rows WERE returned).
+        for r in await platform(conn, "SELECT conname, contype::text AS contype, pg_get_constraintdef(oid) AS d "
+                                      "FROM pg_constraint WHERE conrelid = $1::regclass "
+                                      "AND contype IN ('p', 'c', 'u', 'f')", t):
             cons[(t, r["conname"])] = (r["contype"], r["d"])
     kinds = {k: sum(1 for (_t, _n), (c, _d) in cons.items() if c == k) for k in "pcuf"}
     print(f"[INFO] {len(cons)} constraints read: {kinds}")
+    odd = sorted({type(c).__name__ for (c, _d) in cons.values()} - {"str"})
+    check(bool(cons and not odd), "constraint kinds decode as text", f"non-str kinds: {odd}")
     check(bool(kinds["c"] > 0 and kinds["f"] > 0 and kinds["p"] > 0), "CHECK, FK and PK constraints were read", f"{kinds}")
+    no_pk = [t for t in {t for (t, _n) in cons} if not any(tt == t and c == "p" for (tt, _n), (c, _d) in cons.items())]
+    check(bool(len({t for (t, _n) in cons}) == 10 and not no_pk), "every one of the 10 tables has constraints read, "
+          "each with its PK", f"tables {len({t for (t, _n) in cons})}, without PK {no_pk}")
 
     def lit(table, col, want):
-        defs = [d for (t, _n), (c, d) in cons.items() if t == table and c == "c" and col in d]
-        allowed = set().union(*(_allowed(d) for d in defs)) if defs else set()
-        return bool(not defs or want <= allowed), defs
+        return lit_in(cons, table, col, want)
 
     for table, col, want in (("public.account_authority_settings", "custody", {"integrated"}),
                              ("public.account_authority_settings", "authority_override", {"advise"}),
@@ -480,10 +533,9 @@ async def y_catalog(conn):
                              ("public.held_away_imports", "status", {"draft", "approved", "rejected"})):
         ok, defs = lit(table, col, want)
         check(ok, f"{table}.{col}: the literals this run writes {sorted(want)} are catalog-legal", f"{defs[:2]}")
-    mc = [n for (t, n), (c, d) in cons.items() if c == "c" and "approved_by" in d and ("maker_id" in d or "entered_by"
-                                                                                        in d)]
-    check(bool(len(mc) >= 3), "maker ≠ checker is a CHECK on household_authority, account_authority_settings and "
-          "held_away_imports", f"{mc}")
+    for table, maker in MAKER_CHECKER_COLS.items():
+        mc = maker_checker_checks(cons, table, maker)
+        check(bool(len(mc) == 1), f"maker ≠ checker is a CHECK on {table} (approved_by <> {maker})", f"{mc}")
     for col in ("registration_type", "tax_status", "custodian_code"):
         defs = [d for (t, _n), (c, d) in cons.items() if t == "public.accounts" and c == "c" and col in d]
         vals = _allowed(defs[0]) if defs else []
