@@ -20,7 +20,7 @@ def acct_number(a):
     seed = sum(ord(c) for c in a["id"]) * 7919
     return f"{(seed % 900000) + 100000}{last}"
 
-w("""# HollisMuse — the Olivo family: permanent demo data entry, v1 (2026-11-04)
+w("""# HollisMuse — the Olivo family: permanent demo data entry, v2 (2026-11-04)
 
 You are **HollisMuse**, driving a real browser against the **live production**
 Hollisworks app (`https://2ndactcapital.com`, tenant **2nd Act Capital**). This
@@ -82,13 +82,37 @@ later phases depend on earlier ones.
 
 ---
 
+## v2 — what changed after crmdetail1 (read this)
+
+crmdetail1 added relationship types, trust / entity detail fields, maiden name, date of death, the minor flag,
+liabilities and demo protection. Its step-by-step check found these **known gaps** — do not report them as new
+findings; follow the workaround and move on:
+
+| Gap | Affects | Workaround in this pass |
+|---|---|---|
+| GAP-CRM-01 no "client / contact" status | B.1 status | family → **active**; Claire Porcari → **active** + tag `contact` |
+| GAP-CRM-02 no marital-status field | B.1 | skip the field; note once |
+| GAP-CRM-03 fixed LLC sub-type list | D.20–D.26 | pick the closest sub-type (or none); put the intended one in the record's notes |
+| GAP-CRM-04 no fund_role / ein_status / policy fields | D.3, D.16, D.19 | put those values in the record's notes |
+| GAP-CRM-05 org admin cannot write ownership | F | **super admin** enters phase F |
+| GAP-CRM-06 support staff cannot edit CRM notes / addresses | B.3, C (Cipolla) | support staff tries **B.3.1 once** (expect refused, record it); the **org admin** enters the rest |
+| GAP-PORT-01 manual positions only for securities in the master | I | enter only **listed** tickers; skip mutual funds, munis, cash, private, options, crypto (⏭ GAP-PORT-01) |
+| GAP-PORT-02 integrated (Altruist) accounts have no positions path | I (A7, A9, A12, A14, A15, A20, A24, A29) | ⏭ GAP-PORT-02 |
+| GAP-PORT-03 no direct-asset entry | K | ⏭ GAP-PORT-03 |
+| GAP-PORT-04 no private-fund / commitment entry | J | ⏭ GAP-PORT-04 |
+| GAP-PORT-05 net worth needs a rollup run | N | if no "recalculate" control exists, record what shows and stop |
+
+So this pass loads the **CRM side completely** (A–H, L) and the listed holdings on non-integrated accounts; J, K
+and most of I wait for a follow-up sprint. Because Muse searches before creating, the next pass completes the
+same family without duplicates.
+
 ## 1 · Personas — who does what
 
 | Persona | Login | Role in this pass |
 |---|---|---|
-| **Org admin** | `jpl991723@gmail.com` | **Maker.** Creates every CRM record, household, account, asset, liability. |
+| **Org admin** | `jpl991723@gmail.com` | **Maker.** Creates every CRM record, household, account, liability, notes and addresses (GAP-CRM-06). |
 | **Super admin** | `jlarizza@culmina.io` | **Checker.** Approves maker-checker items (non-default authority, held-away imports, valuations if gated). Also maps securities if the master needs a Super Admin. |
-| **Support staff** | `jpl991722@gmail.com` | Enters the **notes** in phase B.3 and the **addresses** for the Cipolla branch (C.3). Record anything this role is refused. |
+| **Support staff** | `jpl991722@gmail.com` | Tries B.3.1 once (expected refused — GAP-CRM-06) and does the read-only checks in O.2. |
 | **Member A** | `jpl991721@gmail.com` | Read-only checks in phase O. Do **not** link this login to an Olivo person unless the developer has said to (open decision). |
 
 ---
@@ -105,7 +129,7 @@ w("")
 # ── B: people ──
 w("## B · People\n")
 w("**B.1** Create each person as an individual. Use the name parts exactly (prefix, first, middle, surname). Date of birth as given. "
-  "Status: `client` for family members, `contact` for Claire Porcari. Theresa Zucchini Olivo is **deceased** — enter her date of death "
+  "Status: **active** for everyone (GAP-CRM-01); add tag `contact` to Claire Porcari; skip marital status (GAP-CRM-02). Theresa Zucchini Olivo is **deceased** — enter her date of death "
   "if the form offers it (crmdetail1), otherwise mark her inactive and report.\n")
 w("| Step | Person | Prefix | First | Middle | Surname | Born | Died | Maiden | Marital | Email | Phone | Status |")
 w("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
@@ -113,7 +137,7 @@ for i, p in enumerate(d["people"], 1):
     w(f"| B.1.{i} | {p['name']} | {p.get('prefix','')} | {p['first']} | {p.get('middle','')} | {p['surname']} | {p['dob']} | {p.get('dod','')} | "
       f"{p.get('maiden','')} | {p['marital']} | {p.get('email','')} | {p.get('phone','')} | {p['status']}{' (minor)' if p.get('minor') else ''} |")
 w("\n**B.2** For each minor (born after 2008-11-04), check the record shows them as a minor (or age under 18). Record what the app shows.\n")
-w("**B.3** (as **support staff**) Add one note per person with the text below (note type: general / other).\n")
+w("**B.3** (as **org admin**; support staff tries B.3.1 first — GAP-CRM-06) Add one note per person with the text below (note type: general / other).\n")
 w("| Step | Person | Note |\n|---|---|---|")
 for i, p in enumerate(d["people"], 1):
     w(f"| B.3.{i} | {p['name']} | {p['story']} |")
@@ -122,7 +146,7 @@ w("")
 # ── C: addresses ──
 w("## C · Addresses (including seasonal homes)\n")
 w("Where a row says **seasonal**, use the CRM's seasonal-address feature with the months shown. Exactly one primary address per person or entity. "
-  "C.3 (the Cipolla branch: Francesca, Mateo, Isabel, Nico, Gabriel) is done by **support staff**; the rest by the org admin.\n")
+  "All by the org admin (GAP-CRM-06).\n")
 w("| Step | Record | Type | Address | Primary | Seasonal | Note |\n|---|---|---|---|---|---|---|")
 for i, a in enumerate(d["addresses"], 1):
     s = f"{MON[a['season_from_month']-1]}–{MON[a['season_to_month']-1]}" if a["is_seasonal"] else ""
@@ -155,7 +179,7 @@ w("")
 
 # ── F: ownership ──
 w("## F · Ownership (percentages)\n")
-w("Enter each as ownership with the percentage and the interest type in the note. The percentages of each owned entity add to 100.\n")
+w("**As super admin (GAP-CRM-05).** Enter each as ownership with the percentage and the interest type in the note. The percentages of each owned entity add to 100.\n")
 w("| Step | Owner | Owns | % | Interest |\n|---|---|---|---|---|")
 for i, o in enumerate(d["ownership"], 1):
     w(f"| F.{i} | {names[o['owner_id']]} | {names[o['owned_id']]} | {o['pct']} | {o['interest']} |")
@@ -209,14 +233,14 @@ the Nasdaq-100. If one exists, map the position to it and record which (its CUSI
 """)
 
 # ── J/K: private investments & direct assets ──
-w("## J · Private investments and commitments\n")
+w("## J · Private investments and commitments — ⏭ GAP-PORT-04 in this pass (kept for the next pass)\n")
 w("Lines in phase I marked *private / manual asset* that are funds or direct deals (Harbor Point IV, Thornfield II, Stillwater, Brightwater, "
   "New England Harbor FC, the 2nd Act Marketplace SPV, Caldera Fund II, Luma, Halcyon, Pressbox) are entered as **private investments** with "
   "their value as the latest valuation. Commitments: **Harbor Point Partners IV** — $8,000,000 unfunded (Olivo Holdings LP); "
   "**Caldera Ventures Fund II** — $4,000,000 unfunded (MTO Capital LLC). Enter those on the commitments screen if it exists.\n")
 w("**J.SPV** The SPV line names a 2nd Act Marketplace deal (Meridian Logistics). If the marketplace has no such deal, enter it as a private "
   "investment and say so — do not create a marketplace deal.\n")
-w("## K · Direct assets (real estate, collectibles, operating business, cash)\n")
+w("## K · Direct assets — ⏭ GAP-PORT-03 in this pass (kept for the next pass)\n")
 w("Enter each as an asset owned by the entity, with its value as a valuation (method: appraisal / estimate as the note says) and the cost basis.\n")
 w("| Step | Owner | Asset | Class | Sub-class | Value | Cost basis | Note |\n|---|---|---|---|---|---|---|---|")
 for i, x in enumerate(d["direct_assets"], 1):
@@ -263,5 +287,5 @@ Use the test plan's finding format (ID `MUSE-OLIVO-<step>-<nn>`). End with:
 4. The reconciliation table (N) filled in.
 5. Your top 5 "an adviser onboarding a family like this would trip over this" observations.
 """)
-open(f"{OUT}/HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md", "w").write("\n".join(L))
+open(f"{OUT}/HOLLISMUSE_OLIVO_DATA_ENTRY_v2.md", "w").write("\n".join(L))
 print(len(L), "lines")

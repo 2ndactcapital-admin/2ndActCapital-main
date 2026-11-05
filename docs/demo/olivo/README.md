@@ -27,7 +27,7 @@ Surnames: Olivo (main family), Meloni, Broccoli, Cipolla, Zucchini, Porcari.
 ```
 docs/demo/olivo/
   README.md                              this file
-  HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md      the step-by-step entry plan HollisMuse follows (phases A–O)
+  HOLLISMUSE_OLIVO_DATA_ENTRY_v2.md      the step-by-step entry plan HollisMuse follows (phases A–O)
   olivo_family.html                      one-page view of the family (structure, net worth, accounts)
   data/
     olivo_family.json                    base dataset (people, entities, ownership, accounts, holdings, assets, liabilities)
@@ -40,7 +40,7 @@ docs/demo/olivo/
   generator/
     build.py      → data/olivo_family.json, base CSVs, _totals.json, olivo_structure.mmd (reconciles net worth bottom-up)
     enrich.py     → data/olivo_crm.json, crm_*.csv, holdings_secmaster.csv
-    muse_plan.py  → HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md
+    muse_plan.py  → HOLLISMUSE_OLIVO_DATA_ENTRY_v2.md
     page.py       → olivo_family.html
 ```
 
@@ -72,7 +72,7 @@ Foods (NLF) is fictional, no price history.
 1. Confirm the four personas exist in the target tenant (org admin = maker,
    super admin = checker, support staff, member) — §1 of the Muse plan. For
    another tenant, change the logins and the app URL at the top of the plan.
-2. Give HollisMuse `HOLLISMUSE_OLIVO_DATA_ENTRY_v1.md`. It searches before
+2. Give HollisMuse `HOLLISMUSE_OLIVO_DATA_ENTRY_v2.md`. It searches before
    creating, so a **re-load completes a partial load** instead of duplicating.
 3. Every record is tagged **`demo-olivo`**. Clean-up scripts and verify
    teardowns never delete `demo-*` rows (crmdetail1). Throwaway test rows use
@@ -86,14 +86,6 @@ Foods (NLF) is fictional, no price history.
 the records by the `demo-olivo` tag and the `Olivo Family` household, and
 remove them by id with the documented privileged path — the demo protection
 guard must be lifted explicitly for that run.
-
-## Protection rule (crmdetail1)
-Every Olivo record is tagged `demo-olivo`. A record tagged `demo-*`, or a household whose members are all
-demo-tagged, can never be deleted by a script: the database's BEFORE DELETE guard refuses it in a real org (the
-fixture path `crm.demo_teardown = 'fixture'` works for `is_test` orgs only), `_verify_cleanup` and the MUSE removal
-scripts refuse any plan that touches it, and the app refuses to delete the demo household. "Removing it" therefore
-means retiring / editing in the app; there is no privileged path for a real org's demo rows. See
-`docs/demo/README.md`.
 
 ## Decisions still open (2026-11-04)
 - Which tenant hosts the demo (2nd Act's book, tagged and non-billable, vs a
