@@ -1,5 +1,5 @@
 {
- "app_route_count": 835,
+ "app_route_count": 838,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -16058,6 +16058,76 @@
    "name": "reject",
    "note": "",
    "path": "/api/v1/authority/changes/{change_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_authority",
+     "approve_held_away",
+     "view_authority",
+     "view_held_away"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.approvals",
+   "name": "pending",
+   "note": "",
+   "path": "/api/v1/approvals/bulk",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(view_authority|approve_authority|view_held_away|approve_held_away)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_authority",
+     "approve_held_away",
+     "view_authority",
+     "view_held_away"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.approvals",
+   "name": "summary",
+   "note": "",
+   "path": "/api/v1/approvals/summary",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(approve_authority|approve_held_away)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_authority",
+     "approve_held_away"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.approvals",
+   "name": "decide",
+   "note": "",
+   "path": "/api/v1/approvals/bulk",
    "public": false,
    "write": true
   },

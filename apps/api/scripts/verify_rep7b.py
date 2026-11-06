@@ -172,9 +172,138 @@ def self_routes(check, find):
           f"{drifted[:5]}")
 
 
+# what each live cell must do on every path (Task 1b) — stated HERE, independently of services/authority.py
+TRIGGERS = ("join", "model_change", "drift", "cash_flow", "manual", "harvest")
+MODEL = {"join", "change_model", "settings", "transition", "harvest", *(f"proposal:{t}" for t in TRIGGERS)}
+EXEC = {"execute", "instructions", "route"}
+EXPECTED = {
+    ("read_only", "integrated"): (set(), ()), ("read_only", "other_custodian"): (set(), ()),
+    ("read_only", "outside"): (set(), ()),
+    ("advise", "integrated"): ({"one_off"} | EXEC, ("member", "other_adviser")),
+    ("advise", "other_custodian"): ({"one_off"} | EXEC, ("member", "other_adviser")),
+    ("advise", "outside"): ({"one_off"} | EXEC, ("member", "other_adviser")),
+    # rep9 fix 1 — rep8 added the 'options' (options-sleeve proposal) path: managed × integrated / other_custodian only
+    ("managed", "integrated"): (MODEL | {"options"} | EXEC, ("custodian_desk", "broker", "member", "other_adviser",
+                                                             "trader")),
+    ("managed", "other_custodian"): (MODEL | {"options"} | EXEC, ("broker", "trader", "member", "other_adviser")),
+    ("managed", "outside"): (set(), ()),
+}
+
+#: the migrated default, stated here (y_task1 asserts services.authority.default_for equals it)
+DEFAULT_HELD_AWAY, DEFAULT_PLATFORM = ("read_only", "outside"), ("managed", "integrated")
+#: every real account's EFFECTIVE authority / custody, resolved in SQL independently of services/authority.py: the
+#: latest approved, live, in-effect account settings row, else the household's, else the migrated default
+#: (bulkapprove1 fix 1 — replaces "every real account is on the default", a check frozen against live state)
+EFFECTIVE_SQL = """
+SELECT a.id, a.org_id, a.account_number_masked, a.is_held_away,
+       s.id AS settings_id, s.authority_override, s.custody AS s_custody,
+       h.id AS household_authority_id, h.authority AS h_authority
+FROM public.accounts a
+LEFT JOIN LATERAL (SELECT x.id, x.authority_override, x.custody FROM public.account_authority_settings x
+                   WHERE x.org_id = a.org_id AND x.account_id = a.id AND x.status = 'approved'
+                     AND x.system_to IS NULL AND x.effective_from <= CURRENT_DATE
+                   ORDER BY x.decided_at DESC, x.created_at DESC LIMIT 1) s ON true
+LEFT JOIN LATERAL (SELECT y.id, y.authority FROM public.household_authority y
+                   WHERE y.org_id = a.org_id AND y.household_id = a.household_id AND y.status = 'approved'
+                     AND y.system_to IS NULL AND y.effective_from <= CURRENT_DATE
+                   ORDER BY y.decided_at DESC, y.created_at DESC LIMIT 1) h ON true
+WHERE NOT (a.org_id = ANY($1::uuid[])) AND a.valid_to IS NULL AND a.system_to IS NULL
+ORDER BY a.account_number_masked, a.id"""
+
+
+def expected_effective(r: dict) -> dict:
+    """The rule that applies to one account row of EFFECTIVE_SQL."""
+    d_auth, d_cust = DEFAULT_HELD_AWAY if r["is_held_away"] else DEFAULT_PLATFORM
+    if r.get("settings_id") and r.get("authority_override"):
+        auth, src = r["authority_override"], "account"
+    elif r.get("household_authority_id"):
+        auth, src = r["h_authority"], "household"
+    else:
+        auth, src = d_auth, "default"
+    cust = r["s_custody"] if r.get("settings_id") else d_cust
+    sid = str(r["settings_id"]) if r.get("settings_id") else None
+    hid = str(r["household_authority_id"]) if r.get("household_authority_id") else None
+    return {"authority": auth, "custody": cust, "authority_source": src, "settings_id": sid,
+            "household_authority_id": hid, "on_default": src == "default" and sid is None,
+            "is_held_away": bool(r["is_held_away"])}
+
+
+def authority_rule_breaks(acct: dict, exp: dict, path_allowed, all_paths, all_executors) -> list[str]:
+    """Every way the loaded account ``acct`` departs from the rule that applies to it (``exp``): its effective
+    authority / custody / source rows, then every path and every (exec path, executor) allowed / refused exactly as
+    the independent table EXPECTED says. An account on the migrated default is also held to rep7's rule as before
+    (allowed iff not held-away; never a one-off). Empty = it behaves exactly as its effective authority says."""
+    out = []
+    for k in ("authority", "custody", "settings_id", "household_authority_id"):
+        got = acct.get(k)
+        got = str(got) if got is not None else None
+        if got != exp[k]:
+            out.append(f"{k}: loader {got!r} ≠ rule {exp[k]!r}")
+    cell = EXPECTED.get((exp["authority"], exp["custody"]))
+    if cell is None:
+        return out + [f"no rule-table cell for {(exp['authority'], exp['custody'])}"]
+    paths, execs = cell
+    for p in all_paths:
+        if path_allowed(acct, p) != (p in paths):
+            out.append(f"path {p}: {'allowed' if p not in paths else 'refused'} against the rule")
+        if p in EXEC:
+            for ex in all_executors:
+                if path_allowed(acct, p, ex) != (p in paths and ex in execs):
+                    out.append(f"path {p} / executor {ex} against the rule")
+        if exp["on_default"] and path_allowed(acct, p) != ((not exp["is_held_away"]) if p != "one_off" else False):
+            out.append(f"default account: path {p} differs from rep7's rule")
+    return out
+
+
+def self_effective_rule(check, find):
+    """bulkapprove1 fix 1 — the real-account rule, on FIXTURE accounts in memory (no DB): it holds for an account on
+    its approved settings and on the default, and FAILS the moment one account's effective authority is mis-applied."""
+    if str(API_DIR) not in sys.path:
+        sys.path.insert(0, str(API_DIR))
+    from services import authority as AU  # pure: no DB, no settings
+
+    def acct_of(exp, **over):   # what the real loader attaches (AU._compose's shape), optionally mis-applied
+        return {"id": "fixture", "is_held_away": exp["is_held_away"], "account_number_masked": "****fx01",
+                "authority": exp["authority"], "custody": exp["custody"], "authority_source": exp["authority_source"],
+                "settings_id": exp["settings_id"], "household_authority_id": exp["household_authority_id"], **over}
+
+    brk = lambda a, e: authority_rule_breaks(a, e, AU.path_allowed, AU.ALL_PATHS, AU.ALL_EXECUTORS)  # noqa: E731
+    adv = expected_effective({"is_held_away": True, "settings_id": "s-fx", "authority_override": "advise",
+                              "s_custody": "other_custodian", "household_authority_id": None, "h_authority": None})
+    dflt = expected_effective({"is_held_away": True, "settings_id": None, "authority_override": None,
+                               "s_custody": None, "household_authority_id": None, "h_authority": None})
+    plat = expected_effective({"is_held_away": False, "settings_id": None, "authority_override": None,
+                               "s_custody": None, "household_authority_id": "h-fx", "h_authority": "advise"})
+    check(adv["authority"] == "advise" and adv["custody"] == "other_custodian" and not adv["on_default"]
+          and dflt == {**dflt, "authority": "read_only", "custody": "outside", "on_default": True}
+          and plat["authority"] == "advise" and plat["custody"] == "integrated" and plat["authority_source"] == "household",
+          "effective rule: account settings row, else the household's, else the migrated default", f"{adv} {plat}")
+    check(brk(acct_of(adv), adv) == [], "a fixture account on approved advise / other-custodian settings passes "
+          "against its own rule", f"{brk(acct_of(adv), adv)[:3]}")
+    check(brk(acct_of(dflt), dflt) == [], "a fixture account on the migrated default passes (rep7's rule too)",
+          f"{brk(acct_of(dflt), dflt)[:3]}")
+    check(brk(acct_of(plat), plat) == [], "a fixture account on a household authority passes", "")
+    # mis-applied: the loader ignores the approved settings row and hands back the default
+    mis = acct_of(adv, authority="read_only", custody="outside", authority_source="default", settings_id=None)
+    b = brk(mis, adv)
+    check(bool(b) and any(x.startswith("path one_off") for x in b), "a fixture account whose approved settings are "
+          "NOT applied (default handed back) FAILS the rule", f"{b[:3]}")
+    # mis-applied the other way: a default account handed someone's advise authority
+    b2 = brk(acct_of(dflt, authority="advise", custody="other_custodian", settings_id="s-other"), dflt)
+    check(bool(b2) and any("rep7's rule" in x for x in b2), "a default fixture account given another account's "
+          "authority FAILS the rule (and rep7's)", f"{b2[:3]}")
+    # same authority / custody but the wrong executor matrix would also be caught: managed+other_custodian ≠ integrated
+    m_oc = expected_effective({"is_held_away": False, "settings_id": "s-m", "authority_override": "managed",
+                               "s_custody": "other_custodian", "household_authority_id": None, "h_authority": None})
+    b3 = brk(acct_of(m_oc, custody="integrated"), m_oc)
+    check(bool(b3) and any("executor custodian_desk" in x for x in b3), "custody mis-applied (integrated for other "
+          "custodian) FAILS on the executor rule", f"{b3[:3]}")
+
+
 def self_checks(check, find):
     self_rep7_diff(check, find)
     self_routes(check, find)
+    self_effective_rule(check, find)
 
 
 if __name__ == "__main__" and VS.requested():
@@ -267,23 +396,6 @@ COUNTED = (
     "public.instruction_settlements",
 )
 NEW_TABLES = ("public.household_authority", "public.account_authority_settings", "public.instruction_settlements")
-# what each live cell must do on every path (Task 1b) — stated HERE, independently of services/authority.py
-TRIGGERS = ("join", "model_change", "drift", "cash_flow", "manual", "harvest")
-MODEL = {"join", "change_model", "settings", "transition", "harvest", *(f"proposal:{t}" for t in TRIGGERS)}
-EXEC = {"execute", "instructions", "route"}
-EXPECTED = {
-    ("read_only", "integrated"): (set(), ()), ("read_only", "other_custodian"): (set(), ()),
-    ("read_only", "outside"): (set(), ()),
-    ("advise", "integrated"): ({"one_off"} | EXEC, ("member", "other_adviser")),
-    ("advise", "other_custodian"): ({"one_off"} | EXEC, ("member", "other_adviser")),
-    ("advise", "outside"): ({"one_off"} | EXEC, ("member", "other_adviser")),
-    # rep9 fix 1 — rep8 added the 'options' (options-sleeve proposal) path: managed × integrated / other_custodian only
-    ("managed", "integrated"): (MODEL | {"options"} | EXEC, ("custodian_desk", "broker", "member", "other_adviser",
-                                                             "trader")),
-    ("managed", "other_custodian"): (MODEL | {"options"} | EXEC, ("broker", "trader", "member", "other_adviser")),
-    ("managed", "outside"): (set(), ()),
-}
-
 S: dict = {}
 NETWORK_CALLS: list[str] = []
 ADAPTER_CALLS: list[str] = []
@@ -923,21 +1035,28 @@ async def y_migration(conn):
     if non_test == 0:
         find("migration: zero non-test accounts", "every live account sits in an is_test org (leftover REP2 fixture "
              "orgs plus this run's own) — the migration is proven on those; no real account exists yet")
-    real = [dict(r) for r in await platform(
-        conn, "SELECT id, org_id, account_number_masked, is_held_away FROM public.accounts WHERE NOT (org_id = "
-              "ANY($1::uuid[])) AND valid_to IS NULL AND system_to IS NULL", FIXTURE_ORGS)]
-    per = []   # (account, paths whose allowed / refused verdict changed, has a settings row / non-default source)
+    # bulkapprove1 fix 1 — the old rule ("every real account on the migrated default, no settings row") was frozen
+    # against live state: the Olivo demo's 11 approved authority settings (2026-11-05) are legitimate. Every real
+    # account is still checked — against the rule that actually applies to it (its approved settings row, else its
+    # household's, else the migrated default), resolved in SQL independently of the loader; default accounts are
+    # still held to rep7's rule exactly as before.
+    real = [dict(r) for r in await platform(conn, EFFECTIVE_SQL, FIXTURE_ORGS)]
+    per = []   # (account, expected effective, breaks)
     for a in real:
+        exp = expected_effective(a)
         acct = await in_org(lambda c, a=a: AM.load_account(c, a["org_id"], a["id"]), a["org_id"], True)
-        moved = [p for p in AU.ALL_PATHS
-                 if AU.path_allowed(acct, p) != ((not a["is_held_away"]) if p != "one_off" else False)]
-        per.append((a, moved, not (acct["authority_source"] == "default" and acct["settings_id"] is None)))
+        per.append((a, exp, authority_rule_breaks(acct, exp, AU.path_allowed, AU.ALL_PATHS, AU.ALL_EXECUTORS)))
+    on_settings = [r for r in per if not r[1]["on_default"]]
+    find("real accounts carrying approved authority / custody settings (checked against THOSE settings)",
+         f"{len(on_settings)} of {len(per)}: "
+         f"{sorted({(r[1]['authority'], r[1]['custody'], r[1]['authority_source']) for r in on_settings})}")
     # rep9 fix 1 / VHK1 — lotmethod's cleanup removed the leftover REP2 orgs that held the only accounts: an empty
     # set is a [FIND]; the rule is asserted for EVERY existing account when any exist.
     VS.when_empty(per, "the existing account(s) outside this run's orgs, loaded through the real loader: every path "
-                  "allowed / refused exactly as before, every one on the migrated default (no settings row)",
-                  lambda r: not r[1] and not r[2], check=check, find=find,
-                  detail=lambda bad: f"{[(r[0]['account_number_masked'], r[1], r[2]) for r in bad[:5]]}")
+                  "and executor allowed / refused exactly as its EFFECTIVE authority / custody says (approved settings "
+                  "row, else household, else the migrated default — those still exactly as before)",
+                  lambda r: not r[2], check=check, find=find,
+                  detail=lambda bad: f"{[(r[0]['account_number_masked'], r[2][:3]) for r in bad[:5]]}")
     drafts = await platform(
         conn, """SELECT i.id, i.org_id, i.status, i.executor_type, i.maker_id, i.created_at, i.cancelled_at
                  FROM public.execution_instructions i JOIN public.accounts a ON a.id = i.account_id

@@ -12,6 +12,7 @@
 
 import { useState } from "react";
 import { labelOf, pctText, vocab } from "@/lib/proposals.mjs";
+import BulkPendingLink from "@/components/approvals/BulkPendingLink";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -89,6 +90,8 @@ export default function AccountsList({ initialEnvelope }) {
 
   return (
     <div className="space-y-5">
+      {/* BULKAPPROVE1 — "N pending — review in bulk" when more than one item waits for this viewer */}
+      <BulkPendingLink />
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="flex flex-col gap-1">Show
           <select className={input} value={filters.filter || ""} onChange={set("filter")}>

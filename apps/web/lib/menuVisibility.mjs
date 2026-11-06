@@ -121,6 +121,11 @@ export const GATE_HOUSEHOLDS = { internal: true, perm: "manage_members", strict:
 export const GATE_AUTHOR_WORKFLOWS = { perm: "author_workflows", strict: true };
 export const GATE_VIEW_WORKFLOW_RUNS = { perm: "view_workflow_runs", strict: true };
 export const GATE_WORKFLOW_TRIGGERS_READ = { anyOf: ["view_workflow_runs", "configure_workflow_triggers"], strict: true };
+// BULKAPPROVE1 — Approvals (bulk approve): GET /approvals/bulk is any(view_authority | approve_authority |
+// view_held_away | approve_held_away); STRICT (canPermStrict per key), so a lost envelope hides the tab.
+export const GATE_APPROVALS = {
+  anyOf: ["view_authority", "approve_authority", "view_held_away", "approve_held_away"], strict: true,
+};
 // BUGFIX2 — the /admin AREA: open iff the caller can see at least one item of
 // the two admin sections of this very definition (so a member_manager with
 // manage_members keeps /admin/users, an org admin keeps Settings). The /admin
@@ -281,6 +286,8 @@ export const MENU_ITEMS = [
   // PORTENTRY2 (MUSE-OLIVO-G-01) — Households had no nav entry (the page lived at /portfolio/households only).
   // Gate = the API's: GET /admin/households is require_internal_permission(manage_members).
   tab("main", "portfolio", 20, "/portfolio/households", "Households", GATE_HOUSEHOLDS, false),
+  // BULKAPPROVE1 — pending maker-checker items (authority & custody, held-away entries), decided many at once
+  tab("main", "portfolio", 21, "/portfolio/approvals", "Approvals", GATE_APPROVALS, false),
   { ...tab("main", "portfolio", 13, "/portfolio-reporting", "Reporting", null, false), comingSoon: true },
   // mkt04a — the market API admits any valid session, so no gate here either.
   main(50, "/market", "Market Indicators", "portfolio-reporting"),

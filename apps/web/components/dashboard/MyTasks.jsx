@@ -11,10 +11,11 @@
 
 import { useEffect, useState } from "react";
 import { labelOf, myTasksModel } from "@/lib/execution.mjs";
+import BulkPendingLink from "@/components/approvals/BulkPendingLink";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 
-export function MyTasksView({ payload }) {
+export function MyTasksView({ payload, footer = null }) {
   const { actionable, waiting } = myTasksModel(payload);
   const kinds = payload?.vocabularies?.kinds;
   if (!actionable.length && !waiting.length) return null;
@@ -39,6 +40,7 @@ export function MyTasksView({ payload }) {
           <ul className="mt-1 text-sm">{waiting.map(item)}</ul>
         </>
       ) : null}
+      {footer}
     </div>
   );
 }
@@ -51,5 +53,6 @@ export default function MyTasks() {
       .catch(() => {});
     return () => { live = false; };
   }, []);
-  return <MyTasksView payload={payload} />;
+  // BULKAPPROVE1 — "N pending — review in bulk" under the inbox when more than one item waits for this viewer
+  return <MyTasksView payload={payload} footer={<div className="mt-3"><BulkPendingLink /></div>} />;
 }
