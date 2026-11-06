@@ -19,6 +19,9 @@ const ALLOWED = [
   ["POST", /^admin\/integrated-imports$/],
   ["GET", new RegExp(`^admin/integrated-imports/${UUID}$`)],
   ["POST", new RegExp(`^admin/integrated-imports/${UUID}/(approve|reject)$`)],
+  // BUGFIX4 — edit a saved private investment (notes / dates / vintage) and read its versions
+  ["PATCH", new RegExp(`^private-investments/assets/${UUID}$`)],
+  ["GET", new RegExp(`^private-investments/assets/${UUID}/history$`)],
 ];
 
 /** The Next proxy forwards ONLY these method + path pairs. */
@@ -83,8 +86,11 @@ export function privatePayload(form, rule = "required") {
     for (const k of ["called_to_date", "distributed_to_date"]) {
       if (form[k] && String(form[k]).trim()) out[k] = String(form[k]).trim();
     }
-  } else if (form.amount_invested && String(form.amount_invested).trim()) {
-    out.amount_invested = String(form.amount_invested).trim();
+  } else {
+    if (form.amount_invested && String(form.amount_invested).trim()) out.amount_invested = String(form.amount_invested).trim();
+    // BUGFIX4 — a simplified kind (no commitment) carries its own vintage and investment date
+    if (form.vintage_year && String(form.vintage_year).trim()) out.vintage_year = Number.parseInt(form.vintage_year, 10);
+    if (form.investment_date) out.investment_date = form.investment_date;
   }
   for (const k of ["taxonomy_key", "notes"]) {
     if (form[k] && String(form[k]).trim()) out[k] = String(form[k]).trim();
@@ -103,3 +109,17 @@ export function asOfText(netWorth) {
 export function importActions(imp) {
   return Array.isArray(imp?.actions) ? imp.actions : [];
 }
+
+/** BUGFIX4 — the PATCH body of a private-investment edit: only the fields that apply to the row's shape. */
+export function privateEditPayload(form, row) {
+  const out = {};
+  if (form.notes !== undefined) out.notes = String(form.notes || "").trim() || null;
+  if (form.vintage_year !== undefined && String(form.vintage_year).trim() !== "") out.vintage_year = Number.parseInt(form.vintage_year, 10);
+  if (row?.has_commitment === false) {
+    if (form.investment_date) out.investment_date = form.investment_date;
+  } else if (form.commitment_date) {
+    out.commitment_date = form.commitment_date;
+  }
+  return out;
+}
+

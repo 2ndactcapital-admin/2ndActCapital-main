@@ -117,6 +117,20 @@ MANUAL_KINDS = {
     "cash": "Cash", "private": "Private / manual holding", "listed_option": "Listed option",
     "digital_asset": "Digital asset",
 }
+# BUGFIX4 (MUSE-OLIVO entry form) — kinds that NEVER resolve through the security master's identifiers: a digital asset
+# "ETH" is not the Grayscale ETF whose ticker is ETH, and a cash line is the org's cash asset whatever identifier the
+# form happened to still carry from the previous line (A25's cash saved against QQQ by a stale CUSIP).
+NO_MASTER_KINDS = frozenset({"digital_asset", "cash"})
+# BUGFIX4 — kinds entered as an AMOUNT: no quantity needed. The quantity stored is the amount (one unit = one
+# currency unit), exactly what an adviser had to type by hand before.
+VALUE_ONLY_KINDS = frozenset({"cash", "private"})
+# BUGFIX4 (O-04-02) — a held-away import is an account SNAPSHOT: approving one replaces every live line of the account.
+LINE_STATE_LABELS = {"draft": "Draft — not live until a second person approves it",
+                     "live": "Live",
+                     "partly_live": "Partly live — some lines were replaced by a later snapshot",
+                     "superseded": "Superseded — replaced by a later snapshot of the account; none of its lines are live",
+                     "rejected": "Rejected — never live",
+                     "no_lines": "No position lines"}
 MANUAL_TERM_FIELDS = ("coupon", "maturity", "underlying_ticker", "option_type", "strike", "expiry", "multiplier",
                       "chain", "internal_id", "currency")
 CONFIRM_STATUS_LABELS = {"pending": "Awaiting an adviser's confirmation", "confirmed": "Confirmed",
@@ -206,7 +220,10 @@ def _uuid(v, what: str) -> str:
 
 
 def _num(v):
-    return None if v is None else str(v)
+    # BUGFIX4 — fixed-point text, never str(Decimal): a normalized Decimal prints "3.25E+6" (the account lots Muse saw)
+    from services.money_text import fixed
+
+    return fixed(v)
 
 
 def _iso(v):
@@ -455,7 +472,7 @@ async def resolve_manual(conn, rows: list[dict], looks: dict) -> None:
 
     for r in rows:
         hit = None
-        for t in ("cusip", "isin", "sedol", "ticker"):
+        for t in (() if r["asset_kind"] in NO_MASTER_KINDS else ("cusip", "isin", "sedol", "ticker")):
             if r.get(t):
                 got = looks.get(t, {}).get(SG.normalize_identifier_value(t, r[t]))
                 if got:
@@ -468,6 +485,9 @@ async def resolve_manual(conn, rows: list[dict], looks: dict) -> None:
                 r["resolution"] = "master option contract (rep8)"
         if hit is not None:
             r["security_id"] = hit
+            # BUGFIX4 — a master-resolved line keeps the kind it was entered as, so its position is classified by
+            # that kind (a money-market fund the master knows used to lose it, and its fund type has no bucket)
+            r["master_kind"] = r["asset_kind"]
             continue
         if r["asset_kind"] == "cash":
             ccy = (r["terms"].get("currency") or "USD").upper()
@@ -542,8 +562,13 @@ def validate_row(raw: dict, as_of: date) -> dict:
         r["reject"] = ("term_invalid", f"{term!r} is not short or long")
         return r
     r["term"] = term
+    if r["quantity"] is None and kind in VALUE_ONLY_KINDS and r["market_value"] is not None \
+            and not (raw.get("side") or raw.get("trade_date")):
+        r["quantity"] = r["market_value"]                       # BUGFIX4 — an amount-only line: quantity = amount
+        r["value_only"] = True
     if r["quantity"] is None:
-        r["reject"] = ("quantity_missing", REJECT_REASONS["quantity_missing"])
+        r["reject"] = ("quantity_missing", REJECT_REASONS["quantity_missing"]
+                       + (" — or enter the amount (market value)" if kind in VALUE_ONLY_KINDS else ""))
         return r
     for k in ("quantity", "market_value", "cost", "price"):
         if r[k] is not None and r[k] < 0:
@@ -617,7 +642,8 @@ def build_payload(rows: list[dict]) -> dict:
             p = positions.setdefault(sid, {"security_id": sid, "label": r.get("name") or r.get("ticker") or sid,
                                            "quantity": Decimal(0), "market_value": Decimal(0), "value_known": True,
                                            "rows": [], "asset_ref": r.get("asset_ref"),
-                                           "taxonomy_key": r.get("taxonomy_key"), "resolution": r.get("resolution")})
+                                           "taxonomy_key": r.get("taxonomy_key"), "resolution": r.get("resolution"),
+                                           "asset_kind": r.get("master_kind")})
             p["quantity"] += r["quantity"]
             if r["market_value"] is None:
                 p["value_known"] = False
@@ -625,17 +651,18 @@ def build_payload(rows: list[dict]) -> dict:
                 p["market_value"] += r["market_value"]
             p["rows"].append(r["row"])
         if r["kind"] == "lot":
-            lots.append({"security_id": sid, "quantity": str(r["quantity"]), "acquired_date": _iso(r["acquired_date"]),
+            lots.append({"security_id": sid, "quantity": _num(r["quantity"]), "acquired_date": _iso(r["acquired_date"]),
                          "cost": _num(r["cost"]), "term": r["term"], "row": r["row"]})
         if r["kind"] == "transaction":
             txns.append({"security_id": sid, "side": r["side"], "trade_date": _iso(r["trade_date"]),
-                         "quantity": str(r["quantity"]), "price": _num(r["price"]),
+                         "quantity": _num(r["quantity"]), "price": _num(r["price"]),
                          "realized_gain_loss": _num(r["realized_gain_loss"]), "term": r["term"],
                          "acquired_date": _iso(r["acquired_date"]), "cost": _num(r["cost"]), "row": r["row"]})
-    pos = [{"security_id": p["security_id"], "label": p["label"], "quantity": str(p["quantity"]),
-            "market_value": str(p["market_value"]) if p["value_known"] else None, "rows": p["rows"],
+    pos = [{"security_id": p["security_id"], "label": p["label"], "quantity": _num(p["quantity"]),
+            "market_value": _num(p["market_value"]) if p["value_known"] else None, "rows": p["rows"],
             **({"asset_ref": p["asset_ref"]} if p.get("asset_ref") else {}),
             **({"taxonomy_key": p["taxonomy_key"]} if p.get("taxonomy_key") else {}),
+            **({"asset_kind": p["asset_kind"]} if p.get("asset_kind") else {}),
             **({"resolution": p["resolution"]} if p.get("resolution") else {})}
            for p in positions.values()]
     return {"positions": pos, "lots": lots, "transactions": txns}
@@ -986,8 +1013,12 @@ async def decide_import(pool, *, org_id, actor_id, import_id, outcome: str, note
     if imp["status"] != "draft":
         raise HeldAwayConflict(f"this import is {imp['status']}, not a draft")
     if str(imp["entered_by"]) == str(actor["id"]):
-        raise MakerCheckerViolation("maker-checker: you entered this import, so a different holder of "
-                                    f"{APPROVE} must approve or reject it")
+        from services.maker_names import maker_refusal  # BUGFIX4 — the refusal names who entered it
+
+        async with pool.acquire() as conn:
+            who = await maker_refusal(conn, maker_id=imp["entered_by"], checker_id=actor["id"],
+                                      approver=f"holder of {APPROVE}", item="held-away import")
+        raise MakerCheckerViolation(f"maker-checker: {who}")
     if outcome == "approve" and (imp["extraction"] or {}) and _loads(imp["extraction"]).get("refused"):
         raise HeldAwayConflict("the file was refused — reject this import and load a corrected file")
     try:
@@ -1132,8 +1163,13 @@ async def _apply_import(pool, org_id, task: dict, outcome: str, actor_id, note) 
             lots_by_sec: dict[str, list] = {}
             for x in payload.get("lots", []):
                 lots_by_sec.setdefault(x["security_id"], []).append(x)
+            from services.portfolio_kind_taxonomy import key_for_kind
+
             for p in payload.get("positions", []):
                 ls = lots_by_sec.get(p["security_id"], [])
+                # BUGFIX4 — the line's own key, else the key of the kind it was entered as (a master-resolved line)
+                pkey = p.get("taxonomy_key") or (await key_for_kind(conn, str(org_id), p["asset_kind"])
+                                                 if p.get("asset_kind") else None)
                 cost = (sum((Decimal(x["cost"]) for x in ls), Decimal(0))
                         if ls and all(x["cost"] is not None for x in ls)
                         and sum((Decimal(x["quantity"]) for x in ls), Decimal(0)) == Decimal(p["quantity"]) else None)
@@ -1144,7 +1180,7 @@ async def _apply_import(pool, org_id, task: dict, outcome: str, actor_id, note) 
                     str(org_id), str(account["primary_entity_id"]),
                     await _asset_for(conn, org_id, p["security_id"], p.get("asset_ref")),
                     imp["as_of"], Decimal(p["quantity"]), cost, _dec(p["market_value"]), authority, system,
-                    str(account["id"]), p.get("taxonomy_key"))
+                    str(account["id"]), pkey)
                 pos_by_sec[p["security_id"]] = str(pid)
                 await _record(conn, org_id, imp, "position", pid)
             # 3. open lots
@@ -1316,6 +1352,87 @@ async def positions_of(conn, org_id, account_id, *, as_of: date | None = None) -
         "WHERE org_id = $1::uuid AND account_id = $2::uuid AND system_to IS NULL GROUP BY as_of_date "
         "ORDER BY as_of_date DESC", str(org_id), aid)]
     return {"positions": pos, "versions": versions}
+
+
+# ── BUGFIX4 (O-04-02) — live / superseded, and what a new draft replaces ─────
+_SUPERSEDED_BY_RE = r'replaced by held-away import ([0-9a-f-]{36})'
+
+
+def state_of(status: str, live: int, superseded: int) -> str:
+    """An import's live state from its status and its position lines (pure — the vocabulary is LINE_STATE_LABELS)."""
+    if status == "draft":
+        return "draft"
+    if status == "rejected":
+        return "rejected"
+    if live == 0 and superseded == 0:
+        return "no_lines"
+    if superseded == 0:
+        return "live"
+    return "partly_live" if live else "superseded"
+
+
+async def import_states(conn, org_id, account_id) -> dict[str, dict]:
+    """{import id: {state, live_lines, superseded_lines, superseded_by: [import ids], lines: [{record_id, live,
+    superseded_by}]}} for every import of the account — read from the provenance rows the apply marks."""
+    rows = await conn.fetch(
+        f"""SELECT i.id::text AS import_id, i.status, h.record_id::text AS record_id, h.valid_to IS NULL AS live,
+                   substring(h.superseded_reason from '{_SUPERSEDED_BY_RE}') AS by
+            FROM {T_IMP} i
+            LEFT JOIN {T_REC} h ON h.import_id = i.id AND h.record_type = 'position' AND h.system_to IS NULL
+            WHERE i.org_id = $1::uuid AND i.account_id = $2::uuid AND i.system_to IS NULL""",
+        str(org_id), _uuid(account_id, "account"))
+    out: dict[str, dict] = {}
+    for r in rows:
+        d = out.setdefault(r["import_id"], {"status": r["status"], "live_lines": 0, "superseded_lines": 0,
+                                            "superseded_by": [], "lines": []})
+        if r["record_id"] is None:
+            continue
+        d["lines"].append({"record_id": r["record_id"], "live": bool(r["live"]), "superseded_by": r["by"]})
+        if r["live"]:
+            d["live_lines"] += 1
+        else:
+            d["superseded_lines"] += 1
+            if r["by"] and r["by"] not in d["superseded_by"]:
+                d["superseded_by"].append(r["by"])
+    for d in out.values():
+        d["state"] = state_of(d.pop("status"), d["live_lines"], d["superseded_lines"])
+    return out
+
+
+async def live_snapshot(conn, org_id, account_id) -> dict:
+    """The account's live snapshot — what approving ANY new import would replace: its as-of, its live line count and
+    the approved imports those lines came from; plus the open drafts (each would replace it too, in approval order)."""
+    aid = _uuid(account_id, "account")
+    live = await conn.fetch(
+        f"""SELECT h.import_id::text AS import_id, i.as_of, count(*) AS n FROM {T_REC} h
+            JOIN {T_IMP} i ON i.id = h.import_id AND i.system_to IS NULL
+            JOIN portfolio.positions p ON p.id = h.record_id AND p.valid_to IS NULL AND p.system_to IS NULL
+            WHERE h.org_id = $1::uuid AND h.account_id = $2::uuid AND h.record_type = 'position'
+              AND h.valid_to IS NULL AND h.system_to IS NULL GROUP BY 1, 2 ORDER BY 2, 1""", str(org_id), aid)
+    drafts = await conn.fetch(
+        f"SELECT id::text AS id, as_of, created_at FROM {T_IMP} WHERE org_id = $1::uuid AND account_id = $2::uuid "
+        "AND status = 'draft' AND system_to IS NULL ORDER BY created_at", str(org_id), aid)
+    as_of = await account_as_of(conn, org_id, account_id)
+    return {"as_of": _iso(as_of), "live_lines": sum(int(r["n"]) for r in live),
+            "imports": [{"id": r["import_id"], "as_of": _iso(r["as_of"]), "live_lines": int(r["n"])} for r in live],
+            "open_drafts": [{"id": r["id"], "as_of": _iso(r["as_of"])} for r in drafts]}
+
+
+def replaces_text(snap: dict, new_as_of: date | None = None) -> str | None:
+    """The words a new draft shows BEFORE it is saved, and on the draft after (None when there is nothing live)."""
+    if not snap.get("live_lines") and not snap.get("open_drafts"):
+        return None
+    parts = []
+    if snap.get("live_lines"):
+        same = new_as_of is not None and snap.get("as_of") == new_as_of.isoformat()
+        parts.append(f"Approving this draft replaces the earlier snapshot of this account"
+                     f"{' at the same as-of' if same else ''} (as of {snap['as_of']}: {snap['live_lines']} live "
+                     f"line(s) from {len(snap['imports'])} import(s)) — those lines become superseded. Put EVERY "
+                     "holding of the account in this one draft.")
+    if snap.get("open_drafts"):
+        parts.append(f"{len(snap['open_drafts'])} other draft(s) for this account are open; whichever is approved "
+                     "last is the live snapshot.")
+    return " ".join(parts)
 
 
 async def transactions_of(conn, org_id, account_id, limit: int = 200) -> list[dict]:
@@ -1738,4 +1855,7 @@ def vocabularies() -> dict:  # noqa: D401 — PORTENTRY1 adds manual_kinds below
             "file_fields": [{"key": k, "label": v[0]} for k, v in FIELDS.items()],
             "providers": AD.providers(),
             # PORTENTRY1 (GAP-PORT-01) — manual holding types and their term fields
-            "manual_kinds": pairs(MANUAL_KINDS), "manual_term_fields": list(MANUAL_TERM_FIELDS)}
+            "manual_kinds": pairs(MANUAL_KINDS), "manual_term_fields": list(MANUAL_TERM_FIELDS),
+            # BUGFIX4 — line / import live state, which kinds take an amount only, which never match the master
+            "line_states": pairs(LINE_STATE_LABELS), "value_only_kinds": sorted(VALUE_ONLY_KINDS),
+            "no_master_kinds": sorted(NO_MASTER_KINDS)}

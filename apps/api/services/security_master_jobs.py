@@ -330,7 +330,11 @@ async def job_rows(conn, org_id=PLATFORM_ORG_ID) -> dict:
                          "timezone": d["timezone"], "schedule_note": spec.schedule_note,
                          "trigger_active": d["is_active"], "last_fired_at": d["last_fired_at"],
                          "definition_id": d["id"], "version_id": d["vid"], "trigger_id": d["tid"],
-                         "last_run": dict(last) if last else None, "last_run_steps": steps}
+                         "last_run": dict(last) if last else None, "last_run_steps": steps,
+                         # BUGFIX4 — what it fetches; whether a held run blocks the schedule
+                         "fetches": FETCHES.get(spec.key),
+                         "blocked_by_held_run": bool(last is not None and last["status"] == "held"),
+                         "blocked_note": HELD_BLOCKS_NOTE if last is not None and last["status"] == "held" else None}
     return out
 
 
@@ -355,6 +359,59 @@ async def run_now(pool, *, job_key: str, actor_id, org_id=PLATFORM_ORG_ID, conte
             {"trigger_type": "manual", "run_now": True, "job": job_key, **(context or {})}, actor_id)
     finally:
         reset_rls_context(tokens)
+
+
+# BUGFIX4 (MUSE-OLIVO-O-04-03) — what each job fetches, in plain words, and the price gap. Shown on the Security master
+# screen beside the switch. Nothing in this sprint switched a job on: the triggers are seeded inactive by design
+# (scripts/_apply_secmaster1.py --seed-jobs) and the operator decides.
+FETCHES = {
+    "security_master_nightly": "Nasdaq Trader symbol directories and the SEC company-tickers file (new listings, "
+                               "delistings); OpenFIGI identifiers for new securities only. Reference data — no prices.",
+    "security_master_13f": "The SEC Official List of Section 13(f) Securities (a new quarter once), CUSIPs mapped "
+                           "through OpenFIGI. Reference data — no prices.",
+    "security_master_attributes": "FinanceDatabase sector / industry / country / fund category for securities already "
+                                  "in the master. Reference data — no prices.",
+    "security_data_nightly": "marketdata1's nightly: every configured security-data provider within its budget, then "
+                             "the quality checks. No free end-of-day PRICE provider is configured yet, so it adds no "
+                             "prices and price_coverage stays 'unknown' until the prices sprint.",
+}
+PRICE_GAP_NOTE = ("No free end-of-day price source is configured yet: every listed security's price coverage is "
+                  "'unknown', and holdings are valued at their entered market value as of their statement date.")
+HELD_BLOCKS_NOTE = "A held run blocks this schedule until a Super Admin closes it."
+
+
+def platform_org():
+    """The platform org, read at CALL time (a default argument would freeze it at import; a verify points it at its
+    own fixture platform org so no real job is ever switched)."""
+    return PLATFORM_ORG_ID
+
+
+async def set_schedule(conn, *, job_key: str, active: bool, actor_id, org_id=None) -> dict:
+    """BUGFIX4 — switch a platform job's scheduled trigger on or off (Super Admin only — the route's gate), audited.
+    Caller holds platform scope. Returns {key, trigger_active, was, held_run} — ``held_run`` names a held run that
+    will keep the schedule from firing until it is closed."""
+    if job_key not in JOBS:
+        raise KeyError(job_key)
+    org_id = org_id or platform_org()
+    jobs = await job_rows(conn, org_id)
+    if job_key not in jobs or not jobs[job_key]["trigger_id"]:
+        raise PlatformJobError(f"{JOBS[job_key].name} is not seeded in the platform org "
+                               "(scripts/_apply_secmaster1.py --seed-jobs)")
+    j = jobs[job_key]
+    was = bool(j["trigger_active"])
+    async with conn.transaction():
+        hit = await conn.fetchval("UPDATE workflow_triggers SET is_active = $2 WHERE id = $1 AND org_id = $3::uuid "
+                                  "RETURNING id", j["trigger_id"], bool(active), str(org_id))
+        if hit is None:   # zero rows: an RLS-blocked write and a vanished trigger look the same — say neither
+            raise PlatformJobError(f"the schedule of {JOBS[job_key].name} was not changed (no row updated)")
+        await conn.execute(
+            "INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, payload) VALUES "
+            "($1::uuid, $2::uuid, 'security_master.schedule_switched', 'workflow_trigger', $3::uuid, $4::jsonb)",
+            str(org_id), str(actor_id), str(j["trigger_id"]),
+            __import__("json").dumps({"job": job_key, "from": was, "to": bool(active)}))
+    held = (j["last_run"] or {}).get("status") == "held"
+    return {"key": job_key, "trigger_active": bool(active), "was": was,
+            "held_run": str(j["last_run"]["id"]) if held else None}
 
 
 async def close_held_run(conn, *, run_id, actor_id, note: str) -> dict | None:

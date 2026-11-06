@@ -184,7 +184,9 @@ PRINCIPAL_COLUMNS = """
            JOIN role_permissions rp ON rp.role_id = r.id
            JOIN permissions p ON p.id = rp.permission_id
            WHERE r.org_id = u.org_id AND r.name = 'member') AS member_safe_names,
-    CASE WHEN u.role = $2 THEN ARRAY(SELECT name FROM permissions) END AS catalog_names"""
+    CASE WHEN EXISTS (SELECT 1 FROM user_roles ur_s JOIN roles r_s ON r_s.id = ur_s.role_id
+                      WHERE ur_s.user_id = u.id AND r_s.org_id = u.org_id AND r_s.name = $2)
+         THEN ARRAY(SELECT name FROM permissions) END AS catalog_names"""
 
 PRINCIPAL_BY_ID_SQL = f"SELECT {PRINCIPAL_COLUMNS} FROM users u WHERE u.id = $1"
 
@@ -213,7 +215,9 @@ def principal_from_row(row, *, claims: dict | None = None, resolved_via: str = "
     perms: set[str] = set()
     is_super = False
     if admitted:
-        is_super = rbac.is_super_admin({"role": row["role"]})
+        # BUGFIX4 — ONE role source: Super Admin is decided from user_roles (the table People & Access writes), the
+        # same table every other role comes from — never from the users.role string alone.
+        is_super = rbac.SUPER_ADMIN_ROLE in (row["role_names"] or [])
         roles = list(row["role_names"] or [])
         perms = set(row["permission_names"] or [])
         # PERMS1 — profile + permission-set keys (catalog keys only). The client

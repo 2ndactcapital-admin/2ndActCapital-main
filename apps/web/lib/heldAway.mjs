@@ -148,6 +148,8 @@ export function manualRow(form) {
   for (const k of ["acquired_date", "trade_date"]) {
     if (form[k]) out[k] = form[k];
   }
+  // BUGFIX4 — a LISTED line may carry its asset-class key too (a master fund's type has no bucket of its own)
+  if (form.taxonomy_key) out.taxonomy_key = String(form.taxonomy_key).trim();
   // PORTENTRY1 (GAP-PORT-01) — an org-scoped manual holding: its type (from the envelope's manual_kinds) and terms
   if (form.asset_kind) {
     out.asset_kind = String(form.asset_kind);

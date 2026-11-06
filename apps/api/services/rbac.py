@@ -163,6 +163,10 @@ async def get_users_with_permission(pool, org_id, permission_name: str) -> list[
 # parts of the app already write.
 
 SUPER_ADMIN_ROLE = "super_admin"
+#: BUGFIX4 — the ONE Super Admin source, as a SQL expression over ``users u``: a grant of the user's OWN org's
+#: ``super_admin`` role. Used by both principal loaders (services.authz, load_principal below).
+RBAC_SUPER_SQL = ("EXISTS (SELECT 1 FROM user_roles ur_s JOIN roles r_s ON r_s.id = ur_s.role_id "
+                  "WHERE ur_s.user_id = u.id AND r_s.org_id = u.org_id AND r_s.name = 'super_admin')")
 ORG_ADMIN_ROLE = "org_admin"
 
 # ── org_admin role reconciliation ──────────────────────────────────────────
@@ -194,7 +198,10 @@ def is_super_admin(user) -> bool:
     Deliberately ignores org_id — a super_admin sits in the Ripasso platform
     org yet administers every tenant.
     """
-    return _field(user, "role") == SUPER_ADMIN_ROLE
+    flag = getattr(user, "is_super_admin", None)
+    if isinstance(flag, bool):                     # a services.authz Principal — already decided from user_roles
+        return flag
+    return _field(user, "role") == SUPER_ADMIN_ROLE  # a load_principal dict (role derived from user_roles)
 
 
 async def is_org_admin(pool, user, org_id) -> bool:
@@ -458,15 +465,88 @@ async def load_principal(conn, user_id) -> dict | None:
         user_uuid = UUID(str(user_id))
     except (ValueError, TypeError):
         return None
+    # BUGFIX4 — ONE role source: Super Admin is the user's ``user_roles`` grant of the org's ``super_admin`` role (the
+    # table People & Access writes), never the ``users.role`` string on its own. The string is kept in lockstep by
+    # every write path (routers/admin.py) for the SQL that still reads it; a string the grant does not back no
+    # longer makes anyone a Super Admin (and a grant the string lacks no longer leaves one out — the "Super Admin
+    # required everywhere" Joe hit after promoting a test login in the UI).
     row = await conn.fetchrow(
-        "SELECT id, org_id, role, status, is_active FROM users WHERE id = $1",
+        f"SELECT u.id, u.org_id, u.role, u.status, u.is_active, {RBAC_SUPER_SQL} AS rbac_super "
+        "FROM users u WHERE u.id = $1",
         user_uuid,
     )
     if row is None:
         return None
     admitted = row["status"] == "active" and bool(row["is_active"])
+    role = row["role"]
+    if row["rbac_super"]:
+        role = SUPER_ADMIN_ROLE
+    elif role == SUPER_ADMIN_ROLE:
+        role = None
     return {
         "id": str(row["id"]),
         "org_id": str(row["org_id"]),
-        "role": row["role"] if admitted else None,
+        "role": role if admitted else None,
     }
+
+
+# ── BUGFIX4 — ONE role source: user_roles decides, users.role mirrors it ─────
+async def grant_named_role(conn, user_id, org_id, role_name: str) -> str:
+    """Ensure the org has a ``role_name`` role row and grant it to the user (idempotent). Returns the role id."""
+    rid = await conn.fetchval("SELECT id FROM roles WHERE org_id = $1::uuid AND name = $2", str(org_id), role_name)
+    if rid is None:
+        rid = await conn.fetchval(
+            "INSERT INTO roles (org_id, name) VALUES ($1::uuid, $2) ON CONFLICT (org_id, name) DO UPDATE SET "
+            "name = EXCLUDED.name RETURNING id", str(org_id), role_name)
+    await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING",
+                       str(user_id), rid)
+    return str(rid)
+
+
+#: the account-role string each RBAC role is mirrored to (users.role); any other role mirrors to 'member'
+MIRRORED_ROLE_STRINGS = ("super_admin", "org_admin", "support_staff")
+
+
+def mirrored_role_string(role_names) -> str:
+    """The ``users.role`` string that agrees with a user's RBAC roles: the highest of MIRRORED_ROLE_STRINGS held,
+    else 'member'. Pure — the write paths call it so the two sources can never drift again."""
+    names = set(role_names or ())
+    for r in MIRRORED_ROLE_STRINGS:
+        if r in names:
+            return r
+    return "member"
+
+
+async def sync_role_string(conn, user_id) -> str:
+    """Set ``users.role`` from the user's own-org RBAC roles (mirrored_role_string). Returns the string."""
+    names = [r["name"] for r in await conn.fetch(
+        "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id JOIN users u ON u.id = ur.user_id "
+        "WHERE ur.user_id = $1::uuid AND r.org_id = u.org_id", str(user_id))]
+    want = mirrored_role_string(names)
+    await conn.execute("UPDATE users SET role = $2, updated_at = now() WHERE id = $1::uuid AND role IS DISTINCT FROM "
+                       "$2", str(user_id), want)
+    return want
+
+
+ROLE_DISAGREEMENT_SQL = """
+    SELECT u.id, u.email, u.org_id, u.role AS account_role, u.status,
+           COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS rbac_roles
+      FROM users u
+      LEFT JOIN user_roles ur ON ur.user_id = u.id
+      LEFT JOIN roles r ON r.id = ur.role_id AND r.org_id = u.org_id
+     WHERE NOT u.is_test AND COALESCE(u.status, 'active') <> 'retired'
+     GROUP BY u.id
+"""
+
+
+async def role_disagreements(conn) -> list[dict]:
+    """READ-ONLY report: real (non-test, not retired) users whose users.role string differs from what their RBAC
+    roles mirror to. Changes nothing."""
+    out = []
+    for r in await conn.fetch(ROLE_DISAGREEMENT_SQL):
+        want = mirrored_role_string(r["rbac_roles"])
+        if (r["account_role"] or "member") != want:
+            out.append({"id": str(r["id"]), "org_id": str(r["org_id"]), "account_role": r["account_role"],
+                        "rbac_roles": list(r["rbac_roles"]), "mirrors_to": want, "status": r["status"]})
+    return out
+

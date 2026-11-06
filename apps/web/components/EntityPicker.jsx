@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { pickerDisplay, pickerSearchParams } from "@/lib/portentry2.mjs";
+import { createOffer } from "@/lib/bugfix4.mjs";
 
 const INPUT =
   "w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary outline-none focus:ring-2 focus:ring-navy";
@@ -76,6 +77,8 @@ export default function EntityPicker({
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [confirmDupes, setConfirmDupes] = useState(null);
+  // BUGFIX4 (MUSE-OLIVO stubs) — "Create '<text>'" opens THIS confirmation; nothing is created until it is confirmed
+  const [confirmCreate, setConfirmCreate] = useState(null);
   const timer = useRef(null);
   const wrapRef = useRef(null);
 
@@ -243,15 +246,34 @@ export default function EntityPicker({
               Load more
             </button>
           )}
-          {allowCreate && query.trim() && !loading && (
+          {createOffer({ allowCreate, query, loading }) && (
             <button
               type="button"
-              onMouseDown={(e) => { e.preventDefault(); handleCreate(); }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { setOpen(false); setConfirmCreate(createOffer({ allowCreate, query, loading })); }}
               className="w-full border-t border-border px-3 py-2 text-left text-sm font-medium text-navy hover:bg-bg-app"
             >
-              + Create &ldquo;{query.trim()}&rdquo;
+              + {createOffer({ allowCreate, query, loading }).label}
             </button>
           )}
+        </div>
+      )}
+
+      {/* BUGFIX4 — the explicit create confirmation */}
+      {confirmCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="w-full max-w-md rounded-[6px] border border-[#ece8dd] bg-white p-6">
+            <h3 className="font-semibold text-navy" style={{ fontFamily: "Spectral, Georgia, serif" }}>Create a new record?</h3>
+            <p className="mt-1 text-sm text-text-secondary">{confirmCreate.confirm}</p>
+            <div className="mt-4 flex gap-2">
+              <button type="button" onClick={() => { setConfirmCreate(null); handleCreate(); }}
+                className="rounded-md px-4 py-2 text-sm font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--2a-navy)" }}>
+                Create
+              </button>
+              <button type="button" onClick={() => setConfirmCreate(null)}
+                className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-bg-app">Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 

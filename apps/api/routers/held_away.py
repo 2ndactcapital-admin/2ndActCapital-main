@@ -7,6 +7,7 @@ Every route names its gate (docs/AUTHZ1_ROUTES.json; authz1_routes.py reads it):
                     GET  /held-away/accounts/{id}/positions       positions and lots (live, or ?as_of= a version)
                     GET  /held-away/imports/{id}                  one import: rows, rejects with reasons, status
                     GET  /held-away/providers                     the aggregator registry (all "not connected")
+                    GET  /held-away/accounts/{id}/snapshot        BUGFIX4: the live snapshot a new draft replaces
   manage_held_away  POST /held-away/accounts/{id}/sources         add a source (aggregator → not connected)
                     POST /held-away/sources/{id}                  change stale_after_days / notes, or retire
                     POST /held-away/accounts/{id}/imports/manual  keyed positions / lots / trades → a DRAFT
@@ -177,10 +178,20 @@ async def account_panel(request: Request, account_id: UUID):
             raw = {str(r["id"]): r for r in await HA.list_imports(conn, org_id, account_id)}
             positions = await HA.positions_of(conn, org_id, account_id)
             txns = await HA.transactions_of(conn, org_id, account_id)
+            states = await HA.import_states(conn, org_id, account_id)        # BUGFIX4 — live / superseded
+            snap = await HA.live_snapshot(conn, org_id, account_id)
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
     for i in imports:
         i["actions"] = HA.import_actions(raw[i["id"]], can_approve=perms["can_approve"], user_id=principal.user_id)
+        st = states.get(i["id"]) or {}
+        i["state"] = st.get("state") or HA.state_of(i["status"], 0, 0)
+        i["live_lines"], i["superseded_lines"] = st.get("live_lines", 0), st.get("superseded_lines", 0)
+        i["superseded_by"] = st.get("superseded_by", [])
+        i["lines"] = st.get("lines", [])
+        if i["status"] == "draft":
+            other = {**snap, "open_drafts": [d for d in snap["open_drafts"] if d["id"] != i["id"]]}
+            i["replaces"] = HA.replaces_text(other, date.fromisoformat(i["as_of"]) if i["as_of"] else None)
     held = panel["account"]["is_held_away"]
     actions = []
     if perms["can_write"] and held:
@@ -189,8 +200,24 @@ async def account_panel(request: Request, account_id: UUID):
             actions.append("statement_import")
     # rep7b — trade controls only as the account's authority allows (read-only, the default: none)
     trade_actions = list(panel.get("trade_paths") or []) if perms["can_write"] else []
-    return {**_env(principal, panel=panel, imports=imports, positions=positions, transactions=txns),
+    return {**_env(principal, panel=panel, imports=imports, positions=positions, transactions=txns, snapshot=snap),
             "actions": actions, "trade_actions": trade_actions}
+
+
+@router.get("/held-away/accounts/{account_id}/snapshot")
+async def account_snapshot(request: Request, account_id: UUID, as_of: date | None = None):
+    """BUGFIX4 (O-04-02) — what a new draft would replace, shown BEFORE it is saved: the account's live snapshot (as-of,
+    lines, the imports they came from) and the open drafts, with the sentence the form shows."""
+    principal = require_permission(request, VIEW)
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await HA.load_account(conn, org_id, account_id)
+            snap = await HA.live_snapshot(conn, org_id, account_id)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+    return _env(principal, snapshot=snap, replaces=HA.replaces_text(snap, as_of))
 
 
 @router.get("/held-away/accounts/{account_id}/positions")
@@ -268,10 +295,16 @@ async def manual_import(request: Request, account_id: UUID, body: ManualIn):
     org_id = get_org_id(request)
     pool = await get_pool()
     rows = [r.model_dump(exclude_none=True) for r in body.rows]
+    async with pool.acquire() as conn:
+        try:
+            snap = await HA.live_snapshot(conn, org_id, account_id)
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
     out = await _act(HA.create_manual_import(pool, org_id=org_id, actor_id=principal.user_id, account_id=account_id,
                                              as_of=body.as_of, rows=rows, document_id=body.document_id,
                                              notes=body.notes))
-    return HA.import_out(out)
+    # BUGFIX4 — never silent: the new draft says what approving it replaces (the snapshot read BEFORE it was saved)
+    return {**HA.import_out(out), "state": "draft", "replaces": HA.replaces_text(snap, body.as_of)}
 
 
 @router.post("/held-away/accounts/{account_id}/imports/file", status_code=201)

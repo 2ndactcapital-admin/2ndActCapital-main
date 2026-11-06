@@ -73,7 +73,10 @@ WINDOW_DAYS = 30
 OUTCOMES = ("clear", "replaced", "deferred", "blocked")
 OUTCOME_LABELS = {"clear": "Clear", "replaced": "Replaced by an approved substitute",
                   "deferred": "Deferred until it is clear", "blocked": "Blocked"}
-TAX_CLASS_LABELS = {"taxable": "Taxable", "tax_advantaged": "IRA / Roth (tax-advantaged)",
+# BUGFIX4 — the class label no longer claims every non-taxable account is an "IRA / Roth": a 529, a foundation, a DAF,
+# a CRUT and an insurance wrapper are all tax-advantaged. The account's own stored status (tax_status, labelled from
+# the org's account_tax_statuses config) is shown beside it (services.tax_overview).
+TAX_CLASS_LABELS = {"taxable": "Taxable", "tax_advantaged": "Tax-advantaged",
                     "unknown": "Tax status unknown (treated as taxable)"}
 SOURCE_LABELS = {"transaction": "A recorded trade", "held_away": "A trade in a held-away account (its source and as-of "
                  "are on the account)", "fill": "A reported fill", "instruction": "An open instruction",

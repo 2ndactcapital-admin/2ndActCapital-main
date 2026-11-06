@@ -9,6 +9,9 @@ Routes (all under /api/v1):
   POST  /entities/{entity_id}/private-investments      internal + manage_members
   POST  /private-investments/{commitment_id}/flows     internal + manage_members — a capital call / distribution
   POST  /private-investments/{commitment_id}/nav       internal + manage_members — a new NAV valuation
+  PATCH /private-investments/assets/{asset_id}         internal + manage_members — BUGFIX4: edit notes / dates /
+                                                       vintage (a new version, history kept)
+  GET   /private-investments/assets/{asset_id}/history internal + manage_members — BUGFIX4: its versions
   GET   /households/{household_id}/assets              internal — every member's direct assets + private investments
   POST  /entities/{entity_id}/net-worth/recalculate    internal + manage_members | manage_portfolio (family-scoped)
   GET   /portfolio/manual-assets                       view_held_away — org manual assets + the relink report
@@ -109,6 +112,18 @@ class PrivateIn(_Body):
     distributed_to_date: str | None = None
     nav: Nav | None = None
     as_of: date | None = None
+    #: BUGFIX4 — a simplified kind (hedge fund, direct deal, SAFE, note) has no commitment, so its vintage and its
+    #: investment date are its own
+    vintage_year: int | None = Field(default=None, ge=1900, le=2200)
+    investment_date: date | None = None
+
+
+class PrivateEdit(_Body):
+    """BUGFIX4 — an edit of a saved private investment (a new version; the prior one kept)."""
+    notes: str | None = Field(default=None, max_length=4000)
+    commitment_date: date | None = None
+    vintage_year: int | None = Field(default=None, ge=1900, le=2200)
+    investment_date: date | None = None
 
 
 class FlowIn(_Body):
@@ -204,7 +219,10 @@ async def list_private(request: Request, entity_id: UUID):
     await _record_in_org(pool, org_id, entity_id)
     async with pool.acquire() as conn:
         rows = await DH.list_private_investments(conn, org_id, [entity_id])
-    return _env(request, rows, DH.vocab(), ["add", "flows", "nav"])
+    env = _env(request, rows, DH.vocab(), ["add", "flows", "nav", "edit"])
+    for r in env["rows"]:   # BUGFIX4 — the row's Edit only for a caller who may make the identical request
+        r["actions"] = ["edit"] if env["permissions"]["can_write"] else []
+    return env
 
 
 @router.post("/entities/{entity_id}/private-investments", status_code=201)
@@ -217,6 +235,27 @@ async def add_private(request: Request, entity_id: UUID, body: PrivateIn):
                                                                                          exclude_none=True))
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
+
+
+@router.patch("/private-investments/assets/{asset_id}")
+async def edit_private(request: Request, asset_id: UUID, body: PrivateEdit):
+    p = require_internal_permission(request, "manage_members")
+    data = {k: getattr(body, k) for k in body.model_fields_set}
+    data = {k: (v.isoformat() if isinstance(v, date) else v) for k, v in data.items()}
+    try:
+        row = await DH.edit_private_investment(await get_pool(), org_id=get_org_id(request), actor_id=p.user_id,
+                                               asset_id=asset_id, data=data)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+    return {"row": row}
+
+
+@router.get("/private-investments/assets/{asset_id}/history")
+async def private_history(request: Request, asset_id: UUID):
+    require_internal_permission(request, "manage_members")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await DH.private_investment_history(conn, get_org_id(request), asset_id)
 
 
 @router.post("/private-investments/{commitment_id}/flows", status_code=201)
@@ -384,6 +423,13 @@ async def get_integrated(request: Request, import_id: UUID):
             _raise(exc)
     imp["actions"] = (["approve", "reject"] if imp["status"] == "draft" and imp["entered_by"] != str(p.user_id)
                       else [])
+    # BUGFIX4 — the maker of a draft sees WHO entered it (and that their sign-ins are one person), not a bare refusal
+    from services.maker_names import entered_by_note
+
+    async with pool.acquire() as conn:
+        imp["maker_note"] = (await entered_by_note(conn, maker_id=imp["entered_by"], viewer_id=p.user_id,
+                                                   approver="Super Admin", item="import")
+                             if imp["status"] == "draft" else None)
     return imp
 
 

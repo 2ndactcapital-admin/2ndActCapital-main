@@ -106,7 +106,7 @@ export default function IntegratedImport({ initialEnvelope }) {
               {importActions(open).includes("reject") && <button type="button" className="rounded-[6px] border border-[#1B2B4B] px-4 py-2 text-[#1B2B4B]" onClick={() => decide("reject")}>Reject</button>}
             </div>
           )}
-          {open.status === "draft" && importActions(open).length === 0 && <p className={`mt-3 ${quiet}`}>A different Super Admin must approve this import.</p>}
+          {open.status === "draft" && importActions(open).length === 0 && <p className={`mt-3 ${quiet}`}>{open.maker_note || "A different Super Admin must approve this import."}</p>}
         </section>
       )}
       {msg && <p className="text-sm text-[#9B2335]">{msg}</p>}

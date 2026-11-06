@@ -411,3 +411,35 @@ async def recalculate_household(request: Request, household_id: UUID):
         return await HA.recalculate_household(pool, org_id, household_id, actor_id=p.user_id)
     except HA.HouseholdNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------------------
+# BUGFIX4 (MUSE-OLIVO household) — the household's OWN page: net worth (gross / liabilities / net, as-of), top
+# holdings, and Recalculate, on /portfolio/households/{id} (Recalculate used to live only in People & Access →
+# Households, where the org admin looking at the household never saw it).
+# --------------------------------------------------------------------------
+SUMMARY_READ_PERMISSIONS = ("manage_members", "manage_portfolio", "view_replication")
+
+
+@router.get("/households/{household_id}/summary")
+async def household_summary(request: Request, household_id: UUID):
+    """Gate: an internal firm role holding manage_members, manage_portfolio or view_replication (Super Admin first;
+    the staff bypass as every internal_perm gate); a member is refused. Another org's household is a 404."""
+    require_internal_permission(request, "manage_members", "manage_portfolio", "view_replication")  # = SUMMARY_READ_PERMISSIONS
+    from services import household_total as HT_
+
+    org_id = get_org_id(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        name = await conn.fetchval("SELECT name FROM households WHERE id = $1 AND org_id = $2::uuid",
+                                   household_id, str(org_id))
+        if name is None:
+            raise HTTPException(status_code=404, detail="household not found")
+        members = await HT_.household_members(conn, org_id, household_id)
+        total = await HT_.total(conn, org_id, members)
+    perms = _household_permissions(request)
+    perms["can_read"] = True
+    actions = ["recalculate"] if perms["can"]["recalculate"] else []
+    return {"household": {"id": str(household_id), "name": name}, "total": total, "actions": actions,
+            "permissions": perms, "vocabularies": {**HT_.vocabularies(), "editable": [], "inline_editable": []}}
+

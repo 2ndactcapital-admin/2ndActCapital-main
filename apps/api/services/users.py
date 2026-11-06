@@ -342,6 +342,11 @@ async def resolve_identity(conn, request: Request) -> tuple[str | None, str]:
         return None, "none"
     if inserted["status"] == STATUS_PENDING:
         await _notify_pending(conn, org_id=org_id, user_id=inserted["id"], email=any_email or email)
+    if staff:
+        # BUGFIX4 — Super Admin is decided from user_roles (ONE role source): the grant goes with the string
+        from services.rbac import grant_named_role
+
+        await grant_named_role(conn, inserted["id"], org_id, "super_admin")
     return str(inserted["id"]), ("created_super_admin" if staff else "created_pending")
 
 

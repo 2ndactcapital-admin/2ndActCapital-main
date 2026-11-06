@@ -280,9 +280,18 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "money_market": "taxonomy_sub_8_1_1",
         "municipal_bond": "taxonomy_sub_2_3_4",
         "cash": "taxonomy_mc_8_1",
+        "cash_holding": "taxonomy_mc_8_1",   # BUGFIX4 (K.19) — a direct cash / working-capital holding
         "listed_option": "taxonomy_mc_7_6",
         "option": "taxonomy_mc_7_6",
         "digital_asset": "taxonomy_mc_7_3",
+        # BUGFIX4 (MUSE-OLIVO-O-04-03) — a held-away line resolved to the security MASTER gets its asset kind from
+        # securities_global.security_type, which bugfix3's map never covered: every master-resolved line was unkeyed
+        # and the rollup skipped it (Olivo: SCHR / SCMB / QQQ / the ETH ETF = $7,545,600). The unambiguous master types
+        # map here; 'fund' (6,133 rows — equity AND bond ETFs) and 'other' / 'index' stay unmapped on purpose: a fund's
+        # class is given on the entry line (its taxonomy key) or by an operator, never guessed from the type.
+        "equity": "taxonomy_sc_1",
+        "fixed_income": "taxonomy_sc_2",
+        "structured_note": "taxonomy_mc_7_4",
     },
     # ── User management (this sprint) ──────────────────────────────────────
     # How long an admin-minted invite token stays redeemable. Was the module

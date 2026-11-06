@@ -7,6 +7,7 @@ import AuthorityPanel from "@/components/authority/AuthorityPanel";
 import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 import ConsolidatePanel from "@/components/replication/ConsolidatePanel";
 import BulkPendingLink from "@/components/approvals/BulkPendingLink";
+import HouseholdSummary from "@/components/households/HouseholdSummary";
 
 // REP7 — Household → tab "X-ray": the look-through of every fund the
 // household holds (managed and held-away accounts), replicable funds and the
@@ -59,6 +60,8 @@ export default async function HouseholdPage({ params, searchParams }) {
       </nav>
       {/* BULKAPPROVE1 — this household's pending items, when more than one waits for this viewer */}
       <div className="mt-3"><BulkPendingLink householdId={id} /></div>
+      {/* BUGFIX4 — the household's net worth and Recalculate on its own page (renders nothing for a caller refused) */}
+      <div className="mt-3"><HouseholdSummary householdId={id} /></div>
       <div className="mt-4">
         {tab === "consolidate" ? <ConsolidatePanel householdId={id} />
           : tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />

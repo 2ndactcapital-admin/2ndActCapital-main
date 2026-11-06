@@ -29,7 +29,13 @@ from services.money_text import fixed
 from services.portfolio_assets import TABLE_ASSETS, TABLE_POSITIONS, TABLE_VALUATIONS, _OrgWrite
 
 DIRECT_KINDS = {"real_estate": "Real estate", "collectible": "Collectible", "operating_business": "Operating business",
-                "insurance_cash_value": "Insurance policy cash value", "other": "Other"}
+                "insurance_cash_value": "Insurance policy cash value",
+                # BUGFIX4 (K.19) — cash held outside an account (working capital, a sweep at the family office): a
+                # cash KIND, classified as cash by portfolio.kind_taxonomy ('cash_holding' → Cash & Equivalents). Before, it
+                # could only be entered as "Other", which has no bucket, so it counted $0.
+                # key 'cash_holding', not 'cash': asset_type 'cash' is the org's own cash asset (ensure_cash_asset)
+                "cash_holding": "Cash / working capital",
+                "other": "Other"}
 PRIVATE_KINDS = {"fund": "Private fund", "hedge_fund": "Hedge fund", "direct_deal": "Direct deal", "spv": "SPV",
                  "safe": "SAFE", "note": "Convertible note"}
 #: BUGFIX3 (MUSE-OLIVO-H, Task 3) — which kinds carry a commitment. 7 of the 11 Olivo private investments have none
@@ -50,7 +56,7 @@ _STATUS_OF = {"appraisal": "final", "mark_to_model": "estimated", "nav": "final"
 NAV_METHOD = "nav"
 _SHAPE = {"real_estate": ("hard_asset", "appraisal"), "collectible": ("hard_asset", "appraisal"),
           "operating_business": ("financial", "mark_to_model"), "insurance_cash_value": ("financial", "mark_to_model"),
-          "other": ("hard_asset", "appraisal")}
+          "cash_holding": ("financial", "amortized_cost"), "other": ("hard_asset", "appraisal")}
 HUNDRED = Decimal(100)
 AUTHORITY, SOURCE = "manual", "manual"
 CALL_CODE, DIST_CODE = "call_investment", "dist_roc"
@@ -332,12 +338,151 @@ async def _add_private_without_commitment(pool, *, org_id, actor_id, entity_id, 
                 authority=AUTHORITY, source_system=SOURCE, ownership_basis=PA.PERCENT, ownership_pct=HUNDRED,
                 cost_basis=invested, taxonomy_key=(data.get("taxonomy_key") or None))
             await _record_value(conn, org_id, aid, nav, nav=True)
+            # BUGFIX4 — a simplified kind's own vintage and investment date (it has no commitment to carry them)
+            vint = _vintage(data.get("vintage_year")) if data.get("vintage_year") not in (None, "") else None
+            inv = _day(data.get("investment_date"), "investment date", required=False)
+            if vint is not None or inv is not None:
+                async with _OrgWrite(conn, str(org_id)) as c:
+                    await c.execute(f"UPDATE {TABLE_ASSETS} SET inception_date = $2, manual_terms = "
+                                    "COALESCE(manual_terms, '{}'::jsonb) || $3::jsonb WHERE id = $1::uuid AND "
+                                    "system_to IS NULL", aid, inv,
+                                    __import__("json").dumps({"vintage_year": vint} if vint is not None else {}))
     from services import portfolio_refresh as PR
 
     refresh = await PR.after_write(pool, org_id, [entity_id], reason=f"private investment {pid}", actor_id=actor_id)
     return {"asset_id": aid, "position_id": pid, "commitment_id": None, "has_commitment": False, "unfunded": None,
             "called_to_date": None, "distributed_to_date": None, "amount_invested": fixed(invested), "notes": notes,
             "rollup": _brief(refresh)}
+
+
+# ── BUGFIX4 (MUSE-OLIVO private investments) — edit a saved row: notes, dates, vintage ────────────────────────
+#: the fields an edit takes; every one is optional, at least one is required
+EDIT_FIELDS = ("notes", "commitment_date", "vintage_year", "investment_date")
+
+
+def _vintage(v):
+    if v in (None, ""):
+        return None
+    try:
+        y = int(v)
+    except (TypeError, ValueError):
+        raise HoldingError("vintage year is a year, e.g. 2021") from None
+    if not 1900 <= y <= 2200:
+        raise HoldingError("vintage year is a year, e.g. 2021")
+    return y
+
+
+async def edit_private_investment(pool, *, org_id, actor_id, asset_id, data: dict) -> dict:
+    """A NEW VERSION of the private investment, the prior one kept (system axis — the ids are KEPT: positions,
+    transactions and valuations point at the asset, flows and tax rows at the commitment, CLAUDE.md Rule 3):
+
+    * ``notes`` → the asset's note;
+    * a row WITH a commitment: ``commitment_date`` / ``vintage_year`` → the commitment;
+    * a simplified kind (hedge fund, direct deal, SAFE, note — no commitment): ``investment_date`` → the asset's
+      inception date, ``vintage_year`` → its manual terms.
+
+    Returns the edited row as list_private_investments shows it."""
+    changes = {k: data[k] for k in EDIT_FIELDS if k in data}
+    if not changes:
+        raise HoldingError(f"nothing to change — send one of {', '.join(EDIT_FIELDS)}")
+    vintage = _vintage(changes["vintage_year"]) if "vintage_year" in changes else None
+    async with pool.acquire() as conn:
+        async with _OrgWrite(conn, str(org_id)) as c:
+            a = await c.fetchrow(
+                f"SELECT a.id::text AS id, a.asset_type, a.notes, a.manual_terms, a.inception_date, "
+                f"p.id::text AS position_id, p.owner_entity_id::text AS owner FROM {TABLE_ASSETS} a "
+                f"JOIN {TABLE_POSITIONS} p ON p.asset_id = a.id AND p.org_id = a.org_id AND p.valid_to IS NULL "
+                f"AND p.system_to IS NULL WHERE a.id = $1::uuid AND a.org_id = $2::uuid AND a.valid_to IS NULL "
+                f"AND a.system_to IS NULL LIMIT 1", str(asset_id), str(org_id))
+            if a is None:
+                raise HoldingNotFound("Private investment not found")
+            cm = await c.fetchrow(
+                "SELECT id::text AS id FROM portfolio.commitments WHERE position_id = $1::uuid AND org_id = $2::uuid "
+                "AND valid_to IS NULL AND system_to IS NULL LIMIT 1", a["position_id"], str(org_id))
+            if cm is None and not a["asset_type"].startswith("private_"):
+                raise HoldingNotFound("Private investment not found")
+            if cm is None and "commitment_date" in changes:
+                raise HoldingError("this investment has no commitment — set its investment date instead")
+            if cm is not None and "investment_date" in changes:
+                raise HoldingError("this investment has a commitment — set the commitment date instead")
+            asset_change = "notes" in changes or (cm is None and ("investment_date" in changes
+                                                                  or "vintage_year" in changes))
+            before = {"notes": a["notes"], "inception_date": a["inception_date"].isoformat() if a["inception_date"]
+                      else None, "manual_terms": a["manual_terms"]}
+            if asset_change:
+                # the outgoing version, EVERY column (notes and manual_terms included), stamped system_to
+                await c.execute(
+                    f"INSERT INTO {TABLE_ASSETS} (org_id, global_security_id, name, short_name, asset_class, asset_type, "
+                    "ownership_basis, valuation_method, include_in_performance, default_taxonomy_key, currency_code, "
+                    "issuer_entity_id, internal_spv_id, inception_date, maturity_date, is_active, valid_from, valid_to, "
+                    "system_from, system_to, manual_terms, notes) SELECT org_id, global_security_id, name, short_name, "
+                    "asset_class, asset_type, ownership_basis, valuation_method, include_in_performance, "
+                    "default_taxonomy_key, currency_code, issuer_entity_id, internal_spv_id, inception_date, "
+                    "maturity_date, is_active, valid_from, valid_to, system_from, now(), manual_terms, notes "
+                    f"FROM {TABLE_ASSETS} WHERE id = $1::uuid AND org_id = $2::uuid", str(asset_id), str(org_id))
+                terms = a["manual_terms"] or {}
+                terms = __import__("json").loads(terms) if isinstance(terms, str) else dict(terms)
+                if cm is None and "vintage_year" in changes:
+                    terms["vintage_year"] = vintage
+                inception = (_day(changes["investment_date"], "investment date", required=False)
+                             if cm is None and "investment_date" in changes else a["inception_date"])
+                notes = ((changes["notes"] or "").strip() or None) if "notes" in changes else a["notes"]
+                await c.execute(f"UPDATE {TABLE_ASSETS} SET notes = $3, manual_terms = $4::jsonb, inception_date = $5, "
+                                "system_from = now() WHERE id = $1::uuid AND org_id = $2::uuid AND valid_to IS NULL "
+                                "AND system_to IS NULL", str(asset_id), str(org_id), notes,
+                                __import__("json").dumps(terms), inception)
+            if cm is not None and ("commitment_date" in changes or "vintage_year" in changes):
+                # archive the outgoing commitment version (system_to stamped), then update the live row in place
+                await c.execute(
+                    "INSERT INTO portfolio.commitments (org_id, position_id, commitment_amount, commitment_date, "
+                    "called_to_date, distributed_to_date, recallable_amount, unfunded, vintage_year, liquidity_terms, "
+                    "tax_doc_expected, tax_year, tax_doc_status, valid_from, valid_to, system_from, system_to) "
+                    "SELECT org_id, position_id, commitment_amount, commitment_date, called_to_date, "
+                    "distributed_to_date, recallable_amount, unfunded, vintage_year, liquidity_terms, tax_doc_expected, "
+                    "tax_year, tax_doc_status, valid_from, valid_to, system_from, now() FROM portfolio.commitments "
+                    "WHERE id = $1::uuid AND org_id = $2::uuid", cm["id"], str(org_id))
+                sets, vals = [], []
+                if "commitment_date" in changes:
+                    vals.append(_day(changes["commitment_date"], "commitment date"))
+                    sets.append(f"commitment_date = ${len(vals) + 2}")
+                if "vintage_year" in changes:
+                    vals.append(vintage)
+                    sets.append(f"vintage_year = ${len(vals) + 2}")
+                hit = await c.fetchval(f"UPDATE portfolio.commitments SET {', '.join(sets)}, system_from = now() "
+                                       "WHERE id = $1::uuid AND org_id = $2::uuid AND system_to IS NULL RETURNING id",
+                                       cm["id"], str(org_id), *vals)
+                if hit is None:
+                    raise HoldingError("the commitment was not updated (no row changed) — reload and try again")
+            await c.execute(
+                "INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, payload) VALUES "
+                "($1::uuid, $2::uuid, 'portfolio.private_investment_edited', 'asset', $3::uuid, $4::jsonb)",
+                str(org_id), str(actor_id) if actor_id else None, str(asset_id),
+                __import__("json").dumps({"changes": {k: (str(v) if v is not None else None)
+                                                      for k, v in changes.items()},
+                                          "before": {k: (v if not isinstance(v, (dict, list)) else v)
+                                                     for k, v in before.items()},
+                                          "commitment_id": cm["id"] if cm else None}, default=str))
+        rows = await list_private_investments(conn, org_id, [a["owner"]])
+    return next((r for r in rows if r["asset_id"] == str(asset_id)), {})
+
+
+async def private_investment_history(conn, org_id, asset_id) -> dict:
+    """Every version of the asset (notes / dates / terms) and of its commitment — newest first."""
+    async with _OrgWrite(conn, str(org_id)) as c:
+        # the asset archive has no link column, so each edit's before / after lives on its audit row
+        assets = [{"at": r["created_at"], "by": r["user_id"], **(__import__("json").loads(r["payload"])
+                                                                 if isinstance(r["payload"], str) else r["payload"])}
+                  for r in await c.fetch(
+                      "SELECT created_at, user_id::text AS user_id, payload FROM audit_log WHERE org_id = $1::uuid "
+                      "AND action = 'portfolio.private_investment_edited' AND resource_id = $2::uuid "
+                      "ORDER BY created_at DESC", str(org_id), str(asset_id))]
+        commits = [dict(r) for r in await c.fetch(
+            f"SELECT cm.commitment_date, cm.vintage_year, cm.commitment_amount, cm.system_from, cm.system_to FROM "
+            f"portfolio.commitments cm JOIN {TABLE_POSITIONS} p ON p.id = cm.position_id WHERE p.asset_id = $2::uuid "
+            "AND cm.org_id = $1::uuid ORDER BY cm.system_from DESC", str(org_id), str(asset_id))]
+    j = lambda rows: [{k: (v.isoformat() if hasattr(v, "isoformat") else (fixed(v) if isinstance(v, Decimal) else v))  # noqa: E731
+                       for k, v in r.items()} for r in rows]
+    return {"asset_versions": j(assets), "commitment_versions": j(commits)}
 
 
 async def add_flow(pool, *, org_id, actor_id, commitment_id, data: dict) -> dict:
@@ -379,7 +524,8 @@ async def list_private_investments(conn, org_id, entity_ids) -> list[dict]:
             f"SELECT cm.id::text AS commitment_id, cm.commitment_amount, cm.commitment_date, cm.vintage_year, "
             f"cm.called_to_date, cm.distributed_to_date, cm.recallable_amount, cm.unfunded, p.id::text AS position_id, "
             f"p.owner_entity_id::text AS owner_entity_id, p.ownership_basis, p.ownership_pct, p.quantity, "
-            f"p.market_value, p.cost_basis, a.id::text AS asset_id, a.name, a.asset_type, a.notes, "
+            f"p.market_value, p.cost_basis, a.id::text AS asset_id, a.name, a.asset_type, a.notes, a.inception_date, "
+            f"a.manual_terms, "
             f"e.display_name AS owner_name "
             f"FROM {TABLE_POSITIONS} p JOIN {TABLE_ASSETS} a ON a.id = p.asset_id AND a.valid_to IS NULL "
             f"AND a.system_to IS NULL JOIN entities e ON e.id = p.owner_entity_id AND e.valid_to IS NULL "
@@ -403,10 +549,25 @@ async def list_private_investments(conn, org_id, entity_ids) -> list[dict]:
                         # the amount invested of a no-commitment investment is its position's cost basis
                         "amount_invested": None if has_c else fixed(r["cost_basis"]),
                         "commitment_date": r["commitment_date"].isoformat() if r["commitment_date"] else None,
-                        "vintage_year": r["vintage_year"],
+                        # BUGFIX4 — a simplified kind's vintage + date live on the asset (no commitment row)
+                        "vintage_year": r["vintage_year"] if has_c else _terms(r["manual_terms"]).get("vintage_year"),
+                        "investment_date": (None if has_c or not r["inception_date"]
+                                            else r["inception_date"].isoformat()),
+                        # BUGFIX4 — the capital-call projection of a commitment row opens from the row
+                        "projection_path": (f"/portfolio/commitments/{r['commitment_id']}" if has_c
+                                            else None),
                         "nav": None if nav is None else fixed(nav.quantize(Decimal("0.01"))),
                         "valuations": await _valuations(c, r["asset_id"])})
     return out
+
+
+def _terms(v) -> dict:
+    if isinstance(v, str):
+        try:
+            return __import__("json").loads(v) or {}
+        except ValueError:
+            return {}
+    return dict(v or {})
 
 
 def vocab() -> dict:

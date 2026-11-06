@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { consolidationControls, labelOf, pct, vocab } from "@/lib/rep10.mjs";
+import { consolidateMessage } from "@/lib/bugfix4.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const primary = "rounded bg-navy px-3 py-1 text-white disabled:opacity-50";
@@ -45,10 +46,13 @@ export function ConsolidationView({ envelope, onAct }) {
 export default function ConsolidatePanel({ householdId }) {
   const [env, setEnv] = useState(null);
   const [msg, setMsg] = useState(null);
+  // BUGFIX4 — the tab said nothing at all on a 403 (and while loading): it now always says why it is empty
+  const [state, setState] = useState({ loaded: false, status: null, error: null });
   async function load() {
     const res = await fetch(`/api/replication/consolidation/households/${householdId}`);
     const data = await res.json().catch(() => ({}));
-    if (res.ok) setEnv(data); else setMsg(res.status === 403 ? null : data.error);
+    setState({ loaded: true, status: res.status, error: res.ok ? null : (data.error || `Request failed (${res.status})`) });
+    if (res.ok) setEnv(data); else setEnv(null);
   }
   useEffect(() => { load(); }, [householdId]); // eslint-disable-line react-hooks/exhaustive-deps
   async function onAct(l) {
@@ -62,6 +66,9 @@ export default function ConsolidatePanel({ householdId }) {
   return (
     <div className="space-y-2">
       {msg ? <p className="text-sm text-text-muted">{msg}</p> : null}
+      {!env && consolidateMessage(state) ? (
+        <div className="rounded-[6px] border border-[#ece8dd] bg-white p-10 text-center text-sm text-text-muted">{consolidateMessage(state)}</div>
+      ) : null}
       <ConsolidationView envelope={env} onAct={onAct} />
     </div>
   );

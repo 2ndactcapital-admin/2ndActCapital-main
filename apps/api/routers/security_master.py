@@ -6,6 +6,7 @@
     GET  /admin/security-data/master/jobs                       the platform jobs (schedule, last run, steps)
     POST /admin/security-data/master/jobs/{job_key}/run-now     start a job now (same engine path as the scheduler)
     POST /admin/security-data/master/runs/{run_id}/close        close a HELD platform-job run so its schedule resumes
+    POST /admin/security-data/master/jobs/{job_key}/schedule    BUGFIX4: switch the job's schedule on / off (audited)
     GET  /admin/security-data/master/review                     the review queue
     POST /admin/security-data/master/review/{review_id}/decision  resolve / dismiss an item (records the decision;
                                                                 changes NO security — the fix is made on the security
@@ -43,6 +44,10 @@ class DecisionIn(_Body):
     note: str = Field(min_length=1, max_length=2000)
 
 
+class ScheduleIn(_Body):
+    active: bool
+
+
 class CloseIn(_Body):
     note: str = Field(min_length=1, max_length=2000)
 
@@ -74,9 +79,28 @@ async def master_jobs(request: Request):
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with platform_scope(conn):
-            jobs = await J.job_rows(conn)
+            jobs = await J.job_rows(conn, J.platform_org())
     ordered = [jobs[k] for k in J.JOBS if k in jobs]
-    return _envelope(principal, {"jobs": ordered, "missing": [k for k in J.JOBS if k not in jobs]})
+    return _envelope(principal, {"jobs": ordered, "missing": [k for k in J.JOBS if k not in jobs],
+                                 "price_gap_note": J.PRICE_GAP_NOTE,
+                                 "actions": ["switch_schedule", "run_now"] if principal.is_super_admin else []})
+
+
+@router.post(f"{_P}/jobs/{{job_key}}/schedule")
+async def master_switch_schedule(request: Request, job_key: str, body: ScheduleIn):
+    """BUGFIX4 — a Super Admin switches a platform job's schedule on or off; audited (audit_log
+    security_master.schedule_switched). The sprint switched nothing on — the operator decides."""
+    principal = require_super_admin(request)
+    if job_key not in J.JOBS:
+        raise HTTPException(status_code=404, detail=f"unknown platform job {job_key!r}")
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with platform_scope(conn):
+                out = await J.set_schedule(conn, job_key=job_key, active=body.active, actor_id=principal.user_id)
+    except J.PlatformJobError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(principal, {"schedule": out})
 
 
 async def _run_in_background(pool, job_key: str, actor_id) -> None:

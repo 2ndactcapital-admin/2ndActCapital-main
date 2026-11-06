@@ -1,5 +1,5 @@
 {
- "app_route_count": 838,
+ "app_route_count": 843,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -5616,6 +5616,48 @@
    },
    "find": false,
    "methods": [
+    "PATCH"
+   ],
+   "module": "routers.portentry",
+   "name": "edit_private",
+   "note": "",
+   "path": "/api/v1/private-investments/assets/{asset_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "private_history",
+   "note": "",
+   "path": "/api/v1/private-investments/assets/{asset_id}/history",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
     "POST"
    ],
    "module": "routers.portentry",
@@ -7010,6 +7052,29 @@
    "path": "/api/v1/admin/households/{household_id}/recalculate",
    "public": false,
    "write": true
+  },
+  {
+   "after": "internal + any(manage_members|manage_portfolio|view_replication)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_portfolio",
+     "view_replication"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.households",
+   "name": "household_summary",
+   "note": "",
+   "path": "/api/v1/households/{household_id}/summary",
+   "public": false,
+   "write": false
   },
   {
    "after": "authz view_portfolio; internal + any(view_portfolio)",
@@ -12016,6 +12081,24 @@
     "POST"
    ],
    "module": "routers.security_master",
+   "name": "master_switch_schedule",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/jobs/{job_key}/schedule",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.security_master",
    "name": "master_run_now",
    "note": "",
    "path": "/api/v1/admin/security-data/master/jobs/{job_key}/run-now",
@@ -15486,6 +15569,28 @@
    "name": "account_panel",
    "note": "",
    "path": "/api/v1/held-away/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_held_away",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_held_away"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.held_away",
+   "name": "account_snapshot",
+   "note": "",
+   "path": "/api/v1/held-away/accounts/{account_id}/snapshot",
    "public": false,
    "write": false
   },

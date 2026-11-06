@@ -528,7 +528,8 @@ export default function UserManagement({
     );
   }, [users, search]);
 
-  const pendingUsers = users.filter((u) => u.status === "pending");
+  // BUGFIX4 — placeholder (stub) logins appear here too, prominently, with "link to an existing user"
+  const pendingUsers = users.filter((u) => u.status === "pending" || u.stub_login === true);
 
   function refetch(next = {}) {
     const params = listParams({
