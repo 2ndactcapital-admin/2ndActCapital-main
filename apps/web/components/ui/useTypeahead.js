@@ -13,9 +13,10 @@ export function useTypeahead(search, { minChars = 1, delay = TYPEAHEAD_DELAY_MS 
   const [tick, setTick] = useState(0);   // rerun(): the same query again (a Search button / Enter)
   const last = useRef("");
   const seq = useRef(sequence());
+  const tooShort = String(query ?? "").trim().length < minChars;
   useEffect(() => {
     const q = String(query ?? "").trim();
-    if (q.length < minChars) { setHits([]); last.current = ""; return undefined; }
+    if (q.length < minChars) { last.current = ""; return undefined; }   // hits are hidden below, not reset here
     if (!shouldSearch(q, last.current, minChars)) return undefined;
     const id = setTimeout(async () => {
       last.current = q;
@@ -31,5 +32,5 @@ export function useTypeahead(search, { minChars = 1, delay = TYPEAHEAD_DELAY_MS 
   }, [query, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const reset = () => { setQuery(""); setHits([]); last.current = ""; };
   const rerun = () => { last.current = ""; setTick((n) => n + 1); };
-  return { query, setQuery, hits, error, reset, rerun };
+  return { query, setQuery, hits: tooShort ? [] : hits, error: tooShort ? null : error, reset, rerun };
 }

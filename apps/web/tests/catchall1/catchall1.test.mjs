@@ -260,9 +260,9 @@ test("lows: pickers search on ANY change of the text (paste / autofill), not on 
 test("lows: lists follow a re-read (no 'empty until reload'); the household card re-reads on every open", () => {
   for (const f of ["components/crm/tabs/EmploymentTab.jsx", "components/crm/tabs/TaxIdsTab.jsx",
     "components/crm/tabs/SocialTab.jsx"]) {
-    assert.match(src(f), /useEffect\(\(\) => \{\n\s+if \(Array\.isArray\(initial\)\) setItems\(initial\);\n\s+\}, \[initial\]\)/, f);
+    assert.match(src(f), /if \(initial !== seen\) \{\n\s+setSeen\(initial\);\n\s+if \(Array\.isArray\(initial\)\) setItems\(initial\);/, f);
   }
-  assert.match(src("components/crm/tabs/ComplianceTab.jsx"), /if \(initial\) setRecord\(initial\);\n\s+\}, \[initial\]\)/);
+  assert.match(src("components/crm/tabs/ComplianceTab.jsx"), /if \(initial !== seen\) \{\n\s+setSeen\(initial\);\n\s+if \(initial\) setRecord\(initial\);/);
   const hm = src("components/households/HouseholdManager.jsx");
   assert.match(hm, /if \(next\) await load\(\);/);
   assert.doesNotMatch(hm, /if \(next && !detail\) await load\(\);/);
