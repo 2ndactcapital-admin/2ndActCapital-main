@@ -373,6 +373,54 @@
 --   bypass_reason                            text
 --   PRIMARY KEY ai_decision_log_pkey: (id)
 
+-- ===== ai_drift_alert_events =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   alert_id                                 uuid NOT NULL
+--   org_id                                   uuid NOT NULL
+--   event                                    text NOT NULL
+--   at                                       timestamp with time zone NOT NULL
+--   numbers                                  jsonb NOT NULL
+--   note                                     text
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY ai_drift_alert_events_pkey: (id)
+
+-- ===== ai_drift_alerts =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   task_type                                text NOT NULL
+--   rule_key                                 text NOT NULL
+--   status                                   text NOT NULL DEFAULT 'open'::text
+--   opened_at                                timestamp with time zone NOT NULL
+--   last_evaluated_at                        timestamp with time zone NOT NULL
+--   last_drift_at                            timestamp with time zone NOT NULL
+--   evaluations                              integer NOT NULL DEFAULT 1
+--   ok_since                                 timestamp with time zone
+--   closed_at                                timestamp with time zone
+--   close_reason                             text
+--   detail                                   text NOT NULL
+--   numbers                                  jsonb NOT NULL
+--   threshold_id                             uuid
+--   link                                     text NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   PRIMARY KEY ai_drift_alerts_pkey: (id)
+
+-- ===== ai_drift_thresholds =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   task_type                                text
+--   rule_key                                 text NOT NULL
+--   threshold                                numeric
+--   min_recent                               integer NOT NULL
+--   min_baseline                             integer NOT NULL
+--   enabled                                  boolean NOT NULL DEFAULT true
+--   version                                  integer NOT NULL DEFAULT 1
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT clock_timestamp()
+--   valid_to                                 timestamp with time zone
+--   changed_by                               uuid
+--   change_note                              text
+--   PRIMARY KEY ai_drift_thresholds_pkey: (id)
+
 -- ===== ai_ensemble_configs =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   task_key                                 text NOT NULL
