@@ -151,3 +151,78 @@ async def record_quality_event(conn, *, org_id, data_type: str, subject_key: str
         "event_date, kind, provider_key, detail, run_id) VALUES ($1::uuid, CASE WHEN $1::uuid IS NULL THEN "
         "'platform' ELSE 'org' END, $2, $3, $4::uuid, $5, $6, $7, $8::jsonb, $9::uuid) RETURNING id",
         org_id, data_type, subject_key, gsid, event_date, kind, provider_key, body, run_id))
+
+
+# ── PRICES1: end-of-day bars + price coverage ───────────────────────────────
+async def upsert_eod_bars(conn, gsid: str, bars, *, provider_key: str, licence: dict, currency: str | None,
+                          flags: dict | None = None, as_of=None) -> dict:
+    """Platform rows (org_id NULL) for ONE security from ONE provider, on ``conn`` inside the caller's platform
+    transaction (app.is_super_admin LOCAL). Idempotent by (security, date, provider): an equal close writes nothing;
+    a CHANGED close is a restatement on the SYSTEM axis — the live row gets system_to = now() and a new row is
+    inserted (the old one stays readable as history). ``bars``: EodBar list; ``flags`` {day: [quality flags]}.
+    Returns {"inserted", "restated", "unchanged"}."""
+    out = {"inserted": 0, "restated": 0, "unchanged": 0}
+    if not bars:
+        return out
+    days = [b.day for b in bars]
+    cur = {r["price_date"]: r for r in await conn.fetch(
+        "SELECT id, price_date, price FROM portfolio.securities_global_prices WHERE global_security_id = $1::uuid "
+        "AND provider_key = $2 AND price_type = 'close' AND org_id IS NULL AND price_date >= $3 AND price_date <= $4 "
+        "AND " + LIVE + " FOR UPDATE", str(gsid), provider_key, min(days), max(days))}
+    stamp = as_of or datetime.now(timezone.utc)
+    lic = json.dumps(licence or {}, sort_keys=True)
+    restate_ids, rows = [], []
+    for b in bars:
+        c = cur.get(b.day)
+        if c is not None and Decimal(str(c["price"])) == b.close:
+            out["unchanged"] += 1
+            continue
+        if c is not None:
+            restate_ids.append(c["id"])
+            out["restated"] += 1
+        else:
+            out["inserted"] += 1
+        rows.append((str(gsid), b.day, b.close, b.currency or currency, provider_key, provider_key, stamp,
+                     list((flags or {}).get(b.day) or []), lic, b.adjustment_factor, json.dumps(b.bar_json())))
+    if restate_ids:
+        await conn.execute("UPDATE portfolio.securities_global_prices SET system_to = now() WHERE id = ANY($1::uuid[])",
+                           restate_ids)
+    if rows:
+        await conn.executemany(
+            "INSERT INTO portfolio.securities_global_prices (global_security_id, price_date, price, currency_code, "
+            "source, provider_key, as_of, quality_flags, licence, adjustment_factor, bar, price_type) VALUES "
+            "($1::uuid, $2, $3, $4, $5, $6, $7, $8::text[], $9::jsonb, $10, $11::jsonb, 'close')", rows)
+    return out
+
+
+async def set_price_coverage(conn, gsid: str, *, status: str, reason: str, provider_key: str | None,
+                             first_date=None, last_date=None, points: int = 0, run_id=None) -> str:
+    """The coverage finding WITH ITS REASON (portfolio.security_price_coverage, valid axis: a changed finding closes
+    the live row and inserts) and the one flag readers filter on (securities_global.price_coverage, SYSTEM axis: that
+    row is referenced by every asset, so its id is kept — the prior version is archived as a row stamped
+    system_to = now(), exactly services.securities_global.update_security's mechanism). Caller holds a platform
+    transaction. Returns 'unchanged' | 'recorded' | 'changed' (the flag itself changed)."""
+    cur = await conn.fetchrow(
+        "SELECT id, status, reason, provider_key, last_date, points FROM portfolio.security_price_coverage WHERE "
+        "global_security_id = $1::uuid AND " + LIVE, str(gsid))
+    same = cur is not None and (cur["status"], cur["reason"], cur["provider_key"], cur["last_date"], cur["points"]) \
+        == (status, reason, provider_key, last_date, int(points))
+    if not same:
+        if cur is not None:
+            await conn.execute("UPDATE portfolio.security_price_coverage SET valid_to = now() WHERE id = $1", cur["id"])
+        await conn.execute(
+            "INSERT INTO portfolio.security_price_coverage (global_security_id, status, provider_key, reason, "
+            "first_date, last_date, points, run_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::uuid)",
+            str(gsid), status, provider_key, reason, first_date, last_date, int(points), run_id)
+    flag = await conn.fetchval("SELECT price_coverage FROM portfolio.securities_global WHERE id = $1::uuid AND "
+                               "valid_to IS NULL AND system_to IS NULL", str(gsid))
+    if flag is None or flag == status:
+        return "unchanged" if same else "recorded"
+    await conn.execute(
+        "INSERT INTO portfolio.securities_global (name, short_name, security_type, currency_code, price_coverage, "
+        "merged_into_id, canonical_id, valid_from, valid_to, system_from, system_to) SELECT name, short_name, "
+        "security_type, currency_code, price_coverage, merged_into_id, canonical_id, valid_from, valid_to, "
+        "system_from, now() FROM portfolio.securities_global WHERE id = $1::uuid", str(gsid))
+    await conn.execute("UPDATE portfolio.securities_global SET price_coverage = $2 WHERE id = $1::uuid", str(gsid),
+                       status)
+    return "changed"

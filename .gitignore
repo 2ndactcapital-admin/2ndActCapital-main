@@ -58,3 +58,7 @@ apps/api/venv/
 sprint_prompts/logs/
 apps/api/litellm_diagnose.py
 Claude outputs/
+
+# PRICES1 — the backfill checkpoint (operator-local)
+apps/api/scripts/.prices_backfill.*.json
+apps/api/scripts/.prices_backfill.*.tmp

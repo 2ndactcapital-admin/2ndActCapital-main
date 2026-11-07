@@ -341,6 +341,53 @@ This file starts with the email item below.
 
 ---
 
+
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. PRICES1 — end-of-day prices: the price receptor (a documented plug-in contract), the first free source (Yahoo, internal only), store + coverage with reasons, the operator backfill, the prices job, readers that compute; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
+
+**Branch** `prices1-work`. Discovery: `docs/PRICES1_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md` ("PRICES1").
+Schema `docs/prices1_part1.sql` APPLIED (`scripts/_apply_prices1.py --all`: SCHEMA OK): price-store columns
+`adjustment_factor` + `bar`, quality kinds `invalid_value` / `currency_mismatch`, table
+`portfolio.security_price_coverage` (a policy for every operation), providers `yahoo_chart` (active) and `tiingo`
+(not connected), eod_price rank 5 / 6. The job "system:Security data — prices" SEEDED with its trigger **inactive**.
+Verify `apps/api/scripts/verify_prices1.py` WRITTEN, NOT RUN (in `scripts/regression_set.txt`). No price was fetched
+into the store by the sprint (the backfill is the operator's; only its `--dry-run` ran: 29 securities, 29 calls, ~41 s).
+
+**Findings (Task 1).**
+* 1a — the provider contract had no price-fetching method at all (`fetch()` refreshes "what you cover today", and
+  `nightly.coverage()` covers nothing for eod_price), no identifier an adapter keys by, no date range, no bar shape, no
+  adjusted / unadjusted statement, no zero / currency quality rule, no reason for `price_coverage`, no checkpoint.
+* 1b — Stooq answers every request with a JavaScript proof-of-work **bot wall** (not usable, not circumvented); Yahoo
+  chart works keyless for stocks, ETFs, mutual funds and money market — its `close` is **split-adjusted** (NVDA
+  2024-06-07 120.89, traded 1208.88) so the adapter undoes later splits; Tiingo / Polygon / Nasdaq Data Link need keys
+  (none in Doppler); Alpha Vantage free = 25 calls/day. **`FMP_API_KEY` is already in Doppler** [FIND] — unused.
+  Chosen: **primary yahoo_chart** (internal use only, member display not_allowed, a launch blocker), **fallback
+  tiingo** (written, not connected until `TIINGO_API_KEY`).
+* 1c — the coverage set is **29 securities** (28 held in live positions, all 2nd Act Capital; + ACWI benchmark); every
+  model / replica / snapshot / option / note / substitution / backtest table is empty; no watch-list or benchmark
+  table exists (benchmarks SPY / AGG / ACWI are a code constant).
+* 1d — every reader goes through the layer (internal); the roll-up and drift NEVER asked it, and the X-ray's tracking
+  error / harvest value were hard-wired to "needs prices". SSVI surface reads yfinance directly [FIND, untouched].
+
+**Built.** `providers/eod.py` (the receptor: EodSpec / EodLicence / EodBar / EodSeries / EodPriceProvider /
+contract_problems / RecordedHttpGet / RealHttpGet); `providers/yahoo_chart.py`; `providers/tiingo.py`;
+`providers/vendor_stub.py` + `VendorTemplateProvider` (the paid vendor template — `vendor_slot` unchanged);
+`services/security_data/prices.py` (coverage set, quality judge, ingest, backfill + checkpoint, the nightly step);
+`writes.upsert_eod_bars` (system-axis restatement) + `writes.set_price_coverage`; `layer.get_market`;
+`scripts/prices_backfill.py`; the job in `security_master_jobs`; readers: `networth.value_lines` (price else entered
+value; member licence by default), `account_models.load_holdings` (fresher close, `security_price`), the X-ray's
+tracking error + harvest value + `member_price_filter` (live and stored runs), `GET /security-data/lookup` (a non-staff
+caller is always answered for member display; staff see `display: internal`).
+
+**Findings while building.** [FIND] the grids (`position_current_value` called directly) still show the entered value —
+the card / household / snapshot use the price; [FIND] `harvest_candidates_price_chk` admits only `account_position` /
+`none`, so a harvest candidate priced from a fresher close is still labelled `account_position` there (the trade line
+carries `security_price`); [FIND] Yahoo's adjusted close carries ~1e-8 binary noise, so the adjustment factor is kept
+to 6 dp and as of first store — a later dividend does not restate history; [FIND] a spike up and back flags both the
+jump and the reversion as outliers.
+
+**Operator steps** — see `docs/SECURITY_DATA_DESIGN.md` "PRICES1 operator steps": backfill `--dry-run` → the real run
+→ switch "Security data — prices" on (Security master → Platform jobs) → optional `TIINGO_API_KEY`.
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. SECMASTER2 — the security master finished: SEC mutual-fund share classes, the FinanceDatabase load working again, sharper fund categories, the load summary; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
 
 **Branch** `secmaster2-work`. Discovery: `docs/SECMASTER2_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md`

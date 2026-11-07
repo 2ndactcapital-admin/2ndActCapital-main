@@ -47,7 +47,9 @@ REAL_PROVIDERS = ("fred", "yahoo")
 # Environment variables whose VALUES must never reach stdout or a database
 # column. scrub_error removes each one it finds set, wherever it appears.
 SECRET_ENV_NAMES = ("FRED_API_KEY", "DATABASE_URL", "DB_PASSWORD", "APP_SERVICE_DATABASE_URL",
-                    "OPENFIGI_API_KEY")  # secmaster1: the optional OpenFIGI key is scrubbed too
+                    "OPENFIGI_API_KEY",  # secmaster1: the optional OpenFIGI key is scrubbed too
+                    # PRICES1: end-of-day vendors' keys (Tiingo fallback; FMP present in Doppler, not used; template)
+                    "TIINGO_API_KEY", "FMP_API_KEY", "VENDOR_TEMPLATE_API_KEY")
 _MIN_SECRET_LEN = 6
 _URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s'\"<>]+")
 

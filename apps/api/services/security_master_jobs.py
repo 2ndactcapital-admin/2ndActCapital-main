@@ -96,6 +96,17 @@ JOBS: dict[str, JobSpec] = {
         "(SECMASTER2).",
         "0 8 3 * *", "America/New_York", "Monthly, the 3rd at 08:00 New York (12:00 / 13:00 UTC)",
         (StepSpec("mutual_funds", "security_master.mutual_funds", "SEC mutual-fund share classes"),)),
+    # PRICES1 — seeded INACTIVE (scripts/_apply_prices1.py --seed-jobs); the operator switches it on after the backfill
+    "security_data_prices": JobSpec(
+        "security_data_prices", "system:Security data — prices",
+        "End-of-day prices for the coverage set (held, modelled, replicated, option underlyings, benchmarks) through "
+        "the price receptor, in rank order with fallback: the last few days for every covered security (gap fill) and "
+        "full history for new members, within each source's daily budget; the rest resumes next night. Platform job "
+        "(PRICES1).",
+        "15 21 * * 1-5", "America/New_York",
+        "Weekdays 21:15 New York (01:15 UTC in summer, 02:15 UTC in winter) — after the 16:00 close and after mutual "
+        "funds strike and publish their NAVs (~18:00–20:00 New York)",
+        (StepSpec("prices", "security_data.prices", "End-of-day prices (gap fill + new history)"),)),
 }
 JOB_BY_NAME = {j.name: j for j in JOBS.values()}
 
@@ -104,6 +115,8 @@ TRANSPORT_FACTORY = None
 #: verify only (production leaves both empty): extra SyncContext fields (the delisting scope) and run_nightly kwargs
 SYNC_OVERRIDES: dict = {}
 NIGHTLY_KWARGS: dict = {}
+#: PRICES1 verify only: extra services.security_data.prices.nightly kwargs (the fixture securities, the fixture rank)
+PRICES_KWARGS: dict = {}
 
 
 def make_transport():
@@ -284,12 +297,23 @@ async def _security_data(ctx, rc) -> dict:
     return {"security_data_run_id": str(res.run_id), "status": res.status, **s}
 
 
+async def _prices(ctx, rc) -> dict:
+    """PRICES1 — gap fill + new members' history. A source failure raises (→ the run HOLDS, Super Admin alerted)."""
+    from services.security_data import prices as P
+
+    summary = await P.nightly(ctx.pool, run_id=ctx.run_id, **PRICES_KWARGS)
+    deferred = sum(int((v.get("gap_fill") or {}).get("deferred") or 0) + int((v.get("new_history") or {}).get(
+        "deferred") or 0) + int(v.get("new_deferred_to_next_night") or 0) for v in summary["providers"].values())
+    return {**summary, "deferred": deferred}
+
+
 _HANDLERS = {"security_master.universe": ("security_master_universe", _universe),
              "security_master.openfigi_new": ("security_master_openfigi", _openfigi),
              "security_master.sec13f": ("security_master_13f", _sec13f),
              "security_master.attributes": ("security_master_attributes", _attributes),
              "security_data.nightly": ("security_data_nightly", _security_data),
-             "security_master.mutual_funds": ("security_master_mutual_funds", _mutual_funds)}
+             "security_master.mutual_funds": ("security_master_mutual_funds", _mutual_funds),
+             "security_data.prices": ("security_data_prices", _prices)}
 _DESCRIPTIONS = {
     "security_master.universe": "Platform job: load the Nasdaq Trader listed universe and SEC company tickers "
                                 "into the security master; mark securities absent 3 runs as delisted.",
@@ -299,6 +323,8 @@ _DESCRIPTIONS = {
     "security_data.nightly": "Platform job: marketdata1's security-data nightly (refresh, quality, summary).",
     "security_master.mutual_funds": "Platform job: load SEC mutual-fund share classes (ticker, series and class ids) "
                                     "into the security master.",
+    "security_data.prices": "Platform job: end-of-day prices for the coverage set through the price receptor "
+                            "(gap fill + new history, within budget).",
 }
 
 
@@ -392,12 +418,17 @@ FETCHES = {
     "security_master_mutual_funds": "The SEC mutual-fund tickers file (one row per share class: CIK, series, class, "
                                     "ticker). New mutual-fund classes are added; existing tickers gain their SEC ids. "
                                     "Reference data — no prices.",
-    "security_data_nightly": "marketdata1's nightly: every configured security-data provider within its budget, then "
-                             "the quality checks. No free end-of-day PRICE provider is configured yet, so it adds no "
-                             "prices and price_coverage stays 'unknown' until the prices sprint.",
+    "security_data_nightly": "marketdata1's nightly: every configured security-data provider within its budget (FRED "
+                             "rates), then the quality checks. It does not fetch end-of-day prices — the prices job "
+                             "does.",
+    "security_data_prices": "End-of-day closes for the coverage set (held, modelled, replicated, option underlyings, "
+                            "benchmarks) from the ranked price sources — today Yahoo Finance (internal use only, "
+                            "never shown to members), Tiingo when its key is added. Gap fill for the last few days; "
+                            "full history for new members; within each source's daily budget.",
 }
-PRICE_GAP_NOTE = ("No free end-of-day price source is configured yet: every listed security's price coverage is "
-                  "'unknown', and holdings are valued at their entered market value as of their statement date.")
+PRICE_GAP_NOTE = ("End-of-day prices come from the prices job (internal use only for the free source). Until the "
+                  "operator's backfill has run and the job is on, price coverage stays 'unknown' and holdings are "
+                  "valued at their entered market value as of their statement date.")
 HELD_BLOCKS_NOTE = "A held run blocks this schedule until a Super Admin closes it."
 
 
