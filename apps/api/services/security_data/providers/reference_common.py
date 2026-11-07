@@ -42,10 +42,13 @@ class SourceRecord:
     as_of: date | None = None
     raw_symbol: str | None = None
     note: str | None = None
+    #: SECMASTER2 — identifiers beyond cusip / isin / figi / ticker, id_type -> value (sec_series_id, sec_class_id)
+    extra_ids: dict = field(default_factory=dict)
 
     @property
     def subject(self) -> str:
-        return self.cusip or self.figi or (f"{self.ticker}@{self.exchange or '?'}" if self.ticker else "?")
+        return (self.cusip or self.figi or self.extra_ids.get("sec_class_id")
+                or (f"{self.ticker}@{self.exchange or '?'}" if self.ticker else "?"))
 
 
 @dataclass
@@ -90,6 +93,22 @@ class ReferenceProvider(BaseProvider):
 
 
 # ── transports ──────────────────────────────────────────────────────────────
+class SourceHTTPError(RuntimeError):
+    """SECMASTER2 — a source answered with a non-success status. Raised the SAME way by the real transport and by
+    the fixture transport (``status_urls``), so a provider can tell "the file is gone" (404) from a network failure
+    and say so in plain words — never a silent empty load."""
+
+    def __init__(self, status: int, url: str):
+        self.status = int(status)
+        self.url = url
+        super().__init__(f"HTTP {self.status} for {url}")
+
+
+class SourceFormatChanged(RuntimeError):
+    """SECMASTER2 — the source still answers but no longer publishes what the provider reads (a file it lists is
+    gone, a column it needs is missing). The job RAISES it, so the engine HOLDS the run and alerts a Super Admin."""
+
+
 class SourceTransport:
     """``lines(url)`` → async iterator of text lines (no line terminators); ``post_json(url, payload, headers)``
     → (status, headers, parsed body). Implementations count their own requests in ``requests``."""
@@ -122,12 +141,16 @@ class RealSourceTransport(SourceTransport):
         if "sec.gov" in url:
             from services import edgar_fetch
 
-            resp = await edgar_fetch._get(self._client, url)
+            try:
+                resp = await edgar_fetch._get(self._client, url)
+            except self._httpx.HTTPStatusError as exc:   # _get raises on a non-retryable status (404 …)
+                raise SourceHTTPError(exc.response.status_code, url) from None
             for ln in resp.text.splitlines():
                 yield ln
             return
         async with self._client.stream("GET", url, headers={"User-Agent": "Hollisworks-SecurityMaster/1.0"}) as r:
-            r.raise_for_status()
+            if r.status_code >= 400:
+                raise SourceHTTPError(r.status_code, url)
             async for ln in r.aiter_lines():
                 yield ln.rstrip("\r\n")
 
@@ -149,10 +172,12 @@ class FixtureTransport(SourceTransport):
     ``fn(url, payload) -> (status, headers, body)`` for POSTs. Any other URL raises — a verify proves it made no
     network call by this, plus httpx being blocked."""
 
-    def __init__(self, files: dict[str, str] | None = None, responder=None, fail_urls: Iterable[str] = ()):
+    def __init__(self, files: dict[str, str] | None = None, responder=None, fail_urls: Iterable[str] = (),
+                 status_urls: dict[str, int] | None = None):
         self.files = dict(files or {})
         self.responder = responder
         self.fail_urls = set(fail_urls)
+        self.status_urls = dict(status_urls or {})   # SECMASTER2: url -> HTTP status (a recorded 404)
         self.requests = 0
         self.seen: list[str] = []
 
@@ -161,6 +186,8 @@ class FixtureTransport(SourceTransport):
         self.seen.append(url)
         if url in self.fail_urls:
             raise RuntimeError(f"fixture transport: forced failure for {url}")
+        if url in self.status_urls:
+            raise SourceHTTPError(self.status_urls[url], url)
         if url not in self.files:
             raise RuntimeError(f"fixture transport: no recorded response for {url}")
         for ln in self.files[url].splitlines():
@@ -244,9 +271,12 @@ class CallBudget:
 
 
 # ── CSV streaming ───────────────────────────────────────────────────────────
-async def stream_csv_rows(lines: AsyncIterator[str], digest: Digest | None = None) -> AsyncIterator[dict]:
+async def stream_csv_rows(lines: AsyncIterator[str], digest: Digest | None = None,
+                          on_header=None) -> AsyncIterator[dict]:
     """dict rows keyed by the header. A record whose quoted field spans lines is assembled by quote parity
-    (RFC 4180: an escaped quote is doubled, so parity is preserved). Memory: one record at a time."""
+    (RFC 4180: an escaped quote is doubled, so parity is preserved). Memory: one record at a time.
+    ``on_header(columns)`` (SECMASTER2) sees the header before any row — a provider raises SourceFormatChanged there
+    when a column it reads is gone, even for a file with no rows."""
     header = None
     buf: list[str] = []
     quotes = 0
@@ -263,7 +293,9 @@ async def stream_csv_rows(lines: AsyncIterator[str], digest: Digest | None = Non
             continue
         values = next(csv.reader(io.StringIO(record)))
         if header is None:
-            header = [h.strip() for h in values]
+            header = [h.strip().lstrip("\ufeff") for h in values]
+            if on_header is not None:
+                on_header(header)
             continue
         yield dict(zip(header, values))
 

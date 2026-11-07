@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+SECMASTER2 (2026-11-07, SEC mutual-fund share classes into the master (dry run: 22,789 new / 4,609 matched; 10 Olivo funds would relink, none relinked), the FinanceDatabase attributes load fixed (etfs/ASE.csv is not published) + US mutual-fund categories, US / international / EM / cap fund categories with REFINE proposals, the load summary with every count linked to its list; schema APPLIED, job seeded OFF; verify WRITTEN, not yet run): see the top entry.
 VISIBILITY1 (2026-11-07, team-based staff visibility — org admins see every family, staff their assigned / team / reports' families, an unassigned family only its owner; one shared helper on every route, Team panel, preview and an audited org switch that is OFF everywhere; verify WRITTEN, not yet run): see the top entry.
 BULKAPPROVE1 (2026-11-05, Approvals → Bulk approve for authority & custody changes and held-away entries — the SAME single-approval service per item, per-item results, cap 200, audit per item + per batch; verify WRITTEN, not yet run): see the top entry.
 BUGFIX3 (2026-11-05, the Olivo-pass CRITICAL: a member read every family's positions — every portfolio read now takes the one shared visible-entity rule; private investments without a commitment, household Recalculate, provisional import rows live, editable addresses, permission-true CRM controls, manual-asset counts, option picker, fixed-point money; verify WRITTEN, not yet run): see the top entry.
@@ -339,6 +340,75 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. SECMASTER2 — the security master finished: SEC mutual-fund share classes, the FinanceDatabase load working again, sharper fund categories, the load summary; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
+
+**Branch** `secmaster2-work`. Discovery: `docs/SECMASTER2_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md`
+("SECMASTER2"). Schema `docs/secmaster2_part1.sql` APPLIED (`scripts/_apply_secmaster2.py --all`: SCHEMA OK); the job
+"system:Security data — mutual funds" SEEDED with its trigger **inactive**. Verify `apps/api/scripts/verify_secmaster2.py`
+WRITTEN, NOT RUN (in `scripts/regression_set.txt`).
+
+**Findings (Task 1).**
+* 1a — the held attributes run (`12611760-…`, 2026-11-06) died on `etfs/ASE.csv`: FinanceDatabase publishes
+  `equities/ASE.csv` but no ETF file for ASE. Every other file answered 200 and had already been applied. Fixed by the
+  file list (ETF: ASE out, NCM in) + `funds/NAS.csv` (US mutual funds, new) + a clear held failure
+  (`SourceFormatChanged`) for a missing file / column / empty load.
+* 1b — `company_tickers_mf.json` = 28,647 share classes (12,304 series, 1,160 CIKs), public domain, **no names**, and it
+  includes the ETF classes of open-end funds (VTI, VOO, BND, QQQ). The CHECKs admitted no SEC id and no
+  `mutual_fund` type: ids added (`sec_series_id`, `sec_class_id`, unique live class id), type stays `fund`, structure
+  is the new attribute `fund_structure`.
+* 1c — `category` alone is ambiguous (Emerging Markets under Equities AND Fixed Income; Large Cap under Derivatives;
+  Developed Markets holds US and international ETFs alike); ETFs / mutual funds carry no country; 0 N-PORT snapshots
+  are loaded; `fund_category_taxonomy` has 0 rows. The group is now kept (`fund_category_group`) and the name splits
+  region / cap.
+* 1d — the admin page had no structure split, no "missing" counts, no attribute / price coverage, and no count was
+  linked to a list (no master-wide list existed). Added: GET `/admin/security-data/master/summary` + `/securities`.
+* [FIND] `scripts/secmaster_initial_load.py` trusted any `DATABASE_URL` already in the shell — the stale `~/.bashrc`
+  copy — and died on "password authentication failed"; it now always resolves through Doppler and probes.
+* [FIND] `_apply_secmaster1.py --activate-jobs` switched on EVERY job in `J.JOBS` — it would have switched the new
+  mutual-fund job on as a side effect; now limited to its own four.
+* [FIND] verify_secmaster1 fires every job through its own fixture transport and pinned the rank to exactly five
+  providers: its fixture now records the two new files (funds/NAS.csv header; one share class on its ZZSMF ETF) and
+  the rank check reads "the five, in order, first".
+
+**Dry run — mutual funds** (live master, read only, 2026-11-07; `secmaster_initial_load.py --source sec_mutual_funds
+--dry-run --would-relink 00000000-…-0001`): 28,647 rows, 28,646 kept (1 blank ticker); structures 21,854 mutual fund /
+938 money market / 5,854 other classes; **new 22,789 · matched 4,609 (ticker on the US composite family) · conflicts 1
+· unmapped 1,247** (not a mutual-fund ticker and not in the master); 3 review items; 77,585 identifiers and 100,377
+attributes would be written. The live master was unchanged afterwards (15,970 securities, 0 SEC ids, 0
+`sec_mutual_funds` attributes / reviews / files); only 2 `provider_call_log` rows (the real SEC requests) were written.
+
+**Would relink — 2nd Act** (10 of 11 ticker-identified manual assets; NOTHING relinked): mutual funds FXAIX Fidelity 500
+Index Fund · FFFGX Fidelity Freedom 2045 · FSKAX Fidelity Total Market Index · FXNAX Fidelity U.S. Bond Index · SWPPX
+Schwab S&P 500 Index · SWTSX Schwab Total Stock Market Index · VWIUX Vanguard Intermediate-Term Tax-Exempt; money market
+FDRXX Fidelity Government Cash Reserves · FGTXX Goldman Sachs Financial Square Govt MMF · SNOXX Schwab Treasury
+Obligations MMF — each to a NEW share-class security. Not: "Olivo Core Equity" (SMA-CORE, not an SEC class). Bitcoin
+/ Ether (digital assets) and the cash holding are never candidates.
+
+**Refine proposals — 2nd Act** (`backfill_taxonomy_keys.py --funds --dry-run`, CHANGED: 0): refine 9, review 1,
+unchanged 22.
+  REFINE Invesco QQQ Trust · Schwab U.S. Broad Market · Schwab US Dividend Equity · Vanguard Morningstar Total Stock Market:
+  taxonomy_sc_1 → taxonomy_mc_1_1 (US; no cap stated → large-cap weighted).
+  REFINE iShares MSCI EAFE · Schwab International Equity · Vanguard FTSE Developed Markets: taxonomy_sc_1 → taxonomy_mc_1_3.
+  REFINE Vanguard FTSE All World Ex US · Vanguard Total International Stock: taxonomy_sc_1 → taxonomy_sub_1_3_4.
+  REVIEW Grayscale Bitcoin Mini Trust (category "Corporate Bonds", name bitcoin; keeps its hand key taxonomy_mc_7_3).
+  Unchanged: Vanguard Total World Stock (global — no single region), the bonds / munis / TIPS / EM / small cap, and the
+  7 mutual funds (no master link yet — they get categories after steps 2–5).
+
+**Follow-ups.** Mutual-fund names (SEC series / class names are annual deltas; FinanceDatabase is internal-only);
+OpenFIGI share-class FIGIs for mutual funds (budget); prices (prices1) next.
+
+### SECMASTER2 operator steps (in order)
+
+1. close the held attributes run — Security master → Platform jobs → "Close held run" on `12611760-…`.
+2. Attributes re-load: `secmaster_initial_load.py --source finance_database --dry-run`, then real.
+3. Mutual funds: `secmaster_initial_load.py --source sec_mutual_funds --dry-run --would-relink <org>`, then real; then
+   step 2's real load once more (the new classes' categories).
+4. `backfill_taxonomy_keys.py --org <org> --funds --dry-run`, then real, then `--refine`.
+5. Let the nightly relink link the mutual funds (~07:00 UTC; or POST `/portfolio/manual-assets/relink`) and read its
+   report (`portfolio.asset_relinks`); then step 4 again for the newly linked funds.
+6. Household Recalculate.
+7. Run the verify: `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_secmaster2.py`.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. VISIBILITY1 — team-based staff visibility, enforced per org: the rule, the family closure, assignment screens, the preview and the switch (OFF everywhere); verify WRITTEN, not yet run (2026-11-07)
 

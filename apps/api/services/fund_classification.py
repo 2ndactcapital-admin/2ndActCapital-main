@@ -20,6 +20,25 @@ Unclassified (counted in net worth under "Unclassified") and is listed for the o
 
 Statuses: ``apply`` (category → key, the name agrees or says nothing), ``unchanged`` (already that key), ``review``
 (category and name disagree, or a legacy kind-default key the name contradicts), ``unclassified`` (no category).
+
+SECMASTER2 — SHARPER CATEGORIES (docs/SECURITY_DATA_DESIGN.md, "Fund categories"):
+
+* the CATEGORY GROUP decides an ambiguous category (FinanceDatabase files "Emerging Markets" under Equities AND
+  Fixed Income, "Large Cap" under Derivatives too): the map is looked up as ``"<group> / <category>"`` first, then
+  ``"<group> / *"``, then the bare category — so EM debt is Emerging Market Debt, a leveraged fund no bucket;
+* the tree's US / international split (taxonomy_mc_1_1 US Large Cap, _1_2 US Small/Mid, _1_3 International
+  Developed (+ sub_1_3_4 Global ex-US Blend, sub_1_3_5 International Small Cap), _1_4 Emerging Markets): where the
+  category says only "equity" (taxonomy_sc_1 — "Developed Markets" holds VTI and VEA alike) or names a cap without
+  a region, the fund's OWN DATA decides — its name's region tokens ("U.S.", "S&P 500", "Total Stock Market" → US;
+  "International", "EAFE", "Developed Markets" → international developed; "ex US", "Total International" →
+  global ex-US; "Emerging" → EM; "Total World", "Global" → no single region) and cap tokens (small / mid / large).
+  FinanceDatabase states no country for an ETF or a mutual fund (only equities carry one), so the name is the
+  data there is. Every proposal carries the reason ("category 'Developed Markets' → taxonomy_sc_1; name says US
+  ('s&p 500') + large cap → taxonomy_mc_1_1");
+* a contradiction is still REVIEW, never applied (bitcoin-named, filed Corporate Bonds);
+* ``refine`` — a new status: the asset is already keyed with an ANCESTOR of the sharper key (taxonomy_sc_1 →
+  taxonomy_mc_1_1). Listed as REFINE old → new with the reason; scripts/backfill_taxonomy_keys.py applies it only
+  with ``--refine``. A different, non-ancestor key stays REVIEW.
 """
 
 from __future__ import annotations
@@ -57,7 +76,25 @@ DEFAULT_CATEGORY_MAP: dict[tuple[str, str], str | None] = {(PROVIDER, k.lower())
     "Alternative": "taxonomy_sc_7",
     # multi-asset: no honest single bucket
     "Asset Allocation": None,
+    # SECMASTER2 — FinanceDatabase's US mutual-fund categories (funds/NAS.csv) and the rest of the ETF list
+    "Micro Cap": "taxonomy_mc_1_2", "Equities": "taxonomy_sc_1", "Technology": "taxonomy_sc_1",
+    "Bonds": "taxonomy_sc_2", "Money Market Instruments": "taxonomy_sub_8_1_1", "REITs": "taxonomy_mc_5_2",
+    "Commodities Broad Basket": "taxonomy_mc_5_4",
+    "Value": None, "Growth": None, "Blend": None,        # a style, not a class: the group decides (below)
+    "Target Date": None, "Allocation": None, "Trading": None, "Derivatives": None, "Unit Investment Trust": None,
+    # group-qualified ("<group> / <category>", then "<group> / *"): the group decides an ambiguous category
+    "Fixed Income / Emerging Markets": "taxonomy_mc_2_4", "Fixed Income / Frontier Markets": "taxonomy_mc_2_4",
+    "Fixed Income / Bonds": "taxonomy_sc_2", "Fixed Income / Blend": "taxonomy_sc_2",
+    "Fixed Income / Unit Investment Trust": "taxonomy_sc_2", "Fixed Income / Corporate Bonds": "taxonomy_mc_2_1",
+    "Equities / Value": "taxonomy_sc_1", "Equities / Growth": "taxonomy_sc_1", "Equities / Blend": "taxonomy_sc_1",
+    "Equities / Equities": "taxonomy_sc_1", "Equities / Unit Investment Trust": "taxonomy_sc_1",
+    "Equities / Bonds": None,                             # the source disagrees with itself: no bucket
+    "Cash / *": "taxonomy_sub_8_1_1",
+    "Derivatives / *": None,                              # leveraged / inverse / options-overlay: no honest bucket
+    "Target Date / *": None,
 }.items()}
+#: the default map's own keys are written "group / category" for the group-qualified entries
+GROUP_SEP = " / "
 
 #: name evidence → (super class, a more specific key or None). Order matters: the first match wins.
 NAME_HINTS: tuple[tuple[str, str, str | None, str], ...] = (
@@ -68,6 +105,108 @@ NAME_HINTS: tuple[tuple[str, str, str | None, str], ...] = (
     (r"\b(equity|stocks?|s&p 500|500 index|total market|dividend|small[- ]cap|mid[- ]cap|large[- ]cap|russell|"
      r"nasdaq|msci)\b", "1", None, "equity"),
 )
+
+
+# ── SECMASTER2: region / cap from the fund's own name ─────────────────────────
+#: (region, pattern) — the first match wins, most specific first: "All World ex US" is ex-US, not "world"
+REGION_HINTS: tuple[tuple[str, str], ...] = (
+    ("em", r"\b(emerging|frontier|china|chinese|india|latin america|brazil)\b"),
+    ("ex_us", r"\b(ex[- ]?u\.?s\.?a?|ex[- ]us|total international|all[- ]world ex|world ex|global ex|acwi ex)\b"),
+    ("intl", r"\b(international|intl|eafe|developed markets?|europe|european|japan|pacific|foreign|"
+             r"ex[- ]north america)\b"),
+    ("global", r"\b(total world|global|world|all[- ]country|acwi)\b"),
+    ("us", r"(\bu\.s\.|\bus\b|\busa\b|\bamerica\b|s&p 500|\bs&p\b|total stock market|total market|"
+           r"broad market|russell|nasdaq|\bdow\b|\bqqq\b|\b500\b|extended market|\bcrsp\b)"),
+)
+CAP_HINTS: tuple[tuple[str, str], ...] = (
+    ("small", r"(small[- ]?cap|smallcap|russell 2000|s&p (small ?cap )?600|micro[- ]?cap)"),
+    ("mid", r"(mid[- ]?cap|midcap|s&p (mid ?cap )?400)"),
+    ("large", r"(large[- ]?cap|largecap|mega[- ]?cap|s&p 500|\b500\b|nasdaq[- ]100|\bqqq\b|dow jones industrial|"
+              r"russell 1000)"),
+)
+EQUITY_REFINABLE = frozenset({"taxonomy_sc_1", "taxonomy_mc_1_1", "taxonomy_mc_1_2"})
+
+
+def _first(hints, low: str):
+    for k, rx in hints:
+        m = re.search(rx, low)
+        if m:
+            return k, m.group(0)
+    return None, None
+
+
+def region_cap(name: str | None) -> dict:
+    """What the fund's NAME says about region and cap: {"region", "region_token", "cap", "cap_token"}. Pure."""
+    low = (name or "").lower()
+    r, rt = _first(REGION_HINTS, low)
+    c, ct = _first(CAP_HINTS, low)
+    return {"region": r, "region_token": rt, "cap": c, "cap_token": ct}
+
+
+def refine_equity(key: str, name: str | None, org_keys: set[str]) -> tuple[str, str | None]:
+    """An equity key the category left coarse (super class, or a US cap key with no region) → the sharpest key the
+    name supports, with the reason; (key, None) when the name adds nothing. A refined key not in the org's taxonomy
+    falls back to the category's key."""
+    if key not in EQUITY_REFINABLE:
+        return key, None
+    rc = region_cap(name)
+    r, c = rc["region"], rc["cap"]
+    rt = f"'{rc['region_token']}'" if rc["region_token"] else ""
+    ct = f" + {c} cap ('{rc['cap_token']}')" if c else ""
+    if r == "em":
+        new, why = "taxonomy_mc_1_4", f"name says emerging markets ({rt})"
+    elif r == "ex_us":
+        new = "taxonomy_sub_1_3_5" if c == "small" else "taxonomy_sub_1_3_4"
+        why = f"name says global ex-US ({rt}){ct}"
+    elif r == "intl":
+        new = "taxonomy_sub_1_3_5" if c == "small" else "taxonomy_mc_1_3"
+        why = f"name says international developed ({rt}){ct}"
+    elif r == "global":
+        return key, f"name says global ({rt}) — US and international together: no single region bucket"
+    elif r == "us" or (key in ("taxonomy_mc_1_1", "taxonomy_mc_1_2") and r is None):
+        if c in ("small", "mid"):
+            new = "taxonomy_mc_1_2"
+        elif key == "taxonomy_mc_1_2" and c is None:
+            new = key
+        else:
+            new = "taxonomy_mc_1_1"
+        if r == "us":
+            why = f"name says US ({rt}){ct}" + ("" if c else " — no cap stated: a US broad / total-market / "
+                                                          "dividend fund is large-cap weighted (the tree has no US "
+                                                          "all-cap key)")
+        else:
+            return key, None
+    else:
+        return key, "region not stated in the name — the super class only"
+    if new not in org_keys:
+        return key, f"{why} → {new}, not in this org's asset taxonomy — kept {key}"
+    return new, f"{why} → {new}"
+
+
+def is_ancestor(old: str | None, new: str | None) -> bool:
+    """taxonomy_sc_1 is an ancestor of taxonomy_mc_1_3 and taxonomy_sub_1_3_4; taxonomy_mc_1_3 of sub_1_3_4."""
+    mo = re.match(r"^taxonomy_(sc|mc|sub)_([0-9_]+)$", old or "")
+    mn = re.match(r"^taxonomy_(sc|mc|sub)_([0-9_]+)$", new or "")
+    if not mo or not mn or old == new:
+        return False
+    depth = {"sc": 1, "mc": 2, "sub": 3}
+    po, pn = mo.group(2).split("_"), mn.group(2).split("_")
+    return depth[mo.group(1)] < depth[mn.group(1)] and pn[:len(po)] == po
+
+
+def lookup(mapping: dict, provider: str | None, category: str, group: str | None):
+    """(found, key, how): "<group> / <category>", then "<group> / *", then the category."""
+    prov = provider or PROVIDER
+    cat = category.strip().lower()
+    if group and group.strip():
+        g = group.strip().lower()
+        for k, how in (((prov, f"{g}{GROUP_SEP}{cat}"), f"group '{group}' / category '{category}'"),
+                       ((prov, f"{g}{GROUP_SEP}*"), f"group '{group}'")):
+            if k in mapping:
+                return True, mapping[k], how
+    if (prov, cat) in mapping:
+        return True, mapping[(prov, cat)], f"category '{category}'"
+    return False, None, f"category '{category}'"
 
 
 def super_class(key: str | None) -> str | None:
@@ -86,11 +225,12 @@ def name_hint(name: str | None) -> dict | None:
 
 
 def propose_one(*, name: str | None, category: str | None, provider: str | None, current_key: str | None,
-                asset_type: str | None, mapping: dict, org_keys: set[str]) -> dict:
-    """The proposal for ONE fund asset. Pure (the verify drives it directly)."""
+                asset_type: str | None, mapping: dict, org_keys: set[str], group: str | None = None) -> dict:
+    """The proposal for ONE fund asset. Pure (the verify drives it directly). ``group`` (SECMASTER2) is the
+    category group (FinanceDatabase category_group) when the master has one."""
     hint = name_hint(name)
-    out = {"category": category, "provider": provider, "current_key": current_key, "name_hint": hint,
-           "key": None, "status": None, "reason": None}
+    out = {"category": category, "category_group": group, "provider": provider, "current_key": current_key,
+           "name_hint": hint, "key": None, "status": None, "reason": None, "region": region_cap(name)}
     legacy = asset_type == "mutual_fund" and current_key == LEGACY_MUTUAL_FUND_DEFAULT
     if not category:
         if legacy and hint and hint["super"] != "1":
@@ -103,29 +243,35 @@ def propose_one(*, name: str | None, category: str | None, provider: str | None,
             out.update(status="unclassified", reason="no category in the security master — stays Unclassified"
                                                      + (f" ({hint['why']}; operator may --reclassify)" if hint else ""))
         return out
-    k = (provider or PROVIDER, category.strip().lower())
-    if k not in mapping:
-        out.update(status="unclassified", reason=f"category '{category}' has no entry in the fund category map")
+    found, key, how = lookup(mapping, provider, category, group)
+    if not found:
+        out.update(status="unclassified", reason=f"{how} has no entry in the fund category map")
         return out
-    key = mapping[k]
     if key is None:
-        out.update(status="unclassified", reason=f"category '{category}' deliberately has no single bucket")
+        out.update(status="unclassified", reason=f"{how} deliberately has no single bucket")
         return out
     if key not in org_keys:
-        out.update(status="unclassified", reason=f"category '{category}' → {key}, not in this org's asset taxonomy")
+        out.update(status="unclassified", reason=f"{how} → {key}, not in this org's asset taxonomy")
         return out
     if hint and hint["super"] != super_class(key):
         out.update(status="review", key=hint["key"] if hint["key"] in org_keys else None,
-                   reason=f"category '{category}' → {key} but the {hint['why']} — the master's category looks wrong")
+                   reason=f"{how} → {key} but the {hint['why']} — the master's category looks wrong")
         return out
     if hint and hint["key"] and hint["key"] != key and key == f"taxonomy_sc_{hint['super']}" \
             and hint["key"] in org_keys:
         key = hint["key"]                      # same class; the name gives the finer bucket (ETH → Digital Assets)
-        reason = f"category '{category}' → {key} (super class), refined by the {hint['why']}"
+        reason = f"{how} → {key} (super class), refined by the {hint['why']}"
     else:
-        reason = f"category '{category}' → {key}"
+        reason = f"{how} → {key}"
+    # SECMASTER2 — the US / international / EM and cap split, decided by the fund's own name
+    refined, why = refine_equity(key, name, org_keys)
+    if why:
+        reason = f"{reason}; {why}"
+    key = refined
     if current_key == key:
         out.update(status="unchanged", key=key, reason=reason + " (already)")
+    elif current_key and not legacy and is_ancestor(current_key, key):
+        out.update(status="refine", key=key, reason=f"{current_key} → {key}: {reason}")
     elif current_key and not legacy:
         out.update(status="review", key=key, reason=reason + f"; the asset already carries {current_key}")
     else:
@@ -155,6 +301,19 @@ async def categories(conn, security_ids: list) -> dict[str, tuple[str, str]]:
     return {r["g"]: (r["provider_key"], r["value"]) for r in rows}
 
 
+async def categories_full(conn, security_ids: list) -> dict[str, tuple[str, str, str | None]]:
+    """SECMASTER2 — {global_security_id: (provider, category, category group | None)}: the category as
+    ``categories`` reads it, plus the SAME provider's fund_category_group."""
+    cats = await categories(conn, security_ids)
+    if not cats:
+        return {}
+    groups = {(r["g"], r["provider_key"]): r["value"] for r in await conn.fetch(
+        "SELECT global_security_id::text AS g, provider_key, value FROM portfolio.security_reference_attributes "
+        "WHERE global_security_id = ANY($1::uuid[]) AND field = 'fund_category_group' AND org_id IS NULL "
+        "AND valid_to IS NULL AND system_to IS NULL", list(cats))}
+    return {g: (p, c, groups.get((g, p))) for g, (p, c) in cats.items()}
+
+
 async def propose(conn, org_id) -> list[dict]:
     """Every current fund asset of the org (FUND_KINDS) with its proposal. Runs under the org's RLS context."""
     from services.portfolio_kind_taxonomy import org_taxonomy_keys
@@ -170,12 +329,18 @@ async def propose(conn, org_id) -> list[dict]:
         "AND a.valid_to IS NULL AND a.system_to IS NULL ORDER BY a.asset_type, a.name, a.id", org, sorted(FUND_KINDS))
     mapping = await effective_map(conn)
     keys = await org_taxonomy_keys(conn, org)
-    cats = await categories(conn, [a["g"] for a in assets])
+    cats = await categories_full(conn, [a["g"] for a in assets])
+    names = {r["g"]: r["name"] for r in await conn.fetch(
+        "SELECT id::text AS g, name FROM portfolio.securities_global WHERE id = ANY($1::uuid[]) AND valid_to IS NULL "
+        "AND system_to IS NULL", [a["g"] for a in assets if a["g"]])} if any(a["g"] for a in assets) else {}
     out = []
     for a in assets:
-        prov, cat = cats.get(a["g"], (None, None))
-        p = propose_one(name=a["name"], category=cat, provider=prov, current_key=a["default_taxonomy_key"],
-                        asset_type=a["asset_type"], mapping=mapping, org_keys=keys)
+        prov, cat, grp = cats.get(a["g"], (None, None, None))
+        # the asset's own name first (what the adviser entered); the master's name adds region / cap tokens a
+        # short asset name lacks (SECMASTER2: "Invesco QQQ Trust, Series 1" vs a placeholder never helps)
+        nm = a["name"] if not names.get(a["g"]) or names[a["g"]] == a["name"] else f"{a['name']} | {names[a['g']]}"
+        p = propose_one(name=nm, category=cat, provider=prov, current_key=a["default_taxonomy_key"],
+                        asset_type=a["asset_type"], mapping=mapping, org_keys=keys, group=grp)
         out.append({"asset_id": a["id"], "name": a["name"], "asset_type": a["asset_type"],
                     "global_security_id": a["g"], "live_unkeyed_positions": int(a["live_unkeyed"]),
                     "live_value": a["live_value"], **p})
@@ -191,9 +356,10 @@ async def key_for_fund(conn, org_id, global_security_id) -> str | None:
         return None
     g = await conn.fetchrow("SELECT name FROM portfolio.securities_global WHERE id = $1::uuid AND system_to IS NULL "
                             "ORDER BY valid_to NULLS FIRST LIMIT 1", str(global_security_id))
-    prov, cat = (await categories(conn, [global_security_id])).get(str(global_security_id), (None, None))
+    prov, cat, grp = (await categories_full(conn, [global_security_id])).get(str(global_security_id),
+                                                                             (None, None, None))
     p = propose_one(name=g["name"] if g else None, category=cat, provider=prov, current_key=None, asset_type="fund",
-                    mapping=await effective_map(conn), org_keys=await org_taxonomy_keys(conn, str(org_id)))
+                    mapping=await effective_map(conn), org_keys=await org_taxonomy_keys(conn, str(org_id)), group=grp)
     return p["key"] if p["status"] == "apply" else None
 
 

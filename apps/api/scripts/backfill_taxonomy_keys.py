@@ -44,6 +44,15 @@ ROLLUP2:
     doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds
     doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 \
         --reclassify <BTC asset id>:taxonomy_mc_7_3 --reclassify <SGOV asset id>:taxonomy_sub_8_1_2
+
+SECMASTER2:
+* ``--funds`` also proposes the SHARPER key for funds that are already keyed (US vs international developed vs
+  emerging, large vs small cap — services.fund_classification): when the asset's key is an ANCESTOR of the sharper
+  one (taxonomy_sc_1 → taxonomy_mc_1_1) the line is ``REFINE old -> new | reason``. A real run applies refine lines
+  ONLY with ``--refine``; without it they are listed and counted, never written. ``review`` is never applied.
+
+    doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds --dry-run
+    doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds --refine
 """
 
 from __future__ import annotations
@@ -159,8 +168,9 @@ async def reclassify(conn, org: str, items: list[tuple[str, str]], *, dry_run: b
     return changed
 
 
-async def funds(conn, org: str, *, dry_run: bool) -> int:
-    """ROLLUP2 — propose (and, on a real run, apply) a key per fund asset from its category. Returns assets keyed."""
+async def funds(conn, org: str, *, dry_run: bool, refine: bool = False) -> int:
+    """ROLLUP2 — propose (and, on a real run, apply) a key per fund asset from its category. Returns assets keyed.
+    SECMASTER2 — ``refine`` lines (an ancestor key → the sharper one) are applied only when ``refine`` is True."""
     from services.fund_classification import propose
 
     async with _OrgWrite(conn, org) as c:
@@ -174,13 +184,18 @@ async def funds(conn, org: str, *, dry_run: bool) -> int:
               f" | live unkeyed positions {p['live_unkeyed_positions']}, value {Decimal(p['live_value'] or 0):,.2f}")
     print(f"  FUNDS {org}: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
     changed = 0
+    refines = [p for p in props if p["status"] == "refine" and p["key"]]
+    for p in refines:
+        print(f"  REFINE {p['asset_id']} {p['name'][:60]!r}: {p['current_key']} -> {p['key']} | {p['reason']}"
+              f"{'' if refine else ' (not applied: --refine)'}")
     if dry_run:
         return 0
     for p in props:
-        if p["status"] == "apply" and p["key"]:
+        if (p["status"] == "apply" or (refine and p["status"] == "refine")) and p["key"]:
             await update_asset(conn, org_id=org, asset_id=p["asset_id"], changes={"default_taxonomy_key": p["key"]})
             changed += 1
-    print(f"  SET {org}: {changed} fund assets keyed")
+    print(f"  SET {org}: {changed} fund assets keyed"
+          f"{f' ({len(refines)} refined)' if refine and refines else ''}")
     return changed
 
 
@@ -201,6 +216,8 @@ async def main_async(argv=None) -> int:
                          "(taxonomy_...); repeatable; needs exactly one --org")
     ap.add_argument("--funds", action="store_true",
                     help="ROLLUP2: propose a key per fund asset from its master category (apply only 'apply')")
+    ap.add_argument("--refine", action="store_true",
+                    help="SECMASTER2: with --funds, also apply REFINE proposals (an ancestor key -> the sharper one)")
     ap.add_argument("--dsn-env", default="DATABASE_URL", help="env var holding the DSN (default DATABASE_URL)")
     a = ap.parse_args(argv)
     items = []
@@ -212,6 +229,8 @@ async def main_async(argv=None) -> int:
             ap.error(f"--reclassify {x!r} is ASSET_ID:KIND")
     if items and (a.all_orgs or len(a.org or []) != 1):
         ap.error("--reclassify needs exactly one --org")
+    if a.refine and not a.funds:
+        ap.error("--refine needs --funds")
     sys.path.insert(0, str(HERE))
     from _db_connect import resolve_dsn  # Doppler-hydrated; tries the separate DB_PASSWORD secret too
 
@@ -228,7 +247,7 @@ async def main_async(argv=None) -> int:
         changed = await reclassify(conn, orgs[0], items, dry_run=a.dry_run) if items else 0
         if a.funds:
             for o in orgs:
-                changed += await funds(conn, o, dry_run=a.dry_run)
+                changed += await funds(conn, o, dry_run=a.dry_run, refine=a.refine)
         else:
             changed += await run(conn, orgs, dry_run=a.dry_run)
     finally:

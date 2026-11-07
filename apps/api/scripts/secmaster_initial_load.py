@@ -15,6 +15,18 @@ ORDER (each stage only after the previous one finished):
     4. sec_13f_list      the current quarter's 13(f) list (one live row per CUSIP; options kept, never loaded)
     5. openfigi_13f      OpenFIGI for the 13(f) CUSIPs → match / create; each row mapped or "not mapped — why"
     6. finance_database  sector / industry / industry group / country / fund category (never creates)
+    7. sec_mutual_funds  SECMASTER2: SEC mutual-fund share classes (ticker + SEC series / class ids + CIK). Matches
+                         an existing ticker (ETF classes of open-end funds are in the file too), creates a NEW
+                         security only for a mutual-fund ticker, conflicts → review.
+
+SECMASTER2 operator runs (each --dry-run first; docs/SECURITY_DATA_DESIGN.md "SECMASTER2 operator steps"):
+    ... secmaster_initial_load.py --source finance_database --dry-run    # the attributes re-load (equities, ETFs,
+    ... secmaster_initial_load.py --source finance_database              #   and now US mutual funds)
+    ... secmaster_initial_load.py --source sec_mutual_funds --dry-run --would-relink 00000000-0000-0000-0000-000000000001
+    ... secmaster_initial_load.py --source sec_mutual_funds
+--would-relink ORG   (repeatable) after the sec_mutual_funds stage, list the org's manual assets the next relink
+                     WOULD link (read only: it relinks nothing — the nightly, or POST /portfolio/manual-assets/
+                     relink, does that and reports it in portfolio.asset_relinks).
 
 --dry-run    fetches and parses every source and runs the matcher INSIDE A TRANSACTION THAT IS ROLLED BACK —
              exact new / matched / conflict / unmapped counts, nothing written (no OpenFIGI calls: it reports how
@@ -46,7 +58,8 @@ HERE = Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parents[1]))
 
-STAGES = ("nasdaq_trader", "sec_tickers", "openfigi", "sec_13f_list", "openfigi_13f", "finance_database")
+STAGES = ("nasdaq_trader", "sec_tickers", "openfigi", "sec_13f_list", "openfigi_13f", "finance_database",
+          "sec_mutual_funds")
 JOB = "security_master_initial_load"
 STAGE_DONE = 2_000_000_000   # the checkpoint "batch" recording that a whole stage completed (batch_no >= 0 CHECK)
 
@@ -134,6 +147,48 @@ async def _dry_run_matcher(pool):
     M.record_file = no_record
 
 
+async def would_relink(pool, org_id: str, by_ticker: dict) -> list[dict]:
+    """SECMASTER2 — the org's manual assets the next relink WOULD link once the mutual-fund stage is applied. Reads
+    only: the candidates through services.portfolio_manual.relink_candidates (THE definition the nightly uses) under
+    the org's RLS context, today's master through get_by_identifiers_bulk, and the stage's outcome per ticker."""
+    from services import securities_global as SG
+    from services.portfolio_manual import relink_candidates
+
+    out: list[dict] = []
+    async with pool.acquire() as conn:
+        rows = await relink_candidates(conn, org_id)
+        tickers = [r["id_value"] for r in rows if r["id_type"] == "ticker"]
+        now = await SG.get_by_identifiers_bulk(conn, "ticker", tickers) if tickers else {}
+    seen = set()
+    for r in rows:
+        if r["asset_id"] in seen or r["id_type"] != "ticker":
+            continue
+        seen.add(r["asset_id"])
+        t = r["id_value"]
+        o = by_ticker.get(t)
+        if t in now:
+            verdict, why = "would_relink", f"already resolves today to {now[t].get('name')!r}"
+        elif o and o[0] in ("new", "matched"):
+            verdict = "would_relink"
+            why = ("a NEW share-class security" if o[0] == "new" else f"an existing security (matched by {o[2]})")
+        elif o:
+            verdict, why = "would_not", f"{o[0]}: {o[2]}"
+        else:
+            verdict, why = "would_not", "the ticker is not in the SEC mutual-fund file"
+        out.append({"asset_id": r["asset_id"], "name": r["name"], "asset_type": r["asset_type"], "ticker": t,
+                    "verdict": verdict, "why": why})
+    return out
+
+
+def print_would_relink(org: str, items: list[dict]) -> None:
+    yes = [x for x in items if x["verdict"] == "would_relink"]
+    print(f"[would-relink] org {org}: {len(yes)} of {len(items)} ticker-identified manual assets would relink "
+          "(nothing relinked here)")
+    for x in items:
+        print(f"  {'WOULD RELINK' if x['verdict'] == 'would_relink' else 'WOULD NOT  '} {x['asset_id']} "
+              f"{x['asset_type']:<13} {x['ticker']:<6} {x['name'][:50]!r} — {x['why']}")
+
+
 def _line(source: str, s: dict) -> str:
     matched = s.get("matched_total", s.get("match_matched_total", 0))
     return (f"  {source:<17} new {s.get('new', s.get('match_new', 0)):>6}  matched {matched:>6}  conflicts "
@@ -147,16 +202,22 @@ async def _main(args) -> int:
     from services.market_data.adapters import scrub_error
     from services.security_data.providers.reference_common import RealSourceTransport
 
-    if not os.environ.get("DATABASE_URL"):
-        try:
-            from _db_connect import admin_dsn, hydrate
+    # SECMASTER2 — ALWAYS resolve through Doppler and probe: the guard used to be "only when DATABASE_URL is unset",
+    # so a stale export in ~/.bashrc (CLAUDE.md, "Secrets") won over Doppler and the run died on
+    # "password authentication failed". Doppler's value overwrites the shell's; the probe proves it authenticates.
+    try:
+        from _db_connect import admin_dsn, hydrate
 
-            hydrate()
-            dsn, _how = await admin_dsn()
-            if dsn:
-                os.environ["DATABASE_URL"] = dsn
-        except Exception:  # noqa: BLE001
-            pass
+        hydrate()
+        dsn, _how = await admin_dsn()
+        if dsn:
+            os.environ["DATABASE_URL"] = dsn
+        else:
+            print(f"no working DATABASE_URL: {_how}")
+            return 2
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not resolve DATABASE_URL through Doppler: {type(exc).__name__}")
+        return 2
     if not os.environ.get("DATABASE_URL"):
         print("DATABASE_URL is not set (run through doppler run --)")
         return 2
@@ -235,6 +296,14 @@ async def _main(args) -> int:
                                 break
                 elif st == "finance_database":
                     res = await SS.sync_attributes(ctx)
+                elif st == "sec_mutual_funds":
+                    res = await SS.sync_mutual_funds(ctx, return_outcomes=bool(args.would_relink))
+                    by_ticker = res.pop("_by_ticker", None) or {}
+                    if args.would_relink:
+                        res["would_relink"] = {}
+                        for org in args.would_relink:
+                            res["would_relink"][org] = await would_relink(pool, org, by_ticker)
+                            print_would_relink(org, res["would_relink"][org])
                 else:
                     continue
             except Exception as exc:  # noqa: BLE001 — report, stop: later stages depend on earlier ones
@@ -247,6 +316,12 @@ async def _main(args) -> int:
                 ok = False
             if cp is not None:
                 await cp.finish_stage(st, summary["stages"][st])
+            detail = {k: summary["stages"][st].get(k) for k in ("matched", "unmapped_reasons", "structures",
+                                                                  "review_items_created", "identifiers_added",
+                                                                  "attributes_written", "rows", "kept", "excluded")
+                      if summary["stages"][st].get(k) not in (None, {}, [])}
+            if detail:
+                print(f"[{st}] detail: {json.dumps(detail, default=str)}")
             print(f"[{st}] done")
     finally:
         await transport.aclose()
@@ -268,6 +343,8 @@ def main() -> int:
     ap.add_argument("--source", action="append", choices=STAGES)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--batch", type=int, default=1000)
+    ap.add_argument("--would-relink", action="append", default=[], metavar="ORG_ID",
+                    help="SECMASTER2: after sec_mutual_funds, list the org's manual assets that would relink (reads only)")
     return asyncio.run(_main(ap.parse_args()))
 
 

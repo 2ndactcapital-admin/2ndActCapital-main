@@ -4,19 +4,39 @@ import AppShell from "@/components/AppShell";
 import { fetchAPI } from "@/lib/api";
 import { labelFor } from "@/lib/menuVisibility";
 import SecurityMasterAdmin from "@/components/securityData/SecurityMaster";
+import { cleanFilter } from "@/lib/secmaster2.mjs";
 
 // SECMASTER1 — Super Admin → Security master: counts by type / source, the platform jobs (last run,
 // Run now, close a held run) and the review queue. Every control comes from the server's envelope.
-export default async function SecurityMasterPage() {
+// SECMASTER2 — the load summary (each count links here with its filter in the query string); a query
+// that carries a list filter shows that list instead. Only filter names the SERVER lists
+// (summary.list_filters) are forwarded, and a review kind only if the server's vocabulary names it.
+export default async function SecurityMasterPage({ searchParams }) {
   const session = await getHostSession();
   if (!session) redirect("/auth/login?returnTo=/admin/security-data/master");
+  const search = (await searchParams) || {};
+  const one = (v) => (Array.isArray(v) ? v[0] : v);
   let status = null;
   let jobs = null;
   let review = null;
+  let summary = null;
+  let list = null;
   let error = null;
   try {
-    [status, jobs, review] = await Promise.all([fetchAPI("/api/v1/admin/security-data/master/status"),
-      fetchAPI("/api/v1/admin/security-data/master/jobs"), fetchAPI("/api/v1/admin/security-data/master/review")]);
+    [status, jobs, summary] = await Promise.all([fetchAPI("/api/v1/admin/security-data/master/status"),
+      fetchAPI("/api/v1/admin/security-data/master/jobs"), fetchAPI("/api/v1/admin/security-data/master/summary")]);
+    const kinds = (summary?.vocabularies?.review_kinds || []).map((k) => k.key);
+    const kind = one(search.review_kind);
+    const reviewQs = kind && kinds.includes(kind) ? `?${new URLSearchParams({ kind })}` : "";
+    const filter = cleanFilter(Object.fromEntries(Object.entries(search).map(([k, v]) => [k, one(v)])),
+      summary?.list_filters);
+    const offset = Number(one(search.offset)) > 0 ? Math.floor(Number(one(search.offset))) : 0;
+    [review, list] = await Promise.all([
+      fetchAPI(`/api/v1/admin/security-data/master/review${reviewQs}`),
+      Object.keys(filter).length
+        ? fetchAPI(`/api/v1/admin/security-data/master/securities?${new URLSearchParams({ ...filter, offset: String(offset) })}`)
+        : Promise.resolve(null),
+    ]);
   } catch (e) {
     error = e.status === 403 ? "forbidden" : e.message;
   }
@@ -36,7 +56,8 @@ export default async function SecurityMasterPage() {
             Could not load the security master: {error}
           </div>
         ) : (
-          <SecurityMasterAdmin initialStatus={status} initialJobs={jobs} initialReview={review} />
+          <SecurityMasterAdmin initialStatus={status} initialJobs={jobs} initialReview={review}
+            initialSummary={summary} initialList={list} />
         )}
       </div>
     </AppShell>

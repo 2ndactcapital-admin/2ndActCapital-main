@@ -60,15 +60,30 @@ from services.security_data.providers.reference_common import SourceRecord
 
 LIVE = "valid_to IS NULL AND system_to IS NULL"
 REFERENCE_FIELDS = ("exchange", "cik", "sector", "industry", "industry_group", "country", "is_etf", "fund_category",
-                    "listing_status", "first_seen", "last_seen")
+                    "listing_status", "first_seen", "last_seen",
+                    # SECMASTER2 — FinanceDatabase's category_group beside its category; a fund's structure
+                    "fund_category_group", "fund_structure")
 #: sources that may CREATE a security when nothing matches
-CREATORS = {"nasdaq_trader", "sec_tickers", "openfigi", "sec_13f_list"}
+CREATORS = {"nasdaq_trader", "sec_tickers", "openfigi", "sec_13f_list", "sec_mutual_funds"}
 #: sources whose identifiers are ADDED to a matched / new security (FinanceDatabase's only match)
 IDENTIFIER_SOURCES = {"nasdaq_trader": {"ticker"}, "sec_tickers": {"ticker"},
                       "openfigi": {"ticker", "figi", "cusip", "isin"},
-                      "sec_13f_list": {"ticker", "figi", "cusip", "isin"}, "finance_database": set()}
+                      "sec_13f_list": {"ticker", "figi", "cusip", "isin"}, "finance_database": set(),
+                      "sec_mutual_funds": {"ticker", "sec_series_id", "sec_class_id"}}
 #: sources whose security type is a fact rather than a guess (a disagreement is reviewed)
-TYPE_AUTHORITIES = {"openfigi", "sec_13f_list", "finance_database"}
+TYPE_AUTHORITIES = {"openfigi", "sec_13f_list", "finance_database", "sec_mutual_funds"}
+#: SECMASTER2 — identifiers beyond cusip / figi / isin / ticker (SourceRecord.extra_ids). A UNIQUE one (a share
+#: class) is matched on, after CUSIP / FIGI / ISIN and before the ticker; a SHARED one (a series has many classes)
+#: is added, never matched on, and another security holding it is not a conflict.
+EXTRA_ID_UNIQUE = ("sec_class_id",)
+EXTRA_ID_SHARED = ("sec_series_id",)
+#: sources whose 'exchange' token is written only on a security they CREATE (the SEC mutual-fund file states no
+#: listing: 'US' on a new class lets a later run match it again; an existing ETF keeps its listing sources' exchange)
+EXCHANGE_ON_CREATE_ONLY = {"sec_mutual_funds": "US"}
+#: sources that create only when the record says it may (sec_mutual_funds: a mutual-fund ticker, fund_structure set)
+CREATE_ONLY_IF = {"sec_mutual_funds": ("fund_structure",
+                                       "not a mutual-fund ticker (no fifth-letter X) and not in the master — an "
+                                       "exchange-traded class is created by the listing sources")}
 DELIST_AFTER = 3
 REVIEW_KINDS = ("ticker_conflict", "ticker_cusip_conflict", "identifier_conflict", "type_mismatch",
                 "exchange_mismatch", "ambiguous_match", "ticker_moved", "13f_deleted", "13f_conflict")
@@ -162,8 +177,12 @@ def _review(plan: _Plan, kind: str, subject: str, provider_key: str, *, gsid=Non
 async def _lookup(conn, records: list[SourceRecord]) -> dict:
     """Live identifiers for every value in the batch → {(id_type, value): [(identifier id, canonical gsid, type,
     raw gsid)]}; exchange attributes and identifiers of every security touched."""
-    vals = {"cusip": set(), "figi": set(), "ticker": set(), "isin": set()}
+    vals = {"cusip": set(), "figi": set(), "ticker": set(), "isin": set(),
+            **{t: set() for t in EXTRA_ID_UNIQUE + EXTRA_ID_SHARED}}
     for r in records:
+        for t, v in (r.extra_ids or {}).items():
+            if v and t in vals:
+                vals[t].add(v)
         if r.cusip:
             vals["cusip"].add(r.cusip)
             isin = SYM.isin_from_cusip(r.cusip)
@@ -265,7 +284,8 @@ class Matcher:
         for rec in records:
             subj = rec.subject
             gsid, path = None, None
-            for t, v, p in (("cusip", rec.cusip, "cusip"), ("figi", rec.figi, "figi"), ("isin", rec.isin, "isin")):
+            for t, v, p in (("cusip", rec.cusip, "cusip"), ("figi", rec.figi, "figi"), ("isin", rec.isin, "isin"),
+                            *((t, (rec.extra_ids or {}).get(t), t) for t in EXTRA_ID_UNIQUE)):
                 hit = _first(idx, t, v)
                 if hit is not None:
                     gsid, path = hit["gsid"], p
@@ -329,6 +349,12 @@ class Matcher:
                 res.unmapped_reasons[why] = res.unmapped_reasons.get(why, 0) + 1
                 res.by_record[subj] = ("unmapped", None, why)
                 continue
+            guard = CREATE_ONLY_IF.get(self.key)
+            if guard is not None and not (rec.attrs or {}).get(guard[0]):
+                res.unmapped += 1
+                res.unmapped_reasons[guard[1]] = res.unmapped_reasons.get(guard[1], 0) + 1
+                res.by_record[subj] = ("unmapped", None, guard[1])
+                continue
             if not (rec.ticker or rec.cusip) or (self.key == "sec_tickers" and not rec.exchange):
                 why = "nothing to create it from (no exchange)" if rec.ticker else "no ticker or CUSIP"
                 res.unmapped += 1
@@ -373,6 +399,7 @@ class Matcher:
                 continue
             if t in id_types_allowed:
                 self._add_identifier(plan, gsid, t, v, primary=False, facts=facts, idx=idx, res=res)
+        self._extra_ids(rec, gsid, have, owners, plan, res, id_types_allowed, facts, idx, path=path)
         # the ticker
         if rec.ticker and "ticker" in id_types_allowed:
             tick_owners = owners("ticker", rec.ticker)
@@ -448,10 +475,34 @@ class Matcher:
                 continue
             primary = (t == "cusip") or (t == "ticker" and not rec.cusip)
             self._add_identifier(plan, gsid, t, v, primary=primary, facts=facts, idx=idx, res=res)
-        self._attrs(plan, res, gsid, rec, facts[gsid])
+        self._extra_ids(rec, gsid, facts[gsid]["ids"], owners, plan, res, id_types_allowed, facts, idx, path="new")
+        ex = EXCHANGE_ON_CREATE_ONLY.get(self.key)
+        self._attrs(plan, res, gsid, rec, facts[gsid], extra={"exchange": ex} if ex else None)
         return gsid
 
     # ── helpers ─────────────────────────────────────────────────────────────
+    def _extra_ids(self, rec, gsid, have, owners, plan, res, id_types_allowed, facts, idx, *, path):
+        """SECMASTER2 — add the record's extra identifiers (SEC series / class): absent → added; the same value →
+        nothing; a DIFFERENT live value of that type, or a unique value held by another security → review, never
+        replaced."""
+        for t, v in sorted((rec.extra_ids or {}).items()):
+            if not v or t not in id_types_allowed:
+                continue
+            mine = {x[1] for x in have.get(t, [])}
+            if v in mine:
+                continue
+            if mine:
+                _review(plan, "identifier_conflict", f"{t}:{v}", self.key, gsid=gsid, field_=t, incoming=v,
+                        existing=", ".join(sorted(mine)), detail={"path": path, "ticker": rec.ticker})
+                continue
+            others = owners(t, v) - {gsid}
+            if others and t not in EXTRA_ID_SHARED:
+                _review(plan, "identifier_conflict", f"{t}:{v}", self.key, gsid=gsid, field_=t, incoming=v,
+                        existing=f"held by {sorted(str(o) for o in others)[0]}", detail={"path": path,
+                                                                                        "ticker": rec.ticker})
+                continue
+            self._add_identifier(plan, gsid, t, v, primary=False, facts=facts, idx=idx, res=res)
+
     def _add_identifier(self, plan, gsid, t, v, *, primary, facts, idx, res):
         plan.identifiers.append((gsid, t, v, bool(primary)))
         facts.setdefault(gsid, {"type": None, "ids": {}, "exchanges": set(), "attrs": {}})["ids"].setdefault(
@@ -459,8 +510,8 @@ class Matcher:
         idx.setdefault((t, v), []).append({"gsid": gsid, "id": None})
         res.identifiers_added += 1
 
-    def _attrs(self, plan, res, gsid, rec, f):
-        attrs = dict(rec.attrs or {})
+    def _attrs(self, plan, res, gsid, rec, f, extra: dict | None = None):
+        attrs = {**(rec.attrs or {}), **(extra or {})}
         if "first_seen" not in f["attrs"]:
             attrs["first_seen"] = self.as_of.isoformat()
         if rec.exchange:

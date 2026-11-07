@@ -127,6 +127,7 @@ from services import workflow_scheduler as WS  # noqa: E402
 from services.assistant_actions import register_all  # noqa: E402
 from services.database import get_pool, reset_rls_context, set_rls_context  # noqa: E402
 from services.security_data.providers import finance_database as FD  # noqa: E402
+from services.security_data.providers import sec_mutual_funds as MF  # noqa: E402  (SECMASTER2: its job is fired too)
 from services.security_data.providers import nasdaq_trader as NT  # noqa: E402
 from services.security_data.providers import openfigi as OF  # noqa: E402
 from services.security_data.providers import sec_13f_list as F13  # noqa: E402
@@ -471,6 +472,11 @@ FD_EQ = "\n".join([FD_HEAD_EQ,
                    "ZZSMQ,ZZSM Unknown Co,,USD,Financials,Banks,Banks,NMS,XNAS,NASDAQ,United States,,,,,Small Cap,,,,,,False",
                    "ZZSMZ,ZZSM Gone Co,,USD,Energy,Energy,Oil,NMS,XNAS,NASDAQ,United States,,,,,Small Cap,,,,,,True"])
 FD_ETF = "\n".join([FD_HEAD_ETF, 'ZZSMF,ZZSM Index Fund ETF,USD,"Tracks a fixture.",Equities,Large Blend,ZZSM Funds,NMS,XNAS,,False'])
+# SECMASTER2 — the attributes job now also reads FinanceDatabase's US mutual-fund file, and a fifth platform job reads the
+# SEC mutual-fund tickers file: every job in J.JOBS is fired below, so both are recorded here (header-only funds file; one
+# share class on the fixture ETF ZZSMF — matched, never created: it is not a fifth-letter-X ticker)
+FD_HEAD_FUNDS = "symbol,name,currency,summary,category_group,category,family,exchange,mic"
+MF_DOC = {"fields": ["cik", "seriesId", "classId", "symbol"], "data": [[999000009, "S999000001", "C999000001", "ZZSMF"]]}
 
 
 FIGI_CALLS: list = []   # (request jobs, stub answer) per OpenFIGI request — printed in the [Y] 13(f) detail
@@ -501,6 +507,9 @@ def fixture_transport(d: date | None = None, *, drop=(), fail_urls=()) -> Fixtur
         files[FD.url("equities", code)] = FD_EQ if code == "NMS" else FD_HEAD_EQ
     for code in FD.US_ETF_FILES:
         files[FD.url("etfs", code)] = FD_ETF if code == "NMS" else FD_HEAD_ETF
+    for code in FD.US_FUND_FILES:
+        files[FD.url("funds", code)] = FD_HEAD_FUNDS
+    files[MF.URL] = json.dumps(MF_DOC)
     return FixtureTransport(files, responder=figi_responder, fail_urls=fail_urls)
 
 
@@ -583,7 +592,9 @@ async def y_schema(conn):
     rank = [r["provider_key"] for r in await platform(
         conn, "SELECT provider_key FROM portfolio.data_source_rank WHERE owner_scope = 'platform' AND data_type = "
               "'reference' AND valid_to IS NULL AND system_to IS NULL ORDER BY rank")]
-    check(rank == list(PROVIDERS), "the platform rank for 'reference'", f"{rank}")
+    # SECMASTER2 added sec_mutual_funds AFTER these five (rank 6): the five keep their order at the head of the rank
+    check(rank[:len(PROVIDERS)] == list(PROVIDERS), "the platform rank for 'reference' (the five, in order, first)",
+          f"{rank}")
     # seed literals against the live CHECKs (read from the catalog before seeding)
     for con, lits in (("security_master_review_kind_chk", M.REVIEW_KINDS),
                       ("sec_13f_list_map_status_chk", ("pending", "mapped", "not_mapped", "option_skipped")),

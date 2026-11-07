@@ -188,3 +188,71 @@ only a Super Admin passes and the assistant never lists them — and refuse to r
 2. After deploy: `python3 apps/api/scripts/_apply_secmaster1.py --activate-jobs` (triggers seeded inactive).
 3. `secmaster_initial_load.py --dry-run`, then the real load (`--resume` after a crash; `--source X` for one stage).
 4. Work the review queue. 5. marketdata1's pending Render-cron step is no longer needed.
+
+## Reference data — SECMASTER2 (2026-11-07): mutual funds, FinanceDatabase fixed, sharper categories, the summary
+
+Schema `docs/secmaster2_part1.sql` (APPLIED 2026-11-07, `scripts/_apply_secmaster2.py --all`); discovery
+`docs/SECMASTER2_DISCOVERY.md`.
+
+### The sixth provider (rank 6 for `reference`)
+
+| Key | Source | Supplies | Internal | Members | Redistribution | Budget / day |
+|---|---|---|---|---|---|---|
+| sec_mutual_funds | sec.gov company_tickers_mf.json | one security per share class: ticker, `sec_series_id`, `sec_class_id`, CIK, `fund_structure` | yes | allowed | yes (US public record) | 20 |
+
+* An existing ticker is MATCHED on the US composite family (`exchange` token 'US', written only on a security this
+  source creates) — the file also lists the ETF classes of open-end funds (VTI, VOO, BND, QQQ); their SEC ids are
+  added, their listing exchange stays the listing source's. A NEW security is created only for a mutual-fund ticker
+  (five letters ending X; `…XX` = money market); other absent classes are unmapped with the reason. A ticker held on
+  OTC or by an index → `ticker_conflict` review. Type `fund` (the CHECK's pooled-fund type); the structure is the
+  attribute `fund_structure` (mutual_fund / money_market / etf). A new class is named from SEC facts only
+  ("FXAIX (SEC share class C000100045)") — FinanceDatabase names are internal-only by licence; a member's asset keeps
+  its own name. `sec_class_id` is unique per live row (partial unique index).
+* Job **system:Security data — mutual funds** — monthly, the 3rd at 08:00 New York, step `security_master.mutual_funds`
+  (≤ 5,000 new per run). Seeded **inactive**; the Super Admin switches it on (Security master screen). secmaster1's
+  `_apply_secmaster1.py --activate-jobs` activates only its own four jobs.
+
+### FinanceDatabase (the attributes job's 404)
+
+`etfs/ASE.csv` is not published (the held run of 2026-11-06). `US_ETF_FILES` is now what the repository publishes
+(PCX, NGM, NMS, BTS, NYQ, NCM); `funds/NAS.csv` (US mutual funds) is read as kind `funds`; `category_group` is kept as
+`fund_category_group` beside `fund_category`. A configured file that 404s, a missing column, or every file parsing to
+zero rows raises `SourceFormatChanged` naming the file and the fix: the run HOLDS and the Super Admin is alerted.
+
+### Fund categories (`services/fund_classification.py`)
+
+The map is looked up as "<group> / <category>", then "<group> / *", then the category (Fixed Income / Emerging
+Markets → Emerging Market Debt; Derivatives / * → no bucket). An equity key the category leaves coarse
+(taxonomy_sc_1, or a US cap key with no region) is split by the fund's own NAME: US ("U.S.", "S&P 500", "Total Stock
+Market", "Russell" …) → taxonomy_mc_1_1 / _1_2 by cap; international developed ("International", "EAFE", "Developed
+Markets") → taxonomy_mc_1_3 (small cap → sub_1_3_5); global ex-US ("ex US", "Total International", "All World ex") →
+taxonomy_sub_1_3_4; "Emerging" → taxonomy_mc_1_4; "Total World" / "Global" → stays taxonomy_sc_1. Every proposal
+carries the reason; a contradiction (bitcoin-named, "Corporate Bonds") is REVIEW. `backfill_taxonomy_keys.py --funds`
+prints `REFINE old -> new | reason` for an already-keyed fund whose key is an ancestor of the sharper one; applied
+only with `--refine`.
+
+### The load summary
+
+GET `/admin/security-data/master/summary` (Super Admin): per type (funds by structure), per identifier type (with
+"missing"), per provider, attribute coverage per field, price coverage, the open review queue, the last run per job
+— one query per section. Each count carries the filter that lists it: GET `/admin/security-data/master/securities`
+(security_type, fund_structure, id_type, missing_id_type, provider, field, missing_field, price_coverage, has_price;
+`limit` ≤ 500, `offset`) — the SAME predicates, so a count and its list never disagree. The screen links each number
+to its list.
+
+### SECMASTER2 operator steps (in order)
+
+1. **Close the held attributes run** — Security master → Platform jobs → "Close held run" on
+   `12611760-722c-40b0-872c-a84fdc8f82a6` (or POST `/admin/security-data/master/runs/{id}/close`). close the held attributes run first: until then it blocks the trigger.
+2. Attributes re-load: `doppler run -- apps/api/venv/bin/python apps/api/scripts/secmaster_initial_load.py --source finance_database --dry-run`,
+   then the same without `--dry-run` (`--resume` after a crash). Adds the category group and the mutual-fund categories.
+3. Mutual-fund load: `... secmaster_initial_load.py --source sec_mutual_funds --dry-run --would-relink 00000000-0000-0000-0000-000000000001`,
+   then `... --source sec_mutual_funds` (expect ≈ 22,789 new, 4,609 matched, 1 conflict, 1,247 unmapped).
+   Then step 2's real load once more, so the new mutual-fund classes get their FinanceDatabase categories.
+4. Categories: `doppler run -- python3 apps/api/scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds --dry-run`,
+   then without `--dry-run` (applies `apply` only), then with `--refine` (applies the REFINE lines).
+5. Let the nightly relink link the mutual funds (~07:00 UTC; or POST `/portfolio/manual-assets/relink` as an org
+   admin) and read its report (People & Access → manual assets → relinks; `portfolio.asset_relinks`). Then re-run
+   step 4 (`--funds --dry-run`, then real) so the newly linked funds get their category keys.
+6. Household **Recalculate** (or wait for the nightly roll-up).
+7. Optional: switch on "Security data — mutual funds" (monthly) on the Security master screen.

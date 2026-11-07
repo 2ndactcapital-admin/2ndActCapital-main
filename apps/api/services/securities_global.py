@@ -91,6 +91,9 @@ HAS_SERIES = "has_series"
 # sec_global_ident_type_chk
 IDENTIFIER_TYPES = frozenset({
     "cusip", "isin", "ticker", "sedol", "figi", "lei", "internal",
+    # SECMASTER2 — the SEC's own ids for a registered fund's series and share class (company_tickers_mf.json);
+    # docs/secmaster2_part1.sql widens the CHECK. sec_class_id is unique per live row; a series has many classes.
+    "sec_series_id", "sec_class_id",
 })
 
 # sec_global_price_type_chk
@@ -108,7 +111,7 @@ STRUCTURED_NOTE = "structured_note"
 # Identifier types whose values are case-insensitive by convention and stored
 # upper-cased. 'internal' is excluded — an internal key is whatever its minter
 # says it is, and folding its case would collide two distinct keys.
-_UPPERCASED_ID_TYPES = frozenset({"cusip", "isin", "ticker", "sedol", "figi", "lei"})
+_UPPERCASED_ID_TYPES = frozenset({"cusip", "isin", "ticker", "sedol", "figi", "lei", "sec_series_id", "sec_class_id"})
 
 # The "this row is the current truth" predicate, written once. Both temporal
 # axes, because a row can be superseded (valid_to) or corrected (system_to).
