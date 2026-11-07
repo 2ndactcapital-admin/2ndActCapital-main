@@ -151,7 +151,7 @@ def _id(n: int) -> UUID:
 ORG_P, ORG_A = _id(1), _id(2)
 FIXTURE_ORGS = [ORG_P, ORG_A]
 U_SUPER, U_ADMIN = _id(101), _id(102)
-USERS = {U_SUPER: (ORG_P, "super_admin", "super", None, "SECMASTER1 Super Admin"),
+USERS = {U_SUPER: (ORG_P, "super_admin", "super", "super_admin", "SECMASTER1 Super Admin"),
          U_ADMIN: (ORG_A, "org_admin", "admin", "org_admin", "SECMASTER1 Org Admin")}
 
 
@@ -316,6 +316,7 @@ async def teardown() -> list[str]:
                                     "public.domain_events", "public.agent_proposals")}
         plan["public.member_todos"] = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
         plan["public.audit_log"] = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
+        plan["public.user_roles"] = ("user_id = ANY($1::uuid[])", [users])   # SECMASTER2 FIX 1: by fixture user
         plan["portfolio.security_master_review"] = (
             "global_security_id = ANY($1::uuid[]) OR subject_key LIKE '%ZZSM%' OR run_id = ANY($2::uuid[]) OR "
             "decided_by = ANY($3::uuid[])", [secs, runs, users])
@@ -360,6 +361,9 @@ async def leftovers(conn) -> int:
     for sql, args in (
         ("SELECT count(*) FROM users WHERE id = ANY($1::uuid[]) OR auth0_sub LIKE $2", [list(USERS), f"%{TAG}%"]),
         ("SELECT count(*) FROM organizations WHERE id = ANY($1::uuid[])", [FIXTURE_ORGS]),
+        # SECMASTER2 FIX 1: the fixture role grants (user_roles is the ONE role source) and the fixture orgs' roles
+        ("SELECT count(*) FROM user_roles WHERE user_id = ANY($1::uuid[])", [list(USERS)]),
+        ("SELECT count(*) FROM roles WHERE org_id = ANY($1::uuid[])", [FIXTURE_ORGS]),
         (f"SELECT count(*) FROM portfolio.securities_global_identifiers WHERE {_FX_IDENT}", []),
         ("SELECT count(*) FROM portfolio.securities_global WHERE name LIKE 'ZZSM%'", []),
         ("SELECT count(*) FROM portfolio.sec_13f_list WHERE quarter = $1", [QUARTER]),
@@ -694,8 +698,12 @@ async def seed(conn) -> None:
                 "INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active, is_test) "
                 "VALUES ($1, $2, $3, $4, $5, $6, 'active', true, true)", uid, org, email_of(uid), full, sub_of(uid),
                 account_role)
+            # SECMASTER2 FIX 1 — since BUGFIX4 user_roles is the ONE role source (users.role only mirrors it): every
+            # fixture role is a real user_roles grant, through the app's own helpers, never the string alone.
             if rname == "org_admin":
                 await rbac.grant_org_admin(conn, uid, org)
+            elif rname:
+                await rbac.grant_named_role(conn, uid, org, rname)
         # an INDEX holding ZZSMIDX (no exchange — the shape of the 13 real index rows) and a 13(f)-deleted security
         sid = await SG.create_security(conn, name=f"{NAME_PREFIX} IDX", security_type="index", currency_code="USD",
                                        is_super_admin=True)
@@ -708,9 +716,32 @@ async def seed(conn) -> None:
     us = {r["id"] for r in await platform(conn, "SELECT id FROM users WHERE id = ANY($1::uuid[]) AND is_test", list(USERS))}
     os_ = {r["id"] for r in await platform(conn, "SELECT id FROM organizations WHERE id = ANY($1::uuid[]) AND is_test",
                                            FIXTURE_ORGS)}
-    check(us == set(USERS) and os_ == set(FIXTURE_ORGS), "fixture orgs and users are is_test = true",
-          f"{len(us)}/{len(USERS)} users, {len(os_)}/2 orgs")
-    S["seeded"] = True
+    flags_ok = check(us == set(USERS) and os_ == set(FIXTURE_ORGS), "fixture orgs and users are is_test = true",
+                     f"{len(us)}/{len(USERS)} users, {len(os_)}/2 orgs")
+    S["seeded"] = bool(await check_fixture_roles(conn)) and bool(flags_ok)
+
+
+async def check_fixture_roles(conn) -> bool:
+    """SECMASTER2 FIX 1 — each fixture user's role AS THE APP DECIDES IT (user_roles, read by rbac.load_principal and
+    the services.authz Principal) is the one the fixture means, and users.role mirrors it. A string-only seed (the
+    pre-fix shape) fails here, at the seed, instead of as 403s / run refusals far downstream."""
+    from services import authz as _AZ
+    bad = []
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for uid, (org, account_role, _nm, rname, _full) in USERS.items():
+            names = [r["name"] for r in await conn.fetch(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND "
+                "r.org_id = $2", uid, org)]
+            lp = await rbac.load_principal(conn, uid)
+            pr = await _AZ.load_principal(conn, uid)
+            want_super = rname == "super_admin"
+            ok = (rname in names and rbac.mirrored_role_string(names) == account_role
+                  and rbac.is_super_admin(lp) is want_super and bool(pr and pr.is_super_admin) is want_super)
+            if not ok:
+                bad.append((str(uid), names, account_role, lp, bool(pr and pr.is_super_admin)))
+    return check(not bad, "every fixture role is a user_roles grant the app decides from (Super Admin / org admin as "
+                 "meant), users.role its mirror", f"{bad}")
 
 
 async def y_matcher(conn):

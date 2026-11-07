@@ -202,7 +202,7 @@ def _id(n: int) -> UUID:
 ORG_P, ORG_A, ORG_B = _id(1), _id(2), _id(3)
 FIXTURE_ORGS = [ORG_P, ORG_A, ORG_B]
 U_SUPER, U_ADMIN_A, U_ADMIN_B = _id(101), _id(102), _id(103)
-USERS = {U_SUPER: (ORG_P, "super_admin", "super", None, "SECMASTER2 Super Admin"),
+USERS = {U_SUPER: (ORG_P, "super_admin", "super", "super_admin", "SECMASTER2 Super Admin"),
          U_ADMIN_A: (ORG_A, "org_admin", "admin-a", "org_admin", "SECMASTER2 Org Admin A"),
          U_ADMIN_B: (ORG_B, "org_admin", "admin-b", "org_admin", "SECMASTER2 Org Admin B")}
 
@@ -318,6 +318,9 @@ def counted_plan(fx: list, runs: list) -> dict:
     return {
         "public.organizations": ("id = ANY($1::uuid[])", [orgs]),
         "public.users": ("id = ANY($1::uuid[]) OR auth0_sub LIKE $2", [users, f"%{TAG}%"]),
+        # SECMASTER2 FIX 1: the fixture role grants (user_roles is the ONE role source) and the fixture orgs' roles
+        "public.user_roles": ("user_id = ANY($1::uuid[])", [users]),
+        "public.roles": by_org,
         "public.config": by_org,
         # real activity writes these (the nightly ~07:00 UTC, every user action): fixture org / user ids only
         "public.audit_log": ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users]),
@@ -437,6 +440,7 @@ async def teardown() -> list[str]:
                                     "portfolio.assets", "public.config")}
         plan["public.member_todos"] = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
         plan["public.audit_log"] = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
+        plan["public.user_roles"] = ("user_id = ANY($1::uuid[])", [users])   # SECMASTER2 FIX 1: by fixture user
         plan["portfolio.security_master_review"] = (
             "global_security_id = ANY($1::uuid[]) OR subject_key LIKE $4 OR run_id = ANY($2::uuid[]) OR "
             "decided_by = ANY($3::uuid[])", [secs, runs, users, f"%{TICKER_PREFIX}%"])
@@ -782,8 +786,12 @@ async def seed(conn) -> None:
                 "INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active, is_test) "
                 "VALUES ($1, $2, $3, $4, $5, $6, 'active', true, true)", uid, org, email_of(uid), full, sub_of(uid),
                 account_role)
+            # SECMASTER2 FIX 1 — since BUGFIX4 user_roles is the ONE role source (users.role only mirrors it): every
+            # fixture role is a real user_roles grant, through the app's own helpers, never the string alone.
             if rname == "org_admin":
                 await rbac.grant_org_admin(conn, uid, org)
+            elif rname:
+                await rbac.grant_named_role(conn, uid, org, rname)
         # the ETF class the master already holds (listed on NYSE Arca by the listing source) and an OTC holder
         for t, nm, ty, ex in (("ZZME", f"{NAME_PREFIX} Open-End ETF Class", "fund", "ARCX"),
                               ("ZZMOX", f"{NAME_PREFIX} OTC Holder Co", "equity", "OOTC"),
@@ -801,6 +809,30 @@ async def seed(conn) -> None:
     S["seeded"] = check(bool(flags["o"] is True and flags["u"] is True and int(flags["k"]) > 0),
                         "fixture orgs and users are is_test = true (asserted); the fixture orgs carry the taxonomy",
                         f"{dict(flags)}")
+    S["seeded"] = bool(await check_fixture_roles(conn)) and S["seeded"]
+
+
+async def check_fixture_roles(conn) -> bool:
+    """SECMASTER2 FIX 1 — each fixture user's role AS THE APP DECIDES IT (user_roles, read by rbac.load_principal and
+    the services.authz Principal) is the one the fixture means, and users.role mirrors it. A string-only seed (the
+    pre-fix shape) fails here, at the seed, instead of as 403s / run refusals far downstream."""
+    from services import authz as _AZ
+    bad = []
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for uid, (org, account_role, _nm, rname, _full) in USERS.items():
+            names = [r["name"] for r in await conn.fetch(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND "
+                "r.org_id = $2", uid, org)]
+            lp = await rbac.load_principal(conn, uid)
+            pr = await _AZ.load_principal(conn, uid)
+            want_super = rname == "super_admin"
+            ok = (rname in names and rbac.mirrored_role_string(names) == account_role
+                  and rbac.is_super_admin(lp) is want_super and bool(pr and pr.is_super_admin) is want_super)
+            if not ok:
+                bad.append((str(uid), names, account_role, lp, bool(pr and pr.is_super_admin)))
+    return check(not bad, "every fixture role is a user_roles grant the app decides from (Super Admin / org admin as "
+                 "meant), users.role its mirror", f"{bad}")
 
 
 async def y_mutual_funds(conn):
