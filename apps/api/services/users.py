@@ -401,6 +401,7 @@ async def resolve_request_principal(request: Request):
     token's org + the bootstrap sub before calling this). Returns None when
     the token resolves to no user.
     """
+    from services import family_visibility as FV
     from services.authz import load_principal
     from services.database import get_pool
 
@@ -421,6 +422,7 @@ async def resolve_request_principal(request: Request):
             return None
         if principal is not None:
             request.state.principal = principal
+            await FV.preload_scope(conn, request, principal)   # VISIBILITY1 FIX 1 — same transaction
             return principal
         try:
             user_id, via = await resolve_identity(conn, request)
@@ -433,7 +435,8 @@ async def resolve_request_principal(request: Request):
         if user_id is None:
             return None
         principal = await load_principal(conn, user_id, claims=_claims(request), resolved_via=via)
-    request.state.principal = principal
+        request.state.principal = principal
+        await FV.preload_scope(conn, request, principal)       # VISIBILITY1 FIX 1 — same transaction
     return principal
 
 

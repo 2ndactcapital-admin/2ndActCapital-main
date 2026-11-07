@@ -194,7 +194,7 @@ Production effect of a before-gate: token-claim helpers allowed when the claim w
 | POST | `/api/v1/altruist/sync` | altruist_connection | W | rbac manage_custody_connections | OPEN (get_user_id phantom id → no roles → allow) | authz manage_custody_connections | [FIND] same permission, now enforced from the DB Principal |
 | POST | `/api/v1/altruist/webhook` | altruist_webhook | W | public | public | public |  |
 | GET | `/api/v1/approvals/bulk` | approvals | R | — | new route | any(view_authority|approve_authority|view_held_away|approve_held_away) |  |
-| POST | `/api/v1/approvals/bulk` | approvals | W | — | new route | any(approve_authority|approve_held_away); any(view_authority|approve_authority|view_held_away|approve_held_away) |  |
+| POST | `/api/v1/approvals/bulk` | approvals | W | — | new route | any(approve_authority|approve_held_away) |  |
 | GET | `/api/v1/approvals/summary` | approvals | R | — | new route | any(view_authority|approve_authority|view_held_away|approve_held_away) |  |
 | GET | `/api/v1/assistant/activities` | assistant | R | none beyond auth | OPEN | none beyond auth | OWN ROWS: WHERE user_id = caller |
 | POST | `/api/v1/assistant/activity/{activity_id}/undo` | assistant | W | none beyond auth | OPEN | none beyond auth | [FIND] own conversation/activity (WHERE user_id = caller); each assistant ACTION carries its own gate in services.assistant_actions (unchanged — custody-cliff classes stay unreachable) |

@@ -296,6 +296,13 @@ def vocabularies(items: list[dict], type_key: str) -> dict:
     }
 
 
+async def visible_item_ids(conn, org_id, principal, type_key: str, keep) -> set[str]:
+    """VISIBILITY1 FIX 1 (E) — INTERNAL, ungated: the ids of the pending items of ``type_key`` that ``keep`` admits
+    (a restricted caller's visible families). The decide route has already required APPROVE_KEYS; this adds no gate
+    and checks no permission of its own — it only narrows which item ids the caller may decide."""
+    return {str(i.get("id")) for i in await pending(conn, org_id, principal, type_key) if keep(i)}
+
+
 async def summary(conn, org_id, principal, *, household_id=None, account_id=None, keep=None) -> dict:
     """Pending counts for the entry points: per readable type, the items this viewer may decide. ``keep``
     (VISIBILITY1) drops items of families the viewer cannot see, so the counts match the visible list."""

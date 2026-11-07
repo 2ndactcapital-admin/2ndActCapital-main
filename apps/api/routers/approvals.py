@@ -104,9 +104,12 @@ async def decide(request: Request, body: BulkDecision):
     pool = await get_pool()
     staff = await FV.scope_for_request(request, pool)
     if staff is not None:   # VISIBILITY1 — a restricted caller decides only items of families they can see
-        async with pool.acquire() as conn:
-            items = await BA.pending(conn, org_id, principal, body.type)
-        visible = {str(i.get("id")) for i in items if FV.row_visible(i, staff)}
+        try:
+            async with pool.acquire() as conn:   # FIX 1 (E): an internal, ungated helper — the route's gate unchanged
+                visible = await BA.visible_item_ids(conn, org_id, principal, body.type,
+                                                    lambda item: FV.row_visible(item, staff))
+        except BA.BulkError as exc:            # an unknown type is the same 422 decide_bulk gives, never a 500
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         if any(str(x) not in visible for x in body.item_ids):
             raise HTTPException(status_code=404, detail="Not found")
     try:

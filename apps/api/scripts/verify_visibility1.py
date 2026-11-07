@@ -112,6 +112,16 @@ CODE_NEEDLES = [
     ("apps/web/app/crm/[id]/page.js", "<TeamPanel kind=\"entity\"", "Task 4: the Team panel on a CRM record"),
     ("docs/STAFF_VISIBILITY.md", "## How to turn it on", "Task 7: docs"),
     ("docs/STAFF_VISIBILITY.md", "## The Olivo demo", "Task 7: how the Olivo demo is assigned"),
+    ("apps/api/services/held_away.py", 'NO_MASTER_ASSET_TYPES = NO_MASTER_KINDS | frozenset({"cash_holding"})',
+     "FIX 1 (H): the never-through-the-master kinds as stored asset types, derived from BUGFIX4's one list"),
+    ("apps/api/services/portfolio_manual.py", "AND NOT (a.asset_type = ANY($3::text[])) ",
+     "FIX 1 (H): the relink skips every one of those kinds (was: only 'cash')"),
+    ("apps/api/scripts/revert_relinks.py", "from services.held_away import NO_MASTER_ASSET_TYPES",
+     "FIX 1 (H): revert_relinks.py reads the same list"),
+    ("apps/api/services/users.py", "await FV.preload_scope(conn, request, principal)",
+     "FIX 1 (B–D): the visible set rides on the Principal's transaction"),
+    ("apps/api/routers/approvals.py", "visible = await BA.visible_item_ids(",
+     "FIX 1 (E): the bulk decision filters through an internal, ungated helper"),
 ]
 
 
@@ -231,8 +241,27 @@ def self_pure(check, find):
     g4 = FV.FamilyGraph({**row, "assignments": json.dumps(a3), "entities": json.dumps(ents_rm)})
     check(bool("household:H3" in FV.scope_from_graph(g4, "S2").family_keys),
           "owner rule: a RELATIONSHIP MANAGER keeps the family after it is assigned to someone else")
-    check(bool(FV.scope_from_graph(g4, "M").family_keys == m.family_keys),
-          "a manager does not inherit a report's relationship-managed / created families")
+    # FIX 1 (A, VERIFY) — g4 also carries a3 (F3 assigned to S1, who reports to M), so M sees F3 through his
+    # report's ASSIGNMENT on g3 and g4 alike; the RM change is the only difference between g3 and g4.
+    m3, m4 = FV.scope_from_graph(g3, "M").family_keys, FV.scope_from_graph(g4, "M").family_keys
+    find("M's families: original graph / g3 (+ a3) / g4 (+ a3 + RM)",
+         f"{sorted(m.family_keys)} / {sorted(m3)} / {sorted(m4)}")
+    check(bool(m4 == m3 and "household:H3" in m3), "a report's relationship-manager change adds nothing to the "
+          "manager (M on g4 == M on g3; F3 is seen through S1's assignment)", f"{sorted(m3)} / {sorted(m4)}")
+    ents5 = json.loads(row["entities"])
+    for e in ents5:
+        if e["id"] == "lone":
+            e["rm"] = "S1"            # S1 is ONLY the relationship manager of the standalone 'lone' (no assignment)
+        if e["id"] == "c1":
+            e["cb"] = "S1"            # S1 ONLY created the unassigned ownerless-cycle family
+    g5 = FV.FamilyGraph({**row, "entities": json.dumps(ents5)})
+    s1_5, m5 = FV.scope_from_graph(g5, "S1").family_keys, FV.scope_from_graph(g5, "M").family_keys
+    rm_fam = next(iter(g5.grant("lone")[0]), None)
+    cb_fam = next(iter(g5.grant("c1")[0]), None)
+    check(bool(rm_fam and cb_fam and {rm_fam, cb_fam} <= s1_5 and rm_fam not in m5 and cb_fam not in m5
+               and m5 == m.family_keys),
+          "a manager does not inherit a report's relationship-managed / created families (S1 sees them, M does not)",
+          f"S1 {sorted(s1_5)} / M {sorted(m5)}")
     sc = FV.scope_from_graph(g, "S2")
     payload = {"rows": [{"id": "p1", "x": 1}, {"entity_id": "t1"}, {"entity_id": "p3"}, {"entity_id": "not-org"},
                         {"account_id": "acc1"}, {"household_id": "H3", "nested": [{"owner_entity_id": "t1"}]}]}
@@ -328,6 +357,10 @@ E = {
     "pb": (_id(34), ORG_B, "individual", "Org B Person", None),
 }
 ACC1 = _id(70)
+#: FIX 1 (H) — fixture manual assets, all three carrying the SAME master-resolving ticker; only their kind differs
+RL_DIGITAL, RL_CASH, RL_EQUITY = _id(90), _id(91), _id(92)
+RL_TICKER = "BTC"
+FIX1_REF = "fde0ad5"      # the visibility1 commit: relink_manual_assets as the nightly ran it at 07:00:56 UTC
 ASSET1, POS1, DOC1, NOTE1, LIA1, NOTIF1 = _id(80), _id(81), _id(82), _id(83), _id(84), _id(85)
 AS_OF = date(2026, 11, 4)
 MISSING = UUID("99000000-0000-0000-0000-000000599999")   # never seeded — "a missing id"
@@ -671,6 +704,7 @@ async def y_fixtures(conn):
 # ═══ The real app, token stubbed by bearer string ═══════════════════════════════════════════════════════════════
 CLAIMS_BY_TOKEN: dict[str, dict] = {}
 NETWORK_CALLS: list = []
+NOTE_EXTRACTIONS: list = []
 STMTS = {"n": 0}
 GRAPH_LOADS = {"n": 0}
 
@@ -725,6 +759,20 @@ def install_stubs():
         raise AssertionError(f"verify_visibility1: a network call was attempted: {request.url}")
 
     httpx.AsyncHTTPTransport.handle_async_request = refuse_network
+
+    # FIX 1 (F) — POST /entities/{id}/notes schedules services.extraction.extract_from_note (an LLM call through the
+    # LiteLLM proxy) as a background task; the admitted note in [Y] Writes reached it (three refused POSTs to
+    # /v1/messages = one call + the SDK's two retries). Stubbed at its CURRENT signature; the call is recorded.
+    from services import extraction as _extraction
+    have = list(inspect.signature(_extraction.extract_from_note).parameters)
+    if have != ["pool", "org_id", "note_id", "entity_id", "note_text"]:
+        raise RuntimeError(f"extract_from_note signature drifted: {have}")
+
+    async def no_extraction(pool, org_id, note_id, entity_id, note_text):
+        NOTE_EXTRACTIONS.append(str(note_id))
+        return {}
+
+    _extraction.extract_from_note = no_extraction
 
     # statement counter (every asyncpg round trip) + graph-load counter (the visible set's one statement)
     for name in ("execute", "fetch", "fetchrow", "fetchval"):
@@ -965,6 +1013,8 @@ async def y_writes(conn):
     n = await platform(conn, "SELECT count(*) FROM entity_notes WHERE entity_id = $1 AND note_text = $2", eid("p1"),
                        NAME + "admitted note", fetch="fetchval")
     check(bool(c == 201 and n == 1), "the identical note request from S1 is admitted and persisted", f"{c} {n}")
+    check(bool(c == 201 and NOTE_EXTRACTIONS.count(str(b.get("id"))) == 1),
+          "…its note extraction reached the stub (no LLM call), once", f"{NOTE_EXTRACTIONS}")
 
 
 async def y_lists(conn):
@@ -1141,6 +1191,95 @@ async def y_members_isolation(conn):
           "org B's graph carries none of org A's records")
 
 
+async def y_relink_kinds(conn):
+    section("[Y] FIX 1 (H) — the relink never sends a no-master kind through the master; revert_relinks.py")
+    import importlib.util
+    import types
+
+    from services import portfolio_manual as PM
+    from services import securities_global as SG
+    from services.held_away import NO_MASTER_ASSET_TYPES, NO_MASTER_KINDS
+
+    check(bool(NO_MASTER_KINDS <= NO_MASTER_ASSET_TYPES and {"cash", "cash_holding", "digital_asset"}
+               <= NO_MASTER_ASSET_TYPES), "the relink's list is BUGFIX4's NO_MASTER_KINDS plus their stored form",
+          f"{sorted(NO_MASTER_ASSET_TYPES)}")
+    hit = (await SG.get_by_identifiers_bulk(conn, "ticker", [RL_TICKER])).get(RL_TICKER)
+    if not hit:
+        check(False, f"precondition: ticker {RL_TICKER} resolves in the master", "no master hit")
+        return
+    gsid = str(hit.get("matched_global_security_id") or hit["id"])
+    find(f"ticker {RL_TICKER} resolves in the master to", f"{gsid} {hit.get('name')!r}")
+    for aid, kind, nm in ((RL_DIGITAL, "digital_asset", "Bitcoin"), (RL_CASH, "cash_holding", "Cash sweep"),
+                          (RL_EQUITY, "equity", "Listed holding")):
+        await scoped(conn, ORG_A, "INSERT INTO portfolio.assets (id, org_id, name, asset_class, asset_type, "
+                     "ownership_basis, valuation_method) VALUES ($1, $2, $3, $4, $5, 'units', 'market_price')",
+                     aid, ORG_A, NAME + nm, VALUES["asset_class"], kind, fetch="execute")
+        await scoped(conn, ORG_A, "INSERT INTO portfolio.asset_identifiers (asset_id, org_id, id_type, id_value, "
+                     "is_primary) VALUES ($1, $2, 'ticker', $3, true)", aid, ORG_A, RL_TICKER, fetch="execute")
+
+    async def linked() -> dict:
+        rows = await scoped(conn, ORG_A, "SELECT id, global_security_id::text AS g FROM portfolio.assets WHERE id = "
+                            "ANY($1::uuid[]) AND valid_to IS NULL AND system_to IS NULL",
+                            [RL_DIGITAL, RL_CASH, RL_EQUITY])
+        return {r["id"]: r["g"] for r in rows}
+
+    done = await PM.relink_manual_assets(conn, ORG_A, trigger="manual")
+    now = await linked()
+    check(bool(now.get(RL_EQUITY) == gsid and now.get(RL_DIGITAL) is None and now.get(RL_CASH) is None
+               and {d["asset_id"] for d in done} == {str(RL_EQUITY)}),
+          "relink_manual_assets: a digital asset (BTC) and a cash_holding are NOT relinked; an equity with the same "
+          "ticker still is", f"{now} {[d['asset_id'] for d in done]}")
+
+    # reproduce the 07:00:56 UTC defect with the relink as it was before this fix (fixture org only)
+    old_src = VS.git_show(FIX1_REF, "apps/api/services/portfolio_manual.py")
+    old = types.ModuleType("portfolio_manual_before_fix1")
+    exec(compile(old_src or "", "portfolio_manual@" + FIX1_REF, "exec"), old.__dict__)
+    done_old = await old.relink_manual_assets(conn, ORG_A, trigger="nightly")
+    now = await linked()
+    check(bool(now.get(RL_DIGITAL) == gsid and now.get(RL_CASH) == gsid
+               and {d["asset_id"] for d in done_old} == {str(RL_DIGITAL), str(RL_CASH)}),
+          f"REPRODUCED before the fix ({FIX1_REF}): the nightly relink sent the digital asset and the cash_holding "
+          "to the master security by ticker", f"{now}")
+
+    spec = importlib.util.spec_from_file_location("revert_relinks", HERE / "revert_relinks.py")
+    RR = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(RR)
+    archived0 = await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.assets WHERE org_id = $1 AND name LIKE $2 "
+                             "AND system_to IS NOT NULL", ORG_A, NAME + "%", fetch="fetchval")
+    plan = await RR.plan(conn, str(ORG_A))
+    listed = {r["asset_id"]: r for r in plan}
+    check(bool(set(listed) == {str(RL_DIGITAL), str(RL_CASH)} and all(r["to_revert"] for r in plan)
+               and all(r["to_gsid"] == gsid and r["trigger"] == "nightly" for r in plan)),
+          "revert_relinks dry run lists exactly the digital asset and the cash_holding (from / to security, when, "
+          "trigger); the equity's relink is not listed", f"{sorted(listed)}")
+    check(bool(await linked() == now), "…and the dry run changed nothing (re-read)")
+    changed = await RR.apply(conn, str(ORG_A), plan)
+    async with rls(ORG_A):
+        pool = await get_pool()
+        async with pool.acquire() as c2:                                   # an independent connection
+            rows = await c2.fetch("SELECT id, global_security_id::text AS g FROM portfolio.assets WHERE id = "
+                                  "ANY($1::uuid[]) AND valid_to IS NULL AND system_to IS NULL",
+                                  [RL_DIGITAL, RL_CASH, RL_EQUITY])
+            open_relinks = await c2.fetchval("SELECT count(*) FROM portfolio.asset_relinks WHERE asset_id = "
+                                             "ANY($1::uuid[]) AND valid_to IS NULL AND system_to IS NULL",
+                                             [RL_DIGITAL, RL_CASH])
+            archived = await c2.fetchval("SELECT count(*) FROM portfolio.assets WHERE org_id = $1 AND name LIKE $2 "
+                                         "AND system_to IS NOT NULL", ORG_A, NAME + "%")
+    after = {r["id"]: r["g"] for r in rows}
+    audits = await scoped(conn, ORG_A, "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = $2 AND "
+                          "resource_id = ANY($3::uuid[])", ORG_A, RR.AUDIT_ACTION, [RL_DIGITAL, RL_CASH],
+                          fetch="fetchval")
+    check(bool(changed == 2 and after.get(RL_DIGITAL) is None and after.get(RL_CASH) is None
+               and after.get(RL_EQUITY) == gsid and set(after) == {RL_DIGITAL, RL_CASH, RL_EQUITY}),
+          "revert_relinks real run: both unlinked, ids kept, the equity untouched (re-read, independent connection)",
+          f"CHANGED {changed} {after}")
+    check(bool(archived == archived0 + 2 and open_relinks == 0 and audits == 2),
+          "…each as a new system version (prior archived), its relink closed, audited",
+          f"archived {archived0} → {archived}, open relinks {open_relinks}, audit {audits}")
+    again = await RR.apply(conn, str(ORG_A), await RR.plan(conn, str(ORG_A)))
+    check(again == 0, "revert_relinks second run: CHANGED: 0", f"{again}")
+
+
 async def y_statements(conn):
     section("[Y] Statement budget — the visible set once per request; one filter; the Principal one statement")
     import services.users as su
@@ -1153,14 +1292,19 @@ async def y_statements(conn):
             principal_n = STMTS["n"] - n0
     check(principal_n == 1, "load_principal is ONE statement (the switch rides on it)", f"{principal_n}")
     phases = {}
+    switch_state = {"on": None}
     real_resolve = su.resolve_request_principal
 
     async def timed(request):
-        n_0 = STMTS["n"]
+        n_0, g_0 = STMTS["n"], GRAPH_LOADS["n"]
         try:
             return await real_resolve(request)
         finally:
-            phases.setdefault("principal", []).append(STMTS["n"] - n_0)
+            # FIX 1 (B–D) — the visible set's ONE statement now rides on the Principal's transaction; it is counted
+            # by GRAPH_LOADS and in the route budget below, and excluded HERE, so this still proves the switch adds
+            # no statement to the Principal itself.
+            phases.setdefault("principal", []).append((STMTS["n"] - n_0) - (GRAPH_LOADS["n"] - g_0))
+            phases.setdefault(("principal_graph", switch_state["on"]), []).append(GRAPH_LOADS["n"] - g_0)
 
     su.resolve_request_principal = timed
     routes = [("CRM list", "/api/v1/entities?limit=50"), ("households", "/api/v1/admin/households"),
@@ -1169,6 +1313,7 @@ async def y_statements(conn):
     try:
         for on in (False, True):
             await set_switch(on)
+            switch_state["on"] = on
             for label, path in routes:
                 await measured(U_S1, "GET", path)          # warm
                 g0 = GRAPH_LOADS["n"]
@@ -1186,6 +1331,10 @@ async def y_statements(conn):
     pr = phases.get("principal") or []
     check(bool(pr and len(set(pr)) == 1), "the Principal's statement count is the same with the switch off and on",
           f"{pr}")
+    pg_off, pg_on = phases.get(("principal_graph", False)) or [], phases.get(("principal_graph", True)) or []
+    check(bool(pg_off and pg_on and set(pg_off) == {0} and set(pg_on) == {1}),
+          "the visible set is read on the Principal's own transaction (once per request, only with the switch on)",
+          f"off {pg_off} on {pg_on}")
 
 
 async def y_real_orgs(conn, before):
@@ -1281,6 +1430,7 @@ async def main_async() -> int:
         await run("owner rule", y_owner_rule, conn)
         await run("assignment screens", y_assign_screens, conn)
         await run("members + isolation", y_members_isolation, conn)
+        await run("relink kinds", y_relink_kinds, conn)
         await run("statements", y_statements, conn)
         if real is not None:
             await run("real orgs", y_real_orgs, conn, real)
@@ -1289,6 +1439,8 @@ async def main_async() -> int:
         await run("routes", y_routes, conn)
         await run("front end", y_front_end, conn)
         check(not NETWORK_CALLS, "no network call was attempted", f"{NETWORK_CALLS}")
+        check(len(NOTE_EXTRACTIONS) == 1, "exactly one note extraction was scheduled (the admitted note), stubbed",
+              f"{NOTE_EXTRACTIONS}")
     finally:
         section("[Y] Teardown — zero fixture rows; every counted table at its pre-test count; real rows unchanged")
         try:

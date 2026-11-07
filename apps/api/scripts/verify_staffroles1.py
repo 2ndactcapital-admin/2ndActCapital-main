@@ -345,6 +345,13 @@ COUNTED = ("public.users", "public.organizations", "public.entities", "public.de
            "public.entity_groups", "public.entity_group_members", "public.roles", "public.user_roles",
            "public.role_permissions", "public.profiles", "public.profile_permissions", "public.audit_log",
            "public.member_todos", "public.investment_profile_answers")
+#: VISIBILITY1 FIX 1 (G) — tables real activity writes to are counted over FIXTURE rows only (docs/VERIFY_RULES.md
+#: rule 6): the nightly portfolio refresh wrote two real 'manual_asset_relinked' rows (org 2nd Act, user NULL) into
+#: public.audit_log mid-run and a whole-table count reported them as this verify's leftovers (778 → 780).
+FIXTURE_ID_PREFIX = "99000000-0000-0000-0000-00000051"
+FIXTURE_SCOPED = {
+    "public.audit_log": "org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[]) OR resource_id::text LIKE $3",
+}
 REAL_FINGERPRINTED = ("public.users", "public.roles", "public.user_roles", "public.role_permissions",
                       "public.profiles", "public.profile_permissions", "public.permission_sets",
                       "public.user_permission_sets", "public.entities", "public.delegate_grants")
@@ -414,7 +421,14 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
 
 
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    out = {}
+    for t in COUNTED:
+        if t in FIXTURE_SCOPED:
+            out[t] = int(await platform(conn, f"SELECT count(*) FROM {t} WHERE {FIXTURE_SCOPED[t]}", FIXTURE_ORGS,
+                                        list(USERS), FIXTURE_ID_PREFIX + "%", fetch="fetchval"))
+        else:
+            out[t] = int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval"))
+    return out
 
 
 async def pk_of(conn, table: str) -> list[str]:
@@ -1188,7 +1202,8 @@ async def main_async() -> int:
             if pre is not None:
                 post = await counts(conn)
                 for t in COUNTED:
-                    check(post[t] == pre[t], f"{t} at its pre-test count", f"{pre[t]} → {post[t]}")
+                    scope = " (fixture orgs / users / resource ids)" if t in FIXTURE_SCOPED else ""
+                    check(post[t] == pre[t], f"{t}{scope} at its pre-test count", f"{pre[t]} → {post[t]}")
             if real is not None:
                 for t in REAL_FINGERPRINTED:
                     now = await fingerprint(conn, t)

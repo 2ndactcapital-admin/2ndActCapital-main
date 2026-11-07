@@ -36,8 +36,10 @@ THE SWITCH: org_settings ``staff_visibility.enforced`` (default false, written o
 sprint (internal staff unscoped; the legacy resolver for its legacy callers); the preview still works.
 
 COST: the whole org graph is read in ONE statement (``GRAPH_SQL``), at most once per request (cached on
-``request.state``), and only for a restricted caller of an enforcing org. The switch itself rides on the Principal's
-one statement (``services.authz.PRINCIPAL_COLUMNS``). Lists filter with one ``= ANY($n::uuid[])``.
+``request.state``), and only for a restricted caller of an enforcing org — read on the Principal's OWN transaction
+(``preload_scope``, FIX 1), so it costs the request exactly that one statement and no second connection. The switch
+itself rides on the Principal's one statement (``services.authz.PRINCIPAL_COLUMNS``). Lists filter with one
+``= ANY($n::uuid[])``.
 
 FAIL CLOSED: if the graph cannot be read the request raises (refused), it is never answered unscoped.
 """
@@ -426,6 +428,30 @@ async def scope_for_request(request, pool) -> StaffScope | None:
     request.state.visibility_scope = scope
     request.state.visibility_graph = graph
     return scope
+
+
+async def preload_scope(conn, request, p) -> None:
+    """VISIBILITY1 FIX 1 — read the visible set on the Principal's OWN connection and transaction
+    (``services.users.resolve_request_principal``), so enforcement costs the request exactly ONE statement (the
+    graph) instead of a second acquire (BEGIN + set_config + graph + COMMIT + the pool's release reset = 5).
+
+    Only when that transaction's RLS org IS the principal's org and not super-admin scoped — the same context
+    ``scope_for_request`` would set itself. Otherwise (or if the read fails) nothing is cached and
+    ``scope_for_request`` reads it on its own connection, failing closed exactly as before."""
+    if not restricted_principal(p) or getattr(request.state, "visibility_scope", None) is not None:
+        return
+    from services.database import current_rls_context
+
+    guc_org, guc_super, _sub = current_rls_context()
+    if guc_super or not guc_org or str(guc_org) != str(p.org_id):
+        return
+    try:
+        graph = await load_graph(conn, p.org_id)
+    except Exception as exc:  # noqa: BLE001 — never cache a partial scope; scope_for_request re-reads and refuses
+        print(f"[visibility] graph preload failed, re-read on its own connection: {type(exc).__name__}")
+        return
+    request.state.visibility_graph = graph
+    request.state.visibility_scope = scope_from_graph(graph, p.user_id)
 
 
 async def enforced(conn, org_id) -> bool:
