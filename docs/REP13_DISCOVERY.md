@@ -133,3 +133,38 @@ was assumed from the sprint prompt.
   oldest. Block allocations book fills too, so they are covered.
 - **Live counts:** 0 positions with a negative quantity; 0 execution
   instructions; 0 proposal trades; 34 held-away accounts; 0 models.
+
+## Fix 1 discovery (2026-11-07) — the first full run: 175 PASS / 10 FAIL, all VERIFY
+
+- **A — direct service reads ran with no org context (6 FAILs).** `services.database`'s
+  wrapped pool applies `app.current_org_id` / `app.is_super_admin` /
+  `app.current_auth0_sub` ONCE, inside `acquire().__aenter__`, from the task's
+  contextvars. The verify's `_ctx` sets only those contextvars (`set_rls_context`),
+  and it was entered AFTER `acquire()`, so each transaction carried
+  `app.current_org_id = ''`: platform rows were visible and every org row was
+  hidden. Proof (read-only, as `app_service`, `rolbypassrls = false`): acquire
+  then `_ctx` gave GUC `''` and 3 users visible in 2nd Act's org (the users
+  carve-out only). `_ctx` then acquire, the route's order (`rls_context_middleware`
+  sets the context before the handler acquires), gave GUC = the org and 18 users.
+  The services take the caller's connection by contract and set no org context of
+  their own, exactly as the routes call them. So this is VERIFY, not CODE: all 6
+  sites now enter `_ctx` before `acquire()`.
+- **B — rep3's duplicate guard comes BEFORE validation (4 FAILs), by design and
+  unchanged.** The key is (org, sha256 of the file bytes) against an upload whose
+  outcome is still `received` and that a live model still references.
+  `upload_file` logs a `duplicate` row and returns 201. `confirm` → `_parse_upload`
+  then raises 409 "this upload is duplicate", before any validation. rep13_neg.csv,
+  the excluded-short case and rep13_name.csv were byte-identical to rep13_m1.csv,
+  the approved-to-be 130/30 model. Each now lists M1's exact rows in its own order:
+  same holdings, so exactly its rule fires, but distinct bytes. A new check asserts
+  the four hashes differ.
+- **C — the render-test count matched title prefixes across the whole suite
+  (1 FAIL: 12).** 4 other files' tests share a prefix:
+  admin/userManagement "a view-only row …", bugfix4 "the panel renders …",
+  bulkapprove1 "a view-only envelope …", portentry1 "a lost envelope yields …".
+  The count now runs `tests/replication/rep13.test.mjs` by path and requires
+  `# tests 8`, `# pass 8`, `# fail 0` and no "not ok".
+- **Newly reached once A was fixed (VERIFY):** the account panel check compared
+  `signed_quantity` with the text `"-375"`. The API returns the column's scale,
+  `"-375.00000000"` (the same as `quantity` / `price`). It now compares the exact
+  Decimal, −375, and requires the leading minus.

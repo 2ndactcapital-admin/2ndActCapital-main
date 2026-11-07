@@ -228,6 +228,12 @@ HOLDINGS = (
     (ACC_HA, "H2", 20, 800, 400, 700),          # held AWAY, at a GAIN
 )
 M1_ROWS = (("LA", 65), ("LB", 65), ("SC", -15), ("SD", -15))
+# rep13 fix 1: rep3's duplicate guard (same org + same file sha256 as an upload a live model still references)
+# answers 409 at confirm BEFORE validation runs — by design. Each refusal fixture that reuses M1's rows therefore
+# lists them in its OWN order: the same holdings and sums (so exactly its rule fires), but distinct bytes.
+M1_NEG_ROWS = M1_ROWS[1:] + M1_ROWS[:1]       # LB, SC, SD, LA — the long-only negative-weight case
+M1_EXCL_ROWS = M1_ROWS[2:] + M1_ROWS[:2]      # SC, SD, LA, LB — the excluded-short case
+M1_NAME_ROWS = M1_ROWS[3:] + M1_ROWS[:3]      # SD, LA, LB, SC — the "Holdings of …" name case
 M2_ROWS = (("LA", 65), ("LB", 65), ("SE", -5), ("SF", -5), ("G1", -5), ("H2", -4), ("CB", -4), ("LS1", -7))
 SETTINGS = {"extension": "130_30", "tracking_error_limit": "0.10", "max_short_per_name": "0.20",
             "borrow_cost_ceiling_bps": "500", "exclusions": []}
@@ -563,6 +569,9 @@ async def api(uid, method, path, body=None, timeout=300.0):
 
 
 class _ctx:
+    """The task's RLS contextvars. ENTER IT BEFORE ``pool.acquire()``: the wrapped pool applies the GUCs from these
+    contextvars once, at acquire — entered after, the transaction carries app.current_org_id = '' (rep13 fix 1)."""
+
     def __init__(self, org, super_admin=False):
         self.org, self.super_admin = org, super_admin
 
@@ -1018,7 +1027,11 @@ async def y_models(conn):
     want = {S["sec"][k]: D(w) / 100 for k, w in M1_ROWS}
     got = {r["global_security_id"]: D(r["target_weight"]) for r in pos}
     check(got == want, "the stored weights are the signed fractions (two shorts at −15%)", f"{got}")
-    c, o, _ = await upload_confirm("rep13_neg.csv", M1_ROWS, "REP13 Verify Long Only", None)
+    shas = [hashlib.sha256(csv_bytes(r)).hexdigest() for r in (M1_ROWS, M1_NEG_ROWS, M1_EXCL_ROWS, M1_NAME_ROWS)]
+    check(len(set(shas)) == 4 and all(sorted(r) == sorted(M1_ROWS) for r in (M1_NEG_ROWS, M1_EXCL_ROWS, M1_NAME_ROWS)),
+          "the three refusal fixtures hold M1's exact rows but are not M1's bytes (rep3's duplicate guard precedes "
+          "validation, so a byte-identical file would be answered 409 'duplicate', never validated)", f"{shas}")
+    c, o, _ = await upload_confirm("rep13_neg.csv", M1_NEG_ROWS, "REP13 Verify Long Only", None)
     check(c == 422 and "weight_negative" in codes_of(o), "a LONG-ONLY model with a negative weight is refused "
           "(weight_negative, with its row)", f"{c} {dumps(o)}")
     cases = (
@@ -1026,14 +1039,14 @@ async def y_models(conn):
                                                                                          "ls_gross_short"}),
         ("a name both long and short", (("LA", 65), ("LB", 65), ("SC", -15), ("LA", -15)), ls_spec(),
          {"ls_both_sides"}),
-        ("an excluded short", M1_ROWS, ls_spec(short_exclusions=[str(S["sec"]["SC"])]), {"ls_short_excluded"}),
+        ("an excluded short", M1_EXCL_ROWS, ls_spec(short_exclusions=[str(S["sec"]["SC"])]), {"ls_short_excluded"}),
         ("a non-equity short", (("LA", 65), ("LB", 65), ("SC", -15), ("FND", -15)), ls_spec(), {"ls_short_not_equity"}),
     )
     for i, (what, rows, spec, want_codes) in enumerate(cases):
         c, o, upid = await upload_confirm(f"rep13_bad{i}.csv", rows, f"Holdings of REP13 Verify Bad {i}", spec)
         check(c == 422 and want_codes <= codes_of(o), f"{what}: refused with its reason ({sorted(want_codes)})",
               f"{c} {dumps(o)}")
-    c, o, _ = await upload_confirm("rep13_name.csv", M1_ROWS, "REP13 Verify No Prefix", ls_spec())
+    c, o, _ = await upload_confirm("rep13_name.csv", M1_NAME_ROWS, "REP13 Verify No Prefix", ls_spec())
     check(c == 422 and "Holdings of" in dumps(o), "a long/short model is named \"Holdings of …\" (refused otherwise)",
           f"{c} {dumps(o)}")
     code, log = await api(U_ADMIN1, "GET", "/api/v1/models/uploads")
@@ -1167,8 +1180,8 @@ async def y_borrow_rates(conn):
     check(c == 201, "org B enters its own rate on SC", f"{c} {dumps(o)}")
     c, o = await rate(U_ADMIN1, "SC", "1.5e400")
     check(c == 422, "a non-finite rate is refused", f"{c}")
-    async with (await get_pool()).acquire() as pc:
-        with _ctx(ORG_A):
+    with _ctx(ORG_A):  # the route's order: RLS context FIRST, then acquire (the pool applies the GUCs at acquire)
+        async with (await get_pool()).acquire() as pc:
             got = await LS.borrow_rates_for(pc, ORG_A, [str(S["sec"][k]) for k in ("SC", "SD", "SE")], today())
     sc, sd = got.get(str(S["sec"]["SC"])), got.get(str(S["sec"]["SD"]))
     check(sc is not None and sc.rate_bps == 50 and sc.scope == "org" and sd is not None and sd.scope == "platform"
@@ -1270,16 +1283,16 @@ async def y_tracking_error(conn):
     S["series"] = series
     final = {str(S["sec"]["TA"]): Decimal("1.30"), str(S["sec"]["TB"]): Decimal("-0.25"), "cash": Decimal("-0.05")}
     model = {str(S["sec"]["TA"]): Decimal("1.30"), str(S["sec"]["TB"]): Decimal("-0.30")}
-    async with (await get_pool()).acquire() as pc:
-        with _ctx(ORG_A):
+    with _ctx(ORG_A):  # the route's order: RLS context FIRST, then acquire (the pool applies the GUCs at acquire)
+        async with (await get_pool()).acquire() as pc:
             te = await LS.tracking_error(pc, ORG_A, final, model, today())
     hand = _te_hand(final, model, series)
     check(te.get("estimated") is True and abs(D(te["tracking_error"]) - hand) < Decimal("0.0000001"),
           "estimated tracking error = sqrt(252 × sample variance of the active return) — the hand value",
           f"{te.get('tracking_error')} vs {hand}")
     final_missing = {**final, str(S["sec"]["LA"]): Decimal("0.01")}
-    async with (await get_pool()).acquire() as pc:
-        with _ctx(ORG_A):
+    with _ctx(ORG_A):  # the route's order: RLS context FIRST, then acquire (the pool applies the GUCs at acquire)
+        async with (await get_pool()).acquire() as pc:
             te2 = await LS.tracking_error(pc, ORG_A, final_missing, model, today())
     check(te2.get("estimated") is False and "1 of 3" in te2.get("text", ""),
           "one name without a series → 'needs prices — 1 of 3 names …', not a partial estimate", dumps(te2))
@@ -1358,8 +1371,8 @@ async def y_gates_proposal(conn):
     check(code == 201 and blk == ["constructive_sale"], "with SE's rate entered and the proposal rebuilt, the §1259 "
           "block alone remains — it never lapses on its own", f"{code} {dumps(blk)}")
     S["p2"] = p3
-    async with (await get_pool()).acquire() as pc:
-        with _ctx(ORG_A):
+    with _ctx(ORG_A):  # the route's order: RLS context FIRST, then acquire (the pool applies the GUCs at acquire)
+        async with (await get_pool()).acquire() as pc:
             a = await AM.load_account(pc, ORG_A, ACC_LS2)
             blocks, read = await LS.constructive_sale_check(pc, ORG_A, a, [str(S["sec"]["LS1"])], today())
     check(blocks == {} and any(r.get("held_away") for r in read if r.get("read")),
@@ -1463,8 +1476,8 @@ async def manual_instruction(a, key, side, qty, effect, lots=None) -> tuple[int,
 
 
 async def short_book(conn, a):
-    async with (await get_pool()).acquire() as pc:
-        with _ctx(ORG_A):
+    with _ctx(ORG_A):  # the route's order: RLS context FIRST, then acquire (the pool applies the GUCs at acquire)
+        async with (await get_pool()).acquire() as pc:
             book, realized = await LS.short_book(pc, ORG_A, [acct(a)])
     return book.get(acct(a), {}), realized
 
@@ -1482,8 +1495,8 @@ async def y_execution(conn):
               "approval routed the proposal through the declaring adapter: 4 instructions APPROVED, the shorts "
               "'sell_short' with their short terms", dumps([(k, v["side"], v["status"]) for k, v in by.items()]))
         if sc:
-            async with (await get_pool()).acquire() as pc:
-                with _ctx(ORG_A):
+            with _ctx(ORG_A):  # the route's order: RLS context FIRST, then acquire (the pool applies the GUCs at acquire)
+                async with (await get_pool()).acquire() as pc:
                     sd = await BK.instruction_sheet_dict(pc, ORG_A, str(sc["id"]))
             rows = dict(OSH.sheet_rows(sd))
             check(rows.get("Side") == "SELL SHORT" and "OPENING a short sale" in rows.get("Position effect", ""),
@@ -1497,7 +1510,9 @@ async def y_execution(conn):
             c, o = await api(U_ADMIN1, "GET", f"{_L}/accounts/{acct(ACC_LS)}")
             book = {b["security_id"]: b for b in (o or {}).get("short_book") or []}
             b = book.get(str(S["sec"]["SC"])) or {}
-            check(b.get("signed_quantity") == "-375" and b.get("term") == "short" and len(b.get("lots") or []) == 1,
+            # rep13 fix 1: the exact Decimal, not its text — the API returns the column's scale ("-375.00000000")
+            sq = b.get("signed_quantity")
+            check(sq is not None and str(sq).startswith("-") and D(sq) == Decimal(-375) and b.get("term") == "short" and len(b.get("lots") or []) == 1,
                   "the account panel shows the short as a NEGATIVE quantity with its lot", dumps(b))
     # a custodian adapter that does not declare short_selling refuses at submit
     tl = {"account_id": acct(ACC_ND), "executor_type": "broker", "executor_name": "REP13 Verify Broker",
@@ -1654,10 +1669,15 @@ async def y_front_end(conn):
     code, out, err = run_cmd(["node", "--test", "tests/"], WEB_DIR, timeout=1200)
     check(code == 0 and re.search(r"^# fail 0", out, re.M) is not None, "node --test tests/ passes (0 fail)",
           (out + err)[-400:] if code else "")
-    mine = re.findall(r"^\s*ok \d+ - (?:the panel|a view-only|a lost envelope|an action listed|the proposal view|"
-                      r"acknowledge only|the acknowledgement|tracking error and side)", out, re.M)
-    check(len(mine) == 8 and "not ok" not in out, "the 8 rep13 render tests ran and passed (no control without the "
-          "server's flag and action)", f"{len(mine)}")
+    # rep13 fix 1: count rep13's OWN file, run by path — a title-prefix match over the whole suite also counted 4
+    # other files' tests sharing a prefix ("a view-only …", "the panel …", "a lost envelope …") → 12
+    c13, o13, e13 = run_cmd(["node", "--test", "tests/replication/rep13.test.mjs"], WEB_DIR, timeout=300)
+    mine = re.findall(r"^ok \d+ - ", o13, re.M)
+    check(c13 == 0 and len(mine) == 8 and re.search(r"^# tests 8$", o13, re.M) is not None
+          and re.search(r"^# pass 8$", o13, re.M) is not None and re.search(r"^# fail 0$", o13, re.M) is not None
+          and "not ok" not in o13 and "not ok" not in out,
+          "the 8 rep13 render tests (tests/replication/rep13.test.mjs, run by path) ran and passed (no control without "
+          "the server's flag and action)", f"{c13} {len(mine)} {(o13 + e13)[-300:] if c13 else ''}")
     if os.environ.get("SKIP_BUILD") == "1":
         print("[SKIP] npm run build (SKIP_BUILD=1 — the outer run builds)")
         return
