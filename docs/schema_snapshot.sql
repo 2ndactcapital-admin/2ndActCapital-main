@@ -735,6 +735,23 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY block_fills_pkey: (id)
 
+-- ===== borrow_rates =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   owner_scope                              text NOT NULL
+--   org_id                                   uuid
+--   global_security_id                       uuid NOT NULL
+--   rate_bps                                 numeric NOT NULL
+--   rebate_bps                               numeric
+--   as_of                                    date NOT NULL
+--   source                                   text NOT NULL
+--   entered_by                               uuid NOT NULL
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY borrow_rates_pkey: (id)
+
 -- ===== charitable_donees =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -1983,6 +2000,7 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   option_terms                             jsonb
+--   short_terms                              jsonb
 --   PRIMARY KEY execution_instructions_pkey: (id)
 
 -- ===== external_access_grants =====
@@ -2685,6 +2703,66 @@
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY ledger_books_pkey: (id)
 
+-- ===== long_short_proposals =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   proposal_id                              uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   model_id                                 uuid NOT NULL
+--   model_version_id                         uuid NOT NULL
+--   settings_id                              uuid NOT NULL
+--   extension                                text NOT NULL
+--   gross_long                               numeric NOT NULL
+--   gross_short                              numeric NOT NULL
+--   capital                                  numeric NOT NULL
+--   long_value_after                         numeric NOT NULL
+--   short_value_after                        numeric NOT NULL
+--   eligibility                              jsonb NOT NULL
+--   borrow                                   jsonb NOT NULL
+--   cost_comparison                          jsonb NOT NULL
+--   tracking_error                           jsonb NOT NULL
+--   constructive_sale                        jsonb NOT NULL DEFAULT '[]'::jsonb
+--   harvest                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   skipped                                  jsonb NOT NULL DEFAULT '[]'::jsonb
+--   disclosures                              jsonb NOT NULL
+--   margin                                   jsonb NOT NULL
+--   tax_estimate                             jsonb NOT NULL
+--   member_summary                           text NOT NULL
+--   blocking                                 jsonb NOT NULL DEFAULT '[]'::jsonb
+--   acknowledged_by                          uuid
+--   acknowledged_at                          timestamp with time zone
+--   acknowledgement                          jsonb
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY long_short_proposals_pkey: (id)
+
+-- ===== long_short_settings =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   account_id                               uuid NOT NULL
+--   status                                   text NOT NULL
+--   version_no                               integer NOT NULL
+--   extension                                text NOT NULL
+--   gross_long                               numeric NOT NULL
+--   gross_short                              numeric NOT NULL
+--   tracking_error_limit                     numeric NOT NULL
+--   max_short_per_name                       numeric NOT NULL
+--   borrow_cost_ceiling_bps                  numeric NOT NULL
+--   exclusions                               jsonb NOT NULL DEFAULT '[]'::jsonb
+--   note                                     text
+--   created_by                               uuid NOT NULL
+--   saved_by                                 uuid
+--   saved_at                                 timestamp with time zone
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY long_short_settings_pkey: (id)
+
 -- ===== loss_bank_entries =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   org_id                                   uuid NOT NULL
@@ -3292,6 +3370,7 @@
 --   wash_sale                                jsonb
 --   lot_method                               text
 --   option_leg                               jsonb
+--   short_leg                                jsonb
 --   PRIMARY KEY rebalance_proposal_trades_pkey: (id)
 
 -- ===== rebalance_proposals =====
@@ -3715,6 +3794,32 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY substitution_sets_pkey: (id)
+
+-- ===== suitability_records =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   org_id                                   uuid NOT NULL
+--   subject_type                             text NOT NULL
+--   subject_id                               uuid NOT NULL
+--   record_kind                              text NOT NULL
+--   agreement_date                           date NOT NULL
+--   document_id                              uuid NOT NULL
+--   note                                     text
+--   status                                   text NOT NULL
+--   maker_id                                 uuid NOT NULL
+--   approval_task_id                         uuid
+--   approved_by                              uuid
+--   approved_at                              timestamp with time zone
+--   decision_note                            text
+--   removed_by                               uuid
+--   removed_at                               timestamp with time zone
+--   removed_reason                           text
+--   archived_from_id                         uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY suitability_records_pkey: (id)
 
 -- ===== tax_profiles =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
@@ -4972,6 +5077,12 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   disclosure                               text
+--   kind                                     text NOT NULL DEFAULT 'long_only'::text
+--   gross_long                               numeric
+--   gross_short                              numeric
+--   signal_source                            text
+--   signal_as_of                             date
+--   short_exclusions                         jsonb NOT NULL DEFAULT '[]'::jsonb
 --   PRIMARY KEY models_pkey: (id)
 
 -- ===== portfolio.note_extraction_runs =====
