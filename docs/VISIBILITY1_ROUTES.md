@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 851 · guarded 193 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 853 · guarded 193 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -138,7 +138,9 @@ Routes: 851 · guarded 193 · sql-scope 43 · body-check 4 · legacy-rule 2
 | GET | `/api/v1/admin/security-data/master/review` | security_master | scrub |
 | POST | `/api/v1/admin/security-data/master/review/{review_id}/decision` | security_master | scrub |
 | POST | `/api/v1/admin/security-data/master/runs/{run_id}/close` | security_master | scrub |
+| GET | `/api/v1/admin/security-data/master/securities` | security_master | scrub |
 | GET | `/api/v1/admin/security-data/master/status` | security_master | scrub |
+| GET | `/api/v1/admin/security-data/master/summary` | security_master | scrub |
 | GET | `/api/v1/admin/security-data/providers` | security_data | scrub |
 | PUT | `/api/v1/admin/security-data/providers/{key}` | security_data | scrub |
 | GET | `/api/v1/admin/security-data/rank` | security_data | scrub |

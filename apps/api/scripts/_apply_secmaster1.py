@@ -85,6 +85,14 @@ async def seed_jobs() -> None:
         await conn.close()
 
 
+def SECMASTER1_JOBS(J):
+    """SECMASTER2 — the four jobs THIS script seeds and activates. J.JOBS also holds later jobs (the mutual-fund job,
+    seeded inactive by _apply_secmaster2.py) which the operator switches on separately, on the Security master
+    screen — --activate-jobs must never switch them on as a side effect."""
+    return [j for k, j in J.JOBS.items() if k in ("security_master_nightly", "security_master_13f",
+                                                  "security_master_attributes", "security_data_nightly")]
+
+
 async def activate_jobs() -> None:
     from services import security_master_jobs as J
 
@@ -95,7 +103,7 @@ async def activate_jobs() -> None:
             n = await conn.execute(
                 "UPDATE workflow_triggers t SET is_active = true FROM workflow_definitions d WHERE "
                 "d.id = t.workflow_definition_id AND d.org_id = $1 AND d.name = ANY($2::text[]) AND "
-                "t.trigger_type = 'scheduled' AND NOT t.is_active", J.PLATFORM_ORG_ID, [j.name for j in J.JOBS.values()])
+                "t.trigger_type = 'scheduled' AND NOT t.is_active", J.PLATFORM_ORG_ID, [j.name for j in SECMASTER1_JOBS(J)])
         print(f"[OK] activated: {n}")
     finally:
         await conn.close()

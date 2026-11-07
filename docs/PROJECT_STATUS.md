@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+SECMASTER2 (2026-11-07, SEC mutual-fund share classes into the master (dry run: 22,789 new / 4,609 matched; 10 Olivo funds would relink, none relinked), the FinanceDatabase attributes load fixed (etfs/ASE.csv is not published) + US mutual-fund categories, US / international / EM / cap fund categories with REFINE proposals, the load summary with every count linked to its list; schema APPLIED, job seeded OFF; verify WRITTEN, not yet run): see the top entry.
 VISIBILITY1 (2026-11-07, team-based staff visibility — org admins see every family, staff their assigned / team / reports' families, an unassigned family only its owner; one shared helper on every route, Team panel, preview and an audited org switch that is OFF everywhere; verify WRITTEN, not yet run): see the top entry.
 BULKAPPROVE1 (2026-11-05, Approvals → Bulk approve for authority & custody changes and held-away entries — the SAME single-approval service per item, per-item results, cap 200, audit per item + per batch; verify WRITTEN, not yet run): see the top entry.
 BUGFIX3 (2026-11-05, the Olivo-pass CRITICAL: a member read every family's positions — every portfolio read now takes the one shared visible-entity rule; private investments without a commitment, household Recalculate, provisional import rows live, editable addresses, permission-true CRM controls, manual-asset counts, option picker, fixed-point money; verify WRITTEN, not yet run): see the top entry.
@@ -339,6 +340,77 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. SECMASTER2 — the security master finished: SEC mutual-fund share classes, the FinanceDatabase load working again, sharper fund categories, the load summary; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
+
+**Branch** `secmaster2-work`. Discovery: `docs/SECMASTER2_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md`
+("SECMASTER2"). Schema `docs/secmaster2_part1.sql` APPLIED (`scripts/_apply_secmaster2.py --all`: SCHEMA OK); the job
+"system:Security data — mutual funds" SEEDED with its trigger **inactive**. Verify `apps/api/scripts/verify_secmaster2.py`
+WRITTEN, NOT RUN (in `scripts/regression_set.txt`).
+
+**Findings (Task 1).**
+* 1a — the held attributes run (`12611760-…`, 2026-11-06) died on `etfs/ASE.csv`: FinanceDatabase publishes
+  `equities/ASE.csv` but no ETF file for ASE. Every other file answered 200 and had already been applied. Fixed by the
+  file list (ETF: ASE out, NCM in) + `funds/NAS.csv` (US mutual funds, new) + a clear held failure
+  (`SourceFormatChanged`) for a missing file / column / empty load.
+* 1b — `company_tickers_mf.json` = 28,647 share classes (12,304 series, 1,160 CIKs), public domain, **no names**, and it
+  includes the ETF classes of open-end funds (VTI, VOO, BND, QQQ). The CHECKs admitted no SEC id and no
+  `mutual_fund` type: ids added (`sec_series_id`, `sec_class_id`, unique live class id), type stays `fund`, structure
+  is the new attribute `fund_structure`.
+* 1c — `category` alone is ambiguous (Emerging Markets under Equities AND Fixed Income; Large Cap under Derivatives;
+  Developed Markets holds US and international ETFs alike); ETFs / mutual funds carry no country; 0 N-PORT snapshots
+  are loaded; `fund_category_taxonomy` has 0 rows. The group is now kept (`fund_category_group`) and the name splits
+  region / cap.
+* 1d — the admin page had no structure split, no "missing" counts, no attribute / price coverage, and no count was
+  linked to a list (no master-wide list existed). Added: GET `/admin/security-data/master/summary` + `/securities`.
+* [FIND] `scripts/secmaster_initial_load.py` trusted any `DATABASE_URL` already in the shell — the stale `~/.bashrc`
+  copy — and died on "password authentication failed"; it now always resolves through Doppler and probes.
+* [FIND] `_apply_secmaster1.py --activate-jobs` switched on EVERY job in `J.JOBS` — it would have switched the new
+  mutual-fund job on as a side effect; now limited to its own four.
+* [FIND] verify_secmaster1 fires every job through its own fixture transport and pinned the rank to exactly five
+  providers: its fixture now records the two new files (funds/NAS.csv header; one share class on its ZZSMF ETF) and
+  the rank check reads "the five, in order, first".
+
+**Dry run — mutual funds** (live master, read only, 2026-11-07; `secmaster_initial_load.py --source sec_mutual_funds
+--dry-run --would-relink 00000000-…-0001`): 28,647 rows, 28,646 kept (1 blank ticker); structures 21,854 mutual fund /
+938 money market / 5,854 other classes; **new 22,789 · matched 4,609 (ticker on the US composite family) · conflicts 1
+· unmapped 1,247** (not a mutual-fund ticker and not in the master); 3 review items; 77,585 identifiers and 100,377
+attributes would be written. The live master was unchanged afterwards (15,970 securities, 0 SEC ids, 0
+`sec_mutual_funds` attributes / reviews / files); only 2 `provider_call_log` rows (the real SEC requests) were written.
+
+**Would relink — 2nd Act** (10 of 11 ticker-identified manual assets; NOTHING relinked): mutual funds FXAIX Fidelity 500
+Index Fund · FFFGX Fidelity Freedom 2045 · FSKAX Fidelity Total Market Index · FXNAX Fidelity U.S. Bond Index · SWPPX
+Schwab S&P 500 Index · SWTSX Schwab Total Stock Market Index · VWIUX Vanguard Intermediate-Term Tax-Exempt; money market
+FDRXX Fidelity Government Cash Reserves · FGTXX Goldman Sachs Financial Square Govt MMF · SNOXX Schwab Treasury
+Obligations MMF — each to a NEW share-class security. Not: "Olivo Core Equity" (SMA-CORE, not an SEC class). Bitcoin
+/ Ether (digital assets) and the cash holding are never candidates.
+
+**Refine proposals — 2nd Act** (`backfill_taxonomy_keys.py --funds --dry-run`, CHANGED: 0): refine 9, review 1,
+unchanged 22.
+  REFINE Invesco QQQ Trust · Schwab U.S. Broad Market · Schwab US Dividend Equity · Vanguard Morningstar Total Stock Market:
+  taxonomy_sc_1 → taxonomy_mc_1_1 (US; no cap stated → large-cap weighted).
+  REFINE iShares MSCI EAFE · Schwab International Equity · Vanguard FTSE Developed Markets: taxonomy_sc_1 → taxonomy_mc_1_3.
+  REFINE Vanguard FTSE All World Ex US · Vanguard Total International Stock: taxonomy_sc_1 → taxonomy_sub_1_3_4.
+  REVIEW Grayscale Bitcoin Mini Trust (category "Corporate Bonds", name bitcoin; keeps its hand key taxonomy_mc_7_3).
+  Unchanged: Vanguard Total World Stock (global — no single region), the bonds / munis / TIPS / EM / small cap, and the
+  7 mutual funds (no master link yet — they get categories after steps 2–5).
+
+**Follow-ups.** Mutual-fund names (SEC series / class names are annual deltas; FinanceDatabase is internal-only);
+OpenFIGI share-class FIGIs for mutual funds (budget); prices (prices1) next.
+
+### SECMASTER2 operator steps (in order)
+
+1. close the held attributes run — Security master → Platform jobs → "Close held run" on `12611760-…`.
+2. Attributes re-load: `secmaster_initial_load.py --source finance_database --dry-run`, then real.
+3. Mutual funds: `secmaster_initial_load.py --source sec_mutual_funds --dry-run --would-relink <org>`, then real; then
+   step 2's real load once more (the new classes' categories).
+4. `backfill_taxonomy_keys.py --org <org> --funds --dry-run`, then real, then `--refine`.
+5. Let the nightly relink link the mutual funds (~07:00 UTC; or POST `/portfolio/manual-assets/relink`) and read its
+   report (`portfolio.asset_relinks`); then step 4 again for the newly linked funds.
+6. Household Recalculate.
+7. Run the verify: `doppler run -- apps/api/venv/bin/python apps/api/scripts/verify_secmaster2.py`.
+
+**UPDATE (fix 1, 2026-11-07).** The first full run was 126 PASS / 8 FAIL, all with one cause, all VERIFY (no code changed): since BUGFIX4 every role, Super Admin included, is decided from `user_roles` (`users.role` only mirrors it), but verify_secmaster2 and the nested verify_secmaster1 seeded their fixture Super Admin (also the platform-job runner, `…54d101` / `…53c101`) with the role STRING only, so it was neither Super Admin nor a holder of `run_platform_jobs` / `author_workflows`: 403 "Super Admin required" on /summary, /securities and the unknown-filter 422, the held-run close 403, the attributes run refused by the engine's permission check instead of holding on the 404 (so the re-fire skipped), the mutual-fund job errors=1, and secmaster1's 17 FAILs (platform-job delete 403 instead of 409, every job run refused). Discovery (read-only + a rolled-back fixture probe): a string-only `super_admin` resolves to role None / `is_super_admin` False in both `rbac.load_principal` and the `services.authz` Principal, and True once granted through `rbac.grant_named_role`; the REAL platform runner be8165db… holds `super_admin` in `user_roles` in its own org, so real platform jobs were never affected (unchanged). Fix (both scripts): every fixture role is a `user_roles` grant through the app's own helpers (`grant_named_role` for super_admin, `grant_org_admin` as before), `users.role` kept as the mirror; a new seed-time check asserts each fixture's role AS THE APP DECIDES IT (grant present, mirror agrees, both principal loaders agree) so a string-only seed fails at the seed, not 40 checks downstream; teardown plans `public.user_roles` by fixture user id, and the counts / leftovers include `public.user_roles` (by fixture user) and `public.roles` (by fixture org). No assertion was weakened; none of the 8 failed for a second reason. Proof: one-offs driving each verify's own DB sections (seed through jobs, isolation, real rows, teardown; no routes / node / npm / nested run): verify_secmaster2 107 PASS / 0 FAIL (Super Admin 200 on /summary and /securities?fund_structure=money_market, 422 on an unknown filter, the 404 HOLDS the attributes run with its reason and alerts only the Super Admin, the close 200, the trigger fires again and completes, the mutual-fund job completes through the engine); verify_secmaster1 138 PASS / 0 FAIL (= its 121 + 17; the platform-job delete 409, the nightly completes, and a member WITHOUT `run_platform_jobs` is still refused). Zero fixture rows remained, user_roles / roles at pre-test counts, real rows unchanged. `--self-checks-only`: secmaster2 18 / 0, secmaster1 8 / 0. The full verify_secmaster2.py / verify_secmaster1.py / npm build were NOT re-run (WSL memory). BACKLOG (catch-all, read-only grep, NOT fixed here; heuristic: inserts `users` with a role string and has no `user_roles` insert / `grant_named_role` / `grant_org_admin`; each will fail the same way when next run, a few may be false positives that only test the string): Super Admin by string only (36) — aibudget1, assistantquery, bulkfetch, bulkfetchui, bulkfetchui2, bulkfetchui3, ensemblesystemone, fixbugs, litellmavailability, litellmphased1b, litellmphased1c, litellmphasef, litellmphaseg, multitenant1, notefix1, notefix2, notetermsrouting, ownershiptreea, ownershiptreeb, portfolioa1, portfolioa2, portfoliob, portfoliod, portfolioe, portfoliof, portfoliog, previewperffix1, soc4, sprint24, staffvisbypass, superadminmenu, underlyingresolution, usermanagementfinish, workflowmgr4, workflowmgr5, workflowpermsfix; org admin by string only (21) — chancery11b, enrollurl, multitenant2, rls2, rlscutover, schedulerappservicefix, schedulercore, schedulerhistory, schedulernotify, schedulerux, scripttaskrefusal, smtpservice, sprint24, staffvisbypass, superadminmenu, tamodel1, tamodel2, usermanagementfinish, workflowmgr3, workflowmgr4, workflowpermsfix.
 
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. VISIBILITY1 — team-based staff visibility, enforced per org: the rule, the family closure, assignment screens, the preview and the switch (OFF everywhere); verify WRITTEN, not yet run (2026-11-07)
 

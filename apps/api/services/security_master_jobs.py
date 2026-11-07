@@ -39,6 +39,7 @@ REQUIRED_PERMISSION = "run_platform_jobs"
 STEP_DEADLINE_S = 200.0
 NIGHTLY_MAX_NEW = 2000          # new securities per source per night (the operator's load does the bulk)
 OPENFIGI_REQUESTS_PER_STEP = 40  # keyless: 400 identifiers in ~100 s
+MUTUAL_FUNDS_MAX_NEW = 5000     # SECMASTER2: new share classes per monthly run (the operator's load does the bulk)
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,14 @@ JOBS: dict[str, JobSpec] = {
         "workflow engine: its Render cron is no longer needed. Platform job (SECMASTER1).",
         "30 19 * * 1-5", "America/New_York", "Weekdays 19:30 New York (23:30 / 00:30 UTC)",
         (StepSpec("security_data", "security_data.nightly", "Security data nightly"),)),
+    # SECMASTER2 — seeded INACTIVE (scripts/_apply_secmaster2.py --seed-jobs); the operator decides
+    "security_master_mutual_funds": JobSpec(
+        "security_master_mutual_funds", "system:Security data — mutual funds",
+        "SEC mutual-fund share classes (company_tickers_mf.json: CIK, series, class, ticker) → matcher: an existing "
+        "ticker is matched, a new mutual-fund ticker is created, a conflict goes to review. Platform job "
+        "(SECMASTER2).",
+        "0 8 3 * *", "America/New_York", "Monthly, the 3rd at 08:00 New York (12:00 / 13:00 UTC)",
+        (StepSpec("mutual_funds", "security_master.mutual_funds", "SEC mutual-fund share classes"),)),
 }
 JOB_BY_NAME = {j.name: j for j in JOBS.values()}
 
@@ -258,6 +267,12 @@ async def _attributes(ctx, rc) -> dict:
     return await SS.sync_attributes(ctx)
 
 
+async def _mutual_funds(ctx, rc) -> dict:
+    from services import security_master_sync as SS
+
+    return await SS.sync_mutual_funds(ctx, max_new=MUTUAL_FUNDS_MAX_NEW)
+
+
 async def _security_data(ctx, rc) -> dict:
     from services.security_data import nightly
 
@@ -273,7 +288,8 @@ _HANDLERS = {"security_master.universe": ("security_master_universe", _universe)
              "security_master.openfigi_new": ("security_master_openfigi", _openfigi),
              "security_master.sec13f": ("security_master_13f", _sec13f),
              "security_master.attributes": ("security_master_attributes", _attributes),
-             "security_data.nightly": ("security_data_nightly", _security_data)}
+             "security_data.nightly": ("security_data_nightly", _security_data),
+             "security_master.mutual_funds": ("security_master_mutual_funds", _mutual_funds)}
 _DESCRIPTIONS = {
     "security_master.universe": "Platform job: load the Nasdaq Trader listed universe and SEC company tickers "
                                 "into the security master; mark securities absent 3 runs as delisted.",
@@ -281,6 +297,8 @@ _DESCRIPTIONS = {
     "security_master.sec13f": "Platform job: load a new quarter of the SEC 13(f) list once; map pending CUSIPs.",
     "security_master.attributes": "Platform job: add FinanceDatabase sector / industry / country / fund category.",
     "security_data.nightly": "Platform job: marketdata1's security-data nightly (refresh, quality, summary).",
+    "security_master.mutual_funds": "Platform job: load SEC mutual-fund share classes (ticker, series and class ids) "
+                                    "into the security master.",
 }
 
 
@@ -369,8 +387,11 @@ FETCHES = {
                                "delistings); OpenFIGI identifiers for new securities only. Reference data — no prices.",
     "security_master_13f": "The SEC Official List of Section 13(f) Securities (a new quarter once), CUSIPs mapped "
                            "through OpenFIGI. Reference data — no prices.",
-    "security_master_attributes": "FinanceDatabase sector / industry / country / fund category for securities already "
-                                  "in the master. Reference data — no prices.",
+    "security_master_attributes": "FinanceDatabase sector / industry / country / fund category (US equities, ETFs and "
+                                  "mutual funds) for securities already in the master. Reference data — no prices.",
+    "security_master_mutual_funds": "The SEC mutual-fund tickers file (one row per share class: CIK, series, class, "
+                                    "ticker). New mutual-fund classes are added; existing tickers gain their SEC ids. "
+                                    "Reference data — no prices.",
     "security_data_nightly": "marketdata1's nightly: every configured security-data provider within its budget, then "
                              "the quality checks. No free end-of-day PRICE provider is configured yet, so it adds no "
                              "prices and price_coverage stays 'unknown' until the prices sprint.",

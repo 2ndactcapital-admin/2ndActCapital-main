@@ -1,0 +1,4 @@
+{"recorded": "2026-11-07 via api.github.com/repos/JerBouma/FinanceDatabase/contents/database/<kind> (names only)",
+ "etfs": ["AMS","AQS","ASX","ATH","BER","BRU","BSE","BTS","BUD","CPH","DOH","DUS","EBS","FRA","GER","HAM","HAN","HEL","HKG","ICE","IOB","ISE","IST","JKT","JNB","JPX","KLS","KSC","LIS","LIT","LSE","MCE","MCX","MEX","MIL","MUN","NAN","NCM","NEO","NGM","NMS","NSE","NYQ","NZE","OSL","PAR","PCX","PNK","PRA","SAO","SAU","SES","SET","SGO","SHH","SHZ","STO","STU","TAI","TLV","TOR","TWO","VIE","WSE"],
+ "equities_us": ["ASE","BTS","NCM","NGM","NMS","NYQ","PCX","PNK"],
+ "funds_us": ["NAS","PNK"]}

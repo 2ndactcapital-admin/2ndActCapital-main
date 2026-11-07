@@ -90,24 +90,33 @@ async def manual_asset_for(conn, org_id, ref: dict) -> str:
     return aid
 
 
-async def relink_manual_assets(conn, org_id, *, trigger: str = "manual", actor_id=None) -> list[dict]:
-    """Link every org manual asset whose identifier now resolves in the master (exactly one security). Returns the
-    relinks it made — each also recorded in portfolio.asset_relinks and the audit log."""
-    from services import securities_global as SG
+async def relink_candidates(conn, org_id) -> list:
+    """The org's manual assets a relink may link: unlinked, not a kind that never resolves through the master, with
+    a lookup identifier — one row per (asset, identifier), in lookup order. THE definition: relink_manual_assets
+    and the SECMASTER2 load script's would-relink list both read it."""
     from services.held_away import NO_MASTER_ASSET_TYPES
 
     org = str(org_id)
     async with _OrgWrite(conn, org) as c:
         # VISIBILITY1 FIX 1 (H) — every kind that never resolves through the master is skipped (BUGFIX4's list, as
         # stored asset types): a digital asset's ticker "BTC" / "ETH" is not a security ticker. Before, only 'cash'.
-        rows = await c.fetch(
-            f"SELECT a.id::text AS asset_id, a.name, ai.id_type, ai.id_value FROM {TABLE_ASSETS} a "
+        return await c.fetch(
+            f"SELECT a.id::text AS asset_id, a.name, a.asset_type, ai.id_type, ai.id_value FROM {TABLE_ASSETS} a "
             f"JOIN {TABLE_ASSET_IDENT} ai ON ai.asset_id = a.id AND ai.valid_to IS NULL AND ai.system_to IS NULL "
             f"WHERE a.org_id = $1::uuid AND a.global_security_id IS NULL "
             f"AND NOT (a.asset_type = ANY($3::text[])) "
             f"AND ai.id_type = ANY($2::text[]) AND a.valid_to IS NULL AND a.system_to IS NULL "
             f"ORDER BY a.id, array_position($2::text[], ai.id_type)", org, list(LOOKUP_TYPES),
             sorted(NO_MASTER_ASSET_TYPES))
+
+
+async def relink_manual_assets(conn, org_id, *, trigger: str = "manual", actor_id=None) -> list[dict]:
+    """Link every org manual asset whose identifier now resolves in the master (exactly one security). Returns the
+    relinks it made — each also recorded in portfolio.asset_relinks and the audit log."""
+    from services import securities_global as SG
+
+    org = str(org_id)
+    rows = await relink_candidates(conn, org)
     if not rows:
         return []
     looks = {t: await SG.get_by_identifiers_bulk(conn, t, [r["id_value"] for r in rows if r["id_type"] == t])

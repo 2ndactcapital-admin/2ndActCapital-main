@@ -7,6 +7,11 @@
     POST /admin/security-data/master/jobs/{job_key}/run-now     start a job now (same engine path as the scheduler)
     POST /admin/security-data/master/runs/{run_id}/close        close a HELD platform-job run so its schedule resumes
     POST /admin/security-data/master/jobs/{job_key}/schedule    BUGFIX4: switch the job's schedule on / off (audited)
+    GET  /admin/security-data/master/summary                    SECMASTER2: what the master holds — per type /
+                                                                identifier / provider / field / price coverage,
+                                                                review queue, last run per job; each count with
+                                                                the filter that lists it (one query per section)
+    GET  /admin/security-data/master/securities                 SECMASTER2: the filtered list behind a count
     GET  /admin/security-data/master/review                     the review queue
     POST /admin/security-data/master/review/{review_id}/decision  resolve / dismiss an item (records the decision;
                                                                 changes NO security — the fix is made on the security
@@ -26,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services import security_master_jobs as J
 from services import security_master_load as M
+from services import security_master_summary as SUM
 from services.authz import require_super_admin
 from services.database import get_pool, platform_scope
 
@@ -71,6 +77,45 @@ async def master_status(request: Request):
         async with platform_scope(conn):
             st = await J.status(conn)
     return _envelope(principal, {"status": st})
+
+
+@router.get(f"{_P}/summary")
+async def master_summary(request: Request):
+    """SECMASTER2 — the load summary (services.security_master_summary). Super Admin, checked first."""
+    principal = require_super_admin(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with platform_scope(conn):
+            out = await SUM.summary(conn)
+    return _envelope(principal, {"summary": out, "list_filters": list(SUM.FILTERS)})
+
+
+@router.get(f"{_P}/securities")
+async def master_securities(request: Request, security_type: str | None = None, fund_structure: str | None = None,
+                            id_type: str | None = None, missing_id_type: str | None = None,
+                            provider: str | None = None, field: str | None = None, missing_field: str | None = None,
+                            price_coverage: str | None = None, has_price: str | None = None, limit: int = 100,
+                            offset: int = 0):
+    """SECMASTER2 — the securities behind a summary count (the SAME predicates the count used). Super Admin."""
+    principal = require_super_admin(request)
+    from services import securities_global as SG
+
+    filters = {"security_type": security_type, "fund_structure": fund_structure, "id_type": id_type,
+               "missing_id_type": missing_id_type, "provider": provider, "field": field,
+               "missing_field": missing_field, "price_coverage": price_coverage, "has_price": has_price}
+    for k, allowed in (("security_type", SG.SECURITY_TYPES),
+                       ("id_type", SG.IDENTIFIER_TYPES), ("missing_id_type", SG.IDENTIFIER_TYPES),
+                       ("field", M.REFERENCE_FIELDS), ("missing_field", M.REFERENCE_FIELDS),
+                       ("price_coverage", SG.PRICE_COVERAGES),
+                       ("fund_structure", ("mutual_fund", "money_market", "etf", SUM.NOT_STATED)),
+                       ("has_price", ("true", "false"))):
+        if filters[k] is not None and filters[k] not in allowed:
+            raise HTTPException(status_code=422, detail=f"{k}: not one of the allowed values")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with platform_scope(conn):
+            out = await SUM.securities(conn, filters=filters, limit=limit, offset=offset)
+    return _envelope(principal, out)
 
 
 @router.get(f"{_P}/jobs")

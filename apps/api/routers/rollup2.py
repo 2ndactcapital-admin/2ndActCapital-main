@@ -80,4 +80,5 @@ async def fund_proposals(request: Request):
     async with pool.acquire() as conn:
         rows = await FC.propose(conn, get_org_id(request))
     return {**_env([{**r, "live_value": str(r["live_value"])} for r in rows], can_write=False, editable=[]),
-            "apply": "scripts/backfill_taxonomy_keys.py --org <org> --funds --dry-run, then without --dry-run"}
+            "apply": "scripts/backfill_taxonomy_keys.py --org <org> --funds --dry-run, then without --dry-run "
+                     "(add --refine to apply the 'refine' proposals: an ancestor key -> the sharper one)"}

@@ -13,6 +13,7 @@ one-time load (scripts/secmaster_initial_load.py). Every stage:
     sync_openfigi_new    OpenFIGI for listed securities with no FIGI yet (not asked in the last 30 days)
     sync_13f             the 13(f) list: a NEW quarter is loaded once; pending CUSIPs mapped through OpenFIGI
     sync_attributes      FinanceDatabase sector / industry / country / fund category (never creates)
+    sync_mutual_funds    SECMASTER2: SEC mutual-fund share classes (company_tickers_mf.json) → matcher
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from services.security_data.providers import finance_database as FD
 from services.security_data.providers import nasdaq_trader as NT
 from services.security_data.providers import openfigi as OF
 from services.security_data.providers import sec_13f_list as F13
+from services.security_data.providers import sec_mutual_funds as MF
 from services.security_data.providers import sec_tickers as SEC
 from services.security_data.providers.reference_common import BudgetExhausted, CallBudget, SourceRecord
 
@@ -440,8 +442,8 @@ async def sync_13f(ctx: SyncContext, *, map_requests: int = 40, load_only: bool 
 
 
 # ── FinanceDatabase ─────────────────────────────────────────────────────────
-async def sync_attributes(ctx: SyncContext, *, kinds=("equities", "etfs"), equity_files=FD.US_EQUITY_FILES,
-                          etf_files=FD.US_ETF_FILES) -> dict:
+async def sync_attributes(ctx: SyncContext, *, kinds=FD.KINDS, equity_files=FD.US_EQUITY_FILES,
+                          etf_files=FD.US_ETF_FILES, fund_files=FD.US_FUND_FILES) -> dict:
     budget = await CallBudget(ctx.pool, FD.KEY, run_id=ctx.run_id, today=ctx.day()).load()
     matcher = M.Matcher(FD.KEY, as_of=ctx.day(), run_id=ctx.run_id, create_new=False)
     total = M.BatchResult()
@@ -450,7 +452,7 @@ async def sync_attributes(ctx: SyncContext, *, kinds=("equities", "etfs"), equit
 
     async def records():
         async for kind, item in FD.fetch(ctx.transport, kinds=kinds, equity_files=equity_files, etf_files=etf_files,
-                                         as_of=ctx.day(), budget=budget):
+                                         fund_files=fund_files, as_of=ctx.day(), budget=budget):
             if kind == "record":
                 yield item
             else:
@@ -469,10 +471,49 @@ async def sync_attributes(ctx: SyncContext, *, kinds=("equities", "etfs"), equit
     out = {"source": FD.KEY, **total.summary(), "calls": budget.used, "timed_out": timed_out,
            "rows": st.rows if st else None, "excluded": st.excluded if st else None}
     if st is not None:
-        await M.record_file(ctx.pool, provider_key=FD.KEY, file_key="us_equities+etfs",
+        await M.record_file(ctx.pool, provider_key=FD.KEY, file_key="us_" + "+".join(kinds),
                             as_of=datetime.now(timezone.utc), sha256=st.sha256, row_count=st.rows,
                             status="partial" if timed_out or skipped else "complete",
                             summary={k: v for k, v in out.items() if k != "review_item_ids"}, run_id=ctx.run_id)
+    return out
+
+
+# ── SEC mutual-fund share classes (SECMASTER2) ───────────────────────────────
+async def sync_mutual_funds(ctx: SyncContext, *, max_new: int | None = None, return_outcomes: bool = False) -> dict:
+    """company_tickers_mf.json → matcher (provider sec_mutual_funds). An existing ticker is matched (the SEC ids
+    added), a mutual-fund ticker absent from the master is created, a conflict is a review item. Idempotent."""
+    budget = await CallBudget(ctx.pool, MF.KEY, run_id=ctx.run_id, today=ctx.day()).load()
+    try:
+        recs, stats = await MF.fetch(ctx.transport, as_of=ctx.day(), budget=budget)
+    except Exception as exc:
+        await budget.flush(ok=False, error=str(exc))
+        raise
+    await budget.flush()
+    matcher = M.Matcher(MF.KEY, as_of=ctx.day(), run_id=ctx.run_id, max_new=max_new)
+    total = M.BatchResult()
+    skipped: list = []
+
+    async def gen():
+        for r in recs:
+            yield r
+
+    timed_out = False
+    try:
+        await _batches(ctx, MF.KEY, matcher, gen(), total, skipped)
+    except _OutOfTime:
+        timed_out = True
+    complete = not timed_out and not total.deferred and not skipped
+    structures: dict[str, int] = {}
+    for r in recs:
+        k = r.attrs.get("fund_structure") or "other_class"
+        structures[k] = structures.get(k, 0) + 1
+    out = {"source": MF.KEY, **total.summary(), "calls": budget.used, "rows": stats.rows, "kept": stats.kept,
+           "excluded": stats.excluded, "sha256": stats.sha256, "timed_out": timed_out, "structures": structures}
+    await M.record_file(ctx.pool, provider_key=MF.KEY, file_key=MF.FILE_KEY, as_of=datetime.now(timezone.utc),
+                        sha256=stats.sha256, row_count=stats.rows, status="complete" if complete else "partial",
+                        summary={k: v for k, v in out.items() if k != "review_item_ids"}, run_id=ctx.run_id)
+    if return_outcomes:     # the operator's load script only (the would-relink list); never a job step's output
+        out["_by_ticker"] = {r.ticker: total.by_record.get(r.subject) for r in recs}
     return out
 
 

@@ -45,3 +45,4 @@ verify_bulkapprove1.py
 verify_bugfix4.py
 verify_rollup2.py
 verify_visibility1.py
+verify_secmaster2.py

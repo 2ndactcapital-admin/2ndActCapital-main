@@ -1,5 +1,5 @@
 {
- "app_route_count": 858,
+ "app_route_count": 860,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12254,6 +12254,42 @@
    "name": "master_status",
    "note": "",
    "path": "/api/v1/admin/security-data/master/status",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_master",
+   "name": "master_summary",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/summary",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.security_master",
+   "name": "master_securities",
+   "note": "",
+   "path": "/api/v1/admin/security-data/master/securities",
    "public": false,
    "write": false
   },
