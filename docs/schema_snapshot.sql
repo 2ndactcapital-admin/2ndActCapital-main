@@ -4680,6 +4680,22 @@
 --   UNIQUE external_references_org_source_ext_type_key: (org_id, source_system, external_id, record_type)
 --   PRIMARY KEY external_references_pkey: (id)
 
+-- ===== portfolio.fund_category_taxonomy =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   provider_key                             text NOT NULL
+--   category                                 text NOT NULL
+--   taxonomy_key                             text
+--   note                                     text
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_by                               uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY fund_category_taxonomy_pkey: (id)
+
 -- ===== portfolio.index_levels =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
 --   index_key                                text NOT NULL
