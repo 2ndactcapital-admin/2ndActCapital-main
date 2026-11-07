@@ -248,14 +248,21 @@ async def _current_positions(conn, org_id: str, as_of_date: date, scope: list | 
       source that beat them. They are not history and the temporal predicate
       does not exclude them; counting them would double every holding that
       arrived from two sources. Only the winner is the portfolio's answer.
-    * ``DISTINCT ON (owner_entity_id, asset_id)`` with the latest
+    * ``DISTINCT ON (owner_entity_id, asset_id, account_id)`` with the latest
       ``as_of_date <= $2`` — a holding restated on a later date supersedes the
       earlier statement of the same holding. Without this, a position stated at
       Q1 and restated at Q2 would both be summed into a Q2 rollup.
+
+      The ACCOUNT is part of "the same holding" (bugfix4 fix 1): one owner
+      holding one security in two accounts is TWO holdings. Keyed on
+      (owner, asset) alone, the second account's line was silently dropped —
+      the household total read 35,000 for 45,000 held (verify_bugfix4). A
+      direct holding has account_id NULL; DISTINCT ON groups NULLs together,
+      so restatement of a direct holding is unchanged.
     """
     return await conn.fetch(
         f"""
-        SELECT DISTINCT ON (p.owner_entity_id, p.asset_id)
+        SELECT DISTINCT ON (p.owner_entity_id, p.asset_id, p.account_id)
                p.id::text               AS position_id,
                p.owner_entity_id::text  AS owner_entity_id,
                p.asset_id::text         AS asset_id,
@@ -276,7 +283,7 @@ async def _current_positions(conn, org_id: str, as_of_date: date, scope: list | 
           AND p.superseded_by_source IS NULL
           AND ($3::uuid[] IS NULL OR p.owner_entity_id = ANY($3::uuid[]))
           AND {_current('p')}
-        ORDER BY p.owner_entity_id, p.asset_id, p.as_of_date DESC,
+        ORDER BY p.owner_entity_id, p.asset_id, p.account_id, p.as_of_date DESC,
                  p.system_from DESC
         """,
         org_id,

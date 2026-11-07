@@ -111,6 +111,10 @@ CODE_NEEDLES = [
      "Task 2: ONE draft per account with all its lines"),
     ("apps/web/components/households/HouseholdSummary.jsx", "export function SummaryView(",
      "Task 6: the household's own page shows its total and Recalculate"),
+    # bugfix4 fix 1 (FAIL 1, code): one owner holding one security in two accounts is TWO holdings — keyed on
+    # (owner, asset) alone the second account's line was dropped (household gross 35,000 for 45,000 held)
+    ("apps/api/services/portfolio_rollup.py", "SELECT DISTINCT ON (p.owner_entity_id, p.asset_id, p.account_id)",
+     "fix 1: the current-positions read keeps one line per ACCOUNT (the same security in two accounts counts twice)"),
 ]
 
 
@@ -968,8 +972,28 @@ async def y_household_page(conn):
           "the simplified kind shows its vintage + date; the row offers Edit to the org admin", f"{dumps(h)}")
     check(bool(f.get("projection_path") == f"/portfolio/commitments/{f.get('commitment_id')}"),
           "the commitment row links to its capital-call projection", f"{dumps(f)}")
-    cp, _ = await api(U_OA, "GET", f"/api/v1/modeling/ta/projection/{f.get('commitment_id')}")
-    check(cp == 200, "the projection the link opens answers 200", f"{cp}")
+    # bugfix4 fix 1 (FAIL 2, verify): the bare GET is the DESIGNED 422 "no TA parameter override set — pass
+    # ?strategy_key=<…>" (a new commitment has no calibration yet; verify_tamodel3 3.1 pins that 422 as the contract
+    # that drives the page's strategy picker). So the link never leads to an error: either a 200 projection, or that
+    # 422 naming the missing input AND the page renders the picker for it — and the SAME commitment projects 200 once
+    # a strategy is picked (both halves, never only the status code).
+    from services.ta_config import TA_STRATEGY_KEYS
+    cp, pb = await api(U_OA, "GET", f"/api/v1/modeling/ta/projection/{f.get('commitment_id')}")
+    web = pathlib.Path(__file__).resolve().parents[2] / "web"
+    page_src = (web / "app/portfolio/commitments/[commitmentId]/page.js").read_text(encoding="utf-8")
+    scr_src = (web / "components/portfolio/CommitmentProjectionScreen.jsx").read_text(encoding="utf-8")
+    picker = ("error?.status === 422" in page_src and "strategy_defaults" in page_src
+              and "loadError?.status === 422 && !projection" in scr_src and "<StrategyPicker" in scr_src)
+    check(bool(cp == 200 or (cp == 422 and "strategy_key" in dumps(pb) and picker)),
+          "the projection link opens a projection, or the clear 'needs a strategy' state (the API names "
+          "strategy_key; the page renders the strategy picker for exactly that 422) — never an error",
+          f"{cp} {dumps(pb)} picker={picker}")
+    cq, qb = await api(U_OA, "GET", f"/api/v1/modeling/ta/projection/{f.get('commitment_id')}"
+                                    f"?strategy_key={TA_STRATEGY_KEYS[0]}")
+    check(bool(cq == 200 and qb.get("commitment_id") == f.get("commitment_id") and len(qb.get("periods") or []) > 0
+               and Decimal(str(qb.get("committed_capital") or "0")) == Decimal("1000000")),
+          "with a strategy picked, the SAME new commitment projects (200, its periods, its 1,000,000 committed)",
+          f"{cq} {str(dumps(qb))[:300]}")
     ce, e1 = await api(U_OA, "PATCH", f"/api/v1/private-investments/assets/{h.get('asset_id')}",
                        {"notes": "B4V note", "vintage_year": 2020})
     hist_c, hist = await api(U_OA, "GET", f"/api/v1/private-investments/assets/{h.get('asset_id')}/history")
@@ -982,15 +1006,36 @@ async def y_household_page(conn):
                and (e1.get("row") or {}).get("asset_id") == h.get("asset_id")),
           "edit = a NEW version (id kept, the prior archived) with its before / after in the history",
           f"{ce} {dumps(e1)} arch {arch} {dumps(hist)}")
+    # bugfix4 fix 1 (FAIL 3, verify): the query ordered `system_to NULLS LAST`, putting the LIVE row (system_to NULL)
+    # SECOND while the assertions read cm[0] as live — so it compared the ARCHIVE copy's fresh id to the commitment
+    # id. The service keeps the id (UPDATE in place after archiving a copy). Live row first; and a capital call made
+    # BEFORE the edit must still resolve to the same commitment id after it, and a new flow still posts to it.
+    cf1, fl1 = await api(U_OA, "POST", f"/api/v1/private-investments/{f.get('commitment_id')}/flows",
+                         {"type": "call", "amount": "100000", "date": "2021-06-01"})
     cc, e2 = await api(U_OA, "PATCH", f"/api/v1/private-investments/assets/{f.get('asset_id')}",
                        {"commitment_date": "2021-04-01"})
-    cm = await scoped(conn, ORG_A, "SELECT id, commitment_date, system_to FROM portfolio.commitments WHERE position_id "
-                                   "= $1 ORDER BY system_to NULLS LAST", UUID(f["position_id"]))
-    check(bool(cc == 200 and len(cm) == 2 and str(cm[0]["id"]) == f.get("commitment_id")
+    cm = await scoped(conn, ORG_A, "SELECT id, commitment_date, called_to_date, system_to FROM portfolio.commitments "
+                                   "WHERE position_id = $1 ORDER BY system_to NULLS FIRST", UUID(f["position_id"]))
+    check(bool(cc == 200 and len(cm) == 2 and str(cm[0]["id"]) == f.get("commitment_id") and cm[0]["system_to"] is None
                and cm[0]["commitment_date"] == date(2021, 4, 1) and cm[1]["system_to"] is not None
-               and cm[1]["commitment_date"] == date(2021, 3, 1)),
+               and cm[1]["commitment_date"] == date(2021, 3, 1) and str(cm[1]["id"]) != f.get("commitment_id")
+               and (e2.get("row") or e2).get("commitment_id") == f.get("commitment_id")),
           "a commitment-date edit keeps the commitment id (flows point at it) and archives the prior version",
           f"{cc} {[dict(r) for r in cm]}")
+    cf2, fl2 = await api(U_OA, "POST", f"/api/v1/private-investments/{f.get('commitment_id')}/flows",
+                         {"type": "call", "amount": "50000", "date": "2021-09-01"})
+    calls = await scoped(conn, ORG_A, "SELECT count(*) FROM portfolio.transactions WHERE position_id = $1 AND "
+                                      "valid_to IS NULL AND system_to IS NULL", UUID(f["position_id"]),
+                         fetch="fetchval")
+    live_called = await scoped(conn, ORG_A, "SELECT called_to_date FROM portfolio.commitments WHERE id = $1 AND "
+                                            "system_to IS NULL AND valid_to IS NULL", UUID(f["commitment_id"]),
+                               fetch="fetchval")
+    check(bool(cf1 == 201 and cf2 == 201 and fl2.get("commitment_id") == f.get("commitment_id")
+               and Decimal(str(fl2.get("called_to_date") or "0")) == Decimal("150000")
+               and live_called == Decimal("150000") and calls >= 2),
+          "the capital call made BEFORE the edit still resolves to the same commitment after it, and a new call posts "
+          "to it (called 100,000 + 50,000 = 150,000 on the kept id)",
+          f"{cf1} {dumps(fl1)} / {cf2} {dumps(fl2)} live_called {live_called} txns {calls}")
     cbad, _ = await api(U_OA, "PATCH", f"/api/v1/private-investments/assets/{f.get('asset_id')}",
                         {"investment_date": "2021-01-01"})
     check(cbad == 422, "a commitment row refuses an investment date (the commitment carries its date)", f"{cbad}")
