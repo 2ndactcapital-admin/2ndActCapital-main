@@ -7,6 +7,7 @@
 // it (`can()` fails closed).
 
 import { useState } from "react";
+import { stubLoginNotice } from "../../lib/bugfix4.mjs";
 import {
   ACTION,
   EMAIL_EDIT_NOTE,
@@ -113,7 +114,7 @@ export function PendingPanel({ pending, users, roles, onApprove, onReject, onLin
   if (!pending || pending.length === 0) return null;
   return (
     <div className="mt-6 rounded-lg border bg-bg-card p-5" style={{ borderColor: HAIRLINE }} data-pending-panel>
-      <h2 className="text-lg font-semibold text-navy">Awaiting approval</h2>
+      <h2 className="text-lg font-semibold text-navy">Awaiting approval or linking</h2>
       <p className="mt-1 text-sm text-text-muted">{PENDING_EXPLANATION}</p>
       {error ? <p className="mt-2 text-sm text-[#9B2335]">{error}</p> : null}
       <ul className="mt-3 divide-y divide-border">
@@ -129,6 +130,12 @@ export function PendingPanel({ pending, users, roles, onApprove, onReject, onLin
                 {signInLines(u).join(" · ")}
                 {u.contact_email ? ` · Gave ${u.contact_email} (unverified)` : ""}
               </p>
+              {/* BUGFIX4 — a placeholder (stub) login, shown prominently with what to do */}
+              {stubLoginNotice(u) ? (
+                <p className="mt-1 rounded border border-[#C5A880] bg-[#FAF9F6] px-2 py-1 text-sm text-[#9B2335]" data-stub-login={u.id}>
+                  {stubLoginNotice(u).text}
+                </p>
+              ) : null}
               {u.likely_match ? (
                 <p className="mt-1 text-sm text-navy" data-likely-match={u.likely_match.id}>
                   Looks like {u.likely_match.full_name || u.likely_match.email}

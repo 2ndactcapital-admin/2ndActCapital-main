@@ -34,7 +34,7 @@ export default function AccountTaxPanel({ envelope }) {
   return (
     <div className={`${card} p-6 text-sm`}>
       <h2 className="text-lg font-semibold text-navy">Tax</h2>
-      <p className="mt-1">{labelOf(v.tax_classes, panel.account?.tax_class)} · harvesting: {panel.harvesting_engine || "—"}</p>
+      <p className="mt-1">{labelOf(v.tax_classes, panel.account?.tax_class)}{panel.account?.tax_status_label ? ` — ${panel.account.tax_status_label}` : ""} · harvesting: {panel.harvesting_engine || "—"}</p>
       {r.estimated ? (
         <p className="mt-1" title={`as of ${r.as_of}`}>Profile {r.tax_year}: {labelOf(v.filing_statuses, r.filing_status)} · combined short-term {pct(r.st, 3)}, long-term {pct(r.lt, 3)} (estimate, as of {r.as_of})</p>
       ) : <p className="mt-1 text-text-muted">Tax values: {r.label || "not estimated — no tax profile"}</p>}

@@ -127,6 +127,8 @@ class AdminUser(BaseModel):
     sign_in: list["SignInMethod"] = []
     never_signed_in: bool = False
     email_is_placeholder: bool = False
+    stub_login: bool = False          # BUGFIX4 — a placeholder (stub) login: link it to the person's own row
+    sign_in_id: str | None = None     # BUGFIX4 — the Auth0 subject the row signs in with
     is_test: bool = False
     # An address a PENDING person typed on the Access pending page.
     # Unverified — shown, never used for linking.
@@ -272,6 +274,19 @@ def _forbid_staff_target(target, caller_is_super: bool, verb: str) -> None:
         )
 
 
+async def _forbid_super_grant(conn, request: Request, *, target_id, role_name: str) -> None:
+    """BUGFIX4 — only a Super Admin grants the super_admin role, or changes the role of a user who holds it (403)."""
+    caller = authz.principal_of(request)
+    if caller is not None and caller.is_super_admin:
+        return
+    holds = await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 "
+        "AND r.name = 'super_admin')", target_id)
+    if role_name == "super_admin" or holds:
+        raise HTTPException(status_code=403, detail="Only a Super Admin may grant the Super Admin role or change the "
+                                                    "role of a Super Admin.")
+
+
 @router.get("/admin/roles", response_model=list[RoleOption])
 async def list_roles(request: Request):
     """The roles an admin may assign — scoped to THEIR OWN org.
@@ -337,7 +352,8 @@ def _row_actions(row: dict, *, caller, can_manage: bool, never_signed_in: bool,
     if staff_blocked:
         return acts
     is_self = str(row["id"]) == str(caller.user_id)
-    if status == authz.STATUS_PENDING and row["auth0_sub"]:
+    if row["auth0_sub"] and not is_self and (status == authz.STATUS_PENDING or (
+            status == authz.STATUS_ACTIVE and placeholder)):   # BUGFIX4 — a stub login links too
         acts.append(ACTION_LINK)
     if anonymized:
         return acts
@@ -493,6 +509,9 @@ async def list_users(
             sign_in=[SignInMethod(**s) for s in sign_in],
             never_signed_in=never,
             email_is_placeholder=placeholder,
+            # BUGFIX4 — a placeholder login shown prominently with its sign-in id and contact email
+            stub_login=bool(placeholder and r["status"] != authz.STATUS_RETIRED),
+            sign_in_id=r["auth0_sub"],
             is_test=bool(r["is_test"]),
             contact_email=r["contact_email"],
             invited_at=str(r["invited_at"]) if r["invited_at"] else None,
@@ -566,6 +585,10 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
             )
             if role is None:
                 raise HTTPException(status_code=400, detail="Unknown role")
+            # BUGFIX4 — user_roles now DECIDES Super Admin (ONE role source), so granting it, or changing the role of
+            # someone who holds it, is a Super Admin's act: an org admin holding manage_members can no longer
+            # promote anyone (themselves included) to platform staff.
+            await _forbid_super_grant(conn, request, target_id=user_id, role_name=role["name"])
 
             await conn.execute("DELETE FROM user_roles WHERE user_id = $1", user_id)
             await conn.execute(
@@ -578,18 +601,12 @@ async def assign_role(request: Request, user_id: UUID, body: RoleAssignRequest):
 
                 await ensure_support_staff_grants(conn, org_id)
 
-            if role["name"] == ORG_ADMIN_ROLE:
-                await conn.execute(
-                    "UPDATE users SET role = $2, updated_at = now() "
-                    "WHERE id = $1 AND role <> 'super_admin'",
-                    user_id, ORG_ADMIN_ROLE,
-                )
-            elif target["role"] == ORG_ADMIN_ROLE:
-                await conn.execute(
-                    "UPDATE users SET role = 'member', updated_at = now() "
-                    "WHERE id = $1 AND role = $2",
-                    user_id, ORG_ADMIN_ROLE,
-                )
+            # BUGFIX4 — users.role MIRRORS the grant just written, in both directions and for every role (it used
+            # to follow org_admin only and never touch a super_admin string: a Super Admin made in the UI stayed
+            # 'member' in the string and was refused "Super Admin required" everywhere).
+            from services.rbac import sync_role_string
+
+            await sync_role_string(conn, user_id)
 
         await write_audit_log(
             conn,
@@ -660,6 +677,7 @@ async def approve_pending_user(request: Request, user_id: UUID, body: PendingApp
             )
             if role is None:
                 raise HTTPException(status_code=400, detail="Unknown role")
+            await _forbid_super_grant(conn, request, target_id=user_id, role_name=role["name"])  # BUGFIX4
             if role["name"] == ORG_ADMIN_ROLE:
                 from services.rbac import grant_org_admin
 
@@ -677,6 +695,9 @@ async def approve_pending_user(request: Request, user_id: UUID, body: PendingApp
                 "UPDATE users SET status = 'active', updated_at = now() WHERE id = $1",
                 user_id,
             )
+            from services.rbac import sync_role_string
+
+            await sync_role_string(conn, user_id)   # BUGFIX4 — the string mirrors the grant
             await _close_pending_todos(conn, org_id, user_id)
         await write_audit_log(
             conn,
@@ -956,10 +977,15 @@ async def link_pending_login(request: Request, user_id: UUID, body: LinkPendingR
     pool = await get_pool()
     async with pool.acquire() as conn:
         pending, caller_is_super = await _resolve_target(conn, actor_id, org_id, user_id)
-        if pending["status"] != authz.STATUS_PENDING:
+        # BUGFIX4 — a PLACEHOLDER login (a sign-in that arrived with no verified email: <sub>@placeholder.local) is
+        # linked the same way as a pending one, even once admitted: it is a second row for a person who already has
+        # one (Joe's culmina.io sign-in became the stub super admin be8165db…). One row per person; history kept.
+        stub = (pending["status"] == authz.STATUS_ACTIVE and user_admin.is_placeholder_email(pending["email"]))
+        if pending["status"] != authz.STATUS_PENDING and not stub:
             raise HTTPException(
                 status_code=409, detail=f"User is not pending (status: {pending['status']})"
             )
+        _forbid_staff_target(pending, caller_is_super, "link the sign-in of")
         sub = pending["auth0_sub"]
         if not sub:
             raise HTTPException(status_code=409, detail="This pending row has no sign-in to move.")
@@ -986,8 +1012,8 @@ async def link_pending_login(request: Request, user_id: UUID, body: LinkPendingR
         async with conn.transaction():
             await conn.execute(
                 "UPDATE users SET auth0_sub = NULL, status = 'retired', updated_at = now() "
-                "WHERE id = $1 AND status = 'pending'",
-                pending["id"],
+                "WHERE id = $1 AND status = $2",
+                pending["id"], pending["status"],
             )
             await conn.execute(
                 "UPDATE user_identities SET user_id = $2 WHERE user_id = $1",
@@ -1029,7 +1055,7 @@ async def link_pending_login(request: Request, user_id: UUID, body: LinkPendingR
         ):
             await write_audit_log(
                 conn, org_id=target_org, action="link_pending_login", table_name="users",
-                record_id=record_id, old={"status": "pending"} if record_id == pending["id"] else None,
+                record_id=record_id, old={"status": pending["status"]} if record_id == pending["id"] else None,
                 new=new, actor=actor_id,
             )
     return AdminUser(

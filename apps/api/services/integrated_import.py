@@ -298,7 +298,12 @@ async def decide(pool, *, org_id, actor_id, import_id, outcome: str, note: str |
     if imp["status"] != "draft":
         raise ImportError_(f"this import is {imp['status']}, not a draft")
     if str(imp["entered_by"]) == str(actor_id):
-        raise PermissionError("maker-checker: a different person must approve or reject the import they uploaded")
+        from services.maker_names import maker_refusal  # BUGFIX4 — names who entered it (and the shared sign-ins)
+
+        async with pool.acquire() as conn:
+            who = await maker_refusal(conn, maker_id=imp["entered_by"], checker_id=actor_id, approver="Super Admin",
+                                      item="import")
+        raise PermissionError(f"maker-checker: {who}")
     done = await HT.complete_task(pool, org_id=org_id, task_id=imp["approval_task_id"], actor_id=actor_id,
                                   outcome=outcome, note=note)
     return done.get("subject_result") or {}

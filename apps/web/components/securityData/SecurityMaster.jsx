@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { jobSwitch } from "@/lib/bugfix4.mjs";
 import { can, labelOf, vocab } from "./sourceLabel.mjs";
 
 // SECMASTER1 — Super Admin → Security data → Security master: the status panel, the platform jobs
@@ -36,13 +37,14 @@ export function StatusPanel({ envelope }) {
   );
 }
 
-export function JobsView({ envelope, onRunNow, onClose }) {
+export function JobsView({ envelope, onRunNow, onClose, onSwitch }) {
   const jobs = envelope?.jobs || [];
   const run = can(envelope, "can_run");
   const close = can(envelope, "can_close_held");
   return (
     <section className={card} data-testid="platform-jobs">
       <h2 className="font-serif text-xl text-navy">Platform jobs</h2>
+      {envelope?.price_gap_note ? <p className="mt-1 text-xs text-text-muted">{envelope.price_gap_note}</p> : null}
       <table className="mt-3 w-full text-sm">
         <thead className="text-left text-text-muted"><tr><th>Job</th><th>Schedule</th><th>Last run</th><th>Result</th>
           {run ? <th /> : null}</tr></thead>
@@ -51,13 +53,18 @@ export function JobsView({ envelope, onRunNow, onClose }) {
             const last = j.last_run;
             return (
               <tr key={j.key} className="border-t border-[#E2E8F0]">
-                <td title={j.description}>{j.title}{j.trigger_active ? "" : <span className="block text-xs text-text-muted">schedule not active</span>}</td>
+                <td title={j.description}>{j.title}{j.trigger_active ? <span className="block text-xs text-[#2D6A4F]">schedule on</span> : <span className="block text-xs text-text-muted">schedule not active</span>}
+                  {j.fetches ? <span className="block text-xs text-text-muted">{j.fetches}</span> : null}
+                  {j.blocked_note ? <span className="block text-xs text-[#9B2335]">{j.blocked_note}</span> : null}</td>
                 <td className="text-xs">{j.schedule_note}</td>
                 <td className="text-xs">{last ? last.started_at : "never"}</td>
                 <td className="text-xs">{last ? last.status : "—"}{last?.error_detail ? <span className="block text-[#9B2335]">{String(last.error_detail).slice(0, 160)}</span> : null}</td>
                 {run ? (
                   <td className="space-x-2 text-right">
                     <button type="button" className={btn} onClick={() => onRunNow?.(j.key)}>Run now</button>
+                    {/* BUGFIX4 — the Super Admin's schedule switch (audited; the sprint switched nothing on) */}
+                    {jobSwitch(envelope, j) && onSwitch
+                      ? <button type="button" className={btn} onClick={() => onSwitch(j.key, jobSwitch(envelope, j).next)}>{jobSwitch(envelope, j).label}</button> : null}
                     {close && last?.status === "held"
                       ? <button type="button" className={btn} onClick={() => onClose?.(last.id)}>Close held run</button> : null}
                   </td>
@@ -133,7 +140,9 @@ export default function SecurityMasterAdmin({ initialStatus, initialJobs, initia
       <JobsView envelope={jobs}
         onRunNow={(k) => act(() => call(`${base}/jobs/${encodeURIComponent(k)}/run-now`, { method: "POST", body: "{}" }),
           "Started — it appears on the Runs screen.")}
-        onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }} />
+        onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }}
+        onSwitch={(k, on) => { if (window.confirm(on ? "Switch this job's schedule ON? It will run on its schedule from now on." : "Switch this job's schedule off?")) act(() => call(`${base}/jobs/${encodeURIComponent(k)}/schedule`, { method: "POST", body: JSON.stringify({ active: on }) }), on ? "Schedule switched on." : "Schedule switched off."); }}
+      />
       <ReviewQueueView envelope={review}
         onDecide={(id, outcome) => { const note = window.prompt("Note for the record"); if (note) act(() => call(`${base}/review/${id}/decision`, { method: "POST", body: JSON.stringify({ outcome, note }) }), "Recorded."); }} />
     </div>
@@ -156,7 +165,9 @@ export function PlatformJobsPanel({ initialJobs }) {
       <JobsView envelope={jobs}
         onRunNow={(k) => act(() => call(`${base}/jobs/${encodeURIComponent(k)}/run-now`, { method: "POST", body: "{}" }),
           "Started — refresh the run list to follow it.")}
-        onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }} />
+        onClose={(id) => { const note = window.prompt("Why is this held run being closed?"); if (note) act(() => call(`${base}/runs/${id}/close`, { method: "POST", body: JSON.stringify({ note }) }), "Held run closed — the schedule resumes."); }}
+        onSwitch={(k, on) => { if (window.confirm(on ? "Switch this job's schedule ON? It will run on its schedule from now on." : "Switch this job's schedule off?")) act(() => call(`${base}/jobs/${encodeURIComponent(k)}/schedule`, { method: "POST", body: JSON.stringify({ active: on }) }), on ? "Schedule switched on." : "Schedule switched off."); }}
+      />
     </div>
   );
 }

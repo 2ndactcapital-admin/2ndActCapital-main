@@ -506,9 +506,12 @@ async def complete_task(pool, *, org_id, task_id, actor_id, outcome: str, note: 
     if outcome == "reject" and not (note or "").strip():
         raise HumanTaskError("a rejection needs a note saying why")
     if k.maker_checker and task["maker_id"] == str(actor["id"]):
-        raise MakerCheckerError(
-            f"maker-checker: you opened this task ({task['title']}), so a different holder of "
-            f"{task['eligible_permission']} must {'approve' if outcome == 'approve' else 'reject'} it")
+        from services.maker_names import maker_refusal  # BUGFIX4 — the refusal names the maker
+
+        async with pool.acquire() as conn:
+            who = await maker_refusal(conn, maker_id=task["maker_id"], checker_id=actor["id"],
+                                      approver=f"holder of {task['eligible_permission']}", item=f"task ({task['title']})")
+        raise MakerCheckerError(f"maker-checker: {who}")
     from services.rbac import has_permission
 
     if not await has_permission(pool, actor["id"], org_id, task["eligible_permission"]):

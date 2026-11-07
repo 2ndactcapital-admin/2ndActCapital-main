@@ -19,6 +19,16 @@ Usage (the operator runs it; the sprint never ran it on real or demo data):
     doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001
 then Recalculate the household(s) (People & Access → household → Recalculate), or wait for the nightly rollup.
 ``--all-orgs`` instead of ``--org`` walks every organization. No prompts. Final line: ``CHANGED: N`` (0 on a dry run).
+
+BUGFIX4:
+* the default map now also covers the security MASTER's unambiguous types (equity / fixed_income /
+  structured_note), so the same run keys master-resolved held-away assets of those types; ``fund`` stays unmapped
+  (equity AND bond ETFs share it) and is LISTED;
+* ``--reclassify ASSET_ID:KIND`` (repeatable, with ONE ``--org``) — the operator names an asset whose kind was
+  entered wrongly and gives it the right kind (system axis, id kept), then keys it from that kind. The case it was
+  built for: K.19 "Family office working capital" entered as ``other`` (no bucket, counted $0) →
+  ``--reclassify eddf9851-7140-4d38-a558-486d019616e3:cash_holding`` (Cash & Equivalents). Only the kinds of
+  ``portfolio.kind_taxonomy`` are accepted; a dry run prints what would change.
 """
 
 from __future__ import annotations
@@ -94,6 +104,37 @@ async def run(conn, org_ids: list[str], *, dry_run: bool) -> int:
     return changed
 
 
+async def reclassify(conn, org: str, items: list[tuple[str, str]], *, dry_run: bool) -> int:
+    """BUGFIX4 — set each named asset's kind (and the key that kind maps to). Idempotent: an asset already of that
+    kind with that key is reported UNCHANGED."""
+    changed = 0
+    async with _OrgWrite(conn, org) as c:
+        mapping = await kind_map(c, org)
+        keys = await org_taxonomy_keys(c, org)
+        rows = {r["id"]: r for r in await c.fetch(
+            "SELECT id::text AS id, name, asset_type, default_taxonomy_key FROM portfolio.assets WHERE org_id = "
+            "$1::uuid AND id = ANY($2::uuid[]) AND valid_to IS NULL AND system_to IS NULL", org,
+            [a for a, _ in items])}
+    for aid, kind in items:
+        key = mapping.get(kind)
+        r = rows.get(aid)
+        if r is None:
+            print(f"  RECLASSIFY {aid}: NOT FOUND in org {org} (current rows only) — skipped")
+            continue
+        if not key or key not in keys:
+            print(f"  RECLASSIFY {aid}: kind {kind!r} has no key in this org's taxonomy — skipped")
+            continue
+        if r["asset_type"] == kind and r["default_taxonomy_key"] == key:
+            print(f"  RECLASSIFY {aid} ({r['name']}): already {kind} -> {key} — UNCHANGED")
+            continue
+        print(f"  RECLASSIFY {aid} ({r['name']}): {r['asset_type']}/{r['default_taxonomy_key']} -> {kind}/{key}")
+        if not dry_run:
+            await update_asset(conn, org_id=org, asset_id=aid, changes={"asset_type": kind,
+                                                                        "default_taxonomy_key": key})
+            changed += 1
+    return changed
+
+
 async def all_orgs(conn) -> list[str]:
     async with conn.transaction():
         await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
@@ -106,8 +147,19 @@ async def main_async(argv=None) -> int:
     who.add_argument("--org", action="append", help="org id (repeatable)")
     who.add_argument("--all-orgs", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print the counts per kind; write nothing")
+    ap.add_argument("--reclassify", action="append", default=[], metavar="ASSET_ID:KIND",
+                    help="BUGFIX4: give a named asset the right kind (and its key); needs exactly one --org")
     ap.add_argument("--dsn-env", default="DATABASE_URL", help="env var holding the DSN (default DATABASE_URL)")
     a = ap.parse_args(argv)
+    items = []
+    for x in a.reclassify:
+        aid, _, kind = x.partition(":")
+        try:
+            items.append((str(UUID(aid)), kind.strip()))
+        except ValueError:
+            ap.error(f"--reclassify {x!r} is ASSET_ID:KIND")
+    if items and (a.all_orgs or len(a.org or []) != 1):
+        ap.error("--reclassify needs exactly one --org")
     sys.path.insert(0, str(HERE))
     from _db_connect import resolve_dsn  # Doppler-hydrated; tries the separate DB_PASSWORD secret too
 
@@ -121,7 +173,8 @@ async def main_async(argv=None) -> int:
     try:
         orgs = await all_orgs(conn) if a.all_orgs else [str(UUID(o)) for o in a.org]
         print(f"MODE: {'dry-run' if a.dry_run else 'write'}; orgs {len(orgs)}")
-        changed = await run(conn, orgs, dry_run=a.dry_run)
+        changed = await reclassify(conn, orgs[0], items, dry_run=a.dry_run) if items else 0
+        changed += await run(conn, orgs, dry_run=a.dry_run)
     finally:
         await conn.close()
     print(f"CHANGED: {changed}")

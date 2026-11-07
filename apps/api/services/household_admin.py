@@ -149,8 +149,13 @@ async def household_detail(conn, org_id, household_id) -> dict:
     owner_names = {str(m["id"]): m["display_name"] for m in members}
     liabilities = [{**L.to_json(r, names), "owner_name": owner_names.get(str(r["owner_entity_id"]))}
                    for r in liab_rows]
-    gross = (await HH._sum_holdings(conn, org_id, member_ids, None))["total_value"]
-    net_worth = await HH._net_worth(conn, org_id, member_ids, gross, None)
+    # BUGFIX4 — each position ONCE at the household's share of its owner (services.household_total); the member-sum
+    # of entity_holdings counted an owned member's holdings once per owning member, and left out valued lines with
+    # no taxonomy key.
+    from services import household_total as HT_
+
+    total = await HT_.total(conn, org_id, member_ids)
+    net_worth = {k: total[k] for k in ("gross", "liabilities", "net", "currency")}
     vocab = await account_vocab(conn, org_id)
     member_list = [{"id": str(m["id"]), "display_name": m["display_name"], "entity_type": m["entity_type"]}
                    for m in members]
@@ -159,7 +164,7 @@ async def household_detail(conn, org_id, household_id) -> dict:
     # BUGFIX3 FIX 1 — the family rollup that last ran over these members, and the positions it left out
     last_rollup = await PR.last_run_for(conn, org_id, member_ids)
     return {"id": str(hh["id"]), "name": hh["name"],
-            "liabilities": liabilities, "net_worth": net_worth, "last_rollup": last_rollup,
+            "liabilities": liabilities, "net_worth": net_worth, "total": total, "last_rollup": last_rollup,
             "skipped": (last_rollup or {}).get("skipped") or PR.skipped_of(None),
             "is_demo": bool(await conn.fetchval("SELECT public.crm_is_demo_household($1)", hh["id"])),
             "members": member_list,
@@ -504,14 +509,16 @@ async def recalculate_household(pool, org_id, household_id, *, actor_id) -> dict
             if req:
                 ran = await PR.run_request(conn, org_id, req["id"])
     async with pool.acquire() as conn:
-        gross = (await HH._sum_holdings(conn, org_id, member_ids, None))["total_value"] if member_ids else None
-        net_worth = await HH._net_worth(conn, org_id, member_ids, gross, None) if member_ids else None
+        from services import household_total as HT_
+
+        total = await HT_.total(conn, org_id, member_ids) if member_ids else None   # BUGFIX4 — counted once
+        net_worth = {k: total[k] for k in ("gross", "liabilities", "net", "currency")} if total else None
         await _audit(conn, org_id, actor_id, "recalculate", hh["id"],
                      {"members": len(member_ids), "request_id": req.get("id") if req else None,
                       "status": (ran or {}).get("status")})
     return {"household_id": str(hh["id"]), "request_id": req.get("id") if req else None,
             "status": (ran or {}).get("status") or ("no members" if not member_ids else "not run"),
             "family_size": len(req.get("entity_ids") or []) if req else 0, "member_count": len(member_ids),
-            "net_worth": net_worth,
+            "net_worth": net_worth, "total": total,
             # BUGFIX3 FIX 1 — positions the rollup left out (unclassified / unvalued), reported, never a silent $0
             "skipped": PR.skipped_of(ran)}

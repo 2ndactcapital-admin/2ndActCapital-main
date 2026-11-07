@@ -14,6 +14,9 @@ import { contractTerms } from "@/lib/bugfix3.mjs";
 import SecuritySearch from "@/components/heldaway/SecuritySearch";
 import { useState } from "react";
 import {
+  blankLine, changeKind, draftSaveState, importStateText, lineFields, lineLabel, lineRow, neverMaster, qty,
+} from "@/lib/bugfix4.mjs";
+import {
   confirmControl, importControls, labelOf, manualRow, manualTermFields, money, panelControls, staleText, vocab,
 } from "@/lib/heldAway.mjs";
 
@@ -67,7 +70,9 @@ export function Imports({ envelope, onAct }) {
           {rej.length ? <ul className="mt-1 text-xs text-[#9B2335]">{rej.map((x, i) => (
             <li key={i}>Row {x.row ?? "—"}: {labelOf(v.reject_reasons, x.code)} — {x.detail}</li>
           ))}</ul> : null}
+          {importStateText(r, v) ? <p className="mt-1 text-xs text-navy">{importStateText(r, v)}</p> : null}
           {r.status === "draft" ? <p className="mt-1 text-xs text-text-muted">A draft changes nothing until a second person approves it.</p> : null}
+          {r.status === "draft" && r.replaces ? <p className="mt-1 text-xs text-[#9B2335]">{r.replaces}</p> : null}
           {c.approve || c.reject ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input className={input} placeholder="Note (required to reject)" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -94,10 +99,10 @@ export function Positions({ envelope }) {
             <tr key={p.id} className="border-t border-[#ece8dd] align-top">
               <td className="py-1">{p.label}
                 {Array.isArray(p.lots) && p.lots.length ? <ul className="text-xs text-text-muted">{p.lots.map((l) => (
-                  <li key={l.id}>Lot {l.acquired_date || "date unknown"}: {l.quantity} at cost {money(l.cost)} ({l.term || "term unknown"}{l.status === "closed" ? `, closed, realized ${money(l.realized_gain_loss)}` : ""})</li>
+                  <li key={l.id}>Lot {l.acquired_date || "date unknown"}: {qty(l.quantity)} at cost {money(l.cost)} ({l.term || "term unknown"}{l.status === "closed" ? `, closed, realized ${money(l.realized_gain_loss)}` : ""})</li>
                 ))}</ul> : null}
               </td>
-              <td>{p.quantity}</td><td>{money(p.market_value)}</td><td>{p.as_of}</td>
+              <td>{qty(p.quantity)}</td><td>{money(p.market_value)}</td><td>{p.as_of}</td>
               <td>{labelOf(v.source_kinds, p.source)}</td>
             </tr>
           ))}</tbody>
@@ -112,7 +117,12 @@ export default function HeldAwayPanel({ initialEnvelope }) {
   const [env, setEnv] = useState(initialEnvelope);
   const [msg, setMsg] = useState(null);
   const [asOf, setAsOf] = useState("");
-  const [row, setRow] = useState({});
+  const [row, setRow] = useState(blankLine());
+  // BUGFIX4 (O-04-02) — ONE draft per account: its lines, added / edited / removed before saving
+  const [lines, setLines] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [replaces, setReplaces] = useState(null);
+  const [ack, setAck] = useState(false);
   const [file, setFile] = useState(null);
   const [docId, setDocId] = useState("");
   const panel = env?.panel;
@@ -131,6 +141,32 @@ export default function HeldAwayPanel({ initialEnvelope }) {
   async function act(path, body, opts) {
     setMsg(null);
     try { await call(path, body, opts); await reload(); } catch (e) { setMsg(e.message); }
+  }
+  async function checkReplaces(date) {
+    setReplaces(null);
+    setAck(false);
+    if (!date) return;
+    const res = await fetch(`/api/held-away/accounts/${id}/snapshot?as_of=${encodeURIComponent(date)}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) setReplaces(data.replaces || null);
+  }
+  function keepLine() {
+    if (editing === null) setLines([...lines, row]);
+    else setLines(lines.map((l, i) => (i === editing ? row : l)));
+    setRow(blankLine());          // the next line starts EMPTY — nothing carries over
+    setEditing(null);
+  }
+  async function saveDraft() {
+    const rows = lines.map((l) => lineRow(l, v, manualTermFields, manualRow));
+    setMsg(null);
+    try {
+      await call(`accounts/${id}/imports/manual`, { as_of: asOf, rows, document_id: docId || undefined });
+      setLines([]);
+      setRow(blankLine());
+      setAck(false);
+      await reload();
+      await checkReplaces(asOf);
+    } catch (e) { setMsg(e.message); }
   }
   async function upload() {
     if (!file || !asOf) { setMsg("Choose a file and its as-of date."); return; }
@@ -165,28 +201,59 @@ export default function HeldAwayPanel({ initialEnvelope }) {
       {c.manualImport || c.fileImport ? (
         <div className="mt-4 space-y-2">
           <h3 className="font-medium text-navy">Enter positions</h3>
-          <input className={input} type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} aria-label="As of (statement date)" />
+          <input className={input} type="date" value={asOf} onChange={(e) => { setAsOf(e.target.value); checkReplaces(e.target.value); }} aria-label="As of (statement date)" />
           {c.manualImport ? (
-            <div className="flex flex-wrap gap-2">
-              {/* PORTENTRY1 — a holding not in the security master: its type and terms (an org-scoped manual asset) */}
-              <select className={input} value={row.asset_kind || ""} onChange={(e) => setRow({ ...row, asset_kind: e.target.value })} aria-label="Holding type">
-                <option value="">Listed security (in the master)</option>
-                {(Array.isArray(v.manual_kinds) ? v.manual_kinds : []).map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
-              </select>
-              {/* PORTENTRY2 (P.1) — a listed security found in the master fills its ticker / CUSIP */}
-              {!row.asset_kind ? <SecuritySearch onPick={(sec) => setRow({ ...row,
-                ticker: sec.identifiers?.ticker || row.ticker || "", cusip: sec.identifiers?.cusip || row.cusip || "" })} /> : null}
-              {(row.asset_kind ? ["name", "quantity", "price", "market_value", "cost", "taxonomy_key", ...manualTermFields(row.asset_kind)]
-                : ["ticker", "cusip", "quantity", "market_value", "acquired_date", "cost"]).map((k) => (
-                <input key={k} className={input} placeholder={labelOf(v.file_fields, k) || k.replace(/_/g, " ")}
-                  type={k === "maturity" || k === "expiry" || k === "acquired_date" ? "date" : "text"}
-                  value={row[k] || ""} onChange={(e) => setRow({ ...row, [k]: e.target.value })} />
-              ))}
-              {row.asset_kind === "listed_option" ? (
-                <OptionContractPicker underlying={row.underlying_ticker}
-                  onPick={(c) => setRow({ ...row, ...contractTerms(c) })} />
+            <div className="space-y-2">
+              <p className="text-xs text-text-muted">One draft holds every holding of the account as of this date. Add each line, then save the draft once.</p>
+              {replaces ? (
+                <label className="flex items-start gap-2 rounded border border-[#ece8dd] bg-[#FAF9F6] p-2 text-xs text-[#9B2335]">
+                  <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
+                  <span>{replaces}</span>
+                </label>
               ) : null}
-              <button type="button" className={secondary} onClick={() => act(`accounts/${id}/imports/manual`, { as_of: asOf, rows: [manualRow(row)], document_id: docId || undefined })}>Save as draft</button>
+              {lines.length ? (
+                <ul className="text-sm">{lines.map((l, i) => (
+                  <li key={i} className="flex items-center gap-2 border-t border-[#ece8dd] py-1">
+                    <span className="flex-1">{labelOf(v.manual_kinds, l.asset_kind) || "Listed security"} — {lineLabel(l)}</span>
+                    <button type="button" className={secondary} onClick={() => { setRow(l); setEditing(i); }}>Edit</button>
+                    <button type="button" className={secondary} onClick={() => setLines(lines.filter((_, j) => j !== i))}>Remove</button>
+                  </li>
+                ))}</ul>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {/* PORTENTRY1 — a holding not in the security master: its type and terms (an org-scoped manual asset).
+                    BUGFIX4 — changing the type starts the line over */}
+                <select className={input} value={row.asset_kind || ""} onChange={(e) => setRow(changeKind(row, e.target.value))} aria-label="Holding type">
+                  <option value="">Listed security (in the master)</option>
+                  {(Array.isArray(v.manual_kinds) ? v.manual_kinds : []).map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+                </select>
+                {/* PORTENTRY2 (P.1) — a listed security found in the master fills its ticker / CUSIP; BUGFIX4 — and only those */}
+                {!row.asset_kind ? <SecuritySearch onPick={(sec) => setRow({ ...blankLine(), quantity: row.quantity, market_value: row.market_value,
+                  ticker: sec.identifiers?.ticker || "", cusip: sec.identifiers?.cusip || "" })} /> : null}
+                {lineFields(row.asset_kind, v, manualTermFields).map((k) => (
+                  <input key={k} className={input}
+                    placeholder={k === "market_value" && row.asset_kind && !lineFields(row.asset_kind, v, manualTermFields).includes("quantity") ? "Amount"
+                      : (k === "ticker" && neverMaster(row.asset_kind, v) ? "Symbol (not matched to the security master)" : (labelOf(v.file_fields, k) || k.replace(/_/g, " ")))}
+                    type={k === "maturity" || k === "expiry" || k === "acquired_date" ? "date" : "text"}
+                    value={row[k] || ""} onChange={(e) => setRow({ ...row, [k]: e.target.value })} />
+                ))}
+                {row.asset_kind === "listed_option" ? (
+                  <OptionContractPicker underlying={row.underlying_ticker}
+                    onPick={(c) => setRow({ ...row, ...contractTerms(c) })} />
+                ) : null}
+                <button type="button" className={secondary} onClick={keepLine}>{editing === null ? "Add line" : "Update line"}</button>
+                {editing !== null ? <button type="button" className={secondary} onClick={() => { setRow(blankLine()); setEditing(null); }}>Cancel edit</button> : null}
+              </div>
+              {(() => {
+                const st = draftSaveState({ lines, asOf, replaces, acknowledged: ack, vocab: v });
+                return (
+                  <div className="flex items-center gap-2">
+                    <button type="button" className={primary} disabled={!st.enabled} onClick={saveDraft}>Save as draft</button>
+                    <span className="text-xs text-text-muted">{lines.length} line{lines.length === 1 ? "" : "s"} in this draft</span>
+                    {st.reason ? <span className="text-xs text-text-muted">{st.reason}</span> : null}
+                  </div>
+                );
+              })()}
             </div>
           ) : null}
           {c.fileImport ? (

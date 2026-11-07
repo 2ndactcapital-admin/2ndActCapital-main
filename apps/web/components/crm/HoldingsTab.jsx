@@ -6,7 +6,8 @@
 // types come from the API envelope; money arrives and leaves as strings. Write controls only when the envelope
 // says so (lib/portentry.mjs canDo — no truthy fallback).
 import { useEffect, useState } from "react";
-import { canDo, commitmentRule, directAssetPayload, money, options, privatePayload } from "@/lib/portentry.mjs";
+import { canDo, commitmentRule, directAssetPayload, money, options, privateEditPayload, privatePayload } from "@/lib/portentry.mjs";
+import { privateRowControls } from "@/lib/bugfix4.mjs";
 import { listView } from "@/lib/listState.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
@@ -83,6 +84,12 @@ export default function HoldingsTab({ entityId }) {
         await call(`/api/portentry/direct-assets/${adding.slice(5)}/valuations`, { method: "POST",
           body: JSON.stringify({ value: form.nav, date: form.nav_date, method: "nav" }) });
       }
+      if (adding?.startsWith("edit:")) {
+        // BUGFIX4 — a new version of the private investment (notes / dates / vintage); the prior one is kept
+        const row = (priv?.rows || []).find((r) => r.asset_id === adding.slice(5));
+        await call(`/api/portentry/private-investments/assets/${adding.slice(5)}`, { method: "PATCH",
+          body: JSON.stringify(privateEditPayload(form, row)) });
+      }
       if (adding?.startsWith("nav:")) {
         await call(`/api/portentry/private-investments/${adding.slice(4)}/nav`, { method: "POST",
           body: JSON.stringify({ value: form.nav, date: form.nav_date }) });
@@ -140,7 +147,12 @@ export default function HoldingsTab({ entityId }) {
             </>
           )}
           {(rule === "none" || (rule === "optional" && !(form.amount || "").trim())) && (
-            <Field name="amount_invested" text="Amount invested" form={form} setForm={setForm} />
+            <>
+              <Field name="amount_invested" text="Amount invested" form={form} setForm={setForm} />
+              {/* BUGFIX4 — a simplified kind's own vintage and investment date */}
+              <Field name="investment_date" text="Investment date" type="date" form={form} setForm={setForm} />
+              <Field name="vintage_year" text="Vintage" form={form} setForm={setForm} />
+            </>
           )}
           <Field name="taxonomy_key" text="Asset class (taxonomy key)" form={form} setForm={setForm} />
           <div className="sm:col-span-2"><Field name="notes" text="Note" form={form} setForm={setForm} /></div>
@@ -152,6 +164,18 @@ export default function HoldingsTab({ entityId }) {
           <Field name="nav_date" text="NAV date" type="date" form={form} setForm={setForm} />
         </>
       )}
+      {adding.startsWith("edit:") && (() => {
+        const row = (priv?.rows || []).find((r) => r.asset_id === adding.slice(5)) || {};
+        return (
+          <>
+            {row.has_commitment === false
+              ? <Field name="investment_date" text="Investment date" type="date" form={form} setForm={setForm} />
+              : <Field name="commitment_date" text="Commitment date" type="date" form={form} setForm={setForm} />}
+            <Field name="vintage_year" text="Vintage" form={form} setForm={setForm} />
+            <div className="sm:col-span-2"><Field name="notes" text="Note" form={form} setForm={setForm} /></div>
+          </>
+        );
+      })()}
       {adding.startsWith("flow:") && (
         <>
           <Choice name="flow_type" text="Type" list={options(priv, "flow_types")} form={form} setForm={setForm} />
@@ -198,7 +222,7 @@ export default function HoldingsTab({ entityId }) {
           <h2 className="font-[Spectral,Georgia,serif] text-xl text-[#1B2B4B]">Private investments</h2>
           {canDo(priv, "add") && !adding && <button type="button" className="text-sm text-[#1B2B4B] hover:underline" onClick={() => setAdding("private")}>Add private investment</button>}
         </div>
-        {adding && (adding === "private" || adding.startsWith("flow:") || adding.startsWith("nav:") || adding.startsWith("pnav:")) && form_}
+        {adding && (adding === "private" || adding.startsWith("flow:") || adding.startsWith("nav:") || adding.startsWith("pnav:") || adding.startsWith("edit:")) && form_}
         {viewP.state === "loading" ? <p className={`mt-3 ${quiet}`}>Loading…</p> : rowsP.length === 0 ? <p className={`mt-3 ${quiet}`}>No private investments.</p> : (
           <ul className="mt-3 divide-y divide-[#E2E8F0]">
             {rowsP.map((p) => (
@@ -214,6 +238,17 @@ export default function HoldingsTab({ entityId }) {
                   <p className={quiet}>Commitment {money(p.commitment_amount)} · called {money(p.called_to_date)} · distributed {money(p.distributed_to_date)} · unfunded {money(p.unfunded)}</p>
                 )}
                 {p.notes && <p className="text-xs text-[#334155]">{p.notes}</p>}
+                {(p.commitment_date || p.investment_date) && <p className={quiet}>{p.has_commitment === false ? `Invested ${p.investment_date}` : `Committed ${p.commitment_date}`}</p>}
+                <span className="mt-1 flex gap-3">
+                  {/* BUGFIX4 — the commitment opens its capital-call projection; a saved row can be edited */}
+                  {privateRowControls(priv, p).projection && <a className="text-xs text-[#1B2B4B] underline" href={p.projection_path}>Capital-call projection</a>}
+                  {privateRowControls(priv, p).edit && !adding && (
+                    <button type="button" className="text-xs text-[#1B2B4B] hover:underline" onClick={() => {
+                      setForm({ notes: p.notes || "", vintage_year: p.vintage_year ? String(p.vintage_year) : "", commitment_date: p.commitment_date || "", investment_date: p.investment_date || "" });
+                      setAdding(`edit:${p.asset_id}`);
+                    }}>Edit</button>
+                  )}
+                </span>
                 {p.has_commitment === false && canDo(priv, "nav") && !adding && (
                   <button type="button" className="mt-1 text-xs text-[#1B2B4B] hover:underline" onClick={() => setAdding(`pnav:${p.asset_id}`)}>New value</button>
                 )}

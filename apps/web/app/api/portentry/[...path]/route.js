@@ -50,3 +50,4 @@ async function forward(request, { params }) {
 export const GET = forward;
 export const POST = forward;
 export const PUT = forward;
+export const PATCH = forward; // BUGFIX4 — the private-investment edit

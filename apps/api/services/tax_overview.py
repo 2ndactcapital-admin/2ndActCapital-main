@@ -87,6 +87,17 @@ async def dashboard(conn, org_id, *, today: date | None = None, limit: int = 200
             "not_estimated": {"after_tax_performance": TP.NEEDS_PRICES, "tracking_error_cost": TP.NEEDS_PRICES}}
 
 
+async def _tax_status_label(conn, org_id, status) -> str | None:
+    if not status:
+        return None
+    from services.household_admin import account_vocab
+
+    for o in (await account_vocab(conn, org_id)).get("tax_statuses") or []:
+        if o.get("key") == status:
+            return o.get("label")
+    return status
+
+
 async def account_panel(conn, org_id, account_id, *, today: date | None = None) -> dict:
     """The account page's Tax panel: the profile summary, the loss bank, the
     household's open windows and the last harvest run."""
@@ -100,7 +111,9 @@ async def account_panel(conn, org_id, account_id, *, today: date | None = None) 
     summ = await LB.summary(conn, org_id, st, sid, today.year)
     return {"account": {"id": str(account["id"]), "account_number_masked": account["account_number_masked"],
                         "tax_class": WS.tax_class(account), "registration_type": account["registration_type"],
-                        "tax_status": account["tax_status"]},
+                        "tax_status": account["tax_status"],
+                        # BUGFIX4 — the stored status, labelled from the org's own account vocabulary
+                        "tax_status_label": await _tax_status_label(conn, org_id, account["tax_status"])},
             "subject": {"subject_type": st, "subject_id": sid},
             "profile": TP.profile_out(profile) if profile else None,
             "rates": TP.rates_out(TP.combined_rates(profile)),
