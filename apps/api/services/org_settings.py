@@ -423,6 +423,12 @@ async def _validate_setting(conn, org_id, key: str, value) -> None:
     by writing ``ai.model.*`` through the plain settings PUT instead of the
     dedicated task-assignment endpoint.
     """
+    # VISIBILITY1 — the staff-visibility switch has ONE writer: PUT /admin/staff-visibility/enforcement (org admin,
+    # confirmed against the preview, audited). The generic settings path may not flip it silently.
+    if key == "staff_visibility.enforced":
+        raise SettingsValidationError(
+            "staff_visibility.enforced is changed only from Admin → Staff visibility (review the preview first)")
+
     if key == "ai.embedding.provider" and value is not None:
         # Lazy import avoids a module-load cycle (document_embedding imports
         # get_setting from this module).

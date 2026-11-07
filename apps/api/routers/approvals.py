@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from routers.entities import get_org_id
 from services import bulk_approvals as BA
 from services.authz import require_any_permission
+from services import family_visibility as FV
 from services.database import get_pool
 
 router = APIRouter(tags=["approvals"])
@@ -88,8 +89,11 @@ async def summary(request: Request, household_id: UUID | None = None, account_id
     principal = require_any_permission(request, READ_KEYS)
     org_id = get_org_id(request)
     pool = await get_pool()
+    staff = await FV.scope_for_request(request, pool)     # VISIBILITY1 — counts over visible families only
+    keep = None if staff is None else (lambda item: FV.row_visible(item, staff))
     async with pool.acquire() as conn:
-        out = await BA.summary(conn, org_id, principal, household_id=household_id, account_id=account_id)
+        out = await BA.summary(conn, org_id, principal, household_id=household_id, account_id=account_id,
+                               keep=keep)
     return {"types": out, "link": "/portfolio/approvals"}
 
 
@@ -98,6 +102,13 @@ async def decide(request: Request, body: BulkDecision):
     principal = require_any_permission(request, APPROVE_KEYS)
     org_id = get_org_id(request)
     pool = await get_pool()
+    staff = await FV.scope_for_request(request, pool)
+    if staff is not None:   # VISIBILITY1 — a restricted caller decides only items of families they can see
+        async with pool.acquire() as conn:
+            items = await BA.pending(conn, org_id, principal, body.type)
+        visible = {str(i.get("id")) for i in items if FV.row_visible(i, staff)}
+        if any(str(x) not in visible for x in body.item_ids):
+            raise HTTPException(status_code=404, detail="Not found")
     try:
         return await BA.decide_bulk(pool, org_id=org_id, caller=principal, type_key=body.type,
                                     item_ids=body.item_ids, decision=body.decision, note=body.note)

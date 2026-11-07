@@ -28,6 +28,7 @@ from services import households as hh
 from services import authority as AUTH
 from services import authz
 from services.authz import require_internal_permission
+from services.family_visibility import require_visible, visible_household_ids
 from services import household_admin as HA
 from services.crm_vocab import liability_vocab
 
@@ -141,6 +142,9 @@ async def list_households(request: Request):
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await HA.list_households(conn, org_id)
+    visible = await visible_household_ids(request, pool)   # VISIBILITY1 — None unless a restricted staff caller
+    if visible is not None:
+        rows = [r for r in rows if str(r["id"]) in visible]
     perms = _household_permissions(request)
     return {"rows": rows, "permissions": perms,
             "vocabularies": {**AUTH.vocabularies(), **liability_vocab(),   # CRMDETAIL1 — net-worth line labels
@@ -201,6 +205,7 @@ async def add_member(request: Request, household_id: UUID, body: MemberAdd):
     p = _require_household_admin(request)
     org_id = get_org_id(request)
     pool = await get_pool()
+    await require_visible(request, pool, entity_ids=[body.entity_id])   # VISIBILITY1 — never another family's record
     async with pool.acquire() as conn:
         try:
             return await HA.add_member(conn, org_id=org_id, actor_id=p.user_id, household_id=household_id,
@@ -320,6 +325,9 @@ async def all_primary_networth(request: Request):
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await hh.primary_household_networth(conn, org_id, None)
+    visible = await visible_household_ids(request, pool)   # VISIBILITY1
+    if visible is not None:
+        rows = [r for r in rows if str(r.get("household_id") or r.get("id")) in visible]
     return [{**r, "total_holdings_value": _money(r["total_holdings_value"])} for r in rows]
 
 
@@ -353,6 +361,7 @@ async def add_household_account(request: Request, household_id: UUID, body: Acco
     p = _require_household_admin(request)
     org_id = get_org_id(request)
     pool = await get_pool()
+    await require_visible(request, pool, entity_ids=[body.primary_entity_id])   # VISIBILITY1
     try:
         return await HA.add_account(pool, org_id=org_id, actor_id=p.user_id, household_id=household_id,
                                     custodian_code=body.custodian_code, account_number=body.account_number,

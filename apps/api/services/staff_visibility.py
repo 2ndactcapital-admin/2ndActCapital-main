@@ -13,9 +13,12 @@ see, combining three sources:
      direct + team assignments too. A manager inherits the visibility of
      everyone beneath them.
 
-SAFETY / SCOPE (SOC Phase 2):
-    This is a STANDALONE, side-effect-free resolver. As of this phase it is
-    NOT called from any request-handling path and is NOT wired into any
+VISIBILITY1: with the org switch ``staff_visibility.enforced`` ON, this function
+    returns THE rule's set (services.family_visibility) instead — org admins
+    included. With it OFF (the default) the legacy body is unchanged.
+
+SAFETY / SCOPE (SOC Phase 2, historical):
+    This was a STANDALONE, side-effect-free resolver, not wired into any
     endpoint as an enforcement gate. Existing endpoints keep their current
     (org-wide) visibility behavior unchanged. Switching an endpoint to use
     this resolver for enforcement is a deliberate, separate, later decision.
@@ -127,6 +130,17 @@ async def get_staff_visible_entity_ids(
         ``services.restricted_access._require_super_admin`` uses), so callers
         need only pass ``user_id`` — the function derives the role itself.
     """
+    # VISIBILITY1 — an org that ENFORCES staff visibility uses THE rule (services.family_visibility: super / org
+    # admin → every family; others → assignment ∪ team ∪ reports ∪ relationship manager ∪ creator of an
+    # unassigned family, with the family closure). Every caller of this resolver (assistant counts, document
+    # search, ownership tree, document_embedding.visible_entity_ids) switches with the org. Switch OFF (the
+    # default) → the legacy body below, unchanged.
+    from services.family_visibility import staff_visible_entity_ids
+
+    ruled = await staff_visible_entity_ids(pool, user_id, org_id)
+    if ruled is not None:
+        return ruled
+
     async with pool.acquire() as conn:
         principal = await load_principal(conn, user_id)
     if is_super_admin(principal):

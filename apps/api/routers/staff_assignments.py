@@ -4,26 +4,25 @@ Lets an Org Admin populate the data the unified staff-visibility resolver
 reads: create teams, add/remove team members, and assign a user OR a team to
 an entity with a role label.
 
-SCOPE / SAFETY (SOC Phase 2): these endpoints only CREATE assignment records.
-They do NOT change any existing endpoint's visibility/authorization behavior
-and do NOT import or invoke the resolver. Wiring the resolver into enforcement
-is a separate, later decision.
-
-Gated by the ``manage_members`` permission (DB-backed RBAC), same as the
-member-management admin endpoints. ``org_id`` is always resolved server-side
+VISIBILITY1: these records now DECIDE what staff see once an org switches
+``staff_visibility.enforced`` on (services.family_visibility). Gate: an org
+admin (``manage_org_settings``) or ``manage_members`` (Super Admin first,
+services.authz) — and a restricted caller may assign / unassign only families
+they can see. Every add and remove is audited. ``org_id`` is always resolved server-side
 (never from the request body).
 """
 
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from routers.entities import get_org_id
 from services.audit import write_audit_log
 from services.database import get_pool
-from services.rbac import require_permission
-from services.users import ensure_user
+from services.authz import require_any_permission
+from services.family_visibility import require_visible, scope_for_request
+from services.rbac import ORG_ADMIN_PERMISSION
 
 router = APIRouter(tags=["admin", "staff-assignments"])
 
@@ -84,13 +83,13 @@ class Assignment(BaseModel):
 # --------------------------------------------------------------------------
 # Auth helper
 # --------------------------------------------------------------------------
+ASSIGN_PERMISSIONS = ("manage_members", ORG_ADMIN_PERMISSION)
+
+
 async def _require_manage_members(request: Request) -> tuple[str, str]:
-    org_id = get_org_id(request)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        actor_id = await ensure_user(conn, request)
-    await require_permission(pool, actor_id, org_id, "manage_members")
-    return actor_id, org_id
+    """VISIBILITY1 — org admin or manage_members (Super Admin first). The actor is the request's Principal."""
+    p = require_any_permission(request, ASSIGN_PERMISSIONS)
+    return p.user_id, get_org_id(request)
 
 
 # --------------------------------------------------------------------------
@@ -183,12 +182,16 @@ async def add_member(request: Request, team_id: UUID, body: MemberAdd):
             """,
             team_id, body.user_id, actor_id,
         )
+        await write_audit_log(
+            conn, org_id=org_id, action="add_team_member", table_name="team_members", record_id=team_id,
+            new={"team_id": str(team_id), "user_id": str(body.user_id), "added_by": str(actor_id)}, actor=actor_id,
+        )
     return {"ok": True}
 
 
 @router.delete("/admin/staff/teams/{team_id}/members/{user_id}", status_code=200)
 async def remove_member(request: Request, team_id: UUID, user_id: UUID):
-    _, org_id = await _require_manage_members(request)
+    actor_id, org_id = await _require_manage_members(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
         team = await conn.fetchval(
@@ -196,10 +199,15 @@ async def remove_member(request: Request, team_id: UUID, user_id: UUID):
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        await conn.execute(
-            "DELETE FROM team_members WHERE team_id = $1 AND user_id = $2",
+        removed = await conn.fetchval(
+            "DELETE FROM team_members WHERE team_id = $1 AND user_id = $2 RETURNING user_id",
             team_id, user_id,
         )
+        if removed is not None:
+            await write_audit_log(
+                conn, org_id=org_id, action="remove_team_member", table_name="team_members", record_id=team_id,
+                old={"team_id": str(team_id), "user_id": str(user_id)}, actor=actor_id,
+            )
     return {"ok": True}
 
 
@@ -245,6 +253,7 @@ async def list_assignments(request: Request):
 async def create_assignment(request: Request, body: AssignmentCreate):
     actor_id, org_id = await _require_manage_members(request)
     pool = await get_pool()
+    await require_visible(request, pool, entity_ids=[body.entity_id])   # VISIBILITY1 — only families one can see
     async with pool.acquire() as conn:
         entity = await conn.fetchrow(
             "SELECT id, display_name FROM entities WHERE id = $1 AND org_id = $2",
@@ -313,13 +322,106 @@ async def create_assignment(request: Request, body: AssignmentCreate):
 
 @router.delete("/admin/staff/assignments/{assignment_id}", status_code=200)
 async def delete_assignment(request: Request, assignment_id: UUID):
-    _, org_id = await _require_manage_members(request)
+    actor_id, org_id = await _require_manage_members(request)
     pool = await get_pool()
+    return await remove_assignment(request, pool, org_id, actor_id, assignment_id)
+
+
+async def remove_assignment(request: Request, pool, org_id, actor_id, assignment_id) -> dict:
+    """VISIBILITY1 — remove one assignment: 404 unless it exists in the org AND (for a restricted caller) its
+    family is visible — the same 404 either way; audited with the removed row."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, entity_id, assigned_to_user_id, assigned_to_team_id, role_label FROM staff_assignments "
+            "WHERE id = $1 AND org_id = $2", assignment_id, org_id,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    scope = await scope_for_request(request, pool)
+    if scope is not None and str(row["entity_id"]) not in scope.entity_ids:
+        raise HTTPException(status_code=404, detail="Assignment not found")
     async with pool.acquire() as conn:
         deleted = await conn.fetchval(
             "DELETE FROM staff_assignments WHERE id = $1 AND org_id = $2 RETURNING id",
             assignment_id, org_id,
         )
-    if deleted is None:
-        raise HTTPException(status_code=404, detail="Assignment not found")
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        await write_audit_log(
+            conn, org_id=org_id, action="delete_staff_assignment", table_name="staff_assignments",
+            record_id=assignment_id,
+            old={"entity_id": str(row["entity_id"]),
+                 "assigned_to_user_id": str(row["assigned_to_user_id"]) if row["assigned_to_user_id"] else None,
+                 "assigned_to_team_id": str(row["assigned_to_team_id"]) if row["assigned_to_team_id"] else None,
+                 "role_label": row["role_label"]},
+            actor=actor_id,
+        )
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------
+# VISIBILITY1 — people + managers (Admin → Teams)
+# --------------------------------------------------------------------------
+class ManagerSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    manager_id: UUID | None = None
+
+
+@router.get("/admin/staff/people")
+async def list_people(request: Request):
+    """Every admitted user of the org with their manager and teams (the Teams screen's people list)."""
+    _, org_id = await _require_manage_members(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.id, u.full_name, u.email, u.manager_id, m.full_name AS manager_name,
+                   ARRAY(SELECT t.name FROM team_members tm JOIN teams t ON t.id = tm.team_id
+                          WHERE tm.user_id = u.id AND t.org_id = u.org_id ORDER BY t.name) AS teams
+            FROM users u LEFT JOIN users m ON m.id = u.manager_id AND m.org_id = u.org_id
+            WHERE u.org_id = $1 AND u.status = 'active' AND u.is_active
+            ORDER BY u.full_name NULLS LAST, u.email
+            """,
+            org_id,
+        )
+    return [{"user_id": str(r["id"]), "full_name": r["full_name"], "email": r["email"],
+             "manager_id": str(r["manager_id"]) if r["manager_id"] else None, "manager_name": r["manager_name"],
+             "teams": list(r["teams"] or [])} for r in rows]
+
+
+@router.put("/admin/staff/users/{user_id}/manager")
+async def set_manager(request: Request, user_id: UUID, body: ManagerSet):
+    """Set (or clear) who a user reports to. Both users of the caller's org; a chain that would loop back to the
+    user is a 409; audited (set_manager, old and new)."""
+    actor_id, org_id = await _require_manage_members(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        old = await conn.fetchrow("SELECT id, manager_id FROM users WHERE id = $1 AND org_id = $2", user_id, org_id)
+        if old is None:
+            raise HTTPException(status_code=404, detail="User not found in org")
+        if body.manager_id is not None:
+            if body.manager_id == user_id:
+                raise HTTPException(status_code=409, detail="A user cannot report to themselves")
+            if not await conn.fetchval("SELECT 1 FROM users WHERE id = $1 AND org_id = $2", body.manager_id, org_id):
+                raise HTTPException(status_code=404, detail="Manager not found in org")
+            loops = await conn.fetchval(
+                """
+                WITH RECURSIVE up(id, depth) AS (
+                    SELECT manager_id, 1 FROM users WHERE id = $1 AND org_id = $3
+                    UNION
+                    SELECT u.manager_id, up.depth + 1 FROM users u JOIN up ON u.id = up.id
+                     WHERE u.org_id = $3 AND up.depth < 100)
+                SELECT EXISTS (SELECT 1 FROM up WHERE id = $2)
+                """,
+                body.manager_id, user_id, org_id,
+            )
+            if loops:
+                raise HTTPException(status_code=409, detail="That manager already reports to this user")
+        await conn.execute("UPDATE users SET manager_id = $1, updated_at = now() WHERE id = $2 AND org_id = $3",
+                           body.manager_id, user_id, org_id)
+        await write_audit_log(
+            conn, org_id=org_id, action="set_manager", table_name="users", record_id=user_id,
+            old={"manager_id": str(old["manager_id"]) if old["manager_id"] else None},
+            new={"manager_id": str(body.manager_id) if body.manager_id else None}, actor=actor_id,
+        )
+    return {"ok": True, "user_id": str(user_id), "manager_id": str(body.manager_id) if body.manager_id else None}

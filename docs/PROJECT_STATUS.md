@@ -1,4 +1,5 @@
 # Project Status — open blockers and tracked follow-ups
+VISIBILITY1 (2026-11-07, team-based staff visibility — org admins see every family, staff their assigned / team / reports' families, an unassigned family only its owner; one shared helper on every route, Team panel, preview and an audited org switch that is OFF everywhere; verify WRITTEN, not yet run): see the top entry.
 BULKAPPROVE1 (2026-11-05, Approvals → Bulk approve for authority & custody changes and held-away entries — the SAME single-approval service per item, per-item results, cap 200, audit per item + per batch; verify WRITTEN, not yet run): see the top entry.
 BUGFIX3 (2026-11-05, the Olivo-pass CRITICAL: a member read every family's positions — every portfolio read now takes the one shared visible-entity rule; private investments without a commitment, household Recalculate, provisional import rows live, editable addresses, permission-true CRM controls, manual-asset counts, option picker, fixed-point money; verify WRITTEN, not yet run): see the top entry.
 PORTENTRY2 (2026-11-05, what HollisMuse hit onboarding the Olivo family — legal entities join an existing household and own accounts, account type / tax / billable fields + DVP reasons, permission-true CRM controls, the ownership views agree, picker / dates / dialogs / detail keys / seasonal addresses / Households nav, staff security search; schema APPLIED; verify WRITTEN, not yet run): see the top entry.
@@ -338,6 +339,54 @@ looking for one of them, it is in that sprint's verify script and log, not here.
 This file starts with the email item below.
 
 ---
+
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. VISIBILITY1 — team-based staff visibility, enforced per org: the rule, the family closure, assignment screens, the preview and the switch (OFF everywhere); verify WRITTEN, not yet run (2026-11-07)
+
+**What it does.** Discovery: `docs/VISIBILITY1_DISCOVERY.md`; the rule and how to turn it on: `docs/STAFF_VISIBILITY.md`;
+every route and its treatment: `docs/VISIBILITY1_ROUTES.md` (generated, `apps/api/scripts/visibility1_routes.py --check`).
+ONE implementation, `services/family_visibility.py`: super admin and org admins (`manage_org_settings`) see every family
+of the org; a member sees their own family (BUGFIX2, unchanged); every other internal staff member sees the families
+assigned to them, to a team they are on, or to anyone who reports to them (`users.manager_id`, transitively), plus the
+families they are relationship manager of, plus the families they created that NO ONE is assigned to. An assignment to
+any record of a family grants the whole family (a shared vehicle grants only itself and what it owns).
+
+**The switch is OFF for every org.** `org_settings` `staff_visibility.enforced` (default false; no row exists). With it
+off, behaviour is exactly as before this sprint — the switch rides on the Principal's one statement and every new hook
+is a no-op without a statement. Only `PUT /admin/staff-visibility/enforcement` (org admin, confirmed against the preview,
+audited) writes it; the generic settings route refuses the key.
+
+**DECISION FOR JOE — owner semantics.** A relationship manager (`entities.relationship_manager_id`) KEEPS visibility after
+the family is assigned to someone else; a creator (`households.created_by` / `entities.created_by`) sees an unassigned
+family only, and loses it at the first assignment. A manager inherits reports' assignments, never their reports' created
+or relationship-managed families. Reverse either in `FamilyGraph.visible_for`.
+
+| Finding | Where |
+|---|---|
+| Five surfaces ALREADY restrict internal staff to the legacy assignment set today (semantic search, document review / download, assistant counts, `/portfolio/commitments`, ownership-tree staff route) — with 2 live assignments a support user sees almost nothing there. Unchanged with the switch off; the rule with it on | 1c |
+| Removing a team member and deleting an assignment wrote no audit row (both do now); `users.manager_id` had no route or UI | 1e |
+| Bare SQL totals the response scrubber cannot fix: `/dashboard/brief` blocks, `/tax/overview` totals, `/households-by-margin` aggregates — their row lists ARE scrubbed. OPEN | 1c |
+| Today nearly every CRM record is a standalone family: 1 household, 0 `primary_household_id` set | 1a |
+
+**Enforcement, when on, for a restricted caller only:** an app-wide dependency (`main._family_path_guard`) returns the same
+404 as a missing id for another family's entity / household / account / position / transaction / liability / document /
+relationship / proposal / instruction / gift / commitment id, path or query, every method; the shared scope
+(`member_entity_scope`, `require_entity_access`) filters lists in SQL; explicit filters on households, X-ray households,
+approvals, notifications; `require_visible` on body-id writes; a response scrubber in `rls_context_middleware` removes any
+JSON row naming an invisible family; the legacy resolver's callers follow the rule. Cost: one statement (the org graph),
+once per request, restricted callers only.
+
+**Screens.** Team panel on the household page and the CRM record (assigned users / teams with a role label, owner shown,
+add / remove audited — org admin or `manage_members`, and only on families one can see). Admin → Staff visibility: what
+each person will see and why, who would see none, the switch with the preview on its confirm step, Unassigned families
+with bulk assign, People and managers (cycle-checked, audited), plus the SOC Phase 2 teams / assignments manager.
+
+**Operator steps (in order):**
+1. Admin → Staff visibility → create teams; add members; set each person's manager (People and managers).
+2. Assign families — Team panel on each household / CRM record, or Unassigned families → Assign selected. **Assign the
+   Olivo demo** (household "Olivo Family", tag `demo-olivo`): Team → the demo presenter or a "Demo" team, Lead adviser.
+3. Review the preview — every internal user's families and why; fix everyone under "Would see no family".
+4. Switch on — "Turn enforcement on…" → confirm (org admin). Audited.
+5. Run `apps/api/scripts/verify_visibility1.py` (written, NOT run by the sprint).
 
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000. ROLLUP2 — one net-worth roll-up everywhere: unclassified holdings counted, funds classified by category, duplicate ownership repairable, family / charitable split; schema APPLIED; verify WRITTEN, not yet run (2026-11-07)
 

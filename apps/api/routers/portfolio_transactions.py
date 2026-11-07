@@ -409,7 +409,7 @@ async def get_transactions(
     result["transaction_types"] = types
     result["permissions"] = perms
     result["vocabularies"] = _vocabularies(perms, types)
-    result["scope"] = scope_block(scope, "transactions")
+    result["scope"] = scope_block(scope, "transactions", request)
     return result
 
 

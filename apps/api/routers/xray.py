@@ -102,6 +102,12 @@ def _env(principal, **body) -> dict:
 
 async def _visible_households(pool, principal, org_id) -> set[str] | None:
     """None = every household of the org (Super Admin, staff, or an org admin — manage_org_settings)."""
+    # VISIBILITY1 — an org that enforces staff visibility: a restricted staff caller sees their families only.
+    from services.family_visibility import scope_for_principal
+
+    staff = await scope_for_principal(pool, principal)
+    if staff is not None:
+        return set(staff.household_ids)
     if principal.is_super_admin or principal.is_internal or ORG_ADMIN in principal.permissions:
         return None
     from services.document_embedding import visible_entity_ids

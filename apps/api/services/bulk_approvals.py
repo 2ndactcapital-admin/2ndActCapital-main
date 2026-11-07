@@ -296,13 +296,16 @@ def vocabularies(items: list[dict], type_key: str) -> dict:
     }
 
 
-async def summary(conn, org_id, principal, *, household_id=None, account_id=None) -> dict:
-    """Pending counts for the entry points: per readable type, the items this viewer may decide."""
+async def summary(conn, org_id, principal, *, household_id=None, account_id=None, keep=None) -> dict:
+    """Pending counts for the entry points: per readable type, the items this viewer may decide. ``keep``
+    (VISIBILITY1) drops items of families the viewer cannot see, so the counts match the visible list."""
     out = {}
     for k, bt in TYPES.items():
         if not (holds(principal, bt.view) or holds(principal, bt.approve)):
             continue
         items = await pending(conn, org_id, principal, k, household_id=household_id, account_id=account_id)
+        if keep is not None:
+            items = [i for i in items if keep(i)]
         out[k] = {"label": bt.label, "pending": len(items),
                   "decidable": sum(1 for i in items if "approve" in i["actions"] or "reject" in i["actions"])}
     return out

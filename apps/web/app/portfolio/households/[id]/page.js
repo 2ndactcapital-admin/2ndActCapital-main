@@ -8,6 +8,7 @@ import LotMethodPanel from "@/components/lotmethod/LotMethodPanel";
 import ConsolidatePanel from "@/components/replication/ConsolidatePanel";
 import BulkPendingLink from "@/components/approvals/BulkPendingLink";
 import HouseholdSummary from "@/components/households/HouseholdSummary";
+import TeamPanel from "@/components/visibility/TeamPanel";
 
 // REP7 — Household → tab "X-ray": the look-through of every fund the
 // household holds (managed and held-away accounts), replicable funds and the
@@ -47,6 +48,12 @@ export default async function HouseholdPage({ params, searchParams }) {
       lotMethod = null;
     }
   }
+  // VISIBILITY1 — the household's Team panel (who covers this family); refused / not found → no panel
+  const [team, people, teams] = await Promise.all([
+    fetchAPI(`/api/v1/staff-visibility/households/${encodeURIComponent(id)}/team`).catch(() => null),
+    fetchAPI("/api/v1/admin/staff/people").catch(() => []),
+    fetchAPI("/api/v1/admin/staff/teams").catch(() => []),
+  ]);
   const name = envelope?.xray?.household?.name || authority?.household?.name || lotMethod?.household?.name || "Household";
   return (
     <AppShell user={session.user}>
@@ -62,6 +69,7 @@ export default async function HouseholdPage({ params, searchParams }) {
       <div className="mt-3"><BulkPendingLink householdId={id} /></div>
       {/* BUGFIX4 — the household's net worth and Recalculate on its own page (renders nothing for a caller refused) */}
       <div className="mt-3"><HouseholdSummary householdId={id} /></div>
+      {team ? <div className="mt-3"><TeamPanel kind="household" id={id} initialEnvelope={team} people={people || []} teams={teams || []} /></div> : null}
       <div className="mt-4">
         {tab === "consolidate" ? <ConsolidatePanel householdId={id} />
           : tab === "lot-method" ? (lotMethod ? <LotMethodPanel initialEnvelope={lotMethod} kind="household" />
