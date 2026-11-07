@@ -8,7 +8,9 @@ history; nothing is ever deleted.
 Money is Decimal end to end: amounts arrive as strings (a float is refused), are stored numeric(20,2) and leave as
 strings. Unfunded commitments are NOT liabilities (they stay in portfolio.commitments).
 
-NET WORTH, THE ONE PLACE (Task 1c). Gross assets come from ``public.entity_holdings`` — the look-through buckets
+NET WORTH, THE ONE PLACE — ROLLUP2: ``services.networth`` (live positions; the entity card below calls it). The
+CRMDETAIL1 text that follows describes ``lookthrough_liabilities``, still used by the flexible / primary household
+rollups in services.households. Gross assets came from ``public.entity_holdings`` — the look-through buckets
 ``services.portfolio_rollup`` writes (an entity's row already carries its compounded share of everything owned
 beneath it) — summed by ``services.households._sum_holdings``, which both household rollups and the entity figure
 use. Liabilities are attributed on the SAME basis: each borrower's balance counts in full on the borrower and at
@@ -315,13 +317,12 @@ def net_worth_lines(gross: Decimal, liabilities: Decimal) -> dict:
 
 
 async def entity_net_worth(conn, org_id, entity_id, *, as_of: date | None = None) -> dict:
-    from services.households import _sum_holdings
+    """ROLLUP2 — the entity's Net worth card, computed LIVE by services.networth (the same core as the household
+    total and the stored snapshot). It used to read the stored entity_holdings snapshot, which never contained a
+    valued position with no taxonomy key (Olivo: $111,970,400 of listed funds; the CRUT's whole $11,100,000)."""
+    from services import networth as NW
 
-    as_of = as_of or date.today()
-    held = await _sum_holdings(conn, org_id, [str(entity_id)], as_of)
-    gross = held["total_value"]
-    liab = (await lookthrough_liabilities(conn, org_id, [entity_id], as_of=as_of)).get(str(entity_id), ZERO)
-    return {"entity_id": str(entity_id), "as_of": as_of.isoformat(), **net_worth_lines(gross, liab),
-            # PORTENTRY1 — the date of the holdings snapshot the gross figure was read from
-            "holdings_as_of": held.get("holdings_as_of"),
-            "basis": "look-through holdings (entity_holdings) − look-through liabilities"}
+    nw = await NW.entity(conn, org_id, entity_id, as_of=as_of)
+    return {**nw, "entity_id": str(entity_id),
+            "basis": "live positions (look-through, both ownership tables) − look-through liabilities; "
+                     "unclassified holdings counted"}

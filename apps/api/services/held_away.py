@@ -124,6 +124,8 @@ NO_MASTER_KINDS = frozenset({"digital_asset", "cash"})
 # BUGFIX4 — kinds entered as an AMOUNT: no quantity needed. The quantity stored is the amount (one unit = one
 # currency unit), exactly what an adviser had to type by hand before.
 VALUE_ONLY_KINDS = frozenset({"cash", "private"})
+# ROLLUP2 Task 6 — kinds whose Name is OPTIONAL (a cash / money-market line without one is "Cash" / the kind's label)
+NAME_OPTIONAL_KINDS = frozenset({"cash", "money_market"})
 # BUGFIX4 (O-04-02) — a held-away import is an account SNAPSHOT: approving one replaces every live line of the account.
 LINE_STATE_LABELS = {"draft": "Draft — not live until a second person approves it",
                      "live": "Live",
@@ -489,14 +491,24 @@ async def resolve_manual(conn, rows: list[dict], looks: dict) -> None:
             # that kind (a money-market fund the master knows used to lose it, and its fund type has no bucket)
             r["master_kind"] = r["asset_kind"]
             continue
-        if r["asset_kind"] == "cash":
+        if r["asset_kind"] == "cash" and not (r.get("name") or "").strip():
             ccy = (r["terms"].get("currency") or "USD").upper()
             r["security_id"] = f"cash:{ccy}"
             r["resolution"] = f"the org's {ccy} cash asset"
+        elif r["asset_kind"] == "cash":
+            # ROLLUP2 Task 6 (MUSE F1-01 / F2-01) — a NAMED cash line ("Coastal Bank checking", "Cash / sweep") is its
+            # own org cash asset under that name, so two named cash lines in one account stay two holdings
+            r["security_id"] = manual_key(r)
+            r["resolution"] = "named cash (org-scoped cash holding)"
         else:
             r["security_id"] = manual_key(r)
             r["resolution"] = "org-scoped manual asset (not in the master)"
-        r["asset_ref"] = {"asset_kind": r["asset_kind"], "name": (r.get("name") or "").strip() or None,
+        # ROLLUP2 — a named cash line is a 'cash_holding' asset (Cash & Equivalents): kind 'cash' is the org's ONE
+        # cash asset per currency (unique index assets_cash_active_uniq), so a second 'cash' asset could not exist
+        named_cash = r["asset_kind"] == "cash" and bool((r.get("name") or "").strip())
+        r["asset_ref"] = {"asset_kind": "cash_holding" if named_cash else r["asset_kind"],
+                          "name": (r.get("name") or "").strip() or (MANUAL_KINDS.get(r["asset_kind"])
+                                                                     if r["asset_kind"] in NAME_OPTIONAL_KINDS else None),
                           "identifiers": {t: r[t] for t in ("cusip", "isin", "sedol", "ticker") if r.get(t)},
                           "internal_id": r["terms"].get("internal_id"), "taxonomy_key": r.get("taxonomy_key"),
                           "terms": r.get("terms") or {}}
@@ -595,7 +607,7 @@ def validate_row(raw: dict, as_of: date) -> dict:
             r["reject"] = ("manual_transaction", "enter the holding as a position (or a lot); a trade needs a security "
                                                  "in the master")
             return r
-        if kind != "cash" and not (r["name"] or "").strip():
+        if kind not in NAME_OPTIONAL_KINDS and not (r["name"] or "").strip():
             r["reject"] = ("name_missing", REJECT_REASONS["name_missing"])
             return r
         bad = _bad_terms(kind, r["terms"])
@@ -1060,7 +1072,8 @@ async def _asset_for(conn, org_id, security_id: str, asset_ref: dict | None = No
     return str(await conn.fetchval(
         "INSERT INTO portfolio.assets (org_id, global_security_id, name, asset_type, default_taxonomy_key) "
         "VALUES ($1::uuid, $2::uuid, $3, $4, $5) RETURNING id", str(org_id), security_id,
-        g["name"] if g else security_id, kind, await key_for_kind(conn, str(org_id), kind)))
+        g["name"] if g else security_id, kind,
+        await key_for_kind(conn, str(org_id), kind, global_security_id=security_id)))   # ROLLUP2: a fund by category
 
 
 async def _decide_row(conn, imp: dict, status: str, checker, now, note) -> dict:
@@ -1168,8 +1181,12 @@ async def _apply_import(pool, org_id, task: dict, outcome: str, actor_id, note) 
             for p in payload.get("positions", []):
                 ls = lots_by_sec.get(p["security_id"], [])
                 # BUGFIX4 — the line's own key, else the key of the kind it was entered as (a master-resolved line)
-                pkey = p.get("taxonomy_key") or (await key_for_kind(conn, str(org_id), p["asset_kind"])
-                                                 if p.get("asset_kind") else None)
+                # ROLLUP2 — a master fund line is keyed by the fund's category, never by its kind alone
+                sid = str(p["security_id"])
+                pkey = p.get("taxonomy_key") or (await key_for_kind(
+                    conn, str(org_id), p["asset_kind"],
+                    global_security_id=None if sid.startswith(("cash:", "manual:")) else sid)
+                    if p.get("asset_kind") else None)
                 cost = (sum((Decimal(x["cost"]) for x in ls), Decimal(0))
                         if ls and all(x["cost"] is not None for x in ls)
                         and sum((Decimal(x["quantity"]) for x in ls), Decimal(0)) == Decimal(p["quantity"]) else None)
@@ -1858,4 +1875,4 @@ def vocabularies() -> dict:  # noqa: D401 — PORTENTRY1 adds manual_kinds below
             "manual_kinds": pairs(MANUAL_KINDS), "manual_term_fields": list(MANUAL_TERM_FIELDS),
             # BUGFIX4 — line / import live state, which kinds take an amount only, which never match the master
             "line_states": pairs(LINE_STATE_LABELS), "value_only_kinds": sorted(VALUE_ONLY_KINDS),
-            "no_master_kinds": sorted(NO_MASTER_KINDS)}
+            "no_master_kinds": sorted(NO_MASTER_KINDS), "name_optional_kinds": sorted(NAME_OPTIONAL_KINDS)}

@@ -276,7 +276,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "private_note": "taxonomy_sub_3_2_1",
         "private_hedge_fund": "taxonomy_mc_7_1",
         "private": "taxonomy_sc_3",
-        "mutual_fund": "taxonomy_sc_1",
+        # ROLLUP2 Task 3 — "mutual_fund" REMOVED (it keyed every mutual fund, bond funds included, as Public Equity):
+        # a fund's bucket comes from its category (services.fund_classification), else it stays Unclassified.
         "money_market": "taxonomy_sub_8_1_1",
         "municipal_bond": "taxonomy_sub_2_3_4",
         "cash": "taxonomy_mc_8_1",

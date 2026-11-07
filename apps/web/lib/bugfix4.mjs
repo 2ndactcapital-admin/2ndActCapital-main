@@ -23,6 +23,7 @@ export function qty(v) {
 const IDENT = ["ticker", "cusip", "isin", "sedol"];
 const DEFAULT_VALUE_ONLY = ["cash", "private"];
 const DEFAULT_NO_MASTER = ["digital_asset", "cash"];
+const DEFAULT_NAME_OPTIONAL = ["cash", "money_market"];
 
 function vocabList(vocab, key, fallback) {
   const v = vocab && typeof vocab === "object" ? vocab[key] : null;
@@ -43,6 +44,11 @@ export function isValueOnly(kind, vocab) {
   return vocabList(vocab, "value_only_kinds", DEFAULT_VALUE_ONLY).includes(kind);
 }
 
+/** ROLLUP2 Task 6 — the kinds whose Name is optional (the server's vocabulary; cash / money market by default). */
+export function nameIsOptional(kind, vocab) {
+  return vocabList(vocab, "name_optional_kinds", DEFAULT_NAME_OPTIONAL).includes(kind);
+}
+
 export function neverMaster(kind, vocab) {
   return vocabList(vocab, "no_master_kinds", DEFAULT_NO_MASTER).includes(kind);
 }
@@ -54,7 +60,8 @@ export function lineFields(kind, vocab, termFields = () => []) {
   const base = isValueOnly(kind, vocab) ? ["name", "market_value", "cost", "taxonomy_key"]
     : ["name", "quantity", "price", "market_value", "cost", "taxonomy_key"];
   const terms = listOf(termFields(kind)).filter((f) => !(neverMaster(kind, vocab) && f === "cusip"));
-  const out = kind === "cash" ? base.filter((f) => f !== "name") : base;
+  // ROLLUP2 Task 6 — cash takes an OPTIONAL name ("Coastal Bank checking"); two named cash lines stay two holdings
+  const out = base;
   return [...out, ...terms.filter((f) => !out.includes(f))];
 }
 
@@ -77,8 +84,9 @@ export function lineReady(line, vocab) {
   const kind = line?.asset_kind || "";
   const has = (k) => line && line[k] !== undefined && String(line[k]).trim() !== "";
   if (!kind) return (has("ticker") || has("cusip")) && has("quantity");
-  if (isValueOnly(kind, vocab)) return has("market_value") && (kind === "cash" || has("name"));
-  return has("quantity") && has("name");
+  const nameOptional = nameIsOptional(kind, vocab);
+  if (isValueOnly(kind, vocab)) return has("market_value") && (nameOptional || has("name"));
+  return has("quantity") && (nameOptional || has("name"));
 }
 
 export function lineLabel(line) {

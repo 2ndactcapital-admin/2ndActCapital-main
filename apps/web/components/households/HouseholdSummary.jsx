@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { householdControls, labelOf, totalLines } from "@/lib/bugfix4.mjs";
 import { money } from "@/lib/heldAway.mjs";
+import { OwnersTable, SplitTable, UnclassifiedList } from "@/components/networth/NetWorthDetails";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4 text-sm";
 const secondary = "rounded border border-navy px-3 py-1 text-navy disabled:opacity-50";
@@ -31,6 +32,11 @@ export function SummaryView({ envelope, onRecalculate, busy, note }) {
       {t.unclassified ? <p className="mt-2 text-xs text-text-muted">Includes {money(t.unclassified)} not yet classified into an allocation bucket.</p> : null}
       {t.unvalued ? <p className="mt-1 text-xs text-[#9B2335]">{t.unvalued} holding(s) have no value and are not counted.</p> : null}
       {note ? <p className="mt-1 text-xs text-text-muted">{note}</p> : null}
+      {/* ROLLUP2 — Family / Charitable / Household total, the Owners list (each member's own card figure) and the
+          valued holdings with no allocation bucket */}
+      <SplitTable total={envelope?.total} vocabularies={v} />
+      <OwnersTable total={envelope?.total} vocabularies={v} />
+      <UnclassifiedList netWorth={envelope?.total} vocabularies={v} />
       {top.length ? (
         <table className="mt-3 w-full">
           <thead className="text-left text-text-muted"><tr><th className="py-1">Top holdings</th><th>Value</th><th>Positions</th></tr></thead>

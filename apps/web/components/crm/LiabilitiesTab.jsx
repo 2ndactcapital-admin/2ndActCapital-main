@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import EntityPicker from "@/components/EntityPicker";
 import { canWrite, formatMoney, liabilityPayload, netWorthLines } from "@/lib/crmDetail.mjs";
 import { asOfText } from "@/lib/portentry.mjs";
+import { UnclassifiedList } from "@/components/networth/NetWorthDetails";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-6";
 const input = "w-full rounded-[6px] border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A]";
@@ -173,6 +174,8 @@ export default function LiabilitiesTab({ entityId }) {
           )}
         </p>
         {vocab?.net_worth_note && <p className={`mt-2 ${quiet}`}>{vocab.net_worth_note}</p>}
+        {/* ROLLUP2 — valued holdings with no allocation bucket are COUNTED (listed here); valueless ones are listed */}
+        <UnclassifiedList netWorth={env?.net_worth} vocabularies={vocab} />
       </section>
       <section className={card}>
         <div className="flex items-center justify-between">

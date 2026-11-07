@@ -31,6 +31,7 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 
 from services.portfolio_assets import _OrgWrite
 
@@ -182,9 +183,14 @@ def skipped_of(result) -> dict:
         except ValueError:
             result = None
     rows = list((result or {}).get("skipped") or []) if isinstance(result, dict) else []
-    unclassified = sum(1 for r in rows if r.get("reason") == NO_TAXONOMY_REASON)
-    return {"count": len(rows), "unclassified": unclassified, "unvalued": len(rows) - unclassified,
-            "position_ids": [r.get("position_id") for r in rows], "positions": rows[:100]}
+    legacy_uncl = sum(1 for r in rows if r.get("reason") == NO_TAXONOMY_REASON)   # a pre-ROLLUP2 stored result
+    # ROLLUP2 — a valued line with no key is COUNTED (bucket 'unclassified'), not skipped: reported separately
+    uncl = list((result or {}).get("unclassified") or []) if isinstance(result, dict) else []
+    return {"count": len(rows), "unclassified": legacy_uncl, "unvalued": len(rows) - legacy_uncl,
+            "position_ids": [r.get("position_id") for r in rows], "positions": rows[:100],
+            "counted_unclassified": len(uncl), "counted_unclassified_value": str(
+                sum((Decimal(str(u.get("value") or "0")) for u in uncl), Decimal(0))),
+            "counted_unclassified_ids": [u.get("position_id") for u in uncl][:200]}
 
 
 async def last_run_for(conn, org_id, entity_ids) -> dict | None:

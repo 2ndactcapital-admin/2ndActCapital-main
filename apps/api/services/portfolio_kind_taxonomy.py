@@ -48,12 +48,18 @@ async def org_taxonomy_keys(c, org_id: str) -> set[str]:
     return {r["config_key"] for r in rows}
 
 
-async def key_for_kind(c, org_id: str, asset_type: str | None) -> str | None:
+async def key_for_kind(c, org_id: str, asset_type: str | None, *, global_security_id=None) -> str | None:
     """The org's taxonomy key for ``asset_type``, or None (no mapping, or the mapped key is not in the org's
-    taxonomy)."""
+    taxonomy). ROLLUP2 — a FUND kind (fund / etf / mutual_fund / closed_end_fund) is never keyed by its kind: its
+    bucket comes from the security master's category (services.fund_classification.key_for_fund) when the security
+    is known and the category agrees with the name; otherwise None (counted as Unclassified)."""
     kind = (asset_type or "").strip()
     if not kind:
         return None
+    from services.fund_classification import FUND_KINDS, key_for_fund
+
+    if kind in FUND_KINDS:
+        return await key_for_fund(c, org_id, global_security_id) if global_security_id else None
     key = (await kind_map(c, org_id)).get(kind)
     if not key:
         return None

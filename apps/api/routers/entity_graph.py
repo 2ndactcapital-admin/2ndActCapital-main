@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
@@ -80,6 +81,9 @@ class OwnershipCreate(BaseModel):
     effective_date: Optional[str] = None  # YYYY-MM-DD
     note: Optional[str] = None
     change_reason: Optional[str] = None
+    #: ROLLUP2 Task 4 — a new percentage for a pair that already has a live edge is a NEW VERSION (the prior one
+    #: archived) unless the caller explicitly records a second, separate holding
+    separate_holding: bool = False
 
 
 class OwnershipPatch(BaseModel):
@@ -104,6 +108,16 @@ def _rel_row_to_dict(row) -> dict:
     if "effective_date" in d and d["effective_date"] is not None:
         d["effective_date"] = str(d["effective_date"])
     return d
+
+
+async def _require_org_entity(pool, org_id, entity_id) -> None:
+    """ROLLUP2 fix 1 — 404 unless ``entity_id`` is a live entity of the CALLER's org (the same rule as
+    /entities/{id}/net-worth): another org's id is indistinguishable from a missing one, never a 200 with empty lists."""
+    async with pool.acquire() as conn:
+        found = await conn.fetchval("SELECT 1 FROM entities WHERE id = $1 AND org_id = $2::uuid AND valid_to IS NULL "
+                                    "AND system_to IS NULL", entity_id, str(org_id))
+    if not found:
+        raise HTTPException(status_code=404, detail="Entity not found")
 
 
 async def _check_vocab(pool, org_id, relationship_type, from_id, to_id) -> None:
@@ -156,6 +170,7 @@ async def get_entity_relationships(entity_id: UUID, request: Request):
     require_internal(request)  # STAFFROLES1 — staff-data read: any internal firm role (was require_staff)
     pool = await get_pool()
     org_id = get_org_id(request)
+    await _require_org_entity(pool, org_id, entity_id)
     children = await get_children(pool, org_id, str(entity_id))
     parents = await get_parents(pool, org_id, str(entity_id))
     return {
@@ -616,6 +631,7 @@ async def get_entity_ownership(
         time_filter = "AND r.valid_to IS NULL AND r.system_to IS NULL"
         as_of_param = None
 
+    await _require_org_entity(pool, org_id, entity_id)
     async with pool.acquire() as conn:
         if as_of:
             owns_rows = await conn.fetch(
@@ -695,7 +711,15 @@ async def get_entity_ownership(
     from services import record_permissions as RP
 
     can = RP.allowed(principal_of(request), "ownership") and not as_of
+    # ROLLUP2 Task 4 — two live entries for the same owner / owned pair: warned on the panel (net worth adds them)
+    from services import ownership_duplicates as OD
+
+    dups = []
+    if not as_of:
+        async with pool.acquire() as conn:
+            dups = [{**d, "warning": OD.warning_text(d)} for d in await OD.for_entity(conn, org_id, entity_id)]
     return {
+        "duplicates": dups,
         "entity_id": str(entity_id),
         "as_of": as_of,
         "owns": [_to_item(r) for r in owns_rows],
@@ -748,46 +772,90 @@ async def create_ownership(
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
 
-        row = await conn.fetchrow(
-            """
-            INSERT INTO entity_relationships
-                (org_id, from_entity_id, to_entity_id, relationship_type,
-                 notes, ownership_pct, effective_date, change_reason,
-                 change_source_type, valid_from, system_from, created_by)
-            VALUES ($1, $2, $3, 'ownership', $4, $5, $6::date, $7,
-                    'api', now(), now(), $8)
-            RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
-                      notes, ownership_pct, effective_date, change_reason,
-                      valid_from, valid_to, system_from, system_to, created_by, created_at
-            """,
-            org_id,
-            UUID(from_id),
-            UUID(to_id),
-            body.note,
-            body.ownership_pct,
-            body.effective_date,
-            body.change_reason or "initial",
-            user_id,
-        )
+        async with conn.transaction():
+            # ROLLUP2 Task 4 — the same pair already has a live edge: this is a new VERSION of it (the prior one
+            # archived exactly as the PATCH amend archives), unless a second, separate holding is explicitly asked for
+            # ROLLUP2 fix 1 — entity_relationships holds at most ONE live edge per (from, to, type): the partial unique
+            # index entity_rel_active_unique (valid_to IS NULL). A "separate holding" on a pair that already has one
+            # cannot be stored there, so it is a 409 naming the existing edge — never the index's 500.
+            if body.separate_holding:
+                live = await conn.fetchrow(
+                    "SELECT id, ownership_pct FROM entity_relationships WHERE org_id = $1 AND from_entity_id = $2 "
+                    "AND to_entity_id = $3 AND relationship_type = 'ownership' AND valid_to IS NULL",
+                    org_id, UUID(from_id), UUID(to_id))
+                if live:
+                    pct = format(live["ownership_pct"], "f") if live["ownership_pct"] is not None else "no"
+                    raise HTTPException(status_code=409, detail=(
+                        f"This pair already has a live ownership edge {live['id']} ({pct} %). Only one live edge per "
+                        "owner / owned pair can be recorded: edit that edge, or add without 'separate holding' to "
+                        "record the new percentage as a new version of it."))
+            prior = None if body.separate_holding else await conn.fetchrow(
+                """
+                UPDATE entity_relationships SET valid_to = now(), system_to = now()
+                WHERE id = (SELECT id FROM entity_relationships WHERE org_id = $1 AND from_entity_id = $2
+                              AND to_entity_id = $3 AND relationship_type = 'ownership'
+                              AND valid_to IS NULL AND system_to IS NULL
+                            ORDER BY valid_from DESC LIMIT 1)
+                RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
+                          notes, ownership_pct, effective_date, change_reason,
+                          valid_from, valid_to, system_from, system_to, created_by, created_at
+                """,
+                org_id, UUID(from_id), UUID(to_id),
+            )
+            if prior and (body.change_reason or "initial") == "initial":
+                reason = "new version"
+            else:
+                reason = body.change_reason or ("separate holding" if body.separate_holding else "initial")
+            try:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO entity_relationships
+                        (org_id, from_entity_id, to_entity_id, relationship_type,
+                         notes, ownership_pct, effective_date, change_reason,
+                         change_source_type, valid_from, system_from, created_by)
+                    VALUES ($1, $2, $3, 'ownership', $4, $5, $6::date, $7,
+                            'api', now(), now(), $8)
+                    RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
+                              notes, ownership_pct, effective_date, change_reason,
+                              valid_from, valid_to, system_from, system_to, created_by, created_at
+                    """,
+                    org_id,
+                    UUID(from_id),
+                    UUID(to_id),
+                    body.note if body.note is not None else (prior["notes"] if prior else None),
+                    body.ownership_pct,
+                    body.effective_date,
+                    reason,
+                    user_id,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                # a concurrent add, or a live (valid_to IS NULL) edge the archive above did not match: the index's
+                # refusal is answered as the conflict it is, naming the index — never a 500
+                raise HTTPException(status_code=409, detail=(
+                    "This pair already has a live ownership edge (entity_rel_active_unique); edit that edge "
+                    "instead of adding another.")) from exc
 
         new_rel_id = row["id"]
         await _log_ownership_change(
             conn, org_id, new_rel_id,
             UUID(from_id), UUID(to_id),
-            None, body.ownership_pct,
-            body.change_reason or "initial",
+            prior["ownership_pct"] if prior else None, body.ownership_pct,
+            reason,
             UUID(user_id),
         )
 
     result = _rel_row_to_dict(row)
     await write_audit_log(
         org_id=org_id,
-        action="create_ownership",
+        action="version_ownership" if prior else "create_ownership",
         table_name="entity_relationships",
         record_id=result["id"],
+        old=_rel_row_to_dict(prior) if prior else None,
         new=result,
         actor=user_id,
     )
+    if prior:
+        result["replaced_relationship_id"] = str(prior["id"])
     return result
 
 
@@ -946,6 +1014,7 @@ async def get_ownership_history(entity_id: UUID, request: Request):
     require_internal(request)  # STAFFROLES1 — staff-data read: any internal firm role (was require_staff)
     org_id = get_org_id(request)
     pool = await get_pool()
+    await _require_org_entity(pool, org_id, entity_id)
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
