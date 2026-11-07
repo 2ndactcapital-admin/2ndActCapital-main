@@ -58,6 +58,9 @@ NEW_ROUTES = {
     ("POST", "/api/v1/direct-assets/{asset_id}/end"): "internal + any(manage_members)",
     ("GET", "/api/v1/direct-assets/{asset_id}/history"): "internal + any(manage_members)",
 }
+#: the brief's own vocabulary (Task 4) — a spec, not live state
+BRIEF_END_REASONS = ("sold", "disposed", "transferred", "written_off", "entered_in_error")
+BRIEF_EDIT_FIELDS = ("name", "kind", "value", "as_of", "method", "notes")
 REPAIRED_VERIFIES = ("verify_previewperf.py", "verify_previewperffix1.py", "verify_vhk2.py")
 NODE_TEST_FILE = "tests/catchall1/catchall1.test.mjs"
 
@@ -187,13 +190,16 @@ def self_pure(check, find):
                and labels.get("asset_secured_line", "").startswith("Secured credit line")
                and labels["securities_backed_line"] != labels["asset_secured_line"]),
           "both plan 'Secured credit line' kinds carry the plan's wording and stay distinguishable", f"{labels}")
-    check(set(labels) == {"mortgage", "securities_backed_line", "margin", "term_loan", "asset_secured_line",
-                          "personal_loan", "other"}, "liability KEYS unchanged (labels only)", f"{sorted(labels)}")
-    check(set(DH.END_REASONS) == {"sold", "disposed", "transferred", "written_off", "entered_in_error"}
-          and DH.ERROR_REASON in DH.END_REASONS, "the end reasons are the five the brief names", f"{DH.END_REASONS}")
-    check("cash_holding" in DH.DIRECT_KINDS and set(DH.DIRECT_EDIT_FIELDS) == {"name", "kind", "notes", "value",
-                                                                                 "as_of", "method"},
-          "Edit takes name / kind (incl. Cash / working capital) / value / as-of / method / notes", "")
+    old_src = VS.git_show(BEFORE_REF, "apps/api/services/crm_vocab.py") or ""
+    old_block = old_src[old_src.find("LIABILITY_KINDS = "):old_src.find("RATE_TYPES = ")]
+    old_keys = set(re.findall(r'\("([a-z_]+)", "', old_block))
+    check(bool(old_keys and set(labels) == old_keys), "liability KEYS unchanged since BEFORE_REF (labels only)",
+          f"{sorted(labels)} vs {sorted(old_keys)}")
+    check(bool(set(DH.END_REASONS) == set(BRIEF_END_REASONS) and DH.ERROR_REASON in DH.END_REASONS),
+          "the end reasons are the five the brief names", f"{DH.END_REASONS}")
+    check(bool("cash_holding" in DH.DIRECT_KINDS and set(DH.DIRECT_EDIT_FIELDS) == set(BRIEF_EDIT_FIELDS)),
+          "Edit takes the brief's fields (name / kind incl. Cash / working capital / value / as-of / method / notes)",
+          f"{DH.DIRECT_EDIT_FIELDS}")
 
 
 def self_repaired(check, find):
