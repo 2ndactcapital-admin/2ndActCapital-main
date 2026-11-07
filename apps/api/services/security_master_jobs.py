@@ -107,6 +107,17 @@ JOBS: dict[str, JobSpec] = {
         "Weekdays 21:15 New York (01:15 UTC in summer, 02:15 UTC in winter) — after the 16:00 close and after mutual "
         "funds strike and publish their NAVs (~18:00–20:00 New York)",
         (StepSpec("prices", "security_data.prices", "End-of-day prices (gap fill + new history)"),)),
+    # S28 — the AI drift monitor (services.ai_drift registers its action). Seeded INACTIVE (scripts/_apply_s28.py
+    # --seed-jobs); the Super Admin switches it on with BUGFIX4's switch on this same screen. Every 6 hours: the busiest
+    # live task makes ~11 calls a day (docs/S28_DISCOVERY.md 1b), so a run sees ~3 new calls — hourly would re-read
+    # the same window 6 times for nothing and fill the platform Runs screen with 24 runs a day.
+    "ai_drift_monitor": JobSpec(
+        "ai_drift_monitor", "system:AI — drift monitor",
+        "Compares every AI task's recent decision log (last 24 h) with its own 28-day baseline — cost per call, "
+        "latency, fallback / failure / LiteLLM-bypass rates, effort downgrades, the models actually used — and "
+        "opens, refreshes or closes drift alerts. Calls no model. Platform job (S28).",
+        "17 */6 * * *", "UTC", "Every 6 hours at :17 UTC (00:17, 06:17, 12:17, 18:17)",
+        (StepSpec("drift", "ai.drift_monitor", "AI drift check (every task and org)"),)),
 }
 JOB_BY_NAME = {j.name: j for j in JOBS.values()}
 
@@ -421,6 +432,8 @@ FETCHES = {
     "security_data_nightly": "marketdata1's nightly: every configured security-data provider within its budget (FRED "
                              "rates), then the quality checks. It does not fetch end-of-day prices — the prices job "
                              "does.",
+    "ai_drift_monitor": "Nothing external: it reads the platform's own AI decision log (ai_decision_log) and writes "
+                        "drift alerts. It calls no model and makes no network request.",
     "security_data_prices": "End-of-day closes for the coverage set (held, modelled, replicated, option underlyings, "
                             "benchmarks) from the ranked price sources — today Yahoo Finance (internal use only, "
                             "never shown to members), Tiingo when its key is added. Gap fill for the last few days; "

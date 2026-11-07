@@ -37,6 +37,22 @@ Column names are taken from docs/schema_snapshot.sql:
     success bool, error_detail, created_at)
   org_settings(id, org_id, setting_key, setting_value jsonb, category,
     is_public, updated_at, updated_by, created_at)  -- NOT bitemporal, upsert.
+
+S28 FIX 1 — RLS IS ENFORCED NOW
+-------------------------------
+``DATABASE_URL`` connects as ``app_service`` (rolbypassrls = false). Every
+fixture write/read on this script's own connection goes through ``platform()``
+(one transaction, ``set_config('app.is_super_admin', 'true', true)`` — the same
+helper the current verifies use); fixture orgs are seeded ``is_test = true``.
+Every AI call / resolver runs under ``set_rls_context(org, False)`` — the
+context ``rls_context_middleware`` gives a real request — so the pool can read
+the org's own org_settings and write its own ai_decision_log row. Every
+ai_decision_log read / count / delete is keyed by THIS script's fixture org ids
+only (real AI calls write the log at any time). Check 3 runs on a fixture org
+with no ai.model.* rows instead of the real default org (never write a real
+row); its assertions are unchanged. This script has no users / roles / audit_log
+seeding. It always ends in ``TOTAL: N PASS, M FAIL`` — an exception anywhere is
+a ``[FAIL]`` line, then the TOTAL, never a bare traceback.
 """
 import os as _authz_os
 _authz_os.environ["AUTHZ_TEST_MODE"] = "1"  # AUTHZ1: in-process test identity only; set before main is imported
@@ -46,6 +62,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 import types
 import uuid
 
@@ -55,13 +72,20 @@ API_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if API_DIR not in sys.path:
     sys.path.insert(0, API_DIR)
 REPO_ROOT = os.path.dirname(os.path.dirname(API_DIR))
+SCRIPTS_DIR = os.path.join(API_DIR, "scripts")
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-DEFAULT_ORG = "00000000-0000-0000-0000-000000000001"
-HAIKU = "claude-haiku-4-5-20251001"
+from _db_connect import hydrate, resolve_dsn  # noqa: E402
 
-PASS = "\033[32m[Y]\033[0m"
-FAIL = "\033[31m[N]\033[0m"
+hydrate()  # Doppler over HTTPS, BEFORE services.* is imported (Settings is lru_cached)
+# s28 fix 1: the platform default is the LiteLLM deployment name since litellmseedfix (201065f), which renamed
+# DEFAULT_SETTINGS' ai.model.default / fallback_chain from 'claude-haiku-4-5-20251001' and updated
+# verify_litellmphased2 but not this script (hidden until now behind the organizations-insert RLS crash).
+HAIKU = "claude-haiku"
+
+PASS = "[PASS]"
+FAIL = "[FAIL]"
 
 results = []
 
@@ -69,7 +93,24 @@ results = []
 def record(label, ok, note=""):
     results.append((label, ok, note))
     icon = PASS if ok else FAIL
-    print(f"  {icon} {label}{f'  ({note})' if note else ''}")
+    print(f"{icon} {label}{f'  ({note})' if note else ''}")
+
+
+async def platform(conn, sql, *args, fetch="execute"):
+    """ONE transaction with the Super Admin RLS carve-out SET LOCAL (as verify_s28's platform())."""
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        return await getattr(conn, fetch)(sql, *args)
+
+
+async def in_org(org, coro_fn):
+    """Run an AI call / resolver under the org's own request context (what rls_context_middleware sets)."""
+    from services.database import reset_rls_context, set_rls_context
+    tokens = set_rls_context(org, False)
+    try:
+        return await coro_fn()
+    finally:
+        reset_rls_context(tokens)
 
 
 # ── Fake Anthropic seam ────────────────────────────────────────────────────
@@ -138,9 +179,11 @@ def sweep_bypasses():
 
 
 async def main():
-    if not DATABASE_URL:
-        print("[N] SKIP — DATABASE_URL not set")
+    dsn, how = await resolve_dsn("DATABASE_URL")
+    if not dsn:
+        record("connect: a working DATABASE_URL", False, how)
         return
+    os.environ["DATABASE_URL"] = dsn  # the app pool (services.database) reads the same working DSN
 
     # Hermetic AI: fake seam + a dummy key so the no-key early-return is skipped.
     _install_fake_anthropic()
@@ -157,12 +200,13 @@ async def main():
     )
     from services.org_settings import DEFAULT_SETTINGS  # noqa: E402
 
-    conn = await asyncpg.connect(DATABASE_URL, statement_cache_size=0)
+    conn = await asyncpg.connect(dsn, statement_cache_size=0)
 
     org_a = str(uuid.uuid4())  # fall-through org
     org_b = str(uuid.uuid4())  # different per-org chain
     org_c = str(uuid.uuid4())  # no ai.model.* → DEFAULT_SETTINGS behaviour
-    fresh = (org_a, org_b, org_c)
+    org_d = str(uuid.uuid4())  # check 3 (success path) — no ai.model.*, never the real default org
+    fresh = (org_a, org_b, org_c, org_d)
 
     A_PRIMARY = "claude-s27a-primary-BROKEN"
     A_BACKUP = "claude-s27a-backup"
@@ -170,24 +214,22 @@ async def main():
     B_BACKUP = "claude-s27b-backup"
 
     async def teardown():
-        # Only OUR rows: verify_s27_* task_types (covers the default org too) and
-        # the fresh test orgs. NEVER touch the default org's real seeded chain.
-        await conn.execute(
-            "DELETE FROM ai_decision_log WHERE task_type LIKE 'verify_s27%'"
-        )
-        await conn.execute(
-            "DELETE FROM ai_decision_log WHERE org_id = ANY($1::uuid[])",
+        # Only OUR rows: this run's fixture org ids — never a real org's rows.
+        await platform(
+            conn, "DELETE FROM ai_decision_log WHERE org_id = ANY($1::uuid[])",
             list(fresh),
         )
-        await conn.execute(
-            "DELETE FROM org_settings WHERE org_id = ANY($1::uuid[])", list(fresh)
+        await platform(
+            conn, "DELETE FROM org_settings WHERE org_id = ANY($1::uuid[])", list(fresh)
         )
-        await conn.execute(
-            "DELETE FROM organizations WHERE id = ANY($1::uuid[])", list(fresh)
+        await platform(
+            conn, "DELETE FROM organizations WHERE id = ANY($1::uuid[]) AND is_test",
+            list(fresh),
         )
 
     async def seed_setting(org, key, value):
-        await conn.execute(
+        await platform(
+            conn,
             "INSERT INTO org_settings "
             "  (org_id, setting_key, setting_value, category, is_public) "
             "VALUES ($1, $2, $3::jsonb, 'ai', false) "
@@ -197,19 +239,20 @@ async def main():
         )
 
     async def latest(org, task_type):
-        return await conn.fetchrow(
+        return await platform(
+            conn,
             "SELECT * FROM ai_decision_log "
             "WHERE org_id = $1 AND task_type = $2 "
             "ORDER BY created_at DESC LIMIT 1",
-            org, task_type,
+            org, task_type, fetch="fetchrow",
         )
 
-    await teardown()  # teardown-at-start
-
     try:
-        for org, name in ((org_a, "A"), (org_b, "B"), (org_c, "C")):
-            await conn.execute(
-                "INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3) "
+        await teardown()  # teardown-at-start
+        for org, name in ((org_a, "A"), (org_b, "B"), (org_c, "C"), (org_d, "D")):
+            await platform(
+                conn,
+                "INSERT INTO organizations (id, name, slug, is_test) VALUES ($1, $2, $3, true) "
                 "ON CONFLICT (id) DO NOTHING",
                 org, f"Verify S27 Org {name}", f"verify-s27-{org[:8]}",
             )
@@ -252,10 +295,10 @@ async def main():
                "0 bypasses" if only_central else f"BYPASS: {bypass_files}")
 
         # ── 3. Successful call → correct row, real cost/latency ─────────────
-        out = await call_claude_json(
-            "sys", "hi", org_id=DEFAULT_ORG, task_type="verify_s27_success"
-        )
-        row = await latest(DEFAULT_ORG, "verify_s27_success")
+        out = await in_org(org_d, lambda: call_claude_json(
+            "sys", "hi", org_id=org_d, task_type="verify_s27_success"
+        ))
+        row = await latest(org_d, "verify_s27_success")
         ok3 = (
             out == {"result": "ok"}
             and row is not None
@@ -278,9 +321,9 @@ async def main():
         )
 
         # ── 4. Primary failure → chain falls through to next model ──────────
-        out4 = await call_claude_json(
+        out4 = await in_org(org_a, lambda: call_claude_json(
             "sys", "hi", org_id=org_a, task_type="verify_s27_fallthrough"
-        )
+        ))
         row4 = await latest(org_a, "verify_s27_fallthrough")
         ok4 = (
             out4 == {"result": "ok"}
@@ -302,9 +345,9 @@ async def main():
         )
 
         # ── 5. Different org uses ITS OWN chain, not another org's ──────────
-        out5 = await call_claude_json(
+        out5 = await in_org(org_b, lambda: call_claude_json(
             "sys", "hi", org_id=org_b, task_type="verify_s27_perorg"
-        )
+        ))
         row5 = await latest(org_b, "verify_s27_perorg")
         ok5 = (
             out5 == {"result": "ok"}
@@ -322,11 +365,11 @@ async def main():
         )
 
         # ── 6. No explicit chain → DEFAULT_SETTINGS behaviour ───────────────
-        chain_c = await resolve_fallback_chain(org_c)
-        model_c = await resolve_model(org_c)
-        out6 = await call_claude_json(
+        chain_c = await in_org(org_c, lambda: resolve_fallback_chain(org_c))
+        model_c = await in_org(org_c, lambda: resolve_model(org_c))
+        out6 = await in_org(org_c, lambda: call_claude_json(
             "sys", "hi", org_id=org_c, task_type="verify_s27_defaults"
-        )
+        ))
         row6 = await latest(org_c, "verify_s27_defaults")
         ok6 = (
             chain_c == DEFAULT_SETTINGS[FALLBACK_CHAIN_KEY] == [HAIKU]
@@ -351,17 +394,19 @@ async def main():
 
         extraction._write_ai_decision = _boom
         try:
-            out7 = await call_claude_text(
+            out7 = await in_org(org_c, lambda: call_claude_text(
                 "sys", [{"role": "user", "content": "hi"}],
                 org_id=org_c, task_type="verify_s27_nonblocking",
-            )
+            ))
         finally:
             extraction._write_ai_decision = original
         # The AI result must come back despite the broken log; and because the
         # write truly failed, no row should exist for this task_type.
-        n_nb = await conn.fetchval(
+        n_nb = await platform(
+            conn,
             "SELECT count(*) FROM ai_decision_log "
-            "WHERE task_type = 'verify_s27_nonblocking'"
+            "WHERE org_id = ANY($1::uuid[]) AND task_type = 'verify_s27_nonblocking'",
+            list(fresh), fetch="fetchval",
         )
         ok7 = out7 == '{"result": "ok"}' and n_nb == 0
         record(
@@ -371,18 +416,17 @@ async def main():
 
         # ── 8. Teardown leaves zero rows ────────────────────────────────────
         await teardown()
-        leftover_log = await conn.fetchval(
-            "SELECT count(*) FROM ai_decision_log WHERE task_type LIKE "
-            "'verify_s27%' OR org_id = ANY($1::uuid[])",
-            list(fresh),
+        leftover_log = await platform(
+            conn, "SELECT count(*) FROM ai_decision_log WHERE org_id = ANY($1::uuid[])",
+            list(fresh), fetch="fetchval",
         )
-        leftover_settings = await conn.fetchval(
-            "SELECT count(*) FROM org_settings WHERE org_id = ANY($1::uuid[])",
-            list(fresh),
+        leftover_settings = await platform(
+            conn, "SELECT count(*) FROM org_settings WHERE org_id = ANY($1::uuid[])",
+            list(fresh), fetch="fetchval",
         )
-        leftover_orgs = await conn.fetchval(
-            "SELECT count(*) FROM organizations WHERE id = ANY($1::uuid[])",
-            list(fresh),
+        leftover_orgs = await platform(
+            conn, "SELECT count(*) FROM organizations WHERE id = ANY($1::uuid[])",
+            list(fresh), fetch="fetchval",
         )
         ok8 = leftover_log == 0 and leftover_settings == 0 and leftover_orgs == 0
         record(
@@ -391,19 +435,38 @@ async def main():
             f"log={leftover_log} settings={leftover_settings} orgs={leftover_orgs}",
         )
 
+    except Exception as exc:  # noqa: BLE001 — a crash is a FAIL line, never a bare traceback
+        traceback.print_exc()
+        record("verify_s27 ran to completion (seeding + checks raised)", False,
+               f"{type(exc).__name__}: {exc}")
     finally:
-        await teardown()
+        try:
+            await teardown()
+        except Exception as exc:  # noqa: BLE001
+            record("teardown (finally) raised", False, f"{type(exc).__name__}: {exc}")
         await conn.close()
         try:
             await close_pool()
         except Exception:
             pass
 
-    total = len(results)
-    passed = sum(1 for _, ok, _ in results if ok)
-    print(f"\n{passed}/{total} passed")
-    sys.exit(0 if passed == total else 1)
+
+def _total_and_exit():
+    n_pass = sum(1 for _, ok, _ in results if ok)
+    n_fail = sum(1 for _, ok, _ in results if not ok)
+    if n_pass + n_fail == 0:
+        print("[FAIL] verify_s27 recorded no checks")
+        n_fail = 1
+    print(f"\nTOTAL: {n_pass} PASS, {n_fail} FAIL")
+    sys.exit(0 if n_fail == 0 else 1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except BaseException as exc:  # noqa: BLE001 — still print the TOTAL
+        if isinstance(exc, SystemExit):
+            raise
+        traceback.print_exc()
+        record("verify_s27 main() raised", False, f"{type(exc).__name__}: {exc}")
+    _total_and_exit()

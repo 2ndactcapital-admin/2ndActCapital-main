@@ -357,6 +357,9 @@ export const MENU_ITEMS = [
   tab("platform", "ai_models", 2, "/admin/model-research", "Model Research", GATE_MANAGE_ORG_SETTINGS_STRICT, true),
   // AIBUDGET1 — models + daily budgets per ensemble job, and the daily document-reading runs.
   tab("platform", "ai_models", 3, "/admin/ai-jobs", "Model Jobs", GATE_SUPER_ADMIN, true),
+  // S28 — the AI drift monitor. Its read gate is manage_org_settings (Super Admin first; an org admin sees their own
+  // org), STRICT so a lost envelope hides it; the threshold editor is Super Admin only (server-side + can_write).
+  tab("platform", "ai_models", 4, "/admin/ai-drift", "Drift monitor", GATE_MANAGE_ORG_SETTINGS_STRICT, true),
   tab("platform", "structured_notes", 1, "/admin/edgar-pipeline", "Download", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 2, "/admin/pricing/note-terms-queue", "Review queue", GATE_SUPER_ADMIN, true),
   tab("platform", "structured_notes", 3, "/admin/note-extraction/gold", "Gold answers", GATE_SUPER_ADMIN, true),

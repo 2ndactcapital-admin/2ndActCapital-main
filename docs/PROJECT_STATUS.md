@@ -342,6 +342,65 @@ This file starts with the email item below.
 ---
 
 
+## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. S28 — AI drift monitor: a standing alarm over S27's decision log, governed alerts, versioned thresholds, a platform job (OFF); schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
+
+Branch s28-work. Task 1 findings: docs/S28_DISCOVERY.md. Live dry run + incident replay: docs/S28_DRY_RUN.txt.
+
+**What was built**
+- **Schema.** `docs/s28_part1.sql`, APPLIED (`_apply_s28.py --verify`: SCHEMA OK). Three tables, RLS on every operation:
+  - `ai_drift_thresholds` — platform defaults (task_type NULL, owner_scope 'platform', org_id NULL) and per-task overrides. Valid-time versioned: an edit closes the live row and inserts version + 1, audited (`ai_drift.threshold_changed`). Super Admin writes only.
+  - `ai_drift_alerts` — ONE open alert per (org, task, rule) (partial unique index). Closed, never deleted.
+  - `ai_drift_alert_events` — append-only history: opened / updated / recovering / closed, each with its numbers.
+- **Service** `services/ai_drift.py`:
+  - Pure metrics: median, nearest-rank p95, Decimal cost, rates in points, the model set with first-seen times.
+  - Nine rules: cost per call, latency p95, fallback / failure / bypass / effort-downgrade rates, model change, model mismatch, silence.
+  - The alert lifecycle and the job handler. It calls no model and imports no model or HTTP client.
+- **Alerts reuse member_todos** (`workflow_todos.create_ai_drift_alert_todos` / `close_ai_drift_alert_todos`, source `ai_drift`), the same path held platform-job runs use. Recipients: the org's manage_org_settings holders, the platform org's, and the job's Super Admin.
+- **Job.** "system:AI — drift monitor" is on the existing Platform jobs list (`security_master_jobs.JOBS`, BUGFIX4's switch). It runs **every 6 hours** (`17 */6 * * *` UTC) and is seeded **OFF**. A failure HOLDS the run and alerts the Super Admin. A run in a test platform org evaluates test orgs only.
+- **Operator script** `scripts/ai_drift_check.py` (`--dry-run` runs in a READ ONLY transaction; `--task`, `--org`, `--since`, `--now`).
+- **API** `routers/ai_drift.py`, 4 routes:
+  - The 3 GETs need manage_org_settings (Super Admin first). An org admin sees their own org only; a member gets 403.
+  - The PUT (thresholds) is Super Admin only.
+  - Each GET section is one query. AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated.
+- **Page.** AI Models → Drift monitor (`/admin/ai-drift`):
+  - The task table; a task's 90-day sparklines, per-org findings and alerts; the thresholds editor with history.
+  - `lib/aiDrift.mjs` fails closed. `tests/aidrift/s28.test.mjs` 9/9.
+
+**1b profile (live, 2026-11-07).** 662 rows over 11 task types and 2 orgs.
+- member_brief is the only steady task: ~12 calls per active day; cost per call median $0.0016; p95 latency 4.5 s.
+- Everything else comes in batches.
+- No row has an effort set, and no row bypassed LiteLLM.
+- 47 NULL-cost rows: all are provider-400 failures.
+- **~91 rows are other verifies' artifacts sitting in REAL orgs' logs** (workflow_generation stub rows, `verify-edgarcohorts-model`, `verify_lag_calibration`). They were left in place. A verify that writes into a real org's log will look like real traffic to the monitor.
+
+**Sample rule and cadence.** One event in the recent window must never cross a threshold on its own:
+- rate rules need ⌈100 / N⌉ recent calls (10, or 20 for the 5-point failure rule);
+- p95 needs 20, a median needs 5;
+- a baseline needs 20 (`min_baseline`).
+
+`min_baseline` was first seeded at 30. It was lowered to 20 the same day as threshold **version 2**, after a replay showed that 30 would have missed the 2026-08-24 member_brief fallback burst. Cadence: every 6 hours (1b volume — a run sees ~3 new calls).
+
+**Live dry run findings (read-only, 2026-11-07 20:22 UTC):**
+- 8 task/org pairs: **0 drift**, 5 ok, 59 not enough data, 8 off (silence).
+- member_brief is OK on cost, fallback, bypass, model change and mismatch. Its p95 latency and failure rate are "not enough data" (16 calls in the last 24 h, under 20).
+- Every other task had no calls in the last 24 h.
+- **Replay of the real 2026-08-24 incident:** model change (claude-haiku-4-5-20251001 replacing claude-sonnet-4-6) after 2 calls, then fallback rate 100 % against a 0 % baseline.
+
+**Not run:** verify_s28.py, verify_s27.py (the regression), npm build (WSL memory). Pre-existing, not S28: `apps/api/scripts/menuvisibility_harness.mjs` crashes on the unchanged tree too (`i.gate.roles` undefined).
+
+**Changed outside the new files:**
+- `tests/nav/navregroup.test.mjs`: the frozen "org admin sees only Model Research in AI Models" now asserts the rule (every AI Models tab not gated to Super Admin).
+- `navregroup_server_gates.mjs`: a hand row for `/admin/ai-drift`.
+
+**Operator steps**
+1. Run `verify_s28.py` (regression: `verify_s27.py`, run by it).
+2. Redeploy the API and the scheduler (the scheduler must register the new action).
+3. Switch the job on: Security master → Platform jobs → "AI — drift monitor" → switch ON (Super Admin; audited). Until then, nothing alerts.
+4. Optionally, give low-volume tasks a per-task override (lower `min_recent`) on the Drift monitor page.
+5. Add the merge sha to `_verify_self.SPRINT_MERGES`, and refresh the schema snapshot.
+
+**UPDATE (fix 1, 2026-11-07).** The first full run was 150 PASS / 2 FAIL. The drift monitor itself passed, and both FAILs were VERIFY defects, so no code changed. (1, VERIFY) The alert-numbers check compared Decimals as text (`nums['recent'] == '0.0050'`). `ai_decision_log.cost_usd` is `numeric(10,6)`, so the stored medians read '0.005000' / '0.001000' (limit '0.0015000' = 0.001 x 1.5). The values were right and only the scale differed. The check now compares `Decimal(...) == Decimal('0.005')` / `Decimal('0.001')`, keeps recent_n 4, baseline_n 6, the rule and the link exactly, and prints the whole numbers dict on a failure. No other Decimal-as-text comparison exists in verify_s28. (2, VERIFY) verify_s27 (written before RLS was enforced) inserted `public.organizations` on the app_service connection with no context, which raised `InsufficientPrivilegeError` (organizations_self_or_super). The script also read and deleted org_settings / ai_decision_log unscoped, which RLS silently answers with zero rows, and it called the AI helpers with no request context, so the pool could not see the org's own chain. Now every fixture read and write goes through `platform()` (SET LOCAL app.is_super_admin, as in verify_s28). Fixture orgs are `is_test = true`. Every call and resolver runs under `set_rls_context(org, False)`. ai_decision_log is counted and deleted by fixture org ids only. Check 3 moved from the real default org to a fixture org with no ai.model.* rows (never write a real row), with its assertions unchanged. Every exit path ends in `[FAIL]` lines + `TOTAL: N PASS, M FAIL`; the old final line was '7/8 passed', so the nested check could never have passed. verify_s27 seeds no users, roles or audit_log, so none needed fixing. (2b, VERIFY, newly reached) s27's `HAIKU = 'claude-haiku-4-5-20251001'` was stale: litellmseedfix (201065f) deliberately renamed DEFAULT_SETTINGS' default / chain to the proxy deployment 'claude-haiku', and that sprint updated verify_litellmphased2 but not verify_s27. The constant now follows the current default. Proof (one-offs on fixtures, app_service, rolbypassrls false): the pre-fix bare org insert is reproduced as InsufficientPrivilegeError. verify_s27's own helpers seed 2 is_test orgs + 2 settings under RLS; the fall-through call logs primary-BROKEN -> backup with fallback_used; the no-settings org logs claude-haiku == claude-haiku, cost > 0; teardown leaves 0 / 0 / 0 by fixture ids (6 / 0). Patched no-connect and seeding-raises runs both end in `[FAIL]` + TOTAL, exit 1. The real ai_drift path (window_stats -> _rule -> _alert_numbers -> JSON) over costs cast to numeric(10,6) reproduces the stored dict exactly; the old text compare fails and the Decimal compare passes. `verify_s28 --self-checks-only` 16 / 0 (verify_s27 has no self-check mode). The full verify_s28.py / verify_s27.py / npm build were NOT re-run (WSL memory).
+
 ## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. REP13 — Replication Studio phase 4 begins: the tax-aware long/short extension (130/30, 150/50) on any custodian that declares margin, short selling and stock borrow; schema APPLIED; verify WRITTEN, not yet run (2026-11-07)
 
 Branch rep13-work. Full description: docs/REPLICATION_STUDIO.md, "rep13". Task 1 findings: docs/REP13_DISCOVERY.md.

@@ -14,6 +14,8 @@ from services.assistant_actions import (
 from services import spv_carry_runs
 # SECMASTER1 — the platform security-master jobs' Service Task verbs (Super Admin only; never listed to the assistant)
 from services import security_master_jobs
+# S28 — the AI drift monitor's Service Task verb (Super Admin only; never listed to the assistant)
+from services import ai_drift
 
 
 def register_all() -> None:
@@ -29,3 +31,4 @@ def register_all() -> None:
     spv_carry_runs.register_actions()
     edgar_ops.register_actions()
     security_master_jobs.register_actions()
+    ai_drift.register_actions()

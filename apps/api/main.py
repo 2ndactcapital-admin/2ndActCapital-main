@@ -49,6 +49,7 @@ from routers.replication_models import router as replication_models_router
 from routers.replication_options import router as replication_options_router
 from routers.security_data import router as security_data_router
 from routers.security_master import router as security_master_router  # SECMASTER1
+from routers.ai_drift import router as ai_drift_router  # S28 — AI drift monitor
 from routers.blocks import router as blocks_router
 from routers.replication_rep10 import router as replication_rep10_router
 from routers.rollup2 import router as rollup2_router
@@ -672,6 +673,7 @@ app.include_router(replication_models_router, prefix="/api/v1")
 app.include_router(replication_options_router, prefix="/api/v1")
 app.include_router(security_data_router, prefix="/api/v1")
 app.include_router(security_master_router, prefix="/api/v1")    # SECMASTER1 — security master (Super Admin)
+app.include_router(ai_drift_router, prefix="/api/v1")           # S28 — AI drift monitor (manage_org_settings / Super Admin)
 app.include_router(execution_router, prefix="/api/v1")
 app.include_router(blocks_router, prefix="/api/v1")    # rep9 — block trading
 app.include_router(replication_rep10_router, prefix="/api/v1")    # rep10 — tilts, completion, backtests

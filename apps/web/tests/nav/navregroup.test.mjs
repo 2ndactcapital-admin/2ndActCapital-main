@@ -126,8 +126,14 @@ test("tab bar: every visible tab of the group, the current one active; none off-
     ["Download", "Review queue", "Gold answers", "Accuracy results", "Volatility surface"]);
   assert.equal(tabBarModel(PERSONAS.super_admin, "/admin/platform"), null, "single-tab group: no bar");
   assert.equal(tabBarModel(PERSONAS.super_admin, "/dashboard"), null);
-  assert.equal(tabBarModel(PERSONAS.org_admin_manage_org_settings, "/admin/model-research"), null,
-    "org admin sees only Model Research in AI Models: no bar");
+  // The rule, not a frozen list (S28 added the Drift monitor tab, also manage_org_settings): an org admin's AI Models
+  // bar holds exactly the group's tabs whose gate is NOT Super Admin only — never Model Catalog / Model Jobs.
+  const oa = tabBarModel(PERSONAS.org_admin_manage_org_settings, "/admin/model-research");
+  const want = menu.MENU_ITEMS.filter((i) => i.group === "ai_models" && !i.comingSoon
+    && !(i.gate?.roles || []).includes(menu.SUPER_ADMIN)).map((i) => i.href);
+  const got = oa ? oa.tabs.map((t) => t.href) : ["/admin/model-research"];
+  assert.deepEqual([...got].sort(), [...want].sort(), "org admin: the AI Models tabs a non-Super-Admin may open");
+  assert.ok(got.includes("/admin/model-research") && !got.includes("/admin/model-catalog") && !got.includes("/admin/ai-jobs"));
   const html = renderToStaticMarkup(h(TabBar, { model: m }));
   assert.equal(hrefsIn(html).length, 6);
   assert.match(html, /<a [^>]*aria-current="page"[^>]*>Positions</);
