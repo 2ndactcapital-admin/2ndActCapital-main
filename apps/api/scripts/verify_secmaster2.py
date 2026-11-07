@@ -140,8 +140,10 @@ def self_static(check, find):
     check(bool("sec_mutual_funds" in load and not re.search(r"\bDELETE\s+FROM\b", load, re.I)),
           "the matcher knows the new source and still issues no DELETE FROM")
     summ = _read("apps/api/services/security_master_summary.py")
-    check(summ.count("await conn.fetch(") == 7 and "for r in rows" in summ,
-          "the summary is seven set queries (one per section), never a query per row", f"{summ.count('await conn.fetch(')}")
+    body = summ[summ.find("async def summary("):summ.find("async def securities(")]
+    check(body.count("await conn.fetch(") == 7 and "for r in rows" in body,
+          "summary() is seven set queries (one per section), never a query per row (the DB section counts the "
+          "statements it really issues)", f"{body.count('await conn.fetch(')} in summary()")
 
 
 def self_checks(check, find):
