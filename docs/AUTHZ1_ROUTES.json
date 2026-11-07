@@ -1,5 +1,5 @@
 {
- "app_route_count": 874,
+ "app_route_count": 878,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -12398,6 +12398,90 @@
    "name": "master_review_decision",
    "note": "",
    "path": "/api/v1/admin/security-data/master/review/{review_id}/decision",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_drift",
+   "name": "drift_overview",
+   "note": "",
+   "path": "/api/v1/admin/ai/drift",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_drift",
+   "name": "drift_task",
+   "note": "",
+   "path": "/api/v1/admin/ai/drift/tasks/{task_type}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_drift",
+   "name": "drift_thresholds",
+   "note": "",
+   "path": "/api/v1/admin/ai/drift/thresholds",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.ai_drift",
+   "name": "drift_set_threshold",
+   "note": "",
+   "path": "/api/v1/admin/ai/drift/thresholds",
    "public": false,
    "write": true
   },

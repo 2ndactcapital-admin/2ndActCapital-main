@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 867 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 871 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -28,6 +28,10 @@ Routes: 867 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
 | POST | `/api/v1/accounts/{account_id}/proposals/one-off` | account_models | guard:account_id, scrub |
 | GET | `/api/v1/admin/ai/daily-runs` | ai_ensembles | scrub |
 | POST | `/api/v1/admin/ai/daily-runs/{task_key}/run` | ai_ensembles | scrub |
+| GET | `/api/v1/admin/ai/drift` | ai_drift | scrub |
+| GET | `/api/v1/admin/ai/drift/tasks/{task_type}` | ai_drift | scrub |
+| GET | `/api/v1/admin/ai/drift/thresholds` | ai_drift | scrub |
+| PUT | `/api/v1/admin/ai/drift/thresholds` | ai_drift | scrub |
 | GET | `/api/v1/admin/ai/ensembles` | ai_ensembles | scrub |
 | POST | `/api/v1/admin/ai/ensembles` | ai_ensembles | scrub |
 | GET | `/api/v1/admin/ai/force-anthropic-bypass` | org_settings | scrub |

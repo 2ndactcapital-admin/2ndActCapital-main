@@ -1,0 +1,144 @@
+# S28 — ai_drift_check.py --dry-run against the LIVE decision log (read-only transaction), 2026-11-07
+# thresholds: platform defaults version 2 (min_baseline 20); no alert, todo or audit row was written
+
+$ python3 apps/api/scripts/ai_drift_check.py --dry-run
+[INFO] windows: recent 2026-11-06T20:22:07.179361+00:00 → 2026-11-07T20:22:07.179361+00:00 (24 h); baseline 2026-10-09T20:22:07.179361+00:00 → 2026-11-06T20:22:07.179361+00:00 (28 d)
+
+== assistant · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 21 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 21 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 21 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 21 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 21 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 21 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 21 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 21 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+== crm_extraction · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 77 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 77 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 77 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 77 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 77 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 77 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 77 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 77 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+== edgar_inventory · Hollisworks (bb347258-8f28-4f49-8cc9-e29ccad82884) — baseline 48 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 48 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 48 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 48 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 48 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 48 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 48 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 48 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+== edgar_inventory_grouping · Hollisworks (bb347258-8f28-4f49-8cc9-e29ccad82884) — baseline 8 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 8 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 8 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 8 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 8 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 8 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 8 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 8 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+== embedding_query · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 1 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 1 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 1 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 1 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 1 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 1 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 1 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 1 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+== member_brief · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 174 calls, recent 16 — OK
+   [OK          ] Cost per call: Cost per call: recent median $0.001724 (n=16) vs baseline $0.001484 (n=174); limit +50% = $0.002225.
+   [INSUFFICIENT] Latency (p95): Not enough data: 16 recent and 174 baseline calls (needs 20 and 20).
+   [OK          ] Fallback rate: Fallback rate: recent 0.0% (0/16) vs baseline 0.0% (0/174); rise +0.0 points, limit 10 points.
+   [INSUFFICIENT] Failure rate: Not enough data: 16 recent and 174 baseline calls (needs 20 and 20).
+   [OK          ] LiteLLM bypass rate: LiteLLM bypass rate: recent 0.0% (0/16) vs baseline 0.0% (0/174); rise +0.0 points, limit 10 points.
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [OK          ] Model change: Model change: every recent model was in the baseline (claude-sonnet).
+   [OK          ] Model mismatch: Model mismatch: none in 16 recent calls.
+   [DISABLED    ] Silence: Silence is switched off.
+
+== member_brief · Hollisworks (bb347258-8f28-4f49-8cc9-e29ccad82884) — baseline 2 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 2 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 2 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 2 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 2 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 2 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 2 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 2 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+== workflow_generation · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 4 calls, recent 0 — Not enough data
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 4 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 0 recent and 4 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 0 recent and 4 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 0 recent and 4 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 0 recent and 4 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 0 recent and 4 baseline calls (needs 1 and 20).
+   [INSUFFICIENT] Model mismatch: Not enough data: 0 recent and 4 baseline calls (needs 1 and 0).
+   [DISABLED    ] Silence: Silence is switched off.
+
+FINDINGS: 8 task/org pairs; disabled 8, insufficient 59, ok 5
+[INFO] dry run: no alert opened, refreshed or closed; no todo or audit row written
+
+# REPLAY of real past incidents (same script, --now injected, --task member_brief)
+$ ... --dry-run --task member_brief --now 2026-08-25T12:00:00Z / 2026-08-24T23:00:00Z / 2026-10-02T06:00:00Z
+[INFO] windows: recent 2026-08-24T12:00:00+00:00 → 2026-08-25T12:00:00+00:00 (24 h); baseline 2026-07-27T12:00:00+00:00 → 2026-08-24T12:00:00+00:00 (28 d)
+
+== member_brief · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 24 calls, recent 15 — Drift
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 24 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 15 recent and 24 baseline calls (needs 20 and 20).
+   [DRIFT       ] Fallback rate: Fallback rate: recent 100.0% (15/15) vs baseline 0.0% (0/24); rise +100.0 points, limit 10 points.
+   [INSUFFICIENT] Failure rate: Not enough data: 15 recent and 24 baseline calls (needs 20 and 20).
+   [OK          ] LiteLLM bypass rate: LiteLLM bypass rate: recent 0.0% (0/15) vs baseline 0.0% (0/24); rise +0.0 points, limit 10 points.
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [DRIFT       ] Model change: Model change: claude-haiku-4-5-20251001 ran in the recent window and never in the baseline (claude-sonnet-4-6).
+   [OK          ] Model mismatch: Model mismatch: none in 15 recent calls.
+   [DISABLED    ] Silence: Silence is switched off.
+
+FINDINGS: 1 task/org pairs; disabled 1, drift 2, insufficient 4, ok 2
+[INFO] dry run: no alert opened, refreshed or closed; no todo or audit row written
+[INFO] windows: recent 2026-08-23T23:00:00+00:00 → 2026-08-24T23:00:00+00:00 (24 h); baseline 2026-07-26T23:00:00+00:00 → 2026-08-23T23:00:00+00:00 (28 d)
+
+== member_brief · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 24 calls, recent 2 — Drift
+   [INSUFFICIENT] Cost per call: Not enough data: 0 recent and 24 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 2 recent and 24 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 2 recent and 24 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 2 recent and 24 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 2 recent and 24 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [DRIFT       ] Model change: Model change: claude-haiku-4-5-20251001 ran in the recent window and never in the baseline (claude-sonnet-4-6).
+   [OK          ] Model mismatch: Model mismatch: none in 2 recent calls.
+   [DISABLED    ] Silence: Silence is switched off.
+
+FINDINGS: 1 task/org pairs; disabled 1, drift 1, insufficient 6, ok 1
+[INFO] dry run: no alert opened, refreshed or closed; no todo or audit row written
+[INFO] windows: recent 2026-10-01T06:00:00+00:00 → 2026-10-02T06:00:00+00:00 (24 h); baseline 2026-09-03T06:00:00+00:00 → 2026-10-01T06:00:00+00:00 (28 d)
+
+== member_brief · 2nd Act Capital (00000000-0000-0000-0000-000000000001) — baseline 1 calls, recent 3 — OK
+   [INSUFFICIENT] Cost per call: Not enough data: 3 recent and 0 baseline calls (needs 5 and 20).
+   [INSUFFICIENT] Latency (p95): Not enough data: 3 recent and 1 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] Fallback rate: Not enough data: 3 recent and 1 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Failure rate: Not enough data: 3 recent and 1 baseline calls (needs 20 and 20).
+   [INSUFFICIENT] LiteLLM bypass rate: Not enough data: 3 recent and 1 baseline calls (needs 10 and 20).
+   [INSUFFICIENT] Effort downgrades: Not enough data: 0 recent and 0 baseline calls with an effort requested (needs 10 and 20).
+   [INSUFFICIENT] Model change: Not enough data: 3 recent and 1 baseline calls (needs 1 and 20).
+   [OK          ] Model mismatch: Model mismatch: none in 3 recent calls.
+   [DISABLED    ] Silence: Silence is switched off.
+
+FINDINGS: 1 task/org pairs; disabled 1, insufficient 7, ok 1
+[INFO] dry run: no alert opened, refreshed or closed; no todo or audit row written

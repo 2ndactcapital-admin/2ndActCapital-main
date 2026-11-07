@@ -769,6 +769,10 @@ export const activateAiEnsemble = (body) =>
 // now". Super Admin only, enforced by FastAPI. No org_id: platform-wide.
 export const getAiJobs = () => fetchAPI("/api/v1/admin/ai/jobs");
 export const getAiDailyRuns = () => fetchAPI("/api/v1/admin/ai/daily-runs");
+// S28 — AI drift monitor (manage_org_settings reads, scoped by the server; Super Admin edits thresholds)
+export const getAiDrift = () => fetchAPI("/api/v1/admin/ai/drift");
+export const getAiDriftTask = (taskType) => fetchAPI(`/api/v1/admin/ai/drift/tasks/${encodeURIComponent(taskType)}`);
+export const getAiDriftThresholds = () => fetchAPI("/api/v1/admin/ai/drift/thresholds");
 export const runAiDailyJobNow = (taskKey) =>
   fetchAPI(`/api/v1/admin/ai/daily-runs/${encodeURIComponent(taskKey)}/run`, { method: "POST" });
 

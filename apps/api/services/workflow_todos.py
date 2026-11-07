@@ -961,3 +961,65 @@ async def create_pending_user_alerts(conn, *, org_id, pending_user_id, email) ->
             )
         )
     return ids
+
+
+# ── S28: AI drift alerts ────────────────────────────────────────────────────
+#
+# The AI drift monitor (services.ai_drift) opens ONE governed alert per
+# (org, task, rule) in public.ai_drift_alerts; THIS is how people are told —
+# the same member_todos path a held platform-job run uses, never a new channel.
+# Recipients: the affected org's manage_org_settings holders (their own org's
+# AI), the platform org's manage_org_settings holders, and the Super Admin who
+# owns the job (the run's starter — exactly who a held run alerts). Keyed on
+# related_id = the alert id, so a later evaluation REFRESHES the same todo
+# (latest numbers) instead of adding one; closing the alert closes the todos.
+
+TODO_SOURCE_AI_DRIFT = "ai_drift"
+AI_DRIFT_RELATED_TYPE = "ai_drift_alert"
+AI_DRIFT_ALERT_UNDELIVERED_ACTION = "ai_drift_alert_undelivered"
+
+
+async def create_ai_drift_alert_todos(
+    conn, *, alert_org_id, alert_id, title: str, detail: str, link: str, platform_org_id, owner_ids=(),
+) -> list:
+    """Create / refresh the alert's todo for every recipient. Caller holds a
+    Super Admin context (the recipients span two orgs). Each todo is written in
+    the RECIPIENT's own org, so it shows on their own dashboard."""
+    by_org: dict[str, set[str]] = {str(alert_org_id): set(await _org_admin_recipients(alert_org_id))}
+    platform = by_org.setdefault(str(platform_org_id), set())
+    platform |= await _org_admin_recipients(platform_org_id)
+    if owner_ids:
+        rows = await conn.fetch(
+            "SELECT id, org_id FROM users WHERE id = ANY($1::uuid[])", [str(u) for u in owner_ids])
+        for r in rows:
+            by_org.setdefault(str(r["org_id"]), set()).add(str(r["id"]))
+    seen: set[str] = set()
+    ids = []
+    for org, users in by_org.items():
+        for uid in sorted(users):
+            if uid in seen:
+                continue
+            seen.add(uid)
+            ids.append(await _upsert_todo(
+                conn, org_id=org, user_id=uid, source=TODO_SOURCE_AI_DRIFT,
+                related_type=AI_DRIFT_RELATED_TYPE, related_id=alert_id, title=title[:300],
+                detail=detail[:2000], priority=6, action_key=link,
+            ))
+    if not ids:
+        await _record_undelivered_alert(
+            conn, org_id=alert_org_id, source=TODO_SOURCE_AI_DRIFT, related_type=AI_DRIFT_RELATED_TYPE,
+            related_id=alert_id,
+            reason="AI drift alert with no resolvable recipient: no manage_org_settings holder in the org or the "
+                   "platform org, and no job owner",
+            action=AI_DRIFT_ALERT_UNDELIVERED_ACTION,
+        )
+    return ids
+
+
+async def close_ai_drift_alert_todos(conn, *, alert_id, note: str) -> None:
+    """The alert closed — its open todos are marked done with the reason (kept, never deleted)."""
+    await conn.execute(
+        "UPDATE member_todos SET status = 'done', detail = left(coalesce(detail, '') || $2, 2000), "
+        "updated_at = now() WHERE source = $3 AND related_type = $4 AND related_id = $1::uuid AND status = 'open'",
+        str(alert_id), f" [Closed: {note}]", TODO_SOURCE_AI_DRIFT, AI_DRIFT_RELATED_TYPE,
+    )

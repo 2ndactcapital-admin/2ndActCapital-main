@@ -48,3 +48,4 @@ verify_visibility1.py
 verify_secmaster2.py
 verify_prices1.py
 verify_rep13.py
+verify_s28.py

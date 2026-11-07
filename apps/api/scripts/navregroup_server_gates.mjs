@@ -82,6 +82,10 @@ export const SERVER_GATES = {
   //   GET /api/v1/admin/ai/jobs, GET /api/v1/admin/ai/daily-runs,
   //   GET /api/v1/admin/ai/ensembles?task_key=… — each `super` in AUTHZ1_ROUTES.json.
   "/admin/ai-jobs": "super_admin",
+  // S28 — page.js calls lib/api.js (getAiDrift / getAiDriftThresholds / getAiDriftTask), so it names no /api/ path.
+  // Traced by hand: GET /api/v1/admin/ai/drift, /thresholds, /tasks/{task_type} — each require_permission(
+  // manage_org_settings) (Super Admin first) in routers/ai_drift.py; the PUT is Super Admin only.
+  "/admin/ai-drift": "rbac:manage_org_settings",
 };
 
 const isSuper = (me) => me?.account_role === "super_admin";
