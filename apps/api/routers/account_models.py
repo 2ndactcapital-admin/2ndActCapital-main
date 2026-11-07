@@ -159,8 +159,17 @@ class GenerateIn(_Body):
 
 
 def _raise(exc: Exception):
+    from services import long_short as LS
+    from services.custody.trading import ShortSaleNotDeclared
+
     if isinstance(exc, HTTPException):
         raise exc
+    if isinstance(exc, LS.LongShortNotFound):        # rep13
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, (LS.LongShortConflict, ShortSaleNotDeclared)):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, LS.LongShortError):
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if isinstance(exc, (AM.AccountModelNotFound, RP.ProposalNotFound, HT.HumanTaskNotFound)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, (AM.MakerCheckerViolation, RP.MakerCheckerViolation, HT.MakerCheckerError, PermissionError,

@@ -41,7 +41,13 @@ CAPABILITY_LABELS: dict[str, str] = {
     "custodian_tax_loss_harvesting": "Custodian tax-loss harvesting",
     "lot_level_cost_basis_feed": "Lot-level cost-basis feed",
     "held_away_aggregation": "Held-away aggregation",
+    # rep13 — long/short needs margin, short selling AND a stock-borrow source; the custodian's declared margin
+    # requirement (a fraction of the short value, e.g. '0.5000') or 'unknown' → "custodian to confirm"
+    "stock_borrow": "Stock borrow",
+    "margin_initial_pct": "Margin requirement — initial (fraction)",
+    "margin_maintenance_pct": "Margin requirement — maintenance (fraction)",
 }
+PCT_KEYS = ("margin_initial_pct", "margin_maintenance_pct")
 CAPABILITY_KEYS = tuple(CAPABILITY_LABELS)
 
 CUSTODIAN_LABELS: dict[str, str] = {
@@ -84,7 +90,18 @@ class Capability:
 def values_for(key: str) -> tuple[str, ...]:
     if key not in CAPABILITY_LABELS:
         raise CapabilityError(f"unknown capability {key!r}")
+    if key in PCT_KEYS:
+        return ("unknown",)          # or a fraction 0–1 (valid_value)
     return OPTIONS_LEVEL_VALUES if key == "options_level" else YES_NO_VALUES
+
+
+def valid_value(key: str, value: str) -> bool:
+    """rep13 — a margin-requirement key takes 'unknown' or a fraction 0–1 with at most 4 decimals (the CHECK)."""
+    import re
+
+    if key in PCT_KEYS:
+        return value == "unknown" or bool(re.fullmatch(r"0\.[0-9]{1,4}|1\.0{1,4}|1", value or ""))
+    return value in values_for(key)
 
 
 def available(value: str | Capability | None, *, at_least: int = 1) -> bool:
@@ -161,8 +178,9 @@ async def set_capability(conn, *, custodian_code: str, key: str, value: str, evi
     context (the platform write policy), which the API's middleware sets."""
     if not is_super_admin:
         raise CapabilityPermissionError("Super Admin required")
-    if value not in values_for(key):
-        raise CapabilityError(f"{CAPABILITY_LABELS[key]} takes one of {list(values_for(key))}, not {value!r}")
+    if not valid_value(key, value):
+        raise CapabilityError(f"{CAPABILITY_LABELS[key]} takes one of {list(values_for(key))}"
+                              + (" or a fraction such as 0.5000" if key in PCT_KEYS else "") + f", not {value!r}")
     if evidence_kind not in EVIDENCE_KIND_LABELS:
         raise CapabilityError(f"evidence kind must be one of {list(EVIDENCE_KIND_LABELS)}")
     if not (evidence or "").strip():

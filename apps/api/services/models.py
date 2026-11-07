@@ -239,12 +239,16 @@ async def tolerance_pct(conn, org_id) -> Decimal:
         return U.DEFAULT_TOLERANCE_PCT
 
 
-def check_name(name: str, source: str) -> str:
+def check_name(name: str, source: str, kind: str = "long_only") -> str:
     n = (name or "").strip()
     if not n:
         raise ModelError("a model needs a name")
     if len(n) > 200:
         raise ModelError("a model name is at most 200 characters")
+    if kind == "long_short":       # rep13 — Joe: every model is named "Holdings of …" (the CHECK agrees)
+        if not n.lower().startswith(RESERVED_PREFIX + " "):
+            raise ModelError('a long/short model is named "Holdings of …" (e.g. "Holdings of <sub-adviser> 130/30")')
+        return n
     if source != "fund_replica" and n.lower().startswith(RESERVED_PREFIX):
         raise ModelError("names beginning \"Holdings of\" are reserved for models built from a fund or a 13F filer "
                          "— choose another name")
@@ -559,12 +563,14 @@ async def _refresh_version(conn, version: dict, *, makers_add=None) -> dict:
 # ── models ──────────────────────────────────────────────────────────────────
 async def create_model(conn, *, org_id, actor_id, name: str, source: str, description: str | None = None,
                        base_currency: str = "USD", provider_name: str | None = None,
-                       library_entry_id=None) -> tuple[dict, EventRef]:
+                       library_entry_id=None, long_short: dict | None = None) -> tuple[dict, EventRef]:
     if source not in SOURCE_LABELS:
         raise ModelError(f"unknown model source {source!r}")
     if source == "fund_replica":
         raise ModelError("fund-replica models are created from the Replication registry (rep4), not here")
-    n = check_name(name, source)
+    if long_short is not None and source != "upload":
+        raise ModelError("a long/short model is an uploaded model (a sub-adviser's target weights)")
+    n = check_name(name, source, "long_short" if long_short else "long_only")
     cur = (base_currency or "USD").strip().upper()
     if len(cur) != 3 or not cur.isalpha():
         raise ModelError("base currency is a three-letter code, e.g. USD")
@@ -572,14 +578,22 @@ async def create_model(conn, *, org_id, actor_id, name: str, source: str, descri
                               "AND valid_to IS NULL AND system_to IS NULL", str(org_id), n)
     if dup:
         raise ModelConflict(f"a model named {n!r} already exists")
+    ls = long_short or {}
     mid = await conn.fetchval(
         f"INSERT INTO {T_MODEL} (org_id, name, description, source, status, base_currency, provider_name, "
-        "library_entry_id, created_by) VALUES ($1::uuid, $2, $3, $4, 'draft', $5, $6, $7::uuid, $8::uuid) RETURNING id",
+        "library_entry_id, created_by, kind, gross_long, gross_short, signal_source, signal_as_of, short_exclusions) "
+        "VALUES ($1::uuid, $2, $3, $4, 'draft', $5, $6, $7::uuid, $8::uuid, $9, $10, $11, $12, $13, $14::jsonb) "
+        "RETURNING id",
         str(org_id), n, (description or "").strip() or None, source, cur, (provider_name or "").strip() or None,
-        str(library_entry_id) if library_entry_id else None, str(actor_id) if actor_id else None)
+        str(library_entry_id) if library_entry_id else None, str(actor_id) if actor_id else None,
+        "long_short" if long_short else "long_only", ls.get("gross_long"), ls.get("gross_short"),
+        ls.get("signal_source"), ls.get("signal_as_of"), json.dumps(ls.get("short_exclusions") or []))
     model = dict(await conn.fetchrow(f"SELECT * FROM {T_MODEL} WHERE id = $1", mid))
     ref = await _event(conn, org_id=org_id, action="create_model", actor_id=actor_id, model_id=mid,
-                       detail={"name": n, "source": source})
+                       detail={"name": n, "source": source, **({"kind": "long_short",
+                               "gross_long": str(ls["gross_long"]), "gross_short": str(ls["gross_short"]),
+                               "signal_source": ls["signal_source"], "signal_as_of": ls["signal_as_of"].isoformat()}
+                               if long_short else {})})
     return model, ref
 
 
@@ -702,6 +716,8 @@ async def _resolve_sleeves(conn, org_id, parent_model: dict, sleeves: list[dict]
     total = Decimal(0)
     for s in sleeves:
         child = await load_model(conn, org_id, s["child_model_id"])
+        if child.get("kind") == "long_short":       # rep13
+            raise ModelError(f"{child['name']} is a long/short model — it is never a sleeve of a composite")
         if child["id"] in seen:
             raise ModelError(f"{child['name']} appears twice")
         seen.add(child["id"])
@@ -891,7 +907,11 @@ async def edit_positions(pool, *, org_id, actor_id, model_id, version_id, change
                 touched.add(rn)
             else:
                 raise ModelError("each change is an upsert or a remove")
-        rows, msgs = await U.validate_positions(conn, list(new.values()), tolerance_pct=tol, require_sum=False)
+        from services import long_short as LS      # rep13 — a long/short draft may carry negative weights
+
+        ls = await LS.model_kind(conn, model["id"])
+        rows, msgs = await U.validate_positions(conn, list(new.values()), tolerance_pct=tol, require_sum=False,
+                                                long_short=ls)
         errors = [m.as_dict() for m in msgs if m.severity == "error"]
         if errors:
             raise ModelError(f"{len(errors)} problem(s) — nothing was changed", errors)
@@ -943,6 +963,14 @@ async def submit(pool, *, org_id, actor_id, model_id, version_id) -> dict:
         if abs(eff - 1) > tol / 100:
             raise ModelError(f"the draft's weights sum to {U.pct_text(eff)}, not 100% (±{tol}%) — fix them before "
                              "submitting")
+        from services import long_short as LS      # rep13 — the long/short rules again, on the stored draft
+
+        ls = await LS.model_kind(conn, model["id"])
+        if ls is not None:
+            errs = await LS.validate_version(conn, version["id"], ls, tol)
+            if errs:
+                raise ModelError(f"{len(errs)} long/short problem(s) — fix them before submitting",
+                                 [{"code": c, "severity": "error", "text": t, "row": r} for c, r, t in errs])
     task = await HT.open_task(
         pool, org_id=org_id, kind=TASK_APPROVAL, subject_type=TASK_SUBJECT, subject_id=version["id"],
         maker_id=actor["id"], eligible_permission=APPROVE, title=_title(model, version),
@@ -1334,6 +1362,8 @@ async def list_library(conn, org_id) -> list[dict]:
             "live_version_no": r["live_version_no"], "positions": totals.get("positions"),
             "usage_count": int(r["usage_count"] or 0), "agreement_on_file": str(r["id"]) in agreed,
             "loaded_as": mine.get(str(r["id"]), []), "model_id": str(r["model_id"]) if r["shelf"] == "org" else None,
+            # rep13 — a long/short model is never published, so every library entry is long only
+            "kind": "long_only", "kind_label": "Long only",
         })
     return out
 
@@ -1361,6 +1391,9 @@ async def publish_entry(pool, *, org_id, actor_id, is_super_admin: bool, is_org_
         model = await load_model(conn, model_org, model_id)
         if model["source"] == "library_subscription" or model["source"] == "library_copy":
             raise ModelError("a model loaded from the library cannot be republished")
+        if model.get("kind") == "long_short":      # rep13 — platform-published models are rep15
+            raise ModelError(f"{model['name']} is a long/short model — it is not published to the library (a "
+                             "sub-adviser's weights stay with the org that holds the agreement)")
         if await live_approved(conn, model["id"]) is None:
             raise ModelConflict(f"{model['name']} has no approved version to publish")
         if await conn.fetchval(f"SELECT 1 FROM {T_LIB} WHERE model_id = $1 AND status = 'published' AND "
@@ -1673,7 +1706,8 @@ def _wizard(wb: U.Workbook, result: U.ParseResult | None, saved: dict | None, sh
     }
 
 
-async def _parse_upload(conn, *, org_id, up: dict, sheet, header_row, mapping, provider_name, fill_with_cash):
+async def _parse_upload(conn, *, org_id, up: dict, sheet, header_row, mapping, provider_name, fill_with_cash,
+                        long_short: dict | None = None):
     if up["outcome"] != "received" or not up["r2_key"]:
         raise ModelConflict(f"this upload is {up['outcome']} — upload the file again to continue")
     data = await run_in_threadpool(storage.download_bytes, up["r2_key"])
@@ -1688,8 +1722,25 @@ async def _parse_upload(conn, *, org_id, up: dict, sheet, header_row, mapping, p
     tol = await tolerance_pct(conn, org_id)
     result = await U.parse_and_validate(conn, wb, sheet=sheet, header_row=header_row, mapping=mapping,
                                         saved_mapping=(saved or {}).get("mapping"), fill_with_cash=fill_with_cash,
-                                        tolerance_pct=tol)
+                                        tolerance_pct=tol, long_short=long_short)
     return wb, result, saved
+
+
+async def _upload_long_short(conn, org_id, model_id, long_short: dict | None) -> dict | None:
+    """rep13 — the long/short declaration an upload is validated against: a NEW model's (from the request), or an
+    existing model's own (its kind decides; a request may not change it)."""
+    from services import long_short as LS
+
+    if model_id:
+        model = await load_model(conn, org_id, model_id)
+        own = await LS.model_kind(conn, model["id"])
+        if long_short and own is None:
+            raise ModelConflict(f"{model['name']} is a long-only model — a long/short model is a new model")
+        return own
+    try:
+        return LS.clean_model_spec(long_short)
+    except (LS.LongShortError, ValueError) as exc:
+        raise ModelError(str(exc)) from None
 
 
 def _saved_mapping_used(saved: dict | None, result: U.ParseResult):
@@ -1705,14 +1756,15 @@ def _saved_mapping_used(saved: dict | None, result: U.ParseResult):
 
 
 async def preview_upload(pool, *, org_id, upload_id, sheet=None, header_row=None, mapping=None, provider_name=None,
-                         fill_with_cash=False, model_id=None) -> dict:
+                         fill_with_cash=False, model_id=None, long_short: dict | None = None) -> dict:
     """Sheet → header row → mapping → validation report. Writes nothing."""
     async with pool.acquire() as conn:
         up, last = await upload_state(conn, org_id, upload_id)
+        ls = await _upload_long_short(conn, org_id, model_id, long_short)
         try:
             wb, result, saved = await _parse_upload(conn, org_id=org_id, up=up, sheet=sheet, header_row=header_row,
                                                     mapping=mapping, provider_name=provider_name,
-                                                    fill_with_cash=fill_with_cash)
+                                                    fill_with_cash=fill_with_cash, long_short=ls)
         except U.UploadRefused as exc:
             raise ModelError(exc.text, [U.Message(exc.code, "error", exc.text).as_dict()]) from None
         trad = await U.tradability(conn, org_id)
@@ -1728,7 +1780,7 @@ async def preview_upload(pool, *, org_id, upload_id, sheet=None, header_row=None
 
 async def confirm_upload(pool, *, org_id, actor_id, upload_id, sheet=None, header_row=None, mapping=None,
                          provider_name=None, fill_with_cash=False, model_id=None, model_name=None,
-                         description=None) -> dict:
+                         description=None, long_short: dict | None = None) -> dict:
     """Create the DRAFT (a new model, or a new version of ``model_id``) — or,
     if validation finds an error, log the upload 'rejected' with its row-level
     messages and refuse (422)."""
@@ -1742,10 +1794,11 @@ async def confirm_upload(pool, *, org_id, actor_id, upload_id, sheet=None, heade
             # PERMS1 (REP-10) — refused only while a live model references it; a re-opened upload (its model
             # removed, its draft abandoned) may create a draft again.
             raise ModelConflict(f"this upload is already {UPLOAD_OUTCOME_LABELS[last['event']].lower()}")
+        ls = await _upload_long_short(conn, org_id, model_id, long_short)     # rep13
         try:
             wb, result, saved = await _parse_upload(conn, org_id=org_id, up=up, sheet=sheet, header_row=header_row,
                                                     mapping=mapping, provider_name=provider_name,
-                                                    fill_with_cash=fill_with_cash)
+                                                    fill_with_cash=fill_with_cash, long_short=ls)
         except U.UploadRefused as exc:
             raise ModelError(exc.text, [U.Message(exc.code, "error", exc.text).as_dict()]) from None
         mapping_id = _saved_mapping_used(saved, result)
@@ -1764,7 +1817,7 @@ async def confirm_upload(pool, *, org_id, actor_id, upload_id, sheet=None, heade
                 model, r = await create_model(conn, org_id=org_id, actor_id=actor["id"],
                                               name=model_name or up["file_name"].rsplit(".", 1)[0], source="upload",
                                               description=description,
-                                              provider_name=provider_name or up["provider_name"])
+                                              provider_name=provider_name or up["provider_name"], long_short=ls)
                 refs.append(r)
             version = await _create_version(conn, org_id=org_id, model=model, origin="upload", maker_ids=[actor["id"]],
                                             created_by=actor["id"], positions=result.positions(), upload_id=up["id"],
@@ -1776,7 +1829,8 @@ async def confirm_upload(pool, *, org_id, actor_id, upload_id, sheet=None, heade
             refs.append(await _event(conn, org_id=org_id, action="create_draft", actor_id=actor["id"],
                                      model_id=model["id"], version_id=version["id"], upload_id=up["id"],
                                      detail={"origin": "upload", "file_name": up["file_name"], **result.counts,
-                                             "weight_basis": result.weight_basis}))
+                                             "weight_basis": result.weight_basis,
+                                             "kind": "long_short" if ls else "long_only"}))
             up, last = await upload_state(conn, org_id, up["id"])
     if rejected is not None:
         raise ModelError(f"{sum(1 for m in rejected.messages if m.severity == 'error')} validation error(s) — the "
@@ -1873,7 +1927,7 @@ async def upload_log(conn, org_id, *, outcome: str | None = None, provider: str 
                e.header_row, e.weight_basis, e.rows_read, e.rows_resolved, e.rows_unresolved, e.rows_cash,
                e.messages AS e_messages, e.actor_id AS decided_by, e.created_at AS decided_at, e.reason,
                e.mapping_id, COALESCE(du.full_name, du.email) AS decided_by_name, m.name AS model_name,
-               v.version_no
+               v.version_no, m.kind AS model_kind, m.gross_long AS model_gross_long, m.gross_short AS model_gross_short
         FROM {T_UP} u
         LEFT JOIN LATERAL (SELECT * FROM {T_UPE} x WHERE x.upload_id = u.id AND x.event = ANY($2::text[])
                            ORDER BY x.created_at DESC, x.id DESC LIMIT 1) e ON true
@@ -1919,6 +1973,10 @@ async def upload_log(conn, org_id, *, outcome: str | None = None, provider: str 
             "duplicate_of": str(r["duplicate_of"]) if r["duplicate_of"] else None,
             "model_id": str(r["e_model_id"] or r["model_id"]) if (r["e_model_id"] or r["model_id"]) else None,
             "model_name": r["model_name"], "version_id": str(r["e_version_id"]) if r["e_version_id"] else None,
+            "model_kind": r["model_kind"], "model_kind_label": None if r["model_kind"] is None else (
+                "Long/short" if r["model_kind"] == "long_short" else "Long only"),
+            "model_gross": None if r["model_kind"] != "long_short" else
+            f"{_num(r['model_gross_long'])} / {_num(r['model_gross_short'])}",
             "version_no": r["version_no"], "sheet_name": r["sheet_name"], "header_row": r["header_row"],
             "weight_basis": r["weight_basis"], "rows_read": r["rows_read"], "rows_resolved": r["rows_resolved"],
             "rows_unresolved": r["rows_unresolved"], "rows_cash": r["rows_cash"], "messages": msgs or [],
@@ -1985,7 +2043,13 @@ def model_out(m: dict) -> dict:
             "replica_security_id": str(m["replica_security_id"]) if m["replica_security_id"] else None,
             "disclosure": m.get("disclosure"),
             "library_entry_id": str(m["library_entry_id"]) if m["library_entry_id"] else None,
-            "created_at": _iso(m["created_at"])}
+            "created_at": _iso(m["created_at"]),
+            # rep13 — a long/short model: its gross pair, the signal source and the as-of of its weights
+            "kind": m.get("kind") or "long_only",
+            "kind_label": "Long/short" if m.get("kind") == "long_short" else "Long only",
+            "gross_long": _num(m.get("gross_long")), "gross_short": _num(m.get("gross_short")),
+            "signal_source": m.get("signal_source"), "signal_as_of": _iso(m.get("signal_as_of")),
+            "short_exclusions": _loads(m.get("short_exclusions")) or []}
 
 
 def position_out(p: dict) -> dict:

@@ -79,6 +79,10 @@ def sheet_rows(d: dict) -> list[tuple[str, str]]:
         ("Executing account", executing),
         ("Security", f"{sec.get('name') or ''}" + (f" ({ident})" if ident else "")),
         ("Side", d.get("side_label") or d.get("side")),
+        *([("Position effect", {"sell_short": "OPENING a short sale — the shares are borrowed (locate required "
+                                              "before the order)",
+                                "buy_to_cover": "CLOSING a short sale — the shares bought are returned to the lender"}
+            [d["side"]])] if d.get("side") in ("sell_short", "buy_to_cover") else []),
         ("Total quantity", f"{d['total_quantity']} shares"),
         ("Price guidance", price_text(d)),
         ("Execute by", d.get("execute_by")),

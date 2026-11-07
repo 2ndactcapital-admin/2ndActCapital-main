@@ -787,10 +787,11 @@ async def _plan(conn, org_id, instruction_ids: list, policy: dict | None, today:
 
 
 async def _crosses(conn, org_id, global_security_id, side: str, execute_by: date, exclude=None) -> list[str]:
-    other = "sell" if side == "buy" else "buy"
+    # rep13 — the opposite DIRECTION: a buy / cover crosses a sell / short, and the reverse
+    other = ["sell", "sell_short"] if side in ("buy", "buy_to_cover") else ["buy", "buy_to_cover"]
     rows = await conn.fetch(
         f"SELECT id FROM {T_BLK} WHERE org_id = $1::uuid AND system_to IS NULL AND global_security_id = $2::uuid "
-        "AND side = $3 AND execute_by = $4 AND status = ANY($5::text[]) AND id <> COALESCE($6::uuid, "
+        "AND side = ANY($3::text[]) AND execute_by = $4 AND status = ANY($5::text[]) AND id <> COALESCE($6::uuid, "
         "'00000000-0000-0000-0000-000000000000'::uuid)",
         str(org_id), str(global_security_id), other, execute_by, list(LIVE_STATUSES),
         str(exclude) if exclude else None)

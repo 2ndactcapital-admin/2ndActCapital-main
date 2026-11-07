@@ -1,5 +1,5 @@
 {
- "app_route_count": 860,
+ "app_route_count": 874,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -15179,6 +15179,310 @@
    "name": "reject",
    "note": "",
    "path": "/api/v1/proposals/{proposal_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.long_short",
+   "name": "account_panel",
+   "note": "",
+   "path": "/api/v1/long-short/accounts/{account_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_tax",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_tax"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.long_short",
+   "name": "tax_estimate",
+   "note": "",
+   "path": "/api/v1/long-short/accounts/{account_id}/tax-estimate",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.long_short",
+   "name": "borrow_rates",
+   "note": "",
+   "path": "/api/v1/long-short/borrow-rates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz view_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "view_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.long_short",
+   "name": "proposal_details",
+   "note": "",
+   "path": "/api/v1/long-short/proposals/{proposal_id}",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.long_short",
+   "name": "save_draft",
+   "note": "",
+   "path": "/api/v1/long-short/accounts/{account_id}/settings/draft",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "save",
+   "note": "",
+   "path": "/api/v1/long-short/accounts/{account_id}/settings",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "record_margin",
+   "note": "",
+   "path": "/api/v1/long-short/accounts/{account_id}/margin-agreement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "remove_margin",
+   "note": "",
+   "path": "/api/v1/long-short/accounts/{account_id}/margin-agreement/remove",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "approve_margin",
+   "note": "",
+   "path": "/api/v1/long-short/margin-agreements/{record_id}/approve",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz approve_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "approve_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "reject_margin",
+   "note": "",
+   "path": "/api/v1/long-short/margin-agreements/{record_id}/reject",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "enter_org_rate",
+   "note": "",
+   "path": "/api/v1/long-short/borrow-rates",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "enter_platform_rate",
+   "note": "",
+   "path": "/api/v1/long-short/borrow-rates/platform",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "acknowledge",
+   "note": "",
+   "path": "/api/v1/long-short/proposals/{proposal_id}/acknowledge",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_proposals",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_proposals"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.long_short",
+   "name": "execute",
+   "note": "",
+   "path": "/api/v1/long-short/proposals/{proposal_id}/execute",
    "public": false,
    "write": true
   },

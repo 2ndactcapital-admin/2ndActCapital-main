@@ -12,7 +12,7 @@ is true, who is not Super Admin and not org admin. For everyone else every route
 | legacy-rule | uses the legacy resolver, which follows the rule when the switch is on |
 | scrub | the JSON response has every row of an invisible family removed (backstop on EVERY route) |
 
-Routes: 853 · guarded 193 · sql-scope 43 · body-check 4 · legacy-rule 2
+Routes: 867 · guarded 199 · sql-scope 43 · body-check 4 · legacy-rule 2
 
 | method | path | module | visibility |
 |---|---|---|---|
@@ -526,6 +526,20 @@ Routes: 853 · guarded 193 · sql-scope 43 · body-check 4 · legacy-rule 2
 | GET | `/api/v1/ledger/trial-balance` | ledger | scrub |
 | PATCH | `/api/v1/liabilities/{liability_id}` | crm_detail | guard:liability_id, scrub |
 | POST | `/api/v1/liabilities/{liability_id}/end` | crm_detail | guard:liability_id, scrub |
+| GET | `/api/v1/long-short/accounts/{account_id}` | long_short | guard:account_id, scrub |
+| POST | `/api/v1/long-short/accounts/{account_id}/margin-agreement` | long_short | guard:account_id, scrub |
+| POST | `/api/v1/long-short/accounts/{account_id}/margin-agreement/remove` | long_short | guard:account_id, scrub |
+| POST | `/api/v1/long-short/accounts/{account_id}/settings` | long_short | guard:account_id, scrub |
+| PUT | `/api/v1/long-short/accounts/{account_id}/settings/draft` | long_short | guard:account_id, scrub |
+| GET | `/api/v1/long-short/accounts/{account_id}/tax-estimate` | long_short | guard:account_id, scrub |
+| GET | `/api/v1/long-short/borrow-rates` | long_short | scrub |
+| POST | `/api/v1/long-short/borrow-rates` | long_short | scrub |
+| POST | `/api/v1/long-short/borrow-rates/platform` | long_short | scrub |
+| POST | `/api/v1/long-short/margin-agreements/{record_id}/approve` | long_short | scrub |
+| POST | `/api/v1/long-short/margin-agreements/{record_id}/reject` | long_short | scrub |
+| GET | `/api/v1/long-short/proposals/{proposal_id}` | long_short | scrub |
+| POST | `/api/v1/long-short/proposals/{proposal_id}/acknowledge` | long_short | scrub |
+| POST | `/api/v1/long-short/proposals/{proposal_id}/execute` | long_short | scrub |
 | GET | `/api/v1/lot-method/accounts/{account_id}` | lot_method | guard:account_id, scrub |
 | POST | `/api/v1/lot-method/accounts/{account_id}/changes` | lot_method | guard:account_id, scrub |
 | POST | `/api/v1/lot-method/changes/{change_id}/approve` | lot_method | scrub |

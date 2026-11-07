@@ -64,7 +64,8 @@ export default async function AccountPage({ params }) {
   const holdings = Array.isArray(heldAway?.positions?.positions) ? heldAway.positions.positions : [];
   return (
     <AppShell user={session.user}>
-      <p className="text-sm"><a className="text-navy underline" href="/portfolio/accounts">Accounts</a></p>
+      <p className="text-sm"><a className="text-navy underline" href="/portfolio/accounts">Accounts</a>
+        {" · "}<a className="text-navy underline" href={`/portfolio/accounts/${id}/long-short`}>Long/short</a></p>
       <h1 className="mt-1 text-3xl font-semibold text-navy">Account</h1>
       <div className="mt-4">
         {error ? (

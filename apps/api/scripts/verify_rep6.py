@@ -371,8 +371,46 @@ async def scoped(conn, org, sql, *args, fetch="fetch"):
         return await getattr(conn, fetch)(sql, *args)
 
 
+#: REP13 (visibility1 fix 1's rule, docs/VERIFY_RULES.md rule 6) — tables real activity writes to at any time (the
+#: nightly portfolio refresh ~07:00 UTC, real users' tasks / notifications / events, the security-master jobs) are
+#: counted over THIS RUN'S FIXTURE rows only — fixture orgs, fixture users, ids under the fixture prefix, the fixture
+#: security names. A whole-table count reported real rows written mid-run as this verify's own leftovers.
+FIXTURE_ID_PREFIX = "99000000-0000-0000-0000-0000000e6"
+
+
+def _fixture_scope(table: str) -> str | None:
+    orgs = "ARRAY[" + ", ".join(f"'{o}'" for o in FIXTURE_ORGS) + "]::uuid[]"
+    users = "ARRAY[" + ", ".join(f"'{u}'" for u in USERS) + "]::uuid[]"
+    names = "ARRAY[" + ", ".join("'" + n.replace("'", "''") + "'" for n in SEC_NAMES.values()) + "]::text[]"
+    by_org = f"org_id = ANY({orgs})"
+    return {
+        "public.audit_log": f"org_id = ANY({orgs}) OR user_id = ANY({users}) OR resource_id::text LIKE "
+                            f"'{FIXTURE_ID_PREFIX}%'",
+        "public.member_todos": f"org_id = ANY({orgs}) OR user_id = ANY({users})",
+        "public.domain_events": by_org, "public.domain_event_deliveries": by_org,
+        "public.workflow_definitions": by_org, "public.workflow_versions": by_org, "public.workflow_steps": by_org,
+        "public.workflow_runs": by_org, "public.workflow_run_steps": by_org,
+        "public.users": f"org_id = ANY({orgs}) OR id = ANY({users})",
+        "public.user_roles": f"user_id = ANY({users})",                 # SECMASTER2 FIX 1: by fixture user
+        "public.roles": by_org, "public.role_permissions": f"role_id IN (SELECT id FROM public.roles WHERE {by_org})",
+        "public.organizations": f"id = ANY({orgs})",
+        "public.entities": by_org, "public.households": by_org, "public.accounts": by_org,
+        "public.account_balances_daily": by_org, "public.org_settings": by_org,
+        "portfolio.assets": by_org, "portfolio.positions": by_org, "portfolio.tax_lots": by_org,
+        "portfolio.transactions": by_org,
+        "portfolio.securities_global": f"name = ANY({names})",
+        "portfolio.securities_global_identifiers": f"global_security_id IN (SELECT id FROM portfolio.securities_global "
+                                                   f"WHERE name = ANY({names}))",
+    }.get(table)
+
+
 async def counts(conn) -> dict:
-    return {t: int(await platform(conn, f"SELECT count(*) FROM {t}", fetch="fetchval")) for t in COUNTED}
+    out = {}
+    for t in COUNTED:
+        where = _fixture_scope(t)
+        out[t] = int(await platform(conn, f"SELECT count(*) FROM {t}" + (f" WHERE {where}" if where else ""),
+                                    fetch="fetchval"))
+    return out
 
 
 async def fingerprint(conn, sql, *args) -> tuple[int, str]:
@@ -461,6 +499,7 @@ async def teardown(_conn=None) -> list[str]:
         by_org = "org_id = ANY($1::uuid[])"
         org_or_user = ("org_id = ANY($1::uuid[]) OR user_id = ANY($2::uuid[])", [orgs, users])
         plan = {
+            "public.user_roles": ("user_id = ANY($1::uuid[])", [users]),   # REP13 / SECMASTER2 FIX 1: by fixture user
             "public.harvest_candidates": (by_org, [orgs]),
             "public.harvest_runs": (by_org, [orgs]),
             "public.loss_bank_entries": (by_org, [orgs]),
@@ -814,6 +853,30 @@ async def y_seed_literals(conn):
           "the fixture registration / tax_status literals classify as intended (taxable, IRA, unknown sentinel)")
 
 
+async def check_fixture_roles(conn) -> bool:
+    """REP13 (secmaster2 fix 1's rule) — each fixture user's role AS THE APP DECIDES IT (user_roles, read by
+    rbac.load_principal and the services.authz Principal) is the one the fixture means, and users.role mirrors it. A
+    string-only seed fails here, at the seed, instead of as 403s far downstream."""
+    from services import authz as _AZ
+
+    bad = []
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for uid, (org, account_role, _nm, rname, _full) in USERS.items():
+            names = [r["name"] for r in await conn.fetch(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND "
+                "r.org_id = $2", uid, org)]
+            lp = await rbac.load_principal(conn, uid)
+            pr = await _AZ.load_principal(conn, uid)
+            want_super = rname == "super_admin"
+            ok = ((rname is None or rname in names) and rbac.mirrored_role_string(names) == account_role
+                  and rbac.is_super_admin(lp) is want_super and bool(pr and pr.is_super_admin) is want_super)
+            if not ok:
+                bad.append((str(uid), names, account_role, bool(pr and pr.is_super_admin)))
+    return check(not bad, "every fixture role is a user_roles grant the app decides from (Super Admin / org admin as "
+                 "meant), users.role its mirror", f"{bad}")
+
+
 async def seed(conn) -> None:
     anchor_seed_dates()
     async with conn.transaction():
@@ -842,11 +905,12 @@ async def seed(conn) -> None:
                 "INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active) "
                 "VALUES ($1, $2, $3, $4, $5, $6, 'active', true)",
                 uid, org, email_of(uid), full, sub_of(uid), account_role)
+            # REP13 (secmaster2 fix 1's rule) — since BUGFIX4 user_roles is the ONE role source (users.role only
+            # mirrors it): every fixture role is a real user_roles grant through the app's own helpers
             if rname == "org_admin":
                 await rbac.grant_org_admin(conn, uid, org)
             elif rname:
-                await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", uid,
-                                   roles[(org, rname)])
+                await rbac.grant_named_role(conn, uid, org, rname)
         for ent, org, nm in ((ENT_A, ORG_A, "Spouse One"), (ENT_A2, ORG_A, "Spouse Two"), (ENT_SOLO, ORG_A, "Solo"),
                              (ENT_LB, ORG_A, "Ledger"), (ENT_B, ORG_B, "Org B"), (ENT_RACE, ORG_A, "Race")):
             await conn.execute("INSERT INTO entities (id, org_id, entity_type, display_name) VALUES ($1, $2, "
@@ -2117,6 +2181,7 @@ async def main_async() -> int:
         await run("seed literals", y_seed_literals, conn)
         if S.get("instrument_class"):
             await run("seed", seed, conn)
+            await run("fixture roles", check_fixture_roles, conn)       # REP13 (secmaster2 fix 1's seed-time check)
         else:
             check(False, "seed skipped: no catalog instrument class for the registry fixtures")
         if S.get("m3"):

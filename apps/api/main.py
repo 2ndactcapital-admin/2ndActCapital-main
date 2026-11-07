@@ -57,6 +57,7 @@ from routers.replication_note_checks import router as replication_note_checks_ro
 from routers.tax_gifts import router as tax_gifts_router
 from routers.execution import router as execution_router
 from routers.account_models import router as account_models_router
+from routers.long_short import router as long_short_router  # REP13
 from routers.tax import router as tax_router
 from routers.held_away import router as held_away_router
 from routers.xray import router as xray_router
@@ -681,6 +682,7 @@ app.include_router(replication_note_checks_router, prefix="/api/v1")
 app.include_router(replication_notes_router, prefix="/api/v1")    # rep11 — structured notes
 app.include_router(tax_gifts_router, prefix="/api/v1")    # rep10 — charitable lot gifting
 app.include_router(account_models_router, prefix="/api/v1")
+app.include_router(long_short_router, prefix="/api/v1")  # REP13 — the long/short extension
 app.include_router(tax_router, prefix="/api/v1")
 app.include_router(held_away_router, prefix="/api/v1")
 app.include_router(xray_router, prefix="/api/v1")

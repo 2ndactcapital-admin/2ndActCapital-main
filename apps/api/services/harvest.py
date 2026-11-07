@@ -273,6 +273,11 @@ async def scan_account(pool, *, org_id, account_id, today: date | None = None) -
         link = await AM.active_link(conn, account["id"])
         if link is None or AM.is_closed(account, today):
             return {"action": "none", "reason": "no active link"}
+        from services import long_short as LS     # rep13 — both books are harvested inside the long/short proposal
+
+        if await LS.model_kind(conn, link["model_id"]) is not None:
+            return {"action": "none", "reason": "a long/short account — both books are harvested inside its "
+                                                "long/short proposals (made by a person)"}
         if not link.get("harvest_enabled"):
             return {"action": "none", "reason": "harvesting is off for this account (harvest_enabled is an opt-in "
                                                 "link setting, default false)"}

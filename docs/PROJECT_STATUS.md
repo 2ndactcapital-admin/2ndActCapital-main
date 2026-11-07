@@ -342,6 +342,44 @@ This file starts with the email item below.
 ---
 
 
+## 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. REP13 — Replication Studio phase 4 begins: the tax-aware long/short extension (130/30, 150/50) on any custodian that declares margin, short selling and stock borrow; schema APPLIED; verify WRITTEN, not yet run (2026-11-07)
+
+Branch rep13-work. Full description: docs/REPLICATION_STUDIO.md, "rep13". Task 1 findings: docs/REP13_DISCOVERY.md.
+
+**What was built**
+- **Schema.** `docs/rep13_part1.sql`, APPLIED (`_apply_rep13.py --verify`: SCHEMA OK).
+  - New capability keys `stock_borrow`, `margin_initial_pct` and `margin_maintenance_pct`, seeded `unknown` for altruist / manual.
+  - New tables: `suitability_records` (the margin agreement, maker-checker), `long_short_settings`, `borrow_rates` (platform + org) and `long_short_proposals`.
+  - `portfolio.models`: kind, gross pair, signal source, as-of, never-short list. Negative weights are allowed only on a long/short model (enforced by a trigger).
+  - Sides `sell_short` / `buy_to_cover` on proposal trades, instructions and blocks.
+  - RLS on every operation.
+- **Services.** `services/long_short_rules.py` (pure: both books, borrow, the cost comparison, tracking error, IRC §1233 short-term, §1259, §1091(e), disclosures) and `services/long_short.py`.
+- **Hooks into existing code.**
+  - rep5 generate / submit / approval precheck / execute.
+  - rep3 upload / edit / submit.
+  - rep2 `create_instructions`: the §1259 check and the eligibility check run on every SELL SHORT.
+  - `route_trade_list`: the adapter refuses an undeclared short; the manual route is always available.
+  - Order sheet; harvest and drift sweeps skip long/short accounts; the join gate.
+- **Routes and UI.** 14 routes; AUTHZ1_ROUTES and VISIBILITY1_ROUTES regenerated (`--check` CURRENT). Web: Account → Long/short, and the long/short panel on a proposal (`lib/longShort.mjs` fails closed). `tests/replication/rep13.test.mjs`: 8/8.
+
+**No live custodian declares margin, short selling or stock borrow.** Altruist is unknown; Schwab, Fidelity, Pershing and IBKR have no capability rows. So no real account can go long/short until a Super Admin records evidenced capabilities.
+
+**verify_rep6.py changed** (it is the regression for this sprint):
+- It counts audit_log, member_todos, domain_events, workflow_*, users, user_roles, roles, accounts, positions, lots, transactions, assets, balances, org_settings and securities by FIXTURE rows only. This is the visibility1 fix 1 rule.
+- It seeds roles through `rbac.grant_named_role` / `grant_org_admin`, with a seed-time `check_fixture_roles`, and its teardown plans user_roles by fixture user. This is the secmaster2 fix 1 rule.
+
+**Not run:** verify_rep13.py, verify_rep6.py, npm build (WSL memory).
+
+**UPDATE (fix 1, 2026-11-07).** The first full run was 175 PASS / 10 FAIL; verify_rep6.py 188 PASS / 0 FAIL. All 10 were VERIFY defects; no code changed. (A, 6 FAILs, VERIFY, proven) The direct service reads (borrow_rates_for, load_account + constructive_sale_check, instruction_sheet_dict, short_book, tracking_error) entered `_ctx` AFTER `(await get_pool()).acquire()`. The wrapped pool applies the org GUCs from the contextvars once, at acquire, so those transactions ran with `app.current_org_id = ''`: platform rows visible, org rows hidden. The read-only proof as app_service (rolbypassrls false): acquire then ctx gave GUC '' and 3 users (the carve-out only); ctx then acquire, the route's order, gave the org and 18 users. The services set no org context of their own by contract, exactly as the routes call them, so it is not CODE. All 6 sites now enter `_ctx` first, and `_ctx` documents the order. (B, 4 FAILs, VERIFY) rep3's duplicate guard, keyed on (org, sha256) of a `received` upload that a live model references, answers 409 at confirm BEFORE validation, by design and unchanged. rep13_neg.csv, the excluded-short case and rep13_name.csv were byte-identical to rep13_m1.csv. Each now lists M1's exact rows in its own order (so the same rule fires), and a new check asserts the four hashes differ. (C, 1 FAIL, VERIFY) The render-test count matched title prefixes across the whole node suite (8 + 4 other files = 12). It now runs tests/replication/rep13.test.mjs by path: `# tests 8`, pass 8, fail 0, no 'not ok'. (D, VERIFY, newly reached after A) The account-panel check compared signed_quantity with the text '-375'; the API returns '-375.00000000'. It now compares the exact Decimal −375 and requires the minus sign. Proof: a one-off driving verify_rep13's own main_async on fixtures gave 195 PASS / 0 FAIL. It ran without the rep6 regression (VERIFY_NESTED=1) and without npm build, and with the whole-suite `node --test tests/` stubbed (rep13's file ran for real). Results: org A reads its own SC 50 bps (org) and the platform SD 300, never org B's 999, no SE; load_account finds ACC_LS2 and the §1259 read covers the held-away account; the order sheet prints SELL SHORT / 'OPENING a short sale'; the 400-day cover is a $400 SHORT-TERM gain; the harvest covers 60 SC naming its open lot and re-shorts XS, −$240 short-term; the three uploads are 422 (weight_negative, ls_short_excluded, 'Holdings of'), with every bad upload logged 'rejected'; exactly 8 rep13 render tests. Zero fixture rows remained, counted tables were at their pre-test counts, real rows unchanged. `--self-checks-only` 12 / 0. The full verify_rep13.py / verify_rep6.py / npm build were NOT re-run (WSL memory). Noted, not fixed: the Long/short panel prints signed_quantity raw ('-375.00000000').
+
+**Open for Joe:** signal source (sub-adviser weights assumed); which custodian first; default limits for 2nd Act's members; overlay bps; counsel on the §1259 identical rule.
+
+**Operator steps**
+1. Run verify_rep13.py.
+2. Add the merge sha to `_verify_self.SPRINT_MERGES`.
+3. Refresh the schema snapshot.
+4. Redeploy the API and the scheduler.
+
 ## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. PRICES1 — end-of-day prices: the price receptor (a documented plug-in contract), the first free source (Yahoo, internal only), store + coverage with reasons, the operator backfill, the prices job, readers that compute; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
 
 **Branch** `prices1-work`. Discovery: `docs/PRICES1_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md` ("PRICES1").
