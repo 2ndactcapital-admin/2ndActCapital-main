@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { amountText, decimalString, instructionControls, labelOf, priceText, securityText, vocab } from "@/lib/execution.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -270,29 +271,28 @@ export function LetterPanel({ envelope }) {
   const c = instructionControls(envelope);
   const [full, setFull] = useState(false);
   const [number, setNumber] = useState("");
-  const [msg, setMsg] = useState(null);
+  const letter = useBusy(); // CATCHALL1 busy — Download letter
   if (!c.letter) return null;
-  async function download() {
-    setMsg(null);
+  const download = () => letter.run(async () => {
     const res = await fetch(`/api/execution/instructions/${d.id}/letter`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(full ? { include_full_number: true, full_account_number: number } : {}),
     });
-    if (!res.ok) { const data = await res.json().catch(() => ({})); setMsg(data.error || "Could not generate the letter"); return; }
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || "Could not generate the letter"); }
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url; a.download = `letter-of-instruction-${String(d.id).slice(0, 8)}.pdf`; a.click();
     URL.revokeObjectURL(url);
     setNumber("");
-  }
+  });
   return (
     <div className={`${card} p-6 text-sm`}>
       <h2 className="text-lg font-semibold text-navy">Letter of instruction</h2>
       <p className="mt-1 text-text-muted">Generated from this instruction when you ask for it. The account number is masked unless you choose otherwise; that choice is recorded.</p>
       <label className="mt-3 flex items-center gap-2"><input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} />Include the full account number</label>
       {full ? <input className={`${input} mt-2`} autoComplete="off" placeholder="Type the full account number" value={number} onChange={(e) => setNumber(e.target.value)} /> : null}
-      <div className="mt-3"><button type="button" className={primary} onClick={download}>Download letter</button></div>
-      {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
+      <div className="mt-3"><BusyButton busy={letter.busy} busyLabel="Generating…" className={primary} onClick={download}>Download letter</BusyButton></div>
+      <BusyError error={letter.error} className="mt-2 block text-[#9B2335]" />
     </div>
   );
 }
@@ -307,28 +307,27 @@ export function OrderSheetPanel({ envelope }) {
   const d = envelope?.instruction || {};
   const c = instructionControls(envelope);
   const [reason, setReason] = useState("");
-  const [msg, setMsg] = useState(null);
+  const sheet = useBusy(); // CATCHALL1 busy — Print order execution sheet
   if (!c.orderSheet) return null;
-  async function download() {
-    setMsg(null);
+  const download = () => sheet.run(async () => {
     const res = await fetch(`/api/execution/blocks/instructions/${d.id}/sheet`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(reason ? { manual_reason: reason } : {}),
     });
-    if (!res.ok) { const data = await res.json().catch(() => ({})); setMsg(data.error || "Could not generate the sheet"); return; }
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || "Could not generate the sheet"); }
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url; a.download = `order-execution-sheet-${String(d.id).slice(0, 8)}.pdf`; a.click();
     URL.revokeObjectURL(url);
-  }
+  });
   return (
     <div className={`${card} p-6 text-sm`}>
       <h2 className="text-lg font-semibold text-navy">Order execution sheet</h2>
       <p className="mt-1 text-text-muted">Print it and give it to the broker of your choice; enter the fills by hand. Masked account reference, no member names.</p>
       {d.block ? <p className="mt-1">In block <a className="text-navy underline" href={`/portfolio/blocks/${d.block.block_id}`}>{String(d.block.block_id).slice(0, 8)}</a>.</p> : null}
       <input className={`${input} mt-2`} placeholder="Why manual (asked when an automated route is available)" value={reason} onChange={(e) => setReason(e.target.value)} />
-      <div className="mt-3"><button type="button" className={primary} onClick={download}>Print order execution sheet</button></div>
-      {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
+      <div className="mt-3"><BusyButton busy={sheet.busy} busyLabel="Generating…" className={primary} onClick={download}>Print order execution sheet</BusyButton></div>
+      <BusyError error={sheet.error} className="mt-2 block text-[#9B2335]" />
     </div>
   );
 }

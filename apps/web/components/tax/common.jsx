@@ -6,6 +6,7 @@
  * Next.js API route, and the POST helper. Light theme, existing tokens.
  */
 
+import { useTypeahead } from "@/components/ui/useTypeahead";
 import { useState } from "react";
 import { estimateText, ratesTitle } from "@/lib/tax.mjs";
 
@@ -38,26 +39,25 @@ export function Estimate({ value, note, rates }) {
 }
 
 export function SecurityPicker({ value, onChange, placeholder = "Search a security (name or ticker)" }) {
-  const [q, setQ] = useState("");
-  const [rows, setRows] = useState([]);
-  const [err, setErr] = useState(null);
-  async function search() {
-    setErr(null);
-    try {
-      const d = await get(`tax/securities?q=${encodeURIComponent(q)}`);
-      setRows(Array.isArray(d.rows) ? d.rows : []);
-    } catch (e) { setErr(e.message); }
-  }
+  // CATCHALL1 — searches on ANY change of the box (typed, pasted, autofilled) through the shared typeahead; the
+  // Search button stays for an explicit re-run
+  const t = useTypeahead(async (q) => {
+    const d = await get(`tax/securities?q=${encodeURIComponent(q)}`);
+    return Array.isArray(d.rows) ? d.rows : [];
+  });
+  const rows = t.hits;
+  const err = t.error;
   return (
     <div className="space-y-1">
       <div className="flex gap-2">
-        <input className={input} value={q} placeholder={placeholder} onChange={(e) => setQ(e.target.value)} />
-        <button type="button" className={secondary} onClick={search}>Search</button>
+        <input className={input} value={t.query} placeholder={placeholder} autoComplete="off"
+          onChange={(e) => t.setQuery(e.target.value)} onInput={(e) => t.setQuery(e.target.value)} />
+        <button type="button" className={secondary} onClick={t.rerun}>Search</button>
       </div>
       {value ? <p className="text-xs text-text-muted">Chosen: {value.label || value.id}</p> : null}
       {rows.length ? (
         <ul className="text-sm">{rows.map((r) => (
-          <li key={r.id}><a className="text-navy underline" href="#" onClick={(e) => { e.preventDefault(); onChange({ id: r.id, label: r.ticker ? `${r.name} (${r.ticker})` : r.name }); setRows([]); }}>
+          <li key={r.id}><a className="text-navy underline" href="#" onClick={(e) => { e.preventDefault(); onChange({ id: r.id, label: r.ticker ? `${r.name} (${r.ticker})` : r.name }); t.reset(); }}>
             {r.name}{r.ticker ? ` (${r.ticker})` : ""}</a></li>
         ))}</ul>
       ) : null}

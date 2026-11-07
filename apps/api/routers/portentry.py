@@ -5,6 +5,12 @@ Routes (all under /api/v1):
   GET   /entities/{entity_id}/direct-assets            staff any record; a member only their own family's (404 else)
   POST  /entities/{entity_id}/direct-assets            internal + manage_members (org admin admitted)
   POST  /direct-assets/{asset_id}/valuations           internal + manage_members — a NEW valuation row
+  PATCH /direct-assets/{asset_id}                      internal + manage_members — CATCHALL1: edit name / kind / notes
+                                                       (a new version, id kept) and value / as-of / method (a new
+                                                       valuation); a kind change re-keys the taxonomy
+  POST  /direct-assets/{asset_id}/end                  internal + manage_members — CATCHALL1: end it (sold / disposed /
+                                                       transferred / written off / entered in error); nothing deleted
+  GET   /direct-assets/{asset_id}/history              internal + manage_members — CATCHALL1: versions, valuations, end
   GET   /entities/{entity_id}/private-investments      staff any; a member their own family's
   POST  /entities/{entity_id}/private-investments      internal + manage_members
   POST  /private-investments/{commitment_id}/flows     internal + manage_members — a capital call / distribution
@@ -87,6 +93,24 @@ class DirectAssetIn(_Body):
     notes: str | None = Field(default=None, max_length=4000)
 
 
+class DirectEdit(_Body):
+    """CATCHALL1 — an edit of a saved direct asset; every field optional, at least one (DH.DIRECT_EDIT_FIELDS)."""
+    name: str | None = Field(default=None, max_length=300)
+    kind: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=4000)
+    value: str | None = Field(default=None, max_length=40)
+    as_of: date | None = None
+    method: Literal["appraisal", "mark_to_model", "nav", "market_price", "amortized_cost"] | None = None
+
+
+class DirectEnd(_Body):
+    """CATCHALL1 — end a direct asset (DH.END_REASONS = asset_disposals_reason_chk)."""
+    reason: Literal["sold", "disposed", "transferred", "written_off", "entered_in_error"]
+    end_date: date | None = None
+    proceeds: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class Commitment(_Body):
     amount: str
     date: date
@@ -167,7 +191,7 @@ def _raise(exc: Exception):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, (PermissionError, HT.MakerCheckerError, HT.HumanTaskPermissionError)):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    if isinstance(exc, HT.HumanTaskConflict):
+    if isinstance(exc, (HT.HumanTaskConflict, DH.HoldingConflict)):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, (DH.HoldingError, II.ImportError_, ValueError)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -184,7 +208,11 @@ async def list_direct_assets(request: Request, entity_id: UUID):
     await _record_in_org(pool, org_id, entity_id)
     async with pool.acquire() as conn:
         rows = await DH.list_direct_assets(conn, org_id, [entity_id])
-    return _env(request, rows, DH.vocab(), ["add", "revalue"])
+    env = _env(request, rows, DH.vocab(), ["add", "revalue", "edit", "end"])
+    for r in env["rows"]:   # CATCHALL1 — a row's Edit / End only for a caller who may make the identical request
+        can = env["permissions"]["can_write"]
+        r["actions"] = (["history"] + ([] if r.get("ended") else ["edit", "end", "revalue"])) if can else []
+    return env
 
 
 @router.post("/entities/{entity_id}/direct-assets", status_code=201)
@@ -207,6 +235,39 @@ async def add_valuation(request: Request, asset_id: UUID, body: Valuation):
                                       asset_id=asset_id, data=body.model_dump(mode="json"))
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
+
+
+@router.patch("/direct-assets/{asset_id}")
+async def edit_direct_asset(request: Request, asset_id: UUID, body: DirectEdit):
+    p = require_internal_permission(request, "manage_members")
+    data = {k: getattr(body, k) for k in body.model_fields_set}
+    data = {k: (v.isoformat() if isinstance(v, date) else v) for k, v in data.items()}
+    try:
+        return await DH.edit_direct_asset(await get_pool(), org_id=get_org_id(request), actor_id=p.user_id,
+                                          asset_id=asset_id, data=data)
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+
+
+@router.post("/direct-assets/{asset_id}/end")
+async def end_direct_asset(request: Request, asset_id: UUID, body: DirectEnd):
+    p = require_internal_permission(request, "manage_members")
+    try:
+        return await DH.end_direct_asset(await get_pool(), org_id=get_org_id(request), actor_id=p.user_id,
+                                         asset_id=asset_id, data=body.model_dump(mode="json", exclude_none=True))
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)
+
+
+@router.get("/direct-assets/{asset_id}/history")
+async def direct_asset_history(request: Request, asset_id: UUID):
+    require_internal_permission(request, "manage_members")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await DH.direct_asset_history(conn, get_org_id(request), asset_id)
+        except Exception as exc:  # noqa: BLE001
+            _raise(exc)
 
 
 # ── Private investments ─────────────────────────────────────────────────────────────────────────────────────────
@@ -370,10 +431,48 @@ async def option_contracts_for_underlying(request: Request, underlying_ticker: s
         reason = f"No option contract on {t} exists yet. A contract is defined in Replication → Options."
     else:
         reason = None
-    return {"rows": out, "underlying_ticker": t, "empty_reason": reason,
-            "permissions": {"can_read": True, "can_write": False, "is_super_admin": False,
-                            "read_permission": "view_held_away", "write_permission": None},
-            "vocabularies": {"editable": [], "inline_editable": []}}
+    # CATCHALL1 (MUSE I-12) — "Define this contract" from the picker: offered ONLY to a caller who holds rep8's own
+    # gate (manage_replication, Super Admin first). The definition is POSTed to rep8's route
+    # (/replication/options/contracts → options_sleeve.find_or_create_contract, idempotent on its terms), never a
+    # second writer here. The underlying comes from the security master (the row resolved above), never typed.
+    from services import options_sleeve as OS
+
+    p = principal_of(request)
+    can_define = bool(und and p is not None and p.admitted and (p.is_super_admin or OS.MANAGE in p.permissions))
+    if und:
+        u_id = str(und.get("matched_global_security_id") or und["id"])
+        u_type = await _security_type(pool, u_id)
+        try:
+            kind = OS.underlying_kind(u_type) if u_type else None
+        except OS.OptionsError:
+            kind = None   # rep8 lists options only on an index, a stock or a fund
+        can_define = can_define and kind is not None
+        underlying = {"global_security_id": u_id, "ticker": t, "name": und.get("name"), "kind": kind}
+    else:
+        underlying = None
+    if reason and und and can_define:
+        reason = f"No option contract on {t} exists yet. You can define it here."
+    vocab = {"editable": ["define_contract"] if can_define else [], "inline_editable": []}
+    if can_define:
+        vocab.update({
+            "option_types": [{"value": "call", "label": "Call"}, {"value": "put", "label": "Put"}],
+            "exercise_styles": [{"value": v, "label": v.capitalize()} for v in OS.EXERCISE_STYLES],
+            "settlements": [{"value": v, "label": v.capitalize()} for v in OS.SETTLEMENTS],
+            # rep8: only an index option settles in cash; a stock / fund option is physical and never broad-based
+            "default_settlement": "cash" if underlying and underlying["kind"] == "index" else "physical",
+            "default_exercise_style": "european" if underlying and underlying["kind"] == "index" else "american",
+            "default_multiplier": "100"})
+    return {"rows": out, "underlying_ticker": t, "underlying": underlying, "empty_reason": reason,
+            "permissions": {"can_read": True, "can_write": can_define,
+                            "is_super_admin": bool(p and p.is_super_admin),
+                            "read_permission": "view_held_away", "write_permission": OS.MANAGE},
+            "vocabularies": vocab}
+
+
+async def _security_type(pool, gsid: str) -> str | None:
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT security_type FROM portfolio.securities_global WHERE id = $1::uuid "
+                                   "AND system_to IS NULL", gsid)
 
 
 @router.post("/portfolio/manual-assets/relink")

@@ -914,7 +914,7 @@ for (const [k, e] of Object.entries(envs)) {{
   const html = renderToStaticMarkup(h(BulkApproveView, {{ envelope: e, selected: [], filters: {{ age: "any" }},
     expanded: null, onToggle: noop, onSelectAll: noop, onClear: noop, onFilter: noop, onExpand: noop, onAsk: noop }}));
   out[k] = {{ canDecide: B.canDecide(e), selectAll: B.selectAll(e, B.filterRows(e, {{}})).length,
-    rows: B.rowsOf(e).length, approveButton: html.includes("Approve selected"),
+    rows: B.rowsOf(e).length, approveButton: /Review \\d+ selected →/.test(html),  // CATCHALL1 — the first button's wording
     checkboxes: (html.match(/type="checkbox"/g) || []).length,
     enabled: (html.match(/data-selectable="1"/g) || []).length,
     blocked: (html.match(/data-blocked="1"/g) || []).length,
@@ -931,7 +931,7 @@ console.log(JSON.stringify(out));
     c_, m_, n_, h_ = res["env_C"], res["env_M"], res["env_N"], res["env_H"]
     check(bool(code == 0 and c_["canDecide"] and c_["approveButton"] and c_["selectAll"] == 11
                and c_["enabled"] == 11 and c_["blocked"] == 1),
-          "C's real envelope: Approve selected renders; select all takes the 11 decidable drafts, never the withdrawn",
+          "C's real envelope: the approve control ('Review N selected →') renders; select all takes the 11 decidable drafts, never the withdrawn",
           f"{c_}")
     check(bool(c_["byHousehold"] == [S["D1"]]), "the household filter narrows to exactly that household's item",
           f"{c_['byHousehold']}")

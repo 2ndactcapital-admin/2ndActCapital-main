@@ -10,6 +10,7 @@
  * is going (the server refuses all three cases anyway).
  */
 
+import { BusyButton, BusyError } from "@/components/ui/Busy";
 import { budgetKinds, canWrite, rowBudget, runUsageLines, statusLabel, stopText } from "@/lib/aiBudget.mjs";
 
 const CARD = { borderColor: "var(--2a-border)", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
@@ -41,7 +42,7 @@ function RunRow({ envelope, run }) {
   );
 }
 
-export function DailyJobCard({ envelope, job, onRunNow, pending }) {
+export function DailyJobCard({ envelope, job, onRunNow, pending, busyAny = false }) {
   const kinds = budgetKinds(envelope);
   const running = (job.today_runs || []).some((r) => r.status === "running");
   const showRunNow = canWrite(envelope) && Boolean(job.active) && !running && typeof onRunNow === "function";
@@ -54,14 +55,16 @@ export function DailyJobCard({ envelope, job, onRunNow, pending }) {
           <p className="mt-1 text-xs text-text-muted">{job.data_label}</p>
         </div>
         {showRunNow && (
-          <button
-            type="button"
+          // CATCHALL1 busy — Run now (busy from the panel's useBusy)
+          <BusyButton
             onClick={() => onRunNow(job.task_key)}
-            disabled={pending}
+            busy={pending}
+            disabled={busyAny}
+            busyLabel="Starting…"
             className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
-            {pending ? "Starting…" : "Run now"}
-          </button>
+            Run now
+          </BusyButton>
         )}
       </div>
       {job.active ? (
@@ -120,7 +123,7 @@ export function DailyJobCard({ envelope, job, onRunNow, pending }) {
   );
 }
 
-export default function DailyRunsView({ envelope, onRunNow, pendingTask, message }) {
+export default function DailyRunsView({ envelope, onRunNow, pendingTask, message, error = null }) {
   if (!envelope) return null;
   const never = envelope?.vocabularies?.never_scheduled || [];
   return (
@@ -137,6 +140,7 @@ export default function DailyRunsView({ envelope, onRunNow, pendingTask, message
           {message}
         </p>
       )}
+      <BusyError error={error} className="mt-3 block text-sm text-[#9B2335]" />
       {(envelope.rows || []).map((job) => (
         <DailyJobCard
           key={job.task_key}
@@ -144,6 +148,7 @@ export default function DailyRunsView({ envelope, onRunNow, pendingTask, message
           job={job}
           onRunNow={onRunNow}
           pending={pendingTask === job.task_key}
+          busyAny={pendingTask != null}
         />
       ))}
     </div>

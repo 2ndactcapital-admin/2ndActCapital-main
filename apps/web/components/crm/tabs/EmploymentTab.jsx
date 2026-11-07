@@ -13,6 +13,11 @@ const COMPANY_TYPES = ["llc", "lp", "gp", "s_corp", "c_corp", "corporation", "fo
 export default function EmploymentTab({ entityId, initial, canAdd = false }) {
   // PORTENTRY2 (PERS-01) — the add control only when the record envelope allows this write (fail closed)
   const [items, setItems] = useState(initial || []);
+  // CATCHALL1 (display lag) — follow a re-read of the parent's data (BUGFIX3's AddressesTab fix), never keep the
+  // first render's copy
+  useEffect(() => {
+    if (Array.isArray(initial)) setItems(initial);
+  }, [initial]);
   const [adding, setAdding] = useState(false);
   const [selectedEmployer, setSelectedEmployer] = useState(null);
   const formRef = useRef(null);

@@ -19,6 +19,7 @@ import ProposalLotMethod from "@/components/lotmethod/ProposalLotMethod";
 import { proposalStale } from "@/lib/heldAway.mjs";
 import { TaxGatePanelView } from "@/components/replication/OptionsTaxGate";
 import { optionsApproveVisible } from "@/lib/replicationOptions.mjs";
+import { BusyButton, useBusy } from "@/components/ui/Busy";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const input = "rounded border border-[#E2E8F0] px-3 py-2";
@@ -99,19 +100,20 @@ export default function ProposalDetail({ initialEnvelope }) {
   const stale = proposalStale(p);   // REP7 — approval waits for a confirmation of stale held-away data
   const isOptions = p.proposal_kind === "options";
   const [gate, setGate] = useState(null);   // REP8 — the options tax gate (Approve hidden while a rule blocks)
-  const [gateBusy, setGateBusy] = useState(false);
+  const gateRun = useBusy();   // CATCHALL1 busy — the gate load and "Run the gate again"
+  const refresh = useBusy();   // CATCHALL1 busy — Check instructions (errors land in msg via act)
 
-  async function loadGate(rerun = false) {
-    if (!isOptions || !p.id) return;
-    setGateBusy(true);
-    try {
+  function loadGate(rerun = false) {
+    if (!isOptions || !p.id) return undefined;
+    return gateRun.run(async () => {
       const res = await fetch(`/api/replication/options/proposals/${p.id}/gate`, rerun ? { method: "POST" } : undefined);
       const data = await res.json().catch(() => ({}));
-      if (rerun && res.ok) {
+      if (rerun && !res.ok) throw new Error(data.error || data.detail || `Request failed (${res.status})`);
+      if (rerun) {
         const again = await fetch(`/api/replication/options/proposals/${p.id}/gate`);
         setGate(again.ok ? await again.json() : null);
       } else setGate(res.ok ? data : null);
-    } finally { setGateBusy(false); }
+    });
   }
 
   useEffect(() => { loadGate(); }, [p.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -152,7 +154,7 @@ export default function ProposalDetail({ initialEnvelope }) {
           <ul className="mt-2 space-y-1">{warnings.map((w, i) => <li key={i}><span className="font-medium">{labelOf(v.warning_codes, w.code)}</span> — {w.message}</li>)}</ul>
         </div>
       ) : null}
-      {isOptions ? <TaxGatePanelView gate={gate} busy={gateBusy} onRerun={() => loadGate(true)} /> : null}
+      {isOptions ? <TaxGatePanelView gate={gate} busy={gateRun.busy} error={gateRun.error} onRerun={() => loadGate(true)} /> : null}
       <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Trades</h2><div className="mt-2"><Trades envelope={env} /></div>
         <div className="mt-3"><ProposalLotMethod envelope={env} /></div></div>
       <div className={`${card} p-6`}><h2 className="text-lg font-semibold text-navy">Weights</h2><div className="mt-2"><Weights envelope={env} /></div></div>
@@ -173,7 +175,7 @@ export default function ProposalDetail({ initialEnvelope }) {
           {approveShown && !stale.blocking ? <button type="button" className={primary} onClick={() => act("approve", { note: note || undefined })}>Approve</button> : null}
           {c.reject ? <button type="button" className={secondary} onClick={() => act("reject", { note })}>Reject</button> : null}
           {c.execute ? <button type="button" className={secondary} onClick={() => act("execute")}>Create instructions</button> : null}
-          {c.refresh ? <button type="button" className={secondary} onClick={() => act("refresh")}>Check instructions</button> : null}
+          {c.refresh ? <BusyButton busy={refresh.busy} busyLabel="Checking…" className={secondary} onClick={() => refresh.run(() => act("refresh"))}>Check instructions</BusyButton> : null}
         </div>
         {msg ? <p className="mt-2 text-[#9B2335]">{msg}</p> : null}
       </div>

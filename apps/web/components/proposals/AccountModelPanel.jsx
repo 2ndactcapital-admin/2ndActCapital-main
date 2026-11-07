@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import { BusyButton, useBusy } from "@/components/ui/Busy";
 import { accountControls, engineOptions, labelOf, moneyText, pctText, settingsBody, vocab } from "@/lib/proposals.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -162,6 +163,7 @@ export default function AccountModelPanel({ initialEnvelope }) {
   const [reason, setReason] = useState("");
   const [withdrawal, setWithdrawal] = useState("");
   const [msg, setMsg] = useState(null);
+  const rebalance = useBusy(); // CATCHALL1 busy — Rebalance now (errors land in msg via run)
   const c = accountControls(env);
   const v = vocab(env);
   const a = env?.account || {};
@@ -199,7 +201,7 @@ export default function AccountModelPanel({ initialEnvelope }) {
           {c.join ? <button type="button" className={primary} onClick={() => setMode("join")}>Join a model</button> : null}
           {c.changeModel ? <button type="button" className={secondary} onClick={() => setMode("change")}>Change model</button> : null}
           {c.changeSettings ? <button type="button" className={secondary} onClick={() => setMode("settings")}>Change settings</button> : null}
-          {c.generate ? <button type="button" className={secondary} onClick={() => run(`accounts/${a.id}/proposals`, { trigger: "manual" })}>Rebalance now</button> : null}
+          {c.generate ? <BusyButton busy={rebalance.busy} busyLabel="Rebalancing…" className={secondary} onClick={() => rebalance.run(() => run(`accounts/${a.id}/proposals`, { trigger: "manual" }))}>Rebalance now</BusyButton> : null}
         </div>
         {c.generate ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">

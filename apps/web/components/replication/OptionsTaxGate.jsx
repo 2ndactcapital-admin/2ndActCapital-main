@@ -11,11 +11,12 @@
  */
 
 import { gateControls, gateRows } from "@/lib/replicationOptions.mjs";
+import { BusyButton, BusyError } from "@/components/ui/Busy";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
 const secondary = "rounded border border-navy px-3 py-1 text-navy disabled:opacity-50";
 
-export function TaxGatePanelView({ gate, onRerun, busy }) {
+export function TaxGatePanelView({ gate, onRerun, busy, error }) {
   if (!gate) return <div className={`${card} p-6 text-sm text-text-muted`}>The options tax gate has not run yet.</div>;
   const rows = gateRows(gate);
   const c = gateControls(gate);
@@ -35,7 +36,9 @@ export function TaxGatePanelView({ gate, onRerun, busy }) {
           </tr>
         ))}</tbody>
       </table>
-      {c.rerun && onRerun ? <button type="button" className={`${secondary} mt-3`} disabled={busy} onClick={onRerun}>Run the gate again</button> : null}
+      {/* CATCHALL1 busy — busy / error come from the parent's useBusy (ProposalDetail) */}
+      {c.rerun && onRerun ? <BusyButton busy={busy} busyLabel="Running…" className={`${secondary} mt-3`} onClick={onRerun}>Run the gate again</BusyButton> : null}
+      <BusyError error={error} className="ml-2 text-sm text-[#9B2335]" />
     </div>
   );
 }

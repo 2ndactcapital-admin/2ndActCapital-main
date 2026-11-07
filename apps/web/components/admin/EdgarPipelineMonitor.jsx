@@ -35,6 +35,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 
 import BulkDownloadTab from "@/components/admin/EdgarBulkDownload";
+import { BusyButton } from "@/components/ui/Busy";
 import { CohortBuilder, CohortsTab } from "@/components/admin/EdgarCohorts";
 import DataGrid from "@/components/ui/DataGrid";
 import {
@@ -316,6 +317,8 @@ function ProgressTab() {
   const [cap, setCap] = useState("");
   const [runMessage, setRunMessage] = useState(null);
   const [pending, startTransition] = useTransition();
+  // CATCHALL1 busy — run now has its own React pending flag (a list refresh must not show it as Working…)
+  const [launching, startLaunch] = useTransition();
 
   const refresh = useCallback(() => {
     startTransition(async () => {
@@ -339,7 +342,7 @@ function ProgressTab() {
   const runNow = payload?.vocabularies?.run_now;
 
   function launch() {
-    startTransition(async () => {
+    startLaunch(async () => {
       const res = await runNowAction(cap);
       if (!res.ok) {
         setRunMessage({ error: true, text: res.error });
@@ -388,9 +391,10 @@ function ProgressTab() {
               onChange={(e) => setCap(e.target.value)}
             />
           </label>
-          <button type="button" className={BUTTON} disabled={pending || cap === ""} onClick={launch}>
+          {/* CATCHALL1 busy */}
+          <BusyButton className={BUTTON} busy={launching} disabled={pending || cap === ""} onClick={launch}>
             {runNow.label}
-          </button>
+          </BusyButton>
           <p className="text-xs text-[var(--2a-text-muted)]">{runNow.description}</p>
           {runMessage && (
             <p className="w-full text-xs" style={runMessage.error ? { color: ERROR_INK } : undefined}>

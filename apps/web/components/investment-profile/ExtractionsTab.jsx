@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { BusyButton, BusyError } from "@/components/ui/Busy";
 import {
   runExtractionAction,
   reviewExtractionAction,
@@ -160,18 +161,18 @@ export default function ExtractionsTab({ entityId, initialExtractions = [] }) {
               Accept all
             </button>
           )}
-          <button
-            type="button"
+          {/* CATCHALL1 busy — the pending flag is React's (server action under useTransition) */}
+          <BusyButton
             onClick={runOrRefresh}
-            disabled={pending}
+            busy={pending}
             className="rounded-md bg-navy px-3 py-1.5 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60"
           >
-            {pending ? "Working…" : extractions.length ? "Re-run extraction" : "Run extraction"}
-          </button>
+            {extractions.length ? "Re-run extraction" : "Run extraction"}
+          </BusyButton>
         </div>
       </div>
 
-      {error && <p className="mt-2 text-sm text-[#9B2335]">{error}</p>}
+      <BusyError error={error} className="mt-2 block text-sm text-[#9B2335]" />
 
       <div className="mt-4 space-y-3">
         {extractions.length === 0 ? (

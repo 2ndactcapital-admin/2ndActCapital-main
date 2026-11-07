@@ -64,6 +64,10 @@ function Field({ label, children }) {
 
 export default function ComplianceTab({ entityId, initial }) {
   const [record, setRecord] = useState(initial || null);
+  // CATCHALL1 (display lag) — follow a re-read of the parent's data, never keep the first render's copy
+  useEffect(() => {
+    if (initial) setRecord(initial);
+  }, [initial]);
   const [editing, setEditing] = useState(false);
   const [state, formAction, pending] = useActionState(
     updateComplianceAction.bind(null, entityId),

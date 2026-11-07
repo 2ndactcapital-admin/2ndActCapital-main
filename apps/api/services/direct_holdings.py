@@ -26,7 +26,7 @@ from decimal import Decimal, InvalidOperation
 from services import portfolio_assets as PA
 from services import portfolio_commitments as PC
 from services.money_text import fixed
-from services.portfolio_assets import TABLE_ASSETS, TABLE_POSITIONS, TABLE_VALUATIONS, _OrgWrite
+from services.portfolio_assets import TABLE_ASSETS, TABLE_DISPOSALS, TABLE_POSITIONS, TABLE_VALUATIONS, _OrgWrite
 
 DIRECT_KINDS = {"real_estate": "Real estate", "collectible": "Collectible", "operating_business": "Operating business",
                 "insurance_cash_value": "Insurance policy cash value",
@@ -54,6 +54,10 @@ assert set(VALUATION_METHODS) == set(PA.VALUATION_METHODS), "direct-holding meth
 _STATUS_OF = {"appraisal": "final", "mark_to_model": "estimated", "nav": "final", "market_price": "final",
               "amortized_cost": "final"}
 NAV_METHOD = "nav"
+#: CATCHALL1 — why a direct asset ended; keys = the asset_disposals_reason_chk vocabulary (docs/catchall1_part1.sql)
+END_REASONS = {"sold": "Sold", "disposed": "Disposed of", "transferred": "Transferred",
+               "written_off": "Written off", "entered_in_error": "Entered in error"}
+ERROR_REASON = "entered_in_error"
 _SHAPE = {"real_estate": ("hard_asset", "appraisal"), "collectible": ("hard_asset", "appraisal"),
           "operating_business": ("financial", "mark_to_model"), "insurance_cash_value": ("financial", "mark_to_model"),
           "cash_holding": ("financial", "amortized_cost"), "other": ("hard_asset", "appraisal")}
@@ -68,6 +72,10 @@ class HoldingError(ValueError):
 
 class HoldingNotFound(LookupError):
     pass
+
+
+class HoldingConflict(RuntimeError):
+    """CATCHALL1 — the row's state forbids the change (an ended asset is not edited or ended again) — 409."""
 
 
 def _dec(v, label: str, *, required=True, positive_ok_zero=True) -> Decimal | None:
@@ -223,10 +231,13 @@ async def list_direct_assets(conn, org_id, entity_ids) -> list[dict]:
         rows = await c.fetch(
             f"SELECT p.id::text AS position_id, p.owner_entity_id::text AS owner_entity_id, p.ownership_pct, "
             f"p.cost_basis, p.ownership_basis, p.quantity, p.market_value, a.id::text AS asset_id, a.name, "
-            f"a.asset_type, a.default_taxonomy_key, a.notes, a.manual_terms, e.display_name AS owner_name "
+            f"a.asset_type, a.default_taxonomy_key, a.notes, a.manual_terms, e.display_name AS owner_name, "
+            f"a.valuation_method AS asset_method, d.end_date, d.reason AS end_reason, d.proceeds AS end_proceeds "
             f"FROM {TABLE_POSITIONS} p JOIN {TABLE_ASSETS} a ON a.id = p.asset_id AND a.valid_to IS NULL "
             f"AND a.system_to IS NULL JOIN entities e ON e.id = p.owner_entity_id AND e.valid_to IS NULL "
-            f"AND e.system_to IS NULL WHERE p.org_id = $1::uuid AND p.owner_entity_id = ANY($2::uuid[]) "
+            f"AND e.system_to IS NULL LEFT JOIN {TABLE_DISPOSALS} d ON d.asset_id = a.id AND d.org_id = a.org_id "
+            f"AND d.valid_to IS NULL AND d.system_to IS NULL WHERE p.org_id = $1::uuid "
+            f"AND p.owner_entity_id = ANY($2::uuid[]) "
             f"AND a.asset_type = ANY($3::text[]) AND p.valid_to IS NULL AND p.system_to IS NULL ORDER BY a.name",
             str(org_id), [str(e) for e in entity_ids], list(DIRECT_KINDS))
         for r in rows:
@@ -239,6 +250,15 @@ async def list_direct_assets(conn, org_id, entity_ids) -> list[dict]:
                         "taxonomy_key": r["default_taxonomy_key"], "notes": r["notes"],
                         "asset_value": hist[0]["value"] if hist else None,
                         "owner_value": None if share is None else fixed(share.quantize(Decimal("0.01"))),
+                        "kind_label": DIRECT_KINDS.get(r["asset_type"], r["asset_type"]),
+                        "valuation_method": hist[0]["method"] if hist else None,
+                        "as_of": hist[0]["date"] if hist else None,
+                        # CATCHALL1 — the asset's end (None while it is held); counted only before end_date
+                        "ended": None if r["end_date"] is None else {
+                            "end_date": r["end_date"].isoformat(), "reason": r["end_reason"],
+                            "reason_label": END_REASONS.get(r["end_reason"], r["end_reason"]),
+                            "proceeds": fixed(r["end_proceeds"]),
+                            "counting": r["end_date"] > date.today()},
                         "valuations": hist})
     return out
 
@@ -576,5 +596,229 @@ def vocab() -> dict:
             # BUGFIX3 — the form shows the commitment fields only where the kind has one (from the API, Rule 1)
             "commitment_rules": [{"value": k, "rule": v} for k, v in COMMITMENT_RULES.items()],
             "valuation_methods": pairs(VALUATION_METHODS),
+            # CATCHALL1 — why a direct asset ended (asset_disposals_reason_chk)
+            "end_reasons": pairs(END_REASONS),
             "unfunded_formula": PC.UNFUNDED_FORMULA,
             "flow_types": [{"value": "call", "label": "Capital call"}, {"value": "distribution", "label": "Distribution"}]}
+
+
+
+# ── CATCHALL1 (MUSE F4-01) — a direct asset's Edit, End and History ────────────────────────────────────────────
+#: the fields an edit takes; each optional, at least one required. name / kind / notes → a new VERSION of the asset
+#: (the prior one archived, the id kept); value / as_of / method → a new VALUATION row (the prior ones kept)
+DIRECT_EDIT_FIELDS = ("name", "kind", "notes", "value", "as_of", "method")
+_VALUATION_FIELDS = ("value", "as_of", "method")
+
+
+async def _direct_asset(c, org_id, asset_id) -> dict:
+    """The current direct asset in the caller's org (another org's, a security, a private investment → not found),
+    its current end (if any) and its owners."""
+    a = await c.fetchrow(
+        f"SELECT a.id::text AS id, a.name, a.asset_type, a.default_taxonomy_key, a.notes, a.manual_terms, "
+        f"a.valid_from FROM {TABLE_ASSETS} a WHERE a.id = $1::uuid AND a.org_id = $2::uuid "
+        "AND a.global_security_id IS NULL AND a.asset_type = ANY($3::text[]) AND a.valid_to IS NULL "
+        "AND a.system_to IS NULL", str(asset_id), str(org_id), list(DIRECT_KINDS))
+    if a is None:
+        raise HoldingNotFound("Asset not found")
+    end = await c.fetchrow(
+        f"SELECT id::text AS id, end_date, reason, proceeds FROM {TABLE_DISPOSALS} WHERE asset_id = $1::uuid "
+        "AND org_id = $2::uuid AND valid_to IS NULL AND system_to IS NULL", str(asset_id), str(org_id))
+    owners = [r["owner_entity_id"] for r in await c.fetch(
+        f"SELECT DISTINCT owner_entity_id::text AS owner_entity_id FROM {TABLE_POSITIONS} WHERE asset_id = "
+        "$1::uuid AND org_id = $2::uuid AND valid_to IS NULL AND system_to IS NULL", str(asset_id), str(org_id))]
+    start = await c.fetchval(f"SELECT min(as_of_date) FROM {TABLE_POSITIONS} WHERE asset_id = $1::uuid AND "
+                             "org_id = $2::uuid AND valid_to IS NULL AND system_to IS NULL", str(asset_id), str(org_id))
+    latest = await c.fetchrow(
+        f"SELECT valuation_date, value, valuation_method FROM {TABLE_VALUATIONS} WHERE asset_id = $1::uuid AND "
+        "org_id = $2::uuid AND valid_to IS NULL AND system_to IS NULL ORDER BY valuation_date DESC, system_from DESC "
+        "LIMIT 1", str(asset_id), str(org_id))
+    return {**dict(a), "end": dict(end) if end else None, "owners": owners, "start": start,
+            "latest": dict(latest) if latest else None}
+
+
+def _audit(org_id, actor_id, action, asset_id, payload) -> tuple:
+    import json
+
+    return ("INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, payload) VALUES "
+            "($1::uuid, $2::uuid, $3, 'asset', $4::uuid, $5::jsonb)",
+            str(org_id), str(actor_id) if actor_id else None, action, str(asset_id), json.dumps(payload, default=str))
+
+
+async def edit_direct_asset(pool, *, org_id, actor_id, asset_id, data: dict) -> dict:
+    """Edit a saved direct asset (MUSE F4-01). A NEW VERSION, never an in-place loss of the old one:
+
+    * ``name`` / ``kind`` / ``notes`` — the outgoing asset version is archived (system axis, EVERY column, stamped
+      ``system_to``) and the live row updated KEEPING its id (positions and valuations point at it — Rule 3). A kind
+      change re-keys the taxonomy through ``portfolio_kind_taxonomy.reclassify_target`` — the same rule as
+      ``backfill_taxonomy_keys.py --reclassify``;
+    * ``value`` / ``as_of`` / ``method`` — a NEW valuation row (record_valuation never touches the prior one); an
+      omitted part is carried from the latest valuation.
+
+    Audited (``portfolio.direct_asset_edited``, before / after). An ENDED asset is not edited (409)."""
+    from services.portfolio_kind_taxonomy import ReclassifyError, reclassify_target
+
+    changes = {k: data[k] for k in DIRECT_EDIT_FIELDS if k in data}
+    if not changes:
+        raise HoldingError(f"nothing to change — send one of {', '.join(DIRECT_EDIT_FIELDS)}")
+    if "kind" in changes and changes["kind"] not in DIRECT_KINDS:
+        raise HoldingError(f"kind is one of {', '.join(DIRECT_KINDS)}")
+    if "name" in changes and not (changes["name"] or "").strip():
+        raise HoldingError("name is required")
+    async with pool.acquire() as conn:
+        async with _OrgWrite(conn, str(org_id)) as c:
+            a = await _direct_asset(c, org_id, asset_id)
+            if a["end"] is not None:
+                raise HoldingConflict("this asset has ended — its history is kept, and an ended asset is not edited")
+            val = None
+            if any(k in changes for k in _VALUATION_FIELDS):
+                last = a["latest"] or {}
+                val = _valuation_in({
+                    "value": changes.get("value", fixed(last.get("value")) if last.get("value") is not None else None),
+                    "date": changes.get("as_of", last["valuation_date"].isoformat()
+                                        if last.get("valuation_date") else None),
+                    "method": changes.get("method", last.get("valuation_method"))})
+            before = {"name": a["name"], "kind": a["asset_type"], "taxonomy_key": a["default_taxonomy_key"],
+                      "notes": a["notes"]}
+            after = dict(before)
+            if "name" in changes:
+                after["name"] = changes["name"].strip()[:300]
+            if "notes" in changes:
+                after["notes"] = (changes["notes"] or "").strip()[:4000] or None
+            if "kind" in changes and changes["kind"] != a["asset_type"]:
+                try:
+                    after["kind"], after["taxonomy_key"] = await reclassify_target(
+                        c, str(org_id), current_kind=a["asset_type"], target=changes["kind"])
+                except ReclassifyError:
+                    # a kind with no bucket in the org's taxonomy (e.g. 'other'): the kind changes, the key clears
+                    after["kind"], after["taxonomy_key"] = changes["kind"], None
+            version_id = None
+            if after != before:
+                version_id = await c.fetchval(
+                    f"INSERT INTO {TABLE_ASSETS} (org_id, global_security_id, name, short_name, asset_class, "
+                    "asset_type, ownership_basis, valuation_method, include_in_performance, default_taxonomy_key, "
+                    "currency_code, issuer_entity_id, internal_spv_id, inception_date, maturity_date, is_active, "
+                    "valid_from, valid_to, system_from, system_to, manual_terms, notes) SELECT org_id, "
+                    "global_security_id, name, short_name, asset_class, asset_type, ownership_basis, valuation_method, "
+                    "include_in_performance, default_taxonomy_key, currency_code, issuer_entity_id, internal_spv_id, "
+                    "inception_date, maturity_date, is_active, valid_from, valid_to, system_from, now(), manual_terms, "
+                    f"notes FROM {TABLE_ASSETS} WHERE id = $1::uuid AND org_id = $2::uuid AND valid_to IS NULL "
+                    "AND system_to IS NULL RETURNING id::text", str(asset_id), str(org_id))
+                hit = await c.fetchval(
+                    f"UPDATE {TABLE_ASSETS} SET name = $3, asset_type = $4, default_taxonomy_key = $5, notes = $6, "
+                    "system_from = now() WHERE id = $1::uuid AND org_id = $2::uuid AND valid_to IS NULL AND "
+                    "system_to IS NULL RETURNING id", str(asset_id), str(org_id), after["name"], after["kind"],
+                    after["taxonomy_key"], after["notes"])
+                if hit is None or version_id is None:
+                    # never claim a cause it cannot know (CLAUDE.md): zero rows is a missing row OR an RLS refusal
+                    raise HoldingError("the asset was not updated (no row changed) — reload and try again")
+            last = a["latest"] or {}
+            if val and (last.get("value") == val["value"] and last.get("valuation_date") == val["date"]
+                        and last.get("valuation_method") == val["method"]):
+                val = None   # the same value, date and method as the latest — no duplicate valuation row
+            vid = await _record_value(c, org_id, asset_id, val) if val else None
+            await c.execute(*_audit(org_id, actor_id, "portfolio.direct_asset_edited", asset_id,
+                                    {"before": before, "after": after, "archived_version_id": version_id,
+                                     "valuation_id": vid,
+                                     "valuation": None if not val else {"value": fixed(val["value"]),
+                                                                       "date": val["date"].isoformat(),
+                                                                       "method": val["method"]}}))
+        rows = await list_direct_assets(conn, org_id, a["owners"])
+    from services import portfolio_refresh as PR
+
+    refresh = await PR.after_write(pool, org_id, a["owners"], reason=f"direct asset edit {asset_id}",
+                                   actor_id=actor_id)
+    row = next((r for r in rows if r["asset_id"] == str(asset_id)), {})
+    return {"row": row, "archived_version_id": version_id, "valuation_id": vid, "rollup": _brief(refresh)}
+
+
+async def end_direct_asset(pool, *, org_id, actor_id, asset_id, data: dict) -> dict:
+    """End a direct asset (MUSE F4-01): an ``asset_disposals`` row — the end date (valid time), the reason, optional
+    proceeds and a note. The asset stops counting in net worth FROM that date (portfolio_rollup._current_positions);
+    its positions, valuations and versions are untouched — nothing is deleted. "Entered in error" ends it from its
+    START (the earliest as-of of its positions), so it never counted; it takes no date and no proceeds. Audited
+    (``portfolio.direct_asset_ended``). An asset already ended is refused (409)."""
+    reason = (data.get("reason") or "").strip()
+    if reason not in END_REASONS:
+        raise HoldingError(f"reason is one of {', '.join(END_REASONS)}")
+    notes = (data.get("notes") or "").strip()[:2000] or None
+    proceeds = _dec(data.get("proceeds"), "proceeds", required=False)
+    if reason == ERROR_REASON and proceeds is not None:
+        raise HoldingError("an asset entered in error has no proceeds")
+    async with pool.acquire() as conn:
+        async with _OrgWrite(conn, str(org_id)) as c:
+            a = await _direct_asset(c, org_id, asset_id)
+            if a["end"] is not None:
+                raise HoldingConflict(f"this asset already ended on {a['end']['end_date'].isoformat()}")
+            if reason == ERROR_REASON:
+                end_date = a["start"] or date.today()
+            else:
+                end_date = _day(data.get("end_date"), "end date")
+                if a["start"] is not None and end_date < a["start"]:
+                    raise HoldingError(f"the end date is before the asset was first held ({a['start'].isoformat()})"
+                                       " — if it was never really held, end it as 'entered in error'")
+            did = await c.fetchval(
+                f"INSERT INTO {TABLE_DISPOSALS} (org_id, asset_id, end_date, reason, proceeds, notes, entered_by) "
+                "VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::uuid) RETURNING id::text", str(org_id),
+                str(asset_id), end_date, reason, proceeds, notes, str(actor_id) if actor_id else None)
+            await c.execute(*_audit(org_id, actor_id, "portfolio.direct_asset_ended", asset_id,
+                                    {"disposal_id": did, "end_date": end_date.isoformat(), "reason": reason,
+                                     "proceeds": fixed(proceeds), "notes": notes}))
+        rows = await list_direct_assets(conn, org_id, a["owners"])
+    from services import portfolio_refresh as PR
+
+    refresh = await PR.after_write(pool, org_id, a["owners"], reason=f"direct asset end {asset_id}",
+                                   actor_id=actor_id)
+    row = next((r for r in rows if r["asset_id"] == str(asset_id)), {})
+    return {"row": row, "disposal_id": did, "end_date": end_date.isoformat(), "rollup": _brief(refresh)}
+
+
+async def direct_asset_history(conn, org_id, asset_id) -> dict:
+    """Every version of a direct asset (the live row + its system-axis archives, matched on (org_id, valid_from) —
+    the key portfolio_securities.asset_version_history documents), every valuation (superseded ones included), its
+    end(s) and the audited edits — newest first."""
+    async with _OrgWrite(conn, str(org_id)) as c:
+        a = await c.fetchrow(
+            f"SELECT id, valid_from FROM {TABLE_ASSETS} WHERE id = $1::uuid AND org_id = $2::uuid "
+            "AND global_security_id IS NULL AND asset_type = ANY($3::text[])", str(asset_id), str(org_id),
+            list(DIRECT_KINDS))
+        if a is None:
+            raise HoldingNotFound("Asset not found")
+        versions = [dict(r) for r in await c.fetch(
+            f"SELECT id::text AS id, name, asset_type AS kind, default_taxonomy_key AS taxonomy_key, notes, "
+            f"system_from, system_to FROM {TABLE_ASSETS} WHERE org_id = $1::uuid AND valid_from = $2 "
+            "ORDER BY system_to NULLS FIRST, system_from DESC LIMIT 100", str(org_id), a["valid_from"])]
+        vals = [dict(r) for r in await c.fetch(
+            f"SELECT id::text AS id, valuation_date AS date, value, valuation_method AS method, status, valid_to, "
+            f"system_from, system_to FROM {TABLE_VALUATIONS} WHERE asset_id = $1::uuid AND org_id = $2::uuid "
+            "ORDER BY valuation_date DESC, system_from DESC", str(asset_id), str(org_id))]
+        ends = [dict(r) for r in await c.fetch(
+            f"SELECT id::text AS id, end_date, reason, proceeds, notes, created_at, valid_to, system_to FROM "
+            f"{TABLE_DISPOSALS} WHERE asset_id = $1::uuid AND org_id = $2::uuid ORDER BY created_at DESC",
+            str(asset_id), str(org_id))]
+        edits = [dict(r) for r in await c.fetch(
+            "SELECT created_at AS at, user_id::text AS by, action, payload FROM audit_log WHERE org_id = $1::uuid AND "
+            "resource_id = $2::uuid AND action IN ('portfolio.direct_asset_edited', 'portfolio.direct_asset_ended') "
+            "ORDER BY created_at DESC", str(org_id), str(asset_id))]
+
+    def j(rows):
+        out = []
+        for r in rows:
+            d = {}
+            for k, v in r.items():
+                if isinstance(v, Decimal):
+                    v = fixed(v)
+                elif hasattr(v, "isoformat"):
+                    v = v.isoformat()
+                elif k == "payload" and isinstance(v, str):
+                    v = __import__("json").loads(v)
+                d[k] = v
+            out.append(d)
+        return out
+
+    for v in versions:
+        v["current"] = v["system_to"] is None
+        v["kind_label"] = DIRECT_KINDS.get(v["kind"], v["kind"])
+    for e in ends:
+        e["reason_label"] = END_REASONS.get(e["reason"], e["reason"])
+    return {"asset_id": str(asset_id), "versions": j(versions), "valuations": j(vals), "ends": j(ends),
+            "edits": j(edits)}

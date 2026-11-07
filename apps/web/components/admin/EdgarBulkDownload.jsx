@@ -36,6 +36,7 @@ import InstitutionPicker from "@/components/admin/InstitutionPicker";
 
 import LaptopWorkerDialog, { CopyButton } from "@/components/admin/LaptopWorkerDialog";
 import DataGrid from "@/components/ui/DataGrid";
+import { BusyButton } from "@/components/ui/Busy";
 import {
   INSTITUTIONS_REFRESH_MS,
   LAPTOP_DIALOG_RECHECK_MS,
@@ -220,7 +221,7 @@ function PreviewPanel({ preview, loading, error }) {
 
 // ─── Confirm dialog ─────────────────────────────────────────────────────────
 
-function ConfirmDialog({ preview, targetLabel, onCancel, onConfirm, pending }) {
+function ConfirmDialog({ preview, targetLabel, onCancel, onConfirm, pending, queuing = false }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(15,23,42,0.25)]" role="dialog" aria-modal="true">
       <div className={`${CARD} w-[28rem] p-5`}>
@@ -247,9 +248,10 @@ function ConfirmDialog({ preview, targetLabel, onCancel, onConfirm, pending }) {
           <button type="button" className={GHOST} onClick={onCancel} disabled={pending}>
             Back
           </button>
-          <button type="button" className={BUTTON} onClick={onConfirm} disabled={pending}>
+          {/* CATCHALL1 busy — Queue run (React's own pending flag for the queue transition) */}
+          <BusyButton className={BUTTON} onClick={onConfirm} busy={queuing} disabled={pending}>
             Queue run
-          </button>
+          </BusyButton>
         </div>
       </div>
     </div>
@@ -420,6 +422,8 @@ export default function BulkDownloadTab() {
   const [refreshOutcome, setRefreshOutcome] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [pending, startTransition] = useTransition();
+  // CATCHALL1 busy — Queue run has its own transition so the confirm button alone shows Working…
+  const [queuing, startQueue] = useTransition();
   const previewSeq = useRef(0);
 
   // "Run on your laptop" dialog: { source: "queue" | "steps", runId } or null.
@@ -570,7 +574,7 @@ export default function BulkDownloadTab() {
   }
 
   function queue() {
-    startTransition(async () => {
+    startQueue(async () => {
       const { outcome: o, dialog } = await queueAndOpen({
         queueRun: queueBulkRunAction, params, target, hideWhenOnline,
       });
@@ -832,7 +836,7 @@ export default function BulkDownloadTab() {
             ref={queueButtonRef}
             type="button"
             className={BUTTON}
-            disabled={pending || !preview || !preview.total || !target}
+            disabled={pending || queuing || !preview || !preview.total || !target}
             onClick={() => setConfirming(true)}
           >
             Queue run
@@ -861,7 +865,8 @@ export default function BulkDownloadTab() {
         <ConfirmDialog
           preview={preview}
           targetLabel={targets[target] ?? target}
-          pending={pending}
+          pending={pending || queuing}
+          queuing={queuing}
           onCancel={() => setConfirming(false)}
           onConfirm={queue}
         />

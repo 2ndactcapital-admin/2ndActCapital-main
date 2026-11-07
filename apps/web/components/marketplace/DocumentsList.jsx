@@ -13,6 +13,7 @@ import {
 } from "@/lib/marketplaceActions";
 import { humanize, formatDate } from "@/lib/format";
 import { usePermissions } from "@/lib/usePermissions";
+import { BusyButton } from "@/components/ui/Busy";
 
 const PROC_COLORS = {
   pending: "bg-border text-text-secondary",
@@ -144,7 +145,7 @@ export default function DocumentsList({
   const showReview = canReview && allowManageDocs;
 
   const [docs, setDocs] = useState(initial);
-  const [uploading, setUploading] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);   // whether the upload form is open (not a busy state)
   const formRef = useRef(null);
   const [state, formAction, pending] = useActionState(
     uploadDocumentAction.bind(null, dealId),
@@ -159,7 +160,7 @@ export default function DocumentsList({
           : [state.item, ...prev],
       );
       formRef.current?.reset();
-      setUploading(false);
+      setFormOpen(false);
     }
   }, [state]);
 
@@ -171,10 +172,10 @@ export default function DocumentsList({
     <section>
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy">Documents</h2>
-        {showUpload && !uploading && (
+        {showUpload && !formOpen && (
           <button
             type="button"
-            onClick={() => setUploading(true)}
+            onClick={() => setFormOpen(true)}
             className="inline-flex items-center gap-1 text-sm font-medium text-navy hover:underline"
           >
             <IconUpload size={16} /> Upload Document
@@ -228,7 +229,7 @@ export default function DocumentsList({
         </ul>
       )}
 
-      {uploading && (
+      {formOpen && (
         <form
           ref={formRef}
           action={formAction}
@@ -249,16 +250,18 @@ export default function DocumentsList({
             <p className="text-sm text-[#9B2335]">{state.error}</p>
           )}
           <div className="flex gap-2">
-            <button
+            {/* CATCHALL1 busy — pending comes from useActionState, rendering from the shared BusyButton */}
+            <BusyButton
               type="submit"
-              disabled={pending}
+              busy={pending}
+              busyLabel="Uploading…"
               className="rounded-md bg-navy px-4 py-2 text-sm font-medium text-bg-app hover:opacity-90 disabled:opacity-60"
             >
-              {pending ? "Uploading…" : "Upload"}
-            </button>
+              Upload
+            </BusyButton>
             <button
               type="button"
-              onClick={() => setUploading(false)}
+              onClick={() => setFormOpen(false)}
               className="rounded-md border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-border"
             >
               Cancel

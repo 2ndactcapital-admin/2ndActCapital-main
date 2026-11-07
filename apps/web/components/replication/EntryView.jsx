@@ -19,6 +19,7 @@ import {
   approvalControls, departureLines, diffSummary, entryControls, fieldControls, formatValue, formatWeight, labelOf,
 } from "@/lib/replication.mjs";
 import ModelTab from "@/components/replication/ModelTab";
+import { BusyButton, useBusy } from "@/components/ui/Busy";
 import OptionsTab from "@/components/replication/OptionsTab";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -254,6 +255,8 @@ export default function EntryView({ initialEnvelope }) {
   }, []);
   const [query, setQuery] = useState({});
   const [msg, setMsg] = useState(null);
+  const refreshing = useBusy(); // CATCHALL1 busy — Refresh holdings (errors land in msg via run)
+  const extracting = useBusy(); // CATCHALL1 busy — Re-run extraction (errors land in msg via run)
   const controls = entryControls(env);
   const entry = env?.entry || {};
 
@@ -282,8 +285,8 @@ export default function EntryView({ initialEnvelope }) {
             </button>
           ))}
           <span className="flex-1" />
-          {controls.refresh ? <button type="button" className="text-sm text-navy underline" onClick={() => run("holdings/refresh")}>Refresh holdings</button> : null}
-          {controls.extract ? <button type="button" className="text-sm text-navy underline" onClick={() => run("terms/extract")}>Re-run extraction</button> : null}
+          {controls.refresh ? <BusyButton busy={refreshing.busy} busyLabel="Refreshing…" className="text-sm text-navy underline" onClick={() => refreshing.run(() => run("holdings/refresh"))}>Refresh holdings</BusyButton> : null}
+          {controls.extract ? <BusyButton busy={extracting.busy} busyLabel="Extracting…" className="text-sm text-navy underline" onClick={() => extracting.run(() => run("terms/extract"))}>Re-run extraction</BusyButton> : null}
         </div>
       </div>
       {msg ? <p className="text-sm text-[#9B2335]">{msg}</p> : null}

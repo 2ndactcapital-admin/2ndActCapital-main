@@ -98,7 +98,7 @@ export function pruneSelection(selected, filtered) {
 }
 
 /**
- * The action buttons: Approve selected (every selected item lists approve), Reject selected (every one lists
+ * Whether the action buttons are on: approve (every selected item lists approve), reject (every one lists
  * reject). Both off with nothing selected or over the server's cap.
  */
 export function bulkControls(envelope, selected) {
@@ -113,6 +113,25 @@ export function bulkControls(envelope, selected) {
     cap,
     count: items.length,
   };
+}
+
+/**
+ * CATCHALL1 — the first step's buttons say what they DO: they open the review, they do not decide. "Review N
+ * selected →" (approve) / "Review N to reject →"; the final button in the confirmation is "Approve N" / "Reject N".
+ */
+export function reviewLabel(envelope, selected, decision) {
+  const n = bulkControls(envelope, selected).count;
+  return decision === "reject" ? `Review ${n} to reject →` : `Review ${n} selected →`;
+}
+
+/** CATCHALL1 — the final button's label in the confirmation: the server's decision label + the count. */
+export function finalLabel(envelope, selected, decision) {
+  return `${labelOf(vocab(envelope).decisions, decision)} ${confirmation(envelope, selected, decision).items.length}`;
+}
+
+/** CATCHALL1 — Escape / Cancel leaves the confirmation and KEEPS the selection (returns it unchanged). */
+export function cancelConfirmation(selected) {
+  return { asking: null, selected: listOf(selected) };
 }
 
 /** One confirmation: names the count and lists the items; reject needs a note. */

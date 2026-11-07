@@ -21,6 +21,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import {
   capRepriceText, chartPaths, labelOf, legText, markText, minimumText, optionsControls, pct, quoteLine, vocab,
 } from "@/lib/replicationOptions.mjs";
@@ -159,8 +160,9 @@ export function OptionsSleeveView({ envelope, payoff, onAct, busy }) {
         <div className={`${card} flex flex-wrap items-center gap-2 p-4 text-sm`}>
           <input className={input} placeholder="Underlying security id (the index or ETF the options settle on)" value={und}
             onChange={(e) => setUnd(e.target.value)} />
-          <button type="button" className={primary} disabled={busy || !und}
-            onClick={() => onAct("build", null, { underlying_global_security_id: und })}>Build the options sleeve</button>
+          {/* CATCHALL1 busy */}
+          <BusyButton className={primary} busy={busy} disabled={!und}
+            onClick={() => onAct("build", null, { underlying_global_security_id: und })}>Build the options sleeve</BusyButton>
         </div>
       ) : null}
       <PackageSummary envelope={envelope} />
@@ -172,7 +174,8 @@ export function OptionsSleeveView({ envelope, payoff, onAct, busy }) {
           </select>
           {d?.package?.kind === "buffer" ? <input className={input} placeholder="Cap call strike, % of start" value={price.cap_strike_pct} onChange={(e) => setPrice({ ...price, cap_strike_pct: e.target.value })} /> : null}
           {d?.package?.kind === "income" ? <input className={input} placeholder="Call strike, % of start" value={price.call_strike_pct} onChange={(e) => setPrice({ ...price, call_strike_pct: e.target.value })} /> : null}
-          <button type="button" className={secondary} disabled={busy} onClick={() => onAct("price", pkgId, Object.fromEntries(Object.entries(price).filter(([, x]) => x)))}>Price the draft</button>
+          {/* CATCHALL1 busy */}
+          <BusyButton className={secondary} busy={busy} onClick={() => onAct("price", pkgId, Object.fromEntries(Object.entries(price).filter(([, x]) => x)))}>Price the draft</BusyButton>
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
@@ -222,7 +225,8 @@ export default function OptionsTab({ entryId }) {
   const [env, setEnv] = useState(null);
   const [payoff, setPayoff] = useState(null);
   const [msg, setMsg] = useState(null);
-  const [busy, setBusy] = useState(false);
+  // CATCHALL1 busy — every package action is mutually exclusive: one hook
+  const busyState = useBusy();
 
   async function load() {
     try {
@@ -237,8 +241,7 @@ export default function OptionsTab({ entryId }) {
 
   async function onAct(action, id, body) {
     setMsg(null);
-    setBusy(true);
-    try {
+    return busyState.run(async () => {
       if (action === "build") {
         await call("POST", `options/entries/${entryId}/build`, body);
       } else if (action === "quote") {
@@ -250,13 +253,14 @@ export default function OptionsTab({ entryId }) {
         await call("POST", `options/packages/${id}/${action}`, body || {});
       }
       await load();
-    } catch (err) { setMsg(err.message); } finally { setBusy(false); }
+    });
   }
 
   return (
     <div className="space-y-3">
       {msg ? <p className="text-sm text-[#9B2335]">{msg}</p> : null}
-      {env ? <OptionsSleeveView envelope={env} payoff={payoff} onAct={onAct} busy={busy} /> : <p className="text-sm text-text-muted">Loading…</p>}
+      <BusyError error={busyState.error} className="block text-sm text-[#9B2335]" />
+      {env ? <OptionsSleeveView envelope={env} payoff={payoff} onAct={onAct} busy={busyState.busy} /> : <p className="text-sm text-text-muted">Loading…</p>}
     </div>
   );
 }

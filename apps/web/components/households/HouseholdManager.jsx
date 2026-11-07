@@ -12,6 +12,7 @@
 // never shown back — the API returns the mask only. A non-default authority /
 // custody becomes a REP7B change awaiting a second person.
 
+import { useTypeahead } from "@/components/ui/useTypeahead";
 import { useState } from "react";
 import { NetWorthLines } from "@/components/crm/LiabilitiesTab";
 import { formatMoney } from "@/lib/crmDetail.mjs";
@@ -25,6 +26,7 @@ const quiet = "text-sm text-[#64748B]";
 
 async function call(url, options = {}) {
   const res = await fetch(url, {
+    cache: "no-store",   // CATCHALL1 (display lag) — a re-read is always fresh
     ...options,
     headers: { "Content-Type": "application/json" },
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -43,26 +45,17 @@ async function call(url, options = {}) {
 }
 
 function EntityPicker({ chosen, setChosen }) {
-  const [q, setQ] = useState("");
-  const [hits, setHits] = useState([]);
-  async function search(value) {
-    setQ(value);
-    if (value.trim().length < 2) {
-      setHits([]);
-      return;
-    }
-    try {
-      const data = await call(`/api/entities/search?q=${encodeURIComponent(value.trim())}`);
-      const items = Array.isArray(data?.items) ? data.items : [];
-      setHits(items.filter((e) => !["account", "spv"].includes(e.entity_type)));
-    } catch {
-      setHits([]);
-    }
-  }
+  // CATCHALL1 — the shared typeahead: searches on ANY change (typed, pasted, autofilled), debounced, stale-safe
+  const t = useTypeahead(async (q) => {
+    const data = await call(`/api/entities/search?q=${encodeURIComponent(q)}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    return items.filter((e) => !["account", "spv"].includes(e.entity_type));
+  }, { minChars: 2 });
+  const hits = t.hits;
   return (
     <div>
-      <input className={input} value={q} placeholder="Search the CRM for a person, trust or company"
-        onChange={(e) => search(e.target.value)} />
+      <input className={input} value={t.query} placeholder="Search the CRM for a person, trust or company"
+        autoComplete="off" onChange={(e) => t.setQuery(e.target.value)} onInput={(e) => t.setQuery(e.target.value)} />
       {hits.length > 0 && (
         <ul className="mt-1 max-h-48 overflow-auto rounded-[6px] border border-[#ece8dd] bg-white">
           {hits.map((e) => (
@@ -70,8 +63,7 @@ function EntityPicker({ chosen, setChosen }) {
               <button type="button" className="w-full px-3 py-1 text-left text-sm hover:bg-[#FAF9F6]"
                 onClick={() => {
                   if (!chosen.some((c) => c.id === e.id)) setChosen([...chosen, e]);
-                  setHits([]);
-                  setQ("");
+                  t.reset();
                 }}>
                 {e.display_name} <span className={quiet}>· {e.entity_type}</span>
               </button>
@@ -470,7 +462,9 @@ function HouseholdCard({ row, onDetail }) {
   async function toggle() {
     const next = !open;
     setOpen(next);
-    if (next && !detail) await load();
+    // CATCHALL1 (display lag) — every OPEN re-reads: an asset / liability / account added elsewhere (a member's
+    // CRM record) shows without a page reload; the previous copy stays on screen while it loads
+    if (next) await load();
   }
   const canWrite = detail?.permissions?.can_write === true;
   return (

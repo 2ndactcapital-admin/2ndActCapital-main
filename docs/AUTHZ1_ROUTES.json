@@ -1,5 +1,5 @@
 {
- "app_route_count": 878,
+ "app_route_count": 881,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -5564,6 +5564,69 @@
    "path": "/api/v1/direct-assets/{asset_id}/valuations",
    "public": false,
    "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.portentry",
+   "name": "edit_direct_asset",
+   "note": "",
+   "path": "/api/v1/direct-assets/{asset_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.portentry",
+   "name": "end_direct_asset",
+   "note": "",
+   "path": "/api/v1/direct-assets/{asset_id}/end",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "internal + any(manage_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members"
+    ],
+    "rule": "internal_perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.portentry",
+   "name": "direct_asset_history",
+   "note": "",
+   "path": "/api/v1/direct-assets/{asset_id}/history",
+   "public": false,
+   "write": false
   },
   {
    "after": "member scope (own family / published deals; staff unscoped)",

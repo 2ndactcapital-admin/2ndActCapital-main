@@ -84,6 +84,8 @@ TABLE_ASSETS = "portfolio.assets"
 TABLE_ASSET_IDENT = "portfolio.asset_identifiers"
 TABLE_POSITIONS = "portfolio.positions"
 TABLE_VALUATIONS = "portfolio.valuations"
+#: CATCHALL1 — a direct asset's end (docs/catchall1_part1.sql); the rollup counts a position only before it
+TABLE_DISPOSALS = "portfolio.asset_disposals"
 TABLE_TRANSACTIONS = "portfolio.transactions"
 TABLE_EXT_REF = "portfolio.external_references"
 

@@ -11,6 +11,7 @@
  * why; nothing is sent to a custodian.
  */
 
+import { useTypeahead } from "@/components/ui/useTypeahead";
 import { useState } from "react";
 import { tradeListBody, vocab } from "@/lib/execution.mjs";
 
@@ -23,8 +24,16 @@ export default function NewInstruction({ envelope, accounts = [], onCreated }) {
     accountId: accounts[0]?.id || "", side: "buy", amountMode: "quantity", amount: "", priceKind: "market",
     executorType: v.executor_types?.[0]?.key || "", ifNotFilled: "ask", executeBy: "", lots: [],
   });
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
+  // CATCHALL1 — the security search runs on ANY change of the box (typed, pasted, autofilled), shared typeahead
+  const t = useTypeahead(async (q) => {
+    const res = await fetch(`/api/execution/securities?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Search failed");
+    return data.rows || [];
+  });
+  const query = t.query;
+  const setQuery = t.setQuery;
+  const results = t.hits;
   const [security, setSecurity] = useState(null);
   const [lots, setLots] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -32,16 +41,14 @@ export default function NewInstruction({ envelope, accounts = [], onCreated }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   async function search(e) {
-    e.preventDefault();
+    e.preventDefault();   // Enter / the Search button re-runs the same query
     setMsg(null);
-    const res = await fetch(`/api/execution/securities?q=${encodeURIComponent(query)}`);
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) setResults(data.rows || []); else setMsg(data.error || "Search failed");
+    t.rerun();
   }
 
   async function pick(sec) {
     setSecurity(sec);
-    setResults([]);
+    t.reset();
     setForm((f) => ({ ...f, securityId: sec.id, lots: [] }));
     if (form.accountId) {
       const res = await fetch(`/api/execution/accounts/${form.accountId}/lots?security_id=${sec.id}`);
@@ -86,7 +93,8 @@ export default function NewInstruction({ envelope, accounts = [], onCreated }) {
           </select>
         </label>
         <label className="flex flex-col gap-1">Security
-          <input className={input} value={query} placeholder="Name, ticker or CUSIP" onChange={(e) => setQuery(e.target.value)} />
+          <input className={input} value={query} placeholder="Name, ticker or CUSIP" autoComplete="off"
+            onChange={(e) => setQuery(e.target.value)} onInput={(e) => setQuery(e.target.value)} />
         </label>
         <button type="submit" className="rounded border border-navy px-3 py-2 text-navy">Search</button>
         {security ? <span className="text-navy">{security.name}{security.ticker ? ` (${security.ticker})` : ""}</span> : null}
@@ -185,6 +193,7 @@ export default function NewInstruction({ envelope, accounts = [], onCreated }) {
           <button type="submit" disabled={busy || !form.securityId || !form.accountId}
             className="rounded bg-navy px-4 py-2 text-white disabled:opacity-50">Create draft</button>
           {msg ? <span className="ml-3 text-[#9B2335]">{msg}</span> : null}
+          {t.error ? <span className="ml-3 text-[#9B2335]">{t.error}</span> : null}
         </div>
       </form>
     </div>

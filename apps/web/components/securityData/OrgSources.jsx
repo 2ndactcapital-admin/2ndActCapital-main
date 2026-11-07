@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
+import { jsonOrThrow } from "@/lib/busyAction.mjs";
 import { can, labelOf, vocab } from "./sourceLabel.mjs";
 
 // MARKETDATA1 — org admin: rank overrides within the allowed providers, and file uploads
@@ -40,7 +42,7 @@ export function RankOverridesView({ envelope, onAct }) {
   );
 }
 
-export function UploadsView({ envelope, onAct }) {
+export function UploadsView({ envelope, onAct, uploadBusy = false, uploadError = null }) {
   const canUpload = can(envelope, "can_write") && vocab(envelope, "upload_editable").includes("file");
   const types = vocab(envelope, "data_types");
   const uploadTypes = vocab(envelope, "upload_types");
@@ -60,7 +62,10 @@ export function UploadsView({ envelope, onAct }) {
           <label><input name="redistribution" type="checkbox" /> Redistribution allowed</label>
           <label>After cancellation <select name="retention_after_cancel">{ret.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}</select></label>
           <label className="col-span-2">Attribution <input name="attribution" type="text" className="w-full border border-[#E2E8F0]" /></label>
-          <button type="submit" className="col-span-2 rounded-[6px] bg-[#1B2B4B] px-4 py-2 text-white">Upload for approval</button>
+          {/* CATCHALL1 busy */}
+          <BusyButton type="submit" className="col-span-2 rounded-[6px] bg-[#1B2B4B] px-4 py-2 text-white disabled:opacity-50"
+            busy={uploadBusy} busyLabel="Uploading…">Upload for approval</BusyButton>
+          <BusyError error={uploadError} className="col-span-2 text-sm text-[#9B2335]" />
         </form>
       ) : null}
       <table className="mt-4 w-full text-sm">
@@ -96,35 +101,43 @@ export default function OrgSources({ initialRank, initialUploads }) {
   const [rank, setRank] = useState(initialRank);
   const [ups, setUps] = useState(initialUploads);
   const [error, setError] = useState(null);
+  const uploading = useBusy(); // CATCHALL1 busy — Upload for approval
   async function reload() {
     const [a, b] = await Promise.all([fetch("/api/security-data/rank"), fetch("/api/security-data/uploads")]);
     if (a.ok) setRank(await a.json());
     if (b.ok) setUps(await b.json());
   }
   async function onAct(kind, arg) {
+    if (kind === "upload") return uploadFile(arg);
     setError(null);
     let res;
     if (kind === "org_rank") {
       res = await fetch(`/api/security-data/rank/${encodeURIComponent(arg.data_type)}`, { method: "PUT", body: JSON.stringify({ providers: arg.providers }) });
     } else if (kind === "decide") {
       res = await fetch(`/api/security-data/uploads/${encodeURIComponent(arg.id)}/decision`, { method: "POST", body: JSON.stringify({ approve: arg.approve, note: arg.note }) });
-    } else {
+    }
+    if (!res.ok) setError((await res.json().catch(() => ({}))).error || "Request failed");
+    await reload();
+  }
+  function uploadFile(arg) {
+    // CATCHALL1 busy — disabled + "Uploading…" while pending; a refusal is thrown and shown beside the button
+    return uploading.run(async () => {
+      setError(null);
       const fd = new FormData();
       fd.set("file", arg.get("file"));
       fd.set("data_type", arg.get("data_type"));
       fd.set("licence", JSON.stringify({ internal_use: arg.get("internal_use") === "on", member_display: arg.get("member_display"),
         redistribution: arg.get("redistribution") === "on", retention_after_cancel: arg.get("retention_after_cancel"),
         attribution: arg.get("attribution") || null }));
-      res = await fetch("/api/security-data/upload", { method: "POST", body: fd });
-    }
-    if (!res.ok) setError((await res.json().catch(() => ({}))).error || "Request failed");
-    await reload();
+      const res = await fetch("/api/security-data/upload", { method: "POST", body: fd });
+      try { await jsonOrThrow(res); } finally { await reload(); }
+    });
   }
   return (
     <div className="space-y-6">
       {error ? <p className="text-sm text-[#9B2335]">{error}</p> : null}
       <RankOverridesView envelope={rank} onAct={onAct} />
-      <UploadsView envelope={ups} onAct={onAct} />
+      <UploadsView envelope={ups} onAct={onAct} uploadBusy={uploading.busy} uploadError={uploading.error} />
     </div>
   );
 }

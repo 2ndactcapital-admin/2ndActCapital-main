@@ -5,6 +5,7 @@
 // envelope; money arrives and leaves as strings (exact Decimal). Write controls only on can_write === true.
 import { useEffect, useState } from "react";
 import EntityPicker from "@/components/EntityPicker";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
 import { canWrite, formatMoney, liabilityPayload, netWorthLines } from "@/lib/crmDetail.mjs";
 import { asOfText } from "@/lib/portentry.mjs";
 import { UnclassifiedList } from "@/components/networth/NetWorthDetails";
@@ -48,19 +49,19 @@ function LiabilityForm({ vocab, initial, onSubmit, onCancel, submitLabel }) {
   const [lender, setLender] = useState(initial?.lender_entity_id
     ? { id: initial.lender_entity_id, display_name: initial.lender_display } : null);
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const saving = useBusy();   // CATCHALL1 busy — the shared indicator (no local copy)
+  const busy = saving.busy;
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   async function submit(e) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
-    try {
-      await onSubmit({ ...form, lender_entity_id: lender?.id || (initial ? null : undefined) });
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
+    await saving.run(async () => {
+      try {
+        await onSubmit({ ...form, lender_entity_id: lender?.id || (initial ? null : undefined) });
+      } catch (err) {
+        setError(err.message);
+      }
+    });
   }
   return (
     <form onSubmit={submit} className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -84,7 +85,7 @@ function LiabilityForm({ vocab, initial, onSubmit, onCancel, submitLabel }) {
       <textarea value={form.notes || ""} onChange={set("notes")} placeholder="Notes" rows={2} className={`${input} sm:col-span-2`} />
       {error && <p className="text-sm text-[#9B2335] sm:col-span-2">{error}</p>}
       <div className="flex gap-2 sm:col-span-2">
-        <button type="submit" disabled={busy} className={button}>{busy ? "Saving…" : submitLabel}</button>
+        <BusyButton type="submit" busy={busy} busyLabel="Saving…" className={button}>{submitLabel}</BusyButton>
         <button type="button" onClick={onCancel} className="rounded-[6px] border border-[#E2E8F0] px-4 py-2 text-sm text-[#334155]">Cancel</button>
       </div>
     </form>
@@ -142,6 +143,7 @@ export default function LiabilitiesTab({ entityId }) {
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const recalc = useBusy(); // CATCHALL1 busy — net-worth Recalculate
   async function load() {
     try {
       setEnv(await call(`/api/entities/${encodeURIComponent(entityId)}/liabilities`));
@@ -164,15 +166,16 @@ export default function LiabilitiesTab({ entityId }) {
         <div className="mt-3"><NetWorthLines netWorth={env?.net_worth} vocabularies={vocab} /></div>
         {/* PORTENTRY1 (GAP-PORT-05) — the snapshot's as-of, and Recalculate (internal writers only) */}
         <p className={`mt-2 ${quiet}`}>{asOfText(env?.net_worth)}
+          {/* CATCHALL1 busy — disabled + "Recalculating…" while pending; call() throws on !ok, shown below */}
           {writable && (
-            <button type="button" className="ml-3 text-sm text-[#1B2B4B] hover:underline" onClick={async () => {
-              try {
+            <BusyButton className="ml-3 text-sm text-[#1B2B4B] hover:underline disabled:opacity-50" busy={recalc.busy}
+              busyLabel="Recalculating…" onClick={() => recalc.run(async () => {
                 await call(`/api/portentry/entities/${encodeURIComponent(entityId)}/net-worth/recalculate`, { method: "POST", body: "{}" });
                 await load();
-              } catch (e) { setError(e.message); }
-            }}>Recalculate</button>
+              })}>Recalculate</BusyButton>
           )}
         </p>
+        <BusyError error={recalc.error} className="mt-1 block text-sm text-[#9B2335]" />
         {vocab?.net_worth_note && <p className={`mt-2 ${quiet}`}>{vocab.net_worth_note}</p>}
         {/* ROLLUP2 — valued holdings with no allocation bucket are COUNTED (listed here); valueless ones are listed */}
         <UnclassifiedList netWorth={env?.net_worth} vocabularies={vocab} />

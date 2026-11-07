@@ -64,3 +64,25 @@ async def key_for_kind(c, org_id: str, asset_type: str | None, *, global_securit
     if not key:
         return None
     return key if key in await org_taxonomy_keys(c, org_id) else None
+
+
+class ReclassifyError(ValueError):
+    """The requested kind / key is not usable in this org's taxonomy (the caller can fix it)."""
+
+
+async def reclassify_target(c, org_id: str, *, current_kind: str, target: str) -> tuple[str, str]:
+    """CATCHALL1 — THE one rule for re-keying an asset's taxonomy when its kind is changed (or a key is named).
+
+    ``target`` is a KIND (→ the key that kind maps to in ``portfolio.kind_taxonomy``) or, starting ``taxonomy_``, a
+    KEY (the asset keeps ``current_kind``). Returns ``(kind, key)``; raises ReclassifyError when the kind has no key
+    in the org's own taxonomy or the key is not an active one. Used by scripts/backfill_taxonomy_keys.py
+    --reclassify AND by the direct-asset Edit (services.direct_holdings.edit_direct_asset) — never a copy."""
+    keys = await org_taxonomy_keys(c, org_id)
+    if target.startswith("taxonomy_"):
+        if target not in keys:
+            raise ReclassifyError(f"key {target!r} is not an active key of this org's taxonomy")
+        return current_kind, target
+    key = (await kind_map(c, org_id)).get(target)
+    if not key or key not in keys:
+        raise ReclassifyError(f"kind {target!r} has no key in this org's taxonomy")
+    return target, key

@@ -9,6 +9,11 @@ const INPUT = "rounded-md border border-border bg-bg-card px-3 py-2 text-sm text
 export default function TaxIdsTab({ entityId, initial, canAdd = false }) {
   // PORTENTRY2 (PERS-01) — the add control only when the record envelope allows this write (fail closed)
   const [items, setItems] = useState(initial || []);
+  // CATCHALL1 (display lag) — follow a re-read of the parent's data (BUGFIX3's AddressesTab fix), never keep the
+  // first render's copy
+  useEffect(() => {
+    if (Array.isArray(initial)) setItems(initial);
+  }, [initial]);
   const [adding, setAdding] = useState(false);
   const [selectedType, setSelectedType] = useState("ssn");
   const formRef = useRef(null);

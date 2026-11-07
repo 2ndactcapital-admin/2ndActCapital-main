@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { BusyButton, useBusy } from "@/components/ui/Busy";
 import { estimate, giftControls, labelOf, money, vocab } from "@/lib/rep10.mjs";
 
 const card = "rounded-[6px] border border-[#ece8dd] bg-white";
@@ -40,6 +41,7 @@ export function GiftDetailView({ envelope, onAct }) {
   const g = envelope?.gift;
   const [note, setNote] = useState("");
   const [received, setReceived] = useState("");
+  const letter = useBusy(); // CATCHALL1 busy — Print transfer letter (errors shown by the page's message line)
   if (!g) return null;
   const v = vocab(envelope);
   const c = giftControls(envelope, g);
@@ -60,7 +62,7 @@ export function GiftDetailView({ envelope, onAct }) {
         {c.approve || c.reject ? <input className={input} placeholder="Note (required to reject)" value={note} onChange={(e) => setNote(e.target.value)} /> : null}
         {c.approve ? <button type="button" className={primary} onClick={() => onAct?.("approve", { note })}>Approve</button> : null}
         {c.reject ? <button type="button" className={secondary} onClick={() => onAct?.("reject", { note })}>Reject</button> : null}
-        {c.letter ? <button type="button" className={secondary} onClick={() => onAct?.("letter")}>Print transfer letter</button> : null}
+        {c.letter ? <BusyButton busy={letter.busy} busyLabel="Generating…" className={secondary} onClick={() => letter.run(async () => { await onAct?.("letter"); })}>Print transfer letter</BusyButton> : null}
         {c.markSent ? <button type="button" className={primary} onClick={() => onAct?.("sent", { channel: "letter to the custodian" })}>Mark sent</button> : null}
         {c.markReceived ? (
           <>

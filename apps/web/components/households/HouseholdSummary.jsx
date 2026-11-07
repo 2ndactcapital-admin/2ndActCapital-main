@@ -7,6 +7,8 @@
  */
 
 import { useEffect, useState } from "react";
+import { BusyButton, BusyError, useBusy } from "@/components/ui/Busy";
+import { jsonOrThrow } from "@/lib/busyAction.mjs";
 import { householdControls, labelOf, totalLines } from "@/lib/bugfix4.mjs";
 import { money } from "@/lib/heldAway.mjs";
 import { OwnersTable, SplitTable, UnclassifiedList } from "@/components/networth/NetWorthDetails";
@@ -14,7 +16,7 @@ import { OwnersTable, SplitTable, UnclassifiedList } from "@/components/networth
 const card = "rounded-[6px] border border-[#ece8dd] bg-white p-4 text-sm";
 const secondary = "rounded border border-navy px-3 py-1 text-navy disabled:opacity-50";
 
-export function SummaryView({ envelope, onRecalculate, busy, note }) {
+export function SummaryView({ envelope, onRecalculate, busy, error, note }) {
   const t = totalLines(envelope?.total);
   if (!t) return null;
   const c = householdControls(envelope);
@@ -27,11 +29,13 @@ export function SummaryView({ envelope, onRecalculate, busy, note }) {
         <div><p className="text-text-muted">Liabilities</p><p className="text-xl text-navy">{money(t.liabilities)}</p></div>
         <div><p className="text-text-muted">Net worth</p><p className="text-xl font-semibold text-navy">{money(t.net)}</p></div>
         <div><p className="text-text-muted">As of</p><p>{t.asOf || "—"}</p></div>
-        {c.recalculate ? <button type="button" className={secondary} disabled={busy} onClick={onRecalculate}>{busy ? "Recalculating…" : "Recalculate"}</button> : null}
+        {/* CATCHALL1 busy */}
+        {c.recalculate ? <BusyButton className={secondary} busy={busy} busyLabel="Recalculating…" onClick={onRecalculate}>Recalculate</BusyButton> : null}
       </div>
       {t.unclassified ? <p className="mt-2 text-xs text-text-muted">Includes {money(t.unclassified)} not yet classified into an allocation bucket.</p> : null}
       {t.unvalued ? <p className="mt-1 text-xs text-[#9B2335]">{t.unvalued} holding(s) have no value and are not counted.</p> : null}
       {note ? <p className="mt-1 text-xs text-text-muted">{note}</p> : null}
+      <BusyError error={error} className="mt-1 block text-xs text-[#9B2335]" />
       {/* ROLLUP2 — Family / Charitable / Household total, the Owners list (each member's own card figure) and the
           valued holdings with no allocation bucket */}
       <SplitTable total={envelope?.total} vocabularies={v} />
@@ -52,7 +56,7 @@ export function SummaryView({ envelope, onRecalculate, busy, note }) {
 
 export default function HouseholdSummary({ householdId }) {
   const [env, setEnv] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const recalc = useBusy(); // CATCHALL1 busy
   const [note, setNote] = useState(null);
   async function load() {
     const res = await fetch(`/api/households/${householdId}/summary`, { cache: "no-store" });
@@ -60,15 +64,15 @@ export default function HouseholdSummary({ householdId }) {
     setEnv(res.ok ? data : null);
   }
   useEffect(() => { load(); }, [householdId]); // eslint-disable-line react-hooks/exhaustive-deps
-  async function onRecalculate() {
-    setBusy(true);
-    setNote(null);
-    try {
+  function onRecalculate() {
+    // CATCHALL1 busy — disabled + "Recalculating…" while pending; a failure is shown, never swallowed
+    return recalc.run(async () => {
+      setNote(null);
       const res = await fetch(`/api/admin/households/${householdId}/recalculate`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      setNote(res.ok ? `Recalculated (${data.status}).` : (data.error || `Recalculate failed (${res.status})`));
+      const data = await jsonOrThrow(res);
+      setNote(`Recalculated (${data.status}).`);
       await load();
-    } finally { setBusy(false); }
+    });
   }
-  return <SummaryView envelope={env} onRecalculate={onRecalculate} busy={busy} note={note} />;
+  return <SummaryView envelope={env} onRecalculate={onRecalculate} busy={recalc.busy} error={recalc.error} note={note} />;
 }

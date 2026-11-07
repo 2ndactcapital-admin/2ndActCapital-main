@@ -22,6 +22,10 @@ const ALLOWED = [
   // BUGFIX4 — edit a saved private investment (notes / dates / vintage) and read its versions
   ["PATCH", new RegExp(`^private-investments/assets/${UUID}$`)],
   ["GET", new RegExp(`^private-investments/assets/${UUID}/history$`)],
+  // CATCHALL1 — a direct asset's Edit (a new version), End (a disposal row) and History
+  ["PATCH", new RegExp(`^direct-assets/${UUID}$`)],
+  ["POST", new RegExp(`^direct-assets/${UUID}/end$`)],
+  ["GET", new RegExp(`^direct-assets/${UUID}/history$`)],
 ];
 
 /** The Next proxy forwards ONLY these method + path pairs. */
@@ -128,3 +132,49 @@ export function privateEditPayload(form, row) {
   return out;
 }
 
+
+
+// ── CATCHALL1 — a direct asset's Edit / End / History ───────────────────────────────────────────────────────────
+/**
+ * The row's controls: each only when the envelope grants it (can_write + vocabularies.editable) AND the server
+ * listed it on the row (row.actions) — a member's envelope (can_write false, editable []) renders none. A lost
+ * envelope / missing actions → none (fail closed).
+ */
+export function directRowControls(envelope, row) {
+  const acts = Array.isArray(row?.actions) ? row.actions : [];
+  return {
+    edit: canDo(envelope, "edit") && acts.includes("edit"),
+    end: canDo(envelope, "end") && acts.includes("end"),
+    history: envelope?.permissions?.can_write === true && acts.includes("history"),
+    revalue: canDo(envelope, "revalue") && acts.includes("revalue"),
+  };
+}
+
+/** The form's starting values for an Edit, from the row as listed. */
+export function directEditForm(row) {
+  return { name: row?.name || "", kind: row?.kind || "", notes: row?.notes || "", value: row?.asset_value || "",
+    as_of: row?.as_of || "", method: row?.valuation_method || "" };
+}
+
+/** Only what changed from the row (a sparse PATCH); value stays a string (exact Decimal). */
+export function directEditPayload(form, row) {
+  const start = directEditForm(row);
+  const out = {};
+  for (const k of ["name", "kind", "notes", "value", "as_of", "method"]) {
+    const v = form?.[k] === undefined ? start[k] : String(form[k] ?? "").trim();
+    if (v !== String(start[k] ?? "").trim()) out[k] = k === "notes" ? (v || null) : v;
+  }
+  return out;
+}
+
+/** The End request: "entered in error" sends no date and no proceeds (the API ends it from its start). */
+export function directEndPayload(form) {
+  const reason = form?.end_reason || "";
+  const out = { reason };
+  if (reason !== "entered_in_error") {
+    if (form?.end_date) out.end_date = form.end_date;
+    if (form?.proceeds && String(form.proceeds).trim()) out.proceeds = String(form.proceeds).trim();
+  }
+  if (form?.end_notes && String(form.end_notes).trim()) out.notes = String(form.end_notes).trim();
+  return out;
+}
