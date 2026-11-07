@@ -35,6 +35,13 @@ SCOPE_TEXT = {
         "transactions": "Every ledger entry across the firm. Select a row to see its figures, its position and its "
                         "source documents. Entries are corrected, never overwritten.",
     },
+    # VISIBILITY1 — a restricted staff caller of an org that enforces staff visibility.
+    "assigned": {
+        "positions": "Holdings of the families you cover. Select a row to see its valuation, transactions and "
+                     "source documents.",
+        "transactions": "Ledger entries of the families you cover. Select a row to see its figures, its position "
+                        "and its source documents. Entries are corrected, never overwritten.",
+    },
     "own_family": {
         "positions": "Your family's holdings. Select a row to see its valuation, transactions and source documents.",
         "transactions": "Your family's ledger entries. Select a row to see its figures, its position and its source "
@@ -51,9 +58,14 @@ async def entity_scope(request: Request, pool) -> list[str] | None:
     return sorted(str(x) for x in scope)
 
 
-def scope_block(scope: list[str] | None, screen: str) -> dict:
+def scope_block(scope: list[str] | None, screen: str, request: Request | None = None) -> dict:
     """What the page says about whose data it shows. ``screen`` is ``positions`` or ``transactions``."""
+    from services.authz import principal_of
+    from services.family_visibility import restricted_principal
+
     kind = "firm" if scope is None else "own_family"
+    if scope is not None and request is not None and restricted_principal(principal_of(request)):
+        kind = "assigned"
     return {"kind": kind, "description": SCOPE_TEXT[kind][screen]}
 
 

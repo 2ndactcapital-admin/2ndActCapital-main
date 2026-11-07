@@ -17,6 +17,7 @@ from schemas.notifications import (
     UnreadCountResponse,
 )
 from services.database import get_pool
+from services.family_visibility import notification_visible, scope_for_request
 from services.notifications import notification_bus
 from services.permissions import get_user_id
 from services.users import ensure_user
@@ -45,7 +46,19 @@ async def list_notifications(
         pool, user_id, org_id, status=status, limit=limit, offset=offset
     )
     unread = await notification_bus.get_unread_count(pool, user_id, org_id)
+    staff = await scope_for_request(request, pool)      # VISIBILITY1 — a family's notification only if visible
+    if staff is not None:
+        items = [n for n in items if notification_visible(n, staff)]
+        unread = await _visible_unread(pool, user_id, org_id, staff)
     return NotificationListResponse(notifications=items, unread_count=unread)
+
+
+async def _visible_unread(pool, user_id, org_id, staff) -> int:
+    """VISIBILITY1 — the unread count over the notifications this restricted caller may see (two reads)."""
+    pending = await notification_bus.get_for_user(pool, user_id, org_id, status="pending", limit=1000, offset=0)
+    delivered = await notification_bus.get_for_user(pool, user_id, org_id, status="delivered", limit=1000,
+                                                    offset=0)
+    return sum(1 for n in pending + delivered if notification_visible(n, staff))
 
 
 @router.get("/notifications/count", response_model=UnreadCountResponse)
@@ -53,6 +66,9 @@ async def notifications_count(request: Request):
     user_id, org_id = await _resolve_user(request)
     pool = await get_pool()
     count = await notification_bus.get_unread_count(pool, user_id, org_id)
+    staff = await scope_for_request(request, pool)      # VISIBILITY1
+    if staff is not None:
+        count = await _visible_unread(pool, user_id, org_id, staff)
     return UnreadCountResponse(unread_count=count)
 
 

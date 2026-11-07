@@ -11,7 +11,7 @@ every other route with Auth0-issued JWT validation.
 from functools import lru_cache
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from jose import jwt
@@ -93,6 +93,7 @@ from routers.edgar_pipeline_admin import router as edgar_pipeline_admin_router
 from routers.pricing_surface import router as pricing_surface_router
 from routers.spv import router as spv_router
 from routers.staff_assignments import router as staff_assignments_router
+from routers.staff_visibility import router as staff_visibility_router  # VISIBILITY1
 from routers.trading_authority import router as trading_authority_router
 from routers.users import router as users_router
 from routers.vdr import router as vdr_router
@@ -344,7 +345,16 @@ def verify_token(token: str) -> dict:
         raise primary_error
 
 
-app = FastAPI(title="Ripasso API", version=API_VERSION)
+async def _family_path_guard(request: Request) -> None:
+    """VISIBILITY1 — the ONE family-visibility guard, on every route: a restricted staff caller of an org that
+    enforces staff visibility gets the same 404 for another family's record (path or query id) as for a missing
+    one, on reads and writes alike. A no-op (no statement) for everyone else. services.family_visibility."""
+    from services.family_visibility import family_path_guard
+
+    await family_path_guard(request)
+
+
+app = FastAPI(title="Ripasso API", version=API_VERSION, dependencies=[Depends(_family_path_guard)])
 
 app.add_middleware(
     CORSMiddleware,
@@ -403,6 +413,32 @@ async def _resolve_is_super_admin(request: Request) -> bool:
 # purpose. Starlette runs the LAST-registered middleware outermost, so defining
 # this one first makes it *inner* — it therefore runs AFTER auth0_jwt_middleware
 # has populated request.state.user, which we need to resolve org_id.
+async def _scrub_family_rows(request: Request, response):
+    """VISIBILITY1 — re-emit a 2xx JSON response with every list item naming an invisible family removed. A body
+    that cannot be read as JSON is refused (fail closed: 500), never passed through unscrubbed."""
+    import json as _json
+
+    from services.database import get_pool
+    from services.family_visibility import scope_for_request, scrub
+
+    ctype = response.headers.get("content-type", "")
+    if not (200 <= response.status_code < 300) or "application/json" not in ctype:
+        return response
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk if isinstance(chunk, bytes) else chunk.encode()
+    try:
+        scope = await scope_for_request(request, await get_pool())
+        payload = _json.loads(body) if body else None
+        if scope is not None and payload is not None:
+            payload = scrub(payload, scope)
+    except Exception as exc:
+        print(f"[visibility] scrub failed (refused): {exc}")
+        return JSONResponse(status_code=500, content={"detail": "Visibility could not be decided"})
+    headers = {k: v for k, v in response.headers.items() if k.lower() not in ("content-length", "content-type")}
+    return JSONResponse(status_code=response.status_code, content=payload, headers=headers)
+
+
 @app.middleware("http")
 async def rls_context_middleware(request: Request, call_next):
     """Resolve the ONE Principal for the request, gate on it, and set the RLS
@@ -477,7 +513,15 @@ async def rls_context_middleware(request: Request, call_next):
 
     tokens = set_rls_context(org_id, is_super)
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        # VISIBILITY1 — a restricted staff caller of an enforcing org never receives another family's row in any
+        # JSON list (services.family_visibility.scrub). No-op for everyone else.
+        from services.authz import principal_of
+        from services.family_visibility import restricted_principal
+
+        if restricted_principal(principal_of(request)):
+            response = await _scrub_family_rows(request, response)
+        return response
     finally:
         reset_rls_context(tokens)
         reset_auth0_sub_context(sub_token)
@@ -597,6 +641,7 @@ app.include_router(admin_router, prefix="/api/v1")
 app.include_router(enroll_router, prefix="/api/v1")
 app.include_router(invites_router, prefix="/api/v1")
 app.include_router(staff_assignments_router, prefix="/api/v1")
+app.include_router(staff_visibility_router, prefix="/api/v1")  # VISIBILITY1
 app.include_router(households_router, prefix="/api/v1")
 app.include_router(billing_groups_router, prefix="/api/v1")
 app.include_router(fee_chat_router, prefix="/api/v1")

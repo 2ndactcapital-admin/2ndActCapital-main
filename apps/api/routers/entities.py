@@ -1643,6 +1643,9 @@ async def create_ownership(request: Request, body: OwnershipCreate):
         raise HTTPException(status_code=400, detail="An entity cannot own itself")
 
     pool = await get_pool()
+    from services.family_visibility import require_visible
+
+    await require_visible(request, pool, entity_ids=[body.parent_id, body.child_id])   # VISIBILITY1
     async with pool.acquire() as conn:
         async with conn.transaction():
             existing = await conn.fetchval(

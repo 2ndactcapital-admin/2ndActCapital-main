@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import EntityTypeBadge from "@/components/EntityTypeBadge";
 import EntityDetailTabs from "@/components/crm/EntityDetailTabs";
 import { fetchAPI } from "@/lib/api";
+import TeamPanel from "@/components/visibility/TeamPanel";
 
 export default async function EntityDetailPage({ params }) {
   const { id } = await params;
@@ -13,10 +14,17 @@ export default async function EntityDetailPage({ params }) {
     redirect(`/auth/login?returnTo=/crm/${id}`);
   }
 
-  const [fullResult, graphResult] = await Promise.allSettled([
+  const [fullResult, graphResult, teamResult, peopleResult, teamsResult] = await Promise.allSettled([
     fetchAPI(`/api/v1/entities/${id}/full`),
     fetchAPI(`/api/v1/entities/${id}/ownership-graph`),
+    // VISIBILITY1 — the record's Team panel; refused → no panel
+    fetchAPI(`/api/v1/staff-visibility/entities/${id}/team`),
+    fetchAPI("/api/v1/admin/staff/people"),
+    fetchAPI("/api/v1/admin/staff/teams"),
   ]);
+  const team = teamResult.status === "fulfilled" ? teamResult.value : null;
+  const people = peopleResult.status === "fulfilled" ? peopleResult.value : [];
+  const teams = teamsResult.status === "fulfilled" ? teamsResult.value : [];
 
   if (fullResult.status === "rejected") {
     if (fullResult.reason?.status === 404) notFound();
@@ -52,6 +60,10 @@ export default async function EntityDetailPage({ params }) {
       >
         View ownership structure →
       </a>
+
+      {team ? (
+        <div className="mt-4"><TeamPanel kind="entity" id={entity.id} initialEnvelope={team} people={people || []} teams={teams || []} /></div>
+      ) : null}
 
       <div className="mt-8">
         <EntityDetailTabs full={full} graph={graph} />

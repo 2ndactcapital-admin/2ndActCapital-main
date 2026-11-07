@@ -1,5 +1,5 @@
 {
- "app_route_count": 847,
+ "app_route_count": 858,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -6533,15 +6533,11 @@
    "write": false
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
@@ -6555,15 +6551,11 @@
    "write": false
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": true,
    "methods": [
@@ -6577,15 +6569,11 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": true,
    "methods": [
@@ -6599,15 +6587,11 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": true,
    "methods": [
@@ -6621,15 +6605,11 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": false,
    "methods": [
@@ -6643,15 +6623,11 @@
    "write": false
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": true,
    "methods": [
@@ -6665,15 +6641,11 @@
    "write": true
   },
   {
-   "after": "authz manage_members",
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
    "before": "rbac manage_members",
    "before_effect": "OPEN for a role-less user (default-allow)",
    "expect": {
-    "any_of": [
-     "manage_members"
-    ],
-    "rule": "perm",
-    "scoped": false
+    "rule": "mixed"
    },
    "find": true,
    "methods": [
@@ -6683,6 +6655,240 @@
    "name": "delete_assignment",
    "note": "same permission, now enforced from the DB Principal",
    "path": "/api/v1/admin/staff/assignments/{assignment_id}",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.staff_assignments",
+   "name": "list_people",
+   "note": "",
+   "path": "/api/v1/admin/staff/people",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_members; any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "mixed"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.staff_assignments",
+   "name": "set_manager",
+   "note": "",
+   "path": "/api/v1/admin/staff/users/{user_id}/manager",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "get_preview",
+   "note": "",
+   "path": "/api/v1/admin/staff-visibility",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "authz manage_org_settings",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_org_settings"
+    ],
+    "rule": "perm",
+    "scoped": false
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "set_enforcement",
+   "note": "",
+   "path": "/api/v1/admin/staff-visibility/enforcement",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "list_unassigned",
+   "note": "",
+   "path": "/api/v1/admin/staff-visibility/unassigned",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "bulk_assign",
+   "note": "",
+   "path": "/api/v1/admin/staff-visibility/bulk-assign",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_members|view_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "view_members"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "entity_team",
+   "note": "",
+   "path": "/api/v1/staff-visibility/entities/{entity_id}/team",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_members|view_members)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "view_members"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "household_team",
+   "note": "",
+   "path": "/api/v1/staff-visibility/households/{household_id}/team",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "add_entity_team",
+   "note": "",
+   "path": "/api/v1/staff-visibility/entities/{entity_id}/team",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "add_household_team",
+   "note": "",
+   "path": "/api/v1/staff-visibility/households/{household_id}/team",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "any(manage_members|manage_org_settings)",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "any_of": [
+     "manage_members",
+     "manage_org_settings"
+    ],
+    "rule": "perm"
+   },
+   "find": false,
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.staff_visibility",
+   "name": "remove_team",
+   "note": "",
+   "path": "/api/v1/staff-visibility/assignments/{assignment_id}",
    "public": false,
    "write": true
   },

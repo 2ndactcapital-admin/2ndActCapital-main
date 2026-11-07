@@ -406,7 +406,7 @@ async def get_positions(
     perms = await _permission_envelope(pool, user_id, org_id)
     result["permissions"] = perms
     result["vocabularies"] = _vocabularies(perms)
-    result["scope"] = scope_block(scope, "positions")   # BUGFIX3 — "across the firm" only when it is
+    result["scope"] = scope_block(scope, "positions", request)   # BUGFIX3 — "across the firm" only when it is
     return result
 
 

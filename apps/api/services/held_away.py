@@ -121,6 +121,11 @@ MANUAL_KINDS = {
 # "ETH" is not the Grayscale ETF whose ticker is ETH, and a cash line is the org's cash asset whatever identifier the
 # form happened to still carry from the previous line (A25's cash saved against QQQ by a stale CUSIP).
 NO_MASTER_KINDS = frozenset({"digital_asset", "cash"})
+# VISIBILITY1 FIX 1 (H) — the same kinds as the asset_type they are STORED as: a named cash line ("Cash / sweep",
+# "Coastal Bank checking") is asset_type 'cash_holding' (ROLLUP2), the org's cash asset is 'cash'. The nightly relink
+# (services.portfolio_manual.relink_manual_assets) skips exactly these — it once re-attached the Olivo "Bitcoin" /
+# "Ether" digital assets to the Grayscale BTC / ETH trusts by ticker. Derived from NO_MASTER_KINDS, never a 2nd list.
+NO_MASTER_ASSET_TYPES = NO_MASTER_KINDS | frozenset({"cash_holding"})
 # BUGFIX4 — kinds entered as an AMOUNT: no quantity needed. The quantity stored is the amount (one unit = one
 # currency unit), exactly what an adviser had to type by hand before.
 VALUE_ONLY_KINDS = frozenset({"cash", "private"})

@@ -113,6 +113,10 @@ class Principal:
     resolved_via: str = "sub"
     # STAFFROLES1 — may SEE staff data (every internal firm role; never a bypass).
     is_internal: bool = False
+    # VISIBILITY1 — the org's switch org_settings 'staff_visibility.enforced' (read in the SAME one statement).
+    # True → internal staff who are not Super Admin / org admin see only their families
+    # (services.family_visibility). False (the default) → exactly the pre-VISIBILITY1 behaviour.
+    visibility_enforced: bool = False
 
     @property
     def admitted(self) -> bool:
@@ -186,7 +190,9 @@ PRINCIPAL_COLUMNS = """
            WHERE r.org_id = u.org_id AND r.name = 'member') AS member_safe_names,
     CASE WHEN EXISTS (SELECT 1 FROM user_roles ur_s JOIN roles r_s ON r_s.id = ur_s.role_id
                       WHERE ur_s.user_id = u.id AND r_s.org_id = u.org_id AND r_s.name = $2)
-         THEN ARRAY(SELECT name FROM permissions) END AS catalog_names"""
+         THEN ARRAY(SELECT name FROM permissions) END AS catalog_names,
+    (SELECT os.setting_value FROM org_settings os
+      WHERE os.org_id = u.org_id AND os.setting_key = 'staff_visibility.enforced') AS visibility_setting"""
 
 PRINCIPAL_BY_ID_SQL = f"SELECT {PRINCIPAL_COLUMNS} FROM users u WHERE u.id = $1"
 
@@ -251,7 +257,19 @@ def principal_from_row(row, *, claims: dict | None = None, resolved_via: str = "
         permissions=frozenset(perms),
         resolved_via=resolved_via,
         is_internal=bool(admitted and (is_super or INTERNAL_ROLE_NAMES.intersection(roles))),
+        visibility_enforced=_visibility_flag(row),
     )
+
+
+def _visibility_flag(row) -> bool:
+    """VISIBILITY1 — only a stored jsonb ``true`` enforces; no row / anything else is the default (off)."""
+    from services.family_visibility import setting_truthy
+
+    try:
+        value = row["visibility_setting"]
+    except (KeyError, IndexError):
+        return False
+    return setting_truthy(value)
 
 
 # ── Request access ──────────────────────────────────────────────────────────
@@ -401,6 +419,12 @@ async def require_entity_access(request: Request, pool, entity_id) -> Principal:
     not disclosed."""
     p = require_active(request)
     if _sees_unscoped(request, p):
+        # VISIBILITY1 — an enforcing org restricts internal staff (not Super Admin / org admin) to their families.
+        from services.family_visibility import scope_for_request
+
+        staff = await scope_for_request(request, pool)
+        if staff is not None and (entity_id is None or str(entity_id) not in staff.entity_ids):
+            raise HTTPException(status_code=404, detail="Entity not found")
         return p
     from services.document_embedding import visible_entity_ids
 
@@ -425,7 +449,12 @@ async def member_entity_scope(request: Request, pool) -> set | None:
     role reads unscoped too (``_sees_unscoped``)."""
     p = require_active(request)
     if _sees_unscoped(request, p):
-        return None
+        # VISIBILITY1 — None (unscoped) unless the org enforces staff visibility and this caller is restricted;
+        # then their families' entity ids (possibly EMPTY — nothing, never "all").
+        from services.family_visibility import scope_for_request
+
+        staff = await scope_for_request(request, pool)
+        return None if staff is None else set(staff.entity_ids)
     from services.document_embedding import visible_entity_ids
 
     return await visible_entity_ids(pool, p.org_id, p.user_id, False)

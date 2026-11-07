@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import { getHostSession } from "@/lib/authServer";
 import AppShell from "@/components/AppShell";
 import StaffVisibilityManager from "@/components/admin/StaffVisibilityManager";
+import StaffVisibilityAdmin from "@/components/visibility/StaffVisibilityAdmin";
 import {
+  fetchAPI,
   getAdminUsers,
   getStaffAssignments,
   getStaffTeams,
@@ -10,9 +12,11 @@ import {
 } from "@/lib/api";
 import { labelFor } from "@/lib/menuVisibility";
 
-// SOC Phase 2 admin screen: create teams, manage members, and assign a user or
-// team to an entity. This only POPULATES the assignment data the staff-
-// visibility resolver reads — it does NOT change any endpoint's visibility.
+// Admin → Staff visibility. VISIBILITY1: the preview ("what will each person
+// see"), the org switch (org admin only, confirmed against the preview,
+// audited), Unassigned families with bulk assign, People & managers — plus the
+// SOC Phase 2 teams / assignments manager below. Assignments DECIDE what staff
+// see once the org switches enforcement on.
 export default async function StaffVisibilityPage() {
   const session = await getHostSession();
   if (!session) {
@@ -34,13 +38,19 @@ export default async function StaffVisibilityPage() {
   } catch (e) {
     error = e.status === 403 ? "forbidden" : e.message;
   }
+  // VISIBILITY1 — each envelope independently; a refused one (403) renders no section (fails closed).
+  const [preview, unassigned, people] = await Promise.all([
+    fetchAPI("/api/v1/admin/staff-visibility").catch(() => null),
+    fetchAPI("/api/v1/admin/staff-visibility/unassigned").catch(() => null),
+    fetchAPI("/api/v1/admin/staff/people").catch(() => null),
+  ]);
 
   return (
     <AppShell user={session.user}>
       <div>
         <h1 className="text-3xl font-semibold text-navy">{labelFor("/admin/staff-visibility")}</h1>
         <p className="mt-1 text-sm text-text-muted">
-          Teams and entity assignments for staff visibility
+          Which staff see which families — teams, assignments, managers, and the switch that enforces it
         </p>
       </div>
 
@@ -53,12 +63,21 @@ export default async function StaffVisibilityPage() {
           Could not load staff visibility data: {error}
         </div>
       ) : (
+        <>
+        <StaffVisibilityAdmin
+          initialPreview={preview}
+          initialUnassigned={unassigned}
+          initialPeople={people || []}
+          teams={teams || []}
+          canManagePeople={Array.isArray(people)}
+        />
         <StaffVisibilityManager
           initialTeams={teams || []}
           initialAssignments={assignments || []}
           users={users || []}
           entities={entities || []}
         />
+        </>
       )}
     </AppShell>
   );
