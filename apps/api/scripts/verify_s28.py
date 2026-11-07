@@ -892,11 +892,18 @@ async def y_alerts(conn):
           "a drifting cost per call opens ONE alert per org (org A and org B)", f"{a1} {[dict(r) for r in r1]}")
     alert_id = r1[0]["id"] if r1 else None
     nums = (json.loads(r1[0]["numbers"]) if isinstance(r1[0]["numbers"], str) else r1[0]["numbers"]) if r1 else {}
-    check(bool(r1 and nums.get("recent") == "0.0050" and nums.get("baseline") == "0.0010" and nums.get("recent_n") == 4
+    # s28 fix 1: numbers are JSON text of numeric(…,6) medians ("0.005000") — compare as Decimals, never as text
+    def _dec(v):
+        try:
+            return D(str(v)) if v is not None else None
+        except Exception:
+            return None
+    check(bool(r1 and _dec(nums.get("recent")) == D("0.005") and _dec(nums.get("baseline")) == D("0.001")
+               and nums.get("recent_n") == 4
                and nums.get("baseline_n") == 6 and nums.get("rule") == "cost_per_call"
                and r1[0]["link"] == f"/admin/ai-drift?task={tt}"),
           "the alert carries the numbers (baseline vs recent, sample sizes), the rule and the task page link",
-          f"{body_text(nums)[:300]} {r1[0]['link'] if r1 else None}")
+          f"numbers={body_text(nums)} link={r1[0]['link'] if r1 else None}")
     todos = await platform(conn, "SELECT user_id, org_id, status, detail, action_key FROM member_todos WHERE source = "
                                  "'ai_drift' AND related_type = 'ai_drift_alert' AND related_id = $1", alert_id)
     check({t["user_id"] for t in todos} == {U_ADMIN_A, U_SUPER} and all(t["status"] == "open" for t in todos)
