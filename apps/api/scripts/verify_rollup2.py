@@ -115,6 +115,12 @@ CODE_NEEDLES = [
      "1d: a nested tree entry says whose stake it is"),
     ("docs/rollup2_part1.sql", "CREATE TABLE IF NOT EXISTS portfolio.fund_category_taxonomy",
      "Task 3: the fund category map table (Super Admin)"),
+    ("docs/ROLLUP2_DISCOVERY.md", "**CORRECTED (rollup2 fix 1, 2026-11-07).**",
+     "fix 1: 1d corrected — entity_rel_active_unique forbids a second live edge; duplicates live in entity_ownership"),
+    ("apps/api/routers/entity_graph.py", "async def _require_org_entity(pool, org_id, entity_id) -> None:",
+     "fix 1: another org's entity id is a 404 on the entity_graph reads"),
+    ("apps/api/routers/entity_graph.py", "except asyncpg.UniqueViolationError as exc:",
+     "fix 1: the unique index's refusal is a 409, never a 500"),
 ]
 REPO_ROLLUP = "apps/api/services/portfolio_rollup.py"
 
@@ -142,6 +148,8 @@ def self_task1(check, find):
     find("1c — Muse's Owners-list figures are not reproducible; there is no Owners list in the Consolidate code; "
          "the household page now has one, computed per member by the card's own function")
     find("1d — no duplicate live ownership pair exists in the live org; the 60 % / 15 % was two different owners")
+    find("1d CORRECTED (fix 1) — entity_rel_active_unique forbids two live entity_relationships edges per pair; a "
+         "duplicate arises only inside entity_ownership or across the two tables")
 
 
 def self_static(check, find):
@@ -299,6 +307,7 @@ import _authz1_common as C  # noqa: E402
 import backfill_taxonomy_keys as BF  # noqa: E402
 import repair_ownership_duplicates as RD  # noqa: E402
 from services import fund_classification as FC  # noqa: E402
+from services import ownership_duplicates as OD  # noqa: E402
 from services import household_total as HT  # noqa: E402
 from services import liabilities as L  # noqa: E402
 from services import portfolio_assets as PA  # noqa: E402
@@ -369,7 +378,7 @@ AS_OF = date(2026, 11, 4)
 COUNTED = ("public.users", "public.organizations", "public.entities", "public.entity_relationships",
            "public.households", "public.household_memberships", "public.accounts", "public.entity_holdings",
            "public.role_permissions", "public.user_roles", "public.held_away_imports", "public.held_away_records",
-           "public.ownership_change_log",
+           "public.ownership_change_log", "public.entity_ownership",
            "portfolio.assets", "portfolio.positions", "portfolio.valuations", "portfolio.liabilities",
            "portfolio.rollup_requests", "portfolio.securities_global", "portfolio.securities_global_identifiers",
            "portfolio.security_reference_attributes", "portfolio.fund_category_taxonomy")
@@ -985,10 +994,65 @@ async def y_duplicates(conn):
     section("[Y] Task 4 — duplicate ownership: reported, warned, repaired (dry run / real / CHANGED: 0); new % = new "
             "version")
     owner, owned = eid("cashp"), eid("dup")
+    # ROLLUP2 fix 1 — WHERE a duplicate can really arise (catalog + write paths). entity_relationships CANNOT hold two
+    # live edges for one pair: the partial unique index entity_rel_active_unique (valid_to IS NULL) refuses the
+    # second. entity_ownership has only its primary key. So a duplicate is (i) two live entity_ownership rows
+    # (POST /entity-ownership checks only that the pair's sum stays <= 100), or (ii) one live edge in EACH table —
+    # POST /entities/{id}/ownership versions only an entity_relationships edge and never looks at entity_ownership.
+    idx = await scoped(conn, ORG_A, "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = "
+                                    "'entity_rel_active_unique'", fetch="fetchval")
+    eo_uniq = await scoped(conn, ORG_A, "SELECT array_agg(indexname ORDER BY indexname) FROM pg_indexes WHERE "
+                                        "schemaname = 'public' AND tablename = 'entity_ownership' AND indexdef LIKE "
+                                        "'CREATE UNIQUE%'", fetch="fetchval")
+    check(bool(idx and "UNIQUE" in idx and "(from_entity_id, to_entity_id, relationship_type)" in idx
+               and "valid_to IS NULL" in idx and list(eo_uniq or []) == ["entity_ownership_pkey"]),
+          "catalog: entity_relationships has ONE live edge per pair (entity_rel_active_unique); entity_ownership has "
+          "no unique key but its primary key", f"{idx} {eo_uniq}")
     rel = ("INSERT INTO entity_relationships (org_id, from_entity_id, to_entity_id, relationship_type, ownership_pct, "
            "valid_from) VALUES ($1, $2, $3, 'ownership', $4, $5) RETURNING id::text")
-    old_id = await scoped(conn, ORG_A, rel, ORG_A, owner, owned, Decimal(60), date(2026, 1, 1), fetch="fetchval")
-    new_id = await scoped(conn, ORG_A, rel, ORG_A, owner, owned, Decimal(15), date(2026, 2, 1), fetch="fetchval")
+    refused = None
+    try:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.current_org_id', $1, true), "
+                               "set_config('app.is_super_admin', 'false', true)", str(ORG_A))
+            await conn.fetchval(rel, ORG_A, owner, owned, Decimal(60), date(2026, 1, 1))
+            await conn.fetchval(rel, ORG_A, owner, owned, Decimal(15), date(2026, 2, 1))
+    except Exception as exc:  # noqa: BLE001
+        refused = type(exc).__name__
+    left = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_relationships WHERE from_entity_id = $1 AND "
+                                     "to_entity_id = $2", owner, owned, fetch="fetchval")
+    check(bool(refused == "UniqueViolationError" and left == 0),
+          "two live entity_relationships edges for one pair are REFUSED by the index (the old fixture's state is "
+          "impossible); nothing written", f"{refused} {left}")
+    eo = ("INSERT INTO entity_ownership (org_id, parent_id, child_id, ownership_pct, ownership_type) "
+          "VALUES ($1, $2, $3, $4, 'direct') RETURNING id")
+    same_table = None
+    try:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.current_org_id', $1, true), "
+                               "set_config('app.is_super_admin', 'false', true)", str(ORG_A))
+            await conn.fetchval(eo, ORG_A, owner, owned, Decimal(60))
+            await conn.fetchval(eo, ORG_A, owner, owned, Decimal(10))
+            same_table = [p for p in await OD.find(conn, ORG_A) if p["parent_id"] == str(owner)]
+            raise _Rollback()
+    except _Rollback:
+        pass
+    left_eo = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_ownership WHERE parent_id = $1 AND child_id = $2",
+                           owner, owned, fetch="fetchval")
+    check(bool(same_table and len(same_table) == 1 and len(same_table[0]["entries"]) == 2
+               and {e["source"] for e in same_table[0]["entries"]} == {"entity_ownership"} and left_eo == 0),
+          "two live entity_ownership rows for one pair ARE accepted (no unique key) and the report finds them "
+          "(rolled back)", f"{dumps(same_table)} {left_eo}")
+    # the fixture duplicate, seeded the way it really arises: through the two real write routes, one edge in each table
+    ce, be = await api(U_OA, "POST", "/api/v1/entity-ownership",
+                       {"parent_id": str(owner), "child_id": str(owned), "ownership_pct": 60, "ownership_type": "direct"})
+    old_id = str(be.get("id"))
+    cn, bn = await api(U_OA, "POST", f"/api/v1/entities/{owner}/ownership",
+                       {"direction": "owns", "counterparty_id": str(owned), "ownership_pct": "15"})
+    new_id = str(bn.get("id"))
+    check(bool(ce == 201 and cn == 201 and not bn.get("replaced_relationship_id")),
+          "REAL PATH: POST /entity-ownership 60 % then POST /entities/{id}/ownership 15 % for the same pair are both "
+          "accepted — the second never looks at entity_ownership", f"{ce} {cn} {dumps(bn)[:200]}")
     c0, nw0 = await card(U_OA, owner)
     check(bool(c0 == 200 and nw0.get("gross") == "60000.00"),
           "REPRODUCED: two live entries (60 % + 15 %) inflate the owner's look-through to 75 % (60,000 of 80,000)",
@@ -997,8 +1061,10 @@ async def y_duplicates(conn):
     pair = next((p for p in rep.get("rows") or [] if p["parent_id"] == str(owner) and p["child_id"] == str(owned)),
                 None)
     check(bool(cr == 200 and pair and pair["survivor"] == new_id and len(pair["entries"]) == 2
-               and pair["entries"][0]["newer"] is True),
-          "the Super Admin report lists the pair, both entries, the newer one as survivor", f"{cr} {dumps(pair)}")
+               and pair["entries"][0]["newer"] is True
+               and [e["source"] for e in pair["entries"]] == ["entity_relationships", "entity_ownership"]),
+          "the Super Admin report lists the pair, both entries (one per table), the newer one as survivor",
+          f"{cr} {dumps(pair)}")
     c403, _ = await api(U_OA, "GET", "/api/v1/admin/ownership/duplicates")
     check(c403 == 403, "an org admin is refused the duplicate report", f"{c403}")
     cp, own = await api(U_OA, "GET", f"/api/v1/entities/{owner}/ownership")
@@ -1008,13 +1074,14 @@ async def y_duplicates(conn):
     cq, ownp = await api(U_OA, "GET", f"/api/v1/entities/{eid('p')}/ownership")
     check(bool(cq == 200 and ownp.get("duplicates") == []), "no warning where there is no duplicate",
           f"{dumps(ownp.get('duplicates'))}")
+    live_sql = ("SELECT (SELECT count(*) FROM entity_relationships WHERE from_entity_id = $1 AND to_entity_id = $2 "
+                "AND valid_to IS NULL AND system_to IS NULL) + (SELECT count(*) FROM entity_ownership WHERE "
+                "parent_id = $1 AND child_id = $2 AND valid_to IS NULL AND system_to IS NULL)")
     buf = io.StringIO()
     with redirect_stdout(buf):
         n_dry = await RD.run(conn, str(ORG_A), dry_run=True)
     dry_out = buf.getvalue()
-    live_after_dry = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_relationships WHERE from_entity_id = $1 "
-                                               "AND to_entity_id = $2 AND valid_to IS NULL AND system_to IS NULL",
-                                  owner, owned, fetch="fetchval")
+    live_after_dry = await scoped(conn, ORG_A, live_sql, owner, owned, fetch="fetchval")
     check(bool(n_dry == 0 and live_after_dry == 2 and old_id in dry_out and new_id in dry_out and "NEWER" in dry_out),
           "repair --dry-run lists the pair (both entries, which is newer) and changes nothing", dry_out[-300:])
     with redirect_stdout(io.StringIO()):
@@ -1022,14 +1089,16 @@ async def y_duplicates(conn):
         n2 = await RD.run(conn, str(ORG_A), dry_run=False)
     live = await scoped(conn, ORG_A, "SELECT id::text, ownership_pct FROM entity_relationships WHERE from_entity_id = "
                                      "$1 AND to_entity_id = $2 AND valid_to IS NULL AND system_to IS NULL", owner, owned)
-    hist = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_relationships WHERE id = $1::uuid AND valid_to IS "
-                                     "NOT NULL", old_id, fetch="fetchval")
+    live_all = await scoped(conn, ORG_A, live_sql, owner, owned, fetch="fetchval")
+    hist = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_ownership WHERE id = $1::uuid AND valid_to IS "
+                                     "NOT NULL AND system_to IS NOT NULL", old_id, fetch="fetchval")
     audit = await scoped(conn, ORG_A, "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = "
                                       "'repair_ownership_duplicate' AND resource_id = $2::uuid", ORG_A, old_id,
                          fetch="fetchval")
-    check(bool(n1 == 1 and n2 == 0 and [r["id"] for r in live] == [new_id] and hist == 1 and audit == 1),
+    check(bool(n1 == 1 and n2 == 0 and [r["id"] for r in live] == [new_id] and live_all == 1 and hist == 1
+               and audit == 1),
           "the real repair archives the older entry (kept as history, audited); a second run CHANGED: 0",
-          f"{n1} {n2} {[dict(r) for r in live]} {hist} {audit}")
+          f"{n1} {n2} {[dict(r) for r in live]} {live_all} {hist} {audit}")
     c1, nw1 = await card(U_OA, owner)
     check(bool(c1 == 200 and nw1.get("gross") == "12000.00"), "after repair the owner's card uses the one live 15 %",
           f"{dumps(nw1)}")
@@ -1043,15 +1112,23 @@ async def y_duplicates(conn):
                and live2[0]["ownership_pct"] == Decimal(25) and prior_closed is True),
           "a new percentage for the same pair is a NEW VERSION: the prior archived, one live entry (25 %)",
           f"{cv} {dumps(v)} {[dict(r) for r in live2]}")
+    before = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_relationships WHERE from_entity_id = $1 AND "
+                                       "to_entity_id = $2", owner, owned, fetch="fetchval")
     cs, s = await api(U_OA, "POST", f"/api/v1/entities/{owner}/ownership",
                       {"direction": "owns", "counterparty_id": str(owned), "ownership_pct": "5",
                        "separate_holding": True})
-    live3 = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_relationships WHERE from_entity_id = $1 AND "
-                                      "to_entity_id = $2 AND valid_to IS NULL AND system_to IS NULL", owner, owned,
-                         fetch="fetchval")
-    check(bool(cs == 201 and not s.get("replaced_relationship_id") and live3 == 2),
-          "an explicitly separate holding is recorded alongside (two live entries, reported by the panel)",
-          f"{cs} {live3}")
+    after = await scoped(conn, ORG_A, "SELECT count(*) FROM entity_relationships WHERE from_entity_id = $1 AND "
+                                      "to_entity_id = $2", owner, owned, fetch="fetchval")
+    live3 = await scoped(conn, ORG_A, "SELECT id::text, ownership_pct FROM entity_relationships WHERE from_entity_id = "
+                                      "$1 AND to_entity_id = $2 AND valid_to IS NULL AND system_to IS NULL", owner, owned)
+    check(bool(cs == 409 and live2 and live2[0]["id"] in str(s.get("detail")) and before == after
+               and [r["id"] for r in live3] == [live2[0]["id"]]),
+          "a 'separate holding' on a pair with a live edge is a 409 naming that edge (the index allows one), never a "
+          "500; nothing written", f"{cs} {dumps(s)} {before}->{after}")
+
+
+class _Rollback(Exception):
+    pass
 
 
 # ═══ Task 6 — cash line names ═══════════════════════════════════════════════════════════════════════════════════
@@ -1150,9 +1227,18 @@ async def y_live(conn):
 async def y_scope(conn):
     section("[Y] Org isolation both directions; a member and support refused the admin reports")
     for path in (f"/api/v1/entities/{eid('p')}/net-worth", f"/api/v1/households/{HH1}/summary",
-                 f"/api/v1/entities/{eid('p')}/ownership"):
+                 f"/api/v1/entities/{eid('p')}/ownership", f"/api/v1/entities/{eid('p')}/ownership/history",
+                 f"/api/v1/entities/{eid('p')}/relationships"):
         c, _ = await api(U_OB_ADMIN, "GET", path)
         check(c in (403, 404), f"org B's admin on org A's {path.split('/api/v1')[1][:50]} → refused", f"{c}")
+    # ROLLUP2 fix 1 — these three answered 200 with empty lists for another org's id; now 404 like net-worth, and
+    # org A's own admin still reads them
+    for path in (f"/api/v1/entities/{eid('p')}/ownership", f"/api/v1/entities/{eid('p')}/ownership/history",
+                 f"/api/v1/entities/{eid('p')}/relationships"):
+        cb, _ = await api(U_OB_ADMIN, "GET", path)
+        ca, _ = await api(U_OA, "GET", path)
+        check(bool(cb == 404 and ca == 200), f"{path.split('/api/v1')[1][:50]}: org B 404 (as a missing id), org A 200",
+              f"B {cb} A {ca}")
     for path in ("/api/v1/admin/ownership/duplicates", "/api/v1/admin/fund-categories/proposals"):
         c, _ = await api(U_MEMBER, "GET", path)
         check(c == 403, f"a member is refused {path}", f"{c}")

@@ -76,7 +76,6 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
   const [effectiveDate, setEffectiveDate] = useState("");
   const [note, setNote] = useState("");
   // ROLLUP2 Task 4 — a new percentage for an existing owner replaces it (a new version) unless this is ticked
-  const [separate, setSeparate] = useState(false);
   const [error, setError] = useState(null);
   const [pending, startTransition] = useTransition();
 
@@ -94,7 +93,6 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
             effective_date: effectiveDate || null,
             note: note || null,
             change_reason: "initial",
-            separate_holding: separate,
           }),
         });
         const data = await res.json();
@@ -155,10 +153,9 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
           placeholder="Optional note"
         />
       </div>
-      <label className="flex items-center gap-2 text-xs text-text-secondary">
-        <input type="checkbox" checked={separate} onChange={(e) => setSeparate(e.target.checked)} />
-        This is a second, separate holding (otherwise a new percentage replaces the current one)
-      </label>
+      {/* ROLLUP2 fix 1 — no "separate holding" option: entity_relationships holds one live edge per pair
+          (entity_rel_active_unique), so a new percentage for a pair is always a new version of its edge */}
+      <p className="text-xs text-text-secondary">A new percentage for an existing owner replaces the current one (kept as history).</p>
       {error && <p className="text-xs text-error">{error}</p>}
       <div className="flex gap-2">
         <button

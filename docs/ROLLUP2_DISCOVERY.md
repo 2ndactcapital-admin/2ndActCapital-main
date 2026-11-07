@@ -68,9 +68,28 @@ LP, 10 % by Cipolla Olivo Holdings LLC, 10 % by AOF Investments**. On Dominic's 
 Art Holdings appears directly at 15.00 % AND nested under Olivo Holdings LP at 60.00 % — the LP's stake — with no "via".
 Cipolla's card uses its own 10 %, which is correct. Every reader takes ALL live edges (summed, capped at 1).
 
-The real way a duplicate CAN arise: `POST /entities/{id}/ownership` never checked for a live edge on the pair, so a new
-percentage "added" instead of edited left both live. Fixed (Task 4): a new percentage is a new version unless
-`separate_holding: true`; the tree labels nested entries "60.00% via Olivo Holdings LP".
+**CORRECTED (rollup2 fix 1, 2026-11-07).** The original text here said "`POST /entities/{id}/ownership` never checked
+for a live edge on the pair, so a new percentage 'added' instead of edited left both live". **That is wrong for
+`entity_relationships`**: the live database has `CREATE UNIQUE INDEX entity_rel_active_unique ON
+public.entity_relationships (from_entity_id, to_entity_id, relationship_type) WHERE valid_to IS NULL`, so a second live
+ownership edge for the same pair cannot exist there. Before ROLLUP2, that POST on a pair with a live edge was a **500
+from the index**, not a silent duplicate. (verify_rollup2's first fixture seeded exactly that impossible state and
+raised `UniqueViolationError`.)
+
+Where a duplicate CAN really arise (catalog + write paths, proven on fixtures):
+- **Inside `entity_ownership`** — it has only its primary key (no unique index on the pair), and its one write path,
+  `POST /entity-ownership` (`routers/entities.py`), checks only that the child's live total stays <= 100 %: 60 % then
+  10 % for the same pair are both accepted.
+- **Across the two tables** — one live edge in each for the same pair: `POST /entity-ownership` writes
+  `entity_ownership`, and `POST /entities/{id}/ownership` versions only an `entity_relationships` edge, never looking at
+  `entity_ownership`. Every net-worth reader sums both tables, so this inflates the look-through.
+
+Task 4 as built: `POST /entities/{id}/ownership` on a pair with a live edge is a new version (prior archived);
+`separate_holding: true` on such a pair is now a **409 naming the existing edge** (the index allows one), and any index
+refusal is a 409, never a 500 (the Ownership tab's "separate holding" checkbox is removed). The duplicate report and
+repair (`services/ownership_duplicates.py`, `repair_ownership_duplicates.py`) read and archive in BOTH tables, so they
+cover both real shapes. The tree labels nested entries "60.00% via Olivo Holdings LP". Not fixed here (open): neither
+write path refuses the cross-table or same-table duplicate at write time.
 
 ## 1e. What the security master knows about the fund assets
 
