@@ -45,7 +45,9 @@ FOUR THINGS THIS MODULE IS DELIBERATE ABOUT
    that the new computation did not produce. Scoped to this source — a manual
    or imported holding row from another track is never touched.
 
-4. **A position with no mark is skipped and COUNTED, never zeroed.** Same rule
+4. **A position with no mark is skipped and COUNTED, never zeroed.** (ROLLUP2: and a VALUED position with no
+   taxonomy key is no longer skipped — it is written under the ``unclassified`` bucket and listed; the buckets come
+   from ``compute_buckets`` = ``services.networth``, the same lines and shares as every net-worth card.) Same rule
    ``resolve_current_value`` already enforces: a zero for "we have no valuation"
    is indistinguishable from a genuine zero the instant it is summed, and the
    fact that it was never measured is gone. The result object reports how many
@@ -164,6 +166,9 @@ class RollupResult:
     #: stale earlier figure).
     scope_size: int | None = None
     buckets_zeroed: int = 0
+    #: ROLLUP2 — valued positions with no taxonomy key: COUNTED under the ``unclassified`` bucket (no longer
+    #: skipped), and listed here so the report still names them.
+    unclassified: list[dict] = field(default_factory=list)
 
     @property
     def positions_skipped(self) -> int:
@@ -184,6 +189,11 @@ class RollupResult:
             "buckets_zeroed": self.buckets_zeroed,
             "currency_code": BASE_CURRENCY,
             "source": ROLLUP_SOURCE,
+            "unclassified": [
+                {"position_id": u["position_id"], "owner_entity_id": u["owner_entity_id"],
+                 "asset_id": u["asset_id"], "value": str(u["value"])}
+                for u in self.unclassified
+            ],
             "skipped": [
                 {
                     "position_id": s.position_id,
@@ -431,6 +441,42 @@ async def _ownership_weights(conn, org_id: str, owner_ids: set[str], scope: list
     return weights
 
 
+UNCLASSIFIED_BUCKET = "unclassified"   # = services.networth.UNCLASSIFIED_KEY (asserted equal there)
+
+
+async def compute_buckets(c, org_id: str, as_of_date: date, scope_ids: list | None = None):
+    """ROLLUP2 — the snapshot's buckets from THE net-worth core (services.networth): the same valued lines and the
+    same shares (both ownership tables, capped) the entity card and the household total use. Returns
+    ``(rows, valued, skipped, considered)`` — ``rows`` = sorted ``(entity_id, taxonomy_key, amount)`` quantized to
+    the cent; a valued line with no key goes to the ``unclassified`` bucket (it used to be dropped). Read-only: the
+    recalculate script's dry run calls it to show before / after.
+
+    Every entity that owns a valued line or sits above one gets a bucket set: the owner at 1, each ancestor at its
+    share (``networth.shares({ancestor})`` — the card's own rule, so a card and its snapshot agree to the cent)."""
+    from services import networth as NW
+
+    edges = await NW.load_edges(c, org_id)
+    if scope_ids is not None:
+        inside = set(scope_ids)
+        edges = [e for e in edges if e[0] in inside and e[1] in inside]
+    valued, skipped = await NW.value_lines(c, org_id, as_of_date, scope_ids)
+    owners = {ln["owner_entity_id"] for ln in valued}
+    candidates = owners | {p for p, _ch, _pct in edges}
+    if scope_ids is not None:
+        candidates &= set(scope_ids)
+    buckets: dict[tuple[str, str], Decimal] = {}
+    for ent in sorted(candidates):
+        share = NW.shares({ent}, edges)
+        for ln in valued:
+            w = share.get(ln["owner_entity_id"])
+            if not w:
+                continue
+            key = (ent, ln["taxonomy_key"] or UNCLASSIFIED_BUCKET)
+            buckets[key] = buckets.get(key, _ZERO) + ln["value"] * w
+    rows = [(e, k, amt.quantize(_CENTS, rounding=ROUND_HALF_UP)) for (e, k), amt in sorted(buckets.items())]
+    return rows, valued, skipped, len(valued) + len(skipped)
+
+
 async def rollup_entity_holdings(
     conn,
     *,
@@ -462,63 +508,12 @@ async def rollup_entity_holdings(
     result.scope_size = len(scope_ids) if scope_ids is not None else None
 
     async with _OrgWrite(conn, org_id) as c:
-        positions = await _current_positions(c, org_id, as_of_date, scope_ids)
-        result.positions_considered = len(positions)
-
-        # ── Value every position, dropping (and naming) the ones that cannot
-        #    be valued or classified. ─────────────────────────────────────────
-        valued: list[tuple[str, str, Decimal]] = []  # (owner, taxonomy_key, value)
-        owner_ids: set[str] = set()
-        for row in positions:
-            taxonomy_key = row["taxonomy_key"]
-            if not taxonomy_key:
-                result.skipped.append(SkippedPosition(
-                    position_id=row["position_id"],
-                    owner_entity_id=row["owner_entity_id"],
-                    asset_id=row["asset_id"],
-                    reason=NO_TAXONOMY_REASON,
-                ))
-                continue
-
-            value, reason = await _position_value(c, org_id, row, as_of_date)
-            if value is None:
-                result.skipped.append(SkippedPosition(
-                    position_id=row["position_id"],
-                    owner_entity_id=row["owner_entity_id"],
-                    asset_id=row["asset_id"],
-                    reason=reason or "unvalued",
-                ))
-                continue
-
-            valued.append((row["owner_entity_id"], taxonomy_key, value))
-            owner_ids.add(row["owner_entity_id"])
-
+        rows, valued, skipped, considered = await compute_buckets(c, org_id, as_of_date, scope_ids)
+        result.positions_considered = considered
         result.positions_valued = len(valued)
-
-        # ── Attribute each value to the direct owner AND to every ancestor,
-        #    at the graph's own compounded percentage. ─────────────────────────
-        weights = await _ownership_weights(c, org_id, owner_ids, scope_ids)
-        buckets: dict[tuple[str, str], Decimal] = {}
-
-        for owner, taxonomy_key, value in valued:
-            # The direct owner holds the whole thing. Weight 1, not a lookup:
-            # an entity does not appear in its own look-through.
-            key = (owner, taxonomy_key)
-            buckets[key] = buckets.get(key, _ZERO) + value
-
-        for ancestor, held in weights.items():
-            for owner, taxonomy_key, value in valued:
-                fraction = held.get(owner)
-                if fraction is None:
-                    continue
-                key = (ancestor, taxonomy_key)
-                buckets[key] = buckets.get(key, _ZERO) + (value * fraction)
-
-        rows = [
-            (entity_id, taxonomy_key,
-             amount.quantize(_CENTS, rounding=ROUND_HALF_UP))
-            for (entity_id, taxonomy_key), amount in sorted(buckets.items())
-        ]
+        result.unclassified = [u for u in valued if not u["taxonomy_key"]]
+        result.skipped = [SkippedPosition(position_id=x["position_id"], owner_entity_id=x["owner_entity_id"],
+                                          asset_id=x["asset_id"], reason=x["reason"]) for x in skipped]
 
         # ── Remove the buckets this run did NOT produce, then upsert the ones
         #    it did. Deletion first so a bucket that moved taxonomy keys does

@@ -29,6 +29,21 @@ BUGFIX4:
   built for: K.19 "Family office working capital" entered as ``other`` (no bucket, counted $0) →
   ``--reclassify eddf9851-7140-4d38-a558-486d019616e3:cash_holding`` (Cash & Equivalents). Only the kinds of
   ``portfolio.kind_taxonomy`` are accepted; a dry run prints what would change.
+
+ROLLUP2:
+* ``--funds`` — every fund asset (fund / etf / mutual_fund / closed_end_fund) gets a PROPOSED key from what it
+  holds: the security master's category through the fund category map (services.fund_classification), cross-checked
+  against the fund's name. Each line prints the asset, the status (apply / unchanged / review / unclassified), the
+  proposed key and the reason (category → key). The real run applies ONLY ``apply`` proposals (system axis, id
+  kept); ``review`` and ``unclassified`` are listed for the operator, never guessed. ``--funds`` replaces the kind
+  pass (a fund's kind maps to nothing).
+* ``--reclassify ASSET_ID:KEY`` — a value starting ``taxonomy_`` is a KEY: the asset keeps its kind and gets that key
+  (must be an active key of the org's taxonomy). Repeatable; KIND and KEY items can be mixed.
+
+    doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds --dry-run
+    doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds
+    doppler run -- python3 scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 \
+        --reclassify <BTC asset id>:taxonomy_mc_7_3 --reclassify <SGOV asset id>:taxonomy_sub_8_1_2
 """
 
 from __future__ import annotations
@@ -38,6 +53,7 @@ import asyncio
 import pathlib
 import sys
 from collections import defaultdict
+from decimal import Decimal
 from uuid import UUID
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -116,22 +132,55 @@ async def reclassify(conn, org: str, items: list[tuple[str, str]], *, dry_run: b
             "$1::uuid AND id = ANY($2::uuid[]) AND valid_to IS NULL AND system_to IS NULL", org,
             [a for a, _ in items])}
     for aid, kind in items:
-        key = mapping.get(kind)
+        as_key = kind.startswith("taxonomy_")          # ROLLUP2 — ASSET_ID:KEY keeps the kind, sets the key
         r = rows.get(aid)
         if r is None:
             print(f"  RECLASSIFY {aid}: NOT FOUND in org {org} (current rows only) — skipped")
             continue
-        if not key or key not in keys:
-            print(f"  RECLASSIFY {aid}: kind {kind!r} has no key in this org's taxonomy — skipped")
-            continue
+        if as_key:
+            key, kind = kind, r["asset_type"]
+            if key not in keys:
+                print(f"  RECLASSIFY {aid}: key {key!r} is not an active key of this org's taxonomy — skipped")
+                continue
+        else:
+            key = mapping.get(kind)
+            if not key or key not in keys:
+                print(f"  RECLASSIFY {aid}: kind {kind!r} has no key in this org's taxonomy — skipped")
+                continue
         if r["asset_type"] == kind and r["default_taxonomy_key"] == key:
             print(f"  RECLASSIFY {aid} ({r['name']}): already {kind} -> {key} — UNCHANGED")
             continue
         print(f"  RECLASSIFY {aid} ({r['name']}): {r['asset_type']}/{r['default_taxonomy_key']} -> {kind}/{key}")
         if not dry_run:
-            await update_asset(conn, org_id=org, asset_id=aid, changes={"asset_type": kind,
-                                                                        "default_taxonomy_key": key})
+            await update_asset(conn, org_id=org, asset_id=aid,
+                               changes={"default_taxonomy_key": key} if as_key else {"asset_type": kind,
+                                                                                     "default_taxonomy_key": key})
             changed += 1
+    return changed
+
+
+async def funds(conn, org: str, *, dry_run: bool) -> int:
+    """ROLLUP2 — propose (and, on a real run, apply) a key per fund asset from its category. Returns assets keyed."""
+    from services.fund_classification import propose
+
+    async with _OrgWrite(conn, org) as c:
+        props = await propose(c, org)
+    counts: dict[str, int] = defaultdict(int)
+    print(f"ORG {org}: {len(props)} fund assets")
+    for p in props:
+        counts[p["status"]] += 1
+        print(f"  FUND {p['asset_id']} {p['asset_type']:<12} {p['name'][:60]!r}: {p['status'].upper()}"
+              f" {p['current_key'] or '-'} -> {p['key'] or '-'} | {p['reason']}"
+              f" | live unkeyed positions {p['live_unkeyed_positions']}, value {Decimal(p['live_value'] or 0):,.2f}")
+    print(f"  FUNDS {org}: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+    changed = 0
+    if dry_run:
+        return 0
+    for p in props:
+        if p["status"] == "apply" and p["key"]:
+            await update_asset(conn, org_id=org, asset_id=p["asset_id"], changes={"default_taxonomy_key": p["key"]})
+            changed += 1
+    print(f"  SET {org}: {changed} fund assets keyed")
     return changed
 
 
@@ -147,8 +196,11 @@ async def main_async(argv=None) -> int:
     who.add_argument("--org", action="append", help="org id (repeatable)")
     who.add_argument("--all-orgs", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print the counts per kind; write nothing")
-    ap.add_argument("--reclassify", action="append", default=[], metavar="ASSET_ID:KIND",
-                    help="BUGFIX4: give a named asset the right kind (and its key); needs exactly one --org")
+    ap.add_argument("--reclassify", action="append", default=[], metavar="ASSET_ID:KIND|ASSET_ID:KEY",
+                    help="BUGFIX4: give a named asset the right kind (and its key); ROLLUP2: or a taxonomy KEY "
+                         "(taxonomy_...); repeatable; needs exactly one --org")
+    ap.add_argument("--funds", action="store_true",
+                    help="ROLLUP2: propose a key per fund asset from its master category (apply only 'apply')")
     ap.add_argument("--dsn-env", default="DATABASE_URL", help="env var holding the DSN (default DATABASE_URL)")
     a = ap.parse_args(argv)
     items = []
@@ -174,7 +226,11 @@ async def main_async(argv=None) -> int:
         orgs = await all_orgs(conn) if a.all_orgs else [str(UUID(o)) for o in a.org]
         print(f"MODE: {'dry-run' if a.dry_run else 'write'}; orgs {len(orgs)}")
         changed = await reclassify(conn, orgs[0], items, dry_run=a.dry_run) if items else 0
-        changed += await run(conn, orgs, dry_run=a.dry_run)
+        if a.funds:
+            for o in orgs:
+                changed += await funds(conn, o, dry_run=a.dry_run)
+        else:
+            changed += await run(conn, orgs, dry_run=a.dry_run)
     finally:
         await conn.close()
     print(f"CHANGED: {changed}")

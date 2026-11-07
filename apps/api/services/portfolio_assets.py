@@ -422,7 +422,8 @@ async def create_asset(
             # reported by the rollup). Every manual creation path left this NULL → the Olivo family's $0 net worth.
             from services.portfolio_kind_taxonomy import key_for_kind
 
-            default_taxonomy_key = await key_for_kind(c, org_id, asset_type)
+            default_taxonomy_key = await key_for_kind(c, org_id, asset_type,
+                                                      global_security_id=global_security_id)
         await c.execute(
             f"""
             INSERT INTO {TABLE_ASSETS}

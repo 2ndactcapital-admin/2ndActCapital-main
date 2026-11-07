@@ -1,4 +1,5 @@
 import EntityTypeBadge from "@/components/EntityTypeBadge";
+import { treePctLabel } from "@/lib/rollup2.mjs";
 
 // Recursive, indented ownership tree built from the ownership-graph payload.
 // direction "down": follow parent -> child edges (what this entity owns).
@@ -10,7 +11,7 @@ function childEdges(edges, nodeId, direction) {
   );
 }
 
-function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors, maxDepth = Infinity }) {
+function TreeNode({ nodeMap, edges, nodeId, direction, pct, via = null, ancestors, maxDepth = Infinity }) {
   const node = nodeMap[nodeId];
   if (!node) return null;
 
@@ -32,8 +33,10 @@ function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors, maxDepth 
         </a>
         <EntityTypeBadge type={node.entity_type} />
         {pct != null && (
+          // ROLLUP2 (MUSE F5-11) — a nested entry is ANOTHER owner's stake ("60.00% via Olivo Holdings LP"), never
+          // a second percentage of the root's
           <span className="text-xs font-medium text-text-muted">
-            {Number(pct).toFixed(2)}%
+            {treePctLabel(pct, via, direction)}
           </span>
         )}
       </div>
@@ -49,6 +52,7 @@ function TreeNode({ nodeMap, edges, nodeId, direction, pct, ancestors, maxDepth 
                 nodeId={otherId}
                 direction={direction}
                 pct={edge.ownership_pct}
+                via={ancestors.length >= 1 ? node.display_name : null}
                 ancestors={nextAncestors}
                 maxDepth={maxDepth}
               />

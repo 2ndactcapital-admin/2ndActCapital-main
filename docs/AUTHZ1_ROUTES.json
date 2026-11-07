@@ -1,5 +1,5 @@
 {
- "app_route_count": 843,
+ "app_route_count": 847,
  "before_ref": "a911ac7",
  "docs_route_count": 4,
  "routes": [
@@ -13716,6 +13716,78 @@
    "path": "/api/v1/replication/hypothetical-policy/{policy_id}/reject",
    "public": false,
    "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.rollup2",
+   "name": "ownership_duplicates",
+   "note": "",
+   "path": "/api/v1/admin/ownership/duplicates",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.rollup2",
+   "name": "fund_categories",
+   "note": "",
+   "path": "/api/v1/admin/fund-categories",
+   "public": false,
+   "write": false
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.rollup2",
+   "name": "set_fund_category",
+   "note": "",
+   "path": "/api/v1/admin/fund-categories",
+   "public": false,
+   "write": true
+  },
+  {
+   "after": "super_admin",
+   "before": "\u2014",
+   "before_effect": "new route",
+   "expect": {
+    "rule": "super"
+   },
+   "find": false,
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.rollup2",
+   "name": "fund_proposals",
+   "note": "",
+   "path": "/api/v1/admin/fund-categories/proposals",
+   "public": false,
+   "write": false
   },
   {
    "after": "internal + any(view_replication)",

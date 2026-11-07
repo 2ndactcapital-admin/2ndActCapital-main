@@ -102,7 +102,12 @@ export function privatePayload(form, rule = "required") {
 /** Net worth's as-of line: the holdings snapshot date, or that no rollup has run. */
 export function asOfText(netWorth) {
   const d = netWorth?.holdings_as_of;
-  return d ? `Holdings as of ${d}` : "Holdings not yet rolled up";
+  if (d) return `Holdings as of ${d}`;
+  // ROLLUP2 — net worth is computed live: an entity with nothing counted has no holdings, not a missing rollup
+  if (netWorth && typeof netWorth === "object" && netWorth.positions_counted !== undefined) {
+    return Number(netWorth.unvalued_positions) ? "No valued holdings (see the holdings without a value)" : "No holdings recorded";
+  }
+  return "Holdings not yet rolled up";
 }
 
 /** Integrated import: approve / reject only from the server's own actions list (never the uploader). */

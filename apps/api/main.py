@@ -51,6 +51,7 @@ from routers.security_data import router as security_data_router
 from routers.security_master import router as security_master_router  # SECMASTER1
 from routers.blocks import router as blocks_router
 from routers.replication_rep10 import router as replication_rep10_router
+from routers.rollup2 import router as rollup2_router
 from routers.replication_notes import router as replication_notes_router
 from routers.replication_note_checks import router as replication_note_checks_router
 from routers.tax_gifts import router as tax_gifts_router
@@ -628,6 +629,7 @@ app.include_router(security_master_router, prefix="/api/v1")    # SECMASTER1 —
 app.include_router(execution_router, prefix="/api/v1")
 app.include_router(blocks_router, prefix="/api/v1")    # rep9 — block trading
 app.include_router(replication_rep10_router, prefix="/api/v1")    # rep10 — tilts, completion, backtests
+app.include_router(rollup2_router, prefix="/api/v1")    # ROLLUP2 — duplicate ownership report, fund category map
 # rep12 — new-issue note checks + the underlying queue. BEFORE rep11: its /replication/notes/{note_id} would
 # otherwise swallow /replication/notes/checks and /replication/notes/underlyings (a 422, never a fall-through).
 app.include_router(replication_note_checks_router, prefix="/api/v1")

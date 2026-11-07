@@ -80,6 +80,9 @@ class OwnershipCreate(BaseModel):
     effective_date: Optional[str] = None  # YYYY-MM-DD
     note: Optional[str] = None
     change_reason: Optional[str] = None
+    #: ROLLUP2 Task 4 — a new percentage for a pair that already has a live edge is a NEW VERSION (the prior one
+    #: archived) unless the caller explicitly records a second, separate holding
+    separate_holding: bool = False
 
 
 class OwnershipPatch(BaseModel):
@@ -695,7 +698,15 @@ async def get_entity_ownership(
     from services import record_permissions as RP
 
     can = RP.allowed(principal_of(request), "ownership") and not as_of
+    # ROLLUP2 Task 4 — two live entries for the same owner / owned pair: warned on the panel (net worth adds them)
+    from services import ownership_duplicates as OD
+
+    dups = []
+    if not as_of:
+        async with pool.acquire() as conn:
+            dups = [{**d, "warning": OD.warning_text(d)} for d in await OD.for_entity(conn, org_id, entity_id)]
     return {
+        "duplicates": dups,
         "entity_id": str(entity_id),
         "as_of": as_of,
         "owns": [_to_item(r) for r in owns_rows],
@@ -748,46 +759,69 @@ async def create_ownership(
     async with pool.acquire() as conn:
         user_id = await ensure_user(conn, request)
 
-        row = await conn.fetchrow(
-            """
-            INSERT INTO entity_relationships
-                (org_id, from_entity_id, to_entity_id, relationship_type,
-                 notes, ownership_pct, effective_date, change_reason,
-                 change_source_type, valid_from, system_from, created_by)
-            VALUES ($1, $2, $3, 'ownership', $4, $5, $6::date, $7,
-                    'api', now(), now(), $8)
-            RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
-                      notes, ownership_pct, effective_date, change_reason,
-                      valid_from, valid_to, system_from, system_to, created_by, created_at
-            """,
-            org_id,
-            UUID(from_id),
-            UUID(to_id),
-            body.note,
-            body.ownership_pct,
-            body.effective_date,
-            body.change_reason or "initial",
-            user_id,
-        )
+        async with conn.transaction():
+            # ROLLUP2 Task 4 — the same pair already has a live edge: this is a new VERSION of it (the prior one
+            # archived exactly as the PATCH amend archives), unless a second, separate holding is explicitly asked for
+            prior = None if body.separate_holding else await conn.fetchrow(
+                """
+                UPDATE entity_relationships SET valid_to = now(), system_to = now()
+                WHERE id = (SELECT id FROM entity_relationships WHERE org_id = $1 AND from_entity_id = $2
+                              AND to_entity_id = $3 AND relationship_type = 'ownership'
+                              AND valid_to IS NULL AND system_to IS NULL
+                            ORDER BY valid_from DESC LIMIT 1)
+                RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
+                          notes, ownership_pct, effective_date, change_reason,
+                          valid_from, valid_to, system_from, system_to, created_by, created_at
+                """,
+                org_id, UUID(from_id), UUID(to_id),
+            )
+            if prior and (body.change_reason or "initial") == "initial":
+                reason = "new version"
+            else:
+                reason = body.change_reason or ("separate holding" if body.separate_holding else "initial")
+            row = await conn.fetchrow(
+                """
+                INSERT INTO entity_relationships
+                    (org_id, from_entity_id, to_entity_id, relationship_type,
+                     notes, ownership_pct, effective_date, change_reason,
+                     change_source_type, valid_from, system_from, created_by)
+                VALUES ($1, $2, $3, 'ownership', $4, $5, $6::date, $7,
+                        'api', now(), now(), $8)
+                RETURNING id, org_id, from_entity_id, to_entity_id, relationship_type,
+                          notes, ownership_pct, effective_date, change_reason,
+                          valid_from, valid_to, system_from, system_to, created_by, created_at
+                """,
+                org_id,
+                UUID(from_id),
+                UUID(to_id),
+                body.note if body.note is not None else (prior["notes"] if prior else None),
+                body.ownership_pct,
+                body.effective_date,
+                reason,
+                user_id,
+            )
 
         new_rel_id = row["id"]
         await _log_ownership_change(
             conn, org_id, new_rel_id,
             UUID(from_id), UUID(to_id),
-            None, body.ownership_pct,
-            body.change_reason or "initial",
+            prior["ownership_pct"] if prior else None, body.ownership_pct,
+            reason,
             UUID(user_id),
         )
 
     result = _rel_row_to_dict(row)
     await write_audit_log(
         org_id=org_id,
-        action="create_ownership",
+        action="version_ownership" if prior else "create_ownership",
         table_name="entity_relationships",
         record_id=result["id"],
+        old=_rel_row_to_dict(prior) if prior else None,
         new=result,
         actor=user_id,
     )
+    if prior:
+        result["replaced_relationship_id"] = str(prior["id"])
     return result
 
 

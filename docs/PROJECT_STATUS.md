@@ -339,6 +339,68 @@ This file starts with the email item below.
 
 ---
 
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000. ROLLUP2 — one net-worth roll-up everywhere: unclassified holdings counted, funds classified by category, duplicate ownership repairable, family / charitable split; schema APPLIED; verify WRITTEN, not yet run (2026-11-07)
+
+**What was wrong.** Discovery: `docs/ROLLUP2_DISCOVERY.md`. Two net-worth formulas existed. The entity Net worth card and its
+Recalculate read the stored `entity_holdings` snapshot, and the rollup that wrote it SKIPPED every valued position with no
+taxonomy key (`entity_holdings.taxonomy_key` is NOT NULL, there was no bucket); the bugfix4 household total computed live
+and counted them. Recomputed live with the real service code, for every one of the 40 Olivo household entities the
+card = keyed lines only and the household rule = all valued lines, to the cent — the unkeyed funds were the whole gap.
+
+| Owner (entity id prefix) | Card before (snapshot) | Now (live core) | Of which Unclassified |
+|---|---|---|---|
+| Dominic J. Olivo Revocable Trust (18400d6a) | 140,054,602.00 | 188,302,502.00 | 48,247,900.00 (SPY, VXUS, BND, IWM) |
+| Olivo Family Foundation (b06b7417) | 4,500,000.00 | 44,950,000.00 | 40,450,000.00 (VT, BND) |
+| Olivo 2016 CRUT (60c20f3b) | $0 — no snapshot row ("not yet rolled up") | 11,100,000.00 | 11,100,000.00 (SCHD, SCHR) |
+| Cipolla Olivo Holdings LLC (27783cda) | 35,789,160.00 | 40,568,160.00 | 4,779,000.00 (SCHB, SCHF, SCMB) |
+| Theresa Olivo Family Trust (3f098811) | 39,420,000.00 | 44,009,000.00 | 4,589,000.00 (SCHD, SCHP) |
+| MTO Capital LLC (4ea9aa44) | 45,783,860.00 | 48,775,860.00 (= Muse's expected + the unentered −187,500 option) | 2,992,000.00 (QQQ) |
+| Marguerite Meloni Olivo (801422c7) | 2,570,000.00 | 5,391,000.00 | 2,821,000.00 (SCHB, SCMB) |
+
+Household (live): gross 716,925,590 · liabilities 52,800,000 · **Household total 664,125,590 = Family net worth
+601,975,590 + Charitable 62,150,000** (CRUT, Giving Fund, Foundation) — both exactly Muse's expected figures.
+
+Findings: **1c** Muse's Owners-list figures are not reproducible (two stored snapshots of different moments; neither
+side right; there is no Owners list in the Consolidate code). **1d** NO live duplicate ownership pair exists — "Art
+Holdings 60 % and 15 %" is the LP's stake drawn nested under Dominic's trust beside the trust's own 15 % (the tree now
+says "via"); the real hole was `POST /entities/{id}/ownership` accepting a second live edge for a pair. **1e** 24 of 25
+fund assets have a FinanceDatabase category; BTC is filed "Corporate Bonds" (wrong); mutual funds have no master link.
+**[FIND] snapshot date skew**: the rollup dates its snapshot by the server's UTC day (2026-11-07 while New York was on
+11-06), so a reader on the earlier day read the previous snapshot. **[FIND]** `verify_bugfix3.py` FIX 1's "unkeyed
+positions are not counted / reported as skipped" and `kmap['mutual_fund']` checks encode the rule this sprint reverses.
+
+**What changed.**
+- `services/networth.py` — THE core: shares over both ownership tables, each live position valued once, a valued line
+  with no key counted under the `unclassified` bucket and listed, a valueless line listed as skipped. The entity card
+  (`liabilities.entity_net_worth`), Recalculate, the stored snapshot (`portfolio_rollup.compute_buckets`), the
+  household total and its new **Owners** list (`household_total.owners`) all compute from it.
+- Household page / summary API: **Family net worth / Charitable / Household total**, each gross / liabilities / net /
+  Unclassified (`household_total.split`; charitable = foundations and CRUT / CRAT trusts), the Owners list and the
+  Unclassified holdings. The entity card lists its Unclassified and valueless holdings.
+- Fund classification (`services/fund_classification.py`, table `portfolio.fund_category_taxonomy` —
+  `docs/rollup2_part1.sql`, APPLIED, empty): fund category → key, Super Admin `GET` / `PUT /admin/fund-categories`,
+  `GET /admin/fund-categories/proposals`; the name cross-check sends a contradicted category to review. The
+  `mutual_fund → Public Equity` kind default is removed; fund kinds are keyed only by category.
+- Duplicate ownership: `GET /admin/ownership/duplicates` (Super Admin), a warning on the Ownership panel, a new
+  percentage for a pair is a NEW VERSION (prior archived) unless `separate_holding: true` (a checkbox on the form).
+- Held-away cash (and money-market) lines take an optional Name; a named cash line is its own Cash & Equivalents holding.
+
+**Operator steps, in order (the sprint ran only the dry runs):**
+1. `doppler run -- python3 apps/api/scripts/backfill_taxonomy_keys.py --org 00000000-0000-0000-0000-000000000001 --funds --dry-run`
+   (recorded: apply 23, review 2, unchanged 6, unclassified 1), then the same without `--dry-run`; then decide the two
+   reviews and SGOV by hand: `--reclassify 63857a30-4845-4bf4-aef0-cf823aa54dfd:taxonomy_mc_7_3` (BTC → Digital Assets),
+   `--reclassify a0e73fde-b1e2-4798-ad89-2215b49e6f5b:taxonomy_sc_2` (Fidelity U.S. Bond Index), SGOV
+   `3fc0e3ad-3f5a-454d-8ac2-60917110b1e0` as you see fit.
+2. `doppler run -- python3 apps/api/scripts/repair_ownership_duplicates.py --org 00000000-0000-0000-0000-000000000001 --dry-run`
+   (recorded: 0 pairs), then without `--dry-run` only if it lists any.
+3. Stored snapshots exist (`entity_holdings`, sunburst): `doppler run -- python3 apps/api/scripts/recalculate_rollups.py --org 00000000-0000-0000-0000-000000000001 --household f1aa5e56-3e76-427a-ab07-e93b4bbedd4f --dry-run`
+   (recorded: 33 entities, the new snapshot equals the live card for every one), then without `--dry-run`.
+4. Household Recalculate on the Olivo household's page.
+
+**Verify:** `apps/api/scripts/verify_rollup2.py` — WRITTEN, NOT RUN (regression: `verify_bugfix4.py` once, flat,
+VERIFY_NESTED=1). Added to `scripts/regression_set.txt`. Node tests `tests/rollup2` + the full suite pass (562 / 0 fail);
+`npm run build` not run (WSL memory). `authz1_routes.py --check` CURRENT.
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000. BUGFIX4 — HollisMuse Olivo final report: held-away snapshots, the household total, jobs switch, entry form, identity and ONE role source; verify WRITTEN, not yet run (2026-11-06)
 
 **What was wrong, what changed (each Muse finding with its ID).** Discovery: `docs/BUGFIX4_DISCOVERY.md`.

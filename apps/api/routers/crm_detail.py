@@ -227,6 +227,12 @@ async def save_entity_details(request: Request, entity_id: UUID, body: DetailsSa
 
 
 # ── Liabilities + net worth ─────────────────────────────────────────────────────────────────────────────────────
+def _nw_vocab() -> dict:
+    from services import networth as NW
+
+    return NW.vocabularies()
+
+
 @router.get("/entities/{entity_id}/liabilities")
 async def list_liabilities(request: Request, entity_id: UUID):
     # BUGFIX2 — authz: member-scoped (staff any record; a member only their own family's, else 404)
@@ -240,7 +246,8 @@ async def list_liabilities(request: Request, entity_id: UUID):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         nw = await L.entity_net_worth(conn, org_id, entity_id)
     return {"rows": rows, "net_worth": nw, "permissions": _permissions(request, "internal or own family"),
-            "vocabularies": _vocab(request, V.liability_vocab(), ["add", "edit", "end"])}
+            # ROLLUP2 — the Unclassified label and split lines come from the envelope (services.networth)
+            "vocabularies": _vocab(request, {**V.liability_vocab(), **_nw_vocab()}, ["add", "edit", "end"])}
 
 
 @router.post("/entities/{entity_id}/liabilities", status_code=201)
@@ -318,7 +325,8 @@ async def entity_net_worth(request: Request, entity_id: UUID):
 
         nw["last_rollup"] = await PR.last_run(conn, org_id, entity_id)
     return {"rows": nw, "permissions": _permissions(request, "internal or own family"),
-            "vocabularies": _vocab(request, {"net_worth_lines": V.liability_vocab()["net_worth_lines"]}, [])}
+            "vocabularies": _vocab(request, {"net_worth_lines": V.liability_vocab()["net_worth_lines"],
+                                             **_nw_vocab()}, [])}
 
 
 # ── PORTENTRY2 (MUSE-OLIVO-PERS-01) — what the caller may change on this record ─────────────────────────────────

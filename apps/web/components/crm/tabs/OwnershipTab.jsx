@@ -5,6 +5,7 @@ import EntityPicker from "@/components/EntityPicker";
 import OwnershipTree from "@/components/crm/OwnershipTree";
 import DateInput from "@/components/ui/DateInput";
 import { canEditOwnership } from "@/lib/portentry2.mjs";
+import { duplicateWarnings } from "@/lib/rollup2.mjs";
 
 // PORTENTRY2 — (PERS-01) Add / Edit / Remove render ONLY when GET /entities/{id}/ownership's own envelope says
 // permissions.can_write === true (the same rule as the three write routes; a lost envelope renders none).
@@ -74,6 +75,8 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
   const [pct, setPct] = useState("");
   const [effectiveDate, setEffectiveDate] = useState("");
   const [note, setNote] = useState("");
+  // ROLLUP2 Task 4 — a new percentage for an existing owner replaces it (a new version) unless this is ticked
+  const [separate, setSeparate] = useState(false);
   const [error, setError] = useState(null);
   const [pending, startTransition] = useTransition();
 
@@ -91,6 +94,7 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
             effective_date: effectiveDate || null,
             note: note || null,
             change_reason: "initial",
+            separate_holding: separate,
           }),
         });
         const data = await res.json();
@@ -151,6 +155,10 @@ function AddForm({ entityId, direction, onSuccess, onCancel }) {
           placeholder="Optional note"
         />
       </div>
+      <label className="flex items-center gap-2 text-xs text-text-secondary">
+        <input type="checkbox" checked={separate} onChange={(e) => setSeparate(e.target.checked)} />
+        This is a second, separate holding (otherwise a new percentage replaces the current one)
+      </label>
       {error && <p className="text-xs text-error">{error}</p>}
       <div className="flex gap-2">
         <button
@@ -492,6 +500,11 @@ export default function OwnershipTab({ entityId, graph: initialGraph = null }) {
       {actionError && (
         <p className="rounded bg-red-50 px-3 py-2 text-sm text-error">{actionError}</p>
       )}
+
+      {/* ROLLUP2 Task 4 — two live entries for the same owner / owned pair (net worth adds them together) */}
+      {duplicateWarnings(data).map((w) => (
+        <p key={w.key} className="rounded border border-[#9B2335] bg-white px-3 py-2 text-sm text-[#9B2335]">{w.text}</p>
+      ))}
 
       {/* Owned By panel */}
       <section>
