@@ -341,6 +341,55 @@ This file starts with the email item below.
 
 ---
 
+
+## 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. PRICES1 — end-of-day prices: the price receptor (a documented plug-in contract), the first free source (Yahoo, internal only), store + coverage with reasons, the operator backfill, the prices job, readers that compute; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
+
+**Branch** `prices1-work`. Discovery: `docs/PRICES1_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md` ("PRICES1").
+Schema `docs/prices1_part1.sql` APPLIED (`scripts/_apply_prices1.py --all`: SCHEMA OK): price-store columns
+`adjustment_factor` + `bar`, quality kinds `invalid_value` / `currency_mismatch`, table
+`portfolio.security_price_coverage` (a policy for every operation), providers `yahoo_chart` (active) and `tiingo`
+(not connected), eod_price rank 5 / 6. The job "system:Security data — prices" SEEDED with its trigger **inactive**.
+Verify `apps/api/scripts/verify_prices1.py` WRITTEN, NOT RUN (in `scripts/regression_set.txt`). No price was fetched
+into the store by the sprint (the backfill is the operator's; only its `--dry-run` ran: 29 securities, 29 calls, ~41 s).
+
+**Findings (Task 1).**
+* 1a — the provider contract had no price-fetching method at all (`fetch()` refreshes "what you cover today", and
+  `nightly.coverage()` covers nothing for eod_price), no identifier an adapter keys by, no date range, no bar shape, no
+  adjusted / unadjusted statement, no zero / currency quality rule, no reason for `price_coverage`, no checkpoint.
+* 1b — Stooq answers every request with a JavaScript proof-of-work **bot wall** (not usable, not circumvented); Yahoo
+  chart works keyless for stocks, ETFs, mutual funds and money market — its `close` is **split-adjusted** (NVDA
+  2024-06-07 120.89, traded 1208.88) so the adapter undoes later splits; Tiingo / Polygon / Nasdaq Data Link need keys
+  (none in Doppler); Alpha Vantage free = 25 calls/day. **`FMP_API_KEY` is already in Doppler** [FIND] — unused.
+  Chosen: **primary yahoo_chart** (internal use only, member display not_allowed, a launch blocker), **fallback
+  tiingo** (written, not connected until `TIINGO_API_KEY`).
+* 1c — the coverage set is **29 securities** (28 held in live positions, all 2nd Act Capital; + ACWI benchmark); every
+  model / replica / snapshot / option / note / substitution / backtest table is empty; no watch-list or benchmark
+  table exists (benchmarks SPY / AGG / ACWI are a code constant).
+* 1d — every reader goes through the layer (internal); the roll-up and drift NEVER asked it, and the X-ray's tracking
+  error / harvest value were hard-wired to "needs prices". SSVI surface reads yfinance directly [FIND, untouched].
+
+**Built.** `providers/eod.py` (the receptor: EodSpec / EodLicence / EodBar / EodSeries / EodPriceProvider /
+contract_problems / RecordedHttpGet / RealHttpGet); `providers/yahoo_chart.py`; `providers/tiingo.py`;
+`providers/vendor_stub.py` + `VendorTemplateProvider` (the paid vendor template — `vendor_slot` unchanged);
+`services/security_data/prices.py` (coverage set, quality judge, ingest, backfill + checkpoint, the nightly step);
+`writes.upsert_eod_bars` (system-axis restatement) + `writes.set_price_coverage`; `layer.get_market`;
+`scripts/prices_backfill.py`; the job in `security_master_jobs`; readers: `networth.value_lines` (price else entered
+value; member licence by default), `account_models.load_holdings` (fresher close, `security_price`), the X-ray's
+tracking error + harvest value + `member_price_filter` (live and stored runs), `GET /security-data/lookup` (a non-staff
+caller is always answered for member display; staff see `display: internal`).
+
+**Findings while building.** [FIND] the grids (`position_current_value` called directly) still show the entered value —
+the card / household / snapshot use the price; [FIND] `harvest_candidates_price_chk` admits only `account_position` /
+`none`, so a harvest candidate priced from a fresher close is still labelled `account_position` there (the trade line
+carries `security_price`); [FIND] Yahoo's adjusted close carries ~1e-8 binary noise, so the adjustment factor is kept
+to 6 dp and as of first store — a later dividend does not restate history; [FIND] a spike up and back flags both the
+jump and the reversion as outliers.
+
+**Operator steps** — see `docs/SECURITY_DATA_DESIGN.md` "PRICES1 operator steps": backfill `--dry-run` → the real run
+→ switch "Security data — prices" on (Security master → Platform jobs) → optional `TIINGO_API_KEY`.
+
+**UPDATE (fix 1, 2026-11-07).** The first full run was 132 PASS / 3 FAIL. (1, CODE) `services/xray.py` `_priced_estimates` called `SD.get_market` through the `services.security_data` package, but the package re-exported only get / get_bulk / history, so the X-ray's priced path raised `AttributeError` for every fund that reached it (it would have crashed in production). Fix: `get_market` is now exported with the others. An AST sweep of every `services.security_data*` name used across services/, routers/ and prices_backfill.py (401 references) found no other missing name. (2) The licence section was skipped only because of 1; it now passes: the member is hidden from the Yahoo-only price, staff see 50 labelled internal for the identical request, and the X-ray reads "needs prices" for a member and "[internal]" for staff. (2b, VERIFY, newly reached once 1 was fixed) The backtest check compared the engine's text: rep10's `backtest.simulate` writes `str(Decimal)`, so an exact zero reads `'0E-10'` (the front end reads it with `Number()` → 0.00 %). It now compares exact Decimals at the same 1E-10 scale; the values were already right, and nothing was weakened. (3, VERIFY) Nested verify_marketdata1 seeded U_SUPER with the role STRING only, so since BUGFIX4 the app did not treat it as a Super Admin: 403 on the provider admin. Now every fixture role is a `user_roles` grant (`rbac.grant_named_role` for super_admin, `grant_org_admin` as before), `users.role` is its mirror, a seed-time `check_fixture_roles` asserts that grant, mirror, `rbac.load_principal` and the `services.authz` Principal agree, and teardown plans `public.user_roles` by fixture user. verify_prices1 already seeded this way (grant_named_role / grant_org_admin plus its own check_fixture_roles), which is why its admin checks passed. Yahoo licence row (live, read-only): `yahoo_chart` active, `lic_member_display = not_allowed`, `lic_redistribution = false`, platform eod_price rank 5; `tiingo` not_connected, rank 6. Proof: one-offs driving each verify's own sections on fixtures. verify_prices1 (schema, seed, contract, quality, store, readers, licence, teardown): 67 PASS / 0 FAIL; X-ray tracking error 0.1590997265 and harvest value 100.00 as hand-computed, "needs prices" with no series and no exception. verify_marketdata1 (seed with the role check, provider admin, teardown): 15 PASS / 0 FAIL; Super Admin GET 200 with can_write and editable = PROVIDER_FIELDS, viewer and org admin 403 "Super Admin required" on GET and on a valid PUT, the real csv_upload row unchanged. Both left zero fixture rows, counted tables at pre-test counts and real fingerprints unchanged. `--self-checks-only`: prices1 17 / 0, marketdata1 5 / 0. The full verify_prices1.py / verify_marketdata1.py / npm build were NOT re-run (WSL memory).
+
 ## 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000. SECMASTER2 — the security master finished: SEC mutual-fund share classes, the FinanceDatabase load working again, sharper fund categories, the load summary; schema APPLIED, job SEEDED (OFF); verify WRITTEN, not yet run (2026-11-07)
 
 **Branch** `secmaster2-work`. Discovery: `docs/SECMASTER2_DISCOVERY.md`; design: `docs/SECURITY_DATA_DESIGN.md`

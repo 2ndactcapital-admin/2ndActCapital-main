@@ -5905,6 +5905,8 @@
 --   licence                                  jsonb NOT NULL DEFAULT '{}'::jsonb
 --   org_id                                   uuid
 --   upload_id                                uuid
+--   adjustment_factor                        numeric
+--   bar                                      jsonb NOT NULL DEFAULT '{}'::jsonb
 --   PRIMARY KEY securities_global_prices_pkey: (id)
 
 -- ===== portfolio.securities_global_relationships =====
@@ -6021,6 +6023,26 @@
 --   system_from                              timestamp with time zone NOT NULL DEFAULT now()
 --   system_to                                timestamp with time zone
 --   PRIMARY KEY security_master_source_files_pkey: (id)
+
+-- ===== portfolio.security_price_coverage =====
+--   id                                       uuid NOT NULL DEFAULT gen_random_uuid()
+--   global_security_id                       uuid NOT NULL
+--   status                                   text NOT NULL
+--   provider_key                             text
+--   reason                                   text NOT NULL
+--   first_date                               date
+--   last_date                                date
+--   points                                   integer NOT NULL DEFAULT 0
+--   checked_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   run_id                                   uuid
+--   owner_scope                              text NOT NULL DEFAULT 'platform'::text
+--   org_id                                   uuid
+--   created_at                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_from                               timestamp with time zone NOT NULL DEFAULT now()
+--   valid_to                                 timestamp with time zone
+--   system_from                              timestamp with time zone NOT NULL DEFAULT now()
+--   system_to                                timestamp with time zone
+--   PRIMARY KEY security_price_coverage_pkey: (id)
 
 -- ===== portfolio.security_reference_attributes =====
 --   id                                       uuid NOT NULL DEFAULT gen_random_uuid()

@@ -157,3 +157,14 @@ async def history(conn, org_id, data_type: str, subject: str, *, start: date, en
     reasons = "; ".join(f"{t['provider']}: {t['why']}" for t in tried) or "no source is ranked for it"
     return Result(data_type, str(subject), False, missing=f"{data_type} history ({label.lower()}) — {reasons}",
                   tried=tried, detail={"rank_origin": origin})
+
+
+async def get_market(conn, org_id, subject: str, *, as_of: date, purpose: str = "internal",
+                     max_age_days: int | None = None) -> Result:
+    """PRICES1 — the latest end-of-day close from a MARKET source: the rank walk for eod_price with the custodian
+    left out (a custodian valuation is a position's own entered value, not a market close). Same licence / staleness
+    rules; the custodian is reported in ``tried`` as skipped."""
+    code = dict(code_registry())
+    code.pop("custodian", None)
+    return await get(conn, org_id, "eod_price", subject, as_of=as_of, purpose=purpose, max_age_days=max_age_days,
+                     providers=code)

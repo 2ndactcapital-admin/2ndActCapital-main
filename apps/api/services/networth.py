@@ -47,7 +47,13 @@ TOP_N = 10
 UNCLASSIFIED_KEY = "unclassified"
 UNCLASSIFIED_LABEL = "Unclassified"
 BASIS_LABELS = {"entered_value": "Entered value (as of its statement date)", "valuation": "Valuation",
-                "unvalued": "No value — not counted"}
+                "unvalued": "No value — not counted",
+                # PRICES1 — quantity × the latest end-of-day close the layer allows for this view (an estimate)
+                "price": "End-of-day price (estimate: source and as-of on each line)"}
+#: PRICES1 — the purpose every net-worth figure reads prices with. A member sees these figures (cards, the household
+#: total, the stored snapshot), so the default is the MEMBER licence: a source whose licence does not allow member
+#: display (the free Yahoo feed) never moves a member's number. An adviser-only caller may pass "internal".
+DEFAULT_PRICE_PURPOSE = "member_display"
 BASIS = ("each live position once, at the share of its owner (the entity itself 100 %); a valued position with no "
          "allocation bucket counts under Unclassified; a position with no value is listed, not counted")
 
@@ -118,15 +124,54 @@ async def load_edges(conn, org_id) -> list[tuple[str, str, Decimal]]:
     return [(r["parent"], r["child"], r["pct"]) for r in await conn.fetch(EDGES_SQL, str(org_id))]
 
 
-async def value_lines(conn, org_id: str, as_of: date, owner_ids: list[str] | None) -> tuple[list[dict], list[dict]]:
-    """(valued, skipped) for the live positions of ``owner_ids`` (None = every owner in the org)."""
+async def listed_prices(conn, org_id: str, rows: list, as_of: date, purpose: str) -> dict[str, dict]:
+    """PRICES1 — {asset_id: {"price", "provider_key", "provider_name", "as_of", "licence", "label"}} for the live
+    units-basis positions of listed securities: the layer's end-of-day close for ``purpose`` (ONE bulk read). A
+    custodian winner is not a price (it IS the entered value), and a close OLDER than the position's own as-of never
+    replaces it. Nothing → the line keeps bugfix4's entered value."""
+    from services import security_data as SD
+
+    units = [r for r in rows if r["ownership_basis"] == "units" and r["quantity"] is not None]
+    if not units:
+        return {}
+    gs = {str(a["id"]): str(a["global_security_id"]) for a in await conn.fetch(
+        "SELECT id, global_security_id FROM portfolio.assets WHERE id = ANY($1::uuid[]) AND global_security_id IS NOT "
+        "NULL AND valid_to IS NULL AND system_to IS NULL", list({r["asset_id"] for r in units}))}
+    if not gs:
+        return {}
+    got = await SD.get_bulk(conn, org_id, "eod_price", sorted(set(gs.values())), as_of=as_of, purpose=purpose)
+    out = {}
+    for r in units:
+        res = got.get(gs.get(r["asset_id"], ""))
+        if res is None or not res.found or res.provider_key == "custodian" or res.as_of < r["as_of_date"]:
+            continue
+        out[r["asset_id"]] = {"price": res.value, "provider_key": res.provider_key, "provider_name": res.provider_name,
+                              "as_of": res.as_of, "licence": res.licence, "label": res.label}
+    return out
+
+
+async def value_lines(conn, org_id: str, as_of: date, owner_ids: list[str] | None, *,
+                      price_purpose: str = DEFAULT_PRICE_PURPOSE) -> tuple[list[dict], list[dict]]:
+    """(valued, skipped) for the live positions of ``owner_ids`` (None = every owner in the org). PRICES1: a listed
+    units position with an allowed, fresher end-of-day close is valued quantity × close (basis "price", with the
+    source and as-of); otherwise bugfix4's entered value / the valuation ladder, unchanged."""
     from services.portfolio_rollup import _current_positions, position_current_value
 
     valued, skipped = [], []
-    for r in await _current_positions(conn, str(org_id), as_of, owner_ids):
-        value, why = await position_current_value(conn, str(org_id), r, as_of)
+    rows = await _current_positions(conn, str(org_id), as_of, owner_ids)
+    px = await listed_prices(conn, str(org_id), rows, as_of, price_purpose)
+    for r in rows:
         base = {"position_id": r["position_id"], "owner_entity_id": r["owner_entity_id"], "asset_id": r["asset_id"],
                 "as_of_date": r["as_of_date"], "taxonomy_key": r["taxonomy_key"] or None}
+        p = px.get(r["asset_id"])
+        if p is not None:
+            valued.append({**base, "value": Decimal(str(r["quantity"])) * p["price"], "basis": "price",
+                           "price": {"value": format(p["price"], "f"), "provider_key": p["provider_key"],
+                                     "provider_name": p["provider_name"], "as_of": p["as_of"].isoformat(),
+                                     "label": p["label"], "entered_value": None if r["market_value"] is None
+                                     else format(r["market_value"], "f")}})
+            continue
+        value, why = await position_current_value(conn, str(org_id), r, as_of)
         if value is None:
             skipped.append({**base, "reason": why or "no value"})
             continue
@@ -135,7 +180,7 @@ async def value_lines(conn, org_id: str, as_of: date, owner_ids: list[str] | Non
     return valued, skipped
 
 
-async def load(conn, org_id, roots, *, as_of: date | None = None) -> Ctx:
+async def load(conn, org_id, roots, *, as_of: date | None = None, price_purpose: str = DEFAULT_PRICE_PURPOSE) -> Ctx:
     """Read the edges, value every live position of every entity the roots reach, and the liabilities."""
     org = str(org_id)
     ctx = Ctx(org_id=org, as_of=as_of or date.today())
@@ -143,7 +188,7 @@ async def load(conn, org_id, roots, *, as_of: date | None = None) -> Ctx:
     reach = list(shares({str(r) for r in roots}, ctx.edges))
     if not reach:
         return ctx
-    ctx.lines, ctx.skipped = await value_lines(conn, org, ctx.as_of, reach)
+    ctx.lines, ctx.skipped = await value_lines(conn, org, ctx.as_of, reach, price_purpose=price_purpose)
     ctx.liabilities = [(r["o"], r["current_balance"] or ZERO) for r in await conn.fetch(
         "SELECT owner_entity_id::text AS o, current_balance FROM portfolio.liabilities WHERE org_id = $1::uuid "
         "AND owner_entity_id = ANY($2::uuid[]) AND valid_to IS NULL AND system_to IS NULL AND as_of <= $3",

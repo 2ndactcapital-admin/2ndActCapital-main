@@ -208,15 +208,36 @@ async def quality(request: Request, kind: str | None = None):
 @router.get("/security-data/lookup")
 async def lookup(request: Request, data_type: str, subject: str, as_of: date | None = None,
                  purpose: str = "internal"):
+    """PRICES1 — THE licence rule at the route: a caller who is not staff (Super Admin or an internal role) is always
+    answered for MEMBER display, whatever ``purpose`` they send — so a value whose licence forbids it never reaches
+    a member. Staff get the purpose they ask for (internal by default) and a value a member may not see carries
+    ``display = "internal"``. The identical request gets both answers."""
+    from services.security_data import registry as SR
+    from services.security_data.types import INTERNAL_LABEL
+
     principal = require_any_permission(request, VIEW_PERMS)
     org_id = get_org_id(request)
+    staff = bool(principal.is_super_admin or principal.is_internal)
+    eff = purpose if staff else "member_display"
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            res = await L.get(conn, org_id, data_type, subject, as_of=as_of or date.today(), purpose=purpose)
+            res = await L.get(conn, org_id, data_type, subject, as_of=as_of or date.today(), purpose=eff)
+            out = res.as_dict()
+            if res.found:
+                p = (await SR.providers(conn)).get(res.provider_key) or {}
+                member_ok = SR.point_allowed(p, L.Point(res.value, res.as_of, res.provider_key, res.licence,
+                                                        detail=res.detail), _member_ctx(org_id)) is None if p else False
+                out["display"] = "member" if member_ok else INTERNAL_LABEL
     except Exception as exc:  # noqa: BLE001
         _raise(exc)
-    return _envelope(principal, {"result": res.as_dict()})
+    return _envelope(principal, {"result": out, "purpose": eff, "purpose_requested": purpose})
+
+
+def _member_ctx(org_id):
+    """The member-display read context (for the display label)."""
+    from services.security_data.types import ReadContext
+    return ReadContext(str(org_id), "member_display")
 
 
 @router.get("/security-data/uploads")

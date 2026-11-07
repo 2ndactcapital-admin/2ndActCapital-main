@@ -46,3 +46,4 @@ verify_bugfix4.py
 verify_rollup2.py
 verify_visibility1.py
 verify_secmaster2.py
+verify_prices1.py

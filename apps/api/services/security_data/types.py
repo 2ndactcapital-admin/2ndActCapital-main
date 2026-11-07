@@ -14,7 +14,8 @@ PROVIDER_KINDS = ("custodian", "regulator_filing", "issuer_file", "public_api", 
 PROVIDER_STATUSES = ("active", "not_connected", "retired")
 MEMBER_DISPLAY = ("allowed", "own_holdings_only", "not_allowed")
 RETENTION = ("keep", "delete", "unknown", "not_applicable")
-QUALITY_KINDS = ("stale", "gap", "outlier", "disagreement", "budget_exhausted")
+QUALITY_KINDS = ("stale", "gap", "outlier", "disagreement", "budget_exhausted",
+                 "invalid_value", "currency_mismatch")  # PRICES1: never stored, always an event
 
 DATA_TYPE_LABELS = {"eod_price": "End-of-day price", "corporate_action": "Corporate actions (dividends, splits)",
                     "fund_holdings": "Fund holdings", "index_level": "Index level / rate",
@@ -33,7 +34,14 @@ MEMBER_DISPLAY_LABELS = {"allowed": "Allowed", "own_holdings_only": "The member'
 RETENTION_LABELS = {"keep": "May keep after cancellation", "delete": "Must delete after cancellation",
                     "unknown": "Unknown — treat as delete", "not_applicable": "Not applicable (own data)"}
 QUALITY_LABELS = {"stale": "Stale", "gap": "Gap in the series", "outlier": "Outlier move",
-                  "disagreement": "Sources disagree", "budget_exhausted": "Daily call budget exhausted"}
+                  "disagreement": "Sources disagree", "budget_exhausted": "Daily call budget exhausted",
+                  "invalid_value": "Zero, negative or unreadable price (not stored)",
+                  "currency_mismatch": "Source currency differs from the security's (not stored)"}
+#: PRICES1 — price coverage of a security (securities_global.price_coverage; the reason lives in
+#: portfolio.security_price_coverage)
+PRICE_COVERAGE_LABELS = {"has_series": "Has a price series", "no_public_source": "No public price source",
+                         "unknown": "Not checked yet"}
+INTERNAL_LABEL = "internal"   # a value staff may see but whose licence does not allow showing it to a member
 
 NOT_PRICED = "not priced"
 

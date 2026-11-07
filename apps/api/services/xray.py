@@ -606,11 +606,130 @@ async def _fund_analysis(conn, org_id, a, r, line, entry, mv, today, *, M, RM, T
     out["tracking_error"] = NEEDS_PRICES
     # marketdata1: what is missing, by data type (the messages above are unchanged)
     out["needs_prices_missing"] = {k: NEEDS_PRICES_MISSING[k] for k in ("harvest_benefit", "tracking_error")}
+    # PRICES1: with an eod_price series through the layer, both are COMPUTED (estimates, with source and as-of);
+    # without one they still say "needs prices". Internal-licence figures are hidden from members by the router
+    # (member_price_filter) — each detail carries members_may_see.
+    await _priced_estimates(conn, org_id, out, sec, model, lots, qty, today, average, a, profile_cache, WS, TP)
     if held and (a.get("authority") or "read_only") == "read_only":
         out["status_lines"].append(HELD_AWAY_NOTE)
     out["join"] = join_eligibility(a, model, out["replicable"])
     out["one_off"] = one_off_eligibility(a)
     return out
+
+
+async def _members_may_see(conn, provider_keys) -> bool:
+    keys = sorted({k for k in provider_keys if k})
+    if not keys:
+        return False
+    rows = await conn.fetch("SELECT key, lic_member_display FROM portfolio.data_providers WHERE key = ANY($1::text[]) "
+                            "AND valid_to IS NULL AND system_to IS NULL", keys)
+    return len(rows) == len(keys) and all(r["lic_member_display"] == "allowed" for r in rows)
+
+
+async def model_weights(conn, version_id) -> dict[str, Decimal]:
+    out: dict[str, Decimal] = {}
+    for r in await conn.fetch("SELECT global_security_id, target_weight FROM portfolio.model_version_positions WHERE "
+                              "version_id = $1::uuid AND global_security_id IS NOT NULL AND valid_to IS NULL AND "
+                              "system_to IS NULL", str(version_id)):
+        k = str(r["global_security_id"])
+        out[k] = out.get(k, ZERO) + Decimal(str(r["target_weight"] or 0))
+    return out
+
+
+def harvest_value(st: Decimal, lt: Decimal, rates: dict) -> Decimal:
+    """PRICES1 — the tax value of the LOSS a switch realizes: net by character (IRS order), then each net loss × its
+    rate. A net gain harvests nothing (0 — the transition tax covers it). Pure."""
+    s, l_ = net_by_character(st, lt)
+    return money(-(min(s, ZERO) * rates["st"] + min(l_, ZERO) * rates["lt"]))
+
+
+async def _priced_estimates(conn, org_id, out, sec, model, lots, qty, today, average, a, profile_cache, WS, TP):
+    from services import security_data as SD
+    from services import tilts as TL
+
+    # the latest MARKET close of the fund (custodian excluded). No market series for the fund → neither figure can
+    # be estimated, and the per-constituent history reads below (one per security per source) are skipped.
+    pv = await SD.get_market(conn, org_id, sec, as_of=today, purpose="internal")
+    if not pv.found:
+        return
+    # tracking error of the fund against its approved replica (ex-ante, from daily closes of both)
+    if model is not None:
+        w = await model_weights(conn, model["live_version_id"])
+        if w:
+            te = await TL.estimate_te(conn, org_id, {sec: Decimal(1)}, w, today)
+            if te.get("estimated"):
+                prov = te.get("provenance") or {}
+                srcs = sorted({v["provider"] for v in prov.values()})
+                asof = max((v["as_of"] for v in prov.values() if v.get("as_of")), default=None)
+                pct = (Decimal(te["tracking_error"]) * 100).quantize(Decimal("0.01"))
+                out["tracking_error"] = f"{pct}% a year (estimate — {', '.join(srcs)}, as of {asof})"
+                out["tracking_error_detail"] = {**te, "label": "estimate", "sources": srcs, "as_of": asof,
+                                                "members_may_see": await _members_may_see(conn, srcs)}
+                out["needs_prices_missing"].pop("tracking_error", None)
+            else:
+                out["tracking_error_detail"] = {"estimated": False, "label": te.get("label"),
+                                                "coverage": te.get("coverage")}
+    # harvest value of switching: the loss the switch realizes, at the latest MARKET close (never the position's
+    # own valuation — that is what "needs prices" was waiting for)
+    if qty <= 0:
+        return
+    known, st, lt, _avg = embedded_by_character(lots, pv.value, today, average=average)
+    detail = {"label": "estimate", "price": format(pv.value, "f"), "provider_key": pv.provider_key,
+              "provider_name": pv.provider_name, "as_of": pv.as_of.isoformat(), "price_label": pv.label,
+              "members_may_see": await _members_may_see(conn, [pv.provider_key])}
+    if not known:
+        out["harvest_benefit"] = COST_UNKNOWN
+        out["harvest_benefit_detail"] = {**detail, "note": COST_UNKNOWN}
+        out["needs_prices_missing"].pop("harvest_benefit", None)
+        return
+    if WS.tax_class(a) == "tax_advantaged":
+        val, note = Decimal("0.00"), "no tax value — a loss inside an IRA / Roth is not deductible"
+    else:
+        sk = str(a["household_id"] or a["primary_entity_id"])
+        if sk not in profile_cache:
+            profile_cache[sk] = TP.combined_rates(await TP.profile_for_account(conn, org_id, a, today.year))
+        rates = profile_cache[sk]
+        if rates is None:
+            out["harvest_benefit"] = NO_PROFILE
+            out["harvest_benefit_detail"] = {**detail, "note": NO_PROFILE}
+            out["needs_prices_missing"].pop("harvest_benefit", None)
+            return
+        val = harvest_value(st, lt, rates)
+        note = (f"estimate: net loss by character at {format(pv.value, 'f')} ({pv.provider_name}, "
+                f"{pv.as_of.isoformat()}) × the profile's combined rates" if val > 0 else
+                "no loss to harvest — at the latest close the switch realizes a gain (see the transition tax)")
+        detail.update(short_term=str(money(st)), long_term=str(money(lt)), st_rate=str(rates["st"]),
+                      lt_rate=str(rates["lt"]))
+    out["harvest_benefit"] = f"{money(val)} (estimate — {pv.provider_name}, as of {pv.as_of.isoformat()})"
+    out["harvest_benefit_detail"] = {**detail, "amount": str(money(val)), "note": note}
+    out["needs_prices_missing"].pop("harvest_benefit", None)
+
+
+def member_price_filter(x: dict, *, staff: bool) -> dict:
+    """PRICES1 — THE licence rule on the X-ray's price-derived figures: a figure whose source's licence does not allow
+    member display is never shown to a member (it reverts to "needs prices"); staff see it labelled "internal"."""
+    for f in x.get("funds") or []:
+        filter_priced_fields(f, staff=staff)
+    return x
+
+
+def filter_priced_fields(f: dict, *, staff: bool) -> dict:
+    """One fund analysis (live, or a stored run line's detail): see :func:`member_price_filter`."""
+    from services.security_data.types import INTERNAL_LABEL
+
+    for k in ("tracking_error", "harvest_benefit"):
+        d = f.get(f"{k}_detail")
+        if not isinstance(d, dict) or "members_may_see" not in d or d.get("members_may_see"):
+            continue
+        if staff:
+            d["display"] = INTERNAL_LABEL
+            f[k] = f"{f[k]} [{INTERNAL_LABEL}]"
+        else:
+            f[k] = NEEDS_PRICES
+            f.pop(f"{k}_detail", None)
+            f.setdefault("needs_prices_missing", {})[k] = ("eod_price history — its source's licence does not "
+                                                           "allow showing it to members")
+    return f
 
 
 def one_off_eligibility(account: dict) -> dict:
@@ -709,7 +828,8 @@ async def run(pool, *, org_id, household_id, trigger: str, actor_id=None, today:
                             f["label"], f["market_value"], f["as_of"], None, None, f["look_through_as_of"], None, None,
                             f["replicable"], {k: f[k] for k in ("viability", "model", "fee", "embedded_gain",
                                                                  "transition_tax", "break_even", "join", "one_off",
-                                                                 "harvest_benefit", "tracking_error")},
+                                                                 "harvest_benefit", "tracking_error")}
+                            | {k: f[k] for k in ("harvest_benefit_detail", "tracking_error_detail") if k in f},
                             f["status_lines"])
     return {"run_id": str(rid), **x}
 

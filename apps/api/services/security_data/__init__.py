@@ -20,4 +20,4 @@ reuses its scrub_error and FRED client.
 from services.security_data.types import (  # noqa: F401
     DATA_TYPES, PURPOSES, NOT_PRICED, Point, Result, ReadContext, SecurityDataError,
 )
-from services.security_data.layer import get, get_bulk, history  # noqa: F401
+from services.security_data.layer import get, get_bulk, get_market, history  # noqa: F401

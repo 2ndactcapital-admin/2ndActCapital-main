@@ -19,6 +19,10 @@ def build_providers(*, transports: Mapping[str, Any] | None = None, environ: Map
                                                   sec_tickers)
     # SECMASTER2 — registered-fund share classes (company_tickers_mf.json); rank 6 for 'reference'
     from services.security_data.providers import sec_mutual_funds
+    # PRICES1 — end-of-day price adapters behind the receptor contract (providers/eod.py). The transport is injected;
+    # without one an adapter can still READ the store (the rank walk) but any fetch raises ProviderNotConnected —
+    # the prices job / backfill build their own real transport (services.security_data.prices.fetcher).
+    from services.security_data.providers import tiingo, yahoo_chart
 
     t = dict(transports or {})
     return {
@@ -36,4 +40,6 @@ def build_providers(*, transports: Mapping[str, Any] | None = None, environ: Map
         "sec_13f_list": sec_13f_list.Sec13fProvider(),
         "finance_database": finance_database.FinanceDatabaseProvider(),
         "sec_mutual_funds": sec_mutual_funds.SecMutualFundsProvider(),
+        "yahoo_chart": yahoo_chart.YahooChartProvider(transport=t.get("yahoo_chart"), environ=environ),
+        "tiingo": tiingo.TiingoProvider(transport=t.get("tiingo"), environ=environ),
     }

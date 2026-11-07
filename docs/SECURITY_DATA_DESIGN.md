@@ -57,8 +57,10 @@ operation; an org's uploaded rows are visible to that org only.
 | sec_nport | regulator_filing | fund_holdings | yes | yes | rep1 N-PORT re-homed |
 | fred | public_api | index_level | yes | no | Treasury curve + fed funds, existing FRED key |
 | vendor_slot | vendor | (all) | no | no | **not connected**, no network, in no rank |
+| yahoo_chart | public_api | eod_price | yes | **no** | PRICES1 primary free EOD source (Yahoo terms: personal use — internal under the owner's assumption; a launch blocker) |
+| tiingo | public_api | eod_price | yes | no | PRICES1 fallback — **not connected** until `TIINGO_API_KEY` exists |
 
-Platform rank: eod_price custodian → csv_upload → adviser_entry → platform_entry;
+Platform rank: eod_price custodian → csv_upload → adviser_entry → platform_entry → yahoo_chart → tiingo (PRICES1);
 corporate_action csv_upload; fund_holdings ssga_spdr → sec_nport; index_level
 fred → csv_upload → adviser_entry; option_quote adviser_entry.
 
@@ -110,6 +112,9 @@ rep1's own daily schedule. **Scheduled since SECMASTER1 as the platform job
 Render cron; `scripts/security_data_nightly.py` remains for a manual run.
 
 ## Add a vendor — the 5 steps
+
+(For an END-OF-DAY PRICE vendor use the receptor contract and its checklist below — "PRICES1 — the price receptor".
+These five steps are the general shape for the other data types.)
 
 1. **Module**: copy `providers/vendor_stub.py` to `providers/<key>.py`. Implement
    `read()` over the canonical stores (`providers/store.py`, `provider_key = <key>`)
@@ -256,3 +261,97 @@ to its list.
    step 4 (`--funds --dry-run`, then real) so the newly linked funds get their category keys.
 6. Household **Recalculate** (or wait for the nightly roll-up).
 7. Optional: switch on "Security data — mutual funds" (monthly) on the Security master screen.
+
+## PRICES1 (2026-11-07) — the price receptor, the first free source, the prices job
+
+Discovery `docs/PRICES1_DISCOVERY.md`; schema `docs/prices1_part1.sql` (APPLIED 2026-11-07,
+`scripts/_apply_prices1.py --all`: SCHEMA OK).
+
+### The receptor — `providers/eod.py` (THE end-of-day plug-in contract)
+
+An EOD adapter is an `EodPriceProvider` subclass with:
+
+* `spec: EodSpec` — `key` (its data_providers row and every stored price's provider_key), `name`, `keyed_by`
+  (`ticker` | `figi` | `cusip` — the security-master identifier it asks by), `max_symbols_per_call`,
+  `daily_call_budget`, `min_interval_s`, `history_years`, `gives_adjustment`, `secret_env` (the Doppler name; None =
+  keyless) and `licence: EodLicence` (internal use, member display, redistribution, retention after cancellation,
+  attribution, terms note — the facts its registry row records).
+* `symbol_for(identifiers) -> str | None` — None = it cannot ask for this security (→ `no_public_source`, reason).
+* `async fetch_eod(symbols, start, end) -> {symbol: EodSeries}` — network ONLY through `self.http`
+  (`HttpTransportBase` over the INJECTED transport); one `EodSeries(found, bars, currency, reason, dropped, events)`
+  per requested symbol; `EodBar(day, close = UNADJUSTED close, currency, open?, high?, low?, volume?,
+  adjusted_close?, adjustment_factor?)` ascending inside [start, end]; an unknown symbol is `found=False` with the
+  source's own reason; a failure of the request as a whole raises `EodSourceError` (the run holds).
+* free from the base: `read()` over the canonical store, `capabilities = {eod_price}`, `connected` (keyless, or its
+  secret present — the provider admin refuses to activate a not-connected adapter), `scrub()`.
+* `contract_problems(adapter)` is the static half of the contract tests; `RecordedHttpGet` the fake transport;
+  `RealHttpGet` the production one (the adapter's own headers).
+
+### The free adapters
+
+| Key | Source | Stores | Licence (enforced) |
+|---|---|---|---|
+| yahoo_chart (primary, active) | `query1.finance.yahoo.com/v8/finance/chart/<ticker>` — keyless; stocks, ETFs, mutual funds, money market; history to listing | the UNADJUSTED close (Yahoo's close is split-adjusted: every request runs to now and later splits in `events.splits` are undone), open / high / low / volume in `bar`, `adjustment_factor` = adjclose ÷ close (6 dp, as of first store) | internal only; member display **not_allowed**; no redistribution; attribution "Prices: Yahoo Finance"; budget 2,000/day |
+| tiingo (fallback, not connected) | `api.tiingo.com/tiingo/daily/<ticker>/prices`, key in the `Authorization` header | raw close + adjClose → factor | internal only; not_allowed; retention delete; budget 900/day |
+
+### Store, quality, coverage (`services/security_data/prices.py`, `writes.upsert_eod_bars`, `writes.set_price_coverage`)
+
+* Platform rows (org NULL) in `securities_global_prices`, idempotent by (security, date, provider): an equal close
+  writes nothing; a changed close is a **new SYSTEM version** (the live row gets `system_to`). One transaction per
+  batch of 25 securities; one batch in memory.
+* Quality — never silently stored: zero / negative close → `invalid_value` event, not stored; source currency ≠ the
+  security's → `currency_mismatch` event, nothing stored; spike → `outlier` event + the bar stored flagged `outlier`;
+  more than 3 weekdays missing → `gap` event; latest bar older than 5 days → `stale` event.
+* Coverage: `securities_global.price_coverage` (system-axis archive, id kept) + `portfolio.security_price_coverage`
+  (the reason, valid axis): `has_series` "N daily closes A..B from <provider>"; `no_public_source` with the source's
+  own answer ("Yahoo has no data for X: …", "the master holds no ticker for it"). A transport failure changes nothing.
+* The coverage set (1c): live positions, live model versions, replica entries + their live snapshot constituents,
+  option packages / contracts, note replicas, substitution candidates, backtest funds, benchmarks SPY / AGG / ACWI;
+  test orgs left out. 29 securities on 2026-11-07.
+
+### Backfill (operator) and the prices job
+
+* `scripts/prices_backfill.py` — `--dry-run` (counts, estimated calls / minutes, days at the budget; no network, no
+  write), `--years N` (default 5), `--resume` (checkpoint `scripts/.prices_backfill.<provider>.json` after every
+  committed batch), `--provider`, `--batch`, `--gsid`, `--no-budget`; a progress line per batch, a summary per
+  provider, one `security_data_runs` row per provider (`summary.job = 'prices_backfill'`); what the first source
+  does not find goes to the next.
+* Job **system:Security data — prices** (`security_master_jobs.JOBS["security_data_prices"]`, step
+  `security_data.prices`): weekdays 21:15 New York (01:15 / 02:15 UTC). Rank order with fallback; gap fill (last 10
+  days) for every covered security, full history for up to 200 NEW members a night, within each source's budget and
+  a 180 s deadline — the rest next night. A source failure RAISES → the run HOLDS and the Super Admin is alerted.
+  Seeded **inactive**; shown on the Security master screen's job switches.
+
+### Readers (Task 7)
+
+All through the layer, never naming a vendor. Roll-up (`networth.value_lines`): a listed units position with an
+allowed close NEWER than its own as-of is quantity × close (basis "price", the source and as-of on the line); a
+custodian winner is the entered value itself; otherwise bugfix4's entered value. The roll-up reads with the MEMBER
+licence by default (members see these figures), so Yahoo never moves a member's number. Drift / proposals
+(`account_models.load_holdings`): a fresher close (internal) values the holding, `price_source = 'security_price'`.
+X-ray: tracking error vs the approved replica (`tilts.estimate_te`) and the harvest value of switching (the net loss by
+character at the latest MARKET close — `layer.get_market`, custodian excluded — × the profile's rates) are computed
+with a series, "needs prices" without; a figure whose source forbids member display is hidden from a member and
+labelled "internal" for staff (`xray.member_price_filter`, also on stored runs). `GET /security-data/lookup`: a caller
+who is not staff is always answered for member display; staff see `display: "internal"`. Tilts, backtest, viability,
+blocks, gifts and unheld-security pricing already computed from a series — unchanged.
+
+### Plug FMP (or any vendor) in later
+
+1. `providers/<key>.py`: copy `vendor_stub.VendorTemplateProvider`; set its `EodSpec` (key, keyed_by, budget, the
+   CONTRACT's licence facts, `secret_env = "FMP_API_KEY"`) and rewrite `parse` / the request for the vendor's format.
+2. One line in `providers/__init__.py::build_providers`; the secret's name in `adapters.SECRET_ENV_NAMES` (FMP's is).
+3. One `data_providers` row (`eod.registry_row(spec, status='not_connected')` gives the columns) and its
+   `data_source_rank` position for `eod_price` (ahead of yahoo_chart once licensed for members).
+4. Prove it: recorded responses through `RecordedHttpGet`, the same contract tests verify_prices1 runs on the
+   template; then switch the row to active. Nothing else changes.
+
+### PRICES1 operator steps (in order)
+
+1. Deploy the branch (schema already applied; the job is seeded OFF).
+2. `doppler run -- apps/api/venv/bin/python apps/api/scripts/prices_backfill.py --dry-run` (expect ≈ 29 securities,
+   29 calls, under a minute).
+3. The real run: `doppler run -- apps/api/venv/bin/python apps/api/scripts/prices_backfill.py` (`--resume` after a
+   crash). Read the per-provider summary: found / not found, events, coverage.
+4. Switch the nightly job on: Security master → Platform jobs → "Security data — prices" → On.
+5. Optional: add `TIINGO_API_KEY` to Doppler and set the tiingo row active (the fallback).

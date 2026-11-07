@@ -171,6 +171,9 @@ async def household_xray(request: Request, household_id: UUID):
     perms = _permissions(principal)
     _join_actions(x, perms)
     await _note_visibility(pool, principal, org_id, x)
+    # PRICES1 — price-derived figures whose source's licence forbids member display: hidden from a member, labelled
+    # "internal" for staff (the same staff test as the note figures)
+    XR.member_price_filter(x, staff=bool(principal.is_super_admin or principal.is_internal))
     return {**_env(principal, xray=x, runs=runs), "actions": ["run"] if perms["can_write"] else []}
 
 
@@ -201,6 +204,7 @@ async def get_run(request: Request, run_id: UUID):
         lines = await conn.fetch(f"SELECT * FROM {XR.T_LINE} WHERE run_id = $1 AND system_to IS NULL "
                                  "ORDER BY line_kind, label", run_id)
     await _require_household(pool, principal, org_id, run["household_id"])
+    staff = bool(principal.is_super_admin or principal.is_internal)   # PRICES1: the licence rule on stored figures
     return _env(principal, run={"id": str(run["id"]), "household_id": str(run["household_id"]),
                                 "run_date": run["run_date"].isoformat(), "trigger": run["trigger"],
                                 "summary": XR._loads(run["summary"]) or {},
@@ -212,7 +216,8 @@ async def get_run(request: Request, run_id: UUID):
                         "market_value": XR._s(r["market_value"]), "as_of": XR._iso(r["as_of"]), "source": r["source"],
                         "weight": XR._s(r["weight"]), "weight_as_of": XR._iso(r["weight_as_of"]),
                         "exposure": XR._s(r["exposure"]), "sector": r["sector"], "replicable": r["replicable"],
-                        "detail": XR._loads(r["detail"]) or {}, "status_lines": XR._loads(r["status_lines"]) or []}
+                        "detail": XR.filter_priced_fields(XR._loads(r["detail"]) or {}, staff=staff),
+                        "status_lines": XR._loads(r["status_lines"]) or []}
                        for r in lines])
 
 

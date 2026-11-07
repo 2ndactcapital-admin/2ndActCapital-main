@@ -317,6 +317,7 @@ async def load_holdings(conn, org_id, account_id) -> dict:
                                 term_hint=lot["term"]))
         if not h.lots and h.price is not None:
             h.lots.append(E.Lot(id=None, quantity=h.quantity, unit_cost=None, acquired=None, term_hint=None))
+    await _fresher_closes(conn, org_id, holdings)
     bal = await conn.fetchrow(
         "SELECT as_of_date, cash_value, total_market_value, source_system FROM public.account_balances_daily "
         "WHERE org_id = $1::uuid AND account_id = $2::uuid "
@@ -326,6 +327,34 @@ async def load_holdings(conn, org_id, account_id) -> dict:
     return {"holdings": list(holdings.values()), "unresolved": unresolved, "cash": cash,
             "cash_as_of": bal["as_of_date"] if bal else None, "cash_source": bal["source_system"] if bal else None,
             "valuation_as_of": await valuation_as_of(conn, org_id, account_id)}
+
+
+async def _fresher_closes(conn, org_id, holdings: dict) -> None:
+    """PRICES1 — drift and every proposal built on these holdings: a holding whose layer end-of-day close (internal
+    use — an adviser tool) is NEWER than its own position date is valued at that close (price_source
+    'security_price', the label rebalance_proposal_trades already admits for a layer price); a custodian winner is the
+    position's own valuation, so it changes nothing. No close → the position's own valuation, unchanged."""
+    from datetime import date as _date
+
+    from services import rebalance_engine as E
+    from services import security_data as SD
+
+    if not holdings:
+        return
+    got = await SD.get_bulk(conn, org_id, "eod_price", list(holdings), as_of=_date.today(), purpose="internal")
+    for key, h in holdings.items():
+        r = got.get(key)
+        if r is None or not r.found or r.provider_key == "custodian" or r.value is None or r.value <= 0:
+            continue
+        if h.price is not None and h.price_as_of is not None and r.as_of <= h.price_as_of:
+            continue
+        had_lots = bool(h.lots)
+        h.price = Decimal(r.value).quantize(E.QTY)
+        h.market_value = h.quantity * h.price
+        h.price_as_of = r.as_of
+        h.price_source = "security_price"
+        if not had_lots:
+            h.lots.append(E.Lot(id=None, quantity=h.quantity, unit_cost=None, acquired=None, term_hint=None))
 
 
 async def fund_security_ids(conn, model: dict) -> list[str]:
