@@ -1225,9 +1225,18 @@ async def y_readers(conn):
     with localcontext() as ctx:
         ctx.prec = 50
         want_fr = (fprices[-1] / fprices[0] - 1).quantize(RC.Q)
-    check(bool(len(days) == 71 and stt.get("replica_return") == format(D(0).quantize(RC.Q), "f")
-               and stt.get("fund_return") == format(want_fr, "f") and stt.get("end_value") == "1000.00"
-               and stt.get("tracking_error") == format(want_te, "f")),
+    # PRICES1 FIX 1 — compared as exact Decimals at the engine's 1E-10 scale, not as text: rep10's backtest writes
+    # str(Decimal), so an exact zero reads '0E-10' (the front end reads it with Number() → 0.00 %); same value, same
+    # scale, the string form was the only difference.
+    def _exact(v, want):
+        try:
+            got = D(v)
+        except Exception:  # noqa: BLE001
+            return False
+        return got == want and got.as_tuple().exponent == want.as_tuple().exponent
+    check(bool(len(days) == 71 and _exact(stt.get("replica_return"), D(0).quantize(RC.Q))
+               and _exact(stt.get("fund_return"), want_fr) and stt.get("end_value") == "1000.00"
+               and _exact(stt.get("tracking_error"), want_te)),
           "backtest on the stored series (through the layer): replica return 0, fund return and tracking error exactly "
           "as hand-computed, end value 1000.00", f"{len(days)} {stt}")
     S["xray_with"] = with_s

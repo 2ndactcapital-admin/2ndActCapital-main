@@ -431,6 +431,7 @@ async def teardown() -> list[str]:
             "portfolio.data_providers": ("key LIKE $1", [f"{PKEY}%"]),
             "portfolio.securities_global_identifiers": ("global_security_id = ANY($1::uuid[])", [secs]),
             "portfolio.securities_global": ("id = ANY($1::uuid[])", [secs]),
+            "public.user_roles": ("user_id = ANY($1::uuid[])", [users]),   # PRICES1 FIX 1: by fixture user
         }
         res = await VC.cleanup(op, orgs=orgs, users=users, user_sub_like=f"%{TAG}%", plan=plan,
                                gucs=("execution.teardown", "models.teardown", "replica.teardown"),
@@ -776,10 +777,15 @@ async def seed(conn) -> None:
                 "INSERT INTO users (id, org_id, email, full_name, auth0_sub, role, status, is_active, is_test) "
                 "VALUES ($1, $2, $3, $4, $5, $6, 'active', true, true)",
                 uid, org, email_of(uid), full, sub_of(uid), account_role)
+            # PRICES1 FIX 1 — since BUGFIX4 user_roles is the ONE role source (users.role only mirrors it): every
+            # fixture role is a real user_roles grant through the app's own helpers, never the string alone (the
+            # Super Admin used to be the string only, so the app decided it was not one: 403 on the provider admin).
             if rname == "org_admin":
                 await rbac.grant_org_admin(conn, uid, org)
             elif rname == "md1_viewer":
                 await conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)", uid, rid_view)
+            else:
+                await rbac.grant_named_role(conn, uid, org, rname)
         for ent, org in ((ENT_1, ORG_A), (ENT_2, ORG_A), (ENT_B, ORG_B)):
             await conn.execute("INSERT INTO entities (id, org_id, entity_type, display_name) VALUES ($1, $2, "
                                "'individual', $3)", ent, org, f"MD1 Verify {str(ent)[-4:]}")
@@ -819,7 +825,30 @@ async def seed(conn) -> None:
     us = await platform(conn, "SELECT count(*) FROM users WHERE id = ANY($1::uuid[]) AND is_test AND auth0_sub LIKE $2",
                         list(USERS), f"%{TAG}%", fetch="fetchval")
     check(int(us) == len(USERS), "fixture users created explicitly with the token's auth0_sub, is_test = true")
-    S["seeded"] = True
+    S["seeded"] = bool(await check_fixture_roles(conn))
+
+
+async def check_fixture_roles(conn) -> bool:
+    """PRICES1 FIX 1 — each fixture user's role AS THE APP DECIDES IT (user_roles, read by rbac.load_principal and
+    the services.authz Principal) is the one the fixture means, and users.role mirrors it. A string-only seed (the
+    pre-fix shape of U_SUPER) fails here, at the seed, instead of as a 403 far downstream."""
+    from services import authz as _AZ
+    bad = []
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('app.is_super_admin', 'true', true)")
+        for uid, (org, account_role, _nm, rname, _full) in USERS.items():
+            names = [r["name"] for r in await conn.fetch(
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND "
+                "r.org_id = $2", uid, org)]
+            lp = await rbac.load_principal(conn, uid)
+            pr = await _AZ.load_principal(conn, uid)
+            want_super = rname == "super_admin"
+            ok = (rname in names and rbac.mirrored_role_string(names) == account_role
+                  and rbac.is_super_admin(lp) is want_super and bool(pr and pr.is_super_admin) is want_super)
+            if not ok:
+                bad.append((str(uid), names, account_role, lp, bool(pr and pr.is_super_admin)))
+    return check(not bad, "every fixture role is a user_roles grant the app decides from (Super Admin / org admin / "
+                 "viewer as meant), users.role its mirror", f"{bad}")
 
 
 async def set_org_rank_raw(conn, org, data_type, keys):
